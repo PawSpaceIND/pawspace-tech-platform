@@ -1,7 +1,7 @@
 import{resolvePlatformSession}from"../../../lib/platform-session";
 import{authError,database,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{captureAiWebLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,runAuthenticatedAiWebChat,runAuthenticatedWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startAuthenticatedWebChatBot}from"../../../lib/ai-web-chat-adapter";
-import{initialBotState,menuReply,runBotTurn,type BotEvent}from"../../../lib/web-chat-bot";
+import{captureAiWebLead,completeWebChatBotLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,runAuthenticatedAiWebChat,runAuthenticatedWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startAuthenticatedWebChatBot}from"../../../lib/ai-web-chat-adapter";
+import{flowByCode,initialBotState,menuReply,partialSummary,runBotTurn}from"../../../lib/web-chat-bot";
 import{POST as submitPublicContact}from"../public-contact/route";
 import{withinPublicRateLimit}from"../../../lib/public-abuse-gate";
 import{requestAiHumanHandoff}from"../../../lib/ai-human-handoff";
@@ -75,29 +75,40 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
  if(!/^[-A-Za-z0-9_]{16,120}$/.test(sessionKey))return json({error:"A chat session is required",code:"chat_session_required"},400);
  const ref=`public:${sessionKey}`;
  if(body.start===true){await saveWebChatBotState(db,ref,initialBotState());return json({data:{mode:"public",sessionKey,bot:menuReply()}});}
- const turn=runBotTurn(await loadWebChatBotState(db,ref),{text:body.message||"",choiceId:body.choiceId,signedIn:false});
+ const previous=await loadWebChatBotState(db,ref),turn=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false});
+ // "Start over" resets the flow, not the visitor: the lead created for their number stays theirs.
+ if(previous.leadId&&!turn.state.leadId)turn.state.leadId=previous.leadId;
  if(!turn.display)return json({error:"Message is required"},400);
  let ai:unknown=null,lead:unknown=null;
  if(turn.event.type==="ai"){
   if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);
   ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey})).ai;
  }
- if(turn.event.type==="completed")lead=await submitBotLead(request,sessionKey,turn.event);
- await saveWebChatBotState(db,ref,turn.state);
+ let state=turn.state;
+ if(turn.event.type==="completed"){
+  // The lead usually exists already (created when the number was given); the answers complete it.
+  lead=state.leadId?await completeWebChatBotLead(db,{leadId:state.leadId,service:turn.event.service,summary:turn.event.summary,whatsappConsent:/^yes/i.test(turn.event.answers.whatsapp||"")}):await submitBotLead(request,sessionKey,{service:turn.event.service,answers:turn.event.answers,summary:turn.event.summary});
+ }else if(state.status==="collecting"&&state.answers.phone&&state.answers.name&&!state.leadId){
+  /* The visitor's number is known: the lead is created now, as WATI has it from the first message, so a
+   * visitor who stops half way is still followed up by the lead's own response clock. */
+  const flow=flowByCode(state.flow),partial=await submitBotLead(request,sessionKey,{service:flow?.service||"Web chat enquiry",answers:state.answers,summary:`${partialSummary(state,false)}\n(Web chat in progress)`,partial:true});
+  if(partial.captured&&partial.leadId)state={...state,leadId:String(partial.leadId)};
+ }
+ await saveWebChatBotState(db,ref,state);
  return json({data:{mode:"public",sessionKey,display:turn.display,bot:turn.reply,event:turn.event.type,ai,lead}});
 }
 
 /** The finished enquiry, through the website contact form's own intake (CRM contact, lead, owner, SLA). */
-async function submitBotLead(request:Request,sessionKey:string,event:Extract<BotEvent,{type:"completed"}>){
+async function submitBotLead(request:Request,sessionKey:string,event:{service:string;answers:Record<string,string>;summary:string;partial?:boolean}){
  const answers=event.answers,headers=new Headers({"content-type":"application/json"});
  for(const name of["origin","cf-connecting-ip","x-forwarded-for","user-agent"]){const value=request.headers.get(name);if(value)headers.set(name,value);}
  const intake=new Request(new URL("/api/public-contact",request.url),{method:"POST",headers,body:JSON.stringify({
-  requestId:`webchatbot_${sessionKey}`.replace(/[^-A-Za-z0-9_]/g,"_").slice(0,128),
+  requestId:`webchatbot_${event.partial?"start_":""}${sessionKey}`.replace(/[^-A-Za-z0-9_]/g,"_").slice(0,128),
   name:answers.name,phone:answers.phone,email:answers.email||"",area:answers.area||answers.from||"Bangalore",
   petNames:answers.petType?`${answers.petType}${answers.petCount?` x ${answers.petCount}`:""}`:"Not shared",
   service:event.service,message:event.summary.slice(0,500),whatsappConsent:/^yes/i.test(answers.whatsapp||""),
   utmSource:"pawspace_web_chat",utmMedium:"chatbot",
  })});
  const response=await submitPublicContact(intake),payload=await response.json().catch(()=>null) as Record<string,unknown>|null;
- return response.ok?{captured:true,leadId:(payload?.data as Record<string,unknown>|undefined)?.leadId??null}:{captured:false,status:response.status};
+ return response.ok?{captured:true,leadId:payload?.leadId??(payload?.data as Record<string,unknown>|undefined)?.leadId??null}:{captured:false,status:response.status};
 }

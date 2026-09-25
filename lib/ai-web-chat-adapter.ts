@@ -2,8 +2,9 @@ import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
 import{ensureCommunicationTables}from"./communication-engine";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff}from"./ai-human-handoff";
-import{initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
-import{loadBotSession,saveBotSession}from"./web-chat-bot-store";
+import{currentStepReply,initialBotState,menuReply,parseBotState,runBotTurn,type BotReply}from"./web-chat-bot";
+import{ensureBotSessionTable,loadBotSession,saveBotSession}from"./web-chat-bot-store";
+import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";
 import{canonicalCatalogueSnapshot}from"./ai-grounded-runtime-provider";
@@ -259,4 +260,54 @@ export async function runAuthenticatedWebChatBotTurn(db:D1Database,input:{actor:
   return{duplicatePrevented:false,threadId:booking.threadId,path:"completed" as const,handedOff:"withTeam"in booking||Boolean("handoff"in booking&&booking.handoff?.active)};
  }
  return{duplicatePrevented:false,threadId:recorded.threadId,path:turn.event.type==="call"?"call" as const:"bot" as const};
+}
+
+/* ---------------------------------------------------------------------------------------------------
+ * Customers who stop half way. In WATI a stalled flow is followed up; here a signed-in customer who goes
+ * quiet mid-flow is nudged once with the question they stopped on, and if they still do not answer the
+ * enquiry goes to the sales queue so a person follows it up. (A visitor's lead already exists from the
+ * moment they gave their number, so the lead's own response clock covers them.)
+ * --------------------------------------------------------------------------------------------------- */
+export const WEB_CHAT_BOT_NUDGE_AFTER_MS=15*60_000;
+export const WEB_CHAT_BOT_ESCALATE_AFTER_MS=2*60*60_000;
+
+export async function runWebChatBotFollowUpSweep(db:D1Database,input:{asOf?:number;limit?:number}={}){
+ const asOf=input.asOf??Date.now(),limit=Math.min(200,Math.max(1,input.limit??50));
+ await ensureBotSessionTable(db);await ensureAiWebChatTables(db);
+ const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-WEB_CHAT_BOT_NUDGE_AFTER_MS,limit).all<Row>();
+ let nudged=0,escalated=0,skipped=0;
+ for(const row of rows.results){
+  const state=parseBotState(row.state_json),ref=text(row.session_ref),customerId=ref.slice("customer:".length);
+  if(state.status!=="collecting"){skipped++;continue;}
+  const threadId=await currentWebChatThread(db,customerId);
+  if(!threadId||(await activeHandoff(db,threadId)).active){skipped++;continue;}
+  if(!state.nudgedAt){
+   const reply=currentStepReply(state,true,"Still there? Let's finish your details so I can book this for you. ");
+   if(!reply){skipped++;continue;}
+   await postBotMessage(db,{threadId,customerId,reply,idempotencyKey:`web-chat-bot-nudge:${threadId}:${state.flow}:${state.step}`});
+   await saveBotSession(db,ref,{...state,nudgedAt:asOf},asOf);nudged++;continue;
+  }
+  if(asOf-state.nudgedAt<WEB_CHAT_BOT_ESCALATE_AFTER_MS){skipped++;continue;}
+  await postBotMessage(db,{threadId,customerId,reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},idempotencyKey:`web-chat-bot-escalate:${threadId}:${state.flow}`});
+  await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});
+  await saveBotSession(db,ref,{...state,status:"done"},asOf);escalated++;
+ }
+ return{scanned:rows.results.length,nudged,escalated,skipped,externalDelivery:false};
+}
+
+/**
+ * A visitor finished the flow after their lead was already created: the answers are added to that lead
+ * (activity, enquiry summary, next action) rather than creating a second one. When they agreed to
+ * WhatsApp, the governed WhatsApp AI lead starts, which is how a marketing lead continues on WhatsApp.
+ */
+export async function completeWebChatBotLead(db:D1Database,input:{leadId:string;service:string;summary:string;whatsappConsent:boolean}){
+ const lead=await db.prepare("SELECT customer_id,owner FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>().catch(()=>null);
+ if(!lead)return{captured:false,leadId:input.leadId,reason:"lead_not_found"};
+ const contactId=text(lead.customer_id),now=Date.now();
+ await db.batch([
+  db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${crypto.randomUUID()}`,contactId,"web_chat_bot","Web chat enquiry completed",JSON.stringify({service:input.service,summary:input.summary}),now),
+  db.prepare("UPDATE crm_contacts SET pet_summary=?,opportunity=?,next_action=?,updated_at=? WHERE id=?").bind(input.summary.slice(0,500),input.service,"Web chat enquiry complete - contact to confirm the booking",now,contactId),
+ ]);
+ const whatsapp=input.whatsappConsent?await startWhatsAppAiLead(db,{leadId:input.leadId,contactId,idempotencyKey:`web-chat-bot-whatsapp:${input.leadId}`,consentGranted:true,consentSource:"web_chat_bot",consentEvidenceRef:"web-chat-bot-whatsapp-consent-v1",actorId:"web-chat-bot",assignedTo:text(lead.owner)||undefined}).catch(()=>({status:"failed"})):null;
+ return{captured:true,leadId:input.leadId,updated:true,whatsappAi:whatsapp?{status:(whatsapp as Row).status}:null};
 }

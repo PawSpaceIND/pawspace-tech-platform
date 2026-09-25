@@ -19,7 +19,11 @@ type Step={key:string;label:string;prompt:string;kind:StepKind;choices?:BotChoic
  anonymousOnly?:boolean};
 type Flow={code:string;service:string;label:string;steps:Step[]};
 
-export type BotState={version:1;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>};
+export type BotState={version:1;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
+ /** The CRM lead created for a visitor as soon as their number is known (web chat). */
+ leadId?:string;
+ /** When a stalled flow was last nudged by the follow-up sweep. */
+ nudgedAt?:number};
 export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
 export type BotEvent=
  |{type:"none"}
@@ -200,3 +204,11 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  const closing=input.signedIn&&flow.code!==TEAM_FLOW.code?"Let me check the best option and price for you now.":"A PawSpace team member will get in touch with you shortly.";
  return{state:{...state,status:"done"},reply:{text:`Thank you! Here is what I've noted:\n${summary}\n\n${closing}`,choices:[START_OVER],inputHint:"Type a message"},event:{type:"completed",flow:flow.code,service:flow.service,answers:state.answers,summary},display};
 }
+
+/** The question the customer is currently on, re-asked (the stalled-chat nudge uses it). */
+export function currentStepReply(state:BotState,signedIn:boolean,prefix=""):BotReply|null{
+ if(state.status!=="collecting")return null;const flow=flowByCode(state.flow);if(!flow)return null;
+ const step=stepsFor(flow,signedIn)[state.step];return step?askReply(step,prefix):null;
+}
+/** The enquiry so far, for a lead created before the flow is finished. */
+export function partialSummary(state:BotState,signedIn:boolean){const flow=flowByCode(state.flow);return flow?botSummary(flow,state.answers,signedIn):"";}

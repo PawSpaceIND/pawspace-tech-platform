@@ -266,3 +266,50 @@ test("a signed-in customer's finished enquiry goes to the AI booking agent, neve
   // No live model in this world, so the AI hands the customer to a person rather than stalling.
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE customer_id='CUS-BOOK'").get().n), 1);
 });
+
+test("a visitor's lead exists as soon as they give their number, and one that stops half way is not lost", async () => {
+  const { sqlite } = await world();
+  const sessionKey = "botvisitor0000000002";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  await call({ choiceId: "pet_taxi", message: "" });
+  await call({ message: "Ravi Kumar" });
+  const afterPhone = await call({ message: "9876543210" });
+  assert.match(afterPhone.bot.text, /purpose of your travel/);
+  const contact = sqlite.prepare("SELECT name,primary_phone,opportunity,pet_summary FROM crm_contacts").get();
+  assert.equal(contact.name, "Ravi Kumar");
+  assert.equal(contact.opportunity, "Pet Taxi");
+  assert.match(contact.pet_summary, /in progress/);
+  // Start over and pick another service: still one lead, and it is completed with the new answers.
+  await call({ choiceId: "start_over", message: "" });
+  let reply = (await call({ choiceId: "dog_walking", message: "" })).bot;
+  let last;
+  for (let guard = 0; guard < 10 && !last?.lead; guard++) { const answer = answerFor(reply); last = await call({ message: answer.text || "", choiceId: answer.choiceId }); reply = last.bot; }
+  assert.equal(last.lead?.captured, true);
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM lead_work_items").get().n), 1, "a visitor must not become two leads");
+  const updated = sqlite.prepare("SELECT opportunity,pet_summary,next_action FROM crm_contacts").get();
+  assert.equal(updated.opportunity, "Dog Walking");
+  assert.match(updated.pet_summary, /Dog Walking enquiry/);
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM crm_activities WHERE type='web_chat_bot'").get().n), 1);
+});
+
+test("a signed-in customer who stops mid-flow is nudged once, then handed to the sales queue", async () => {
+  const { sqlite, db } = await world();
+  seedCustomer(sqlite, "CUS-STALL", "+919900000203");
+  const cookie = await customerCookie(db, "CUS-STALL", "+919900000203");
+  const call = async (body) => (await callEndpoint(post({ mode: "authenticated", bot: true, ...body }, { cookie }))).response;
+  await call({ start: true });
+  await call({ choiceId: "grooming", message: "", idempotencyKey: "stall-1" });
+  const adapter = await import("../lib/ai-web-chat-adapter.ts");
+  const sweep = (asOf) => runWithWorkersDb(db, () => adapter.runWebChatBotFollowUpSweep(db, { asOf }));
+  const now = Date.now();
+  assert.equal((await sweep(now + 5 * 60_000)).nudged, 0, "not yet stalled");
+  assert.equal((await sweep(now + 16 * 60_000)).nudged, 1);
+  assert.equal((await sweep(now + 20 * 60_000)).nudged, 0, "nudged only once");
+  const nudge = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-nudge:%'").get();
+  assert.match(JSON.parse(nudge.payload_json).text, /Still there\? .*dog or a cat/);
+  assert.equal((await sweep(now + 16 * 60_000 + 2 * 60 * 60_000)).escalated, 1);
+  const handoff = sqlite.prepare("SELECT reason,queue_code FROM ai_handoffs WHERE customer_id='CUS-STALL'").get();
+  assert.deepEqual({ ...handoff }, { reason: "bot_abandoned", queue_code: "sales-web-chat" });
+  assert.equal((await sweep(now + 5 * 60 * 60_000)).escalated, 0, "escalated only once");
+});
