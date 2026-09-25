@@ -8,3 +8,5 @@ test("V2 AI continuity regression executes governed callback classifier",async()
 test("V2 home routes every AI entry into native V2 chat",()=>{assert.equal((home.match(/href="\/v2\/chat"/g)||[]).length,4);assert.doesNotMatch(home,/href="\/chat"/);});
 test("V2 chat reuses governed AI and identity contracts",()=>{assert.match(chat,/\/api\/identity-session/);assert.match(chat,/\/api\/ai-web-chat/);assert.match(chat,/idempotencyKey:"v2-web-"/);});
 test("authenticated chat fails closed without customer identity",()=>{assert.match(chat,/mode==="authenticated"&&identity!=="customer"/);assert.match(chat,/Open V2 home/);});
+
+test("public V2 chat uses conversational AI path instead of raw knowledge dump",()=>{assert.match(chat,/sessionKey:publicSessionKey/);assert.match(chat,/history/);assert.match(chat,/Ask PawSpace AI/);assert.doesNotMatch(chat,/knowledge\.map/);});
