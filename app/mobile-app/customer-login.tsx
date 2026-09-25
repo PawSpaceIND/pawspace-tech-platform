@@ -115,7 +115,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" }}
                 />
                 {error && <p style={{ color: "#b3261e", fontSize: 11, marginTop: 8 }}>{error}</p>}
-                <button className={styles.primary} disabled={!hydrated || busy} onClick={() => void requestOtp()}>
+                <button data-paw-action="primary" className={styles.primary} disabled={!hydrated || busy} onClick={() => void requestOtp()}>
                   {busy ? "Sending…" : "Send OTP"}
                 </button>
                 <p style={{ fontSize: 9, color: "var(--ps-muted)", marginTop: 10 }}>
@@ -151,7 +151,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                   />
                 )}
                 {error && <p style={{ color: "#b3261e", fontSize: 11, marginTop: 8 }}>{error}</p>}
-                <button className={styles.primary} disabled={busy} onClick={() => void verifyOtp()}>
+                <button data-paw-action="primary" className={styles.primary} disabled={busy} onClick={() => void verifyOtp()}>
                   {busy ? "Verifying…" : "Verify & continue"}
                 </button>
                 <button className={styles.back} onClick={() => {
