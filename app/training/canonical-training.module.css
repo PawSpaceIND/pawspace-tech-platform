@@ -55,3 +55,6 @@
 .shell .stickyCard > button { min-width:330px; min-height:54px; border:0; border-radius:999px; background:var(--brand-primary); color:var(--brand-on-primary); font-size:17px; font-weight:850; box-shadow:0 10px 24px color-mix(in srgb,var(--brand-primary) 20%,transparent); }
 .shell .stickyCard > button:not(:disabled):hover { transform:translateY(-1px); box-shadow:0 14px 30px color-mix(in srgb,var(--brand-primary) 26%,transparent); }
 @media(max-width:720px) { .shell.shell { padding:18px 14px 120px; gap:14px; } .shell > header { padding:24px 20px; border-radius:20px; } .shell .card { padding:20px 17px; border-radius:18px; } .shell .card > h2 { font-size:20px; } .shell .stickyCard { bottom:10px; padding:16px; border-radius:18px; } .shell .stickyCard > button { width:100%; min-width:0; } .shell .stickyCard > div > strong { font-size:26px; } }
+
+/* Final mobile UAT polish: keep the checkout summary in normal flow so it cannot cover programme choices. */
+@media(max-width:720px){.shell.shell .stickyCard{position:static!important}}
