@@ -266,6 +266,7 @@ const UNLOADABLE_UNDER_STRIP_ONLY = [];
 // not turn a correct customer path into a false ordering defect.
 const AUTHORIZED_PROBE_VALIDATION = new Map([
   ["customer-grooming-summary.GET", "customer probe holds scheduling.book; missing selector validates after authorization"],
+  ["customer-live-tracking.GET", "customer probe holds scheduling.book; missing booking selector validates after authorization"],
   ["grooming-booking-change.GET", "customer probe holds scheduling.book; missing booking selector is validated only after authorization"],
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
   ["taxi-ride-bookings.POST", "customer probe holds scheduling.book; Taxi v2 payload validation happens only after authentication and scheduling authorization"],
