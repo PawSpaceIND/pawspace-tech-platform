@@ -283,3 +283,55 @@ jobs:
           if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
           console.log('REPAIR_COMPLETE=yes');
           NODE
+
+  diagnose-exophone:
+    if: ${{ inputs.confirm == 'diagnose-exophone' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Compare Exotel ExoPhones with caller-id and UAT recipient
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.EXOTEL_API_KEY||'').trim();
+          const token=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const sid=String(process.env.EXOTEL_SID||'').trim();
+          const host=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const callerRaw=String(process.env.EXOTEL_CALLER_ID||'').trim();
+          const recipientRaw=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean)[0]||'';
+          if(!key||!token||!sid) throw new Error('Exotel diagnostics prerequisites missing');
+          const norm=v=>String(v||'').replace(/\D/g,'').replace(/^0+/,'').slice(-10);
+          const callerKey=norm(callerRaw),recipientKey=norm(recipientRaw);
+          console.log('CALLER_EQUALS_UAT_RECIPIENT='+String(Boolean(callerKey&&recipientKey&&callerKey===recipientKey)));
+          const auth='Basic '+Buffer.from(key+':'+token).toString('base64');
+          const r=await fetch('https://'+host+'/v2_beta/Accounts/'+encodeURIComponent(sid)+'/IncomingPhoneNumbers',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const body=await r.json().catch(()=>({}));
+          if(!r.ok){console.log('EXOPHONE_LIST_ERROR='+JSON.stringify(body).slice(0,1500));throw new Error('ExoPhone list failed '+r.status);}
+          const rows=Array.isArray(body?.incoming_phone_numbers)?body.incoming_phone_numbers:[];
+          const safe=rows.map(x=>({
+            sidPresent:Boolean(x.sid),
+            phoneLast4:String(x.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+            friendlyLast4:String(x.friendly_name||'').replace(/\D/g,'').slice(-4)||null,
+            voice:Boolean(x?.capabilities?.voice),
+            voiceUrl:x.voice_url||null,
+            region:x.region||null,
+            numberType:x.number_type||null,
+            matchesCaller:norm(x.phone_number)===callerKey,
+            matchesRecipient:norm(x.phone_number)===recipientKey,
+            voiceFlowId:(String(x.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]||null
+          }));
+          console.log('EXOPHONES_SAFE='+JSON.stringify(safe));
+          const flow1347515=safe.filter(x=>x.voiceFlowId==='1347515');
+          console.log('FLOW_1347515_EXOPHONES='+JSON.stringify(flow1347515));
+          NODE
