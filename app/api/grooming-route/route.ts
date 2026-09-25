@@ -3,6 +3,7 @@ import{computeGoogleRoute,ensureGroomingMapTables,mapsNavigationUrl,type Provide
 import{existingGroomingTelemetry,prepareGroomingTelemetry,commitGroomingTelemetry,ensureGroomingGpsPipelineTables}from"../../../lib/grooming-gps-pipeline";
 import{gpsIngestionKey,validGpsCoordinates}from"../../../lib/gps-telemetry-policy";
 import{LocationConfigurationRequired}from"../../../lib/universal-location-recovery";
+import{liveStaticMapResponse}from"../../../lib/live-static-map";
 import{decideCustomerDataAccess,resolveDataAccessPolicy}from"../../../lib/purpose-based-access";
 
 type Input={bookingId:string;providerId:string;latitude:number;longitude:number;accuracyMeters:number;capturedAt:number;idempotencyKey?:string};
@@ -65,7 +66,7 @@ async function latestAcceptedPoint(db:Awaited<ReturnType<typeof database>>,booki
 
 export async function GET(request:Request){try{
   const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
-  const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim(),providerId=String(url.searchParams.get("providerId")||"").trim();
+  const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim(),providerId=String(url.searchParams.get("providerId")||"").trim(),mapMode=url.searchParams.get("map")==="1";
   if(!bookingId||!providerId)return json({error:"Booking and provider are required"},400);
   const db=await database();await ensureGroomingMapTables(db);await ensureGroomingGpsPipelineTables(db);await requireProviderOwnership(db,actor,providerId);
   const booking=await assignedBooking(db,bookingId,providerId);if(!booking)return json({error:"Assigned booking location is unavailable"},404);
@@ -74,6 +75,7 @@ export async function GET(request:Request){try{
   const point=await latestAcceptedPoint(db,bookingId,providerId);
   const snapshot=point?await db.prepare("SELECT provider_status,distance_meters,duration_seconds,detail_json FROM route_eta_snapshots WHERE booking_id=? AND provider_id=? AND origin_location_event_id=? ORDER BY calculated_at DESC LIMIT 1").bind(bookingId,providerId,point.eventId).first<Row>():null;
   const detail=snapshot?JSON.parse(String(snapshot.detail_json||"{}")) as Record<string,unknown>:{};
+  if(mapMode){if(!point||!disclosure.destinationCoordinates)return new Response("Live map is unavailable until provider GPS and destination coordinates are ready",{status:409,headers:{"cache-control":"no-store"}});return liveStaticMapResponse({provider:{lat:point.lat,lng:point.lng},destination:disclosure.destinationCoordinates,polyline:typeof detail.polyline==="string"?detail.polyline:null,privacyRounded:false});}
   const destination=disclosure.destinationAddress||"";
   return json({data:{
     bookingId,providerId,

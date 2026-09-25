@@ -6,6 +6,8 @@ import {loadCustomerConfirmationProjection,type CustomerConfirmationProjection} 
 import {customerBookingManageHref} from "../../../lib/customer-activity";
 import {customerScopedHref} from "../../../lib/v2/route-scope";
 import TrainingBookingSessions from "./training-sessions";
+import CustomerGroomingLiveCard from "../../mobile-app/customer-grooming-live-card";
+import {customerGroomingLiveCardVisible} from "../../../lib/customer-location-disclosure";
 import BookingPaymentPage from "../../mobile-app/booking-payment-page";
 import {formatIndiaDateTime} from "../../../lib/india-time";
 import styles from "../customer-detail.module.css";
@@ -19,6 +21,7 @@ export default function V2BookingPage(){
  const mode=record?.paymentMode;
  return <main className={styles.page}><div className={styles.shell}><header className={styles.topbar}><Link href="/v2/activity">← Your bookings</Link><Link href="/v2">PawSpace</Link></header>
  {!bookingId?<p role="alert">Open a booking from your Activity timeline.</p>:error?<section className={styles.card}><p role="alert">{error}</p><button onClick={()=>setAttempt(x=>x+1)}>Retry booking</button></section>:!record?<p role="status">Loading your booking…</p>:<><section className={styles.card}><h1>{record.packageName}</h1><p>{record.bookingId}</p><p>Status: {record.bookingStatus.replaceAll("_"," ")}</p><p>{formatIndiaDateTime(record.scheduledStart)} · {record.providerName||"Assignment pending"}</p><p>{record.pets?.map(pet=>pet.name).join(", ")}</p><p>Total: {money(record.totalAmount,record.currency)} · Payment: {record.paymentStatus.replaceAll("_"," ")}</p>{manage&&<Link href={customerScopedHref("/v2",manage)}>Manage service</Link>}<button onClick={()=>setAttempt(x=>x+1)}>Refresh status</button></section>
+ {customerGroomingLiveCardVisible(record.serviceCode,record.bookingStatus)&&<CustomerGroomingLiveCard key={record.bookingId} bookingId={record.bookingId}/>}
  {record.serviceCode==="dog_training"&&<TrainingBookingSessions key={record.bookingId} bookingId={record.bookingId} inactive={["cancelled","refunded","failed","expired","completed"].includes(record.bookingStatus)} onReady={setTrainingReady}/>}
  {payable&&(record.serviceCode!=="dog_training"||trainingReady)&&(mode==="prepaid"||mode==="split"||mode==="split_50_50")&&<BookingPaymentPage serviceName={record.packageName} bookingId={record.bookingId} totalAmount={record.totalAmount} amountDueNow={record.amountDueNow} mode={mode} onVerified={()=>setAttempt(x=>x+1)}/>}
  {mode==="pay_after_service"&&record.paymentStatus!=="captured"&&record.paymentStatus!=="paid"&&<p>Your provider will share the payment request after service completion.</p>}</>}

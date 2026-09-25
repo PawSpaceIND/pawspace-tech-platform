@@ -35,3 +35,9 @@ export function customerTrackingProjection(input:{bookingStatus:unknown;hasTrust
     distanceKm:Number.isFinite(distance)&&distance>=0?Math.round(distance/100)/10:null,
   };
 }
+
+/** Booking statuses where the customer live-tracking card is shown. Unpaid and closed bookings never poll. */
+const LIVE_CARD_HIDDEN_STATUSES=new Set(["payment_pending","completed","cancelled","canceled","refunded","failed","expired"]);
+export function customerGroomingLiveCardVisible(serviceCode:unknown,bookingStatus:unknown){
+  return String(serviceCode||"")==="grooming"&&!LIVE_CARD_HIDDEN_STATUSES.has(String(bookingStatus||""));
+}
