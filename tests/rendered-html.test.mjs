@@ -316,12 +316,15 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(groomingLive, /ETA about/);
   assert.match(groomingLive, /map=1&v=/);
   assert.match(groomingLive, /live map refreshes automatically/);
-  assert.match(groomingSummaryRoute, /google-static-maps/);
-  assert.match(groomingSummaryRoute, /provider-rounded-3dp/);
-  assert.match(groomingSummaryRoute, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
+  // The Static Maps call moved into the shared server-side helper; the route must still use it privacy-rounded.
+  const liveStaticMap = await readFile(new URL("../lib/live-static-map.ts", import.meta.url), "utf8");
+  assert.match(groomingSummaryRoute, /liveStaticMapResponse\([^;]*privacyRounded:true/);
+  assert.match(liveStaticMap, /google-static-maps/);
+  assert.match(liveStaticMap, /provider-rounded-3dp/);
+  assert.match(liveStaticMap, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
   // The live map is re-fetched only when a new route snapshot lands, not on every summary poll.
   assert.match(groomingSummaryRoute, /mapVersion:tracking\.state==="live"/);
-  assert.match(groomingLive, /key=\{mapVersion\}/);
+  assert.match(groomingLive, /mapKey=`\$\{mapVersion\}-\$\{recenter\}`/);
   assert.doesNotMatch(groomingLive, /setMapTick/);
   // V2 customers reach the live card from their booking page and the Grooming manage page.
   const [v2Booking, groomingManage] = await Promise.all(["app/v2/booking/page.tsx", "app/grooming/manage/grooming-customer-booking.tsx"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")));
