@@ -409,3 +409,63 @@ jobs:
           if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
           console.log('REAL_EXOPHONE_REPAIR_COMPLETE=yes');
           NODE
+
+  diagnose-latest-exotel-call:
+    if: ${{ inputs.confirm == 'diagnose-latest-exotel-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect latest Exotel call and legs without dialing
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.EXOTEL_API_KEY||'').trim(),token=String(process.env.EXOTEL_API_TOKEN||'').trim(),sid=String(process.env.EXOTEL_SID||'').trim(),host=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          if(!key||!token||!sid) throw new Error('Exotel diagnostic prerequisites missing');
+          const auth='Basic '+Buffer.from(key+':'+token).toString('base64');
+          const list=await fetch('https://'+host+'/v1/Accounts/'+encodeURIComponent(sid)+'/Calls.json?PageSize=10&SortBy=DateCreated:desc&details=true',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const lb=await list.json().catch(()=>({}));
+          if(!list.ok) throw new Error('Exotel call list failed '+list.status+' '+JSON.stringify(lb).slice(0,800));
+          const calls=Array.isArray(lb?.Calls)?lb.Calls:Array.isArray(lb?.calls)?lb.calls:[];
+          const latest=calls.find(c=>String(c.Direction||c.direction||'').toLowerCase().includes('outbound'))||calls[0];
+          if(!latest) throw new Error('No recent Exotel calls');
+          const callSid=String(latest.Sid||latest.sid||'').trim(); if(!callSid) throw new Error('Latest call has no SID');
+          console.log('::add-mask::'+callSid);
+          console.log('LATEST_V1_SAFE='+JSON.stringify({
+            status:latest.Status||latest.status||null,currentStatus:latest.CurrentStatus||latest.current_status||null,direction:latest.Direction||latest.direction||null,
+            duration:Number(latest.Duration||latest.duration||0),dateCreated:latest.DateCreated||latest.date_created||null,startTime:latest.StartTime||latest.start_time||null,endTime:latest.EndTime||latest.end_time||null
+          }));
+          const ccmHost=host.includes('api.in.exotel.com')?'ccm-api.in.exotel.com':'ccm-api.exotel.com';
+          const det=await fetch('https://'+ccmHost+'/v3/accounts/'+encodeURIComponent(sid)+'/calls/'+encodeURIComponent(callSid),{headers:{authorization:auth,'content-type':'application/json'},signal:AbortSignal.timeout(30000)});
+          const db=await det.json().catch(()=>({}));
+          console.log('V3_DETAIL_HTTP='+det.status);
+          if(det.ok){
+            const cd=db?.response?.call_details||{};
+            console.log('V3_CALL_DETAIL='+JSON.stringify({
+              state:cd.state||null,status:cd.status||null,direction:cd.direction||null,virtualNumberLast4:String(cd.virtual_number||'').replace(/\D/g,'').slice(-4)||null,
+              startTime:cd.start_time||null,endTime:cd.end_time||null,totalDuration:cd.total_duration??null,totalTalkTime:cd.total_talk_time??null,
+              appId:cd.app_id||null,appName:cd.app_name||null,legs:cd.legs||null
+            }));
+            if(cd.legs){
+              const legsUrl='https://'+ccmHost+String(cd.legs);
+              const lr=await fetch(legsUrl,{headers:{authorization:auth,'content-type':'application/json'},signal:AbortSignal.timeout(30000)});
+              const lj=await lr.json().catch(()=>({}));
+              console.log('LEGS_HTTP='+lr.status);
+              const raw=lj?.response?.legs||lj?.legs||lj?.response||lj;
+              const legs=Array.isArray(raw)?raw:[];
+              console.log('LEGS_SAFE='+JSON.stringify(legs.map(x=>({
+                direction:x.direction||null,state:x.state||null,terminalStatus:x.terminal_status||x.status||null,
+                networkType:x.network_type||null,onCallDurationMs:Number(x.on_call_duration_ms||0),
+                bridgeStatus:x?.additional_info?.bridge_status||null,txAudioStatus:x?.additional_info?.tx_audio_status||null,rxAudioStatus:x?.additional_info?.rx_audio_status||null
+              }))));
+            }
+          } else console.log('V3_DETAIL_ERROR='+JSON.stringify(db).slice(0,1200));
+          NODE
