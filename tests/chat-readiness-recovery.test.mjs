@@ -53,6 +53,10 @@ test('public AI chat still answers when the service-control read fails',async t=
  const result=await adapter.runPublicAiWebChat(broken,{query:'Does PawSpace offer pet relocation?',sessionKey:'service-control-failure'});
  assert.equal(result.ai.turn.outcome,'knowledge_missing');
  assert.match(result.ai.turn.output,/I can help with Grooming/);
+ const recorded=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE event_type='service_directory_degraded' AND actor_ref='public:service-control-failure'").first();
+ assert.ok(recorded,'the lost service-directory read is recorded, not silently treated as an empty catalogue');
+ assert.equal(JSON.parse(recorded.detail_json).degraded[0].source,'service_controls');
+ assert.equal(JSON.stringify(result).includes('injected service control failure'),false,'the failure reason stays internal');
 });
 
 test('public AI does not answer deterministically about one service when several are named',async t=>{

@@ -5,6 +5,7 @@ import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";
 import{canonicalCatalogueSnapshot}from"./ai-grounded-runtime-provider";
 import{listServiceControls}from"./service-control";
+import{createDegradationLog}from"./degraded-reads";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 import{inspectTrustSafetyText,redactTrustSafetyText}from"./trust-safety-governance";
 
@@ -33,7 +34,8 @@ type PublicServiceEntry={code:string;name:string;group:string;enabled:boolean};
  * audit text and are never included. A failed service-control read degrades to an empty directory so the
  * public chat keeps its grounded/provider path instead of rejecting every request.
  */
-async function publicServiceDirectory(db:D1Database):Promise<PublicServiceEntry[]>{try{return(await listServiceControls(db)).map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled}));}catch{return[];}}
+/** Reads the public service directory. A failed read falls back to the pre-directory chat path and is recorded as a degraded turn, never passed off as an empty catalogue. */
+async function publicServiceDirectory(db:D1Database,sessionKey:string):Promise<PublicServiceEntry[]>{const degradation=createDegradationLog();const directory=await listServiceControls(db).then(rows=>rows.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled})),error=>degradation.note("service_controls",error,[] as PublicServiceEntry[]));if(degradation.degraded())await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'service_directory_degraded',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({degraded:degradation.entries()}),Date.now()).run().catch(()=>undefined);return directory;}
 const phrase=(value:string)=>` ${value.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()} `;
 /** Returns the service only when the question names exactly one distinct service; multi-service questions go to the general path. */
 function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].some(alias=>phrase(alias).trim()&&q.includes(phrase(alias))));return matches.length===1?matches[0]:null;}
@@ -44,7 +46,7 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const sessionKey=text(input.sessionKey).slice(0,120)||crypto.randomUUID(),now=Date.now();
  const inspected=await inspectTrustSafetyText(db,{text:query,channel:"chat",sourceReference:`ai-web-public-turn:${sessionKey}:${now}`,actorType:"customer",actorId:`public:${sessionKey}`,detail:{surface:"public_ai_web_chat"},asOf:now});
  const grounded=await publicAiWebKnowledge(db,{query:inspected.redacted}),history=publicHistory(input.history);
- const serviceDirectory=await publicServiceDirectory(db);
+ const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted);
  if(matchedService){
   const output=matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`;
