@@ -665,9 +665,10 @@ jobs:
               tts:{
                 model_id:'eleven_flash_v2',
                 voice_id:voiceId,
-                stability:0.68,
-                similarity_boost:0.8,
-                speed:0.9
+                stability:0.78,
+                similarity_boost:0.75,
+                speed:0.9,
+                optimize_streaming_latency:0
               },
               turn:{
                 turn_timeout:12,
