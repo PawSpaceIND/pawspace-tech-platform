@@ -391,3 +391,52 @@ test("a provider HTTP failure persists degraded connectivity and routes the cust
  const snapshot=await orchestrator.aiConversationSnapshot(db,{actor:customerActor(sqlite,"CUS-1"),threadId:"THREAD-1",customerId:"CUS-1"});
  assert.equal(snapshot.providerStatus,"degraded");assert.equal(snapshot.providerConnected,false);assert.equal(handoffs(sqlite).length,1);
 });
+
+// ---------------------------------------------------------------------------
+// Web chat asks the model when the keyword classifier is unsure
+// ---------------------------------------------------------------------------
+test("an everyday web chat message reaches the connected model instead of a human", async () => {
+  for (const [index, text] of ["Hi", "Can I book grooming for Saturday?", "When is my next booking?", "My personal details changed"].entries()) {
+    const { sqlite, db } = await world();
+    const stub = answered("Happy to help with that.", { confidence: undefined });
+    const result = await turn(sqlite, db, { text, stub, key: `chat-model-first-${index}` });
+    assert.equal(stub.calls.length, 1, `"${text}" never reached the model`);
+    assert.notEqual(result.turn.outcome, "handoff", `"${text}" was handed to a human without the model being asked`);
+    assert.equal(result.turn.output, "Happy to help with that.");
+    assert.equal(handoffs(sqlite).length, 0, `"${text}" opened a handoff`);
+  }
+});
+
+test("web chat still hands off at once for an explicit request for a person, without calling the model", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("should not be used");
+  const result = await turn(sqlite, db, { text: "I want to talk to a human", stub, key: "chat-explicit-human" });
+  assert.equal(stub.calls.length, 0);
+  assert.equal(result.turn.outcome, "handoff");
+  assert.equal(result.turn.handoffReason, "customer_requested_human");
+});
+
+test("a model that states low confidence on web chat still routes to a human", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("maybe?", { confidence: 0.2 });
+  const result = await turn(sqlite, db, { text: "Hi", stub, key: "chat-low-stated-confidence" });
+  assert.equal(stub.calls.length, 1);
+  assert.equal(result.turn.outcome, "handoff");
+  assert.equal(result.turn.handoffReason, "low_confidence");
+});
+
+test("the model-first rule is web chat only: an unmatched WhatsApp message keeps its existing routing", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("should not be used");
+  const result = await turn(sqlite, db, { text: "Hi", stub, key: "whatsapp-unmatched", channel: "whatsapp" });
+  assert.equal(stub.calls.length, 0);
+  assert.equal(result.turn.outcome, "handoff");
+});
+
+test("intent signals match whole words, not fragments of other words", () => {
+  assert.equal(orchestrator.classifyAiIntent("My personal details changed").intent, "unknown");
+  assert.equal(orchestrator.classifyAiIntent("Is the vegetarian meal available").intent, "unknown");
+  assert.equal(orchestrator.classifyAiIntent("I need a person please").intent, "human_handoff");
+  assert.equal(orchestrator.classifyAiIntent("what's the eta?").intent, "booking_status");
+  assert.equal(orchestrator.classifyAiIntent("please call me").intent, "human_handoff");
+});

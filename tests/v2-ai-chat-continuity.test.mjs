@@ -12,3 +12,7 @@ test("authenticated chat fails closed without customer identity",()=>{assert.mat
 test("public V2 chat uses conversational AI path instead of raw knowledge dump",()=>{assert.match(chat,/sessionKey:publicSessionKey/);assert.match(chat,/history/);assert.match(chat,/Ask PawSpace AI/);assert.doesNotMatch(chat,/knowledge\.map/);});
 
 test("public V2 chat grounds answers in the canonical service catalogue",()=>{const adapter=fs.readFileSync(new URL("../lib/ai-web-chat-adapter.ts",import.meta.url),"utf8");assert.match(adapter,/canonicalCatalogueSnapshot/);assert.match(adapter,/currentServiceCatalogue/);});
+
+test("My PawSpace reads the conversation back so replies from the PawSpace team appear",()=>{assert.match(chat,/\/api\/ai-web-chat\?mode=thread/);assert.match(chat,/PawSpace team/);assert.match(chat,/TEAM_POLL_MS/);assert.doesNotMatch(chat,/setTimeout\(\(\)=>controller\.abort\(\),20000\)/,"the browser must wait longer than the server's model deadline");});
+
+test("the Inbox & AI workspace replies to, takes over and resumes web chat on the web chat paths",()=>{const inbox=fs.readFileSync(new URL("../app/team/customer-experience/page.tsx",import.meta.url),"utf8");assert.match(inbox,/"\/api\/chat-human-reply", \{ action: "human_reply"/);assert.match(inbox,/action: "take_over", startIfIdle: true/);assert.match(inbox,/action: "resume_ai"/);assert.match(inbox,/\["chat", "Web chat"\]/);});

@@ -3,7 +3,7 @@ import{actorCanAccessConversation,conversationAccessPredicate,ensureConversation
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
-export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated"|"high_value_enterprise_objection";
+export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated"|"high_value_enterprise_objection"|"staff_initiated";
 export type AiHandoffAction="take_over"|"resume_ai";
 
 const text=(value:unknown)=>String(value??"").trim();
@@ -86,6 +86,24 @@ export async function manageAiHumanHandoff(db:D1Database,input:{actor:Authentica
  ]);
  if(Number(results[0]?.meta?.changes||0)!==1)throw new Response("Handoff changed concurrently; refresh and retry",{status:409});
  return{handoff:await db.prepare("SELECT * FROM ai_handoffs WHERE id=?").bind(id).first<Row>(),aiPaused:taking};
+}
+
+/**
+ * Staff take a conversation the AI never escalated.
+ *
+ * `take_over` only ever claimed a handoff the AI had already queued, so a member of staff reading a web
+ * chat in the inbox could not step in at all until the AI decided to give up - and the inbox's Take over
+ * button did nothing for web chat. This opens the handoff on staff's behalf (reason staff_initiated) and
+ * claims it in the same governed way. A handoff that is already queued is simply claimed; one already
+ * with staff is returned as it is.
+ */
+export async function staffTakeOverConversation(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;reason?:string}){
+ await ensureAiHumanHandoff(db);if(!isStaff(input.actor))throw new Response("Staff conversation permission required",{status:403});
+ await authorizeThread(db,input.actor,input.threadId,input.customerId);
+ const active=await db.prepare("SELECT status FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(input.threadId).first<Row>();
+ if(active&&text(active.status)==="staff_active")return{handoff:await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND status='staff_active'").bind(input.threadId).first<Row>(),aiPaused:true,alreadyWithStaff:true};
+ if(!active)await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:input.threadId,customerId:input.customerId,reason:"staff_initiated",confidence:null});
+ return{...await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:input.customerId,action:"take_over",reason:input.reason||"staff_initiated_takeover"}),alreadyWithStaff:false};
 }
 
 export async function aiHumanHandoffSnapshot(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string}){await ensureAiHumanHandoff(db);await authorizeThread(db,input.actor,input.threadId,input.customerId);const current=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(input.threadId).first<Row>(),events=current?await db.prepare("SELECT * FROM ai_handoff_events WHERE handoff_id=? ORDER BY created_at").bind(current.id).all<Row>():{results:[]};let parsedSummary:Record<string,unknown>|null=null;if(current)try{parsedSummary=JSON.parse(text(current.summary_json)||"{}")as Record<string,unknown>}catch{}return{current:current?{...current,summary:parsedSummary}:null,events:events.results,aiPaused:Boolean(current&&["queued","staff_active"].includes(text(current.status))),sameCanonicalThread:true};}

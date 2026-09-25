@@ -29,3 +29,8 @@
 .page .userBubble { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
 .page .aiBubble, .page .aiLabel { background:var(--brand-surface) !important; border-color:var(--brand-line) !important; color:var(--brand-text) !important; }
 .page .aiLabel { background:transparent !important; }
+
+/* Replies from a PawSpace team member, set apart from the AI's. */
+.page .teamBubble { border-left:4px solid var(--brand-gold) !important; }
+.page .teamNotice { background:var(--brand-surface) !important; border-left:4px solid var(--brand-gold) !important; }
+.teamNotice p { margin:0; }
