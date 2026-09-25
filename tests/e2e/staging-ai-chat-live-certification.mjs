@@ -1,11 +1,12 @@
 import { writeFileSync } from "node:fs";
+import { randomInt } from "node:crypto";
 
 const BASE = String(process.env.STAGING_URL || "https://pawspace-staging.karthik-fce.workers.dev").replace(/\/$/, "");
 const ACCESS_CODE = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
 const FOUNDER_EMAIL = "founder@pawspace.in";
 // A fresh sandbox customer per run: chat reuses a customer's newest open thread, so a fixed phone would
 // carry old UAT or human conversation into both turns and make the same-thread check meaningless.
-const CUSTOMER = { phone: String(process.env.CERT_CUSTOMER_PHONE || `99999${String(crypto.getRandomValues(new Uint32Array(1))[0] % 100000).padStart(5, "0")}`), name: "UAT Chat Certification", cityId: "blr" };
+const CUSTOMER = { phone: String(process.env.CERT_CUSTOMER_PHONE || `99999${String(randomInt(0, 100000)).padStart(5, "0")}`), name: "UAT Chat Certification", cityId: "blr" };
 const REQUEST_TIMEOUT_MS = 30_000;
 const EVIDENCE_FILE = "staging-ai-chat-certification.json";
 
