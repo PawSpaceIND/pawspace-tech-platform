@@ -723,6 +723,7 @@ async function partnerLifecycle(page: Page) {
     await customerPage.screenshot({path:"test-results/btm-customer-live-google-map.png",fullPage:true});
     log(`✅ Customer live map: tracking live, ETA ${summary.body?.data?.tracking?.etaMinutes} min, distance ${summary.body?.data?.tracking?.distanceKm} km, Google Static Maps image HTTP 200.`);
   }finally{await customerContext.close();}
+  if(process.env.PW_MAP_PROOF_ONLY==="1"){log("✅ Maps-only proof complete; stopping partner lifecycle after live-map evidence.");return;}
   await page.locator("nav").getByRole("button", { name: /jobs/i }).last().click();
   expect(await selectJobCard(page), `job ${bookingId} must reopen after the GPS fix`).toBeTruthy();
   await partnerAct(page, /^Mark arrived$/, /arrived/i); log("✅ Mark arrived accepted (fresh trusted GPS inside the doorstep geofence).");
