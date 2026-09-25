@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import {Suspense,useEffect,useMemo,useState,useSyncExternalStore} from "react";
-import {useSearchParams} from "next/navigation";
+import {usePathname,useSearchParams} from "next/navigation";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
 import {loadOwnBoardingStays,updateBoardingStay,type BoardingStay,type BoardingStayAction} from "../../lib/boarding-stay-client";
 import styles from "./host.module.css";
@@ -22,7 +22,7 @@ async function loadWorkspace():Promise<Workspace>{const scoped=await loadOwnBoar
 export default function HostPage(){return <Suspense fallback={null}><HostPageContent/></Suspense>;}
 
 function HostPageContent(){
- const searchParams=useSearchParams(),requestedBookingId=searchParams.get("bookingId")||"";
+ const searchParams=useSearchParams(),pathname=usePathname(),v2=pathname.startsWith("/v2/partner/boarding"),customerHref=v2?"/v2/boarding":"/boarding",proofBase=v2?"/v2/partner/boarding/proof":"/host/proof",requestedBookingId=searchParams.get("bookingId")||"";
  const[tab,setTab]=useState<Tab>("today"),[stays,setStays]=useState<BoardingStay[]>([]),[profile,setProfile]=useState<BoardingHost|null>(null),[providerId,setProviderId]=useState<string|null>(null),[selectedId,setSelectedId]=useState(""),[busy,setBusy]=useState(""),[toast,setToast]=useState(""),[error,setError]=useState(""),[loading,setLoading]=useState(true);
  // Localized date resolves on the client only: the server (UTC) and client (IST) render
  // different weekday/day/month, so computing it during SSR causes a hydration mismatch
@@ -48,10 +48,10 @@ function HostPageContent(){
  const care=async(stay:BoardingStay,eventType:"meal"|"play"|"walk")=>{await act(stay,"care_event",{careEventType:eventType,detail:{source:"host_workspace"}});};
  return <main className={styles.shell}>
   <aside>
-   <Link href="/boarding"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link>
+   <Link href={customerHref}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link>
    <div className={styles.host}><span>{hostInitials}</span><div><strong>{hostName}</strong><small>{profile?`${profile.area} · ${profile.rating.toFixed(1)} ★`:providerId?"Canonical Boarding host":"Provider identity required"}</small></div></div>
    <nav>{[["today","⌂","Today"],["requests","▤","Requests"],["calendar","▦","Capacity"],["earnings","₹","Settlement"],["profile","♙","Home profile"]].map(([id,icon,label])=><button key={id} className={tab===id?styles.active:""} onClick={()=>setTab(id as Tab)}><i>{icon}</i>{label}{id==="requests"&&pending.length>0&&<b>{pending.length}</b>}</button>)}</nav>
-   <div className={styles.sideFoot}><Link href="/boarding">← Customer marketplace</Link><button onClick={()=>notify("Host support remains UAT-routed")}>◎ Host support</button></div>
+   <div className={styles.sideFoot}><Link href={customerHref}>← Customer marketplace</Link><button onClick={()=>notify("Host support remains UAT-routed")}>◎ Host support</button></div>
   </aside>
   <section className={styles.main}>
    <header><div><p>{today.toUpperCase()}</p><h1>{tab==="today"?`Hello, ${hostName.split(" ")[0]}`:tab==="requests"?"Canonical stay requests":tab==="calendar"?"Stay capacity":tab==="earnings"?"Settlement readiness":"Governed home profile"}</h1></div><span className={styles.live}>● UAT · canonical stays</span></header>
@@ -77,7 +77,7 @@ function HostPageContent(){
        </div>
        <div className={styles.quick}>
         {liveStay.status==="confirmed"&&<button disabled={liveStay.care_plan_status!=="ready"||isBusy(liveStay,"check_in")} onClick={()=>act(liveStay,"check_in")}>✓ Check in</button>}
-        {liveStay.status==="in_progress"&&<><button onClick={()=>care(liveStay,"meal")}>🍲 Log meal</button><button onClick={()=>care(liveStay,"play")}>🎾 Log play</button><button onClick={()=>care(liveStay,"walk")}>🦮 Log walk</button><Link href={`/host/proof?stayId=${encodeURIComponent(liveStay.id)}`}>📷 Proof · medication · incident</Link><button disabled={isBusy(liveStay,"check_out")} onClick={()=>window.confirm("Complete checkout for this stay?")&&void act(liveStay,"check_out")}>✓ Check out</button></>}
+        {liveStay.status==="in_progress"&&<><button onClick={()=>care(liveStay,"meal")}>🍲 Log meal</button><button onClick={()=>care(liveStay,"play")}>🎾 Log play</button><button onClick={()=>care(liveStay,"walk")}>🦮 Log walk</button><Link href={`${proofBase}?stayId=${encodeURIComponent(liveStay.id)}`}>📷 Proof · medication · incident</Link><button disabled={isBusy(liveStay,"check_out")} onClick={()=>window.confirm("Complete checkout for this stay?")&&void act(liveStay,"check_out")}>✓ Check out</button></>}
        </div>
        {liveStay.status==="in_progress"&&<div className={styles.marketSync}><b>Evidence workflow</b><span>Medication, photo proof and incidents use the secure Gate 4 proof workspace. Generic care events cannot bypass evidence, scan or incident governance.</span></div>}
        {liveStay.extension&&<div className={styles.marketSync}><b>Extension request</b><span>Requested checkout: {formatDateTime(liveStay.extension.requested_end)}. Status: {statusLabel(liveStay.extension.status)}. The paid stay window is unchanged until a governed quote is approved.</span></div>}

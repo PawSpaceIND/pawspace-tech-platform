@@ -7,7 +7,7 @@ import Link from "next/link";
 import PartnerJobNotes from "./job-notes";
 import {selectPartnerWorkOrder} from "../../lib/partner-job-selection";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {useStatusQueue} from "./use-status-queue";
 import {useDutyTracking} from "./use-duty-tracking";
 import {BEFORE_SERVICE,AFTER_SERVICE,checklistComplete,isGroomerOnDuty} from "../../lib/partner-job-checklists";
@@ -141,6 +141,8 @@ export default function PartnerMobileApp() {
 
 function PartnerMobileAppContent() {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const workspaceScope = pathname.startsWith("/v2/partner") ? "v2" : "legacy";
   const requestedBookingId = searchParams.get("bookingId") || "";
   const [tab, setTab] = useState<Tab>("home");
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -613,7 +615,7 @@ function PartnerMobileAppContent() {
           </div>
 
           {feedError&&<p role="alert">{feedError}</p>}
-          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job);return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
+          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job,workspaceScope);return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
           <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
@@ -754,7 +756,7 @@ function PartnerMobileAppContent() {
           {!uatProviders && uatRosterError && <p role="status" className={styles.empty}>Switch UAT provider is unavailable right now: {uatRosterError}</p>}
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
             <b>Switch UAT provider</b>
-            <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Job lists and lifecycle actions in this app are grooming work orders; other verticals sign in but see their jobs elsewhere.</p>
+            <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Grooming and Training run in this mobile shell; Boarding, Sitting, Walking and Taxi assignments open their canonical service workspaces from the same V2 partner experience.</p>
             <label>Provider<select value={uatProviderId} onChange={(event) => setUatProviderId(event.target.value)}>
               <option value="">Choose a provider…</option>
               {uatProviders.map((provider) => <option key={provider.id} value={provider.id} disabled={provider.id === identity?.subjectId}>{provider.name} · {provider.services.map((service) => label(service)).join(", ")}{provider.id === identity?.subjectId ? " (current)" : ""}</option>)}

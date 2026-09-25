@@ -96,6 +96,17 @@ test("assigned job workspace links preserve the exact booking context only where
   assert.equal(partnerJobWorkspaceHref({ bookingId: " ", serviceCode: "pet_taxi" }), null);
 });
 
+test("V2 partner workspace links never fall back to legacy provider routes", () => {
+  const id = "B & 1";
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "grooming" }, "v2"), "/v2/partner?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "dog_training" }, "v2"), "/v2/partner?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "boarding" }, "v2"), "/v2/partner/boarding?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "dog_walking" }, "v2"), "/v2/partner/walking?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_walking" }, "v2"), "/v2/partner/walking?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_taxi" }, "v2"), "/v2/partner/taxi?bookingId=B%20%26%201");
+  assert.equal(partnerJobWorkspaceHref({ bookingId: id, serviceCode: "pet_sitting" }, "v2"), "/v2/partner/sitting?bookingId=B%20%26%201");
+});
+
 // --- Real-execution tests: grouping over a real SQLite engine -------------------------------
 
 function makeD1(sqlite) {
