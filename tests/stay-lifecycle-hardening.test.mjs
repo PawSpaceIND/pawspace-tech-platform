@@ -81,9 +81,16 @@ async function stayStack() {
     sqlite.prepare("INSERT OR REPLACE INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed,onboarding_fee,renewal_fee,renewal_months,effective_from,reason,created_by,approved_by,approval_reference,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(`PCT-${serviceCode}-${providerId}`, serviceCode, providerId, 1, "active", "commission_standard", 0.70, "provider_gst_on_behalf", 0.18, 0, 0, 0, 12, "2026-01-01", "Deterministic stay lifecycle test fixture", "fixture-maker", "fixture-checker", "TEST-APPROVED", NOW, NOW);
   };
-  const seedBooking = ({ bookingId, customerId = "CUS-STAY-1", providerId, service = "boarding", groupId, start, end, status = "confirmed", amount = 4500 }) => {
+  // A seeded booking is a paid booking unless a test says otherwise: Boarding host acceptance now
+  // requires a captured customer payment, so the fixture records one the way checkout would.
+  const seedBooking = ({ bookingId, customerId = "CUS-STAY-1", providerId, service = "boarding", groupId, start, end, status = "confirmed", amount = 4500, paymentStatus = "captured" }) => {
     sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(bookingId, `ik-${bookingId}`, customerId, "[]", "[]", "blr", "blr-east", service, `${service}-std`, `${service} package`, groupId, providerId, start, end, status, "customer_app", amount, "INR", "{}", "test", NOW, NOW);
+    if (paymentStatus) {
+      sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+      sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'upi','prepaid',?,?,?,?)")
+        .run(`PAY-${bookingId}`, bookingId, customerId, amount, amount, paymentStatus, `pay-${bookingId}`, NOW, NOW);
+    }
   };
   const seedStay = ({ stayId, bookingId, customerId = "CUS-STAY-1", providerId, start, end, petCount = 1, status = "awaiting_host_acceptance", carePlan = "required" }) => {
     sqlite.prepare("INSERT INTO boarding_stays (id,booking_id,customer_id,host_provider_id,city_id,zone_id,package_code,check_in_at,check_out_at,billed_units,pet_count,status,care_plan_status,check_in_status,check_out_status,extension_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
