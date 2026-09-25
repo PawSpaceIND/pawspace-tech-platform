@@ -25,7 +25,6 @@ jobs:
       PW_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
       PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
       E2E_REPORT: test-results/uat-btm-report.md
-      PW_CUSTOMER_PHONE: '9899901066'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
