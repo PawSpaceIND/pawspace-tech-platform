@@ -177,27 +177,48 @@ export default function PetManager({ customer, onPetsChanged, draftPets = [] }: 
       setPets(updated); onPetsChanged?.(updated); setForm(null); setSaving(false);
       return;
     }
+    let savedEntityId = form.id || "";
     try {
-      await upsertCustomerPet({
+      const saved = await upsertCustomerPet({
         customerId: customer.customerId,
         pet: { id: form.id, name: candidate.name, species: form.species, breed: profile.breed || null, vaccinationStatus: candidate.vaccinationStatus, profile },
       });
+      savedEntityId = saved.entityId;
     } catch (error) {
       // The save itself failed — nothing committed, so keep the form open for a safe retry.
       setIssues([error instanceof Error ? error.message : "Unable to save the pet"]);
       setSaving(false);
       return;
     }
-    // The pet is committed. A failure refreshing the list must NOT reopen the resubmit path: a retry
-    // mints a fresh idempotency key and would create a duplicate pet. Close the form, refresh best-effort.
+    // The pet is committed. Reflect the canonical entity id immediately so an eventually-consistent
+    // read cannot make the just-saved pet disappear from My Pets. Reconcile best-effort afterwards.
+    const previous = pets.find(pet => pet.id === savedEntityId || pet.id === form.id);
+    const optimistic: CustomerPet = {
+      ...candidate,
+      id: savedEntityId,
+      sourceId: previous?.sourceId ?? null,
+      breed: profile.breed || null,
+      profile,
+    };
+    const optimisticPets = [...pets.filter(pet => pet.id !== savedEntityId && pet.id !== form.id), optimistic];
+    setPets(optimisticPets);
+    onPetsChanged?.(optimisticPets);
     setForm(null);
     try {
-      const refreshed = await loadCustomerPets(customer.customerId);
-      setPets(refreshed);
-      setLoadError("");
-      onPetsChanged?.(refreshed);
+      let refreshed = await loadCustomerPets(customer.customerId);
+      for (let attempt = 0; attempt < 3 && !refreshed.some(pet => pet.id === savedEntityId); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
+        refreshed = await loadCustomerPets(customer.customerId);
+      }
+      if (refreshed.some(pet => pet.id === savedEntityId)) {
+        setPets(refreshed);
+        onPetsChanged?.(refreshed);
+        setLoadError("");
+      } else {
+        setLoadError("Pet saved. The canonical list is still syncing; your new pet is shown here in the meantime.");
+      }
     } catch {
-      setLoadError("Pet saved — reload to see the updated list.");
+      setLoadError("Pet saved. The canonical list is still syncing; your new pet is shown here in the meantime.");
     } finally {
       setSaving(false);
     }

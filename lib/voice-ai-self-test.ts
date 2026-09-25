@@ -32,6 +32,7 @@ const EXOTEL_PSTN_SAMPLE_RATE = 8000;
 const MAX_CALL_SECONDS = 300;
 const MAX_TURNS = 12;
 const STREAM_TOKEN_TTL_MS = 2 * 60_000;
+const DIAL_NEGOTIATION_TIMEOUT_MS = 90_000;
 const DAILY_CAP_DEFAULT = 3;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -130,6 +131,18 @@ async function releaseActiveGuard(db: Db, callId: string) {
     .prepare("DELETE FROM ai_voice_self_test_active_guard WHERE slot=1 AND call_id=?")
     .bind(callId)
     .run();
+}
+
+async function reconcileStaleDialingSelfTests(db: Db, now: number) {
+  const cutoff = now - DIAL_NEGOTIATION_TIMEOUT_MS;
+  await db.batch([
+    db.prepare(
+      "UPDATE ai_voice_self_tests SET state='failed',last_error=COALESCE(last_error,'AgentStream negotiation timed out before connection'),ended_at=COALESCE(ended_at,?),updated_at=? WHERE state='dialing' AND created_at<=?",
+    ).bind(now, now, cutoff),
+    db.prepare(
+      "DELETE FROM ai_voice_self_test_active_guard WHERE slot=1 AND call_id IN (SELECT id FROM ai_voice_self_tests WHERE state IN ('failed','ended'))",
+    ),
+  ]);
 }
 
 function hex(bytes: ArrayBuffer) {
@@ -411,6 +424,8 @@ export async function requestAiVoiceSelfTest(
 
   const now = Date.now();
   const callId = `AIVST-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+
+  await reconcileStaleDialingSelfTests(db, now);
 
   // Serialize self-test admission in D1. The prior read-then-insert check let concurrent requests both
   // observe "no active call" and dial. The singleton guard makes the claim atomic across Worker isolates.

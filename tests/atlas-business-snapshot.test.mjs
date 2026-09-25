@@ -20,8 +20,8 @@ function makeD1(sqlite){
 }
 function world(){
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite),now=2_000_000_000_000;
- sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,booking_id TEXT,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
- sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1','B2',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
+ sqlite.exec("CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,service_code TEXT,status TEXT); CREATE TABLE booking_invoices(id TEXT PRIMARY KEY,booking_id TEXT,issued_at INTEGER); CREATE TABLE unified_cases(id TEXT PRIMARY KEY,status TEXT,first_responded_at INTEGER,first_response_due_at INTEGER,resolution_due_at INTEGER); CREATE TABLE provider_assignment_offers(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE ops_completion_controls(id TEXT PRIMARY KEY,status TEXT); CREATE TABLE payment_reconciliation_exceptions(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,exception_type TEXT,severity TEXT,status TEXT); CREATE TABLE training_session_earnings(session_id TEXT PRIMARY KEY,status TEXT); CREATE TABLE training_compensation_rules(id TEXT PRIMARY KEY,status TEXT);");
+ sqlite.exec("INSERT INTO canonical_bookings VALUES ('B1','grooming','completed'),('B2','grooming','assigned'),('B3','dog_training','cancelled'); INSERT INTO booking_invoices VALUES ('I1','B2',1999999999000); INSERT INTO unified_cases VALUES ('C1','open',NULL,1999999999000,2000000001000); INSERT INTO provider_assignment_offers VALUES ('O1','pending'); INSERT INTO ops_completion_controls VALUES ('H1','collection_hold'); INSERT INTO payment_reconciliation_exceptions VALUES ('PX1','B1','P1','capture_amount_mismatch','critical','open'),('PX2','B2','P2','refund_failed','warning','open'),('PX3','B3','P3','currency_mismatch','critical','resolved'); INSERT INTO training_session_earnings VALUES ('E1','pending_rate_configuration'),('E2','earned'); INSERT INTO training_compensation_rules VALUES ('R1','published');");
  return{sqlite,db,now};
 }
 async function founderMfaContext(sqlite,db){sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)");sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U-FOUNDER','founder@pawspace.test','Founder','founder','active',0,0)").run();await mfa.ensureAdminMfaTables(db);const session=await mfa.issuePrivilegedSession(db,'U-FOUNDER'),actor={userId:'U-FOUNDER',email:'founder@pawspace.test',roleCode:'founder',developmentPreview:false},request=new Request('https://pawspace.test/api/admin/atlas-chat',{headers:{cookie:`pawspace_admin_mfa=${encodeURIComponent(session.token)}`}});return{session,actor,request};}
@@ -33,6 +33,24 @@ test("snapshot mission math matches revenueMissionSummary and keeps pipeline out
  ins.run("E1","M1","b","booked","C","BK",null,null,"grooming","blr",500,0,500,"INR",now-5000,"test","{}",now);ins.run("E2","M1","c","collected","C","BK","P",null,"grooming","blr",400,0,400,"INR",now-4000,"test","{}",now);ins.run("E3","M1","r","refunded","C","BK","P","R","grooming","blr",0,50,-50,"INR",now-3000,"test","{}",now);
  const summary=await revenue.revenueMissionSummary(db,"M1"),snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:"M1"});
  assert.equal(snapshot.mission.value.target,summary.metrics.target);assert.equal(snapshot.mission.value.booked,summary.metrics.booked);assert.equal(snapshot.mission.value.collected,summary.metrics.collected);assert.equal(snapshot.mission.value.refunded,summary.metrics.refunded);assert.equal(snapshot.mission.value.net,summary.metrics.netCollected);assert.equal(snapshot.mission.value.achieved,summary.metrics.achieved);assert.equal(snapshot.mission.value.percent,summary.metrics.percent);assert.equal(snapshot.mission.value.pipeline_weighted,null);assert.equal(snapshot.production_ready,false);
+});
+test("Atlas reads mission-period pipeline from canonical revenue opportunities without changing achieved revenue",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MP','Pipeline mission',2000,'INR',?,?,?,'net_collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:"company"}),now-10000,now);
+ sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('PC','MP','collected','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);
+ sqlite.exec("CREATE TABLE canonical_revenue_opportunities(id TEXT PRIMARY KEY,status TEXT NOT NULL,estimated_value REAL NOT NULL,confidence REAL NOT NULL,created_at INTEGER NOT NULL)");
+ const add=sqlite.prepare("INSERT INTO canonical_revenue_opportunities VALUES (?,?,?,?,?)");
+ add.run('O1','ready',1000,0.5,now-5000);add.run('O2','review_required',500,0.8,now-4000);add.run('O3','suppressed',900,1,now-3000);add.run('O4','converted',700,1,now-2000);add.run('O5','closed',600,1,now-1000);add.run('O6','ready',999,1,now-20000);
+ const summary=await revenue.revenueMissionSummary(db,'MP'),snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:'MP'});
+ assert.equal(snapshot.mission.value.achieved,summary.metrics.achieved);assert.equal(snapshot.mission.value.net,400);
+ assert.equal(snapshot.mission.value.pipeline_unweighted,1500);assert.equal(snapshot.mission.value.pipeline_weighted,900);assert.equal(snapshot.mission.value.forecast,null);
+ assert.match(snapshot.mission.source,/canonical_revenue_opportunities/);
+});
+test("Atlas leaves pipeline unknown when canonical opportunity data is unavailable",async()=>{
+ const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);
+ sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('MPX','Pipeline missing',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:"company"}),now-10000,now);
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now,missionId:'MPX'});
+ assert.equal(snapshot.mission.value.pipeline_weighted,null);assert.equal(snapshot.mission.value.pipeline_unweighted,null);assert.ok(snapshot.limitations.some(item=>item.includes("pipeline is unavailable")));
 });
 test("empty database reports insufficient_data with nulls rather than fake zero",async()=>{const sqlite=new DatabaseSync(":memory:"),snapshot=await atlas.buildAtlasBusinessSnapshot(makeD1(sqlite),{asOf:2_000_000_000_000});assert.equal(snapshot.insufficient_data,true);assert.equal(snapshot.mission.value,null);assert.equal(snapshot.bookings.value,null);assert.match(snapshot.mission.reason,/missing_table/);});
 test("ask without AI key still returns grounded numbers",async()=>{const{sqlite,db,now}=world();await revenue.ensureRevenueMissionTables(db);sqlite.prepare("INSERT INTO revenue_missions (id,name,target_amount,currency,period_start,period_end,scope_json,revenue_basis,status,approval_reference,config_version,created_by,created_at,updated_by,updated_at) VALUES ('M2','UAT mission',1000,'INR',?,?,?,'collected','active_uat','APR',1,'owner',?,'owner',?)").run(now-10000,now+10000,JSON.stringify({type:"company"}),now-10000,now);sqlite.prepare("INSERT INTO revenue_mission_events (id,mission_id,source_event_key,event_type,customer_id,booking_id,payment_id,refund_id,service_code,city_id,gross_amount,refund_amount,eligible_amount,currency,source_at,source_version,attribution_json,created_at) VALUES ('X','M2','x','collected','C','B','P',NULL,'grooming','blr',400,0,400,'INR',?,'test','{}',?)").run(now-1000,now);globalThis.__PAWSPACE_TEST_ENV__={};const answer=await atlas.answerAtlasBusinessQuestion(db,{question:"How are we doing?",missionId:"M2",asOf:now});assert.equal(answer.narrativeAvailable,false);assert.match(answer.content,/Narrative unavailable; numbers only/);assert.match(answer.content,/collected INR 400/);});
@@ -172,29 +190,69 @@ test("daily retry never re-offers rejected or executed terminal proposals",async
 });
 
 
+test("Atlas counts only unresolved critical reconciliation exceptions as cash-collection integrity holds",async()=>{
+ const{sqlite,db,now}=world();let snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.ops.cash_collection_holds.value,1);assert.equal(snapshot.ops.cash_collection_holds.source,"payment_reconciliation_exceptions:open_critical");
+ assert.equal(snapshot.limitations.some(item=>item.includes("Cash-collection integrity holds are unknown")),false);
+ sqlite.prepare("UPDATE payment_reconciliation_exceptions SET status='resolved' WHERE id='PX1'").run();snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now+1});assert.equal(snapshot.ops.cash_collection_holds.value,0);
+});
+
+test("Atlas keeps cash-collection holds unknown when the canonical reconciliation ledger is unavailable",async()=>{
+ const{sqlite,db,now}=world();sqlite.exec("DROP TABLE payment_reconciliation_exceptions");const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.ops.cash_collection_holds.value,null);assert.equal(snapshot.ops.cash_collection_holds.reason,"missing_table:payment_reconciliation_exceptions");assert.ok(snapshot.limitations.some(item=>item.includes("canonical payment reconciliation exception ledger is unavailable")));
+});
+
 test("invoice gap counts only invoices linked to completed canonical bookings",async()=>{
  const{db,now}=world();const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
  assert.deepEqual(snapshot.finance.invoice_completed_gap.value,{completed_jobs:1,issued_invoices:0,gap:1});
  assert.equal(snapshot.finance.invoice_completed_gap.source,"canonical_bookings + booking_invoices");
 });
 
-test("integration flags reuse canonical credential detectors instead of partial secret heuristics",async()=>{
- const{db,now}=world();
+test("Atlas integration flags require governed readiness plus current credentials",async()=>{
+ const{sqlite,db,now}=world();
+ sqlite.exec("CREATE TABLE integration_registry(integration_code TEXT PRIMARY KEY,readiness_state TEXT NOT NULL,credential_status TEXT NOT NULL);");
+ const add=sqlite.prepare("INSERT INTO integration_registry VALUES (?,?,?)");
+ add.run("INT-PAY-01","sandbox_ready_for_test","configured");
+ add.run("INT-MAPS-01","production_setup_required","configured");
+ add.run("INT-COMMS-01","sandbox_verified","configured");
+ add.run("INT-AI-01","production_ready_for_controlled_test","configured");
  globalThis.__PAWSPACE_TEST_ENV__={
   PAWSPACE_PAYMENT_ENV:"sandbox",
-  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
-  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  RAZORPAY_KEY_ID_SANDBOX:"rzp_test",
+  RAZORPAY_KEY_SECRET_SANDBOX:"secret",
+  RAZORPAY_WEBHOOK_SECRET_SANDBOX:"hook",
   PAWSPACE_COMMUNICATION_ENV:"uat",
   META_WHATSAPP_UAT_DELIVERY_ENABLED:"true",
+  META_WHATSAPP_UAT_ACCESS_TOKEN:"token",
+  META_WHATSAPP_PHONE_NUMBER_ID:"phone",
+  META_WHATSAPP_WABA_ID:"waba",
+  META_WHATSAPP_APP_SECRET:"app",
+  META_WHATSAPP_VERIFY_TOKEN:"verify",
+  META_WHATSAPP_UAT_ALLOWLIST:"919999999999",
+  META_WHATSAPP_TEMPLATE_ALLOWLIST:"uat-template",
   GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps",
   PAWSPACE_AI_PROVIDER_API_KEY:"ai-key"
  };
- const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
- assert.equal(snapshot.integrations.payments.value,false,"payment env alone is not sandbox readiness");
- assert.equal(snapshot.integrations.whatsapp.value,false,"token + phone alone are not Meta UAT readiness");
- assert.equal(snapshot.integrations.maps.value,true);
+ let snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.payments.value,true);
+ assert.equal(snapshot.integrations.whatsapp.value,true);
+ assert.equal(snapshot.integrations.maps.value,false,"credentials alone must not override governed readiness");
+ assert.equal(snapshot.integrations.maps.reason,"integration_readiness_state:production_setup_required");
  assert.equal(snapshot.integrations.ai.value,true);
- assert.match(snapshot.integrations.whatsapp.source,/integration-readiness credential detector/);
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
+ delete globalThis.__PAWSPACE_TEST_ENV__.PAWSPACE_AI_PROVIDER_API_KEY;
+ snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now+1});
+ assert.equal(snapshot.integrations.ai.value,false,"stale registry credential state must not override the current runtime detector");
+ assert.equal(snapshot.integrations.ai.reason,"integration_credentials:missing");
+ globalThis.__PAWSPACE_TEST_ENV__={};
+});
+
+test("Atlas keeps integration readiness unknown when the governed registry is unavailable",async()=>{
+ const{db,now}=world();globalThis.__PAWSPACE_TEST_ENV__={GOOGLE_MAPS_SERVER_API_KEY_UAT:"maps"};
+ const snapshot=await atlas.buildAtlasBusinessSnapshot(db,{asOf:now});
+ assert.equal(snapshot.integrations.maps.value,null);
+ assert.equal(snapshot.integrations.maps.reason,"missing_table:integration_registry");
+ assert.match(snapshot.integrations.maps.source,/integration_registry:INT-MAPS-01/);
  globalThis.__PAWSPACE_TEST_ENV__={};
 });
 

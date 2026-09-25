@@ -66,6 +66,8 @@ export const VOICE_USE_CASES: VoiceUseCaseDefinition[] = [
   { code: "feedback_request", label: "Ask for feedback after a completed service", purpose: "lifecycle", requiresBooking: true, requiresSalesApproval: false, maxAttempts: 1 },
   { code: "lead_qualification", label: "Qualify an inbound enquiry", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
   { code: "sales_pitch", label: "Outbound sales / pitching call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 1 },
+  { code: "grooming_sales", label: "Grooming sales and booking call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
+  { code: "training_sales", label: "Dog-training needs assessment and booking call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
 ];
 
 export const voiceUseCase = (code: unknown) => VOICE_USE_CASES.find(entry => entry.code === text(code)) || null;
@@ -203,7 +205,8 @@ export type VoiceCallRequest = {
 // controlled carrier-UAT wrapper below can attach. This keeps the production/general UAT frequency
 // cap impossible to bypass through JSON, route fields, actor spoofing, or retries.
 const CONTROLLED_UAT_FREQUENCY_TOKEN = Symbol("controlled-voice-uat-frequency-isolation");
-type InternalVoiceCallRequest = VoiceCallRequest & { [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true };
+const CONTROLLED_UAT_SPECIALIST_TOKEN = Symbol("controlled-specialist-voice-uat");
+type InternalVoiceCallRequest = VoiceCallRequest & { [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true; [CONTROLLED_UAT_SPECIALIST_TOKEN]?: true };
 
 function controlledUatFrequencyIsolated(env: Env, input: VoiceCallRequest, phoneKey: string) {
   const internal = input as InternalVoiceCallRequest;
@@ -220,6 +223,22 @@ function controlledUatFrequencyIsolated(env: Env, input: VoiceCallRequest, phone
     && text(input.customerId).length > 0
     && text(input.bookingId).length > 0
     && text(input.idempotencyKey).startsWith("voice-carrier-uat:");
+}
+
+function controlledSpecialistUat(env: Env, input: VoiceCallRequest, phoneKey: string) {
+  const internal = input as InternalVoiceCallRequest;
+  if (internal[CONTROLLED_UAT_SPECIALIST_TOKEN] !== true) return false;
+  const gate = resolveVoiceCallGate(env), useCase = text(input.useCase);
+  return gate.ok
+    && gate.mode === "uat"
+    && text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() === "true"
+    && text(env.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED).toLowerCase() === "true"
+    && salesOutboundApproved(env)
+    && gate.allowlist.length === 1
+    && gate.allowlist[0] === phoneKey
+    && (useCase === "grooming_sales" || useCase === "training_sales")
+    && text(input.customerId).length > 0
+    && text(input.idempotencyKey).startsWith("voice-specialist-uat:");
 }
 
 function inQuietHours(hour: number, start: number, end: number) { return start > end ? hour >= start || hour < end : hour >= start && hour < end; }
@@ -291,7 +310,10 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const policy = await quietHoursPolicy(db, text(input.cityId) || "blr");
   const localHour = new Date(now + IST_OFFSET_MINUTES * 60_000).getUTCHours();
   const quiet = inQuietHours(localHour, policy.quietStart, policy.quietEnd);
-  add("quiet_hours", !quiet, "blocked_quiet_hours", quiet ? `Local hour ${localHour} is inside quiet hours ${policy.quietStart}-${policy.quietEnd} (${policy.source})` : `Local hour ${localHour} is outside quiet hours (${policy.source})`);
+  const specialistUat = controlledSpecialistUat(env, input, phoneKey);
+  add("quiet_hours", specialistUat || !quiet, "blocked_quiet_hours", specialistUat && quiet
+    ? `Controlled specialist UAT bypassed quiet hours for the single allowlisted test recipient; production policy remains ${policy.quietStart}-${policy.quietEnd}`
+    : quiet ? `Local hour ${localHour} is inside quiet hours ${policy.quietStart}-${policy.quietEnd} (${policy.source})` : `Local hour ${localHour} is outside quiet hours (${policy.source})`);
 
   // Only calls that actually dialled count towards the cap. A call the gate refused never reached the
   // recipient, so counting it would let one blocked attempt suppress a legitimate later one.
@@ -299,7 +321,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
   const dailyCap = 1;
-  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey);
+  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey) || specialistUat;
   const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
   add("frequency_cap", capOk, "blocked_frequency_cap",
     frequencyCapIsolated
@@ -325,7 +347,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     attempts24h,
     consentDecision: consentGranted ? "granted" : consent ? "revoked" : "missing",
     optOutDecision: optOut || leadOptOut ? "opted_out" : "clear",
-    quietHoursDecision: quiet ? "inside" : "outside",
+    quietHoursDecision: specialistUat && quiet ? "uat_bypass" : quiet ? "inside" : "outside",
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
@@ -582,6 +604,17 @@ export async function requestControlledCarrierUatCall(db: Db, env: Env, input: O
     simulatedOutcome: null,
     [CONTROLLED_UAT_FREQUENCY_TOKEN]: true,
   });
+}
+
+
+/** Controlled Grooming/Training UAT: single allowlisted recipient, explicit UAT + sales approvals. */
+export async function requestControlledSpecialistUatCall(db: Db, env: Env, input: Omit<VoiceCallRequest, "actorId" | "actorPermissions">) {
+  const gate = resolveVoiceCallGate(env), dialNumber = canonicalDialNumber(env, input.phone), targetKey = normalisedDialKey(dialNumber || input.phone), useCase = text(input.useCase);
+  if (!gate.ok || gate.mode !== "uat" || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true" || text(env.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED).toLowerCase() !== "true" || !salesOutboundApproved(env)) throw new Error("Controlled specialist UAT requires approved UAT voice and outbound sales gates");
+  if (gate.allowlist.length !== 1 || !targetKey || gate.allowlist[0] !== targetKey) throw new Error("Controlled specialist UAT requires exactly the single approved allowlisted recipient");
+  if ((useCase !== "grooming_sales" && useCase !== "training_sales") || !text(input.customerId)) throw new Error("Controlled specialist UAT requires Grooming/Training and canonical customer context");
+  if (!text(input.idempotencyKey).startsWith("voice-specialist-uat:")) throw new Error("Controlled specialist UAT requires a dedicated voice-specialist-uat idempotency key");
+  return requestOutboundVoiceCallInternal(db, env, { ...input, actorId: "system:voice-specialist-uat", actorPermissions: ["communications.call", "customers.manage"], simulatedOutcome: null, [CONTROLLED_UAT_SPECIALIST_TOKEN]: true });
 }
 
 /**

@@ -17,9 +17,10 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   // These exact machine-to-machine POST handlers authenticate their own bearer/HMAC credentials.
   // A provider cannot log in as staff. Never exempt a prefix or any other HTTP method here.
   if(method==="POST"&&(url.pathname==="/api/elevenlabs/v1/responses"||url.pathname==="/api/webhooks/elevenlabs/init"||url.pathname==="/api/webhooks/elevenlabs/post-call"))return null;
-  // V2 customer reads still need a verified customer/session or an authorized staff actor.
-  // Unknown V2 paths and unsupported methods must keep the existing default-deny permission.
-  if(method==="GET"&&(url.pathname==="/api/v2/grooming-catalogue"||url.pathname==="/api/v2/grooming-checkout"))return "scheduling.book";
+  // V2 publishes only the customer-safe grooming catalogue without auth. Checkout remains
+  // customer-scoped, while unknown V2 paths and unsupported methods keep default-deny.
+  if(method==="GET"&&url.pathname==="/api/v2/grooming-catalogue")return null;
+  if(method==="GET"&&url.pathname==="/api/v2/grooming-checkout")return "scheduling.book";
   // A cross-site Razorpay form cannot carry a PawSpace cookie. This exact stateless adapter
   // only validates receipt shape and redirects; the customer-owned checkout verifies capture.
   if(url.pathname==="/api/v2/grooming-checkout-return"&&(method==="GET"||method==="POST"))return null;
