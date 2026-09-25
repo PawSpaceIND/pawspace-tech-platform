@@ -15,5 +15,5 @@ test("AI grounding receives the canonical enabled PawSpace service directory", a
 
 test("Training mobile checkout summary no longer overlays programme choices", async () => {
   const css = await read("app/training/canonical-training.module.css");
-  assert.match(css, /@media\(max-width:720px\)[^{]*\{[\s\S]*?\.stickyCard\{position:static;/);
+  assert.match(css, /@media\(max-width:720px\)\{\.shell\.shell \.stickyCard\{position:static!important\}\}/);
 });
