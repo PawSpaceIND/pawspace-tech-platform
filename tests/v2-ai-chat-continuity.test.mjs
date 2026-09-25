@@ -10,3 +10,5 @@ test("V2 chat reuses governed AI and identity contracts",()=>{assert.match(chat,
 test("authenticated chat fails closed without customer identity",()=>{assert.match(chat,/mode==="authenticated"&&identity!=="customer"/);assert.match(chat,/Open V2 home/);});
 
 test("public V2 chat uses conversational AI path instead of raw knowledge dump",()=>{assert.match(chat,/sessionKey:publicSessionKey/);assert.match(chat,/history/);assert.match(chat,/Ask PawSpace AI/);assert.doesNotMatch(chat,/knowledge\.map/);});
+
+test("public V2 chat grounds answers in the canonical service catalogue",()=>{const adapter=fs.readFileSync(new URL("../lib/ai-web-chat-adapter.ts",import.meta.url),"utf8");assert.match(adapter,/canonicalCatalogueSnapshot/);assert.match(adapter,/currentServiceCatalogue/);});
