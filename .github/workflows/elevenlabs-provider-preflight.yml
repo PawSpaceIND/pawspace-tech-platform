@@ -335,3 +335,77 @@ jobs:
           const flow1347515=safe.filter(x=>x.voiceFlowId==='1347515');
           console.log('FLOW_1347515_EXOPHONES='+JSON.stringify(flow1347515));
           NODE
+
+  repair-with-real-exophone:
+    if: ${{ inputs.confirm == 'repair-with-real-exophone' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Replace ElevenLabs UAT import with a real Exotel ExoPhone
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OLD_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
+          const exToken=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const exSid=String(process.env.EXOTEL_SID||'').trim();
+          const exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!elevenKey||!exKey||!exToken||!exSid||!agentId) throw new Error('repair prerequisites missing');
+          const auth='Basic '+Buffer.from(exKey+':'+exToken).toString('base64');
+          const xr=await fetch('https://'+exHost+'/v2_beta/Accounts/'+encodeURIComponent(exSid)+'/IncomingPhoneNumbers',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const xb=await xr.json().catch(()=>({}));
+          if(!xr.ok) throw new Error('ExoPhone list failed '+xr.status);
+          const phones=(Array.isArray(xb?.incoming_phone_numbers)?xb.incoming_phone_numbers:[]).filter(x=>Boolean(x?.capabilities?.voice)&&x?.phone_number);
+          if(!phones.length) throw new Error('No voice-capable ExoPhones found');
+          const chosen=phones.find(x=>String(x.region||'').toUpperCase()==='KA')||phones[0];
+          let digits=String(chosen.phone_number||'').replace(/\D/g,'');
+          let e164='';
+          if(digits.length===12&&digits.startsWith('91')) e164='+'+digits;
+          else if(digits.length===11&&digits.startsWith('0')) e164='+91'+digits.slice(1);
+          else if(digits.length===10) e164='+91'+digits;
+          else throw new Error('Selected ExoPhone cannot be normalized to Indian E.164');
+          console.log('::add-mask::'+e164);
+          console.log('SELECTED_EXOPHONE='+JSON.stringify({
+            last4:digits.slice(-4),region:chosen.region||null,numberType:chosen.number_type||null,
+            voiceFlowId:(String(chosen.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]||null
+          }));
+          const headers={'xi-api-key':elevenKey};
+          if(oldId){
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('OLD_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('old ElevenLabs phone delete failed '+del.status);
+          }
+          const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+            method:'POST',headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({
+              provider:'exotel',label:'PawSpace Voice UAT',phone_number:e164,account_sid:exSid,
+              api_key:exKey,api_token:exToken,api_subdomain:exHost,app_id:'1347515'
+            }),signal:AbortSignal.timeout(30000)
+          });
+          const ib=await imp.json().catch(()=>({}));
+          if(!imp.ok||!ib?.phone_number_id){console.log('REAL_EXOPHONE_IMPORT_ERROR='+JSON.stringify(ib).slice(0,1800));throw new Error('real ExoPhone import failed '+imp.status);}
+          const newId=String(ib.phone_number_id);
+          console.log('REAL_EXOPHONE_PHONE_ID='+newId);
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(newId),{
+            method:'PATCH',headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),signal:AbortSignal.timeout(30000)
+          });
+          const pb=await patch.json().catch(()=>({}));
+          console.log('REAL_EXOPHONE_ASSIGN_STATUS='+patch.status);
+          if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
+          console.log('REAL_EXOPHONE_REPAIR_COMPLETE=yes');
+          NODE
