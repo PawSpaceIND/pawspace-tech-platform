@@ -301,8 +301,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
 });
 
 test("uses 60 minutes per training pet and one GPS policy for doorstep providers", async () => {
-  const [training, trainer, grooming, groomingLive, stays, sittingCare] = await Promise.all(
-    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
+  const [training, trainer, grooming, groomingLive, groomingSummaryRoute, stays, sittingCare] = await Promise.all(
+    ["app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/mobile-app/grooming-flow.tsx", "app/mobile-app/customer-grooming-live-card.tsx", "app/api/customer-grooming-summary/route.ts", "app/mobile-app/stay-flow.tsx", "app/mobile-app/sitting-customer-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -314,7 +314,11 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(groomingLive, />Groomer<\/dt>/);
   assert.match(groomingLive, /customer-grooming-summary/);
   assert.match(groomingLive, /ETA about/);
-  assert.match(groomingLive, /shows ETA and distance only—not the groomer’s exact location/);
+  assert.match(groomingLive, /map=1&v=/);
+  assert.match(groomingLive, /live map refreshes automatically/);
+  assert.match(groomingSummaryRoute, /google-static-maps/);
+  assert.match(groomingSummaryRoute, /provider-rounded-3dp/);
+  assert.match(groomingSummaryRoute, /GOOGLE_MAPS_SERVER_API_KEY_UAT/);
   assert.match(groomingLive, /requestVersion=useRef/);
   assert.match(groomingLive, /current\?\.abort\(\)/);
   assert.match(groomingLive, /version===requestVersion\.current/);
