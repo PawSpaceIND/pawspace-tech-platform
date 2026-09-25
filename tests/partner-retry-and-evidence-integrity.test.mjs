@@ -92,3 +92,20 @@ test("listing Boarding stays reads child tables a fixed number of times, whateve
   assert.equal(empty.extension, null);
   assert.deepEqual(empty.events, []);
 });
+
+test("listing Boarding stays past one D1 IN chunk reads each chunk once and loses no stay", async (t) => {
+  const sqlite = freshSqlite(), db = makeD1(sqlite);
+  t.after(() => sqlite.close());
+  globalThis.__PARTNER_RETRY_DB__ = db;
+  const { listBoardingStays } = await import("../lib/boarding-stay-lifecycle.ts");
+  const { D1_IN_CHUNK } = await import("../lib/d1-chunked-in.ts");
+  const stays = [];
+  for (let index = 0; index <= D1_IN_CHUNK; index++) stays.push(await seedBoardingStay(db, sqlite, { bookingId: `BKG-BOARD-C${index}`, customerId: `CUST-C${index}` }));
+  const last = stays.at(-1), now = Date.now();
+  sqlite.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").run("EV-LAST", last.stayId, last.bookingId, "care_meal", "host", "{}", now);
+  const probe = countingSelects(db);
+  const all = await listBoardingStays(probe.db, {});
+  assert.equal(all.length, D1_IN_CHUNK + 1);
+  assert.equal(childReads(probe.seen), 6, "two chunks of stay ids, three child tables each");
+  assert.equal(all.find((stay) => stay.booking_id === last.bookingId).events.some((row) => row.id === "EV-LAST"), true, "a stay in the second chunk keeps its events");
+});

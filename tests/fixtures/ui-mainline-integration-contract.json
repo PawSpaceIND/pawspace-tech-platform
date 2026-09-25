@@ -32,7 +32,7 @@
     "e2e/v2-grooming.spec.ts": "c473ef237d049caa03d24dee6da989e7c478f5aae0477c9a44a2ef04066ebf62",
     "lib/ai-provider-adapter.ts": "30ba42c6049aa812e365b7a10d0951932958e76725bb0c841dd1247c004eea8f",
     "lib/api-gateway.ts": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
-    "lib/boarding-stay-lifecycle.ts": "176c9407577ee9a18b7acd3eb9caf72347de81adeae81348d2f908d977e6ef97",
+    "lib/boarding-stay-lifecycle.ts": "c11a7401413dc39e45db0bf37190945a68fcc5da54908e66e3c9419a9c34744b",
     "lib/booking-payment-balances.ts": "af19e326600c0556dea6832e0886af38d9e020c0bf5742c2f8f39f063a1d8614",
     "lib/customer-activity.ts": "d018f67fa49b5dfbcd13c722bb313f680bcfd97dbec8d1bc4b77226749b9c889",
     "lib/customer-checkout-client.ts": "cd909caea876c2843e21056b1583d850603d55cbb98c56b0672b23a523ebeb51",

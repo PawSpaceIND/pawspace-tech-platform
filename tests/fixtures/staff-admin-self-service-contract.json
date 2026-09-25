@@ -601,7 +601,7 @@
     "lib/boarding-provider-projection.ts": "f13323cf2bff2a5d2c79c9a4bf04c9351001eb010fb55ad610738ced5918c158",
     "lib/boarding-recovery-finalizer.ts": "e24a4458c9b2f0483c5bfbb859af148704903694415f09ce051c7acb39cdfb5b",
     "lib/boarding-stay-client.ts": "56e67b66d1896fc34fa82041db7691ab284d675381fa9c58c460c8309210e688",
-    "lib/boarding-stay-lifecycle.ts": "176c9407577ee9a18b7acd3eb9caf72347de81adeae81348d2f908d977e6ef97",
+    "lib/boarding-stay-lifecycle.ts": "c11a7401413dc39e45db0bf37190945a68fcc5da54908e66e3c9419a9c34744b",
     "lib/booking-conversation.ts": "a391e7970b1e6826d8a6d94c3f7768060159181b70ee9debaf21724799539dae",
     "lib/booking-credit-application.ts": "91f4fd1a56eae5050fbefb0d53da9db2b4f6a181de1d62e03354c591e22d3379",
     "lib/booking-doorstep.ts": "3f130b279fa5f79e392fab9aca5cf799d09fb8070003e1f90de26f755dd017e0",
