@@ -36,11 +36,11 @@ export async function GET(request:Request){try{
  const serviceCode=String(booking.service_code||"");if(!SUPPORTED.has(serviceCode))return json({error:"Live tracking is not enabled for this service"},409);
  await requireCustomerOwnership(db,actor,String(booking.customer_id));
  const specific=await serviceStatus(db,serviceCode,bookingId),workOrder=String(booking.work_order_status||""),canonical=String(booking.status||"");
- const status=specific||workOrder||canonical;
+ const stateKnown=(value:string)=>ACTIVE.includes(value as typeof ACTIVE[number])||CLOSED.has(value);
+ const status=stateKnown(specific)?specific:stateKnown(workOrder)?workOrder:canonical;
  const point=await db.prepare("SELECT id,latitude,longitude,server_received_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? AND trust_state='accepted' ORDER BY server_received_at DESC LIMIT 1").bind(bookingId,String(booking.provider_id)).first<Row>();
  const eta=point?await db.prepare("SELECT provider_status,distance_meters,duration_seconds,calculated_at,stale_after,detail_json FROM route_eta_snapshots WHERE booking_id=? AND provider_id=? AND origin_location_event_id=? ORDER BY calculated_at DESC LIMIT 1").bind(bookingId,String(booking.provider_id),String(point.id)).first<Row>():null;
- const normalized=CLOSED.has(status)?status:status;
- const tracking=customerTrackingProjection({bookingStatus:normalized,hasTrustedLocation:Boolean(point),eta:eta?{providerStatus:eta.provider_status,distanceMeters:eta.distance_meters,durationSeconds:eta.duration_seconds,calculatedAt:eta.calculated_at,staleAfter:eta.stale_after}:null,visibleStatuses:ACTIVE});
+ const tracking=customerTrackingProjection({bookingStatus:status,hasTrustedLocation:Boolean(point),eta:eta?{providerStatus:eta.provider_status,distanceMeters:eta.distance_meters,durationSeconds:eta.duration_seconds,calculatedAt:eta.calculated_at,staleAfter:eta.stale_after}:null,visibleStatuses:ACTIVE});
  if(mapMode){
   if(tracking.state!=="live"||!point)return new Response("Live map is not available yet",{status:409,headers:{"cache-control":"no-store"}});
   const taxiInRide=serviceCode==="pet_taxi"&&["in_progress","arrived_dropoff","dropoff_confirmed"].includes(status);
