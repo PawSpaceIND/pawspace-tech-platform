@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once";
 type Row=Record<string,unknown>;
 export type CommunicationChannel="whatsapp"|"sms"|"email"|"push"|"chat"|"voice";
 export type CommunicationPurpose="auth"|"transactional"|"service_recovery"|"marketing"|"lifecycle";
@@ -9,7 +10,7 @@ const GLOBAL_QUIET_START_HOUR=21;
 const GLOBAL_QUIET_END_HOUR=9;
 const TERMINAL_MESSAGE_STATUSES=new Set(["read","dead_letter","suppressed"]);
 
-export async function ensureCommunicationTables(db:D1Database){await db.batch([
+export async function ensureCommunicationTables(db:D1Database){return ensureD1Once(db,"communication_tables",async()=>{await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS communication_policies (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,zone_id TEXT,enforcement_mode TEXT NOT NULL DEFAULT 'observe',quiet_start_hour INTEGER NOT NULL DEFAULT 21,quiet_end_hour INTEGER NOT NULL DEFAULT 9,promotional_cap_7d INTEGER NOT NULL DEFAULT 3,max_attempts INTEGER NOT NULL DEFAULT 5,retry_base_minutes INTEGER NOT NULL DEFAULT 5,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_communication_policy_lookup ON communication_policies(city_id,zone_id,active,effective_from,effective_to)"),
  db.prepare("CREATE TABLE IF NOT EXISTS communication_threads (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT,lead_id TEXT,ticket_id TEXT,status TEXT NOT NULL DEFAULT 'open',assigned_to TEXT,sla_due_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -22,7 +23,7 @@ export async function ensureCommunicationTables(db:D1Database){await db.batch([
  db.prepare("CREATE INDEX IF NOT EXISTS idx_communication_delivery_message ON communication_message_delivery_events(message_id,created_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS communication_dead_letters (id TEXT PRIMARY KEY,message_id TEXT NOT NULL,reason TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
  db.prepare("CREATE TABLE IF NOT EXISTS communication_preferences (customer_id TEXT PRIMARY KEY,service_updates INTEGER,marketing INTEGER,preferred_channel TEXT,timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',source TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
-]);}
+]);});}
 
 export async function seedCommunicationPolicy(db:D1Database){await ensureCommunicationTables(db);const now=Date.now();await db.prepare("INSERT OR IGNORE INTO communication_policies (id,city_id,zone_id,enforcement_mode,quiet_start_hour,quiet_end_hour,promotional_cap_7d,max_attempts,retry_base_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('comm_blr_default','blr',NULL,'enforce',21,9,3,5,5,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(now).run();await db.prepare("UPDATE communication_policies SET enforcement_mode='enforce',quiet_start_hour=21,quiet_end_hour=9,version=version+1,updated_at=? WHERE id='comm_blr_default' AND (enforcement_mode!='enforce' OR quiet_start_hour!=21 OR quiet_end_hour!=9) AND updated_by='founder_seed'").bind(now).run();}
 

@@ -1,12 +1,13 @@
+import{ensureD1Once}from"./d1-ensure-once";
 type Row=Record<string,unknown>;
 export const forbiddenAutonomousActions=["refund","price_change","payment","payout","outbound_contact","customer_merge","provider_assignment","campaign_activation"] as const;
 export type AiSuggestionAction="summarize"|"next_best_action"|"draft_response"|"risk_flag"|typeof forbiddenAutonomousActions[number];
-export async function ensureAiGovernance(db:D1Database){await db.batch([
+export async function ensureAiGovernance(db:D1Database){return ensureD1Once(db,"ai_governance",async()=>{await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_context_snapshots (id TEXT PRIMARY KEY,actor_email TEXT NOT NULL,customer_id TEXT,booking_id TEXT,ticket_id TEXT,authorized_scope_json TEXT NOT NULL,context_json TEXT NOT NULL,pii_policy TEXT NOT NULL DEFAULT 'minimum_necessary',created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_suggestions (id TEXT PRIMARY KEY,context_id TEXT NOT NULL,suggestion_type TEXT NOT NULL,content_json TEXT NOT NULL,confidence REAL NOT NULL,provider TEXT NOT NULL DEFAULT 'not_connected',model_ref TEXT,status TEXT NOT NULL DEFAULT 'review_required',requested_by TEXT NOT NULL,reviewed_by TEXT,reviewed_at INTEGER,review_note TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_audit_events (id TEXT PRIMARY KEY,context_id TEXT,suggestion_id TEXT,action TEXT NOT NULL,actor_email TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_evaluation_results (id TEXT PRIMARY KEY,suite_version TEXT NOT NULL,case_code TEXT NOT NULL,category TEXT NOT NULL,status TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);});}
 export function assertAiActionAllowed(action:string){if((forbiddenAutonomousActions as readonly string[]).includes(action))throw new Error(`AI autonomous action blocked: ${action}`);if(!["summarize","next_best_action","draft_response","risk_flag"].includes(action))throw new Error("Unsupported AI suggestion type");}
 /** Pure derivation of the minimum-necessary AI customer context from a Customer 360 record.
  *  Every number here is a direct aggregation of canonical rows - nothing is estimated or invented. */

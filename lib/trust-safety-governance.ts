@@ -1,4 +1,5 @@
 import { ensureCommunicationTables } from "./communication-engine";
+import { ensureD1Once } from "./d1-ensure-once";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;
@@ -83,6 +84,7 @@ export function redactTrustSafetyText(value: string) {
 }
 
 export async function ensureTrustSafetyTables(db: Db) {
+  return ensureD1Once(db,"trust_safety_tables",async()=>{
   await ensureCommunicationTables(db);
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS trust_safety_events (id TEXT PRIMARY KEY,event_type TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id TEXT,provider_id TEXT,customer_id TEXT,thread_id TEXT,message_id TEXT,channel TEXT NOT NULL,detection_types_json TEXT NOT NULL DEFAULT '[]',content_sha256 TEXT NOT NULL,source_reference TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',strike_applied INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(event_type,source_reference))"),
@@ -104,6 +106,7 @@ export async function ensureTrustSafetyTables(db: Db) {
   ]);
   await ensureProviderTrustColumns(db);
   await ensureBlocklistTriggers(db);
+  });
 }
 
 async function ensureBlocklistTriggers(db: Db) {

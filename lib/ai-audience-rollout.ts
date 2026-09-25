@@ -11,6 +11,7 @@
  * connected or a kill-switch is thrown, the AI stays off regardless of the rollout stage. Cold-DB safe.
  */
 
+import{ensureD1Once}from"./d1-ensure-once";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 export type RolloutStage = "off" | "staff_only" | "customers";
@@ -41,7 +42,7 @@ async function customerRolloutApprovedHere(): Promise<boolean> {
 }
 
 export async function ensureAiAudienceRolloutTables(db: Db) {
-  await db.prepare("CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=1),stage TEXT NOT NULL DEFAULT 'off',reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)").run();
+  return ensureD1Once(db,"ai_audience_rollout",async()=>{await db.prepare("CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=1),stage TEXT NOT NULL DEFAULT 'off',reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)").run();});
 }
 
 /** Current rollout stage (defaults to 'off' when never configured). Cold-DB safe. */

@@ -1,14 +1,15 @@
 import{ensureCommunicationTables,type CommunicationChannel}from"./communication-engine";
+import{ensureD1Once}from"./d1-ensure-once";
 import{conversationAccessPredicate,ensureConversationAccessTables,type ConversationAccessActor}from"./conversation-access";
 
 type Row=Record<string,unknown>;
 export type ConversationScope="customer"|"provider"|"staff";
 
-export async function ensureConversationGovernance(db:D1Database){await ensureCommunicationTables(db);await db.batch([
+export async function ensureConversationGovernance(db:D1Database){return ensureD1Once(db,"conversation_governance",async()=>{await ensureCommunicationTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS conversation_audit_events (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,message_id TEXT,action TEXT NOT NULL,actor_email TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS conversation_assignments (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,assigned_to TEXT NOT NULL,assigned_by TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',reason TEXT,created_at INTEGER NOT NULL,ended_at INTEGER)"),
  db.prepare("CREATE INDEX IF NOT EXISTS conversation_assignment_thread_idx ON conversation_assignments(thread_id,status,created_at)"),
-]);}
+]);});}
 
 // The ticket is a decoration on the thread, and on a deployment without the CX module its table does
 // not exist, so a raw throw would take the whole queue down for a missing badge. Swallowing EVERY

@@ -1,5 +1,6 @@
 import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
 import{ensureCommunicationTables}from"./communication-engine";
+import{ensureD1Once}from"./d1-ensure-once";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";
@@ -19,10 +20,10 @@ function searchTerms(value:string){return Array.from(new Set(value.toLowerCase()
  */
 function publicHistory(value:unknown):PublicAiWebHistoryTurn[]{if(!Array.isArray(value))return[];return value.slice(-8).flatMap(item=>{if(!item||typeof item!=="object"||Array.isArray(item))return[];const row=item as Row,role=text(row.role),body=text(row.text).slice(0,800);return role==="user"&&body?[{role:"user",text:redactTrustSafetyText(body).redacted} as PublicAiWebHistoryTurn]:[];});}
 
-export async function ensureAiWebChatTables(db:D1Database){await ensureCommunicationTables(db);await db.batch([
+export async function ensureAiWebChatTables(db:D1Database){return ensureD1Once(db,"ai_web_chat_tables",async()=>{await ensureCommunicationTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_web_leads (id TEXT PRIMARY KEY,session_key TEXT NOT NULL UNIQUE,name TEXT,email TEXT,phone TEXT,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_web_chat_events (id TEXT PRIMARY KEY,thread_id TEXT,customer_id TEXT,event_type TEXT NOT NULL,actor_ref TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);});}
 
 export async function publicAiWebKnowledge(db:D1Database,input:{query:string}){await ensureAiWebChatTables(db);const query=text(input.query).toLowerCase(),terms=searchTerms(query);if(!query||!terms.length)return{mode:"public",knowledge:[],customerDataAccess:false,toolExecution:false};await ensureAiBusinessConfiguration(db);const rows=await db.prepare("SELECT id,title,content_text,visibility_scope_json,immutable_hash FROM ai_knowledge_source_versions WHERE status='active' AND (effective_from IS NULL OR effective_from<=?) AND (effective_to IS NULL OR effective_to>?) ORDER BY version DESC LIMIT 100").bind(Date.now(),Date.now()).all<Row>();const knowledge=rows.results.filter(row=>{try{const scope=JSON.parse(text(row.visibility_scope_json)||"[]")as string[];return scope.includes("public")}catch{return false}}).map(row=>{const title=text(row.title).toLowerCase(),content=text(row.content_text).toLowerCase(),combined=`${title} ${content}`;let score=combined.includes(query)?100:0;for(const term of terms){if(title.includes(term))score+=5;if(content.includes(term))score+=2;}return{row,score};}).filter(item=>item.score>0).sort((a,b)=>b.score-a.score).slice(0,5).map(({row})=>({id:text(row.id),title:text(row.title),excerpt:text(row.content_text).slice(0,600),immutableHash:text(row.immutable_hash)}));return{mode:"public",knowledge,customerDataAccess:false,toolExecution:false};}
 
