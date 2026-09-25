@@ -102,6 +102,19 @@ test("LP-D10: a captured payment does not appear in paymentPending even though a
   assert.equal(booking?.paymentDueNow, 0, "every Partner workspace section must show the current settled balance, not the original instalment");
 });
 
+
+
+test("LP-D10: degraded balance snapshot falls back to the legacy workspace projection instead of failing the whole workspace", async () => {
+  const { sqlite, db, workspaceLib } = await world();
+  seedGroomingBooking(sqlite, { id: "PS-UAT-FALLBACK-1", paymentStatus: "pending", dueNow: 1299, proof: null });
+  sqlite.exec("CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY)");
+  const workspace = await workspaceLib.providerWorkspace(db, { providerId: PROVIDER });
+  const booking = workspace.bookings.past.find(item => item.bookingId === "PS-UAT-FALLBACK-1");
+  assert.equal(booking?.paymentStatus, "pending");
+  assert.equal(booking?.paymentDueNow, 1299);
+  assert.ok(workspace.bookings.paymentPending.some(item => item.bookingId === "PS-UAT-FALLBACK-1"));
+});
+
 test("LP-D10: an actually pending/partial/failed payment still appears in paymentPending", async () => {
   const { sqlite, db, workspaceLib } = await world();
   seedGroomingBooking(sqlite, { id: "PS-UAT-PARTIAL-1", paymentStatus: "partial", dueNow: 500, proof: null });
