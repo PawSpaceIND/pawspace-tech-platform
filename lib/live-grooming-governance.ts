@@ -1,4 +1,4 @@
-import{groomingCatalogue,governGroomingBooking,type GroomingCatalogueItem,type GroomingGovernanceInput,type GroomingGovernanceResult}from"./grooming-governance";
+import{groomingCatalogue,quoteGroomingBooking,type GroomingCatalogueItem,type GroomingGovernanceInput,type GroomingGovernanceResult}from"./grooming-governance";
 import{groomingPricingPackageCode}from"./grooming-pricing-code";
 import{resolveLivePrice}from"./live-pricing-resolver";
 
@@ -19,10 +19,10 @@ async function taxBreakdown(db:D1Database,cityId:string,total:number,base:number
 
 /** Keeps subscription/single-pet behaviour untouched; regular multi-pet quotes get explicit species,
  * discount and GST guardrails. Mixed dog+cat bookings resolve the equivalent catalogue package per pet. */
-export async function governGroomingBookingWithLiveMultiPet(db:D1Database,input:GroomingGovernanceInput):Promise<GroomingGovernanceResult>{
- if(input.pets.length<=1||input.packageCode.startsWith("sub-"))return governGroomingBooking(db,input);
+export async function quoteGroomingBookingWithLiveMultiPet(db:D1Database,input:Omit<GroomingGovernanceInput,"submittedTotal"|"submittedAmountDueNow">):Promise<GroomingGovernanceResult>{
+ if(input.pets.length<=1||input.packageCode.startsWith("sub-"))return quoteGroomingBooking(db,input);
  const item=groomingCatalogue.find(row=>row.active&&row.code===input.packageCode);
- if(!item)return governGroomingBooking(db,input);
+ if(!item)return quoteGroomingBooking(db,input);
  const petCount=input.pets.length,maxPets=item.maxPetsPerBooking??4;if(petCount<2||petCount>maxPets)throw new Error(`Grooming supports between 1 and ${maxPets} pets for this plan`);
  const species=input.pets.map(p=>p.species??"other");if(species.some(value=>value!=="dog"&&value!=="cat"))throw new Error("Multi-pet Grooming requires each saved pet to be explicitly a dog or cat");
  const resolved=species.map(value=>pairedItem(item,value as "dog"|"cat"));if(resolved.some(value=>!value))throw new Error(`${item.name} has no governed equivalent for every selected pet species`);
@@ -33,7 +33,13 @@ export async function governGroomingBookingWithLiveMultiPet(db:D1Database,input:
  const homogeneous=new Set(species).size===1;
  const live=homogeneous&&input.scheduledStart?await resolveLivePrice(db,{packageCode:groomingPricingPackageCode(item.code,petCount),fallbackPrice:fallbackTotal,scheduledStart:input.scheduledStart,cityId:input.cityId,zoneId:input.zoneId}):{price:fallbackTotal,source:"fallback_default" as const};
  const discounted=round2(live.price),breakdown=await taxBreakdown(db,input.cityId,discounted,basePrice),totalAmount=breakdown.gstMode==="exclusive"?breakdown.totalAmount:discounted;
- if(Math.round(input.submittedTotal)!==Math.round(totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${item.version}`);
- const amountDueNow=input.paymentMode==="prepaid"?totalAmount:0;if(Math.round(input.submittedAmountDueNow)!==Math.round(amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
+ const amountDueNow=input.paymentMode==="prepaid"?totalAmount:0;
  return{packageCode:item.code,packageName:item.name,catalogueVersion:item.version,offerType:item.offerType,petCount,totalAmount,amountDueNow,pricingBreakdown:{...breakdown,totalAmount}};
+}
+
+export async function governGroomingBookingWithLiveMultiPet(db:D1Database,input:GroomingGovernanceInput):Promise<GroomingGovernanceResult>{
+ const quote=await quoteGroomingBookingWithLiveMultiPet(db,input);
+ if(Math.round(input.submittedTotal)!==Math.round(quote.totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${quote.catalogueVersion}`);
+ if(Math.round(input.submittedAmountDueNow)!==Math.round(quote.amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
+ return quote;
 }
