@@ -1,0 +1,81 @@
+name: ElevenLabs phone bridge diagnostics (no calls)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type inspect-phone-bridge'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: ${{ inputs.confirm == 'inspect-phone-bridge' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect ElevenLabs imported phone metadata without dialing
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const expectedId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim();
+          if(!key) throw new Error('ELEVENLABS_API_KEY missing');
+          const headers={'xi-api-key':key};
+          const listResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{headers,signal:AbortSignal.timeout(30000)});
+          const list=await listResponse.json().catch(()=>({}));
+          if(!listResponse.ok) throw new Error('phone list failed '+listResponse.status);
+          const rows=Array.isArray(list?.phone_numbers)?list.phone_numbers:Array.isArray(list)?list:[];
+          const safeRows=rows.map(x=>({
+            phoneNumberId:x.phone_number_id||x.id||null,
+            label:x.label||null,
+            provider:x.provider||null,
+            phoneLast4:String(x.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+            agentId:x.agent_id||null,
+            inboundAgentId:x.inbound_agent_id||null,
+            outboundAgentId:x.outbound_agent_id||null,
+            hasAccountSid:Boolean(x.account_sid),
+            hasApiKey:Boolean(x.api_key),
+            hasApiToken:Boolean(x.api_token),
+            appId:x.app_id||null,
+            region:x.region||x.api_subdomain||null
+          }));
+          console.log('PHONE_LIST_SAFE='+JSON.stringify(safeRows));
+          console.log('EXPECTED_PHONE_ID_PRESENT='+String(safeRows.some(x=>x.phoneNumberId===expectedId)));
+          if(expectedId){
+            const detailResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(expectedId),{headers,signal:AbortSignal.timeout(30000)});
+            const d=await detailResponse.json().catch(()=>({}));
+            console.log('EXPECTED_PHONE_DETAIL_STATUS='+detailResponse.status);
+            if(detailResponse.ok){
+              console.log('EXPECTED_PHONE_DETAIL='+JSON.stringify({
+                phoneNumberId:d.phone_number_id||d.id||null,
+                label:d.label||null,
+                provider:d.provider||null,
+                phoneLast4:String(d.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+                agentId:d.agent_id||null,
+                inboundAgentId:d.inbound_agent_id||null,
+                outboundAgentId:d.outbound_agent_id||null,
+                hasAccountSid:Boolean(d.account_sid),
+                hasApiKey:Boolean(d.api_key),
+                hasApiToken:Boolean(d.api_token),
+                appId:d.app_id||null,
+                region:d.region||d.api_subdomain||null
+              }));
+            } else {
+              console.log('EXPECTED_PHONE_ERROR='+JSON.stringify(d).slice(0,1500));
+            }
+          }
+          console.log('SPECIALIST_IDS='+JSON.stringify({grooming:Boolean(process.env.GROOMING_AGENT_ID),training:Boolean(process.env.TRAINING_AGENT_ID)}));
+          NODE
