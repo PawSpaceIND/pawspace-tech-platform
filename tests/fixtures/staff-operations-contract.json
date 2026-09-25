@@ -1143,5 +1143,6 @@
     "lib/whatsapp-uat-adapter.ts": "238607fbc0a950edd30213cff7d590dd4d052bd1ae8e2c15783992202c7ab69f",
     "lib/workforce-classification.ts": "a082977376abc4fb55dd1296bee852b444dd9f7654e50b53709300e10d66b8e4",
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2"
-  }
+  },
+  "adminCssBase": "9e16ef6c44ed61f1668270442b3f6372a42affb2"
 }
