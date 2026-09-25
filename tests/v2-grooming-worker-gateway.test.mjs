@@ -85,19 +85,30 @@ for (const path of [CATALOGUE, CHECKOUT + "?bookingId=B1"]) {
     else { assert.equal(body.data.customerId, "C1"); assert.equal(body.data.locationReady, true); assert.equal(body.data.confirmation.ready, false); }
     assert.deepEqual(bookingSnapshot(w.sqlite), before, "a read must never create booking, payment or work-order state");
   });
-  test(`V2 read remains protected from anonymous and provider callers: ${path}`, async t => {
-    const w = await world(t);
-    for (const [cookie, status] of [["", 401], [w.sessions.provider.cookie, 403]]) {
-      const result = await dispatch(w, req(path, cookie));
-      assert.equal(result.reachedRoute, false); assert.equal(result.response.status, status);
-    }
-  });
-  test(`V2 fallback gateway also maps only the intended GET permission: ${path}`, async t => {
-    const w = await world(t), access = await authorizeApiRequest(req(path, w.sessions.owner.cookie), w.env);
-    assert.ok(!(access instanceof Response), "fallback RBAC must not require staff dashboard permission");
-    assert.equal(access.permission, "scheduling.book"); assert.equal(access.actor.roleCode, "customer");
-  });
 }
+
+test("V2 grooming catalogue is a public read-only projection and never requires a customer or staff session", async t => {
+  const w = await world(t), before = bookingSnapshot(w.sqlite);
+  for (const cookie of ["", w.sessions.provider.cookie, w.sessions.owner.cookie]) {
+    const result = await dispatch(w, req(CATALOGUE, cookie));
+    assert.equal(result.reachedRoute, true);
+    assert.equal(result.response.status, 200, await result.response.clone().text());
+    assert.equal((await result.response.json()).data.packages[0].code, "dog-basic");
+  }
+  const access = await authorizeApiRequest(req(CATALOGUE), w.env);
+  assert.ok(!(access instanceof Response)); assert.equal(access.permission, null);
+  assert.deepEqual(bookingSnapshot(w.sqlite), before);
+});
+
+test("V2 grooming checkout remains customer-session protected at both gateway layers", async t => {
+  const w = await world(t), path = CHECKOUT + "?bookingId=B1";
+  for (const [cookie, status] of [["", 401], [w.sessions.provider.cookie, 403]]) {
+    const result = await dispatch(w, req(path, cookie));
+    assert.equal(result.reachedRoute, false); assert.equal(result.response.status, status);
+  }
+  const access = await authorizeApiRequest(req(path, w.sessions.owner.cookie), w.env);
+  assert.ok(!(access instanceof Response)); assert.equal(access.permission, "scheduling.book"); assert.equal(access.actor.roleCode, "customer");
+});
 
 test("V2 checkout gateway authenticates first; handler still rejects another customer's booking", async t => {
   const w = await world(t), before = bookingSnapshot(w.sqlite);
@@ -111,18 +122,18 @@ test("V2 checkout rejects invalid references after authenticating the real owner
   assert.equal(result.reachedRoute, true); assert.equal(result.response.status, 400);
 });
 for (const invalidation of ["status='revoked'", "expires_at=0"]) {
-  test(`V2 gate rejects invalid sessions: ${invalidation}`, async t => {
+  test(`V2 checkout rejects invalid sessions while public catalogue stays readable: ${invalidation}`, async t => {
     const w = await world(t);
     w.sqlite.prepare(`UPDATE platform_identity_sessions SET ${invalidation} WHERE id=?`).run(w.sessions.owner.id);
-    for (const path of [CATALOGUE, CHECKOUT + "?bookingId=B1"]) {
-      const result = await dispatch(w, req(path, w.sessions.owner.cookie));
-      assert.equal(result.reachedRoute, false); assert.equal(result.response.status, 401);
-    }
+    const catalogueResult = await dispatch(w, req(CATALOGUE, w.sessions.owner.cookie));
+    assert.equal(catalogueResult.reachedRoute, true); assert.equal(catalogueResult.response.status, 200);
+    const checkoutResult = await dispatch(w, req(CHECKOUT + "?bookingId=B1", w.sessions.owner.cookie));
+    assert.equal(checkoutResult.reachedRoute, false); assert.equal(checkoutResult.response.status, 401);
   });
 }
-test("V2 gateway does not trust spoofed workspace headers on workers.dev", async t => {
+test("V2 checkout gateway does not trust spoofed workspace headers on workers.dev", async t => {
   const w = await world(t);
-  const access = await gate(w, req(CATALOGUE, "", "GET", undefined, { "oai-authenticated-user-email": "founder@pawspace.test", "x-pawspace-role": "admin" }));
+  const access = await gate(w, req(CHECKOUT + "?bookingId=B1", "", "GET", undefined, { "oai-authenticated-user-email": "founder@pawspace.test", "x-pawspace-role": "admin" }));
   assert.ok(access instanceof Response); assert.equal(access.status, 401);
 });
 
