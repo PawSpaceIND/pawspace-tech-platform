@@ -177,3 +177,27 @@ test("ElevenLabs Exotel outbound adapter is selected only when explicitly config
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,"CUS-1");
  }finally{stub.restore();}
 });
+
+test("ElevenLabs Exotel outbound adapter recovers one stale phone-number id without weakening call guards",async()=>{
+ const mod=await import("../lib/voice-telephony-provider.ts");
+ const env={PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"el-test",ELEVENLABS_AGENT_ID:"agent-1",ELEVENLABS_AGENT_PHONE_NUMBER_ID:"phone-stale",ELEVENLABS_API_BASE:"https://api.in.residency.elevenlabs.io",EXOTEL_CALLER_ID:"09513886363"};
+ const provider=mod.selectTelephonyProvider(env);
+ const stub=stubFetch((url,init)=>{
+  if(url.endsWith("/v1/convai/phone-numbers?provider=exotel"))return jsonResponse({phone_numbers:[{provider:"exotel",phone_number:"+919513886363",phone_number_id:"phone-current"}]});
+  if(url.endsWith("/v1/convai/exotel/outbound-call")){
+   const body=JSON.parse(init.body);
+   if(body.agent_phone_number_id==="phone-stale")return jsonResponse({detail:{code:"document_not_found"}},404);
+   assert.equal(body.agent_phone_number_id,"phone-current");
+   return jsonResponse({success:true,conversation_id:"conv-current",callSid:"call-current"});
+  }
+  throw new Error("unexpected URL "+url);
+ });
+ try{
+  const result=await provider.createCall({callRef:"VCALL-STALE",toNumber:"+919999999999",statusCallbackUrl:"https://example.test/cb",recordingAllowed:false,customerId:"CUS-1",useCase:"grooming_sales"});
+  assert.equal(result.accepted,true);
+  assert.equal(result.providerCallId,"call-current");
+  assert.equal(stub.calls.filter(x=>x.url.endsWith("/v1/convai/exotel/outbound-call")).length,2);
+  assert.equal(stub.calls.filter(x=>x.url.includes("/v1/convai/phone-numbers?provider=exotel")).length,1);
+ }finally{stub.restore();}
+});
+
