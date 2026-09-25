@@ -2,7 +2,8 @@ import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
 import{ensureCommunicationTables}from"./communication-engine";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff}from"./ai-human-handoff";
-import{initialBotState,menuReply,parseBotState,runBotTurn,type BotReply,type BotState}from"./web-chat-bot";
+import{initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
+import{loadBotSession,saveBotSession}from"./web-chat-bot-store";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";
 import{canonicalCatalogueSnapshot}from"./ai-grounded-runtime-provider";
@@ -189,9 +190,7 @@ export async function customerWebChatTranscript(db:D1Database,input:{actor:Authe
  * ------------------------------------------------------------------------------------------------- */
 export const WEB_CHAT_BOT_TEMPLATE_KEY="web_app_chat_bot";
 
-async function ensureWebChatBotTable(db:D1Database){await db.prepare("CREATE TABLE IF NOT EXISTS web_chat_bot_sessions (session_ref TEXT PRIMARY KEY,state_json TEXT NOT NULL,updated_at INTEGER NOT NULL)").run();}
-export async function loadWebChatBotState(db:D1Database,sessionRef:string){await ensureWebChatBotTable(db);const row=await db.prepare("SELECT state_json FROM web_chat_bot_sessions WHERE session_ref=?").bind(sessionRef).first<Row>();return parseBotState(row?.state_json);}
-export async function saveWebChatBotState(db:D1Database,sessionRef:string,state:BotState){await ensureWebChatBotTable(db);await db.prepare("INSERT INTO web_chat_bot_sessions (session_ref,state_json,updated_at) VALUES (?,?,?) ON CONFLICT(session_ref) DO UPDATE SET state_json=excluded.state_json,updated_at=excluded.updated_at").bind(sessionRef,JSON.stringify(state),Date.now()).run();}
+export const loadWebChatBotState=loadBotSession,saveWebChatBotState=saveBotSession;
 
 async function postBotMessage(db:D1Database,input:{threadId:string;customerId:string;reply:BotReply;idempotencyKey:string}){
  const now=Date.now();

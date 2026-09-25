@@ -3,8 +3,11 @@
 /* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
 .page { composes:palette from "../../components/brand/brand-surface.module.css"; }
 /* WATI conversation pane (app/components/wati-chat) inside the V2 shell. */
-.page .chatShell { grid-template-rows:auto minmax(0,1fr) !important; background:transparent !important; border:0 !important; box-shadow:none !important; gap:10px; overflow:visible !important; }
+.page .chatShell { width:min(1180px,100%) !important; height:calc(100vh - 110px) !important; grid-template-rows:auto minmax(0,1fr) !important; background:transparent !important; border:0 !important; box-shadow:none !important; gap:12px; overflow:visible !important; }
+.page .modeBar button { font-size:15px !important; padding:10px 18px !important; }
+.page .modeBar .back { font-size:15px !important; }
 .page .modeBar { align-items:center; border:0 !important; background:transparent !important; padding:0 !important; }
 .page .modeBar .back { margin-left:auto; }
-.page .watiIntro { margin:4px 0 6px !important; text-align:center; font-size:17px !important; color:var(--brand-text) !important; }
+.page .watiIntro { margin:4px 0 8px !important; text-align:center; font-size:22px !important; color:var(--brand-text) !important; }
 .page .notice h1 { font-size:22px; margin:0 0 8px; }
+@media (max-width:640px) { .page .chatShell { height:calc(100dvh - 84px) !important; gap:8px; } .page .modeBar { padding:8px 10px 0 !important; } }

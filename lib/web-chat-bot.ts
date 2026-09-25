@@ -120,7 +120,9 @@ function matchChoice(choices:BotChoice[],input:{text:string;choiceId?:string|nul
  const id=String(input.choiceId||"").trim();if(id){const byId=choices.find(item=>item.id===id);if(byId)return byId;}
  const typed=input.text.trim().toLowerCase().replace(/[.!]+$/,"");if(!typed)return null;
  const index=Number(typed);if(numbered&&Number.isInteger(index)&&index>=1&&index<=choices.length)return choices[index-1];
- return choices.find(item=>item.label.toLowerCase()===typed||item.id===typed.replace(/[^a-z0-9]+/g,"_"))||null;
+ // WhatsApp cuts button titles at 20 characters and list titles at 24, and sends the title back.
+ return choices.find(item=>item.label.toLowerCase()===typed||item.id===typed.replace(/[^a-z0-9]+/g,"_"))
+  ||(typed.length>=18?choices.find(item=>item.label.toLowerCase().startsWith(typed)):undefined)||null;
 }
 
 /** DD/MM or DD/MM/YYYY, a real calendar date. */

@@ -20,39 +20,52 @@ async function world(){
 
 async function inbound(sqlite,db,id,text){return inboundMessage(sqlite,db,{threadId:"THREAD-BOT",customerId:"CUS-BOT",text,channel:"whatsapp",idempotencyKey:id});}
 
-test("chatbot mode runs deterministic qualification and is idempotent",async()=>{
+const payloadOf=(sqlite,messageId)=>JSON.parse(sqlite.prepare("SELECT payload_json FROM communication_messages WHERE id=?").get(messageId).payload_json);
+
+test("WhatsApp runs the same guided flows as web chat, with reply buttons and lists, and is idempotent",async()=>{
  const{sqlite,db}=await world();
- const firstId=await inbound(sqlite,db,"bot-in-1","1");
+ let seq=0;const say=async text=>{const id=await inbound(sqlite,db,`bot-in-${++seq}`,text);return{id,result:await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:id,actorEmail:"whatsapp-chatbot"})};};
+ const firstId=await inbound(sqlite,db,"bot-in-0","hi");
  await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable certified deterministic chatbot"});
- const first=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:firstId,actorEmail:"whatsapp-chatbot"});
- assert.equal(first.routingMode,"chatbot_only");
- assert.equal(first.session.state,"city");
- assert.equal(first.session.service_code,"grooming");
- assert.equal(first.externalDelivery,false);
+ const menu=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:firstId,actorEmail:"whatsapp-chatbot"});
+ assert.equal(menu.routingMode,"chatbot_only");
+ assert.equal(menu.externalDelivery,false);
+ const menuPayload=payloadOf(sqlite,menu.turn.output_message_id);
+ assert.equal(menuPayload.interactive.kind,"list","the service menu is a WhatsApp list");
+ assert.ok(menuPayload.interactive.sections[0].rows.some(row=>row.title==="Pet Relocation"));
  const replay=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:firstId,actorEmail:"whatsapp-chatbot"});
  assert.equal(replay.duplicatePrevented,true);
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM whatsapp_chatbot_turns WHERE input_message_id=?").get(firstId).n,1);
- const cityId=await inbound(sqlite,db,"bot-in-2","Indiranagar Bengaluru");
- const city=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:cityId,actorEmail:"whatsapp-chatbot"});
- assert.equal(city.session.state,"pet");
- assert.equal(city.session.city,"Indiranagar Bengaluru");
- const petId=await inbound(sqlite,db,"bot-in-3","Dog");
- const pet=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:petId,actorEmail:"whatsapp-chatbot"});
- assert.equal(pet.session.state,"qualified");
- assert.equal(pet.session.pet_type,"dog");
- assert.equal(pet.session.status,"qualified");
- const outbound=sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE idempotency_key LIKE 'whatsapp-chatbot:%'").get().n;
- assert.equal(outbound,3);
+
+ // The customer taps "Grooming" in the list: WhatsApp sends the row title back as the message text.
+ const service=(await say("Grooming")).result;
+ assert.equal(service.session.service_code,"grooming");
+ const petButtons=payloadOf(sqlite,service.turn.output_message_id).interactive;
+ assert.equal(petButtons.kind,"reply_buttons");
+ assert.deepEqual(petButtons.buttons.map(button=>button.title),["Dog","Cat","Start over"]);
+ await say("Dog");await say("1");await say("Not sure yet");
+ const invalidDate=(await say("next week")).result;
+ assert.equal(invalidDate.session.state,"collecting","an invalid date is asked again");
+ await say("28/09");
+ const done=(await say("Indiranagar Bengaluru")).result;
+ assert.equal(done.session.state,"qualified");
+ assert.equal(done.session.status,"qualified");
+ assert.equal(done.session.pet_type,"dog");
+ assert.equal(done.session.city,"Indiranagar Bengaluru");
+ assert.equal(done.routingMode,"human_only","a finished enquiry goes to the sales team");
+ const handoff=sqlite.prepare("SELECT reason,queue_code FROM ai_handoffs WHERE thread_id=?").get("THREAD-BOT");
+ assert.deepEqual({...handoff},{reason:"bot_lead_qualified",queue_code:"sales-web-chat"});
 });
 
-test("negated service mentions do not select a service",async()=>{
+test("a free question in the bot goes to the AI instead of selecting a service",async()=>{
  const{sqlite,db}=await world();
- const inputId=await inbound(sqlite,db,"bot-negated-service","not grooming");
- await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable chatbot for negation regression"});
+ const inputId=await inbound(sqlite,db,"bot-negated-service","not grooming, how is boarding priced?");
+ await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable chatbot for question routing"});
  const result=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:inputId,actorEmail:"whatsapp-chatbot"});
- assert.equal(result.session.state,"service");
- assert.equal(result.session.service_code,null);
- assert.equal(result.turn.intent,"service_prompt");
+ assert.equal(result.aiRequested,true);
+ assert.equal(result.turn.action,"ai_answer");
+ assert.equal(result.routingMode,"chatbot_only");
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE idempotency_key LIKE 'whatsapp-chatbot:%'").get().n,0,"the bot must not also send its own reply over the AI's answer");
 });
 
 test("customer human request immediately hands off and disables chatbot",async()=>{
@@ -91,4 +104,19 @@ test("chatbot fails closed to human handoff when outbound policy blocks",async()
  assert.equal(result.turn.reason,"whatsapp_consent_required");
  assert.equal(result.routingMode,"human_only");
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE idempotency_key LIKE 'whatsapp-chatbot:%'").get().n,0);
+});
+
+test("bot buttons and lists reach Meta as interactive messages inside the service window only",async()=>{
+ const dispatch=await import("../lib/meta-whatsapp-uat-dispatch.ts");
+ const buttons=chatbot.whatsAppChoicesContract({text:"Please select the travel type",choices:[{id:"domestic",label:"Domestic"},{id:"international",label:"International"}],inputHint:null});
+ const sent=dispatch.buildMetaWhatsAppRequest({recipient:"+91 98765 00011",messageText:"Please select the travel type",withinSession:true,interactive:buttons});
+ assert.equal(sent.type,"interactive");
+ assert.equal(sent.interactive.type,"button");
+ assert.deepEqual(sent.interactive.action.buttons.map(button=>button.reply.title),["Domestic","International"]);
+ const list=chatbot.whatsAppChoicesContract({text:"Please select the stay you need",choices:[{id:"standard",label:"Standard Stay (up to 4 hours)"},{id:"premium",label:"Premium Stay (up to 10 hours)"},{id:"luxury",label:"Luxury Stay (overnight)"}],inputHint:null});
+ const listed=dispatch.buildMetaWhatsAppRequest({recipient:"919876500011",messageText:"Please select the stay you need",withinSession:true,interactive:list});
+ assert.equal(listed.interactive.type,"list","labels longer than a button title become a list");
+ assert.ok(listed.interactive.action.sections[0].rows.every(row=>row.title.length<=24));
+ const outside=dispatch.buildMetaWhatsAppRequest({recipient:"919876500011",templateKey:"lead_first_response",withinSession:false,interactive:buttons});
+ assert.equal(outside.type,"template","outside the 24-hour window only an approved template may be sent");
 });
