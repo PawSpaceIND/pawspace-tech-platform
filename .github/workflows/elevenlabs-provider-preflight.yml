@@ -663,11 +663,11 @@ jobs:
                 first_message:"Hi, this is PawSpace's grooming assistant. How can I help with grooming today?"
               },
               tts:{
-                model_id:'eleven_flash_v2_5',
+                model_id:'eleven_flash_v2',
                 voice_id:voiceId,
-                stability:0.6,
+                stability:0.68,
                 similarity_boost:0.8,
-                speed:0.95
+                speed:0.9
               },
               turn:{
                 turn_timeout:12,
