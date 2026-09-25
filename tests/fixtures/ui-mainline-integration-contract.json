@@ -700,7 +700,7 @@
     "lib/partner-job-feed.ts": "04a51beb2fa850c19125c45998668fd7009e3bd5e9270618697d6083e31cd297",
     "lib/partner-job-heartbeat.ts": "e8d6ed7f98d4a9df21610d343484ca99dbcf733d23459cbdc083ec5a7a0020c8",
     "lib/partner-job-selection.ts": "2bf3c95fdd15a9b419236911ab409b9ceec0e30198d97c558bbbe940aba268a0",
-    "lib/partner-job-workspace.ts": "0c5158bae0957733cf9c7fde4d78bc8ca7bcb6eb350ef8f52855b61bb1e2858a",
+    "lib/partner-job-workspace.ts": "d95184deece4a8e5f973e10aa8bcd58bc228b95ea2e507f223026c6ea43479a0",
     "lib/partner-otp.ts": "1b91602cbc24dadd302fea0fcacf86eaf2b41ce48ca9819a948d100476aa5016",
     "lib/partner-settlement-governance.ts": "1941f4450e1ac14a17f56fdfa34f2317cfc88a1eae1209bd5dabc7fafe0a1221",
     "lib/partner-status-queue.ts": "6739d203001d8c6fc2c55506d63795da1f8c81a51cec2e4ef6998f0d5e5f612d",
