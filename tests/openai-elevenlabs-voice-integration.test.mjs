@@ -201,3 +201,74 @@ test("ElevenLabs Exotel outbound adapter recovers one stale phone-number id with
  }finally{stub.restore();}
 });
 
+
+// A grounded voice turn may answer with prose or with a governed action envelope. Streaming the
+// envelope straight to TTS would have the agent read JSON down the phone, so the gate has to decide
+// from the first characters and never from the whole generation.
+test("speech gate releases prose as it streams and never speaks a governed action envelope",async()=>{
+ const {speechGate}=await import("../lib/elevenlabs-custom-llm.ts");
+
+ const spoken=[];
+ const prose=speechGate(text=>spoken.push(text));
+ prose.push("Sure. ");prose.push("Which pet needs grooming?");
+ assert.deepEqual(spoken,["Sure. ","Which pet needs grooming?"],"prose must be released delta by delta, not buffered");
+ assert.equal(prose.unspoken,false);
+
+ const leaked=[];
+ const envelope=speechGate(text=>leaked.push(text));
+ for(const delta of ['{"repl','y":"Booked.","act','ions":[{"toolCode":"booking.create","arguments":{}}]}'])envelope.push(delta);
+ assert.deepEqual(leaked,[],"an action envelope must never reach the caller");
+ assert.equal(envelope.unspoken,true,"the turn must fall back to sending the parsed reply");
+
+ // A fenced envelope is the same hazard wearing a different hat.
+ const fenced=[];const fencedGate=speechGate(text=>fenced.push(text));
+ fencedGate.push("```json\n{\"reply\":\"Done.\"}");
+ assert.deepEqual(fenced,[]);
+ assert.equal(fencedGate.unspoken,true);
+
+ // Leading whitespace must not force a premature decision before the first real character.
+ const delayed=[];const delayedGate=speechGate(text=>delayed.push(text));
+ delayedGate.push("  ");
+ assert.deepEqual(delayed,[],"nothing is decided while only whitespace has arrived");
+ delayedGate.push("\n  Hello there.");
+ assert.equal(delayed.join(""),"  \n  Hello there.","buffered whitespace is released with the first prose");
+ assert.equal(delayedGate.unspoken,false);
+});
+
+test("streamed provider deltas reach the caller and still return the full accounted draft",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"};
+ const events=[
+  'data: {"type":"response.output_text.delta","delta":"Sure. "}',
+  'data: {"type":"response.output_text.delta","delta":"Which package?"}',
+  'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":9,"output_tokens":5,"total_tokens":14}}}',
+  'data: [DONE]',
+ ].join("\n\n")+"\n\n";
+ let sentBody=null;
+ const stub=stubFetch((url,init)=>{
+  sentBody=JSON.parse(String(init?.body||"{}"));
+  return new Response(events,{status:200,headers:{"content-type":"text/event-stream"}});
+ });
+ try{
+  const seen=[];
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"voice",intent:"service_info",maxTokens:160,onDelta:d=>seen.push(d)});
+  assert.equal(sentBody.stream,true,"supplying a delta sink must request a streamed provider response");
+  assert.deepEqual(seen,["Sure. ","Which package?"],"each delta must be handed over as it arrives");
+  assert.equal(result.connected,true);
+  assert.equal(result.text,"Sure. Which package?","the accumulated text must still be returned for storage and envelope parsing");
+  assert.equal(result.usageTokens,14,"streamed turns must stay accounted");
+ }finally{stub.restore();}
+});
+
+test("a provider response without a delta sink stays blocking, so chat and WhatsApp are unchanged",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
+ let sentBody=null;
+ const stub=stubFetch((url,init)=>{
+  sentBody=JSON.parse(String(init?.body||"{}"));
+  return jsonResponse({id:"resp_2",status:"completed",output:[{type:"message",content:[{type:"output_text",text:"Blocking reply"}]}],usage:{total_tokens:7}});
+ });
+ try{
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"chat",intent:"service_info"});
+  assert.equal(sentBody.stream,undefined,"no delta sink means no streaming request");
+  assert.equal(result.text,"Blocking reply");
+ }finally{stub.restore();}
+});

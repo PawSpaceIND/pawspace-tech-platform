@@ -15,7 +15,8 @@ export type AiConversationIntent="service_info"|"booking_create"|"booking_status
 /** Intent confidence is a deterministic keyword-match heuristic (sandbox), NOT a model probability.
  *  Every surface showing this number must label it as such. */
 export type AiIntentDecision={intent:AiConversationIntent;confidence:number;confidenceBasis:"keyword_heuristic_sandbox";signals:string[];policyRisk:boolean};
-export type AiProviderInput={threadId:string;customerId:string;channel:AiConversationChannel;inputText:string;intent:AiIntentDecision;context:Record<string,unknown>};
+/** `onDelta` is supplied only by the live voice turn, which cannot wait for a whole generation. */
+export type AiProviderInput={threadId:string;customerId:string;channel:AiConversationChannel;inputText:string;intent:AiIntentDecision;context:Record<string,unknown>;onDelta?:(delta:string)=>void};
 export type AiActionRequest={toolCode:AiToolCode;arguments:Record<string,unknown>};
 export type AiProviderResult={text:string;provider:string;modelRef:string|null;latencyMs:number;inputTokens?:number;outputTokens?:number;costMinor?:number;confidence?:number;unsupported?:boolean;failure?:string;groundingRefs?:string[];referencedCustomerIds?:string[];highImpactAction?:boolean;actionRequests?:AiActionRequest[]};
 export type AiResponseProvider={status:"connected"|"not_connected"|"degraded";provider:string;modelRef:string|null;deadlineMs?:number;generate(input:AiProviderInput):Promise<AiProviderResult>};

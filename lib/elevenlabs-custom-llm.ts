@@ -85,28 +85,71 @@ async function voiceContext(db:D1Database,body:Row){
  * caller sees one number. Each mark is milliseconds from the start of the turn, so a stage's own cost
  * is the difference between consecutive marks. Durations only — no customer, thread or reply content.
  */
-function turnStopwatch(){
+export type TurnStopwatch={mark:(name:string)=>void;marks:Record<string,number>};
+export function turnStopwatch():TurnStopwatch{
  const started=Date.now(),marks:Record<string,number>={};
  return{mark:(name:string)=>{marks[name]=Date.now()-started;},marks};
 }
 
-export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
- const clock=turnStopwatch();
+/**
+ * The clock is started by the caller, not here: request decode, auth and acquiring the D1 binding all
+ * happen before this function and were previously outside every mark, leaving ~2.25s of a measured
+ * 8.3s turn attributed to nothing at all.
+ */
+/**
+ * Decides, from the first characters the model emits, whether this turn is safe to speak as it
+ * arrives. A grounded turn may answer with prose OR with a governed action envelope
+ * ({"reply":...,"actions":[...]}), and streaming the latter straight to TTS would have the agent read
+ * JSON aloud down the phone. Anything opening with `{` or a code fence is therefore withheld and the
+ * caller speaks only the parsed `reply` once the turn resolves; prose starts speaking immediately.
+ * The cost of the distinction is one delta, not one generation.
+ */
+export function speechGate(emit:(text:string)=>void){
+ let decided:"speak"|"withhold"|null=null,buffered="";
+ return{
+  push(delta:string){
+   if(decided==="withhold")return;
+   if(decided==="speak"){emit(delta);return;}
+   buffered+=delta;
+   const first=buffered.replace(/^\s+/,"").charAt(0);
+   if(!first)return;
+   if(first==="{"||first==="`"){decided="withhold";return;}
+   decided="speak";emit(buffered);buffered="";
+  },
+  /** True when nothing has been spoken, so the resolved reply still has to be sent in full. */
+  get unspoken(){return decided!=="speak";},
+ };
+}
+
+export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void){
  await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
  const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
- await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
-  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();clock.mark("inboundWrite");
+ // Started, not awaited: the inbound transcript has to be recorded, but nothing about the reply
+ // depends on it having landed, so it overlaps the model call instead of preceding it. Both writes
+ // are settled before this function resolves, so the turn still cannot report success on a lost row.
+ // The rejection is captured rather than left floating, so a failed write surfaces at the await.
+ let inboundFailure:unknown=null;
+ const inboundWrite=db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
+  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run()
+  .then(()=>{},(error:unknown)=>{inboundFailure=error;});
+ const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
+ clock.mark("inboundWriteStarted");
  const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});clock.mark("provider");
  const intent=classifyAiIntent(inputText);
  const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
-  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true}});clock.mark("model");
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true},...(onDelta?{onDelta}:{})});clock.mark("model");
   const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
    const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
-   await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
-    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run();clock.mark("replyWrite");
+   // Both writes are settled here, after the reply has already been streamed to the caller. They are
+   // still guaranteed before the turn resolves; they just no longer sit between question and audio.
+   await Promise.all([
+    settleInbound(),
+    db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
+     .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run(),
+   ]);clock.mark("replyWrite");
    // `latencyMs` brackets only the provider round trip, so the "model" stage minus this is the runtime
    // control cost (reservation sweep, circuit read, its own schema guard) that precedes every call.
    // The resolved model ref is reported because the reasoning-effort shortcut applies to exactly one
@@ -114,6 +157,8 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
    return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"fast",timings:clock.marks,modelRef:generated.modelRef||null,providerRef:generated.provider||null,upstreamMs:generated.latencyMs??null};
   }
  }
+ // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
+ await settleInbound();
  const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});

@@ -10,7 +10,19 @@ const integer=(env:Env,key:string,fallback:number,min:number,max:number)=>{const
 const dayStart=(now:number)=>Math.floor(now/86_400_000)*86_400_000;
 const reservationTtlMs=(env:Env)=>integer(env,"PAWSPACE_AI_RESERVATION_TTL_MS",180_000,30_000,3_600_000);
 
+/**
+ * The second schema guard on every voice turn, and the same waste as the first: CREATE ... IF NOT
+ * EXISTS that has nothing left to create, paid for with a D1 round trip before each provider call.
+ * Keyed on the binding so each database is still guarded once.
+ */
+const runtimeControlReady=new WeakSet<D1Database>();
 export async function ensureAiProviderRuntimeControl(db:D1Database){
+ if(runtimeControlReady.has(db))return;
+ await ensureAiProviderRuntimeControlOnce(db);
+ // After the batch resolves, so a failure is retried rather than recorded as done.
+ runtimeControlReady.add(db);
+}
+async function ensureAiProviderRuntimeControlOnce(db:D1Database){
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS ai_provider_runtime_requests (id TEXT PRIMARY KEY,provider TEXT NOT NULL,model_ref TEXT NOT NULL,channel TEXT NOT NULL,intent TEXT NOT NULL,reserved_tokens INTEGER NOT NULL,reserved_cost_micros INTEGER NOT NULL DEFAULT 0,actual_tokens INTEGER,actual_cost_micros INTEGER,status TEXT NOT NULL,failure_class TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_ai_provider_runtime_requests_created ON ai_provider_runtime_requests(created_at,status)"),

@@ -9,7 +9,20 @@ const GLOBAL_QUIET_START_HOUR=21;
 const GLOBAL_QUIET_END_HOUR=9;
 const TERMINAL_MESSAGE_STATUSES=new Set(["read","dead_letter","suppressed"]);
 
-export async function ensureCommunicationTables(db:D1Database){await db.batch([
+/**
+ * These statements are all CREATE ... IF NOT EXISTS, so every run after the first is a no-op that
+ * still costs a full D1 round trip for the whole batch. On a live phone turn that is 329ms the caller
+ * spends listening to silence for nothing. Keyed on the D1 binding itself so a different database —
+ * a test harness, the preview instance — is still guarded on its own first use.
+ */
+const communicationTablesReady=new WeakSet<D1Database>();
+export async function ensureCommunicationTables(db:D1Database){
+ if(communicationTablesReady.has(db))return;
+ await ensureCommunicationTablesOnce(db);
+ // Recorded only after the batch resolves, so a failed guard is retried rather than assumed done.
+ communicationTablesReady.add(db);
+}
+async function ensureCommunicationTablesOnce(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS communication_policies (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,zone_id TEXT,enforcement_mode TEXT NOT NULL DEFAULT 'observe',quiet_start_hour INTEGER NOT NULL DEFAULT 21,quiet_end_hour INTEGER NOT NULL DEFAULT 9,promotional_cap_7d INTEGER NOT NULL DEFAULT 3,max_attempts INTEGER NOT NULL DEFAULT 5,retry_base_minutes INTEGER NOT NULL DEFAULT 5,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_communication_policy_lookup ON communication_policies(city_id,zone_id,active,effective_from,effective_to)"),
  db.prepare("CREATE TABLE IF NOT EXISTS communication_threads (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT,lead_id TEXT,ticket_id TEXT,status TEXT NOT NULL DEFAULT 'open',assigned_to TEXT,sla_due_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
