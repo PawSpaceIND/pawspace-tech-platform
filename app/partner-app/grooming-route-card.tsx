@@ -46,9 +46,11 @@ export default function GroomingRouteCard({bookingId,providerId,managedTracking=
   // Held apart from `data` on purpose: a rejected fix must explain itself WITHOUT overwriting the last
   // accepted route and ETA, which are still the best information the partner has.
   const[rejection,setRejection]=useState<{trustState?:string;reason?:string|null}|null>(null);
-  const watchId=useRef<number|null>(null),lastSentAt=useRef(0),inFlight=useRef(false),pending=useRef<GeolocationPosition|null>(null),controller=useRef<AbortController|null>(null),sequence=useRef(0),lastAppliedSequence=useRef(0),mounted=useRef(true);
+  const watchId=useRef<number|null>(null),lastSentAt=useRef(0),inFlight=useRef(false),pending=useRef<GeolocationPosition|null>(null),controller=useRef<AbortController|null>(null),sequence=useRef(0),lastAppliedSequence=useRef(0),mounted=useRef(true),loadVersion=useRef(0);
 
-  const load=async()=>{try{const response=await fetch(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"});const body=await response.json() as ApiResponse;if(response.ok&&body.data){setData(body.data);setMapTick(value=>value+1);setError("");}else if(response.status!==404)throw new Error(body.error||"Unable to load route");}catch(err){setError(err instanceof Error?err.message:"Unable to load route");}};
+  // Manual refresh and managed polling overlap with GPS posts: apply a GET only if it is the newest GET
+  // and no GPS response landed while it was in flight, so an older route never replaces a newer one.
+  const load=async()=>{const version=++loadVersion.current,appliedAtStart=lastAppliedSequence.current;try{const response=await fetch(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"});const body=await response.json() as ApiResponse;if(!mounted.current||version!==loadVersion.current||lastAppliedSequence.current!==appliedAtStart)return;if(response.ok&&body.data){setData(body.data);setMapTick(value=>value+1);setError("");}else if(response.status!==404)throw new Error(body.error||"Unable to load route");}catch(err){setError(err instanceof Error?err.message:"Unable to load route");}};
 
   const transmit=async(position:GeolocationPosition)=>{
     const seq=++sequence.current,abort=new AbortController();controller.current=abort;inFlight.current=true;

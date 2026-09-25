@@ -14,9 +14,8 @@ async function liveMapResponse(db:D1Database,booking:Row,bookingId:string,tracki
  const destination=await optionalRow(db,"booking_service_locations","SELECT latitude,longitude FROM booking_service_locations WHERE booking_id=? AND customer_id=? AND provider_id=? AND status='active'",[bookingId,String(booking.customer_id),String(booking.provider_id)]);
  const providerLat=finiteCoordinate(point?.latitude,-90,90),providerLng=finiteCoordinate(point?.longitude,-180,180),destLat=finiteCoordinate(destination?.latitude,-90,90),destLng=finiteCoordinate(destination?.longitude,-180,180);
  if(providerLat===null||providerLng===null||destLat===null||destLng===null)return new Response("Live map coordinates are unavailable",{status:409,headers:{"cache-control":"no-store"}});
- const snapshot=point?.id?await optionalRow(db,"route_eta_snapshots","SELECT detail_json FROM route_eta_snapshots WHERE booking_id=? AND provider_id=? AND origin_location_event_id=? ORDER BY calculated_at DESC LIMIT 1",[bookingId,String(booking.provider_id),String(point.id)]):null;
- let polyline:string|null=null;try{const detail=snapshot?JSON.parse(String(snapshot.detail_json||"{}")) as Record<string,unknown>:{};if(typeof detail.polyline==="string")polyline=detail.polyline;}catch{}
- return liveStaticMapResponse({provider:{lat:providerLat,lng:providerLng},destination:{lat:destLat,lng:destLng},polyline,privacyRounded:true});
+ // No route polyline for customers: it begins at the provider's exact fix (CUSTOMER_LOCATION_DISCLOSURE_POLICY).
+ return liveStaticMapResponse({provider:{lat:providerLat,lng:providerLng},destination:{lat:destLat,lng:destLng},privacyRounded:true});
 }
 /**
  * Provider recovery moves only the WORK ORDER to reassignment_needed; canonical_bookings keeps

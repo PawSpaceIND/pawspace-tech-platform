@@ -15,7 +15,9 @@ export async function liveStaticMapResponse(input:Input){
  url.searchParams.set("size","640x360");url.searchParams.set("scale","2");url.searchParams.set("maptype","roadmap");
  url.searchParams.append("markers","color:0x1f8f5f|label:P|"+provider.lat+","+provider.lng);
  url.searchParams.append("markers","color:0xc7962d|label:H|"+input.destination.lat+","+input.destination.lng);
- if(input.polyline)url.searchParams.append("path","weight:5|color:0x5d22a4ff|enc:"+input.polyline);
+ // A Routes polyline starts at the provider's exact fix, so drawing it would undo the rounding above.
+ // Only the provider's own (exact) map carries the route line.
+ if(input.polyline&&!input.privacyRounded)url.searchParams.append("path","weight:5|color:0x5d22a4ff|enc:"+input.polyline);
  url.searchParams.set("key",key);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
  try{const response=await fetch(url.toString(),{signal:controller.signal});if(!response.ok)return new Response("Google map is temporarily unavailable",{status:502,headers:{"cache-control":"no-store"}});const bytes=await response.arrayBuffer();return new Response(bytes,{status:200,headers:{"content-type":response.headers.get("content-type")||"image/png","cache-control":"private, no-store, max-age=0","x-pawspace-map-source":"google-static-maps","x-pawspace-location-privacy":input.privacyRounded?"provider-rounded-3dp":"provider-owned-exact"}});}catch{return new Response("Google map is temporarily unavailable",{status:502,headers:{"cache-control":"no-store"}});}finally{clearTimeout(timer);}

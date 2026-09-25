@@ -18,12 +18,11 @@ test("V2 live tracking has one reusable multi-role presentation core",()=>{
  assert.match(panel,/providerLabel/);
 });
 
-test("customer live map stays privacy projected and draws the governed route",()=>{
+test("customer live map stays privacy projected and never draws the exact-origin route",()=>{
  const route=read("app/api/customer-grooming-summary/route.ts");
  const helper=read("lib/live-static-map.ts");
  assert.match(route,/privacyRounded:true/);
- assert.match(route,/route_eta_snapshots/);
- assert.match(route,/detail\.polyline/);
+ assert.doesNotMatch(route,/detail\.polyline/,"the customer map must not read the exact-origin Routes polyline");
  assert.match(helper,/provider-rounded-3dp/);
  assert.match(helper,/path/);
  assert.match(helper,/encoded|enc:/);
@@ -37,6 +36,7 @@ test("partner live route uses provider-owned exact map and navigation without ex
  assert.match(card,/LiveTrackingPanel/);
  assert.match(card,/Open navigation/);
  assert.match(card,/map=1/);
+ assert.match(card,/version!==loadVersion\.current\|\|lastAppliedSequence\.current!==appliedAtStart/,"a route refresh never overwrites a newer GPS result");
  assert.doesNotMatch(card,/GOOGLE_MAPS_SERVER_API_KEY/);
  assert.match(helper,/GOOGLE_MAPS_SERVER_API_KEY_UAT/);
 });
@@ -49,6 +49,9 @@ test("Ops exposes canonical live sessions and recovery exceptions, not raw custo
  assert.match(page,/Recovery attention/);
  assert.match(page,/Raw GPS history is deliberately not rendered here/);
  assert.match(hub,/\/team\/operations\/live-tracking/);
+ assert.match(page,/request\.current\?\.abort\(\)/,"each poll cancels the previous request");
+ assert.match(page,/current!==version\.current/,"only the newest poll is applied");
+ assert.match(page,/bookings\.manage/,"a provider-scoped payload is reported as missing access, not as zero sessions");
 });
 
 test("live static map helper refuses bad input, keeps the key server-side and rounds only customer views",async t=>{
@@ -68,11 +71,13 @@ test("live static map helper refuses bad input, keeps the key server-side and ro
  const sent=calls[0];
  assert.equal(sent.origin+sent.pathname,"https://maps.googleapis.com/maps/api/staticmap");
  assert.ok(sent.searchParams.getAll("markers").some(m=>m.endsWith("|12.971,77.595")),"customer view rounds the provider to 3dp");
- assert.ok(sent.searchParams.getAll("path").some(p=>p.endsWith("enc:abc~def")),"the stored Routes polyline is drawn");
- const partner=await liveStaticMapResponse({provider,destination,privacyRounded:false});
+ assert.equal(sent.searchParams.getAll("path").length,0,"a privacy-rounded map never draws the polyline, which starts at the exact fix");
+ const partner=await liveStaticMapResponse({provider,destination,polyline:"abc~def",privacyRounded:false});
  assert.equal(partner.headers.get("x-pawspace-location-privacy"),"provider-owned-exact");
  assert.ok(calls[1].searchParams.getAll("markers").some(m=>m.endsWith("|12.971234,77.594567")),"the provider sees their own exact position");
- assert.equal(calls[1].searchParams.getAll("path").length,0,"no path without a stored polyline");
+ assert.ok(calls[1].searchParams.getAll("path").some(p=>p.endsWith("enc:abc~def")),"the provider's own map draws the stored Routes polyline");
+ await liveStaticMapResponse({provider,destination,privacyRounded:false});
+ assert.equal(calls[2].searchParams.getAll("path").length,0,"no path without a stored polyline");
  globalThis.fetch=async()=>new Response("denied",{status:403});
  assert.equal((await liveStaticMapResponse({provider,destination,privacyRounded:true})).status,502,"a Google refusal is a gateway failure, not an image");
 });

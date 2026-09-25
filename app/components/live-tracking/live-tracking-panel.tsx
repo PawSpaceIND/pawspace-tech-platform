@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import {useState} from "react";
 import styles from "./live-tracking-panel.module.css";
 
 type Action={label:string;href:string;kind?:"primary"|"secondary";external?:boolean};
@@ -20,13 +21,15 @@ export type LiveTrackingPanelProps={
 
 export default function LiveTrackingPanel({title,eyebrow="LIVE TRACKING",state,mapUrl,mapKey,etaMinutes,distanceKm,providerLabel,detail,live=false,actions=[],onRecenter}:LiveTrackingPanelProps){
  const eta=etaMinutes!=null&&Number.isFinite(Number(etaMinutes))?Math.max(1,Math.round(Number(etaMinutes))):null;
+ // The map endpoint answers 409/502/503 while coordinates or Google are unavailable; never show a broken image.
+ const [failedUrl,setFailedUrl]=useState<string|null>(null),showMap=Boolean(mapUrl)&&failedUrl!==mapUrl;
  const distance=distanceKm!=null&&Number.isFinite(Number(distanceKm))?Number(distanceKm):null;
  return <section className={styles.panel} aria-label={title}>
    <div className={styles.mapWrap}>
-     {mapUrl?<img key={mapKey} className={styles.map} src={mapUrl} alt={"Live route map for "+title}/>:<div className={styles.placeholder}>The live route map will appear after PawSpace receives a trusted provider location and a route is available.</div>}
-     {mapUrl&&<div className={styles.mapShade}/>}
+     {showMap?<img key={mapKey} className={styles.map} src={mapUrl!} alt={"Live route map for "+title} onError={()=>setFailedUrl(mapUrl??null)}/>:<div className={styles.placeholder}>The live route map will appear after PawSpace receives a trusted provider location and a route is available.</div>}
+     {showMap&&<div className={styles.mapShade}/>}
      {live&&<span className={styles.livePill}><i/>LIVE</span>}
-     {mapUrl&&onRecenter&&<button type="button" className={styles.recenter} onClick={onRecenter} aria-label="Recenter live map">⌖</button>}
+     {showMap&&onRecenter&&<button type="button" className={styles.recenter} onClick={onRecenter} aria-label="Recenter live map">⌖</button>}
    </div>
    <div className={styles.body}>
      <div className={styles.head}><div><span className={styles.eyebrow}>{eyebrow}</span><h3>{title}</h3></div><span className={styles.state}>{state.replaceAll("_"," ")}</span></div>

@@ -1,5 +1,5 @@
 "use client";
-import {useCallback,useEffect,useMemo,useState} from "react";
+import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import Link from "next/link";
 import styles from "./live-tracking.module.css";
 
@@ -13,8 +13,18 @@ const active=(row:Row)=>["active","started","on_the_way","arrived","in_service"]
 
 export default function OpsLiveTracking(){
  const[data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true),[tick,setTick]=useState(0);
- const load=useCallback(async()=>{try{const r=await fetch("/api/location-recovery",{cache:"no-store"}),b=await r.json() as Payload;if(!r.ok||!b.data)throw new Error(b.error||"Unable to load live tracking");setData(b.data);setError("");}catch(e){setError(e instanceof Error?e.message:"Unable to load live tracking");}finally{setLoading(false);}},[]);
- useEffect(()=>{const first=window.setTimeout(()=>void load(),0);const id=window.setInterval(()=>{setTick(v=>v+1);void load();},10000);return()=>{window.clearTimeout(first);window.clearInterval(id);};},[load]);
+ const request=useRef<AbortController|null>(null),version=useRef(0);
+ // Each poll aborts the previous one and only the newest response is applied, so a slow older snapshot
+ // never overwrites newer sessions, recoveries or punctuality events.
+ const load=useCallback(async()=>{const current=++version.current;request.current?.abort();const controller=new AbortController();request.current=controller;
+  try{const r=await fetch("/api/location-recovery",{cache:"no-store",signal:controller.signal}),b=await r.json().catch(()=>({})) as Payload;if(current!==version.current)return;
+   // Only bookings.manage (or preview) actors receive the cross-provider snapshot; anyone else gets a
+   // provider-scoped payload or 403, which must not render as "0 active sessions".
+   if(r.status===401||r.status===403||(r.ok&&!Array.isArray(b.data?.sessions)))throw new Error("Live tracking control needs Operations booking-management access (bookings.manage).");
+   if(!r.ok||!b.data)throw new Error(b.error||"Unable to load live tracking");setData(b.data);setError("");}
+  catch(e){if(controller.signal.aborted||current!==version.current)return;setError(e instanceof Error?e.message:"Unable to load live tracking");}
+  finally{if(current===version.current)setLoading(false);}},[]);
+ useEffect(()=>{const first=window.setTimeout(()=>void load(),0);const id=window.setInterval(()=>{setTick(v=>v+1);void load();},10000);return()=>{window.clearTimeout(first);window.clearInterval(id);version.current+=1;request.current?.abort();};},[load]);
  const sessions=useMemo(()=>data?.sessions??[],[data]),recoveries=useMemo(()=>data?.recoveries??[],[data]),events=useMemo(()=>data?.punctualityEvents??[],[data]);
  const liveSessions=sessions.filter(active),openRecoveries=recoveries.filter(row=>!["resolved","cancelled","closed"].includes(String(row.recovery_state||row.status||"").toLowerCase()));
  return <main className={styles.page}>
