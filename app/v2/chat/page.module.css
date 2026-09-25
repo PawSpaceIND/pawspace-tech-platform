@@ -7,3 +7,6 @@
 .aiLabel{display:flex;align-items:center;gap:8px;margin-bottom:8px;color:#173d32;font-weight:850}
 .aiLabel img{width:24px;height:24px;border-radius:8px}
 @media(max-width:640px){.bubble{max-width:90%}}
+
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.page { composes:palette from "../../components/brand/brand-surface.module.css"; }
