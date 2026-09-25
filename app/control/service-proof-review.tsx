@@ -61,15 +61,15 @@ export default function ServiceProofReview({ bookingId, title }: { bookingId?: s
   };
 
   const pending = assets.filter(asset => asset.review_status === "pending_review");
-  return <section aria-label={title ?? "Service proof review"} style={{ border: "1px solid #d9e2dc", borderRadius: 14, padding: 14, display: "grid", gap: 10, background: "#fff" }}>
-    <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><div><span style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", opacity: .7 }}>Maker / checker</span><h4 style={{ margin: 0 }}>{title ?? "Service proof review"}</h4></div><button type="button" onClick={() => void load()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button></header>
-    {error && <p role="alert" style={{ color: "#b3261e", margin: 0 }}>{error}</p>}
+  return <section aria-label={title ?? "Service proof review"} style={{ border: "1px solid var(--staff-line, #d9e2dc)", borderRadius: 14, padding: 14, display: "grid", gap: 10, background: "var(--staff-surface, #fff)" }}>
+    <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><div><span style={{ fontSize: 14, letterSpacing: ".08em", textTransform: "uppercase", opacity: .7 }}>Maker / checker</span><h4 style={{ margin: 0 }}>{title ?? "Service proof review"}</h4></div><button type="button" onClick={() => void load()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button></header>
+    {error && <p role="alert" style={{ color: "var(--staff-muted, #b3261e)", margin: 0 }}>{error}</p>}
     {notice && <p role="status" style={{ margin: 0 }}>{notice}</p>}
     {!loading && !assets.length && <p style={{ margin: 0, opacity: .75 }}>{bookingId ? "No proof photos registered for this booking yet." : "No proof photos are waiting for review."}</p>}
     {assets.map(asset => <article key={asset.id} style={{ display: "grid", gap: 6, padding: 10, borderRadius: 10, background: asset.review_status === "pending_review" ? "#fff8e6" : "#f4f7f5" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}><strong>{label(asset.purpose)} photo</strong><span>{stateOf(asset)}</span></div>
       <small>{!bookingId && <>Booking {asset.booking_id} · {asset.provider_name ?? asset.provider_id} · </>}{asset.mime_type} · {Math.round(Number(asset.size_bytes) / 1024)} KB · uploaded {when(asset.created_at)}{asset.created_by ? ` by ${asset.created_by}` : ""}{asset.reviewed_by ? ` · reviewed by ${asset.reviewed_by}` : ""}{asset.review_reason ? ` · "${asset.review_reason}"` : ""}</small>
-      {asset.objectStored === false && <p role="alert" style={{ margin: 0, color: "#b3261e", fontWeight: 600 }}>⚠ File storage is not connected in this environment. Only the upload&apos;s hash was verified — no image exists to open. Whether that is acceptable to approve is your call.</p>}
+      {asset.objectStored === false && <p role="alert" style={{ margin: 0, color: "var(--staff-muted, #b3261e)", fontWeight: 600 }}>⚠ File storage is not connected in this environment. Only the upload&apos;s hash was verified — no image exists to open. Whether that is acceptable to approve is your call.</p>}
       {asset.review_status === "pending_review" && <div style={{ display: "grid", gap: 6 }}>
         <input aria-label={`Review reason for ${label(asset.purpose)} photo`} placeholder="Reason for the decision (required)" value={reasons[asset.id] ?? ""} onChange={event => setReasons(current => ({ ...current, [asset.id]: event.target.value }))} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

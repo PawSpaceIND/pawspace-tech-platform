@@ -2,6 +2,7 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
+import StaffModule from "../../../components/staff-workspace/StaffModule";
 
 type Row=Record<string,unknown>;
 type Overview={modules:Array<Row&{id:string;title:string;service_code:string;status:string;version:number;pass_pct:number;required:number;quizQuestions:number;providersPassedCurrentVersion:number;totalAttempts:number}>;providers:Array<{providerId:string;name:string;trainingReady:boolean;requiredComplete:number;requiredTotal:number}>;metrics:{published:number;draft:number;providersNotReady:number}};
@@ -21,14 +22,14 @@ export default function ProviderTrainingPage(){
   const quiz=[{question,options:options.split("|").map(option=>option.trim()).filter(Boolean),answerIndex:Number(answerIndex)}];
   void run({action:"save_module",title,serviceCode,summary,sections:sections.split("\n").map(section=>section.trim()).filter(Boolean),quiz,passPct:Number(passPct)},"Module saved as draft");
  }
- return <main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:16}}>
+ return <StaffModule><main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"inherit",display:"grid",gap:16}}>
   <header><Link href="/team/people">← People home</Link><p>TEAM OS · PEOPLE · PROVIDER TRAINING</p><h1>Provider training & SOP library</h1><p>Versioned SOP modules with a real pass mark. Republishing a module invalidates completions — retraining is the point of a content change.</p></header>
-  {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}}>
+  {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}} data-staff-grid="stats">
    {[["Published modules",overview.metrics.published],["Drafts",overview.metrics.draft],["Providers not ready",overview.metrics.providersNotReady]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
   </section>}
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
-  <section style={{display:"grid",gridTemplateColumns:"minmax(0,.9fr) minmax(0,1.1fr)",gap:16,alignItems:"start"}}>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  <section style={{display:"grid",gridTemplateColumns:"minmax(0,.9fr) minmax(0,1.1fr)",gap:16,alignItems:"start"}} data-staff-grid="split">
+   <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
     <h2>Author a module</h2>
     <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}>{["all","grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","pet_food","pet_relocation"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select>
@@ -43,9 +44,9 @@ export default function ProviderTrainingPage(){
     <button disabled={busy} onClick={saveModule}>Save draft</button>
    </article>
    <section style={{display:"grid",gap:12}}>
-    <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+    <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
      <h2>Modules</h2>
-     {(overview?.modules??[]).map(module=><div key={module.id} style={{borderBottom:"1px solid #eee",padding:"8px 0"}}>
+     {(overview?.modules??[]).map(module=><div key={module.id} style={{borderBottom:"1px solid var(--staff-line)",padding:"8px 0"}}>
       <b>{module.title}</b> · {label(module.service_code)} · v{module.version} · {label(module.status)} · pass ≥{module.pass_pct}% · {module.quizQuestions} question(s)
       <br/><small>{module.providersPassedCurrentVersion} provider(s) passed the current version · {module.totalAttempts} attempt(s) · <code>{module.id}</code></small>
       <div style={{display:"flex",gap:8,marginTop:4}}>
@@ -54,12 +55,12 @@ export default function ProviderTrainingPage(){
       </div>
      </div>)}
     </article>
-    <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+    <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
      <h2>Provider compliance</h2>
      {(overview?.providers??[]).map(provider=><p key={provider.providerId}>{provider.trainingReady?"✅":"❌"} <b>{provider.name}</b> · {provider.requiredComplete}/{provider.requiredTotal} required modules · <code>{provider.providerId}</code></p>)}
     </article>
    </section>
   </section>
   <footer><small>Completion rule: pass the current version&#39;s quiz at or above the module pass mark. Providers complete modules from their own workspace via /api/provider-lms (ownership enforced).</small></footer>
- </main>;
+ </main></StaffModule>;
 }

@@ -41,3 +41,18 @@ test("AI mode is explicit and production delivery remains disabled", () => {
   assert.match(page, /Production delivery disabled/);
   assert.match(route, /productionDelivery:false/);
 });
+
+// Execute the production routing boundary as well as keeping the UI source assertions.
+import {installAiHooks,freshAiDb,seedCustomer,staffActor,inboundMessage} from './helpers/ai-harness.mjs';
+installAiHooks();
+const routingRuntime=await import('../lib/whatsapp-conversation-control.ts');
+test('executed inbox routing refuses AI by default and rejects undocumented mode changes',async t=>{
+ const {sqlite,db}=freshAiDb();t.after(()=>sqlite.close());seedCustomer(sqlite,'UI-INBOX-C','UI Fixture','9000000001');
+ await routingRuntime.ensureWhatsAppConversationControl(db);
+ await inboundMessage(sqlite,db,{threadId:'UI-INBOX-T',customerId:'UI-INBOX-C',text:'Fixture request',channel:'whatsapp',idempotencyKey:'ui-inbox-inbound'});
+ const before=await routingRuntime.getWhatsAppConversationMode(db,'UI-INBOX-T');assert.equal(before.mode,'human_only');assert.equal(before.explicit,false);
+ await assert.rejects(routingRuntime.assertWhatsAppAiRoutingAllowsReply(db,'UI-INBOX-T'),e=>e instanceof Response&&e.status===409);
+ await assert.rejects(routingRuntime.setWhatsAppConversationMode(db,{threadId:'UI-INBOX-T',mode:'ai_assistant',actorEmail:staffActor.email,reason:'short'}),e=>e instanceof Response&&e.status===400);
+ assert.equal((await routingRuntime.getWhatsAppConversationMode(db,'UI-INBOX-T')).mode,'human_only');
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM whatsapp_conversation_routing_events WHERE thread_id=?').get('UI-INBOX-T').n,0);
+});

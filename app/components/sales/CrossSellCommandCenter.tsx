@@ -19,6 +19,7 @@ import type {
 import { NextBestServiceCard } from "./NextBestServiceCard";
 import { UnifiedWorkQueue, type UnifiedWorkQueueCandidate } from "./UnifiedWorkQueue";
 import styles from "./cross-sell-command-center.module.css";
+import StaffModule from "../staff-workspace/StaffModule";
 
 type CustomerPet = { id: string; name: string; species: string; breed: string | null };
 type CustomerBooking = { id: string; serviceCode: string; status: string; scheduledEnd: string; totalAmount: number };
@@ -255,11 +256,11 @@ export default function CrossSellCommandCenter() {
   const workQueue = useMemo(() => queueCandidates(customers, actions), [customers, actions]);
   const recommendations = useMemo(() => recommendationViews(customers, actions), [customers, actions]);
 
-  return <main className={styles.shell}><div className={styles.page}>
+  return <StaffModule><main className={styles.shell}><div className={styles.page}>
     <header className={styles.hero}><div><span>V2 · GROWTH & RETENTION OS</span><h1>Cross-Sell Command Center</h1><p>Explainable next-best-service intelligence, one governed work queue, and contact-safety enforcement for the sales and retention team.</p></div><nav aria-label="Command center navigation"><Link href="/team/sales">Customer 360</Link><Link href="/team">Team home</Link></nav></header>
     <section className={styles.metrics} aria-label="Cross-sell metrics"><article><span>Cross-Sell Revenue Pipeline</span><strong>{money(summary.pipeline)}</strong><small>Active governed cross-sell estimates</small></article><article><span>Attach Rate</span><strong>{summary.attachRate.toFixed(1)}%</strong><small>Customers with 2+ completed services</small></article><article><span>Conversion Rate</span><strong>{summary.conversionRate.toFixed(1)}%</strong><small>Completed ÷ non-suppressed cross-sell actions</small></article></section>
     {loading && <div className={styles.state}>Loading canonical growth signals…</div>}{error && <div className={`${styles.state} ${styles.error}`}>{error}</div>}
     {!loading && !error && <><UnifiedWorkQueue candidates={workQueue} /><section className={styles.recommendations} aria-labelledby="next-best-service-title"><header className={styles.sectionHeader}><div><span>EXPLAINABLE CROSS-SELL</span><h2 id="next-best-service-title">Next Best Service</h2></div><small>{recommendations.length} recommendation{recommendations.length === 1 ? "" : "s"}</small></header><div className={styles.recommendationGrid}>{recommendations.map((view) => <NextBestServiceCard key={view.key} recommendation={view.recommendation} householdName={view.householdName} petName={view.petName} safety={view.safety} />)}</div>{recommendations.length === 0 && <div className={styles.emptyState}><strong>No explainable next-best-service recommendation is ready.</strong><span>The engine only emits recommendations supported by canonical service history; missing pet-age or stated-intent signals are not guessed.</span></div>}</section></>}
     <footer className={styles.footnote}>Priority uses the governed V2 scoring contract. Unknown capacity remains neutral; missing pet age, stated intent, economics, and contribution are never fabricated.</footer>
-  </div></main>;
+  </div></main></StaffModule>;
 }

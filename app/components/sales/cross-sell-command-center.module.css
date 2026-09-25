@@ -446,3 +446,162 @@
     grid-column: auto;
   }
 }
+
+/* STAFF TEAM COMPLETION OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .shell {
+    background: radial-gradient(circle at top right, rgba(111, 62, 178, 0.12), transparent 34rem),
+    var(--staff-raised, #f6f3fa) !important;
+    color: var(--staff-primary, #24133f) !important;
+    font-family: inherit !important
+}
+:global([data-staff-module]) .hero span, :global([data-staff-module]) .sectionHeader span, :global([data-staff-module]) .recommendationCard header span {
+    color: var(--staff-primary, #6c39a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .hero p {
+    color: var(--staff-muted, #6d6477) !important
+}
+:global([data-staff-module]) .hero nav a {
+    background: var(--staff-surface, #ffffff) !important;
+    border: 1px solid var(--staff-line, #dfd4e9) !important;
+    color: var(--staff-primary, #3c1f60) !important
+}
+:global([data-staff-module]) .metrics article, :global([data-staff-module]) .queuePanel, :global([data-staff-module]) .recommendations {
+    background: var(--staff-surface, #ffffff) !important;
+    border: 1px solid var(--staff-line, #e4dbea) !important
+}
+:global([data-staff-module]) .metrics article span, :global([data-staff-module]) .metrics article small {
+    color: var(--staff-muted, #716879) !important
+}
+:global([data-staff-module]) .metrics article small {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sectionHeader {
+    border-bottom: 1px solid var(--staff-line, #eee8f2) !important
+}
+:global([data-staff-module]) .sectionHeader small {
+    color: var(--staff-muted, #776f80) !important
+}
+:global([data-staff-module]) .queueHead {
+    background: var(--staff-surface, #faf8fc) !important;
+    border-bottom: 1px solid var(--staff-line, #eee8f2) !important;
+    color: var(--staff-muted, #7a7084) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .queueRow {
+    border-bottom: 1px solid var(--staff-line, #f0ebf4) !important
+}
+:global([data-staff-module]) .queueRow span, :global([data-staff-module]) .queueRow small {
+    color: var(--staff-muted, #746b7d) !important
+}
+:global([data-staff-module]) .queueRow small {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .priorityCell span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .workType {
+    background: var(--staff-raised, #f3edf9) !important;
+    color: var(--staff-primary, #5f2d97) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .safetyAllowed, :global([data-staff-module]) .safetySuppressed, :global([data-staff-module]) .safetyReview {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .safetyAllowed {
+    background: var(--staff-raised, #e9f8ef) !important;
+    color: var(--staff-success, #176238) !important
+}
+:global([data-staff-module]) .safetySuppressed {
+    background: var(--staff-raised, #fbeaea) !important;
+    color: var(--staff-danger, #982f36) !important
+}
+:global([data-staff-module]) .safetyReview {
+    background: var(--staff-raised, #fff3dc) !important;
+    color: var(--staff-danger, #8b5b09) !important
+}
+:global([data-staff-module]) .recommendationCard {
+    border: 1px solid var(--staff-line, #e7dfec) !important
+}
+:global([data-staff-module]) .recommendationCard header em {
+    background: var(--staff-raised, #f2ebfa) !important;
+    color: var(--staff-primary, #5c2d91) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .householdLine {
+    background: var(--staff-surface, #faf8fc) !important
+}
+:global([data-staff-module]) .householdLine span {
+    color: var(--staff-muted, #756c7e) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .recommendationFacts div {
+    border-left: 3px solid var(--staff-line, #ded0ec) !important
+}
+:global([data-staff-module]) .recommendationFacts dt {
+    color: var(--staff-muted, #766d7f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reasonChips span {
+    background: var(--staff-raised, #f4f0f7) !important;
+    color: var(--staff-muted, #685c73) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .primaryAction {
+    background: var(--staff-primary, #4b168c) !important;
+    color: var(--staff-on-primary, #ffffff) !important
+}
+:global([data-staff-module]) .recommendationDisabled {
+    background: var(--staff-raised, #f5f4f6) !important
+}
+:global([data-staff-module]) .suppressionBanner {
+    background: var(--staff-raised, #eee9ef) !important;
+    border: 1px solid var(--staff-line, #d7cedb) !important
+}
+:global([data-staff-module]) .suppressionBanner strong {
+    color: var(--staff-danger, #742d39) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .suppressionBanner span {
+    color: var(--staff-muted, #6f6674) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .state, :global([data-staff-module]) .emptyState {
+    border: 1px dashed var(--staff-line, #d9cde4) !important;
+    color: var(--staff-muted, #6f6677) !important
+}
+:global([data-staff-module]) .error {
+    background: var(--staff-surface, #fff3f3) !important;
+    border-color: var(--staff-line, #e7b9bd) !important;
+    color: var(--staff-danger, #8c2933) !important
+}
+:global([data-staff-module]) .footnote {
+    color: var(--staff-muted, #756c7e) !important;
+    font-size: 13px !important
+}
+
+/* Staff frame compatibility without modifying recommendation or safety decisions. */
+:global([data-staff-module]) .shell { background:var(--staff-bg) !important; min-width:0; }
+:global([data-staff-module]) .page { min-width:0; }
+:global([data-staff-module]) .hero { flex-wrap:wrap; }
+:global([data-staff-module]) .hero h1 { font-size:32px !important; }
+:global([data-staff-module]) .queuePanel { overflow-x:auto; }
+:global([data-staff-module]) .queueRow > div { min-width:0; overflow-wrap:anywhere; }
+:global([data-staff-module]) .metrics article strong { font-size:28px !important; }
+@media(max-width:1450px) {
+  :global([data-staff-module]) .queueHead { display:none; }
+  :global([data-staff-module]) .queueRow { grid-template-columns:90px minmax(0,1fr) minmax(0,1fr); }
+}
+@media(max-width:760px) {
+  :global([data-staff-module]) .queueRow { grid-template-columns:1fr; }
+  :global([data-staff-module]) .hero h1 { font-size:28px !important; }
+}
+
+/* Keep opportunity and safety details out of the narrow priority column on laptops. */
+@media (min-width:761px) and (max-width:1450px) {
+  :global([data-staff-module]) .queueRow > .priorityCell { grid-column:1; grid-row:1 / span 2; align-self:start; }
+  :global([data-staff-module]) .queueRow > div:nth-child(2) { grid-column:2; grid-row:1; }
+  :global([data-staff-module]) .queueRow > div:nth-child(3) { grid-column:3; grid-row:1; }
+  :global([data-staff-module]) .queueRow > div:nth-child(4) { grid-column:2; grid-row:2; }
+  :global([data-staff-module]) .queueRow > div:nth-child(5) { grid-column:3; grid-row:2; }
+}

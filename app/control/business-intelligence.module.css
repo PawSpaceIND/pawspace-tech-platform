@@ -5,3 +5,407 @@
 @media(max-width:680px){.hero{display:block;padding:22px}.hero h2{font-size:27px}.heroActions{margin-top:18px}.sourceBanner{grid-template-columns:1fr}.sourceBanner button{width:100%}.filters{display:grid;grid-template-columns:1fr 1fr}.filters label{min-width:0}.filters button{grid-column:1/-1}.tabs button{flex:0 0 auto}.metrics{grid-template-columns:1fr 1fr}.metrics article:last-child{grid-column:1/-1}.subscriptionGrid{grid-template-columns:1fr}.reconcile{grid-template-columns:1fr 1fr}.panel{padding:15px}.panel header{display:block}.panel header button,.panel header input{width:100%;margin-top:10px}.panel header>div:last-child{display:grid}.barChart article>div{display:block}.barChart span{display:block;margin-top:3px}.customerRow{grid-template-columns:auto 1fr}.customerRow>b,.customerRow>em{grid-column:2}.reportFormats strong{width:100%}.builderGrid{grid-template-columns:1fr}.builderChecks{display:grid}.reportBuilder footer{align-items:stretch;flex-direction:column}.integrationNote{grid-template-columns:auto 1fr}.integrationNote>b{grid-column:2;width:max-content}.reportList article{grid-template-columns:auto 1fr 1fr}.reportList button{width:100%}.reportList button:first-of-type{grid-column:2}.reportHeader{display:block}.reportHeader button{width:100%;margin-top:15px}.reportSafety{display:block}.reportSafety span{display:block;margin-top:5px}}
 @media(max-width:680px){.modalBackdrop{padding:10px}.modal{max-height:calc(100vh - 20px);padding:17px;border-radius:16px}.modalGrid{grid-template-columns:1fr}.quickRanges button{flex:1}.modal footer{align-items:stretch;flex-direction:column}.modal footer>div{display:grid;grid-template-columns:1fr 1fr}.modal footer button{width:100%}}
 @media print{.heroActions,.filters,.tabs,.sourceBanner button,.panel button,.reportHeader button,.reportFormats,.reportList button{display:none!important}.stack{gap:10px}.panel,.hero,.reportHeader{break-inside:avoid;box-shadow:none}.hero{color:#111;background:#fff;border:1px solid #ccc}.hero p{color:#444}}
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .hero {
+    color: var(--staff-on-primary, #fff) !important;
+    background: linear-gradient(135deg,var(--staff-primary, #251047),var(--staff-primary, #5d22a8)) !important
+}
+:global([data-staff-module]) .hero span, :global([data-staff-module]) .reportHeader span, :global([data-staff-module]) .panel header span, :global([data-staff-module]) .kicker {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .hero p {
+    color: var(--staff-on-primary, #e8ddf5) !important
+}
+:global([data-staff-module]) .hero button, :global([data-staff-module]) .reportHeader button {
+    background: var(--staff-danger, #f6a91a) !important;
+    color: var(--staff-danger, #261100) !important
+}
+:global([data-staff-module]) .hero button+button {
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #4f1a92) !important
+}
+:global([data-staff-module]) .sourceBanner {
+    border: 1px solid var(--staff-line, #d7c6ec) !important;
+    background: var(--staff-surface, #fbf8ff) !important
+}
+:global([data-staff-module]) .sourceBanner i {
+    background: var(--staff-raised, #e5f8f0) !important;
+    color: var(--staff-success, #087a51) !important
+}
+:global([data-staff-module]) .sourceBanner span {
+    color: var(--staff-muted, #71697a) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sourceBanner button, :global([data-staff-module]) .filters button, :global([data-staff-module]) .panel header button, :global([data-staff-module]) .reportFormats button, :global([data-staff-module]) .customerActions button {
+    border: 1px solid var(--staff-line, #ddd1ea) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .sourceBanner aside {
+    border-top: 1px solid var(--staff-line, #e8dff1) !important;
+    color: var(--staff-muted, #62596c) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .sourceBanner aside strong {
+    color: var(--staff-primary, #27143c) !important
+}
+:global([data-staff-module]) .filters {
+    border: 1px solid var(--staff-line, #e6deed) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .filters label {
+    color: var(--staff-muted, #746a7b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .filters select {
+    border: 1px solid var(--staff-line, #e2d8eb) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #2c1a3f) !important
+}
+:global([data-staff-module]) .tabs {
+    background: var(--staff-raised, #ebe4f2) !important
+}
+:global([data-staff-module]) .tabs button {
+    color: var(--staff-muted, #6f6678) !important
+}
+:global([data-staff-module]) .tabs .active {
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .metrics article {
+    border: 1px solid var(--staff-line, #e7deef) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .metrics span {
+    color: var(--staff-muted, #756c7d) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .metrics strong {
+    color: var(--staff-primary, #32125f) !important
+}
+:global([data-staff-module]) .metrics small {
+    color: var(--staff-muted, #817888) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .panel {
+    border: 1px solid var(--staff-line, #e5dcec) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .panel header p, :global([data-staff-module]) .reportHeader p {
+    color: var(--staff-muted, #796f81) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .barChart strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .barChart span {
+    color: var(--staff-muted, #6f6678) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .barChart i, :global([data-staff-module]) .subscriptionGrid i {
+    background: var(--staff-raised, #eee8f3) !important
+}
+:global([data-staff-module]) .barChart i b, :global([data-staff-module]) .subscriptionGrid i span {
+    background: var(--staff-primary, #6530ab) !important
+}
+:global([data-staff-module]) .action {
+    border-bottom: 1px solid var(--staff-line, #eee7f3) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-text, #241633) !important
+}
+:global([data-staff-module]) .action i {
+    background: var(--staff-raised, #f2eafb) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .action small {
+    color: var(--staff-muted, #756c7d) !important
+}
+:global([data-staff-module]) .action b {
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reconcile {
+    border: 1px solid var(--staff-line, #dfd5e8) !important;
+    background: var(--staff-raised, #dfd5e8) !important
+}
+:global([data-staff-module]) .reconcile>div, :global([data-staff-module]) .reconcile article {
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .reconcile>div span {
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reconcile>div strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reconcile article span {
+    color: var(--staff-muted, #7d7484) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .tableHead {
+    background: var(--staff-raised, #f3eef7) !important;
+    color: var(--staff-muted, #776e7f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .table article {
+    border-bottom: 1px solid var(--staff-line, #eee8f2) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .table article strong {
+    color: var(--staff-primary, #31135d) !important
+}
+:global([data-staff-module]) .table article b {
+    color: var(--staff-success, #087a51) !important
+}
+:global([data-staff-module]) .panel footer {
+    background: var(--staff-surface, #faf7fc) !important;
+    color: var(--staff-muted, #6f6678) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .ledger em {
+    background: var(--staff-raised, #f4edf9) !important;
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .panel header input {
+    border: 1px solid var(--staff-line, #e1d7e9) !important
+}
+:global([data-staff-module]) .customerRow {
+    border-bottom: 1px solid var(--staff-line, #eee8f2) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-text, #281838) !important
+}
+:global([data-staff-module]) .customerRow>i {
+    background: var(--staff-raised, #f1e8fa) !important;
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerRow small {
+    color: var(--staff-muted, #7b7282) !important
+}
+:global([data-staff-module]) .customerRow>b {
+    color: var(--staff-primary, #34106f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerRow em {
+    background: var(--staff-raised, #fff1d5) !important;
+    color: var(--staff-danger, #885000) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .selectedCustomer {
+    background: var(--staff-surface, #faf6ff) !important
+}
+:global([data-staff-module]) .masked {
+    background: var(--staff-raised, #f3eff6) !important;
+    color: var(--staff-muted, #756d7c) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerMetrics article {
+    border: 1px solid var(--staff-line, #e9e1ef) !important
+}
+:global([data-staff-module]) .customerMetrics span {
+    color: var(--staff-muted, #827887) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerMetrics strong {
+    color: var(--staff-primary, #351164) !important
+}
+:global([data-staff-module]) .detail {
+    border-bottom: 1px solid var(--staff-line, #eee8f2) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .detail span {
+    color: var(--staff-muted, #776e7f) !important
+}
+:global([data-staff-module]) .customerActions button:first-child {
+    background: var(--staff-primary, #5d22a8) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .subscriptionGrid article {
+    border: 1px solid var(--staff-line, #e8e0ee) !important
+}
+:global([data-staff-module]) .subscriptionGrid article strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .subscriptionGrid article span {
+    color: var(--staff-muted, #7d7484) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .subscriptionGrid article>b {
+    color: var(--staff-primary, #351064) !important
+}
+:global([data-staff-module]) .subscriptionGrid article small {
+    color: var(--staff-muted, #6f6677) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportHeader {
+    border: 1px solid var(--staff-line, #ded1eb) !important;
+    background: linear-gradient(120deg,var(--staff-surface, #fff),var(--staff-raised, #f5edfc)) !important
+}
+:global([data-staff-module]) .reportFormats {
+    border: 1px solid var(--staff-line, #e6dced) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .reportList article {
+    border: 1px solid var(--staff-line, #e7deee) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .reportList i {
+    background: var(--staff-raised, #f2eafb) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .reportList span {
+    color: var(--staff-muted, #786f80) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportList b {
+    color: var(--staff-muted, #6c6274) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportList button {
+    border: 1px solid var(--staff-line, #dfd5e7) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportSafety {
+    background: var(--staff-primary, #2b104e) !important;
+    color: var(--staff-on-primary, #fff) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportSafety span {
+    color: var(--staff-on-primary, #ddd0e9) !important
+}
+:global([data-staff-module]) .reportBuilder {
+    border: 1px solid var(--staff-line, #d8c6e8) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .reportBuilder header span {
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportBuilder p {
+    color: var(--staff-muted, #796f81) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderGrid label {
+    color: var(--staff-muted, #6e6476) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .builderGrid input, :global([data-staff-module]) .builderGrid select {
+    border: 1px solid var(--staff-line, #e1d7e9) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #2c1a3f) !important
+}
+:global([data-staff-module]) .builderChecks {
+    color: var(--staff-muted, #5f5568) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportBuilder footer {
+    border-top: 1px solid var(--staff-line, #eee7f3) !important
+}
+:global([data-staff-module]) .reportBuilder footer span {
+    color: var(--staff-muted, #786f80) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .reportBuilder footer button {
+    background: var(--staff-primary, #5d22a8) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .integrationNote {
+    border: 1px solid var(--staff-line, #dbe6dc) !important;
+    background: var(--staff-surface, #f8fcf8) !important
+}
+:global([data-staff-module]) .integrationNote i {
+    background: var(--staff-success, #25894b) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .integrationNote span {
+    color: var(--staff-muted, #657169) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .integrationNote>b {
+    background: var(--staff-raised, #e0f2e5) !important;
+    color: var(--staff-success, #176936) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal {
+    border: 1px solid var(--staff-line, #d8c9e6) !important;
+    background: var(--staff-surface, #fff) !important
+}
+:global([data-staff-module]) .modal header span {
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal header h3 {
+    color: var(--staff-primary, #29133f) !important
+}
+:global([data-staff-module]) .modal header p {
+    color: var(--staff-muted, #746a7d) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal header>button {
+    border: 1px solid var(--staff-line, #e1d7e9) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .quickRanges button {
+    border: 1px solid var(--staff-line, #ddd1e8) !important;
+    background: var(--staff-surface, #faf7fc) !important;
+    color: var(--staff-primary, #5d22a8) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modalGrid label {
+    color: var(--staff-muted, #62596b) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modalGrid input, :global([data-staff-module]) .modalGrid select {
+    border: 1px solid var(--staff-line, #dfd4e7) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #2b173e) !important
+}
+:global([data-staff-module]) .customerDateNote {
+    border: 1px solid var(--staff-line, #cfe7db) !important;
+    background: var(--staff-raised, #f4fbf7) !important;
+    color: var(--staff-success, #176940) !important
+}
+:global([data-staff-module]) .customerDateNote strong {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .customerDateNote span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal footer {
+    border-top: 1px solid var(--staff-line, #eee7f3) !important
+}
+:global([data-staff-module]) .modal footer>span {
+    color: var(--staff-muted, #776e7f) !important;
+    font-size: 13px !important
+}
+:global([data-staff-module]) .modal footer button {
+    border: 1px solid var(--staff-line, #dacfe3) !important;
+    background: var(--staff-surface, #fff) !important;
+    color: var(--staff-primary, #5d22a8) !important
+}
+:global([data-staff-module]) .modal footer button:last-child {
+    border-color: var(--staff-line, #5d22a8) !important;
+    background: var(--staff-primary, #5d22a8) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .modal footer button:disabled {
+    border-color: var(--staff-line, #cec7d3) !important;
+    background: var(--staff-raised, #cec7d3) !important
+}
+@media print {
+    :global([data-staff-module]) .hero {
+        color: var(--staff-text, #111) !important;
+        background: var(--staff-surface, #fff) !important;
+        border: 1px solid var(--staff-line, #ccc) !important
+    }
+}
+@media print {
+    :global([data-staff-module]) .hero p {
+        color: var(--staff-text, #444) !important
+    }
+}

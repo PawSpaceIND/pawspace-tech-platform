@@ -1,3 +1,174 @@
 .shell{min-height:100vh;background:#f4f1f7;color:#241532;display:grid;grid-template-columns:250px 1fr;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.side{background:#21102f;color:#fff;padding:26px 18px;display:flex;flex-direction:column;min-height:100vh}.brand{font-size:24px;color:#fff;text-decoration:none;margin:0 10px 30px}.brand b{color:#f5b942}.brand span{display:block;font-size:10px;letter-spacing:.18em;color:#bdaec8;margin-top:4px}.side nav{display:grid;gap:7px}.side nav a{color:#cfc2d8;text-decoration:none;padding:12px;border-radius:10px;font-size:13px}.side nav a:hover,.side nav .active{background:#45265a;color:#fff}.boundary{margin-top:auto;border:1px solid #523766;background:#2d183d;border-radius:14px;padding:14px;display:grid;gap:7px;font-size:11px;color:#cdbed7}.boundary b{color:#f5b942;letter-spacing:.1em}.workspace{padding:34px;max-width:1450px;width:100%;box-sizing:border-box}.top{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-bottom:24px}.top span,.panel header span,.external>div:first-child>span{font-size:11px;font-weight:800;letter-spacing:.13em;color:#76558a}.top h1{font-size:32px;margin:6px 0}.top p{margin:0;color:#766b7d}.top button{border:0;border-radius:11px;background:#663684;color:#fff;padding:13px 18px;font-weight:750;cursor:pointer}.top button:disabled{opacity:.55}.hero{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}.hero>div{background:#fff;border:1px solid #e1d8e7;border-radius:16px;padding:20px;display:grid;gap:7px}.hero small{font-weight:800;color:#806b8c;letter-spacing:.08em}.hero strong{font-size:32px}.hero span{font-size:12px;font-weight:800;width:max-content;padding:5px 9px;border-radius:20px}.hero p{font-size:12px;color:#766b7d;margin:0}.good{background:#dcf5e8;color:#17603a}.warn{background:#fff0c9;color:#76540a}.blocked{background:#ffe2df;color:#9b3128}.panel{background:#fff;border:1px solid #e1d8e7;border-radius:17px;margin:18px 0;overflow:hidden}.panel>header{padding:20px 22px;border-bottom:1px solid #eee6f2;display:flex;justify-content:space-between;align-items:center}.panel h2,.external h2{margin:5px 0 0;font-size:21px}.panel header em{font-size:12px;color:#806b8c}.controls article,.integrations article{display:grid;align-items:center;border-bottom:1px solid #f0ebf2;padding:16px 22px}.controls article{grid-template-columns:14px 1fr auto;gap:14px}.controls article:last-child,.integrations article:last-child{border-bottom:0}.controls h3,.integrations h3{font-size:14px;margin:0 0 4px}.controls p,.integrations p{font-size:12px;color:#766b7d;margin:0}.controls article>b{font-size:10px;letter-spacing:.08em;background:#f3eef6;padding:6px 9px;border-radius:18px}.passDot,.blockDot,.warnDot{width:10px;height:10px;border-radius:50%;display:block}.passDot{background:#23a566}.blockDot{background:#d7564a}.warnDot{background:#df9f25}.integrations{display:grid;grid-template-columns:1fr 1fr}.integrations article{grid-template-columns:36px 1fr auto;gap:12px}.passIcon,.failIcon{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-weight:900}.passIcon{background:#dcf5e8;color:#17603a}.failIcon{background:#ffe2df;color:#9b3128}.integrations article>span{font-size:11px;color:#76558a}.external{background:#2b1739;color:#fff;border-radius:17px;padding:24px;display:grid;grid-template-columns:1.1fr 1fr;gap:30px}.external p{color:#c9bcd1;font-size:13px;line-height:1.55}.external>div:last-child{display:grid;grid-template-columns:1fr 1fr;gap:8px}.external article{background:#3a214b;border:1px solid #533865;border-radius:11px;padding:12px;display:grid;grid-template-columns:12px 1fr;gap:5px 9px}.external article b{font-size:12px}.external article span{grid-column:2;font-size:10px;color:#c9bcd1}.workspace>footer{display:flex;justify-content:space-between;padding:18px 4px;font-size:11px;color:#786b7f}.workspace>footer a{color:#663684;font-weight:800;text-decoration:none}.error{background:#ffe2df;color:#8f2b24;border-radius:10px;padding:12px;margin-bottom:14px}.loading{min-height:100vh;display:grid;place-items:center;background:#f4f1f7;color:#5b386f;font:600 15px Inter,system-ui}
 @media(max-width:950px){.shell{grid-template-columns:1fr}.side{min-height:auto}.side nav{grid-template-columns:repeat(5,1fr)}.boundary{display:none}.workspace{padding:24px}.integrations{grid-template-columns:1fr}}
 @media(max-width:680px){.side{padding:14px}.brand{margin:0 0 12px}.side nav{display:flex;overflow:auto}.side nav a{white-space:nowrap}.workspace{padding:16px}.top{align-items:flex-start}.top h1{font-size:25px}.top p{font-size:12px}.top button{min-width:124px}.hero{grid-template-columns:1fr}.controls article{grid-template-columns:12px 1fr}.controls article>b{grid-column:2;width:max-content}.integrations article{grid-template-columns:34px 1fr}.integrations article>span{grid-column:2}.external{grid-template-columns:1fr}.external>div:last-child{grid-template-columns:1fr}.workspace>footer{display:grid;gap:10px}}
+
+/* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
+:global([data-staff-module]) .shell {
+    background: var(--staff-raised, #f4f1f7) !important;
+    color: var(--staff-text, #241532) !important;
+    font-family: inherit !important
+}
+:global([data-staff-module]) .side {
+    background: var(--staff-primary, #21102f) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .brand {
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .brand b {
+    color: var(--staff-danger, #f5b942) !important
+}
+:global([data-staff-module]) .brand span {
+    font-size: 13px !important;
+    color: var(--staff-muted, #bdaec8) !important
+}
+:global([data-staff-module]) .side nav a {
+    color: var(--staff-muted, #cfc2d8) !important
+}
+:global([data-staff-module]) .side nav a:hover, :global([data-staff-module]) .side nav .active {
+    background: var(--staff-primary, #45265a) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .boundary {
+    border: 1px solid var(--staff-line, #523766) !important;
+    background: var(--staff-primary, #2d183d) !important;
+    font-size: 13px !important;
+    color: var(--staff-muted, #cdbed7) !important
+}
+:global([data-staff-module]) .boundary b {
+    color: var(--staff-danger, #f5b942) !important
+}
+:global([data-staff-module]) .top span, :global([data-staff-module]) .panel header span, :global([data-staff-module]) .external>div:first-child>span {
+    font-size: 13px !important;
+    color: var(--staff-primary, #76558a) !important
+}
+:global([data-staff-module]) .top p {
+    color: var(--staff-muted, #766b7d) !important
+}
+:global([data-staff-module]) .top button {
+    background: var(--staff-primary, #663684) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .hero>div {
+    background: var(--staff-surface, #fff) !important;
+    border: 1px solid var(--staff-line, #e1d8e7) !important
+}
+:global([data-staff-module]) .hero small {
+    color: var(--staff-muted, #806b8c) !important
+}
+:global([data-staff-module]) .hero span {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .hero p {
+    font-size: 13px !important;
+    color: var(--staff-muted, #766b7d) !important
+}
+:global([data-staff-module]) .good {
+    background: var(--staff-raised, #dcf5e8) !important;
+    color: var(--staff-success, #17603a) !important
+}
+:global([data-staff-module]) .warn {
+    background: var(--staff-raised, #fff0c9) !important;
+    color: var(--staff-danger, #76540a) !important
+}
+:global([data-staff-module]) .blocked {
+    background: var(--staff-raised, #ffe2df) !important;
+    color: var(--staff-danger, #9b3128) !important
+}
+:global([data-staff-module]) .panel {
+    background: var(--staff-surface, #fff) !important;
+    border: 1px solid var(--staff-line, #e1d8e7) !important
+}
+:global([data-staff-module]) .panel>header {
+    border-bottom: 1px solid var(--staff-line, #eee6f2) !important
+}
+:global([data-staff-module]) .panel header em {
+    font-size: 13px !important;
+    color: var(--staff-muted, #806b8c) !important
+}
+:global([data-staff-module]) .controls article, :global([data-staff-module]) .integrations article {
+    border-bottom: 1px solid var(--staff-line, #f0ebf2) !important
+}
+:global([data-staff-module]) .controls p, :global([data-staff-module]) .integrations p {
+    font-size: 13px !important;
+    color: var(--staff-muted, #766b7d) !important
+}
+:global([data-staff-module]) .controls article>b {
+    font-size: 13px !important;
+    background: var(--staff-raised, #f3eef6) !important
+}
+:global([data-staff-module]) .passDot {
+    background: var(--staff-success, #23a566) !important
+}
+:global([data-staff-module]) .blockDot {
+    background: var(--staff-danger, #d7564a) !important
+}
+:global([data-staff-module]) .warnDot {
+    background: var(--staff-danger, #df9f25) !important
+}
+:global([data-staff-module]) .passIcon {
+    background: var(--staff-raised, #dcf5e8) !important;
+    color: var(--staff-success, #17603a) !important
+}
+:global([data-staff-module]) .failIcon {
+    background: var(--staff-raised, #ffe2df) !important;
+    color: var(--staff-danger, #9b3128) !important
+}
+:global([data-staff-module]) .integrations article>span {
+    font-size: 13px !important;
+    color: var(--staff-primary, #76558a) !important
+}
+:global([data-staff-module]) .external {
+    background: var(--staff-primary, #2b1739) !important;
+    color: var(--staff-on-primary, #fff) !important
+}
+:global([data-staff-module]) .external p {
+    color: var(--staff-muted, #c9bcd1) !important
+}
+:global([data-staff-module]) .external article {
+    background: var(--staff-primary, #3a214b) !important;
+    border: 1px solid var(--staff-line, #533865) !important
+}
+:global([data-staff-module]) .external article b {
+    font-size: 13px !important
+}
+:global([data-staff-module]) .external article span {
+    font-size: 13px !important;
+    color: var(--staff-muted, #c9bcd1) !important
+}
+:global([data-staff-module]) .workspace>footer {
+    font-size: 13px !important;
+    color: var(--staff-muted, #786b7f) !important
+}
+:global([data-staff-module]) .workspace>footer a {
+    color: var(--staff-primary, #663684) !important
+}
+:global([data-staff-module]) .error {
+    background: var(--staff-raised, #ffe2df) !important;
+    color: var(--staff-danger, #8f2b24) !important
+}
+:global([data-staff-module]) .loading {
+    background: var(--staff-raised, #f4f1f7) !important;
+    color: var(--staff-primary, #5b386f) !important
+}
+@media (max-width:680px) {
+    :global([data-staff-module]) .top p {
+        font-size: 13px !important
+    }
+}
+
+/* One shared staff rail, with the original contextual destinations retained. */
+:global([data-staff-module]) .shell { display:block !important; min-width:0; font-family:inherit !important; background:var(--staff-bg) !important; color:var(--staff-text) !important; }
+:global([data-staff-module]) .brand { color:var(--staff-text) !important; }
+:global([data-staff-module]) .boundary { background:var(--staff-raised) !important; }
+:global([data-staff-module]) .workspace { min-width:0; padding:24px; }
+:global([data-staff-module]) .top { flex-wrap:wrap; gap:12px; }
+:global([data-staff-module]) .controls article { min-width:0; grid-template-columns:14px minmax(0,1fr) minmax(100px,.4fr); }
+:global([data-staff-module]) .controls article>div { min-width:0; }
+:global([data-staff-module]) .controls article>button { grid-column:2; justify-self:start; }
+:global([data-staff-module]) .external { background:var(--staff-raised) !important; color:var(--staff-text) !important; }
+:global([data-staff-module]) .external :is(h2,p,span,small,b) { color:var(--staff-text) !important; }
+:global([data-staff-module]) .external article { background:var(--staff-surface) !important; }
+:global([data-staff-module]) .loading { min-height:180px; padding:32px; background:var(--staff-bg) !important; color:var(--staff-text) !important; }
+@media(max-width:1180px){:global([data-staff-module]) .hero,:global([data-staff-module]) .external{grid-template-columns:1fr;}}
+@media(max-width:650px){:global([data-staff-module]) .workspace{padding:16px;} :global([data-staff-module]) .controls article{grid-template-columns:12px minmax(0,1fr);} :global([data-staff-module]) .controls article>b{grid-column:2;} }

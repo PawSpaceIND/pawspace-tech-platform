@@ -23,3 +23,21 @@
 .primary:disabled,.secondary:disabled{opacity:.55;cursor:not-allowed}
 .actions{display:grid;gap:10px}
 .foot{font-size:12px;line-height:1.45;color:var(--ps-muted,#6f687b)}
+
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+.page { composes:palette from "../../components/brand/brand-surface.module.css"; }
+.page.page { background:var(--ps-bg,var(--brand-surface)) !important; color:var(--ps-text,var(--brand-text)) !important; }
+.page .content a { color:var(--ps-primary,var(--brand-muted)) !important; }
+.page .eyebrow { font-size:13px !important; color:var(--ps-primary,var(--brand-muted)) !important; }
+.page .card { border:1px solid var(--ps-border,var(--brand-line)) !important; background:var(--ps-surface,var(--brand-surface)) !important; }
+.page .card dt { color:var(--ps-muted,var(--brand-muted)) !important; }
+.page .reference { font-size:13px !important; color:var(--ps-muted,var(--brand-muted)) !important; }
+.page .success { border-color:var(--brand-line) !important; background:var(--brand-success-bg) !important; }
+.page .success i { background:var(--brand-success-bg) !important; color:var(--brand-success) !important; }
+.page .pending { border-color:var(--brand-line) !important; background:var(--brand-warning-bg) !important; }
+.page .failed { border-color:var(--brand-line) !important; background:var(--brand-danger-bg) !important; }
+.page .status { color:var(--ps-muted,var(--brand-muted)) !important; }
+.page .error { color:var(--brand-danger) !important; }
+.page .primary { background:var(--ps-primary,var(--brand-primary)) !important; color:var(--brand-on-primary) !important; }
+.page .secondary { border:1px solid var(--ps-border,var(--brand-line)) !important; }
+.page .foot { font-size:13px !important; color:var(--ps-muted,var(--brand-muted)) !important; }
