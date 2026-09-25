@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls, specialist-call, or direct-grooming-call.'
+        description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
       specialist_use_case:
@@ -13,6 +13,74 @@ on:
 permissions:
   contents: read
 jobs:
+  # Answers "would streaming actually help, and by how much" without involving staging at all.
+  # The shared staging Worker is deployed by several workstreams, so a measurement that needs a
+  # particular build to still be live is a race this cannot reliably win. The provider is the same
+  # one the Worker calls, so time-to-first-token measured here is the floor the voice turn can reach.
+  measure-voice-llm:
+    if: ${{ inputs.confirm == 'measure-voice-llm' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Compare blocking and streaming provider latency for one voice turn
+        env:
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          PAWSPACE_AI_PROVIDER: ${{ vars.PAWSPACE_AI_PROVIDER }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+          PAWSPACE_AI_PROVIDER_MODEL: ${{ vars.PAWSPACE_AI_PROVIDER_MODEL }}
+        run: |
+          node <<'NODE'
+          // Synthetic prompt only: no customer, pet, booking or catalogue data leaves this job.
+          const key=String(process.env.PAWSPACE_OPENAI_API_KEY||process.env.PAWSPACE_AI_PROVIDER_API_KEY||'').trim();
+          if(!key) throw new Error('no provider credential');
+          const configuredVoice=String(process.env.PAWSPACE_AI_VOICE_MODEL||'').trim();
+          const configuredMain=String(process.env.PAWSPACE_AI_PROVIDER_MODEL||'').trim();
+          const DEFAULT_VOICE='gpt-5.6-luna';
+          const model=configuredVoice||configuredMain||DEFAULT_VOICE;
+          console.log('MODEL_RESOLUTION='+JSON.stringify({
+            providerVar:String(process.env.PAWSPACE_AI_PROVIDER||'').trim()||null,
+            voiceModelVar:configuredVoice||null,mainModelVar:configuredMain||null,
+            resolvedModel:model,isVoiceDefault:model===DEFAULT_VOICE,
+            reasoningShortcutApplies:model===DEFAULT_VOICE}));
+          const instructions='You are PawSpace’s AI grooming concierge on a live phone call in India. Keep every spoken reply to one or two short natural sentences and ask only the next necessary question.';
+          const input='I need grooming today for my dog.';
+          const base={model,instructions,input,max_output_tokens:160,store:false,...(model===DEFAULT_VOICE?{reasoning:{effort:'none'}}:{})};
+          const url='https://api.openai.com/v1/responses';
+          const headers={'content-type':'application/json',authorization:'Bearer '+key};
+
+          const blocking=async()=>{const t=Date.now();const r=await fetch(url,{method:'POST',headers,body:JSON.stringify(base),signal:AbortSignal.timeout(60000)});const body=await r.text();return{status:r.status,totalMs:Date.now()-t,chars:body.length};};
+
+          const streaming=async()=>{
+            const t=Date.now();
+            const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({...base,stream:true}),signal:AbortSignal.timeout(60000)});
+            if(!r.ok)return{status:r.status,error:(await r.text()).slice(0,400)};
+            let headersMs=Date.now()-t,firstDeltaMs=null,firstSentenceMs=null,totalMs=null,acc='',buf='';
+            const decoder=new TextDecoder();
+            for await(const chunk of r.body){
+              buf+=decoder.decode(chunk,{stream:true});
+              if(firstDeltaMs===null&&buf.includes('"response.output_text.delta"'))firstDeltaMs=Date.now()-t;
+              for(const line of buf.split('\n')){
+                if(!line.startsWith('data: '))continue;
+                try{const ev=JSON.parse(line.slice(6));if(ev.type==='response.output_text.delta'&&typeof ev.delta==='string')acc+=ev.delta;}catch{}
+              }
+              if(firstSentenceMs===null&&/[.!?]\s|[.!?]$/.test(acc))firstSentenceMs=Date.now()-t;
+            }
+            totalMs=Date.now()-t;
+            return{status:r.status,headersMs,firstDeltaMs,firstSentenceMs,totalMs,replyChars:acc.length,replyPrefix:acc.slice(0,120)};
+          };
+
+          for(let run=1;run<=2;run++){
+            console.log('BLOCKING_'+run+'='+JSON.stringify(await blocking()));
+            console.log('STREAMING_'+run+'='+JSON.stringify(await streaming()));
+          }
+          NODE
+
   preflight:
     if: ${{ inputs.confirm == 'no-calls' }}
     runs-on: ubuntu-latest
