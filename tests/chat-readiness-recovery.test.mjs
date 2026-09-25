@@ -45,3 +45,34 @@ test('public AI answers Pet Relocation from the canonical service directory',asy
  assert.match(result.ai.turn.output,/Yes\. PawSpace offers Pet Relocation\./);
  assert.equal(result.serviceDirectory.find(service=>service.code==='relocation')?.enabled,true);
 });
+
+test('public AI chat still answers when the service-control read fails',async t=>{
+ const {db}=await world(t);
+ const fail=async()=>{throw new Error('injected service control failure');};
+ const broken={...db,prepare(sql){if(sql.includes('service_control')){const failing={bind:()=>failing,run:fail,all:fail,first:fail};return failing;}return db.prepare(sql);},batch:async statements=>{for(const statement of statements)await statement.run();return[];}};
+ const result=await adapter.runPublicAiWebChat(broken,{query:'Does PawSpace offer pet relocation?',sessionKey:'service-control-failure'});
+ assert.equal(result.ai.turn.outcome,'knowledge_missing');
+ assert.match(result.ai.turn.output,/I can help with Grooming/);
+});
+
+test('public AI does not answer deterministically about one service when several are named',async t=>{
+ const {db}=await world(t);
+ const result=await adapter.runPublicAiWebChat(db,{query:'Do you offer pet taxi and boarding?',sessionKey:'multi-service-check'});
+ assert.notEqual(result.ai.turn.provider,'canonical_service_directory');
+ const single=await adapter.runPublicAiWebChat(db,{query:'Do you offer boarding?',sessionKey:'single-service-check'});
+ assert.equal(single.ai.turn.provider,'canonical_service_directory');
+ assert.match(single.ai.turn.output,/PawSpace offers Boarding\./);
+});
+
+test('public AI never exposes the operator-entered disabled reason',async t=>{
+ const {db}=await world(t);
+ const {setServiceEnabled}=await import('../lib/service-control.ts');
+ await setServiceEnabled(db,{serviceCode:'relocation',enabled:false,reason:'INTERNAL vendor contract dispute ticket OPS-991',actorEmail:'ops@pawspace.test'});
+ const result=await adapter.runPublicAiWebChat(db,{query:'Does PawSpace offer pet relocation?',sessionKey:'disabled-reason-check'});
+ assert.equal(result.ai.turn.provider,'canonical_service_directory');
+ assert.equal(result.ai.turn.output,'Pet Relocation is temporarily unavailable on PawSpace.');
+ const serialized=JSON.stringify(result);
+ assert.ok(!serialized.includes('OPS-991'),serialized);
+ assert.ok(!serialized.includes('disabledReason'),serialized);
+ assert.equal(result.serviceDirectory.find(service=>service.code==='relocation')?.enabled,false);
+});
