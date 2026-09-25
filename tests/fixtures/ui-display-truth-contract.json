@@ -1,35 +1,134 @@
 {
-  "base": "4586a9075c6fbe9715ab4e7149e4ebfa61be97ca",
-  "routes": [
-    "/partner/jobs",
-    "/partner/workspace",
-    "/partner/rates",
-    "/partner/onboarding",
-    "/partner/funeral",
-    "/driver",
-    "/driver/proof",
-    "/driver/recovery",
-    "/host",
-    "/host/proof",
-    "/trainer",
-    "/sitter",
-    "/sitter/proof",
-    "/walker",
-    "/walker/proof",
-    "/walker/recovery"
-  ],
-  "layouts": [
-    "app/partner/jobs/layout.tsx",
-    "app/partner/workspace/layout.tsx",
-    "app/partner/rates/layout.tsx",
-    "app/partner/onboarding/layout.tsx",
-    "app/partner/funeral/layout.tsx",
-    "app/driver/layout.tsx",
-    "app/host/layout.tsx",
-    "app/trainer/layout.tsx",
-    "app/sitter/layout.tsx",
-    "app/walker/layout.tsx"
-  ],
+  "base": "bea71eef160ff25469f50d1e6348652e89ad05dc",
+  "corrections": {
+    "app/booking-command-center/page.tsx": {
+      "beforeHash": "2bac33a8db636f5e52a758943c2e3bfd96573764738ea5f2f9954ec517fe4a48",
+      "afterHash": "67c04956107cad78d9cb9fecdc019d38e073a9689a3a82f956ed1780f72af071",
+      "changes": [
+        [
+          "import StaffWorkspace from \"../components/staff-workspace/StaffWorkspace\";",
+          "import StaffWorkspace from \"../components/staff-workspace/StaffWorkspace\";\nimport {snapshotMetric} from \"../components/staff-workspace/display-state\";"
+        ],
+        [
+          "<section className={styles.metrics}>",
+          "<section className={styles.metrics} aria-label=\"Booking snapshot metrics\" aria-busy={loading}>"
+        ],
+        [
+          "<b>{bookings.length}</b>",
+          "<b>{snapshotMetric(bookings.length, loading, error)}</b>"
+        ],
+        [
+          "<small>Canonical UAT records</small>",
+          "<small>{error ? \"Snapshot unavailable\" : loading ? \"Loading snapshot\" : \"Latest loaded UAT records\"}</small>"
+        ],
+        [
+          "<b className={risks ? styles.red : \"\"}>{risks}</b>",
+          "<b className={!loading && !error && risks ? styles.red : \"\"}>{snapshotMetric(risks, loading, error)}</b>"
+        ],
+        [
+          "<b>{paymentPending}</b>",
+          "<b>{snapshotMetric(paymentPending, loading, error)}</b>"
+        ],
+        [
+          "{money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0))}",
+          "{snapshotMetric(money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0)), loading, error)}"
+        ]
+      ]
+    },
+    "app/control/page.tsx": {
+      "beforeHash": "51bb310c99bc5254dde76d5b6e9a67e5e93eff4d25b6e6679cc8f2ef5979b5d9",
+      "afterHash": "4a77a213c073746ffe7a57d91b0495115b6dc35c1ea103085a628ef030a78af4",
+      "changes": [
+        [
+          "import StaffModule from \"../components/staff-workspace/StaffModule\";",
+          "import StaffModule from \"../components/staff-workspace/StaffModule\";\nimport {controlSignalLabel,snapshotMetric} from \"../components/staff-workspace/display-state\";"
+        ],
+        [
+          "<section className={styles.metrics}>",
+          "<section className={styles.metrics} aria-label=\"Control snapshot metrics\" aria-busy={tower.loading}>"
+        ],
+        [
+          "tower.loading?\"—\":tower.data?.headline.signalsTracked??0",
+          "snapshotMetric(tower.data?.headline.signalsTracked,tower.loading,tower.error)"
+        ],
+        [
+          "tower.loading?\"—\":tower.data?.headline.needsAttention??0",
+          "snapshotMetric(tower.data?.headline.needsAttention,tower.loading,tower.error)"
+        ],
+        [
+          "tower.loading?\"—\":tower.data?.headline.signalsClear??0",
+          "snapshotMetric(tower.data?.headline.signalsClear,tower.loading,tower.error)"
+        ],
+        [
+          "tower.loading?\"—\":tower.data?.headline.openItems??0",
+          "snapshotMetric(tower.data?.headline.openItems,tower.loading,tower.error)"
+        ],
+        [
+          "<i>{s.severity===\"critical\"?\"Action\":\"Clear\"}</i>",
+          "<i data-signal-severity={s.severity}>{controlSignalLabel(s.severity)}</i>"
+        ],
+        [
+          "{tower.loading?\"Loading governance signals…\":\"No connected signal currently needs display.\"}",
+          "{tower.loading?\"Loading governance signals…\":tower.error?\"Governance signals unavailable. Reload after access or connectivity is restored.\":\"No connected signal currently needs display.\"}"
+        ],
+        [
+          "<p className={styles.muted}>No governed changes recorded yet.</p>",
+          "<p className={styles.muted}>{tower.loading?\"Loading governed changes…\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
+        ]
+      ]
+    },
+    "app/components/staff-workspace/StaffWorkspace.tsx": {
+      "beforeHash": "782fad57d5f95378d92be920e02076b0baa67bd07ef5d185a45783e38c9bfd0f",
+      "afterHash": "9edd435801399ec0a48c473980cdda6a46ca7f559ba5cf525ea66ceea0a1155b",
+      "changes": [
+        [
+          "import styles from \"./staff-workspace.module.css\";",
+          "import styles from \"./staff-workspace.module.css\";\nimport {currentNavigationSnapshot, type NavigationSnapshot} from \"./display-state\";"
+        ],
+        [
+          "  const [loadedActor, setLoadedActor] = useState<StaffActor | null>(null);\n  const [navigationError, setNavigationError] = useState(\"\");\n  const [signInUrl, setSignInUrl] = useState(\"\");",
+          "  const [navigationSnapshot, setNavigationSnapshot] = useState<NavigationSnapshot<StaffActor> | null>(null);"
+        ],
+        [
+          "  const actor = suppliedActor === undefined ? loadedActor : suppliedActor;",
+          "  const currentNavigation = currentNavigationSnapshot(navigationSnapshot, pathname, attempt);\n  const actor = suppliedActor === undefined ? currentNavigation?.actor ?? null : suppliedActor;\n  const navigationError = currentNavigation?.error ?? \"\";\n  const signInUrl = currentNavigation?.signInUrl ?? \"\";"
+        ],
+        [
+          "    const abort = new AbortController();",
+          "    const abort = new AbortController();\n    let responseStatus = 0, nextSignInUrl = \"\";"
+        ],
+        [
+          "        if (!response.ok) {",
+          "        responseStatus = response.status;\n        if (!response.ok) {"
+        ],
+        [
+          "          if (!abort.signal.aborted) setSignInUrl(body.signInUrl === \"/staging-login\" ? body.signInUrl : \"\");",
+          "          nextSignInUrl = body.signInUrl === \"/staging-login\" ? body.signInUrl : \"\";"
+        ],
+        [
+          "        if (!abort.signal.aborted) { setLoadedActor(next); setNavigationError(\"\"); setSignInUrl(\"\"); }",
+          "        if (!abort.signal.aborted) setNavigationSnapshot({pathname, attempt, actor: next, error: \"\", signInUrl: \"\", status: responseStatus});"
+        ],
+        [
+          "        if (!abort.signal.aborted) { setLoadedActor(null); setNavigationError(error instanceof Error ? error.message : \"Navigation unavailable.\"); }",
+          "        if (!abort.signal.aborted) setNavigationSnapshot({pathname, attempt, actor: null, error: error instanceof Error ? error.message : \"Navigation unavailable.\", signInUrl: nextSignInUrl, status: responseStatus});"
+        ],
+        [
+          "navigationError ? \"Navigation unavailable. Your workspace below keeps its existing access checks.\"",
+          "navigationError ? currentNavigation?.status === 403 ? \"Your role does not include the Team menu. The current page below keeps its own access checks.\" : \"Navigation unavailable. Your workspace below keeps its existing access checks.\""
+        ],
+        [
+          "      {actor && groups.length === 0",
+          "      {!actor && navigationError && pathname === \"/me\" && <a className={styles.home} href=\"#staff-workspace-content\">Current page: My workspace</a>}\n      {actor && groups.length === 0"
+        ]
+      ]
+    },
+    "app/control/control.module.css": {
+      "beforeHash": "84f2fcb0339670515ad87578e323b9efefc06fa7ef01c55d279a068d59e3c5f9",
+      "afterHash": "3ab10c9b9c59b1a6aaf0f0af067fe6c8cc05e050fdbe7f1a6e8d3e373b7b53f2",
+      "append": "\n/* UI status truth: semantic badges, scoped to the existing Control signals. */\n:global([data-staff-module]) .signal > i[data-signal-severity] {\n  color:var(--staff-muted) !important; background:var(--staff-raised) !important;\n  padding:8px 10px; border-radius:10px; line-height:1.45; white-space:normal;\n}\n:global([data-staff-module]) .signal > i[data-signal-severity=\"attention\"] {\n  color:var(--staff-warning) !important; background:var(--staff-warning-bg) !important;\n}\n:global([data-staff-module]) .signal > i[data-signal-severity=\"critical\"] {\n  color:var(--staff-danger) !important; background:var(--staff-danger-bg) !important;\n}\n:global([data-staff-module]) .signal > i[data-signal-severity=\"clear\"] {\n  color:var(--staff-success) !important; background:var(--staff-success-bg) !important;\n}\n"
+    }
+  },
   "protected": {
     "app/(sales)/cross-sell/CrossSellCommandCenter.tsx": "6124b94820f64bb72aad1079a67cd42c85160fd71f2434314843c396e9489299",
     "app/(sales)/cross-sell/NextBestServiceCard.tsx": "f0d9a827bc344f63a7b17d4e1b6618ce471bacf693e5b1fe1533f104f69bab0d",
@@ -328,7 +427,6 @@
     "app/boarding/page.tsx": "95d40c9b770a8315e120c339cb86bd68ee0f4833e6f2dfb68d1122cebda5217a",
     "app/boarding/stay.module.css": "e02022afeab87d1bf6402d9f019f9ad52fc8babc1d56d7fbce2a7b8fcd646433",
     "app/booking-command-center/page.module.css": "1288ed6ddb13bed66c6e7004319d63d24d4134ad3a7ef7044db01a3e938c9ec4",
-    "app/booking-command-center/page.tsx": "67c04956107cad78d9cb9fecdc019d38e073a9689a3a82f956ed1780f72af071",
     "app/booking-command-center/service-proof-review.module.css": "ae3585a47879f3083b3fd25e1c5ff063a42a5ff279079d2d9ad800a63220e5e2",
     "app/booking-command-center/service-proof-review.tsx": "749843927b78c2f00f2930341d624ede1bb223d67b67c4109a7cb9191614228c",
     "app/brand-book-theme.css": "9ac1df47841bfd42bdf515c60f87d44f514bf79a75d0cf2d27ffccb2515e44a1",
@@ -347,6 +445,8 @@
     "app/components/ops-shell/OpsShell.tsx": "ce35d16feeadef57e6894789b893844fbd5f3c336608f0450a6b3a373ab3c908",
     "app/components/ops-shell/ops-shell.module.css": "c895fc56030e57279f8e74e084a56ec153f0b7245b3b70dcbca5b678d4e37d5a",
     "app/components/order-notification-center.tsx": "ec6952ad16c63d42613257d8b37f9dd4cdc25370a0ee518d133e756ed84f9199",
+    "app/components/partner-presentation/PartnerModule.tsx": "89e595716ad28b5baee90eef57a7b2d6d16881c41db4bf150a0af5aa5c96dfd6",
+    "app/components/partner-presentation/partner-presentation.module.css": "6a7fa54795b3ca0bb7bd1d07c2909af40887bf929a85c633e4b3c039f794cd1a",
     "app/components/pawspace-appearance.tsx": "666ee04dd2580372b59cd16218a695090825f4bcb4f0075af319f571c1ddd846",
     "app/components/provider-workspace-entry.tsx": "34ac765f3ea52386bea2872c70090fcd80ae3df356b545dccfc3f201cdc2229e",
     "app/components/recovery-screen.tsx": "13547712c10d11ee8c990118acb69fbdd7414f7f541b73842bec5e6f782e6260",
@@ -356,7 +456,6 @@
     "app/components/sales/UnifiedWorkQueue.tsx": "405b8c167832439bea490ad36e9b226b2e5b2282ca9a0754ffaf35b4ce028ad4",
     "app/components/sales/cross-sell-command-center.module.css": "27c9bcef71098726209355bff16ae8cac89009527eded70f47d937ce3732312f",
     "app/components/staff-workspace/StaffModule.tsx": "e1eae8900de5022ca777e46fbc97c94961e4ab5e8c438f7b96ed53e91087366d",
-    "app/components/staff-workspace/StaffWorkspace.tsx": "9edd435801399ec0a48c473980cdda6a46ca7f559ba5cf525ea66ceea0a1155b",
     "app/components/staff-workspace/navigation.ts": "188c6dcb6191bfaf8bdd490436da6ae75f000e1386bfb2e481e328cf00fdef15",
     "app/components/staff-workspace/staff-console.module.css": "86b33733c5aa6f4cd960628eda8021369ba25342ead67364f46f42a70930f8bd",
     "app/components/staff-workspace/staff-module.module.css": "4c774b1024b5527a7e9e230fc3e53db79951b858311ddb587891404e91bfbc54",
@@ -390,7 +489,6 @@
     "app/control/city-control-panel.module.css": "7ad21ea64ae8101c56e0f2f12b315bd0d0445308c4be356bd0081791db7e5a3b",
     "app/control/city-control-panel.tsx": "92c0f788e31c4e2be6663de8c26997cda1c1b46a68aa38b82b4e19369c6b6fff",
     "app/control/control-route-fix.css": "74009bdbc13c8f5bd94773a9ed4a5369aa1033d766469f7e2f5dbf5be3d0d77f",
-    "app/control/control.module.css": "3ab10c9b9c59b1a6aaf0f0af067fe6c8cc05e050fdbe7f1a6e8d3e373b7b53f2",
     "app/control/coupons-control-panel.tsx": "8c9159d2fd1ed0b0d2fb58c59239e0372bc5f9d9f04d7f6f1405649804c15bbb",
     "app/control/customer-data-panel.tsx": "c783aca544e67c9dd8a5ca7a2f31da8bb897c765149d37549df5bd277fe4619c",
     "app/control/customer-reveal.tsx": "ed4db1bbc3348139c9956293bfd47fef544344dc2a48312a5e34ac1528514ae2",
@@ -408,7 +506,6 @@
     "app/control/marketing-control-panel.module.css": "330c8b01a8c00abb2e860f70bc7087aa76dc5a57979866d6afd3b3991b535637",
     "app/control/marketing-control-panel.tsx": "5b9eb56ab4e98e16eb8df7c9eadc1c0cabde21242be5f1252ea7b56944129a9f",
     "app/control/offers-control-panel.module.css": "c4d4bcb2b0d8851bc932bfc3d52c660e9f95d5dafed37301a9c9546739951a5b",
-    "app/control/page.tsx": "4a77a213c073746ffe7a57d91b0495115b6dc35c1ea103085a628ef030a78af4",
     "app/control/platform-audit-panel.tsx": "73ae89dbaacce017f118559be27ca32a8a810c657595d6daba1da0fa6f0cf073",
     "app/control/platform-audit.module.css": "1acc0b36e5b4615ce256cea38d547cb00a115aa98cbff7eef605c200665e2d18",
     "app/control/pricing-control-panel.module.css": "6c26fa6a3c3fbb7ef00530c5bd4d9f817b90976a1afd8566ff1cd5a204403b1e",
@@ -434,6 +531,7 @@
     "app/dog-breeds/[breed]/page.tsx": "ec9628afe8982f0b1520af08938eb2a24ca4b12c11211ce4f7e2505e9f18698d",
     "app/driver/canonical-driver-page.tsx": "e36f977b2070f6aade056710bede22fb5e99252203ed33234a23bd86d25a9dc9",
     "app/driver/driver.module.css": "56289bc5358b4f13786d10c05f049c04e0d67c5d259381bc0b29875f2aaf3678",
+    "app/driver/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
     "app/driver/page.tsx": "a1d22875430793850a3142e0392a8b04db71a762ccaba6d3d04c446edfa3b682",
     "app/driver/proof/page.tsx": "acb31fbecc5a400b362857f73b33f5cb1240f97b4374e6dd6e876a08258b0c79",
     "app/driver/recovery/page.tsx": "ca981b3a4aec133756b16c13bcbdff6b1cadac5d2b987353c2e880576d849a9c",
@@ -463,6 +561,7 @@
     "app/healthz/route.ts": "a2867452d916e963abebbcf4ac47f5d11ba65b151775dbc90ea0e8fd26446484",
     "app/host/boarding-proof-workspace.tsx": "b452867796dad0f3fbf4f68068d45c208fd73eead0ddeee4744b653c74c01428",
     "app/host/host.module.css": "51d4c14ee1a7023d2f22ca87b308aa47796f48f7d65aca5db2bce9bfefbfbde6",
+    "app/host/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
     "app/host/page.tsx": "9e6131d67f22d2daa643acf6c0f72ab27ea17b7c9a036310ae0a07696cece544",
     "app/host/proof/page.tsx": "a916320f9395d361ea8a1d2194309da5281fee3fe0f4dca713cb1c05f774ef69",
     "app/kit-lock.css": "65039d7125e8e3d63b4842edc2454a0d134830436a2567578c4cc5bc88bc3cc6",
@@ -572,15 +671,20 @@
     "app/partner-app/use-status-queue.ts": "2184c9a494789a41135d590496f61d48482b60c43786ff699322c8b31d4a1c59",
     "app/partner-mobile/page.tsx": "e35b66a7a9c56ea3f917ea7a48307db4182daba2615f34d2e61a7d5f5bfe6640",
     "app/partner-mobile/partner-mobile.module.css": "9817e2b94ab4846e99bdc800f8b09dd373f2263de33e18f4240152f6893ef580",
+    "app/partner/funeral/layout.tsx": "ba09f5c1279a345897cc4811cbbf469dbe152a9ef3228dfed85c5631416e6aea",
     "app/partner/funeral/page.tsx": "220478ee39d5487fe599005a9e98e5ace21ca8ade88279f0066c2889a67d684b",
+    "app/partner/jobs/layout.tsx": "ba09f5c1279a345897cc4811cbbf469dbe152a9ef3228dfed85c5631416e6aea",
     "app/partner/jobs/page.tsx": "882c970554cbdf01f6fd3e3d0f25f7829ab3ed79fe36166be940d327e751745d",
     "app/partner/layout.tsx": "5272d8139bbae3cfec0840696ce902b28a5835b035f6665d4edbdfdc277d7223",
+    "app/partner/onboarding/layout.tsx": "ba09f5c1279a345897cc4811cbbf469dbe152a9ef3228dfed85c5631416e6aea",
     "app/partner/onboarding/onboarding.module.css": "7d9105deb7b79469fd763d5488e0b525dbddf7ac6183f44a6d9374a033b3df8c",
     "app/partner/onboarding/page.tsx": "cce7ce5e3baf41b22a282e49b2f2e6f1ac5e7f892de9a9c1f44f1f599431ec9d",
     "app/partner/page.tsx": "b7dbbea6c64d31ae86eaa284ab4865afc6aff6a0be86340ed827a09e7db3b375",
     "app/partner/partner-hub.module.css": "c73e457760c1b585a834ebb760db6c44b9416134d26ddd99f7fcf7474479d3dc",
     "app/partner/partner-login.tsx": "af239fc15f08293fbc1072d02191684f4f51c9cb2a4dad49ad8726709f317293",
+    "app/partner/rates/layout.tsx": "ba09f5c1279a345897cc4811cbbf469dbe152a9ef3228dfed85c5631416e6aea",
     "app/partner/rates/page.tsx": "375f2fa14e0ab2bf9589f42eb687dc66bc280e531b17bfd1f34830272e9eb509",
+    "app/partner/workspace/layout.tsx": "ba09f5c1279a345897cc4811cbbf469dbe152a9ef3228dfed85c5631416e6aea",
     "app/partner/workspace/page.tsx": "93397ac91da98ce8fca9c8f8fe84a68d669ceb9b038d1060967bb0f6b567e50a",
     "app/platform-api/page.tsx": "b5f34bd1a344c998fea9ab67007a0ba585a10c4c413fa707d12e2fbbf4b2021a",
     "app/platform-api/platform.module.css": "4075511eb1169cae4bd1ac022260a5e2b025f65863ccad84fbd81e6aea580cd1",
@@ -599,6 +703,7 @@
     "app/services/[slug]/page.tsx": "cdf2b4c0030512d40da6001c3ba881d083af01cb854e5027a7199f0fd6f45a08",
     "app/services/page.tsx": "be4292ddd08d29056181b2fbc133eabbfc90deeb341ec9543c52f0c0912631b9",
     "app/sitemap.ts": "0b4038eb11a9709527c77256fa07386d0d900acd470411c7e34c93104b8d8a61",
+    "app/sitter/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
     "app/sitter/page.tsx": "8f3366661badff67210ceca2f0ede6e8fc90743df5ad1d0e0ad0b3090a1676cb",
     "app/sitter/proof/page.tsx": "70205bbd7e1c171632c0539afe593b8bc5a2ff5df3447e6e79c460d05c5c4c25",
     "app/sitter/sitting-workspace.module.css": "306717ac1e20cf7d93b3461bb5668f9d37ee2b3c3508c84782f5b176cb3ae937",
@@ -719,6 +824,7 @@
     "app/test-lab/page.tsx": "9da72c5cec1e220bcf51be92db5b8896f9090387a8f23810b837f7cc8b0585db",
     "app/test-lab/test-lab.module.css": "2cbfafa66a9f508ff7cb550c2313fb57f8a833034725f14777de37ce8cf7675b",
     "app/trainer/earnings-load-state.tsx": "0af2a17be3a01cab9da2bf721463f078509cb7b054bf5a2fdc86418cd9d66ea8",
+    "app/trainer/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
     "app/trainer/page.tsx": "0d31d6e172dda02cb5e337633a916e9ebf4e611c376c1b747fce6c2f528f87d3",
     "app/trainer/session-proof.module.css": "f92927c6b21a6bcdc62a9f440afacbb31f1e6fd74bd2d5705f32533f0a432de3",
     "app/trainer/session-proof.tsx": "975a61e0e97ee32618afedb5119d186a54511bf38f248156a342449c06f77627",
@@ -776,6 +882,7 @@
     "app/v2/walking/page.tsx": "55b6ba1bd72da0040d7369e13c7f3cbeb90677b069caefcb7255e71337810d11",
     "app/v2/workspaces/page.module.css": "e29f4158e72e9e85f1b5221488b3488c5f64e3062ecdbfa234296ca9041a7270",
     "app/v2/workspaces/page.tsx": "92f4607df57b9adae554cec48d5c336e518cb318b8ca06d69e1adf416023e142",
+    "app/walker/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
     "app/walker/page.tsx": "67f5df4b836ae0a3aeafa3a06fef18a3fc33ca779d5f6d49b8f188c72fd48a6d",
     "app/walker/proof/page.tsx": "d2761f69ef3af9e75e476eb9cdaa914934037b1f881739684eed200f0ec63463",
     "app/walker/recovery/page.tsx": "2633185a2d7f0231b009925c5ebf3511f5bf09bb915edee1172609e66046357c",

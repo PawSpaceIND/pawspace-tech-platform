@@ -369,3 +369,18 @@
 :global([data-staff-module]) .main>header h1 { font-size:32px !important; font-weight:750; line-height:1.25; }
 :global([data-staff-module]) .panel h2 { font-size:20px !important; }
 @media(max-width:650px){:global([data-staff-module]) .main>header h1{font-size:28px !important;}}
+
+/* UI status truth: semantic badges, scoped to the existing Control signals. */
+:global([data-staff-module]) .signal > i[data-signal-severity] {
+  color:var(--staff-muted) !important; background:var(--staff-raised) !important;
+  padding:8px 10px; border-radius:10px; line-height:1.45; white-space:normal;
+}
+:global([data-staff-module]) .signal > i[data-signal-severity="attention"] {
+  color:var(--staff-warning) !important; background:var(--staff-warning-bg) !important;
+}
+:global([data-staff-module]) .signal > i[data-signal-severity="critical"] {
+  color:var(--staff-danger) !important; background:var(--staff-danger-bg) !important;
+}
+:global([data-staff-module]) .signal > i[data-signal-severity="clear"] {
+  color:var(--staff-success) !important; background:var(--staff-success-bg) !important;
+}

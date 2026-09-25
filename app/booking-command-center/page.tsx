@@ -6,6 +6,7 @@ import { isSupportCaseOpen } from "../../lib/support-case-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
+import {snapshotMetric} from "../components/staff-workspace/display-state";
 import ServiceProofReview from "./service-proof-review";
 
 type Row = Record<string, unknown>;
@@ -92,11 +93,11 @@ export default function BookingCommandCenter() {
 
     <section className={styles.workspace}>
       <header className={styles.top}><div><span>PAWSPACE OPERATIONS</span><h1>Booking Command Center</h1><p>One place to control every booking, provider, payment and exception.</p></div><div><button onClick={() => void load()}>↻ Refresh snapshot</button><Link href="/assisted-booking">＋ Add booking</Link></div></header>
-      <section className={styles.metrics}>
-        <article><span>Total bookings</span><b>{bookings.length}</b><small>Canonical UAT records</small></article>
-        <article><span>Needs attention</span><b className={risks ? styles.red : ""}>{risks}</b><small>Delay, ticket or rebooking</small></article>
-        <article><span>Payment pending</span><b>{paymentPending}</b><small>Includes pay-after service</small></article>
-        <article><span>Open revenue</span><b>{money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0))}</b><small>Due now across records</small></article>
+      <section className={styles.metrics} aria-label="Booking snapshot metrics" aria-busy={loading}>
+        <article><span>Total bookings</span><b>{snapshotMetric(bookings.length, loading, error)}</b><small>{error ? "Snapshot unavailable" : loading ? "Loading snapshot" : "Latest loaded UAT records"}</small></article>
+        <article><span>Needs attention</span><b className={!loading && !error && risks ? styles.red : ""}>{snapshotMetric(risks, loading, error)}</b><small>Delay, ticket or rebooking</small></article>
+        <article><span>Payment pending</span><b>{snapshotMetric(paymentPending, loading, error)}</b><small>Includes pay-after service</small></article>
+        <article><span>Open revenue</span><b>{snapshotMetric(money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0)), loading, error)}</b><small>Due now across records</small></article>
       </section>
 
       <section className={styles.controls}><label>⌕<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search booking, customer, pet, phone or provider" /></label><div>{["All bookings", "Needs attention", "Payment pending", "Confirmed", "Completed"].map(item => <button key={item} className={filter === item ? styles.filterActive : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></section>
