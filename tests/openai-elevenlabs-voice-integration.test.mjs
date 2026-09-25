@@ -272,3 +272,32 @@ test("a provider response without a delta sink stays blocking, so chat and Whats
   assert.equal(result.text,"Blocking reply");
  }finally{stub.restore();}
 });
+
+// Retiring abandoned reservations is housekeeping; it was a full-table write on the path of every
+// request, and on a phone turn the caller waits through it in silence. It must not run per turn, and
+// the protections around it must not have been removed to achieve that.
+test("reservation preflight sweeps stale rows at most once per TTL, and keeps circuit and quota checks",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db}=freshCountingD1();
+ const prepared=[];
+ const recording={...db,prepare:sql=>{prepared.push(String(sql));return db.prepare(sql);}};
+ const env={};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+
+ const first=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(first.allowed,true,"a healthy first turn must be allowed");
+ const sweepSql=/UPDATE ai_provider_runtime_requests SET status='abandoned'/;
+ assert.ok(prepared.some(sql=>sweepSql.test(sql)),"the sweep must still happen on the first turn in an isolate");
+
+ prepared.length=0;
+ const second=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(second.allowed,true);
+ assert.ok(!prepared.some(sql=>sweepSql.test(sql)),"the sweep must NOT run again inside the reservation TTL");
+
+ // The protections are the reason this function exists; cutting the sweep must not have cut them.
+ assert.ok(prepared.some(sql=>/SELECT open_until FROM ai_provider_runtime_circuit/.test(sql)),"circuit breaker must still be read before every call");
+ assert.ok(prepared.some(sql=>/INSERT INTO ai_provider_runtime_requests/.test(sql)),"the reservation must still be recorded");
+ assert.ok(prepared.some(sql=>/SELECT COUNT\(\*\) count FROM ai_provider_runtime_requests/.test(sql)),"per-minute rate limit must still be read");
+ assert.ok(prepared.some(sql=>/COALESCE\(SUM\(reserved_tokens\),0\)/.test(sql)),"daily token and cost quota must still be read");
+});

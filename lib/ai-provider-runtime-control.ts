@@ -36,11 +36,32 @@ export function estimateAiTokenReservation(systemPrompt:string,userPrompt:string
  return Math.max(1,inputEstimate+Math.max(1,maxOutputTokens));
 }
 
+/**
+ * Retiring reservations nobody completed is housekeeping, not a precondition for the call being
+ * made. It was a full-table write on the path of every request, and on a live phone turn it was part
+ * of the 1813ms a caller spent in silence before the first word. It now runs at most once per
+ * reservation TTL per isolate, and is not awaited, so it never sits between a question and audio.
+ *
+ * Deliberately NOT weakened: the circuit-breaker read, the quota reads and the reservation insert all
+ * still happen before the provider is called. A sweep that runs late leaves stale `reserved` rows in
+ * the quota counts for a while, which makes rate limiting slightly stricter rather than looser — the
+ * safe direction for a control whose job is to stop runaway spend.
+ */
+const lastReservationSweepAt=new WeakMap<D1Database,number>();
+function sweepExpiredReservations(db:D1Database,env:Env,now:number){
+ const ttl=reservationTtlMs(env);
+ if(now-(lastReservationSweepAt.get(db)??0)<ttl)return;
+ // Recorded before dispatch so concurrent turns in one isolate do not all launch the same sweep.
+ lastReservationSweepAt.set(db,now);
+ void db.prepare("UPDATE ai_provider_runtime_requests SET status='abandoned',failure_class='reservation_expired',updated_at=? WHERE status='reserved' AND created_at<?")
+  .bind(now,now-ttl).run().catch(()=>{/* housekeeping only; the next turn past the TTL retries */});
+}
+
 export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{provider:string;modelRef:string;channel?:string;intent?:string;systemPrompt:string;userPrompt:string;maxOutputTokens:number;asOf?:number}):Promise<AiRuntimePreflight>{
  const now=input.asOf??Date.now();
  try{
   await ensureAiProviderRuntimeControl(db);
-  await db.prepare("UPDATE ai_provider_runtime_requests SET status='abandoned',failure_class='reservation_expired',updated_at=? WHERE status='reserved' AND created_at<?").bind(now,now-reservationTtlMs(env)).run();
+  sweepExpiredReservations(db,env,now);
   const circuit=await db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>();
   if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
 
