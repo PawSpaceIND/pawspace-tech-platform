@@ -54,6 +54,7 @@ export function projectBoardingProviderStay(row: Row) {
     bookingId: String(row.booking_id || ""),
     status: String(row.status || ""),
     bookingStatus: row.booking_status != null ? String(row.booking_status) : null,
+    paymentStatus: row.payment_status != null ? String(row.payment_status) : null,
     hostProviderId: String(row.host_provider_id || ""),
     customerId: String(row.customer_id || ""),
     cityId: String(row.city_id || ""),
