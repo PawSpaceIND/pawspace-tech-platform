@@ -169,7 +169,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   // to the default "dashboard.view", which a service_provider session does not have, so every partner
   // photo upload was refused "Permission denied" at the gateway before the route ran.
   if(url.pathname==="/api/service-media"||url.pathname==="/api/service-media/upload")return "bookings.view";
-  if(url.pathname==="/api/customer-grooming-summary")return "scheduling.book";
+  if(url.pathname==="/api/customer-grooming-summary"||url.pathname==="/api/customer-live-tracking")return "scheduling.book";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
   if(url.pathname==="/api/grooming-finance")return "finance.view";
   if(url.pathname==="/api/grooming-payment-sandbox"){
