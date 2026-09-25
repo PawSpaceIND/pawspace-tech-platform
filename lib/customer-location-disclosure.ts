@@ -17,11 +17,12 @@ type EtaEvidence={
   staleAfter?:unknown;
 }|null;
 
-export function customerTrackingProjection(input:{bookingStatus:unknown;hasTrustedLocation:boolean;eta:EtaEvidence;now?:number}){
+export function customerTrackingProjection(input:{bookingStatus:unknown;hasTrustedLocation:boolean;eta:EtaEvidence;now?:number;visibleStatuses?:readonly string[]}){
   const status=String(input.bookingStatus||"");
   const now=input.now??Date.now();
   if(["completed","cancelled","refunded","failed"].includes(status))return{state:"ended" as const,etaMinutes:null,distanceKm:null};
-  if(!(CUSTOMER_LOCATION_DISCLOSURE_POLICY.visibleBookingStatuses as readonly string[]).includes(status))return{state:"not_started" as const,etaMinutes:null,distanceKm:null};
+  const visible=input.visibleStatuses??CUSTOMER_LOCATION_DISCLOSURE_POLICY.visibleBookingStatuses;
+  if(!(visible as readonly string[]).includes(status))return{state:"not_started" as const,etaMinutes:null,distanceKm:null};
   if(!input.hasTrustedLocation)return{state:"not_sharing" as const,etaMinutes:null,distanceKm:null};
   if(!input.eta)return{state:"unavailable" as const,etaMinutes:null,distanceKm:null};
   const staleAfter=Number(input.eta.staleAfter||0);
