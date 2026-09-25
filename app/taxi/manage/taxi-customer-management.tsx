@@ -1,5 +1,6 @@
 "use client";
-import Link from"next/link";\nimport CustomerServiceLiveTracking from"../../components/live-tracking/customer-service-live-tracking";
+import Link from"next/link";
+import CustomerServiceLiveTracking from"../../components/live-tracking/customer-service-live-tracking";
 import type React from"react";
 import{useEffect,useState}from"react";
 import{resourceScreenState}from"../../../lib/resource-screen-state";
