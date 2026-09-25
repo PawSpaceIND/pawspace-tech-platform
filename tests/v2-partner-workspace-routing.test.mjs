@@ -3,14 +3,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { partnerJobWorkspaceHref } from '../lib/partner-job-workspace.ts';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 
 test('V2 Partner workspace routing stays inside /v2/partner',()=>{
-  const helper=read('lib/partner-job-workspace.ts');
-  assert.match(helper,/options:\{v2\?:boolean\}/);
-  for(const name of ['trainer','host','walker','driver','sitter'])assert.match(helper,new RegExp('\\$\\{prefix\\}/'+name+'\\?bookingId='));
+  const bookingId='B & 1';
+  const cases=[
+    ['dog_training','/v2/partner/trainer?bookingId=B%20%26%201'],
+    ['boarding','/v2/partner/host?bookingId=B%20%26%201'],
+    ['pet_sitting','/v2/partner/sitter?bookingId=B%20%26%201'],
+    ['dog_walking','/v2/partner/walker?bookingId=B%20%26%201'],
+    ['pet_taxi','/v2/partner/driver?bookingId=B%20%26%201'],
+  ];
+  for(const [serviceCode,expected] of cases)assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode},{v2:true}),expected);
+  assert.equal(partnerJobWorkspaceHref({bookingId,serviceCode:'grooming'},{v2:true}),'/partner-app?bookingId=B%20%26%201');
   const shell=read('app/partner-app/page.tsx');
   assert.match(shell,/usePathname/);
   assert.match(shell,/pathname\.startsWith\("\/v2\/partner"\)/);
