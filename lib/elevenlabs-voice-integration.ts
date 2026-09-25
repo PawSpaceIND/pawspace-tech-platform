@@ -85,3 +85,8 @@ export async function buildElevenLabsInitiation(db:D1Database,input:{providerCal
   user_id:session.customerId,
  };
 }
+
+/** Agent IDs are configured server-side. An unknown incoming agent never gains customer access. */
+export function configuredElevenLabsAgent(env:Env,agentId:string){
+ return Boolean(agentId)&&[env.ELEVENLABS_AGENT_ID,env.ELEVENLABS_GROOMING_AGENT_ID,env.ELEVENLABS_TRAINING_AGENT_ID].some(value=>text(value)===agentId);
+}
