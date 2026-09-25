@@ -1,6 +1,6 @@
 import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
 import{ensureCommunicationTables}from"./communication-engine";
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";

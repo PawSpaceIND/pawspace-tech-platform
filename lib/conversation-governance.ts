@@ -1,5 +1,5 @@
 import{ensureCommunicationTables,type CommunicationChannel}from"./communication-engine";
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{conversationAccessPredicate,ensureConversationAccessTables,type ConversationAccessActor}from"./conversation-access";
 
 type Row=Record<string,unknown>;

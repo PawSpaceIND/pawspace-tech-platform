@@ -1,6 +1,6 @@
 import test from"node:test";
 import assert from"node:assert/strict";
-import{ensureD1Once}from"../lib/d1-ensure-once.ts";
+import{ensureD1Once}from"../lib/d1-ensure-once.js";
 
 test("ensureD1Once shares one successful setup per binding and key",async()=>{
  const db={},calls=[];

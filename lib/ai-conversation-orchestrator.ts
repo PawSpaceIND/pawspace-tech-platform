@@ -6,7 +6,7 @@ import{resolveAiAudienceGate}from"./ai-audience-rollout";
 import{executeGovernedConversationTool,CONFIRMABLE_SAFE_MUTATIONS}from"./ai-first-control-plane";
 import type{AiToolCode,AiToolIntent}from"./ai-tool-registry";
 import{ensureConversationGovernance}from"./conversation-governance";
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 

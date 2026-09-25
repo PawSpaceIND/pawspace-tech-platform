@@ -1,4 +1,4 @@
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 type Row=Record<string,unknown>;
 export const forbiddenAutonomousActions=["refund","price_change","payment","payout","outbound_contact","customer_merge","provider_assignment","campaign_activation"] as const;
 export type AiSuggestionAction="summarize"|"next_best_action"|"draft_response"|"risk_flag"|typeof forbiddenAutonomousActions[number];

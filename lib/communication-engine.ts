@@ -1,4 +1,4 @@
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 type Row=Record<string,unknown>;
 export type CommunicationChannel="whatsapp"|"sms"|"email"|"push"|"chat"|"voice";
 export type CommunicationPurpose="auth"|"transactional"|"service_recovery"|"marketing"|"lifecycle";

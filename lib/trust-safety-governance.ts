@@ -1,5 +1,5 @@
 import { ensureCommunicationTables } from "./communication-engine";
-import { ensureD1Once } from "./d1-ensure-once";
+import { ensureD1Once } from "./d1-ensure-once.js";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;

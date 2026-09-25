@@ -1,5 +1,5 @@
 import{ensureConversationGovernance}from"./conversation-governance";
-import{ensureD1Once}from"./d1-ensure-once";
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{actorCanAccessConversation,conversationAccessPredicate,ensureConversationAccessTables}from"./conversation-access";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
