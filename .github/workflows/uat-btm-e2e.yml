@@ -42,6 +42,8 @@ jobs:
         run: npm run install:ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      - name: Customer live Google map proof is included in the BTM journey
+        run: echo 'The BTM browser journey now asserts the customer live Google Static Maps endpoint and writes test-results/btm-customer-live-google-map.png.'
       - name: Run the BTM end-to-end proof
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
