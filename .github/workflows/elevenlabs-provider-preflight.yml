@@ -93,6 +93,14 @@ jobs:
           const callSid=String(phoneMeta?.call_sid||phoneMeta?.callSid||meta?.call_sid||meta?.callSid||'').trim();
           if(callSid) console.log('::add-mask::'+callSid);
           console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(meta?.call_duration_secs||0),terminationReason:meta?.termination_reason||null,error:meta?.error||null,metadataKeys:Object.keys(meta).sort(),phoneMetadataKeys:Object.keys(phoneMeta).sort(),hasProviderCallSid:Boolean(callSid),safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const trResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}?format=opentelemetry`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          if(trResponse.ok){
+            const otlp=await trResponse.json().catch(()=>({}));
+            const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
+            const compact=JSON.stringify(scrub(otlp));
+            const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
+            console.log('GROOMING_OTLP_SIGNALS='+JSON.stringify(hits));
+          }
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),host=(String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com');
           if(callSid&&exKey&&exToken&&exSid){
             const auth=Buffer.from(exKey+':'+exToken).toString('base64');
