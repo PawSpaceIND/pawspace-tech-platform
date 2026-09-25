@@ -23,7 +23,9 @@ export type BotState={version:1;status:"menu"|"collecting"|"done";flow:string|nu
  /** The CRM lead created for a visitor as soon as their number is known (web chat). */
  leadId?:string;
  /** When a stalled flow was last nudged by the follow-up sweep. */
- nudgedAt?:number};
+ nudgedAt?:number;
+ /** The service a lead enquired about (its WhatsApp template was for it): a short reply starts that flow. */
+ preferredFlow?:string};
 export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
 export type BotEvent=
  |{type:"none"}
@@ -107,6 +109,18 @@ const HUMAN_PATTERNS:Array<[RegExp,Extract<BotEvent,{type:"human"}>["reason"]]>=
 ];
 const RESTART=/^(menu|main menu|restart|start over|start again|hi|hello|hey)$/i;
 
+const FLOW_KEYWORDS:Record<string,RegExp>={grooming:/\bgroom/,training:/\btrain/,boarding:/\bboard/,pet_sitting:/\bsitt(ing|er)\b/,dog_walking:/\bwalk/,pet_taxi:/\b(taxi|cab)\b/,fresh_food:/\bfood\b/,relocation:/\brelocat/};
+/**
+ * "Book grooming", "need a dog walker": a short request that names a service starts its flow, as the
+ * reply button of a WATI service template does. Questions and negations are left for PawSpace AI.
+ */
+export function flowFromText(value:string){
+ const text=value.trim().toLowerCase();if(!text||text.length>40||text.includes("?")||/\b(not|no|don'?t|never)\b/.test(text))return null;
+ const matches=Object.entries(FLOW_KEYWORDS).filter(([,pattern])=>pattern.test(text)).map(([code])=>code);
+ return matches.length===1?flowByCode(matches[0]):null;
+}
+const SHORT_YES=/^(yes|yeah|yep|ok|okay|sure|book|book now|start|continue|interested|get started|let'?s go|go ahead)[.! ]*$/i;
+
 export function initialBotState():BotState{return{version:1,status:"menu",flow:null,step:0,answers:{}};}
 export function parseBotState(value:unknown):BotState{
  try{const parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===1&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
@@ -164,7 +178,9 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  const picked=matchChoice(choices,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM],{text,choiceId:input.choiceId},false);
  const display=picked?.label||text;
 
- if(picked?.id===START_OVER.id||(!picked&&RESTART.test(text)))return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
+ // A greeting in reply to a service template starts that service; otherwise it (re)opens the menu.
+ const greetsPreferred=!picked&&Boolean(state.preferredFlow)&&state.status==="menu"&&/^(hi|hello|hey)[.! ]*$/i.test(text);
+ if(picked?.id===START_OVER.id||(!picked&&RESTART.test(text)&&!greetsPreferred))return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
  /* "Request a call": a signed-in customer gets PawSpace's governed callback (the AI calls them); a visitor
   * leaves a name and number first, as a lead the team calls back. */
  if(picked?.id===REQUEST_CALL.id){
@@ -183,7 +199,10 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
 
  if(state.status!=="collecting"){
   if(picked?.id===ASK_AI.id)return{state:initialBotState(),reply:{text:"Sure - type your question and I'll answer it.",choices:[],inputHint:"Type your question"},event:{type:"none"},display};
-  const flow=picked?flowByCode(picked.id):null;
+  /* A lead who came in for a service: their first short reply ("Yes", "Book now", the template's
+   * button) starts that service's questions straight away, as the WATI template flow does. */
+  const preferred=!picked&&state.preferredFlow&&(SHORT_YES.test(text)||greetsPreferred||flowFromText(text)?.code===state.preferredFlow)?flowByCode(state.preferredFlow):null;
+  const flow=picked?flowByCode(picked.id):preferred||(!picked?flowFromText(text):null);
   if(flow){const steps=stepsFor(flow,input.signedIn);return{state:{version:1,status:"collecting",flow:flow.code,step:0,answers:{}},reply:askReply(steps[0],`Great, let's get your ${flow.service} details. `),event:{type:"none"},display};}
   if(!text)return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
   // A free question at the menu goes to PawSpace AI; the route answers it and offers the menu again.

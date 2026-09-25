@@ -90,3 +90,37 @@ test("a recorded opt-out cannot be overwritten by new lead consent",async()=>{
  assert.equal(ctx.sqlite.prepare("SELECT whatsapp_consent,opt_out FROM customer_contact_preferences WHERE customer_id=?").get(ids.contactId).whatsapp_consent,0);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) count FROM communication_messages").get().count,0);
 });
+
+test("a lead gets its service's approved template, and its reply starts that service in the guided bot (WATI flow)",async()=>{
+ const ctx=await world(),ids=seed(ctx);
+ const templates=await import("../lib/whatsapp-service-templates.ts");
+ ctx.sqlite.prepare("UPDATE whatsapp_uat_templates SET status='approved' WHERE template_key=?").run(ctx.workflow.WHATSAPP_AI_LEAD_TEMPLATE);
+ // Service template not yet approved: the generic template goes out, and the bot still takes the reply.
+ const generic=await ctx.workflow.startWhatsAppAiLead(ctx.db,input(ids));
+ assert.equal(generic.status,"queued");
+ assert.equal(ctx.sqlite.prepare("SELECT template_key FROM communication_messages WHERE id=?").get(generic.message_id).template_key,ctx.workflow.WHATSAPP_AI_LEAD_TEMPLATE);
+ assert.equal(ctx.sqlite.prepare("SELECT mode FROM whatsapp_conversation_routing_modes WHERE thread_id=?").get(generic.thread_id).mode,"chatbot_only");
+ const state=JSON.parse(ctx.sqlite.prepare("SELECT state_json FROM web_chat_bot_sessions WHERE session_ref=?").get(`whatsapp:${generic.thread_id}`).state_json);
+ assert.equal(state.preferredFlow,"grooming","the lead's service is ready for their first reply");
+
+ // Grooming template approved: the next grooming lead gets it.
+ const second=seed(ctx,{contactId:"CU-LEAD-2",leadId:"LEAD-2",phone:"9876543211"});
+ ctx.sqlite.prepare("UPDATE whatsapp_uat_templates SET status='approved' WHERE template_key='pawspace_lead_grooming_v1'").run();
+ const specific=await ctx.workflow.startWhatsAppAiLead(ctx.db,input(second));
+ const sent=ctx.sqlite.prepare("SELECT template_key,payload_json FROM communication_messages WHERE id=?").get(specific.message_id);
+ assert.equal(sent.template_key,"pawspace_lead_grooming_v1");
+ assert.match(JSON.parse(sent.payload_json).text,/Book grooming/);
+
+ // The customer taps "Book grooming": the bot asks the first grooming question.
+ const now=Date.now(),inboundId="MSG-WA-IN-1";
+ ctx.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','whatsapp','transactional','whatsapp_inbound',?,'received','sandbox_simulator',NULL,?,'{}','customer',?,?)").run(inboundId,specific.thread_id,"CU-LEAD-2",JSON.stringify({text:"Book grooming"}),"wa-in-1",now,now);
+ ctx.sqlite.prepare("INSERT OR REPLACE INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at,last_outbound_at) VALUES (?,'sandbox_simulator',?,NULL)").run("CU-LEAD-2",now);
+ const chatbot=await import("../lib/whatsapp-chatbot.ts");
+ const turn=await chatbot.runWhatsAppChatbotTurn(ctx.db,{threadId:specific.thread_id,inputMessageId:inboundId,actorEmail:"whatsapp-chatbot"});
+ assert.equal(turn.session.service_code,"grooming");
+ const question=JSON.parse(ctx.sqlite.prepare("SELECT payload_json FROM communication_messages WHERE id=?").get(turn.turn.output_message_id).payload_json);
+ assert.match(question.text,/dog or a cat/);
+ assert.deepEqual(question.interactive.buttons.map(button=>button.title),["Dog","Cat","Start over"]);
+ assert.equal(templates.flowForLeadService("Pet Relocation - Meta lead form"),"relocation");
+ assert.equal(templates.flowForLeadService("General enquiry"),null);
+});

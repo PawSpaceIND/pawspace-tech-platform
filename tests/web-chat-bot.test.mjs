@@ -313,3 +313,13 @@ test("a signed-in customer who stops mid-flow is nudged once, then handed to the
   assert.deepEqual({ ...handoff }, { reason: "bot_abandoned", queue_code: "sales-web-chat" });
   assert.equal((await sweep(now + 5 * 60 * 60_000)).escalated, 0, "escalated only once");
 });
+
+test("a short request naming a service starts it; a lead's greeting starts the service it came for", () => {
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "Book grooming", signedIn: true }).state.flow, "grooming");
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "I need a dog walker", signedIn: true }).state.flow, "dog_walking");
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "how much is grooming?", signedIn: true }).event.type, "ai", "a question goes to the AI");
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "not grooming", signedIn: true }).state.flow, null);
+  const lead = { ...bot.initialBotState(), preferredFlow: "relocation" };
+  for (const reply of ["Hi", "Yes", "Plan relocation", "book now"]) assert.equal(bot.runBotTurn(lead, { text: reply, signedIn: true }).state.flow, "relocation", reply);
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "Hi", signedIn: true }).state.flow, null, "without a lead service a greeting opens the menu");
+});

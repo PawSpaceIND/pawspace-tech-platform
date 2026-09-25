@@ -375,6 +375,7 @@ export default function CustomerExperiencePage() {
   const routingMode = control?.routing?.mode || "human_only";
   const humanMode = routingMode === "human_only";
   const aiMode = routingMode === "ai_assistant";
+  const chatbotMode = routingMode === "chatbot_only";
   const handoffRow = control?.handoff?.current || null;
   const handoffStatus = text(handoffRow?.status, "");
   const humanOwned = humanMode && (handoffStatus === "staff_active" || Boolean(assigned && assigned !== "ai-orchestrator"));
@@ -494,7 +495,7 @@ export default function CustomerExperiencePage() {
             <div className={styles.aiBar}>
               <div>
                 <b>{isWhatsApp ? `${modeLabel} routing` : isWebChat ? (chatStaffOwned ? "Web chat · with PawSpace team" : chatAiPaused ? "Web chat · waiting for the team" : "Web chat · PawSpace AI answering") : "Non-WhatsApp conversation"}</b><br />
-                <span>{isWebChat ? (chatStaffOwned ? "AI is paused. Your replies appear in the customer's PawSpace chat." : chatAiPaused ? "The AI handed this customer to the team. Take over to reply." : "Take over to pause the AI and reply to the customer yourself.") : !isWhatsApp ? "WhatsApp routing controls apply only to canonical WhatsApp threads." : humanMode ? "Human replies use the governed outbox; AI is blocked for this thread." : aiMode ? "AI may qualify the enquiry; high-impact actions and handoff rules remain governed." : "Chatbot mode is visible but remains fail-closed until the deterministic flow engine is certified."}</span>
+                <span>{isWebChat ? (chatStaffOwned ? "AI is paused. Your replies appear in the customer's PawSpace chat." : chatAiPaused ? "The AI handed this customer to the team. Take over to reply." : "Take over to pause the AI and reply to the customer yourself.") : !isWhatsApp ? "WhatsApp routing controls apply only to canonical WhatsApp threads." : humanMode ? "Human replies use the governed outbox; AI is blocked for this thread." : aiMode ? "AI may qualify the enquiry; high-impact actions and handoff rules remain governed." : "The guided bot is answering with the service flows; a question goes to PawSpace AI and a request for a person comes to you."}</span>
               </div>
               <Button size="sm" variant="secondary" className={styles.takeover} disabled={busy || (isWebChat ? chatStaffOwned : !isWhatsApp || humanOwned)} onClick={() => { void takeOver(); }}>Take over</Button>
             </div>
@@ -537,7 +538,7 @@ export default function CustomerExperiencePage() {
             <input className={styles.search} value={routingReason} onChange={(event) => setRoutingReason(event.target.value)} maxLength={240} aria-label="Routing change reason" />
             <div className={styles.actions}>
               <Button size="sm" className={`${styles.action} ${humanMode ? styles.actionPrimary : ""}`} disabled={busy || !isWhatsApp} onClick={() => { void controlAct("set_mode", { mode: "human_only", reason: routingReason }); }}>Human only</Button>
-              <Button size="sm" variant="secondary" className={styles.action} disabled title="Chatbot mode unlocks only after deterministic flow-engine certification">Chatbot only</Button>
+              <Button size="sm" className={`${styles.action} ${chatbotMode ? styles.actionPrimary : ""}`} disabled={busy || !isWhatsApp || chatbotMode} title="Guided bot: the same service flows and buttons as PawSpace web chat" onClick={() => { void controlAct("set_mode", { mode: "chatbot_only", reason: routingReason }); }}>Chatbot only</Button>
               <Button size="sm" className={`${styles.action} ${aiMode ? styles.actionGreen : ""}`} disabled={busy || !isWhatsApp} onClick={() => { void controlAct(control?.handoff?.aiPaused ? "resume_ai" : "set_mode", control?.handoff?.aiPaused ? { reason: routingReason } : { mode: "ai_assistant", reason: routingReason }); }}>AI Assistant</Button>
             </div>
             <div className={styles.kv}><span>Provider</span><b>{text(control?.provider, isWhatsApp ? "sandbox simulator" : "—")}</b><span>AI paused</span><b>{(isWebChat ? chatAiPaused : control?.handoff?.aiPaused) ? "Yes" : "No"}</b><span>Handoff</span><b>{pretty((isWebChat ? chatHandoffStatus : handoffStatus) || "none")}</b><span>Production delivery</span><b>Disabled</b></div>
