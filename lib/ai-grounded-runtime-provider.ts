@@ -30,7 +30,7 @@ export function parseGroundedActionEnvelope(raw:string):{reply:string;actions:Ai
 
 async function canonicalRows(db:D1Database,sql:string){return(await db.prepare(sql).all<Row>()).results;}
 function compact(rows:Row[],fields:string[]){return rows.slice(0,25).map(row=>Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]])));}
-async function canonicalCatalogueSnapshot(db:D1Database){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
+export async function canonicalCatalogueSnapshot(db:D1Database){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
  canonicalRows(db,"SELECT package_code,name,base_price,currency,version FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price"),
  canonicalRows(db,"SELECT package_code,name,sessions,validity_days,base_price,currency,version FROM training_commercial_packages WHERE active=1 ORDER BY sessions"),
  canonicalRows(db,"SELECT package_code,name,care_kind,max_hours,base_price_per_pet,currency,version FROM boarding_commercial_packages WHERE active=1 ORDER BY max_hours"),

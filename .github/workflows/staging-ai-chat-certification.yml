@@ -1,0 +1,35 @@
+name: Staging AI chat certification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/staging-ai-chat-certification.yml'
+      - 'tests/e2e/staging-ai-chat-live-certification.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run authenticated V2 Chat AI live certification
+        run: node tests/e2e/staging-ai-chat-live-certification.mjs
+      - name: Upload sanitized certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-ai-chat-certification
+          path: staging-ai-chat-certification.json
+          if-no-files-found: warn
