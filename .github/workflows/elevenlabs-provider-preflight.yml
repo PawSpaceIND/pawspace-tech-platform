@@ -216,7 +216,25 @@ jobs:
                 if(firstDeltaMs===null&&bodyText.includes('"response.output_text.delta"'))firstDeltaMs=Date.now()-started;
               }
               const totalMs=Date.now()-started;
-              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,headersMs,firstByteMs,firstDeltaMs,totalMs,ms:totalMs,contentType:probe.headers.get('content-type'),serverTiming:probe.headers.get('server-timing'),bodyPrefix:bodyText.slice(0,1200)}));
+              // One fat delta and many small ones are the same firstDeltaMs but opposite outcomes on a
+              // phone, so count them and measure the first one. The stage timings ride the FINAL event,
+              // because response headers are already sent by the time the model stages finish, so the
+              // tail has to be parsed to see them at all.
+              let deltaCount=0,firstDeltaChars=null,turnTiming=null;
+              for(const line of bodyText.split('\n')){
+                if(!line.startsWith('data: '))continue;
+                const payload=line.slice(6).trim();
+                if(!payload||payload==='[DONE]')continue;
+                let event;try{event=JSON.parse(payload);}catch{continue;}
+                if(event.type==='response.output_text.delta'&&typeof event.delta==='string'){
+                  deltaCount+=1;
+                  if(firstDeltaChars===null)firstDeltaChars=event.delta.length;
+                }
+                if(event.type==='response.completed'&&event.response&&event.response.pawspace_timing)turnTiming=event.response.pawspace_timing;
+                if(event.type==='response.failed')turnTiming={failed:event.response&&event.response.error};
+              }
+              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,headersMs,firstByteMs,firstDeltaMs,totalMs,ms:totalMs,deltaCount,firstDeltaChars,contentType:probe.headers.get('content-type'),serverTiming:probe.headers.get('server-timing'),turnTiming,bodyPrefix:bodyText.slice(0,700)}));
+              console.log('GROOMING_LLM_PROBE_TAIL='+JSON.stringify({tail:bodyText.slice(-1400)}));
             } else console.log('GROOMING_LLM_PROBE='+JSON.stringify({skipped:true,hasCallId:Boolean(callId),hasSecret:Boolean(llmSecret)}));
           }
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),host=(String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com');
