@@ -136,6 +136,14 @@ test("ElevenLabs custom LLM extracts the latest user input and streams Responses
  assert.match(sse,/data: \[DONE\]/);
 });
 
+test("ElevenLabs outbound voice calls use a dedicated deterministic AI-owned thread id",async()=>{
+ const mod=await import("../lib/elevenlabs-custom-llm.ts");
+ assert.equal(mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"),"THREAD-VOICE-VCALL-C2A93B2F-269");
+ assert.equal(mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"),mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"));
+ assert.notEqual(mod.voiceThreadIdForCall("VCALL-A"),mod.voiceThreadIdForCall("VCALL-B"));
+ assert.throws(()=>mod.voiceThreadIdForCall("   "));
+});
+
 test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
  const mod=await import("../lib/elevenlabs-custom-llm.ts");
  const make=(auth)=>new Request("https://example.test",{headers:auth?{authorization:auth}:{}});
