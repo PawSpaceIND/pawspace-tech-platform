@@ -8,16 +8,17 @@ function careTime(value:unknown){const date=new Date(String(value||""));return N
 import{getDeviceLocation}from"../../lib/device-location-client";
 import{useEffect,useRef,useState}from"react";
 import{loadSittingLifecycle,updateSittingLifecycle,type SittingLifecycleBooking}from"../../lib/sitting-lifecycle-client";
+import{intentOf,useIntentIdempotency}from"../../lib/use-intent-idempotency";
 
 const careFields=[["feeding","Food and water routine"],["medication","Medication instructions from your vet"],["emergencyContact","Emergency contact"],["vet","Vet contact"],["homeAccess","Home access instructions"],["specialInstructions","Other care instructions"]] as const;
 
-export default function SittingWorkspace({bookingId}:{bookingId:string}){
+export default function SittingWorkspace({bookingId}:{bookingId:string}){const intents=useIntentIdempotency("sitter");
  const pathname=usePathname(),inV2=pathname.startsWith("/v2/partner/sitter"),sitterBase=inV2?"/v2/partner/sitter":"/sitter",customerHref=inV2?"/v2/sitting":"/sitting";
  const actionInFlight=useRef(false);
  const[booking,setBooking]=useState<SittingLifecycleBooking|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[recoveryReason,setRecoveryReason]=useState("");
  async function refresh(){if(!bookingId)return;try{setError("");const rows=await loadSittingLifecycle({bookingId});setBooking(rows[0]||null)}catch(e){setError(e instanceof Error?e.message:"Unable to load Sitting booking")}}
  useEffect(()=>{if(!bookingId)return;let active=true;void loadSittingLifecycle({bookingId}).then(rows=>{if(!active)return;setError("");setBooking(rows[0]||null)}).catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load Sitting booking")});return()=>{active=false}},[bookingId]);
- async function act(action:"accept"|"check_in"|"care_event"|"check_out"|"decline"|"sitter_unavailable",extra:Record<string,unknown>={}){if(!bookingId||actionInFlight.current)return;actionInFlight.current=true;setBusy(true);setError("");try{const location=action==="check_in"?await getDeviceLocation():{};await updateSittingLifecycle({bookingId,action,...location,idempotencyKey:`sitter:${bookingId}:${action}:${Date.now()}`,...extra});await refresh()}catch(e){setError(e instanceof Error?e.message:"Unable to update Sitting booking")}finally{actionInFlight.current=false;setBusy(false)}}
+ async function act(action:"accept"|"check_in"|"care_event"|"check_out"|"decline"|"sitter_unavailable",extra:Record<string,unknown>={}){if(!bookingId||actionInFlight.current)return;const intent=intentOf([bookingId,action],extra);actionInFlight.current=true;setBusy(true);setError("");try{const location=action==="check_in"?await getDeviceLocation():{};await updateSittingLifecycle({bookingId,action,...location,idempotencyKey:intents.keyFor(intent),...extra});intents.settle(intent);await refresh()}catch(e){setError(e instanceof Error?e.message:"Unable to update Sitting booking")}finally{actionInFlight.current=false;setBusy(false)}}
  if(!bookingId)return <ProviderWorkspaceEntry eyebrow="PAWSPACE · PET SITTER" title="Sitter workspace" blurb="Open a Pet Sitting booking to accept the schedule, check in, log care events and check out." basePath="/sitter" demoBookingId="UATD-BK-SIT-1" demoLabel="demo sitting booking" customerHref="/sitting" customerLabel="Book a Pet Sitting service" opsHref="/team/operations/sitting" opsLabel="Operations → Sitting" />;
  if(error&&!booking)return <main className={styles.workspace}><h1>PawSpace Sitting workspace</h1><p role="alert">{error}</p><button onClick={()=>void refresh()}>Retry</button></main>;
  if(!booking)return <main className={styles.workspace}><h1>PawSpace Sitting workspace</h1><p>Loading canonical Sitting booking…</p></main>;
