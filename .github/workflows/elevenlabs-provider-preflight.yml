@@ -636,3 +636,67 @@ jobs:
           console.log('ALTERNATE_ASSIGN_STATUS='+patch.status);
           if(!patch.ok) throw new Error('alternate Grooming assignment failed '+patch.status);
           NODE
+
+  tune-grooming-audio:
+    if: ${{ inputs.confirm == 'tune-grooming-audio' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - name: Tune Grooming agent for clear phone conversation
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
+          const headers={'xi-api-key':key,'content-type':'application/json'};
+          const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const current=await read.json().catch(()=>({}));
+          if(!read.ok) throw new Error('agent read failed '+read.status);
+          const voiceId=current?.conversation_config?.tts?.voice_id;
+          if(!voiceId) throw new Error('agent voice_id missing');
+          const body={
+            conversation_config:{
+              agent:{
+                first_message:"Hi, this is PawSpace's grooming assistant. How can I help with grooming today?"
+              },
+              tts:{
+                model_id:'eleven_flash_v2_5',
+                voice_id:voiceId,
+                stability:0.6,
+                similarity_boost:0.8,
+                speed:0.95
+              },
+              turn:{
+                turn_timeout:12,
+                silence_end_call_timeout:60,
+                turn_eagerness:'normal',
+                turn_model:'turn_v3',
+                soft_timeout_config:{
+                  timeout_seconds:4,
+                  message:"One moment while I check that for you.",
+                  max_soft_timeouts_per_generation:1
+                }
+              }
+            }
+          };
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{
+            method:'PATCH',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(30000)
+          });
+          const result=await patch.json().catch(()=>({}));
+          if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error('agent update failed '+patch.status);}
+          const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+          console.log('GROOMING_AUDIO_TUNED='+JSON.stringify({
+            firstMessage:agent.first_message||null,
+            modelId:tts.model_id||null,
+            stability:tts.stability??null,
+            similarityBoost:tts.similarity_boost??null,
+            speed:tts.speed??null,
+            turnTimeout:turn.turn_timeout??null,
+            silenceEndCallTimeout:turn.silence_end_call_timeout??null,
+            turnModel:turn.turn_model||null,
+            softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null
+          }));
+          NODE
