@@ -13,6 +13,8 @@ on:
       - 'worker/index.ts'
       - 'tests/v2-grooming*.test.mjs'
       - 'e2e/v2-grooming.spec.ts'
+      - 'e2e/v2-ui-theme-closure.spec.ts'
+      - 'app/components/pawspace-appearance.tsx'
       - 'playwright.v2.config.ts'
       - '.github/workflows/v2-grooming.yml'
   workflow_dispatch:
@@ -25,7 +27,7 @@ jobs:
   browser:
     name: V2 Grooming desktop and mobile
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       APP_ENV: staging
       NODE_ENV: test

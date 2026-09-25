@@ -15,6 +15,7 @@ import {
   type V2ServiceAvailability,
 } from "../../lib/v2/customer-experience-client";
 import styles from "./v2.module.css";
+import { AdditionalCareTiles, HomePets } from "./home-care-extras";
 import V2ServiceIcon from "./service-icon";
 
 type ServiceCard = {
@@ -159,7 +160,7 @@ export default function PawSpaceV2() {
   };
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-v2-home="true">
       <div className={styles.aurora} aria-hidden="true" />
       <div className={styles.shell}>
         <header className={styles.nav}>
@@ -168,7 +169,7 @@ export default function PawSpaceV2() {
           </Link>
           <div className={styles.navCenter}>
             <span className={styles.locationDot} />
-            <span>Bengaluru</span>
+            <Link href="/v2/account" aria-label="Manage saved service address">{account?.addresses[0]?.area || account?.addresses[0]?.city || "Bengaluru"}⌄</Link>
             <span className={styles.navDivider} />
             <span>{availability ? `${availableCount} services ready` : "Checking services"}</span>
           </div>
@@ -225,6 +226,7 @@ export default function PawSpaceV2() {
           </div>
         )}
 
+        <HomePets account={account} />
         <section className={styles.familyStrip}>
           <div className={styles.sectionTitleCompact}>
             <span>Your PawSpace</span>
@@ -266,11 +268,12 @@ export default function PawSpaceV2() {
                   </>
                 );
                 return enabled ? (
-                  <Link key={service.code} href={service.href} className={`${styles.serviceCard} ${service.size === "hero" ? styles.serviceHero : ""}`} style={cardStyle}>{content}</Link>
+                  <Link key={service.code} data-home-care-tile={service.code} href={service.href} className={`${styles.serviceCard} ${service.size === "hero" ? styles.serviceHero : ""}`} style={cardStyle}>{content}</Link>
                 ) : (
-                  <article key={service.code} className={`${styles.serviceCard} ${styles.serviceDisabled} ${service.size === "hero" ? styles.serviceHero : ""}`} style={cardStyle} aria-disabled="true">{content}</article>
+                  <article key={service.code} data-home-care-tile={service.code} className={`${styles.serviceCard} ${styles.serviceDisabled} ${service.size === "hero" ? styles.serviceHero : ""}`} style={cardStyle} aria-disabled="true">{content}</article>
                 );
               })}
+              <AdditionalCareTiles availability={availability} />
             </div>
           </section>
 
@@ -279,11 +282,11 @@ export default function PawSpaceV2() {
               <div className={styles.aiTop}><span className={styles.aiOrb}>✦</span><div><small>PAWSPACE AI</small><b>Your pet-care co-pilot</b></div><span className={styles.beta}>AI</span></div>
               <h3>{firstPet ? `A little more ease for ${firstPet.name}.` : "Tell us about your pet. We'll connect the dots."}</h3>
               <p>{account ? (upcoming ? `You have ${upcoming.packageName} coming up. I can help with prep, follow-ups and the next best care step.` : "Your family profile is connected. Ask for care ideas, service guidance or help planning your next booking.") : "Ask what service fits, how to prepare, or what your pet may need next. Booking truth always comes from PawSpace systems."}</p>
-              <Link href="/v2/chat" className={styles.aiCta}>Start a conversation <span>↗</span></Link>
+              <Link href="/v2/chat" className={styles.aiCta}>Need help? Ask PawSpace <span>↗</span></Link>
               <div className={styles.promptChips}><span>“What does my pet need?”</span><span>“Plan a travel stay”</span><span>“Grooming advice”</span></div>
             </section>
 
-            <section className={styles.bookingCard}>
+            <section className={styles.bookingCard} data-has-booking={Boolean(upcoming)}>
               <div className={styles.cardLabel}><span>◎</span> NEXT CARE</div>
               {upcoming ? (
                 <>
@@ -316,9 +319,8 @@ export default function PawSpaceV2() {
 
       <nav className={styles.mobileDock} aria-label="PawSpace mobile navigation">
         <Link href="/v2"><span>⌂</span><b>Home</b></Link>
-        <a href="#services"><span>＋</span><b>Book</b></a>
-        <Link href="/v2/chat" className={styles.mobileAi}><span>✦</span><b>AI</b></Link>
-        <Link href="/v2/activity"><span>◎</span><b>Activity</b></Link>
+        <Link href="/v2/activity"><span>◎</span><b>Bookings</b></Link>
+        <Link href="/v2/chat" className={styles.mobileAi}><span>✦</span><b>Help</b></Link>
         {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={() => setAuthOpen(true)}><span>◉</span><b>Sign in</b></button>}
       </nav>
 
