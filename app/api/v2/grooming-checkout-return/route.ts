@@ -6,7 +6,7 @@ async function v2Return(request: Request, handler: (request: Request) => Promise
   const location = response.headers.get("location");
   if (response.status !== 303 || !location) return response;
   const target = new URL(location), source = new URL(request.url);
-  if (target.origin !== source.origin || target.pathname !== "/mobile-app/booking-confirmation") {
+  if (target.origin !== source.origin || !["/mobile-app/booking-confirmation", "/v2/booking-confirmation"].includes(target.pathname)) {
     return new Response("Invalid checkout return destination", { status: 400 });
   }
   target.pathname = "/v2/grooming";
