@@ -1,5 +1,5 @@
 import{ensureCommunicationTables}from"./communication-engine";
-import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
+import{classifyAiIntent,orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import type{AuthenticatedActor}from"./server-auth";
 
@@ -84,6 +84,17 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
  await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
   .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();
  const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});
+ const intent=classifyAiIntent(inputText);
+ const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
+ if(fastEligible){
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true}});
+  if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!(generated.actionRequests?.length)){
+   const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
+   await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
+    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run();
+   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId};
+  }
+ }
  const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
