@@ -37,9 +37,9 @@
       "conditions": 11
     },
     "app/training/page.tsx": {
-      "sha256": "6daac7fa1cd5cfc7675f6de6e493f2c350b024b9d9286a03288fcf6dddb1e09e",
-      "functions": 69,
-      "declarations": 89,
+      "sha256": "71b20d324929944b8d6e53471cce9ef005622d88ff0d7300622f4e2c1c9b86fa",
+      "functions": 70,
+      "declarations": 90,
       "interactionProps": 43,
       "conditions": 32
     },

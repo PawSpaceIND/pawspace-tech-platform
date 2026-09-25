@@ -38,7 +38,7 @@ export default function AssistedBooking(){
 
   useEffect(()=>{let active=true;
     const requested=requestedCustomerIdQuery.trim();
-    queueMicrotask(()=>{if(!active)return;setRequestedCustomerId(requested);if(requested)setCrmLoading(true);});
+    queueMicrotask(()=>{if(!active)return;setRequestedCustomerId(requested);setCrmCustomer(null);setCrmPendingPetName("");setCrmSpecies("");if(requested)setCrmLoading(true);});
     void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});
     if(requested){void (async()=>{try{
       const response=await fetch(`/api/customer-360?customerId=${encodeURIComponent(requested)}`,{cache:"no-store"});
@@ -59,7 +59,8 @@ export default function AssistedBooking(){
   },[requestedCustomerIdQuery]);
 
   const effectiveCrmCustomer=useMemo<AssistedOrderCustomer|null>(()=>{if(!crmCustomer)return null;if(crmCustomer.pets.length||!crmPendingPetName||!crmSpecies)return crmCustomer;return{...crmCustomer,pets:[{sourceId:crmPendingPetName,name:crmPendingPetName,species:crmSpecies}]};},[crmCustomer,crmPendingPetName,crmSpecies]);
-  const customer=requestedCustomerId?effectiveCrmCustomer:(config?.customers[selected]??null);
+  // A CRM record loaded for an earlier query is never shown or submitted under a new selection.
+  const customer=requestedCustomerId?(effectiveCrmCustomer?.id===requestedCustomerId?effectiveCrmCustomer:null):(config?.customers[selected]??null);
   const petKeys=customer?(selectedPetKeys?.customerId===customer.id?selectedPetKeys.keys:customer.pets[0]?[assistedPetKey(customer.pets[0])]:[]):[];
   const selectedPets=customer?.pets.filter(pet=>petKeys.includes(assistedPetKey(pet)))||[];
   const eligiblePackages=config?.packages.filter(item=>selectedPets.length>0&&selectedPets.every(pet=>item.eligiblePetTypes.includes(pet.species)))||[];

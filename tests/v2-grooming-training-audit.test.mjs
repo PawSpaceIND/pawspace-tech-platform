@@ -52,3 +52,24 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   for(const pets of [1,2,3,4]){const terms={sessions,validityDays,minutesPerSession:60*pets};const windows=trainingCalendarWindows(start,terms);assert.equal(windows.length,sessions);assert.equal(Date.parse(windows[0].end)-Date.parse(start),pets*3600000);assert.doesNotThrow(()=>assertTrainingCalendarValidity(start,terms,windows));}
  }
 });
+
+// Review follow-ups (CodeAnt on #1088): source contracts for UI-only state; the behaviour is a one-token change each.
+{
+ const {readFileSync}=await import('node:fs');
+ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
+ test('review: a recorded zero Training progress score is loaded as zero, not replaced by the default',()=>{
+  const trainer=read('app/trainer/page.tsx');
+  for(const key of ['focus','recall','impulse','parent'])assert.match(trainer,new RegExp(`${key}:Number\\(progress\\.${key}\\?\\?7\\)`),key);
+  assert.doesNotMatch(trainer,/Number\(progress\.[a-z]+\|\|7\)/);
+ });
+ test('review: legacy /training keeps its own booking/payment page instead of jumping into V2',()=>{
+  const training=read('app/training/page.tsx');
+  assert.match(training,/const bookingRecordHref=\(bookingId:string\)=>routeScope==="v2"\?`\/v2\/booking\?bookingId=\$\{encodeURIComponent\(bookingId\)\}`:`\/mobile-app\/booking-confirmation\?bookingId=\$\{encodeURIComponent\(bookingId\)\}`/);
+  assert.equal((training.match(/\/v2\/booking\?bookingId=/g)||[]).length,1,'the V2 booking link is built only by bookingRecordHref');
+ });
+ test('review: an assisted booking never shows or submits a CRM record loaded for a previous customer query',()=>{
+  const assisted=read('app/assisted-booking/page.tsx');
+  assert.match(assisted,/requestedCustomerId\?\(effectiveCrmCustomer\?\.id===requestedCustomerId\?effectiveCrmCustomer:null\)/);
+  assert.match(assisted,/setRequestedCustomerId\(requested\);setCrmCustomer\(null\);/);
+ });
+}
