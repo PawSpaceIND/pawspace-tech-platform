@@ -1,5 +1,5 @@
 import { ensureCommunicationTables } from "./communication-engine";
-import { ensureD1Once } from "./d1-ensure-once.js";
+import { ensureD1Once, ensureD1OnceApplied } from "./d1-ensure-once.js";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;
@@ -31,11 +31,12 @@ async function columnNames(db: Db, table: string) {
 }
 
 async function ensureProviderTrustColumns(db: Db) {
-  if (!await tableExists(db, "provider_capacity_profiles")) return;
+  if (!await tableExists(db, "provider_capacity_profiles")) return false;
   const columns = await columnNames(db, "provider_capacity_profiles");
   if (!columns.has("trust_score")) await db.exec("ALTER TABLE provider_capacity_profiles ADD COLUMN trust_score INTEGER NOT NULL DEFAULT 100");
   if (!columns.has("trust_strike_count")) await db.exec("ALTER TABLE provider_capacity_profiles ADD COLUMN trust_strike_count INTEGER NOT NULL DEFAULT 0");
   if (!columns.has("suspended_until")) await db.exec("ALTER TABLE provider_capacity_profiles ADD COLUMN suspended_until INTEGER");
+  return true;
 }
 
 export function normaliseTrustSafetyPhone(value: unknown): { e164: string; key: string } | null {
@@ -84,7 +85,7 @@ export function redactTrustSafetyText(value: string) {
 }
 
 export async function ensureTrustSafetyTables(db: Db) {
-  return ensureD1Once(db,"trust_safety_tables",async()=>{
+  await ensureD1Once(db,"trust_safety_tables",async()=>{
   await ensureCommunicationTables(db);
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS trust_safety_events (id TEXT PRIMARY KEY,event_type TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id TEXT,provider_id TEXT,customer_id TEXT,thread_id TEXT,message_id TEXT,channel TEXT NOT NULL,detection_types_json TEXT NOT NULL DEFAULT '[]',content_sha256 TEXT NOT NULL,source_reference TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',strike_applied INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(event_type,source_reference))"),
@@ -104,24 +105,26 @@ export async function ensureTrustSafetyTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS trust_safety_sweep_runs (slot_key TEXT PRIMARY KEY,started_at INTEGER NOT NULL,finished_at INTEGER,status TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}')"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_opt_outs (phone_key TEXT PRIMARY KEY,source TEXT NOT NULL,reason TEXT,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL)"),
   ]);
-  await ensureProviderTrustColumns(db);
-  await ensureBlocklistTriggers(db);
   });
+  // These two depend on tables other modules create later. They are cached only once applied, so a
+  // binding that first ran before provider_capacity_profiles or canonical_bookings existed still gets them.
+  await ensureD1OnceApplied(db, "trust_safety_provider_columns", () => ensureProviderTrustColumns(db));
+  await ensureD1OnceApplied(db, "trust_safety_blocklist_triggers", () => ensureBlocklistTriggers(db));
 }
 
 async function ensureBlocklistTriggers(db: Db) {
-  if (await tableExists(db, "canonical_bookings")) {
-    await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_global_blocklist_booking_insert
-      BEFORE INSERT ON canonical_bookings
-      WHEN EXISTS (
-        SELECT 1 FROM global_blocklist_customer_links l
-        JOIN global_blocklist g ON g.phone_e164=l.phone_e164 AND g.status='active'
-        WHERE l.customer_id=NEW.customer_id
-      )
-      BEGIN
-        SELECT RAISE(ABORT,'global_customer_blocked');
-      END`).run();
-  }
+  if (!await tableExists(db, "canonical_bookings")) return false;
+  await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_global_blocklist_booking_insert
+    BEFORE INSERT ON canonical_bookings
+    WHEN EXISTS (
+      SELECT 1 FROM global_blocklist_customer_links l
+      JOIN global_blocklist g ON g.phone_e164=l.phone_e164 AND g.status='active'
+      WHERE l.customer_id=NEW.customer_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT,'global_customer_blocked');
+    END`).run();
+  return true;
 }
 
 function trustScoreAfterStrike(strike: number) {
