@@ -93,7 +93,15 @@ jobs:
           const phoneMeta=meta?.phone_call&&typeof meta.phone_call==='object'?meta.phone_call:{};
           const callSid=String(phoneMeta?.call_sid||phoneMeta?.callSid||meta?.call_sid||meta?.callSid||'').trim();
           if(callSid) console.log('::add-mask::'+callSid);
-          console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(meta?.call_duration_secs||0),terminationReason:meta?.termination_reason||null,error:meta?.error||null,metadataKeys:Object.keys(meta).sort(),phoneMetadataKeys:Object.keys(phoneMeta).sort(),hasProviderCallSid:Boolean(callSid),safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(meta?.call_duration_secs||0),terminationReason:meta?.termination_reason||null,error:meta?.error||null,metadataKeys:Object.keys(meta).sort(),phoneMetadataKeys:Object.keys(phoneMeta).sort(),hasProviderCallSid:Boolean(callSid),agentNumberLast4:String(phoneMeta?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(phoneMeta?.external_number||'').replace(/\D/g,'').slice(-4)||null,phoneNumberIdPresent:Boolean(phoneMeta?.phone_number_id),safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const recentDetails=[];
+          for(const row of rows.slice(0,10)){
+            const cid=String(row?.conversation_id||'');if(!cid)continue;
+            const rr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(cid)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)});if(!rr.ok)continue;
+            const cd=await rr.json().catch(()=>({})),ct=Array.isArray(cd?.transcript)?cd.transcript:[],cm=cd?.metadata&&typeof cd.metadata==='object'?cd.metadata:{},cp=cm?.phone_call&&typeof cm.phone_call==='object'?cm.phone_call:{};
+            if(ct.some(x=>x?.role==='user')) recentDetails.push({status:cd?.status||null,turns:ct.length,duration:Number(cm?.call_duration_secs||0),start:Number(cd?.start_time_unix_secs||cm?.start_time_unix_secs||0),agentNumberLast4:String(cp?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(cp?.external_number||'').replace(/\D/g,'').slice(-4)||null,hasCallSid:Boolean(cp?.call_sid),sample:ct.slice(0,4).map(x=>({role:x.role,message:String(x.message||'').replace(/\s+/g,' ').slice(0,180)}))});
+          }
+          console.log('GROOMING_RECENT_ANSWERED='+JSON.stringify(recentDetails));
           const trResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}?format=opentelemetry`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           if(trResponse.ok){
             const otlp=await trResponse.json().catch(()=>({}));
