@@ -213,7 +213,7 @@ export async function aiProviderConnection(channel?: string): Promise<{
   };
 }
 
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
@@ -239,7 +239,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     return fail(failure, status);
   };
 
-  const timeoutMs = aiTimeoutMs(env);
+  const configuredTimeoutMs=aiTimeoutMs(env),requestedTimeoutMs=Number(input.timeoutMs),timeoutMs=Number.isFinite(requestedTimeoutMs)&&requestedTimeoutMs>0?Math.min(configuredTimeoutMs,Math.max(MIN_TIMEOUT_MS,Math.floor(requestedTimeoutMs))):configuredTimeoutMs;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
