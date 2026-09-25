@@ -783,6 +783,75 @@ async function partnerLifecycle(page: Page) {
   await shot(page, "partner-photos-uploaded");
 }
 
+test("MAP-DIRECT — existing confirmed booking reaches trusted GPS and Google customer map", async ({ browser }) => {
+  test.setTimeout(180_000);
+  bookingId=process.env.PW_MAP_BOOKING_ID||"PS-UAT-MUGQERZ7-2ADF";
+  assignedProviderId=process.env.PW_MAP_PROVIDER_ID||"uatcap_groom_south_2";
+  providerPhone=process.env.PW_MAP_PROVIDER_PHONE||"9000000913";
+
+  const customerContext=await browser.newContext();
+  const customerPage=await customerContext.newPage();
+  await customerOtpLogin(customerPage);
+  const own=await customerContext.request.get(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}`);
+  expect(own.status(),await own.text()).toBe(200);
+
+  const partnerContext=await browser.newContext();
+  const partnerPage=await partnerOtpLogin(partnerContext,providerPhone);
+  let projection=await readPartnerLifecycle(partnerPage);
+  let status=String(projection?.data?.booking?.workOrderStatus||projection?.data?.booking?.work_order_status||projection?.data?.booking?.status||"").toLowerCase();
+
+  if(status==="confirmed"||status==="awaiting acceptance"||status==="awaiting_acceptance"){
+    const accepted=await partnerContext.request.post("/api/grooming-lifecycle",{data:{bookingId,action:"accept"}});
+    expect(accepted.status(),await accepted.text()).toBe(200);
+  }
+  projection=await readPartnerLifecycle(partnerPage);
+  status=String(projection?.data?.booking?.workOrderStatus||projection?.data?.booking?.work_order_status||projection?.data?.booking?.status||"").toLowerCase();
+  if(status==="assigned"){
+    const started=await partnerContext.request.post("/api/grooming-lifecycle",{data:{bookingId,action:"on_the_way"}});
+    expect(started.status(),await started.text()).toBe(200);
+  }
+  projection=await readPartnerLifecycle(partnerPage);
+  status=String(projection?.data?.booking?.workOrderStatus||projection?.data?.booking?.work_order_status||projection?.data?.booking?.status||"").toLowerCase();
+  expect(["on_the_way","on the way","arrived","in_service","in service"]).toContain(status);
+
+  const gps=await partnerContext.request.post("/api/grooming-route",{data:{
+    bookingId,
+    providerId:assignedProviderId,
+    latitude:DOORSTEP.latitude,
+    longitude:DOORSTEP.longitude,
+    accuracyMeters:8,
+    capturedAt:Date.now(),
+    idempotencyKey:`maps-direct-${Date.now()}`
+  }});
+  const gpsText=await gps.text();
+  expect(gps.status(),gpsText).toBe(200);
+  const gpsBody=JSON.parse(gpsText) as {data?:{providerLocation?:{trustState?:string};telemetryAccepted?:boolean}};
+  expect(gpsBody.data?.providerLocation?.trustState).toBe("accepted");
+  expect(gpsBody.data?.telemetryAccepted).toBe(true);
+
+  let summary:any=null;
+  await expect.poll(async()=>{
+    const response=await customerContext.request.get(`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}&proof=${Date.now()}`,{headers:{"cache-control":"no-store"}});
+    if(response.status()!==200)return `http-${response.status()}`;
+    summary=await response.json();
+    return summary?.data?.tracking?.state||"missing";
+  },{timeout:45_000,intervals:[1000,2000,3000,5000]}).toBe("live");
+
+  expect(Number(summary?.data?.tracking?.etaMinutes||0)).toBeGreaterThan(0);
+  const mapUrl=`/api/customer-grooming-summary?bookingId=${encodeURIComponent(bookingId)}&map=1&proof=${Date.now()}`;
+  const mapResponse=await customerPage.goto(mapUrl,{waitUntil:"load",timeout:30_000});
+  expect(mapResponse).not.toBeNull();
+  expect(mapResponse!.status()).toBe(200);
+  expect(mapResponse!.headers()["content-type"]||"").toMatch(/^image\//i);
+  expect(mapResponse!.headers()["x-pawspace-map-source"]).toBe("google-static-maps");
+  expect(mapResponse!.headers()["x-pawspace-location-privacy"]).toBe("provider-rounded-3dp");
+  await customerPage.screenshot({path:"test-results/btm-customer-live-google-map.png",fullPage:true});
+  log(`✅ MAP_DIRECT_PASS booking ${bookingId}: tracking live, ETA ${summary?.data?.tracking?.etaMinutes} min, distance ${summary?.data?.tracking?.distanceKm} km, Google Static Maps HTTP 200.`);
+
+  await partnerContext.close();
+  await customerContext.close();
+});
+
 test("4. Founder — approves both photos in Control → Customer booking lifecycle", async ({ browser }) => {
   test.setTimeout(180_000);
   section("4. Founder persona (maker/checker approval)");
