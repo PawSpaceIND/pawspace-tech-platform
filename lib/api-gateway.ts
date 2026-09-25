@@ -14,6 +14,9 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
 
 /** Exported so the mapping can be asserted by executing it, rather than by matching this file's text. */
 export async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();
+  // These exact machine-to-machine POST handlers authenticate their own bearer/HMAC credentials.
+  // A provider cannot log in as staff. Never exempt a prefix or any other HTTP method here.
+  if(method==="POST"&&(url.pathname==="/api/elevenlabs/v1/responses"||url.pathname==="/api/webhooks/elevenlabs/init"||url.pathname==="/api/webhooks/elevenlabs/post-call"))return null;
   // V2 customer reads still need a verified customer/session or an authorized staff actor.
   // Unknown V2 paths and unsupported methods must keep the existing default-deny permission.
   if(method==="GET"&&(url.pathname==="/api/v2/grooming-catalogue"||url.pathname==="/api/v2/grooming-checkout"))return "scheduling.book";

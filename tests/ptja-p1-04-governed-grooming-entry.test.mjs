@@ -218,7 +218,8 @@ test("P1-04-A01 a post-commit failure names the booking instead of denying it", 
   assert.ok(start > 0, "the confirm catch exists");
   const handler = code.slice(start, code.indexOf("}finally", start));
   assert.ok(handler.includes("committedBookingId?"), "the handler branches on whether the booking exists");
-  assert.ok(handler.includes("is confirmed"), "and says so rather than denying it");
+  assert.ok(handler.includes("was created"), "and identifies the committed booking without claiming payment confirmation");
+  assert.ok(handler.includes("payment and care-detail completion are not confirmed"), "partial completion remains explicit");
   assert.ok(handler.includes("Do not rebook"), "and tells the customer not to rebook");
   // Non-vacuity: the pre-commit path still reports a genuine scheduling failure.
   assert.ok(handler.includes("No groomer is available for this slot"), "a pre-commit failure still reads as one");

@@ -2,11 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./stay-flow.module.css";
 import Link from "next/link";
-import {saveCustomerBoardingCare,boardingCareDraft} from "../../lib/boarding-customer-care";
-import {saveSittingCustomerPlan} from "../../lib/sitting-customer-view";
+import {boardingCareDraft} from "../../lib/boarding-customer-care";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
-import { createTestTransaction } from "../../lib/test-transaction";
 import { meetGreetPrice } from "../../lib/meet-and-greet";
 import SittingCustomerPanel from "./sitting-customer-panel";
 import PetManager from "./pet-manager";
@@ -21,7 +19,7 @@ import type { StayLocation } from "../../lib/stay-saved-address";
 import { stayCareWindow } from "../../lib/stay-care-window";
 import { createSittingQuote, type SittingQuote } from "../../lib/sitting-commercial-client";
 import { createCanonicalSittingBooking } from "../../lib/sitting-booking-client";
-import BookingPaymentPage from "./booking-payment-page";
+import StayCarePaymentGate from "./stay-care-payment-gate";
 
 // Unique per-booking nonce. Kept as a module-scope helper so the impure Date.now()
 // call lives outside component render (matching istDate in the taxi/walking flows).
@@ -319,46 +317,14 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
       const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,breed:p.breed??undefined,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"created",detail:"Awaiting verified Razorpay payment"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
     }
     const plan=mode==="boarding"?boardingCareDraft(careDraft,selectedNeeds,selectedBenefits,foodType):{...careDraft,specialInstructions:[careDraft.specialInstructions,selectedNeeds.length?`Care requests: ${selectedNeeds.join(', ')}`:''].filter(Boolean).join('\n')};setConfirmedCarePlan(plan);
-    try{if(mode==="boarding")await saveCustomerBoardingCare(canonicalBookingId,plan,`initial-boarding-care:${canonicalBookingId}`);else await saveSittingCustomerPlan(canonicalBookingId,plan,`initial-sitting-care:${canonicalBookingId}`);setCareSaveError("");}catch(problem){setCareSaveError(`Booking saved, but care instructions were not confirmed. Review and save them below. ${problem instanceof Error?problem.message:''}`);if(mode==="boarding")setView("care");}
-    const booking = createTestTransaction({
-      customerId: customer.customerId,
-      customerName: customer.customerName,
-      primary: customer.phone,
-      secondary: "",
-      pets: selectedPetNames.join(", "),
-      petCount: selectedPets.length,
-      service: mode === "boarding" ? "Boarding" : "Pet Sitting",
-      packageName:
-        mode === "boarding" ? "Home Boarding" : careWindow === "24 hours" ? "Overnight Pet Sitting" : "Pet Sitting",
-      area: caregiver.area,
-      slot: stayWindow.summary,
-      duration: stayWindow.duration,
-      amount: governedBoardingQuote?.totalAmount ?? governedSittingQuote?.totalAmount ?? total,
-      offerCode: undefined,
-      discount: 0,
-      payment:
-        mode === "boarding"
-          ? splitEligible && splitPayment
-            ? `50% deposit paid in UAT sandbox from canonical Boarding quote · ${money(balanceAmount)} due 24 hours before check-in`
-            : "Paid in UAT sandbox from canonical Boarding quote"
-          : splitEligible && splitPayment
-            ? `50% stay deposit + Meet & Greet paid · ${money(balanceAmount)} due 24 hours before check-in`
-            : "Server-attested Sitting UAT sandbox payment",
-      provider: decision.provider.name,
-      providerModel: "Commission",
-      subscription: "No active plan",
-      creditsBefore: 0,
-      crmOwner: "Asha",
-      crmNextAction: "Commission caregiver approval, secure chat and Meet & Greet",
-      reminder: "Review the saved care plan before check-in",
-    },canonicalBookingId);
+    // Care saving has its own retry boundary; canonical creation is not payment confirmation.
     setConfirmedTotal(governedBoardingQuote?.totalAmount ?? governedSittingQuote?.totalAmount ?? total);
     setBookingId(canonicalBookingId);
     const paymentQuote=governedBoardingQuote??governedSittingQuote!;setPendingPayment({bookingId:canonicalBookingId,serviceName:mode==="boarding"?"Boarding":"Pet Sitting",total:paymentQuote.totalAmount,dueNow:paymentQuote.amountDueNow,mode:paymentQuote.paymentMode});
     } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {actionLock.current=false;setScheduling(false);}
 
   };
-  if(pendingPayment)return <BookingPaymentPage serviceName={pendingPayment.serviceName} totalAmount={pendingPayment.total} amountDueNow={pendingPayment.dueNow} mode={pendingPayment.mode} bookingId={pendingPayment.bookingId} onVerified={()=>{setPendingPayment(null);setConfirmed(true);}} onBack={()=>setPendingPayment(null)}/>;
+  if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
   if (confirmed)
     return (
       <>

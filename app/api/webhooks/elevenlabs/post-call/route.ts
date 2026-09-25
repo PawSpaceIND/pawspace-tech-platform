@@ -11,7 +11,7 @@ export async function POST(request:Request){
   try{raw=await readBoundedRequestText(request,256*1024);}catch(error){if(error instanceof VoiceFetchRefused)return json({error:"ElevenLabs post-call payload is too large"},413);throw error;}
   const signature=request.headers.get("ElevenLabs-Signature")||"";
   const verified=await verifyElevenLabsWebhook(raw,signature,env);if(!verified.verified)return json({error:verified.reason},401);
-  let payload:Record<string,unknown>;try{payload=JSON.parse(raw)as Record<string,unknown>;}catch{return json({error:"Malformed ElevenLabs post-call payload"},400);}
+  let payload:Record<string,unknown>;try{const parsed:unknown=JSON.parse(raw);if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return json({error:"ElevenLabs post-call payload must be a JSON object"},400);payload=parsed as Record<string,unknown>;}catch{return json({error:"Malformed ElevenLabs post-call payload"},400);}
   const result=await reconcileElevenLabsPostCall(await database(),payload);return json({ok:true,data:result});
  }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to reconcile ElevenLabs post-call event");}
 }

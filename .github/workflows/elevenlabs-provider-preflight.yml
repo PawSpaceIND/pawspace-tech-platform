@@ -1,0 +1,27 @@
+name: ElevenLabs and OpenAI provider preflight (no calls)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type no-calls. Makes one synthetic OpenAI request and reads the existing global ElevenLabs agent. No calls or conversations.'
+        required: true
+        default: ''
+permissions:
+  contents: read
+jobs:
+  preflight:
+    if: ${{ inputs.confirm == 'no-calls' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Read agent and verify one synthetic OpenAI reply without business data
+        env:
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+        run: node scripts/elevenlabs-provider-preflight.mjs

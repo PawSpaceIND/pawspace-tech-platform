@@ -125,7 +125,11 @@ test("the fields that were being dropped are specifically present on both sides"
     assert.ok(routeKeys.includes(key), `${key} must still be returned by the route`);
     assert.ok(declaredKeys.includes(key), `${key} must be declared by the client`);
   }
-  assert.match(route, /amountDueNow:Number\(row\.amount_due_now\|\|0\)/);
+  // The amount is CURRENT online due, not the original instalment at booking creation.
+  // Executed route cases in partner-current-payment-balance.test.mjs cover capture,
+  // credits, split balances, pay-after totals and provider ownership.
+  assert.match(route, /bookingPaymentBalances\(readDb,/);
+  assert.match(route, /status:balance\.paymentStatus,amount:balance\.bookingTotal,amountDueNow:balance\.dueNow/);
   assert.match(page, /amountDueNow: number/);
 });
 

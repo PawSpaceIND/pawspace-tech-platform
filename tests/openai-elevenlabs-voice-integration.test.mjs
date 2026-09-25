@@ -5,6 +5,7 @@ import {installAiHooks,stubFetch,jsonResponse} from "./helpers/ai-harness.mjs";
 installAiHooks();
 const adapter=await import("../lib/ai-provider-adapter.ts");
 const eleven=await import("../lib/elevenlabs-voice-integration.ts");
+const telephony=await import("../lib/voice-telephony-provider.ts");
 
 test("OpenAI uses a dedicated credential and voice uses the low-latency model when explicitly selected",async()=>{
  globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
@@ -20,6 +21,7 @@ test("OpenAI uses a dedicated credential and voice uses the low-latency model wh
   assert.equal(call.init.headers.authorization,"Bearer test-openai-key");
   assert.equal(body.model,adapter.DEFAULT_VOICE_AI_MODEL_REF);
   assert.equal(body.store,false);
+ assert.equal(body.reasoning.effort,"none");
   assert.equal(body.instructions,"system");
   assert.equal(body.input,"hello");
   assert.ok(!String(call.init.body).includes("test-openai-key"));
@@ -142,6 +144,15 @@ test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
  assert.doesNotThrow(()=>mod.assertElevenLabsLlmAuth(make("Bearer secret"),{ELEVENLABS_LLM_SECRET:"secret"}));
 });
 
+
+test("ElevenLabs specialist agent routing is deterministic by governed voice use case",()=>{
+ const env={ELEVENLABS_AGENT_ID:"agent-generic",ELEVENLABS_GROOMING_AGENT_ID:"agent-grooming",ELEVENLABS_TRAINING_AGENT_ID:"agent-training"};
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"grooming_sales"),"agent-grooming");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"training_sales"),"agent-training");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase(env,"booking_confirmation"),"agent-generic");
+ assert.equal(telephony.elevenLabsAgentIdForUseCase({ELEVENLABS_AGENT_ID:"agent-generic"},"grooming_sales"),"agent-generic");
+});
+
 test("ElevenLabs Exotel outbound adapter is selected only when explicitly configured and carries PawSpace IDs",async()=>{
  const mod=await import("../lib/voice-telephony-provider.ts");
  const env={PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"el-test",ELEVENLABS_AGENT_ID:"agent-1",ELEVENLABS_AGENT_PHONE_NUMBER_ID:"phone-1",ELEVENLABS_API_BASE:"https://api.in.residency.elevenlabs.io"};
@@ -153,6 +164,7 @@ test("ElevenLabs Exotel outbound adapter is selected only when explicitly config
   const call=stub.calls[0],body=JSON.parse(call.init.body);
   assert.equal(call.url,"https://api.in.residency.elevenlabs.io/v1/convai/exotel/outbound-call");
   assert.equal(call.init.headers["xi-api-key"],"el-test");
+  assert.deepEqual(body.conversation_initiation_client_data.custom_llm_extra_body,{pawspace_voice_call_id:"VCALL-1"});
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_voice_call_id,"VCALL-1");
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,"CUS-1");
  }finally{stub.restore();}

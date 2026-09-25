@@ -78,19 +78,33 @@ export async function POST(request: Request) {
           JOIN booking_payments p ON p.booking_id=b.id
           WHERE b.id=? AND b.customer_id=?`).bind(bookingId, session.subjectId).first<Record<string, unknown>>();
       if (!stage || !projection) return json({ error: "Payment record was not found." }, 404);
-      const status = stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation";
+      let status = stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation";
       const bookingStatus = String(projection.booking_status), paymentStatus = String(projection.payment_status), paymentMode = String(projection.payment_mode);
-      const transactionId = String(projection.transaction_id || "");
-      const bookingReady = ["confirmed", "assigned", "on_the_way", "arrived", "in_service", "completed"].includes(bookingStatus);
+      let transactionId = String(projection.transaction_id || "");
+      const bookingReady = ["confirmed", "assigned", "on_the_way", "arrived", "in_service", "in_progress", "completed"].includes(bookingStatus);
+      // Capture of this instalment is distinct from settlement of the whole booking.
+      // A deposit may confirm the booking while its later balance remains payable.
+      const requestedOrder = typeof body.orderId === "string" ? body.orderId : "";
+      if (requestedOrder && !/^order_[a-zA-Z0-9_]{1,100}$/.test(requestedOrder)) return json({ error: "Invalid payment order." }, 400);
+      if (requestedOrder) {
+        const capturedOrder = gatewayEventsTable ? await db.prepare(`SELECT id,gateway_order_id,gateway_payment_id FROM payment_gateway_events
+          WHERE booking_id=? AND payment_id=? AND gateway_order_id=? AND provider='razorpay' AND environment='sandbox'
+          AND processing_status='processed' AND event_type IN ('payment.captured','order.paid','payment_link.paid')
+          AND (signature_verified=1 OR (signature_verified=0 AND json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority')='provider_api'))
+          LIMIT 1`).bind(bookingId,projection.payment_id,requestedOrder).first<Record<string,unknown>>() : null;
+        transactionId = capturedOrder ? String(capturedOrder.gateway_payment_id || "") : "";
+        status = capturedOrder && transactionId ? "captured" : "awaiting_confirmation";
+      }
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
+      if (!requestedOrder && paymentReady && bookingReady) status = "captured";
       const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
         ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageCode: String(projection.package_code||""), packageName: String(projection.package_name),
-        bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: transactionId || canonical.gatewayPaymentId, amountDueNow: Number(projection.amount_due_now || 0),
+        bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: requestedOrder ? transactionId || null : transactionId || canonical.gatewayPaymentId, amountDueNow: stage.dueNow,
         totalAmount: canonical.totalAmount, currency: canonical.currency, providerId: canonical.providerId || String(projection.provider_id),
         providerName: canonical.providerName || String(projection.provider_name), providerModel: canonical.providerModel || String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
         scheduledStart: canonical.scheduledStart, scheduledEnd: canonical.scheduledEnd, updatedAt: Number(projection.updated_at || 0),
-        gatewayOrderId: canonical.gatewayOrderId, gatewayPaymentId: canonical.gatewayPaymentId || transactionId || null, pets: canonical.pets,
+        gatewayOrderId: requestedOrder ? (transactionId ? requestedOrder : null) : canonical.gatewayOrderId, gatewayPaymentId: requestedOrder ? transactionId || null : canonical.gatewayPaymentId || transactionId || null, pets: canonical.pets,
       } } });
     }
     if (body.action === "confirm") {
