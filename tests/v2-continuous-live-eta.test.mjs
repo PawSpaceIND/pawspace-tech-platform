@@ -1,8 +1,10 @@
 import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
+import{installWorkersHooks}from"./helpers/module-hooks.mjs";
 import{freshSqlite,makeD1}from"./helpers/taxi-harness.mjs";
 
+installWorkersHooks("__LIVE_ETA_DB__","__LIVE_ETA_ENV__");
 const journey=await import("../lib/live-journey-destination.ts");
 const read=p=>fs.readFileSync(new URL("../"+p,import.meta.url),"utf8");
 
