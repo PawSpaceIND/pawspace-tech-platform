@@ -28,18 +28,14 @@ import {
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
 import V2GroomingPaymentPanel from "./payment-panel";
+import ContactForm from "../../contact/contact-form";
+import { serviceAddressConflict } from "../../../lib/service-address-consistency";
+import { v2GroomingPetAudience, v2GroomingSelectionIssue } from "../../../lib/v2/grooming-selection";
 import styles from "./grooming.module.css";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
-
-function petAudience(pet: CustomerAccountRecord["pets"][number]): V2GroomingPackage["audience"] {
-  const species = String(pet.species || "").toLowerCase();
-  const age = pet.ageYears;
-  if ((species === "dog" || species === "cat") && typeof age === "number" && age >= 0 && age <= 0.5) return "young";
-  return species === "cat" ? "cat" : "dog";
-}
 
 export default function V2GroomingPage() {
   const recoveryBookingId = useQueryParameter("bookingId");
@@ -48,6 +44,7 @@ export default function V2GroomingPage() {
   const [loading, setLoading] = useState(true);
   const [fatal, setFatal] = useState("");
   const [selectedPetIds, setSelectedPetIds] = useState<string[]>([]);
+  const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
   const [pincode, setPincode] = useState("");
@@ -101,8 +98,9 @@ export default function V2GroomingPage() {
     () => (account?.pets || []).filter(pet => selectedPetIds.includes(pet.id)),
     [account, selectedPetIds],
   );
-  const audience = selectedPets[0] ? petAudience(selectedPets[0]) : null;
-  const mixedAudience = selectedPets.some(pet => audience && petAudience(pet) !== audience);
+  const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0]) : null;
+  const selectionIssue = v2GroomingSelectionIssue(selectedPets);
+  const mixedAudience = Boolean(selectionIssue);
   const packages = useMemo(
     () => (catalogue?.packages || []).filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
     [catalogue, audience, selectedPets.length],
@@ -129,7 +127,12 @@ export default function V2GroomingPage() {
     coverageVersion.current++; setCoverageBusy(false); setCoverage(null); invalidateCare();
   };
 
+  useEffect(() => { if (largeHousehold) document.getElementById("v2-large-family-enquiry")?.focus(); }, [largeHousehold]);
   const togglePet = (id: string) => {
+    if (!selectedPetIds.includes(id) && selectedPetIds.length >= 4) {
+      setLargeHousehold((account?.pets || []).filter(pet => [...selectedPetIds, id].includes(pet.id)).map(pet => pet.name));
+      return;
+    }
     invalidateCare();
     setSelectedPetIds(current => {
       if (current.includes(id)) return current.length === 1 ? current : current.filter(item => item !== id);
@@ -147,6 +150,8 @@ export default function V2GroomingPage() {
     try {
       if (address.trim().length < 8) throw new Error("Add your house, street and area before verifying serviceability.");
       const result = await resolveV2GroomingCoverage(pincode);
+      const conflict = serviceAddressConflict(address, result.city, result.pincode);
+      if (conflict) throw new Error(conflict);
       if (mounted.current && version === coverageVersion.current) setCoverage(result);
     } catch (problem) {
       if (mounted.current && version === coverageVersion.current) setCoverageError(problem instanceof Error ? problem.message : "We could not verify this service address.");
@@ -163,7 +168,7 @@ export default function V2GroomingPage() {
     try {
       await createV2GroomingBooking({
         account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
-        address, pincode: coverage.pincode, cityId: coverage.cityId, zoneId: coverage.zoneId,
+        address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
         scheduledStart, scheduledEnd,
       }, current => {
         if (!mounted.current) return;
@@ -251,6 +256,11 @@ export default function V2GroomingPage() {
         </div>
       </section>
 
+      {largeHousehold && <section id="v2-large-family-enquiry" tabIndex={-1} role="dialog" aria-modal="false" aria-label="Large pet family enquiry" className={styles.step}>
+        <h2>Plan care for more than four pets</h2><p>Your four-pet booking is unchanged. Send a separate enquiry for the full family; this does not confirm a booking.</p>
+        <ContactForm initial={{name:account.name,phone:account.primaryPhone,service:"Grooming",petNames:largeHousehold.join(", "),message:`Please plan grooming for ${largeHousehold.length} pets: ${largeHousehold.join(", ")}. Requested date: ${date}.`}}/>
+        <button type="button" onClick={() => setLargeHousehold(null)}>Return to booking</button>
+      </section>}
       <div className={styles.layout}>
         <fieldset className={styles.journey} disabled={checkoutBusy}>
           <section className={styles.step}>
@@ -258,15 +268,15 @@ export default function V2GroomingPage() {
             <div className={styles.petGrid}>
               {account.pets.map(pet => {
                 const selected = selectedPetIds.includes(pet.id);
-                return <button key={pet.id} className={`${styles.petCard} ${selected ? styles.selected : ""}`} onClick={() => togglePet(pet.id)}>
+                return <button key={pet.id} className={`${styles.petCard} ${selected ? styles.selected : ""}`} aria-pressed={selected} onClick={() => togglePet(pet.id)}>
                   <span className={styles.petAvatar}>{String(pet.species).toLowerCase() === "cat" ? "🐱" : "🐶"}</span>
                   <div><b>{pet.name}</b><small>{pet.breed || pet.species} · {pet.ageYears != null ? `${pet.ageYears} yrs` : "age on profile"}</small></div>
                   <strong>{selected ? "✓" : "+"}</strong>
                 </button>;
               })}
             </div>
-            <p className={styles.helper}>{selectedPetIds.length}/4 pets selected. Multi-pet prices come from the governed catalogue.</p>
-            {mixedAudience && <p className={styles.inlineError}>Dog and cat care cannot be mixed in one grooming booking. Create separate appointments for their safety.</p>}
+            <p className={styles.helper}>{selectedPetIds.length}/4 pets selected. Multi-pet prices come from the governed catalogue. More than four opens a team enquiry.</p>
+            {mixedAudience && <p className={styles.inlineError} role="alert">{selectionIssue}</p>}
           </section>
 
           <section className={styles.step}>
@@ -290,10 +300,11 @@ export default function V2GroomingPage() {
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); invalidateDoorstep(); }} placeholder="560102" /></label>
-              <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Verify doorstep"}</button>
+              <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
             </div>
-            {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>LIVE</strong></div>}
-            {coverageError && <p className={styles.inlineError}>{coverageError}</p>}
+            {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
+            {coverage && <p className={styles.helper}>Service area matched only. The complete doorstep must still be map-verified before payment.</p>}
+            {coverageError && <p role="alert" className={styles.inlineError}>{coverageError}</p>}
           </section>
 
           <section className={styles.step}>
@@ -322,7 +333,7 @@ export default function V2GroomingPage() {
           <div className={styles.summaryPet}><img src="/assets/pawspace-grooming-cartoon.webp" alt="" /><div><b>{selectedPets.map(pet => pet.name).join(" + ") || "Choose your pet"}</b><small>{selectedPets.length ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "No pet selected"}</small></div></div>
           <div className={styles.summaryRows}>
             <div><span>Package</span><b>{selectedPackage?.name || "—"}</b></div>
-            <div><span>Doorstep</span><b>{coverage ? `${coverage.area}, ${coverage.pincode}` : "Verify address"}</b></div>
+            <div><span>Doorstep</span><b>{coverage ? `${address.trim()}, ${coverage.pincode}` : "Verify address"}</b></div>
             <div><span>When</span><b>{date ? `${date} · ${SLOT_LABELS[slotIndex]}` : "—"}</b></div>
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>

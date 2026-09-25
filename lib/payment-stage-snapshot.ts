@@ -8,7 +8,7 @@ const money = (value: unknown) => Math.round(Math.max(0, Number(value || 0)) * 1
  * Schema discovery is separate; missing optional ledgers mean never used, but query/schema faults
  * propagate. A capture cannot split the payment, instalment, credit and reconciliation read.
  */
-export async function readPaymentStageSnapshots(db: D1Database, bookingIds: string[]): Promise<Map<string, PaymentStageSnapshot>> {
+export async function readPaymentStageSnapshots(db: Pick<D1Database, "prepare">, bookingIds: string[], options: { includePaymentMetadata?: boolean } = {}): Promise<Map<string, PaymentStageSnapshot>> {
   const ids = [...new Set(bookingIds)], result = new Map<string, PaymentStageSnapshot>();
   if (!ids.length) return result;
   const schema = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${optionalTables.map(() => '?').join(',')})`).bind(...optionalTables).all<Row>();
@@ -22,7 +22,7 @@ export async function readPaymentStageSnapshots(db: D1Database, bookingIds: stri
   const rewards = optional('review_reward_codes', "SELECT SUM(COALESCE(c.applied_amount,c.discount_amount)) FROM review_reward_codes c WHERE c.redeemed_booking_id=p.booking_id AND c.status='redeemed' AND c.discount_amount>0");
   for (let offset = 0; offset < ids.length; offset += 80) {
     const batch = ids.slice(offset, offset + 80);
-    const rows = await db.prepare(`SELECT p.id,p.booking_id,p.amount,p.amount_due_now,p.currency,p.status,
+    const rows = await db.prepare(`SELECT p.id,p.booking_id,p.amount,p.amount_due_now,p.currency,p.status${options.includePaymentMetadata ? ",p.method,p.mode" : ""},
       ${stay} _stay,${taxi} _taxi,${recon} _recon,${wallet} _wallet,${points} _points,${rewards} _rewards
       FROM booking_payments p WHERE p.booking_id IN (${batch.map(() => '?').join(',')})`).bind(...batch).all<Row>();
     for (const row of rows.results) {

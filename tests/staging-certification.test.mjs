@@ -310,6 +310,25 @@ test("any live or approval flag riding along on staging fails certification", as
   }
 });
 
+test("sales approval certifies only inside the explicit voice-UAT overlay", async () => {
+  const vars = { ...goodConfig().vars,
+    PAWSPACE_VOICE_ENV: "uat",
+    PAWSPACE_VOICE_UAT_APPROVED: "true",
+    PAWSPACE_VOICE_UAT_AUTORUN: "true",
+    PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true",
+    PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "true",
+  };
+  const report = await runStagingCertification(world({ deployedConfig: async () => ({ ...goodConfig(), vars }) }));
+  assert.equal(failed(report, "live-approval flag").length, 0, JSON.stringify(report.checks.filter(check => !check.ok), null, 2));
+});
+
+test("sales approval without the full voice-UAT overlay remains forbidden", async () => {
+  const vars = { ...goodConfig().vars, PAWSPACE_VOICE_ENV: "uat", PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "true" };
+  const report = await runStagingCertification(world({ deployedConfig: async () => ({ ...goodConfig(), vars }) }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "live-approval flag").length, 1);
+});
+
 test("a UAT credential serialized into the deployed configuration fails certification", async () => {
   // wrangler.json is a generated artifact and anything under vars is a plaintext Worker variable
   // readable in the dashboard. This is the exact defect the deploy script was fixed for; the gate

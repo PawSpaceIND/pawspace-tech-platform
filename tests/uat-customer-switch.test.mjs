@@ -87,6 +87,16 @@ for (const collision of ['source', 'phone']) test(`existing ${collision} conflic
   w.sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,'blr','Existing Customer','9000000841','customer_app_otp','{}',0,0)").run(id);
   assert.equal((await POST(request())).status, 409); noSessions(w); assert.equal(w.sqlite.prepare('SELECT name FROM canonical_customers WHERE id=?').get(id).name, 'Existing Customer');
 });
+test('unsigned customer-account self-service read returns V2 customer sign-in guidance, not staff staging-login copy', async t => {
+  fresh(t);
+  const response = await account.GET(new Request(origin + '/api/customer-account'));
+  assert.equal(response.status, 401);
+  const body = await response.json();
+  assert.equal(body.error, 'A verified customer sign-in is required. Sign in and try again.');
+  assert.equal(body.signInUrl, undefined);
+  assert.doesNotMatch(body.error, /staging-login/i);
+});
+
 test('account and profile resolve from actual session and refuse another customer scope', async t => {
   fresh(t); const { req, cookie } = await login(); const read = await account.GET(req); assert.equal(read.status, 200, await read.clone().text());
   assert.equal((await account.GET(new Request(origin + '/api/customer-account?customerId=another-customer', { headers: { cookie } }))).status, 403);

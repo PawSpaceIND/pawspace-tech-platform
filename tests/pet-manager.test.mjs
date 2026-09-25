@@ -320,3 +320,14 @@ test("the account route keeps ownership server-side via the platform session", (
   assert.match(accountRoute, /sameOrigin\(request\)/, "writes carry the cross-origin guard");
   assert.match(clientLib, /idempotencyKey: `pet-manager:\$\{crypto\.randomUUID\(\)\}`/, "every save is idempotency-keyed");
 });
+
+test("pet manager keeps a committed pet visible across a stale read-after-write account response", () => {
+  assert.match(component, /const saved = await upsertCustomerPet/);
+  assert.match(component, /savedEntityId = saved\.entityId/);
+  assert.match(component, /const optimisticPets = \[\.\.\.pets\.filter/);
+  assert.match(component, /setPets\(optimisticPets\)/);
+  assert.match(component, /onPetsChanged\?\.\(optimisticPets\)/);
+  assert.match(component, /attempt < 3 && !refreshed\.some\(pet => pet\.id === savedEntityId\)/);
+  assert.match(component, /if \(refreshed\.some\(pet => pet\.id === savedEntityId\)\)/);
+  assert.match(component, /your new pet is shown here in the meantime/i);
+});

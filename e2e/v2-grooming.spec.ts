@@ -98,7 +98,7 @@ async function openCare(page: Page) {
 }
 async function previewCare(page: Page) {
   await openCare(page);
-  await page.getByRole("button", { name: "Verify doorstep" }).click();
+  await page.getByRole("button", { name: "Check service area" }).click();
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
@@ -136,7 +136,7 @@ test("V2 contract: stale coverage cannot verify an edited doorstep", async ({ pa
   let release!: () => void;
   state.coverageGate = new Promise(resolve => { release = resolve; });
   await openCare(page);
-  await page.getByRole("button", { name: "Verify doorstep" }).click();
+  await page.getByRole("button", { name: "Check service area" }).click();
   await expect.poll(() => state.coverageStarted).toBe(true);
   await page.getByLabel("PIN code", { exact: true }).fill("560001");
   const settled = page.waitForResponse(response => response.url().includes("/api/service-zone") && response.ok());
@@ -150,7 +150,7 @@ test("V2 contract: delayed provider results cannot restore a stale quote after e
   const state = await fixture(page);
   let release!: () => void;
   state.previewGate = new Promise(resolve => { release = resolve; });
-  await openCare(page); await page.getByRole("button", { name: "Verify doorstep" }).click();
+  await openCare(page); await page.getByRole("button", { name: "Check service area" }).click();
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect.poll(() => state.previewStarted).toBe(true);
@@ -175,7 +175,7 @@ test("V2 contract: address failure preserves booking and blocks payment until re
 
 test("V2 contract: fallback pricing never enables reservation", async ({ page }) => {
   const state = await fixture(page); state.quoteSource = "fallback_default";
-  await openCare(page); await page.getByRole("button", { name: "Verify doorstep" }).click();
+  await openCare(page); await page.getByRole("button", { name: "Check service area" }).click();
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByText(/published live grooming price could not be verified/)).toBeVisible();
@@ -211,4 +211,50 @@ test("V2 contract: full-page payment return verifies the receipt, scrubs URL and
   await page.getByRole("button", { name: "Check verified status" }).click();
   await expect(page.getByText("Your grooming visit is confirmed", { exact: true })).toBeVisible();
   expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+});
+
+test('explicit V2 rejects a contradictory city/PIN before availability or booking', async ({page}) => {
+  const state = await fixture(page); await openCare(page);
+  await page.getByLabel('House, street & area').fill('24 Audit Road, Mumbai, Maharashtra');
+  await page.getByRole('button',{name:'Check service area'}).click();
+  await expect(page.getByRole('alert')).toContainText('different city');
+  await expect(page.getByRole('button',{name:/Check live price & groomers/})).toBeDisabled();
+  expect(state.previewStarted).toBe(false); expect(state.bookingWrites).toBe(0);
+});
+async function familyFixture(page:Page, pets:Array<{id:string;name:string;species:string;ageYears:number}>) {
+  const state = await fixture(page);
+  await page.route('**/api/customer-account',route=>route.fulfill({json:{data:{
+    customerId:'C1',name:'QA Family',primaryPhone:'9000000901',addresses:[],bookings:[],pets,
+  }}}));
+  await page.goto('/v2/grooming');
+  await expect(page.getByRole('heading',{name:/A calmer spa day/})).toBeVisible();
+  return state;
+}
+test('explicit V2 separates puppy and kitten even though both are young pets',async({page})=>{
+  const state=await familyFixture(page,[{id:'P1',name:'QA Puppy',species:'dog',ageYears:0.3},{id:'P2',name:'QA Kitten',species:'cat',ageYears:0.3}]);
+  await page.getByRole('button',{name:/QA Kitten/}).click();
+  await expect(page.getByRole('alert')).toContainText('cannot be mixed');
+  await expect(page.getByRole('button',{name:/Reserve & review payment/})).toBeDisabled();
+  expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
+});
+
+test('explicit V2 fifth-pet enquiry preserves four pets and never grants consent',async({page})=>{
+  const pets=Array.from({length:5},(_,i)=>({id:`P${i+1}`,name:`QA Dog ${i+1}`,species:'dog',ageYears:3}));
+  const state=await familyFixture(page,pets);
+  for(const pet of pets.slice(1))await page.getByRole('button',{name:new RegExp(pet.name)}).click();
+  const enquiry=page.getByRole('dialog',{name:'Large pet family enquiry'});
+  await expect(enquiry).toBeVisible();
+  await expect(enquiry.locator('select[name="service"]')).toHaveValue('Grooming');
+  for(const pet of pets)await expect(enquiry.locator('textarea[name="message"]')).toHaveValue(new RegExp(pet.name));
+  await expect(enquiry.locator('input[name="whatsappConsent"]')).not.toBeChecked();
+  await enquiry.getByRole('button',{name:'Return to booking'}).click();
+  await expect(enquiry).toHaveCount(0);
+  for(const pet of pets.slice(0,4))await expect(page.getByRole('button',{name:new RegExp(pet.name)})).toHaveAttribute('aria-pressed','true');
+  await expect(page.getByRole('button',{name:/QA Dog 5/})).toHaveAttribute('aria-pressed','false');
+  expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
+});
+test('explicit V2 review retains full address and distinguishes service area from geocoding',async({page})=>{
+  await fixture(page);await previewCare(page);
+  await expect(page.locator('aside').filter({ hasText: 'YOUR CARE PLAN' })).toContainText('21 Indiranagar Main Road, 560038');
+  await expect(page.getByText('Service area matched only. The complete doorstep must still be map-verified before payment.')).toBeVisible();
 });

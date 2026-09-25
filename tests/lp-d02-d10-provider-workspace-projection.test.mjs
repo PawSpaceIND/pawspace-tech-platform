@@ -25,7 +25,7 @@ const now = Date.now();
 
 function baseTables(sqlite) {
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_name TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,total_amount REAL,provider_id TEXT)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT,status TEXT,amount_due_now REAL,method TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,status TEXT,method TEXT,mode TEXT)");
   // Exact DDL grooming-lifecycle's add_proof writes to (app/api/grooming-lifecycle/route.ts).
   sqlite.exec("CREATE TABLE IF NOT EXISTS grooming_service_proof (booking_id TEXT PRIMARY KEY,before_photo_ref TEXT,after_photo_ref TEXT,checklist_json TEXT NOT NULL DEFAULT '[]',completion_notes TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
 }
@@ -49,8 +49,8 @@ async function world() {
 function seedGroomingBooking(sqlite, { id, paymentStatus, dueNow, proof }) {
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,scheduled_start,scheduled_end,status,total_amount,provider_id) VALUES (?,?,?,?,?,?,?,?,?)")
     .run(id, "CUS-1", "grooming", "Full Groom", "2026-08-01T04:00:00.000Z", "2026-08-01T05:00:00.000Z", "completed", 1299, PROVIDER);
-  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,status,amount_due_now,method) VALUES (?,?,?,?,?)")
-    .run(`PAY-${id}`, id, paymentStatus, dueNow, "upi");
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,amount,amount_due_now,currency,status,method,mode) VALUES (?,?,?,?,?,?,?,?)")
+    .run(`PAY-${id}`, id, 1299, dueNow, "INR", paymentStatus, "upi", "prepaid");
   if (proof) {
     sqlite.prepare("INSERT INTO grooming_service_proof (booking_id,before_photo_ref,after_photo_ref,checklist_json,completion_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
       .run(id, proof.before ?? null, proof.after ?? null, "[]", null, now, now);
@@ -96,7 +96,23 @@ test("LP-D10: a captured payment does not appear in paymentPending even though a
   });
   const workspace = await workspaceLib.providerWorkspace(db, { providerId: PROVIDER });
   assert.ok(!workspace.bookings.paymentPending.some(item => item.bookingId === "PS-UAT-CAPTURED-1"),
-    "a captured payment must never be listed as pending, regardless of paymentDueNow");
+    "a captured payment must never be listed as pending, regardless of stored amount_due_now");
+  const booking = workspace.bookings.past.find(item => item.bookingId === "PS-UAT-CAPTURED-1");
+  assert.equal(booking?.paymentStatus, "captured");
+  assert.equal(booking?.paymentDueNow, 0, "every Partner workspace section must show the current settled balance, not the original instalment");
+});
+
+
+
+test("LP-D10: degraded balance snapshot falls back to the legacy workspace projection instead of failing the whole workspace", async () => {
+  const { sqlite, db, workspaceLib } = await world();
+  seedGroomingBooking(sqlite, { id: "PS-UAT-FALLBACK-1", paymentStatus: "pending", dueNow: 1299, proof: null });
+  sqlite.exec("CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY)");
+  const workspace = await workspaceLib.providerWorkspace(db, { providerId: PROVIDER });
+  const booking = workspace.bookings.past.find(item => item.bookingId === "PS-UAT-FALLBACK-1");
+  assert.equal(booking?.paymentStatus, "pending");
+  assert.equal(booking?.paymentDueNow, 1299);
+  assert.ok(workspace.bookings.paymentPending.some(item => item.bookingId === "PS-UAT-FALLBACK-1"));
 });
 
 test("LP-D10: an actually pending/partial/failed payment still appears in paymentPending", async () => {

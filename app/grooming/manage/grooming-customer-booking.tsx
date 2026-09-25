@@ -2,6 +2,8 @@
 import Link from "next/link";
 import GroomingCareSummary from "./grooming-care-summary";
 import GroomingChangePolicy from "./grooming-change-policy";
+import CustomerGroomingLiveCard from "../../mobile-app/customer-grooming-live-card";
+import {customerGroomingLiveCardVisible} from "../../../lib/customer-location-disclosure";
 import {useEffect,useState} from "react";
 import {loadCustomerAccount} from "../../../lib/customer-account-client";
 import type {CustomerAccountRecord} from "../../../lib/customer-account";
@@ -38,6 +40,7 @@ export default function GroomingCustomerBooking({bookingId,routeScope="legacy"}:
      booking.status==="payment_pending"&&<Link href={`/mobile-app/booking-confirmation?bookingId=${encodeURIComponent(booking.id)}`}>Continue to payment</Link>
     }
    </section>
+   {customerGroomingLiveCardVisible(booking.serviceCode,booking.status)&&<CustomerGroomingLiveCard key={booking.id} bookingId={booking.id}/>}
    {booking.status==="completed"&&<GroomingCareSummary key={booking.id} bookingId={booking.id}/>}
    <GroomingChangePolicy key={`${booking.id}:${booking.scheduledStart}:${booking.status}`} bookingId={booking.id} customerId={customerId} onChanged={message=>{setNotice({bookingId:booking.id,text:message});reload();}}/>
    <button onClick={reload}>Refresh booking status</button>
