@@ -80,3 +80,34 @@ test("the seeded values are ones Finance's own publishing validation accepts, an
   assert.equal(seededColumns("training_cancellation_policies"), columns("training_cancellation_policies"));
   assert.equal(seededColumns("training_tax_policies"), columns("training_tax_policies"));
 });
+
+// --- multi-dog pricing (founder decision 26 Sep 2026) ---------------------------------------------
+
+const { trainingPriceForPets } = await import("../lib/training-pricing.ts");
+
+test("each extra dog adds 60% of the plan price; the quote, split and duration agree", async () => {
+  assert.deepEqual([1, 2, 3, 4].map((dogs) => trainingPriceForPets(3500, dogs)), [3500, 5600, 7700, 9800]);
+  assert.equal(trainingPriceForPets(3500, 3, 0), 3500, "a package configured at 0% stays flat");
+  const world = freshWorld();
+  const start = new Date(Date.now() + 5 * 86_400_000).toISOString();
+  const one = await commercial.createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 1, scheduledStart: start, paymentMode: "split" });
+  const two = await commercial.createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 2, scheduledStart: start, paymentMode: "split" });
+  const four = await commercial.createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 4, scheduledStart: start, paymentMode: "prepaid" });
+  assert.deepEqual([one.planPrice, one.basePrice, one.totalAmount, one.amountDueNow, one.minutesPerSession], [3500, 3500, 3500, 1750, 60]);
+  assert.deepEqual([two.basePrice, two.totalAmount, two.amountDueNow, two.minutesPerSession, two.extraPetPercent], [5600, 5600, 2800, 120, 60]);
+  assert.deepEqual([four.totalAmount, four.amountDueNow, four.minutesPerSession], [9800, 9800, 240]);
+  const meet = await commercial.createTrainingQuote(world.db, { packageCode: "trainer-meet-greet", petCount: 2, scheduledStart: start, paymentMode: "prepaid" });
+  assert.equal(meet.totalAmount, 800);
+  world.sqlite.prepare("UPDATE training_commercial_packages SET extra_pet_percent=0 WHERE package_code='trainer-meet-greet'").run();
+  assert.equal((await commercial.createTrainingQuote(world.db, { packageCode: "trainer-meet-greet", petCount: 2, scheduledStart: start, paymentMode: "prepaid" })).totalAmount, 500, "Finance can keep a package flat");
+  const catalogue = await commercial.listTrainingPackages(world.db);
+  assert.equal(catalogue.find((row) => row.package_code === "training-2-starter").extra_pet_percent, 60, "the catalogue tells the booking screens the rate");
+});
+
+test("a database created before multi-dog pricing gains the column with the 60% default", async () => {
+  const world = freshWorld();
+  world.sqlite.exec("CREATE TABLE training_commercial_packages (package_code TEXT PRIMARY KEY,name TEXT NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,base_price REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',meet_and_greet INTEGER NOT NULL DEFAULT 0,max_pets INTEGER NOT NULL DEFAULT 4,direct_minutes_per_pet INTEGER NOT NULL DEFAULT 45,coaching_minutes_per_pet INTEGER NOT NULL DEFAULT 15,split_due_percent REAL NOT NULL DEFAULT 50,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  world.sqlite.prepare("INSERT INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,effective_from,updated_by,updated_at) VALUES ('training-2-starter','Starter Plan',2,31,3500,'2026-08-01','founder_seed',1)").run();
+  await commercial.ensureTrainingCommercialTables(world.db);
+  assert.equal(world.sqlite.prepare("SELECT extra_pet_percent FROM training_commercial_packages WHERE package_code='training-2-starter'").get().extra_pet_percent, 60);
+});

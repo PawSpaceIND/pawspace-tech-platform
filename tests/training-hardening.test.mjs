@@ -603,6 +603,20 @@ test("real execution: trainer earnings exist ONLY for completed sessions and der
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_session_earnings").get().n, 1);
 });
 
+test("real execution: a two-dog session (120 minutes) earns twice the one-dog per-session rate", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 3 });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  const start = Date.parse(sessions[0].scheduled_start);
+  sqlite.prepare("UPDATE training_sessions SET scheduled_end=? WHERE id=?").run(new Date(start + 120 * 60_000).toISOString(), sessions[0].id);
+  await completeSession(db, sessions[0], "c1");
+  await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
+  const res = await call(earningsRoute.GET, "GET", `providerId=${TRAINER}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.data.earnings[0].gross_earning, 1400, "the rate is per dog-hour of trainer time");
+  assert.equal(res.body.data.earnings[0].rate_value, 700);
+});
+
 test("real execution: earnings are held when payment is reversed after delivery", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 4 });
   const db = globalThis.__TRN_DB__;

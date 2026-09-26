@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { DEFAULT_EXTRA_PET_PERCENT, trainingPriceForPets } from "../../lib/training-pricing";
 import { isVaccinatedStatus } from "../../lib/pet-vaccination-status";
 import { useCallback, useEffect, useRef, useState } from "react";
 import baseStyles from "./training.module.css";
@@ -36,6 +37,7 @@ type Plan = {
   directMinutes: number;
   coachingMinutes: number;
   splitDuePercent: number;
+  extraPetPercent: number;
   detail: string;
   bonus: boolean;
   level: string;
@@ -65,7 +67,7 @@ const planMarketing = [
   { packageCode:"training-12-advanced",name:"Advanced Obedience Plan",detail:"Reliable commands, impulse control and real-world manners.",bonus:true,level:"Advanced",idealFor:"Dogs ready to work reliably around real-world distractions",outcomes:["Distance commands","Advanced recall","Public manners"] },
   { packageCode:"training-16-pro",name:"Pro Training Plan",detail:"High-level obedience, heel work, distance control and complex behaviour.",bonus:true,level:"Professional",idealFor:"Families seeking the most complete obedience programme",outcomes:["Off-leash control","Complex behaviour","Handler mastery"] },
 ] as const;
-const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,detail:"Loading the canonical Training catalogue.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[],recommended:true};
+const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,extraPetPercent:DEFAULT_EXTRA_PET_PERCENT,detail:"Loading the canonical Training catalogue.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[],recommended:true};
 const money = (n: number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -91,7 +93,7 @@ const TRAINING_MIN_NOTICE_MS=24*60*60_000;
 function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Tue & Sat"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday)&&candidate.getTime()-Date.now()>=TRAINING_MIN_NOTICE_MS)result.push(candidate);}return result;}
 function slotLabel(value:Date){return new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(value);}
 function previewHour(time:string){return time.startsWith("9")?9:time.startsWith("3")?15:17;}
-function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent),outcomes:[...marketing.outcomes]}];});}
+function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent),extraPetPercent:Number(pkg.extra_pet_percent??DEFAULT_EXTRA_PET_PERCENT),outcomes:[...marketing.outcomes]}];});}
 function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 import type { LoggedInCustomer } from "./customer-login";
 export default function TrainingFlow({ customer }: { customer: LoggedInCustomer }) {
@@ -169,6 +171,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const selectedStartIso=selectedStart.toISOString();
   const calendarPreview=trainingSessionPreviewDates(selectedStart,weekdayMap[frequency]||weekdayMap["Tue & Sat"],previewHour(time),trainingPreviewCount(plan.sessions));
   const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
+  // Prices shown for the dogs selected, computed exactly as the server quote does.
+  const dogCount=Math.max(1,selectedPets.length),priceFor=(item:Plan)=>trainingPriceForPets(item.price,dogCount,item.extraPetPercent),planPrice=priceFor(plan);
   const discount=checkoutQuote?.discount??0;
   const payableNow=checkoutQuote?.amountDueNow??0;
   const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
@@ -391,8 +395,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <div className={styles.planListHead}><b>All training programmes</b><span>{plans.length} options · select to compare</span></div>
           <div className={planStyles.grid} data-testid="training-plan-grid">
             {plans.map((item) => (
-              <article key={item.name} className={`${planStyles.card} ${plan.name === item.name ? planStyles.selected : ""}`} onClick={() => setPlan(item)} onKeyDown={(event) => {if (event.key === "Enter" || event.key === " ") {event.preventDefault();setPlan(item);}}} role="button" tabIndex={0} aria-pressed={plan.name === item.name} aria-label={`${plan.name === item.name ? "Selected" : "Select"} ${item.name}, ${item.sessionLabel}, ${item.validity}, ${money(item.price)}`}>
-                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.recommended ? "BEST MATCH" : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(item.price)}</strong></header>
+              <article key={item.name} className={`${planStyles.card} ${plan.name === item.name ? planStyles.selected : ""}`} onClick={() => setPlan(item)} onKeyDown={(event) => {if (event.key === "Enter" || event.key === " ") {event.preventDefault();setPlan(item);}}} role="button" tabIndex={0} aria-pressed={plan.name === item.name} aria-label={`${plan.name === item.name ? "Selected" : "Select"} ${item.name}, ${item.sessionLabel}, ${item.validity}, ${money(priceFor(item))}`}>
+                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.recommended ? "BEST MATCH" : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(priceFor(item))}{dogCount>1&&<small> for {dogCount} dogs</small>}</strong></header>
                 <p className={planStyles.description}>{item.detail}</p>
                 <div className={planStyles.metrics}><span><b>{item.sessionLabel}</b><small>at home</small></span><span><b>{item.validity}</b><small>validity</small></span><span><b>{item.directMinutes+item.coachingMinutes} minutes</b><small>per pet session</small></span><span><b>Video + homework</b><small>after every session</small></span></div>
                 <small className={planStyles.includes}>Includes trainer notes, parent practice tasks, milestone tracking, two-session feedback and replacement protection.</small>
@@ -444,14 +448,14 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             <div><span>Complimentary care</span><b>{plan.bonus ? "Bath & Basic grooming" : "Not included"}</b></div>
           </article>
           <div className={styles.paymentOptions}>
-            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCouponQuoteId("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
-            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(plan.price)} before an eligible coupon</span></div></button>
+            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCouponQuoteId("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(planPrice*plan.splitDuePercent/100))} now · {money(planPrice-Math.round(planPrice*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
+            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(planPrice)} before an eligible coupon</span></div></button>
           </div>
           {/* Quoted for this programme and service city, so the governed coupon quote is one the Training quote and
               booking can honour. Keyed by payment mode: coupons need 100% payment, and a remount leaves the 50% view
               with no leftover "applied" coupon it would not honour. The quote effect above re-prices whenever the coupon
               changes; a refused coupon changes nothing, so the current quote stays payable instead of "Refreshing…". */}
-          <CouponField key={paymentMode} eligible={paymentMode === "full"} service="Dog Training" orderValue={plan.price} customerId={customer.customerId} customerKind="existing" paymentMode={paymentMode === "full" ? "full" : "partial"} cityId={coverage?.cityId} packageCode={plan.packageCode} onDiscountChange={(_value, code, quoteId) => {setCouponCode(code);setCouponQuoteId(quoteId||"");}} />
+          <CouponField key={paymentMode} eligible={paymentMode === "full"} service="Dog Training" orderValue={planPrice} customerId={customer.customerId} customerKind="existing" paymentMode={paymentMode === "full" ? "full" : "partial"} cityId={coverage?.cityId} packageCode={plan.packageCode} onDiscountChange={(_value, code, quoteId) => {setCouponCode(code);setCouponQuoteId(quoteId||"");}} />
           {discount > 0 && <article className={styles.couponSaving}>Coupon saving <b>−{money(discount)}</b></article>}
           <article className={styles.policy}><b>Cancellation and refund</b><p>Cancellation requests go for PawSpace approval. Once approved, the unused-session value is refunded after completed sessions and adjustments are reconciled.</p></article>
           <label className={styles.consent}><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />{" "}I agree to training, attendance, rescheduling, safety, media and refund terms.</label>
