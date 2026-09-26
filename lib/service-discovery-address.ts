@@ -17,6 +17,7 @@ async function ensureAddressTables(db:Db){
   await db.prepare("CREATE TABLE IF NOT EXISTS customer_service_address_geocodes (address_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pincode TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,resolved_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_service_geocodes_customer ON customer_service_address_geocodes(customer_id,updated_at DESC)").run();
 }
+function comparableAddress(value:string){return value.split(",").map(part=>part.trim().toLowerCase().replace(/\s+/g," ")).filter(part=>part&&part!=="india").join(",");}
 function completeAddress(row:Row,pincode:string){return serviceAddressText({line1:String(row.line1||""),line2:String(row.line2||""),area:String(row.area||""),city:String(row.city||""),postalCode:pincode,country:"India"});}
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
@@ -62,7 +63,9 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw Response.json({error:"PawSpace is not currently serving this address",code:cityVerdict.reason,cityId:cityVerdict.cityCode},{status:409});
   if(suppliedAddress){
     suppliedAddress=serviceAddressText({line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode});
-    row={...row,id:addressId(input.customerId,validated.pincode,suppliedAddress),line1:suppliedAddress};
+    const saved=await db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? AND postal_code=? ORDER BY is_default DESC,updated_at DESC").bind(input.customerId,validated.pincode).all<Row>();
+    const existing=saved.results.find(item=>comparableAddress(completeAddress(item,validated.pincode))===comparableAddress(suppliedAddress));
+    row=existing??{...row,id:addressId(input.customerId,validated.pincode,suppliedAddress),line1:suppliedAddress};
   }
   const address=completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
@@ -72,9 +75,9 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
     const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     const now=Date.now(),id=String(row.id);
-    if(suppliedAddress){
-      await db.prepare("UPDATE customer_addresses SET is_default=0,updated_at=? WHERE customer_id=?").bind(now,input.customerId).run();
-      await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET line1=excluded.line1,city=excluded.city,postal_code=excluded.postal_code,is_default=1,updated_at=excluded.updated_at WHERE customer_addresses.customer_id=excluded.customer_id").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,now,now).run();
+    if(suppliedAddress&&!await db.prepare("SELECT id FROM customer_addresses WHERE id=? AND customer_id=?").bind(id,input.customerId).first()){
+      // A service search is not permission to replace the customer's preferred address.
+      await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id=?) THEN 0 ELSE 1 END,?,? ON CONFLICT(id) DO NOTHING").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,input.customerId,now,now).run();
     }
     await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
     geo={latitude:Number(resolvedGeo.latitude),longitude:Number(resolvedGeo.longitude),address_text:resolvedGeo.address||address};

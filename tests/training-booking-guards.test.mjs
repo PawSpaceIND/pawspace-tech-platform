@@ -119,7 +119,7 @@ test("the Training page books the governed zone and never a hardcoded one",async
  for(const token of["trainingQuoteKey","trainingQuoteSpendable","trainingLocationPincode","trainingLocationZone"])
   assert.equal(code.includes(token),true,`page must use ${token}`);
  // Availability, reservation and the canonical booking all take the resolved zone.
- for(const token of["cityId:location.cityId,zoneId:location.zoneId","trainingScheduleRequest({customerId:customer.id,petIds:selectedPets.map(pet=>pet.id),cityId:location.cityId,zoneId:location.zoneId,scheduledStart,quote})","loadTrainingTrainers({cityId:location.cityId,zoneId:location.zoneId"])
+ for(const token of["cityId:location.cityId,zoneId:location.zoneId","trainingScheduleRequest({customerId:customer.id,petIds:selectedPets.map(pet=>pet.id),cityId:location.cityId,zoneId:location.zoneId,scheduledStart,quote,cadenceDays})","loadTrainingTrainers({cityId:location.cityId,zoneId:location.zoneId"])
   assert.equal(code.includes(token),true,token);
  // No city or zone literal survives in the page at all: the city guard moved into the tested helper,
  // and every bookable city/zone now comes from the resolved location.

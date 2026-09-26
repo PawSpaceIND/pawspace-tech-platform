@@ -5,8 +5,8 @@
 /** Everything that changes a Training price. Two sets of selections with the same key are the same
  *  quote; anything else is a different quote and the old price is not spendable against it.
  *  Pet ids are sorted so that selecting Bruno then Pepper is the same key as Pepper then Bruno. */
-export function trainingQuoteKey(input:{scheduledStart:string;packageCode:string;paymentMode:string;petIds:readonly string[]}):string{
- return [input.scheduledStart,input.packageCode,input.paymentMode,[...input.petIds].sort().join(",")].join("|");
+export function trainingQuoteKey(input:{scheduledStart:string;packageCode:string;paymentMode:string;petIds:readonly string[];cadenceDays?:number}):string{
+ return [input.scheduledStart,input.packageCode,input.paymentMode,input.cadenceDays??7,[...input.petIds].sort().join(",")].join("|");
 }
 
 /** A held quote is spendable only while it still corresponds to what is on screen.
