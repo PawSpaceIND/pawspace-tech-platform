@@ -432,9 +432,19 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
     });
     await step("Pricing", "Training coupon (UATCARE100 / WELCOME) on the Training quote", async () => {
       const start = new Date(Date.now() + 5 * 86_400_000); start.setUTCHours(5, 30, 0, 0);
+      // Same contract as the app's review step: the governed coupon engine prices the code for this customer
+      // first, and the Training quote honours that governed coupon quote (couponQuoteId), never a bare code.
+      const customerId = String((await api(a.page, "/api/identity-session")).body?.data?.subjectId || "");
+      const catalogue = await api(a.page, "/api/training-commercial");
+      const price = Number(((catalogue.body?.data?.packages || []) as Array<{ package_code: string; base_price: number }>).find(p => p.package_code === "training-8-basic")?.base_price || 0);
       const out: string[] = [];
-      for (const code of ["UATCARE100", "WELCOME"]) { const q = await api(a.page, "/api/training-commercial", { method: "POST", body: { packageCode: "training-8-basic", petCount: 1, scheduledStart: start.toISOString(), paymentMode: "prepaid", couponCode: code } }); out.push(`${code}: ${q.status} ${q.status === 201 ? `discount ₹${q.body?.data?.discount}` : q.body?.error}`); }
-      if (out.every(o => o.includes(" 409 "))) throw fail(`No coupon is accepted by the Training quote: ${out.join(" · ")}`);
+      for (const code of ["UATCARE100", "WELCOME"]) {
+        const governed = await api(a.page, "/api/coupon-governance", { method: "POST", body: { action: "quote", input: { code, customerId, serviceCode: "dog_training", cityId: "blr", channel: "customer_app", packageCode: "training-8-basic", orderValue: price, paymentMode: "full", isSubscription: false } } });
+        if (governed.status !== 200) { out.push(`${code}: coupon ${governed.status} ${governed.body?.error || governed.body?.data?.error}`); continue; }
+        const q = await api(a.page, "/api/training-commercial", { method: "POST", body: { packageCode: "training-8-basic", petCount: 1, scheduledStart: start.toISOString(), paymentMode: "prepaid", couponCode: code, couponQuoteId: governed.body?.data?.quoteId } });
+        out.push(`${code}: ${q.status} ${q.status === 201 ? `discount ₹${q.body?.data?.discount}` : q.body?.error}`);
+      }
+      if (!out.some(o => o.includes(": 201 "))) throw fail(`No coupon is accepted by the Training quote: ${out.join(" · ")}`);
       return out.join(" · ");
     });
     await step("Customer V2", "Training page: dogs-only list, zone, catalogue", async () => {

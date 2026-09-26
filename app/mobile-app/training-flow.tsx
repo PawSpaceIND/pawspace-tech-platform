@@ -127,6 +127,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [meetPetKey, setMeetPetKey] = useState(""),
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
     [couponCode, setCouponCode] = useState(""),
+    [couponQuoteId, setCouponQuoteId] = useState(""),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(true),
     [bookingId, setBookingId] = useState(""),
@@ -144,6 +145,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     window.setTimeout(() => setToast(""), 2600);
   };
   useFlowHistory("training",stage,setStage);
+  // The coupon belongs to the review step's CouponField, which unmounts when the customer leaves the step.
+  // Forget it with the field, so a return trip never re-prices a coupon quote the fresh field no longer shows.
+  const [couponStage,setCouponStage]=useState(stage);
+  if(couponStage!==stage){setCouponStage(stage);if(stage!==5){setCouponCode("");setCouponQuoteId("");}}
  useEffect(() => {
     void fetch("/api/training-requirements")
       .then((response) => response.json())
@@ -165,7 +170,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;if(pincode.length!==6){queueMicrotask(()=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");}});return()=>{active=false;};}void resolveServiceCoverage(pincode).then(resolved=>{if(!active)return;setCoverage(resolved);return loadTrainingTrainers({cityId:resolved.cityId,zoneId:resolved.zoneId,at:selectedStartIso});}).then(result=>{if(!active||!result)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");setScheduleError("");}).catch(problem=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to resolve Training coverage");}});return()=>{active=false;};},[pincode,selectedStartIso]);
-  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";queueMicrotask(()=>{if(active)setCheckoutQuote(null);});void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
+  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split",withCoupon=mode==="prepaid"&&Boolean(couponCode);queueMicrotask(()=>{if(active)setCheckoutQuote(null);});
+    // The Training quote honours the governed coupon quote CouponField obtained, never a bare code. A code
+    // without its quote id means CouponField is re-checking it; wait for that answer instead of pricing it.
+    if(withCoupon&&!couponQuoteId)return()=>{active=false;};
+    void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:withCoupon?couponCode:undefined,couponQuoteId:withCoupon?couponQuoteId:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,couponQuoteId,frequency,time,startDateIndex,selectedStartIso]);
   const togglePet = (pet: string) =>
     setSelectedPets((current) =>
       current.includes(pet)
@@ -246,7 +255,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const linkedMeetBookingId=meetLinked?meetBookingId:"";
         const mode=paymentMode==="full"?"prepaid":"split",quote=checkoutQuote,end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=trainingProgrammeRequestId({customerId:customer.customerId,petIds:selectedPets,packageCode:quote.packageCode,scheduledStart:selectedStart.toISOString(),frequency,trainingCategory,healthSafetyNotes,behaviourNotes});
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
-        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
+        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:quote.couponCode||undefined,couponQuoteId:quote.couponQuoteId||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
         setConfirmedTrainerName(decision.provider.name);setBookingId(canonical.bookingId);
         setPendingPayment({kind:"programme",bookingId:canonical.bookingId,total:quote.totalAmount,dueNow:quote.amountDueNow,mode,trainerName:decision.provider.name});
@@ -430,10 +439,14 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             <div><span>Complimentary care</span><b>{plan.bonus ? "Bath & Basic grooming" : "Not included"}</b></div>
           </article>
           <div className={styles.paymentOptions}>
-            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
+            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCouponQuoteId("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule</span></div></button>
             <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(plan.price)} before an eligible coupon</span></div></button>
           </div>
-          <CouponField eligible={paymentMode === "full"} service="Dog Training" orderValue={plan.price} customerId={customer.customerId} customerKind="existing" paymentMode={paymentMode === "full" ? "full" : "partial"} onDiscountChange={(_value, code) => {setCouponCode(code);setCheckoutQuote(null);}} />
+          {/* Quoted for this programme and service city, so the governed coupon quote is one the Training quote and
+              booking can honour. Keyed by payment mode: coupons need 100% payment, and a remount leaves the 50% view
+              with no leftover "applied" coupon it would not honour. The quote effect above re-prices whenever the coupon
+              changes; a refused coupon changes nothing, so the current quote stays payable instead of "Refreshing…". */}
+          <CouponField key={paymentMode} eligible={paymentMode === "full"} service="Dog Training" orderValue={plan.price} customerId={customer.customerId} customerKind="existing" paymentMode={paymentMode === "full" ? "full" : "partial"} cityId={coverage?.cityId} packageCode={plan.packageCode} onDiscountChange={(_value, code, quoteId) => {setCouponCode(code);setCouponQuoteId(quoteId||"");}} />
           {discount > 0 && <article className={styles.couponSaving}>Coupon saving <b>−{money(discount)}</b></article>}
           <article className={styles.policy}><b>Cancellation and refund</b><p>Cancellation requests go for PawSpace approval. Once approved, the unused-session value is refunded after completed sessions and adjustments are reconciled.</p></article>
           <label className={styles.consent}><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />{" "}I agree to training, attendance, rescheduling, safety, media and refund terms.</label>
