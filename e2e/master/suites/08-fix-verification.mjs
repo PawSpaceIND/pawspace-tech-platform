@@ -23,10 +23,10 @@ try {
   await cus.close();
 
   // PARTNER-01: host view of 06's split stay.
-  const stay = readBookings(row => row.suite === "06-money-and-maps" && row.service === "boarding").at(-1);
+  const stay = readBookings(row => row.suite === "06-money-and-maps" && row.service === "boarding" && row.paid).at(-1);
   const host = await newFlow(browser, "08-host-care-plan");
   try {
-    if (!stay?.bookingId || !stay?.providerId) throw new Error("no Boarding stay from 06 in this run");
+    if (!stay?.bookingId || !stay?.providerId) throw new Error("no paid Boarding stay from 06 in this run");
     await providerSession(host.context, stay.providerId);
     const r = await api(host.context, "GET", `/api/boarding-stays?bookingId=${encodeURIComponent(stay.bookingId)}`);
     const row = (r.body?.data || [])[0];

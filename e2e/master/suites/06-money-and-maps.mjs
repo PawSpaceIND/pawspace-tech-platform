@@ -191,7 +191,7 @@ try {
   step("webhook inbox, last hour", true, out.inboxSince);
   // PAY-01 regression watch: webhooks stuck since the live deploy (in-flight ones are given 2 minutes to settle).
   out.unfinishedWebhooks = await recordWebhookCheck(SUITE);
-  step("webhooks stuck since the live deploy", !out.unfinishedWebhooks.stuckAfterDeploy?.length, out.unfinishedWebhooks.stuckAfterDeploy || out.unfinishedWebhooks.error);
+  step("webhooks stuck since the live deploy", !out.unfinishedWebhooks.stuckAfterDeployCount, out.unfinishedWebhooks.stuckAfterDeploy || out.unfinishedWebhooks.error);
 } catch (error) {
   step("suite aborted", false, String(error?.message || error).slice(0, 500));
 } finally {
