@@ -474,9 +474,13 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await customer.getByRole("button", { name: /Pay 50% upfront/ }).click(); await settle(customer, 3000);
       const pay = customer.getByRole("button", { name: /Pay ₹[\d,]+ & request trainer approval/ });
       await pay.waitFor({ timeout: 30_000 });
-      const created = customer.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 });
+      const created = customer.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 }).catch(() => null);
+      const alertsBefore = JSON.stringify(await customer.locator("[role=alert]").allInnerTexts());
+      const refused = (async () => { for (let i = 0; i < 240; i++) { await customer.waitForTimeout(500); const now = JSON.stringify(await customer.locator("[role=alert]").allInnerTexts().catch(() => [])); if (now !== alertsBefore && now !== "[]") return "alert" as const; } return null; })();
       await pay.click();
-      const response = await created; const body = await response.json().catch(() => null) as { data?: { bookingId?: string } } | null;
+      const first = await Promise.race([created, refused]);
+      if (first === "alert" || first === null) { await shot(customer, "app-reserve-refused"); throw fail(`Reservation refused before booking: ${JSON.stringify(await customer.locator("[role=alert]").allInnerTexts())}`); }
+      const response = first; const body = await response.json().catch(() => null) as { data?: { bookingId?: string } } | null;
       const bookingId = String(body?.data?.bookingId || ""); state.app = { bookingId };
       if (!bookingId) throw fail(`booking create ${response.status()}`);
       await customer.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 }); await shot(customer, "app-payment-page");
