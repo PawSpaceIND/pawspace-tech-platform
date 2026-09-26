@@ -238,6 +238,9 @@ test("3. a signed capture moves the booking, raises its totals, keeps the origin
   assert.equal(JSON.parse(booking.pricing_json).rescheduleDifferencePaid, 475);
   assert.deepEqual(f.payment(), { amount: 2374, amount_due_now: 2374, status: "captured" });
   assert.deepEqual(f.recon(), { expected_amount: 2374, captured_amount: 2374, refunded_amount: 0 });
+  const reconStatus = f.one("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id=?", f.paymentId);
+  assert.deepEqual(reconStatus, { reconciliation_status: "matched", variance_amount: 0 }, "a paid difference is part of the price, not an over-collection");
+  assert.equal(f.one("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE booking_id=?", f.bookingId).n, 0, "no Finance exception for a paid difference");
   assert.equal(f.one("SELECT gateway_payment_id FROM payment_gateway_links WHERE booking_id=?", f.bookingId).gateway_payment_id, f.originalPayment, "the original payment id is kept");
   const request = f.request(requestId);
   assert.equal(request.status, "applied");
