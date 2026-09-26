@@ -29,3 +29,11 @@ test('history is bounded and excludes system and tool messages',()=>{
  const bounded=extractElevenLabsHistory({input:Array.from({length:30},()=>({role:'user',content:'x'.repeat(2000)}))});
  assert.equal(bounded.length,12);assert.ok(bounded.every(m=>m.content.length===1000));
 });
+
+test('current explicit booking confirmation retains intent only after a booking confirmation question',()=>{
+ const context=[...history,{role:'assistant',content:'Shall I book this grooming slot and create checkout?'}];
+ assert.equal(classifyVoiceFollowup('Yes, proceed',context).intent,'booking_create');
+ assert.equal(classifyVoiceFollowup('Yes, proceed',history).intent,'unknown');
+ assert.equal(classifyVoiceFollowup('No, do not book it',context).intent,'unknown');
+ assert.equal(classifyVoiceFollowup('12 Test Street, Bengaluru 560038',[...history,{role:'assistant',content:'What is your address and pincode?'}]).intent,'service_info');
+});

@@ -1,5 +1,5 @@
 import{ensureCommunicationTables}from"./communication-engine";
-import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn}from"./ai-conversation-orchestrator";
+import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn,minimumContext}from"./ai-conversation-orchestrator";
 import{createGroundedAiRuntimeProvider,requiresImmediateHumanHandoff}from"./ai-grounded-runtime-provider";
 import{assertAiMayReply}from"./ai-human-handoff";
 import{detectPromptInjection}from"./ai-evaluation-security";
@@ -53,7 +53,7 @@ export function extractElevenLabsHistory(body:Row):VoiceHistoryMessage[]{
 }
 export function classifyVoiceFollowup(input:string,history:VoiceHistoryMessage[]){
  const current=classifyAiIntent(input);
- if(current.intent!=="unknown"||current.policyRisk||requiresImmediateHumanHandoff(input)||detectPromptInjection(input).blocked||isExplicitCustomerActionConfirmation(input))return current;
+ if(current.intent!=="unknown"||current.policyRisk||requiresImmediateHumanHandoff(input)||detectPromptInjection(input).blocked)return current;
  // Carry intent only for bounded slot answers/backchannels in an established grooming discussion.
  // Do not infer authorization from an earlier "yes" or let history override a current risky intent.
  const previous=[...history];
@@ -64,8 +64,10 @@ export function classifyVoiceFollowup(input:string,history:VoiceHistoryMessage[]
  const normalized=input.toLowerCase().replace(/[.,!?-]/g," ").replace(/\s+/g," ").trim();
  const backchannel=/^(?:(?:hello|hi|okay|ok|sure|thank you|thanks|oh|damn|something|are you there|can you hear me)\s*)+$/.test(normalized);
  const dateAnswer=input.length<=120&&/\b(date|time|when)\b/i.test(lastQuestion)&&/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)\b/i.test(input)&&/^(?:i |want |would |like |prefer |for |at |on |please|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|am|pm|a m|p m|[0-9:.,!?\s])+$/i.test(input);
- if(!backchannel&&!dateAnswer)return current;
- return{...priorIntent,signals:[...priorIntent.signals,"voice_conversation_followup"]};
+ const confirmation=isExplicitCustomerActionConfirmation(input)&&/\b(confirm|proceed|go ahead|shall i|would you like me to)\b/i.test(lastQuestion)&&/\b(book|booking|reserve|slot|checkout)\b/i.test(lastQuestion);
+ const addressAnswer=input.length<=240&&/\b(address|pincode|pin code)\b/i.test(lastQuestion)&&/\b[1-9][0-9]{5}\b/.test(input);
+ if(!backchannel&&!dateAnswer&&!confirmation&&!addressAnswer)return current;
+ return{...priorIntent,...(confirmation?{intent:"booking_create" as const}:{}),signals:[...priorIntent.signals,"voice_conversation_followup"]};
 }
 
 function extra(body:Row){return((body.elevenlabs_extra_body||body.metadata||{})as Row);}
@@ -183,13 +185,16 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"human_handoff",timings:clock.marks,modelRef:null,providerRef:"human_handoff",upstreamMs:null as number|null};
  }
  clock.mark("handoffChecked");
+ let actionProvider;
  const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true,onTiming:clock.mark});clock.mark("provider");
  const conversationHistory=extractElevenLabsHistory(body);
  const intent=classifyVoiceFollowup(inputText,conversationHistory);
  const fastEligible=!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
-  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true,conversationHistory,asOf:now},...(onDelta?{onDelta}:{})});clock.mark("model");
+  const canonical=await minimumContext(db,{customerId:ctx.customerId,threadId:ctx.threadId,fastVoice:true});clock.mark("canonicalContext");
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{...canonical,voiceFastPath:true,conversationHistory,asOf:now},...(onDelta?{onDelta}:{})});clock.mark("model");
   const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
+  if(confirmedAction)actionProvider={...provider,async generate(){return generated;}};
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
    const output=text(generated.text),replyId=await persistReply(output,generated.provider,generated.modelRef||null);
    // `latencyMs` brackets only the provider round trip, so the "model" stage minus this is the runtime
@@ -201,7 +206,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  }
  // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
  await settleInbound();
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});clock.mark("orchestrator");
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
  return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks,modelRef:provider.modelRef??null,providerRef:provider.provider??null,upstreamMs:null as number|null};
