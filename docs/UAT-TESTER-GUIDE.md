@@ -88,6 +88,16 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   - **Mark arrived is GPS-gated**: the server only accepts it with a fresh GPS fix within 250 m of the customer's
     doorstep. On a phone, open **GPS & route → Start GPS** first, and book the test job to the address you are
     actually at. Without a fix the app now says so instead of failing silently.
+  - **Booked-time window (only when it is switched on)**: with `PAWSPACE_SERVICE_WINDOW_ENFORCEMENT=on` (always on
+    in production), Mark arrived and Start service work only from 60 minutes before to 2 hours after the booked
+    start. Outside it the app shows, for example, "This job starts 28 Sept, 9:00 am IST. You can mark arrival or
+    start from 28 Sept, 8:00 am IST." To run the lifecycle straight after booking, a Founder or Manager signs in
+    at `/staging-login`, opens **Control → Customer booking lifecycle**, clicks the booking (**Open →**), and
+    under **Authorise early/late start** writes a reason of at least 10 characters and taps **Authorise
+    early/late start**. The panel then shows who authorised it and when; the groomer retries Mark arrived (with
+    a fresh GPS fix) and Start service. The authorisation covers that booked time only: if the booking is
+    rescheduled (even back to the same time), authorise it again. When the window is off, the panel says so and
+    nothing is blocked.
   - **Photos need Ops approval** (maker/checker): after both photos show "awaiting Ops approval", a *different*
     person signs in at `/staging-login` (Founder or Manager), opens **Control → Customer booking lifecycle →
     Service proof awaiting review**, writes a reason and approves each photo. The partner then taps **Refresh

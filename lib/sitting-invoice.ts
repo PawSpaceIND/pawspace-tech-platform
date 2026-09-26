@@ -1,3 +1,4 @@
+import{gstOn}from"./gst-method";
 type Row=Record<string,unknown>;
 
 export async function ensureSittingInvoiceTables(db:D1Database){await db.batch([
@@ -7,11 +8,12 @@ export async function ensureSittingInvoiceTables(db:D1Database){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);}
 
+// Whether this customer invoice shows GST inside the price or added on top stays this city policy's call (owner decision 9: the
+// customer invoice is not decided yet); the arithmetic is the one GST helper's, so no vertical keeps its own formula.
 function invoiceAmounts(total:number,policy:Row|null){
   if(!policy||String(policy.status)!=="published"||policy.tax_rate===null||policy.tax_rate===undefined||!policy.tax_mode)return null;
-  const rate=Number(policy.tax_rate),mode=String(policy.tax_mode);
-  if(mode==="inclusive"){const taxable=Math.round(total/(1+rate/100)*100)/100,tax=Math.round((total-taxable)*100)/100;return{taxAmount:tax,netAmount:total};}
-  const tax=Math.round(total*(rate/100)*100)/100;return{taxAmount:tax,netAmount:Math.round((total+tax)*100)/100};
+  const inclusive=String(policy.tax_mode)==="inclusive",tax=gstOn(total,{ratePercent:Number(policy.tax_rate),method:inclusive?"extract_inclusive":"percent_of_base"});
+  return{taxAmount:tax,netAmount:inclusive?total:Math.round((total+tax)*100)/100};
 }
 
 export async function saveSittingTaxPolicy(db:D1Database,input:{cityId:string;taxMode:"inclusive"|"exclusive";taxRate:number;effectiveFrom:string;actorId:string;reason:string}){
@@ -41,7 +43,10 @@ export async function issueSittingInvoice(db:D1Database,input:{bookingId:string;
   await db.prepare("INSERT OR IGNORE INTO sitting_invoice_sequences (city_id,financial_year,next_number,updated_at) VALUES (?,?,0,?)").bind(cityId,financialYear,now).run();
   const sequence=await db.prepare("UPDATE sitting_invoice_sequences SET next_number=next_number+1,updated_at=? WHERE city_id=? AND financial_year=? RETURNING next_number").bind(now,cityId,financialYear).first<{next_number:number}>();
   if(!sequence)throw new Response("Pet Sitting invoice sequence could not be reserved",{status:409});
-  const invoiceNumber=`SIT-${cityCode}-${financialYear}-${String(sequence.next_number).padStart(6,"0")}`,invoiceId=`STINV-${crypto.randomUUID().slice(0,12).toUpperCase()}`,grossAmount=Number(booking.total_amount||0);
+  const invoiceNumber=`SIT-${cityCode}-${financialYear}-${String(sequence.next_number).padStart(6,"0")}`,invoiceId=`STINV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+  // gross_amount is what the customer is CHARGED: on an exclusive policy that is the total plus GST, not the total alone
+  // (the walking/taxi fix, D31-W1d). Identical to the total on the inclusive policies in use today.
+  const grossAmount=amounts.netAmount;
   const inserted=await db.prepare("INSERT INTO booking_invoices (id,booking_id,customer_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at,created_at,updated_at) VALUES (?,?,?,?,'issued_uat',?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO NOTHING")
     .bind(invoiceId,input.bookingId,String(booking.customer_id),invoiceNumber,String(booking.currency||"INR"),grossAmount,amounts.taxAmount,amounts.netAmount,now,now,now).run();
   if(Number(inserted.meta.rows_written||0)!==1){

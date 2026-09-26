@@ -26,7 +26,9 @@ const PROVIDER = "TRAINER-D31-001";
 const DAY = 86400000;
 const TOTAL_SESSIONS = 6;
 const PACKAGE_VALUE = 24000;     // Rs 24,000 programme
-const COMMISSION_PCT = 50;       // trainer keeps 50% -> Rs 12,000, paid Rs 6,000 + Rs 6,000
+// Owner decision 8 (26 Sept 2026): PawSpace keeps 10-40%, so the trainer's share is 60-90%. The legacy profile value is the
+// trainer's share and is carried over once into provider_commercial_terms; 50% (PawSpace 50%) would not be.
+const COMMISSION_PCT = 70;       // trainer keeps 70% -> Rs 16,800, paid Rs 8,400 + Rs 8,400
 
 async function seedProgramme() {
   const { sqlite, db } = world("__D31_TCM_DB__", "__D31_TCM_ENV__");
@@ -70,7 +72,7 @@ test("half the sessions completed opens the first milestone at half the commissi
 
   const first = milestone(sqlite, "first_50_percent");
   assert.ok(first, "reaching half the sessions must open the first milestone");
-  assert.equal(first.payout_amount, 6000, "half of 50% of Rs 24,000");
+  assert.equal(first.payout_amount, 8400, "half of 70% of Rs 24,000");
   assert.equal(first.status, "waiting_payout_hold");
   assert.equal(Number(first.due_at) - Number(first.reached_at), 7 * DAY);
   assert.equal(milestone(sqlite, "final_50_percent"), undefined, "the programme is not finished");
@@ -95,7 +97,7 @@ test("the five-day hold genuinely holds - finance cannot approve inside it", asy
     actorId: "finance@pawspace.in", reason: "Day-31 approval after the five-day hold", asOf: now + 7 * DAY,
   });
   assert.equal(approved.status, "instruction_ready_sandbox");
-  assert.equal(approved.amount, 6000);
+  assert.equal(approved.amount, 8400);
   assert.equal(approved.livePayout, false, "sandbox only - no live money on this path");
 });
 

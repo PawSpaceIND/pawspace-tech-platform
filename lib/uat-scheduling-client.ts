@@ -33,13 +33,23 @@ export async function previewUatProviders(input:UatScheduleRequest,options:{time
  const timer=setTimeout(abort,timeout);
  try{
   const remembered=!input.serviceAddress&&!input.servicePincode?selectedAddress():null;
-  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});
-  const body=await readJsonBody<{data?:ProviderPreview;error?:string;code?:string;retryAfterSeconds?:number}>(response);
-  if(response.ok&&body?.data&&Array.isArray(body.data.providers))return body.data;
-  // An unfinished check (deadline, busy, gateway timeout, unreadable 5xx page) is "still checking", not "none available".
-  if(response.status>=500||body?.code==="SCHEDULING_PREVIEW_TIMEOUT")throw new AvailabilityPending(body?.error||STILL_CHECKING,Number(body?.retryAfterSeconds)||Number(response.headers?.get?.("retry-after"))||5);
-  if(!body)throw new Error("Availability response could not be read. Please try again.");
-  throw new Error(body.error||"Unable to load available care professionals. Please try again.");
+  for(let attempt=0;;attempt+=1){
+   const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});
+   const body=await readJsonBody<{data?:ProviderPreview;error?:string;code?:string;retryAfterSeconds?:number}>(response);
+   if(response.ok&&body?.data&&Array.isArray(body.data.providers))return body.data;
+   // The server stops at its own 20 s deadline with 503 SCHEDULING_PREVIEW_TIMEOUT and finishes warming up in the
+   // background, so a second check after Retry-After usually answers in a few seconds. Retry once, inside the same
+   // overall time limit, instead of asking the customer to press the button again.
+   if(attempt===0&&response.status===503&&body?.code==="SCHEDULING_PREVIEW_TIMEOUT"){
+    const waitMs=Math.min(10,Math.max(1,Number(body.retryAfterSeconds)||5))*1000;
+    await new Promise<void>((resolve,reject)=>{const wait=setTimeout(resolve,waitMs);controller.signal.addEventListener("abort",()=>{clearTimeout(wait);reject(new Error("aborted"));},{once:true});});
+    continue;
+   }
+   // An unfinished check (deadline, busy, gateway timeout, unreadable 5xx page) is "still checking", not "none available".
+   if(response.status>=500||body?.code==="SCHEDULING_PREVIEW_TIMEOUT")throw new AvailabilityPending(body?.error||STILL_CHECKING,Number(body?.retryAfterSeconds)||Number(response.headers?.get?.("retry-after"))||5);
+   if(!body)throw new Error("Availability response could not be read. Please try again.");
+   throw new Error(body.error||"Unable to load available care professionals. Please try again.");
+  }
  }catch(error){
   if(controller.signal.aborted)throw new AvailabilityPending("Still checking availability - the search timed out. Please try again.");
   throw error;

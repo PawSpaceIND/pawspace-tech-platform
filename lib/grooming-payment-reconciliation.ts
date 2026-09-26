@@ -171,14 +171,19 @@ async function settleStayBalance(db:Db,input:{bookingId:string;eventId:string;pa
  * webhook and a staff-recorded service refund, so both leave identical books. Callers batch these with
  * their ledger posting.
  */
-export function processedRefundStatements(db:Db,input:{bookingId:string;paymentId:string;refundCaseId:string;gatewayRefundId:string|null;eventId:string;provider:string;environment:string;expected:number;capturedCurrent:number;currency:string;now:number}){
+export function processedRefundStatements(db:Db,input:{bookingId:string;paymentId:string;refundCaseId:string;gatewayRefundId:string|null;eventId:string;provider:string;environment:string;expected:number;capturedCurrent:number;currency:string;now:number;purposeAware?:boolean}){
  const{bookingId,paymentId,now}=input;
  return[
   db.prepare("UPDATE booking_refund_cases SET status=CASE WHEN status='completed' THEN 'completed' ELSE 'processed' END,payment_id=COALESCE(payment_id,?),gateway_reference=?,updated_at=? WHERE id=?").bind(paymentId,input.gatewayRefundId,now,input.refundCaseId),
   db.prepare("INSERT OR IGNORE INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,?,0,?,'not_started','pending',0,?,?)").bind(paymentId,bookingId,input.provider,input.environment,input.expected,input.capturedCurrent,input.currency,input.eventId,now),
   db.prepare("UPDATE payment_reconciliation_records SET refunded_amount=(SELECT ROUND(COALESCE(SUM(amount),0),2) FROM booking_refund_cases WHERE booking_id=? AND payment_id=? AND status IN ('processed','completed')),last_event_id=?,updated_at=? WHERE payment_id=?").bind(bookingId,paymentId,input.eventId,now,paymentId),
   db.prepare("UPDATE payment_reconciliation_records SET gateway_status=CASE WHEN refunded_amount>=expected_amount THEN 'refunded' ELSE 'partially_refunded' END,reconciliation_status=CASE WHEN ROUND(refunded_amount-captured_amount,2)>0.009 THEN 'refund_overage' ELSE 'matched' END,variance_amount=MAX(0,ROUND(refunded_amount-captured_amount,2)) WHERE payment_id=?").bind(paymentId),
-  db.prepare("UPDATE booking_payments SET status=(SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?),detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(paymentId,input.eventId,input.gatewayRefundId,now,paymentId),
+  // A refunded reschedule difference that never moved the booking returned an ADDITIONAL payment: the
+  // booking's own price is still fully paid, so a captured booking stays 'captured' (its invoice, its
+  // confirmation and a later paid reschedule all require it). The gateway record keeps the refund.
+  input.purposeAware
+    ?db.prepare("UPDATE booking_payments SET status=CASE WHEN status='captured' AND NOT EXISTS (SELECT 1 FROM booking_refund_cases c WHERE c.booking_id=? AND c.payment_id=? AND c.status IN ('processed','completed') AND COALESCE(c.purpose,'')<>'reschedule_difference') THEN 'captured' ELSE (SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?) END,detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(bookingId,paymentId,paymentId,input.eventId,input.gatewayRefundId,now,paymentId)
+    :db.prepare("UPDATE booking_payments SET status=(SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?),detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(paymentId,input.eventId,input.gatewayRefundId,now,paymentId),
   db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) SELECT ?,booking_id,payment_id,?,'refund_overage','critical','open',json_object('expected',expected_amount,'captured',captured_amount,'refundCeiling',captured_amount,'refunded',refunded_amount),? FROM payment_reconciliation_records WHERE payment_id=? AND variance_amount>0.009").bind(`PAYEX-refund-${input.environment}-${input.gatewayRefundId??input.eventId}`,input.eventId,now,paymentId),
  ];
 }
@@ -206,7 +211,11 @@ async function claimedBookingConflict(db:Db,event:GatewayEvent){
  return null;
 }
 
-async function resolvePayment(db:Db,event:GatewayEvent){if(event.bookingId){const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(event.bookingId).first<Row>();if(payment)return{bookingId:event.bookingId,payment};}if(event.gatewayPaymentLinkId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_link_id=?").bind(event.gatewayPaymentLinkId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayPaymentId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_id=?").bind(event.gatewayPaymentId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayOrderId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_order_id=?").bind(event.gatewayOrderId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}return null;}
+async function resolvePayment(db:Db,event:GatewayEvent){if(event.bookingId){const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(event.bookingId).first<Row>();if(payment)return{bookingId:event.bookingId,payment};}if(event.gatewayPaymentLinkId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_link_id=?").bind(event.gatewayPaymentLinkId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayPaymentId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_payment_id=?").bind(event.gatewayPaymentId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}if(event.gatewayOrderId){const link=await db.prepare("SELECT booking_id,payment_id FROM payment_gateway_links WHERE gateway_order_id=?").bind(event.gatewayOrderId).first<Row>();if(link){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=?").bind(link.payment_id).first<Row>();if(payment)return{bookingId:String(link.booking_id),payment};}}
+ // An ADDITIONAL payment on a booking (a reschedule difference) has its own intent and order and is never
+ // written onto the booking's gateway link, so a refund of it resolves through that intent.
+ if(String(event.eventType||"").startsWith("refund.")&&(event.gatewayPaymentId||event.gatewayOrderId)){const intent=await db.prepare("SELECT booking_id,payment_id FROM payment_intents WHERE provider='razorpay' AND environment=? AND ((?<>'' AND gateway_payment_id=?) OR (?<>'' AND gateway_order_id=?)) LIMIT 1").bind(event.environment,event.gatewayPaymentId??"",event.gatewayPaymentId??"",event.gatewayOrderId??"",event.gatewayOrderId??"").first<Row>().catch(()=>null);if(intent){const payment=await db.prepare("SELECT * FROM booking_payments WHERE id=? AND booking_id=?").bind(intent.payment_id,intent.booking_id).first<Row>().catch(()=>null);if(payment)return{bookingId:String(intent.booking_id),payment};}}
+ return null;}
 
 export async function processGatewayEvent(db:Db,event:GatewayEvent){
   await ensurePaymentReconciliationTables(db);if(!event.signatureVerified)throw new Error("Gateway event signature is not verified");
@@ -300,7 +309,10 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
       return{duplicate:false,status:"processed",ignored:true,reason:"capture_already_collected"};
     }
     const amountGuard=await verifyCurrentPaymentStageCaptureAmount(db,{bookingId,storedExpected:expected,receivedAmount:amount}),variance=Math.round((amount-amountGuard.expectedForCapture)*100)/100;
-    if(!amountGuard.ok){await upsert("captured","amount_mismatch",amount,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,variance,...amountGuard}});await finish("exception",amountGuard.reason||"Capture amount mismatch");return{duplicate:false,status:"exception",reason:amountGuard.reason||"capture_amount_mismatch"};}
+    // A refused capture is an exception and a variance; the collected total stays what it was. Writing THIS
+    // capture's amount here wiped out every earlier capture (Rs 1,899 + Rs 285 collected read Rs 99 after
+    // one short difference capture), under-reporting collections and every refund ceiling built on them.
+    if(!amountGuard.ok){await upsert("captured","amount_mismatch",capturedCurrent,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,variance,...amountGuard}});await finish("exception",amountGuard.reason||"Capture amount mismatch");return{duplicate:false,status:"exception",reason:amountGuard.reason||"capture_amount_mismatch"};}
     // A 50/50 stay pays in TWO captures against ONE payment row and ONE reconciliation record. The
     // variance check above is per ORDER and must stay that way, but what the record REPORTS has to be
     // the booking: captured_amount was being overwritten with the latest capture, so a fully paid
@@ -400,7 +412,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const refundAlreadyCounted=Boolean(priorRefundFact||priorReconciledRefund);
     if(eventType==="refund.processed"&&alreadyProcessed&&refundAlreadyCounted){
       const posted=await db.prepare("SELECT group_key FROM collection_ledger_postings WHERE group_key=?").bind(`COLL-refund_completed-${event.gatewayRefundId??event.eventId}`).first<Row>().catch(()=>null);
-      if(["refunded","partially_refunded"].includes(String(payment.status))&&refundedCurrent>=expectedRefund&&posted){await finish("processed","Duplicate logical refund ignored");return{duplicate:Boolean(existing),status:"processed",ignored:true,reason:"refund_already_processed"};}
+      if(["refunded","partially_refunded",...(String(refund.purpose??"")==="reschedule_difference"?["captured"]:[])].includes(String(payment.status))&&refundedCurrent>=expectedRefund&&posted){await finish("processed","Duplicate logical refund ignored");return{duplicate:Boolean(existing),status:"processed",ignored:true,reason:"refund_already_processed"};}
     }
     if(eventType!=="refund.failed"&&Math.abs(amount-expectedRefund)>0.009){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_amount_mismatch",detail:{expected:expectedRefund,received:amount}});await finish("exception","Refund amount mismatch");return{duplicate:false,status:"exception",reason:"refund_amount_mismatch"};}
     if(eventType==="refund.created"&&!alreadyProcessed)await db.prepare("UPDATE booking_refund_cases SET status='processing',gateway_reference=?,updated_at=? WHERE id=?").bind(event.gatewayRefundId??null,now,refund.id).run();
@@ -425,7 +437,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
        * before it - which is what makes the retry safe rather than skippable. */
       await db.batch([
         ...ledger.statements,
-        ...processedRefundStatements(db,{bookingId,paymentId,refundCaseId:String(refund.id),gatewayRefundId:event.gatewayRefundId??null,eventId:event.eventId,provider:event.provider,environment:event.environment,expected,capturedCurrent,currency,now}),
+        ...processedRefundStatements(db,{bookingId,paymentId,refundCaseId:String(refund.id),gatewayRefundId:event.gatewayRefundId??null,eventId:event.eventId,provider:event.provider,environment:event.environment,expected,capturedCurrent,currency,now,purposeAware:"purpose" in refund}),
         ...(!priorRefundFact?[lifecycleStatement("refund_processed",{gateway:event.provider,eventId:event.eventId,gatewayRefundId:event.gatewayRefundId,amount})]:[]),
         finishStatement("processed"),
       ]);

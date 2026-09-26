@@ -1,10 +1,13 @@
 // Monthly finance close: one governed checklist per calendar month, computed from REAL platform
 // data, gated by the founder's monthly board approval, and locked once closed.
 //   revenue        - canonical_bookings totals + food orders for the month
-//   gst            - PawSpace's OWN output tax (B2B ledger + the commission/principal share of service
-//                    verticals; the provider-supply GST collected on their behalf is disclosed but goes to
-//                    s52 TCS/GSTR-8, not here), eligible input tax from finance_bills via approved vendor
-//                    reviews; GSTR-3B net payable = own output - eligible input
+//   gst            - PawSpace's OWN output tax (B2B ledger + the service supply register: GST on PawSpace's
+//                    commission or own supply, from the payout record - lib/service-output-tax.ts), eligible
+//                    input tax from finance_bills via approved vendor reviews; GSTR-3B net payable = own
+//                    output - eligible input
+//   ownership      - every service invoice and completed service of the month is assigned to its legal
+//                    entity and GST registration; the close refuses until it is (audit G22: a closed month
+//                    can no longer be assigned, so closing first would leave its GST returns unpreparable)
 //   tds            - the month's computed TDS liability + deposit status (lib/tds-governance)
 //   payroll        - the month's payroll run status
 //   board approval - lib/statutory-compliance board_approvals
@@ -14,6 +17,7 @@
 import{computeMonthlyTds}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
 import{serviceVerticalOutputTax}from"./service-output-tax";
+import{governedJsonError}from"./governed-http-error";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -42,7 +46,7 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
 }
 
 export type CloseChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
+export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number;serviceOutputTax?:number;serviceTaxableValue?:number;serviceExemptValue?:number;notYetClassifiedTax?:number;unassignedServiceSupplies?:number;serviceGstMatchesLedger?:boolean};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
 
 /** Build (or rebuild) the month's close view from real data. Never mutates a locked close. */
 export async function monthlyCloseView(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<MonthlyCloseView>{
@@ -73,11 +77,12 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // published as 0 under a GREEN gst_computed check. The two tables are disjoint - a B2B invoice is
  // never a booking invoice - so their tax sums and nothing is counted twice. No tax rule is decided
  // here: each invoice's own tax_amount, computed by the module that issued it, is simply included.
- // Of the service-vertical GST collected, only PawSpace's OWN output GST (commission/principal) is its
- // GSTR-3B net-payable liability; the provider-supply GST collected on their behalf is a separate
- // pass-through (remitted via s52 GST TCS / GSTR-8), disclosed but NOT part of PawSpace's net payable.
+ // The service side comes from the service supply register (lib/service-output-tax.ts): PawSpace's OWN
+ // output GST per completed or invoiced booking, from the payout record the completion journal was posted
+ // from, so this figure, the statutory package, GSTR-1/3B and ledger account 2130 agree. A legacy carve
+ // row's provider-supply GST is a pass-through (s52 GST TCS / GSTR-8), disclosed but NOT net payable.
  const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
- const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf};
+ const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data (idempotent), then check the deposit.
@@ -94,6 +99,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  const checklist:CloseChecklistItem[]=[
   {key:"revenue_reconciled",label:"Revenue aggregated from canonical bookings + food orders",ok:true,value:revenue.total,detail:`${revenue.bookingCount} bookings + ${revenue.foodOrderCount} food orders`},
   {key:"gst_computed",label:"GSTR-3B net payable computed (own output - eligible input)",ok:true,value:gst.netPayable,detail:`own output ${gst.outputTax} - eligible input ${gst.eligibleInputTax}${gst.providerSupplyGstCollectedOnBehalf?` · provider-supply GST collected on behalf ${gst.providerSupplyGstCollectedOnBehalf} -> s52 TCS/GSTR-8`:""}`},
+  {key:"service_supplies_assigned",label:"Every service invoice and completed service is assigned to its legal entity and GST registration",ok:serviceOutput.unassignedCount===0,value:serviceOutput.unassignedCount,detail:serviceOutput.unassignedCount===0?"all assigned":`${serviceOutput.unassignedCount} not assigned yet - assign them before closing; a closed month can no longer be assigned`},
   {key:"tds_computed",label:"TDS liability computed from payroll + payouts",ok:true,value:tds.totalTds,detail:Object.entries(tds.sections).map(([section,bucket])=>`${section}: ${bucket.tds}`).join(" · ")||"no deductions this month"},
   {key:"tds_deposited",label:`TDS deposited (due ${tds.depositDueDate})`,ok:tds.totalTds===0||Boolean(deposit),value:deposit?round2(Number(deposit.amount)):null,detail:tds.totalTds===0?"no liability":deposit?"challan recorded":"deposit pending"},
   {key:"payroll_finalised",label:"Payroll run approved for the month",ok:payroll.runStatus==null||["approved","payment_prepared","completed"].includes(String(payroll.runStatus)),value:payroll.runStatus,detail:payroll.runStatus?`${payroll.employees} employees · gross ${payroll.grossTotal}`:"no payroll run in this month (acceptable for pre-payroll months)"},
@@ -115,7 +121,10 @@ export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?
  if(existing&&String(existing.status)==="closed")throw new Response(`${input.period} is already closed and locked; post corrections in the next open period`,{status:409});
  const view=await monthlyCloseView(db,input);
  if(view.status!=="ready"){
-  const blocking=view.checklist.filter(item=>!item.ok).map(item=>item.key);
+  const blocking=view.checklist.filter(item=>!item.ok).map(item=>item.key),unassigned=view.gst.unassignedServiceSupplies??0;
+  // G22: closing first used to lock a month with service invoices nobody had assigned, and a locked month can no longer be
+  // assigned, so its GST returns could never be prepared. Refuse, and say exactly what to do.
+  if(unassigned>0)throw governedJsonError({error:`Close blocked - ${unassigned} service invoice(s) or completed service(s) in ${input.period} are not assigned to a legal entity and GST registration yet. Assign them under GST and accounting, service invoice ownership (a whole month can be assigned at once), then close. A closed month can no longer be assigned, so its GST returns could not be prepared.${blocking.length>1?` Also unresolved: ${blocking.filter(key=>key!=="service_supplies_assigned").join(", ")}.`:""}`,blocking},409);
   throw new Response(`Close blocked - unresolved checklist items: ${blocking.join(", ")}`,{status:409});
  }
  const now=input.asOf??Date.now();

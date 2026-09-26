@@ -174,8 +174,8 @@ test("a provider with no GSTIN on file stops the close instead of filing them at
 
   const outcome = await attempt(() => tcs.computeMonthlyTcsStatutory(db, { period: PERIOD, actorId: "finance@pawspace.in" }));
 
-  assert.equal(outcome.ok, false, "an unidentifiable supplier must not be filed");
-  assert.match(outcome.body, /configuration_required:provider_gstin:PRV-UNKNOWN/, "and the refusal must name what is missing");
+  assert.equal(outcome.ok, true, "owner decision 5 (26 Sept 2026): a provider without a GSTIN is paid in full and never blocks the close");
+  assert.deepEqual(outcome.value.issues, ["provider_not_gst_registered_no_tcs:PRV-UNKNOWN:BKG-8"], "the unregistered provider is not filed, and the close names who was left out");
 });
 
 test("GSTR-8 reports every supplier, and its totals equal the sum of the lines it summarises", async () => {
@@ -295,10 +295,10 @@ test("a failed recompute leaves the previously filed period intact", async () =>
   // A new supply arrives from a provider nobody has recorded a GSTIN for.
   seedSupply(sqlite, { bookingId: "BKG-BAD", providerId: "PRV-NOBODY", orderValue: 999999 });
   const outcome = await attempt(() => tcs.computeMonthlyTcsStatutory(db, { period: PERIOD, actorId: "finance@pawspace.in" }));
-  assert.equal(outcome.ok, false);
+  assert.equal(outcome.ok, true, "owner decision 5: an unregistered provider no longer refuses the recompute; their supply is skipped");
 
   const rows = collected(sqlite);
-  assert.deepEqual(rows.map(r => r.booking_id), ["BKG-GOOD"], "a refused recompute must not wipe the month it refused to replace");
+  assert.deepEqual(rows.map(r => r.booking_id), ["BKG-GOOD"], "the recompute keeps the filed supply and files nothing for the unregistered provider");
   assert.equal(rows[0].tcs_total, 45);
 });
 

@@ -22,7 +22,7 @@
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
-      "semantic": "e372b42d26e694deded4b96d2e2fdb24fd009f1c725968d69bca276c8f052ce2",
+      "semantic": "c99d1e78aee544e9c38f782f0c8e06190a89f92dbcc9e1b71be316a9de2f297c",
       "mainRoots": 1
     },
     "app/team/finance/relocation/page.tsx": {
@@ -34,7 +34,7 @@
       "mainRoots": 1
     },
     "app/team/finance/statutory/page.tsx": {
-      "semantic": "5d71f11e680aa01aed9da3a125e01cefe309e2506aece89d93246ad2f11525ed",
+      "semantic": "11566da9dd32b66b19fea3b5b396c0917acd9fc86bb359e0562bf23906ec249e",
       "mainRoots": 1
     },
     "app/team/finance/statutory/service-invoice-ownership.tsx": {

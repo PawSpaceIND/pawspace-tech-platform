@@ -1,7 +1,7 @@
 "use client";
 
 import{useEffect,useRef,useState}from"react";
-import{FOREGROUND_GPS_INTERVAL_MS,gpsIngestionKey,shouldApplyTelemetryResponse}from"../../lib/gps-telemetry-policy";
+import{FOREGROUND_GPS_INTERVAL_MS,IMPLAUSIBLE_SPEED_NOTE,gpsIngestionKey,shouldApplyTelemetryResponse}from"../../lib/gps-telemetry-policy";
 import LiveTrackingPanel from"../components/live-tracking/live-tracking-panel";
 
 type AddressPrecision="full"|"area"|"billing"|"none";
@@ -23,7 +23,7 @@ const precisionNote=(precision:AddressPrecision|undefined)=>{
  return"";
 };
 
-/** The trust verdicts classifyGpsObservation can return, in the partner's terms. */
+/** The trust verdicts classifyGpsObservation and the speed check can return, in the partner's terms. */
 const REJECTION_NOTE:Record<string,string>={
  gps_kill_switch_active:"Location sharing is switched off platform-wide right now.",
  invalid_coordinates:"That fix had impossible coordinates and was not stored.",
@@ -35,6 +35,7 @@ const REJECTION_NOTE:Record<string,string>={
  accuracy_not_reported_by_device:"This phone did not report GPS accuracy, so the fix could not be trusted.",
  accuracy_reported_as_negative:"This phone reported an invalid GPS accuracy, so the fix could not be trusted.",
  accuracy_outside_approved_policy:"GPS accuracy is outside the approved range. Move into the open or away from tall buildings.",
+ implausible_speed:IMPLAUSIBLE_SPEED_NOTE,
 };
 const rejectionNote=(reason:string|null|undefined)=>reason?REJECTION_NOTE[reason]||`That fix was not accepted (${reason.replaceAll("_"," ")}).`:"That fix was not accepted.";
 
