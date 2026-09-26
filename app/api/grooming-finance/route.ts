@@ -1,6 +1,6 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
-import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{ensureGroomingInvoiceTables,issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
 
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
@@ -61,6 +61,8 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
 export async function GET(request:Request){try{
   await authorize(request,"finance.view");
   const db=await database();
+  const url=new URL(request.url);
+  if(url.searchParams.get("scope")==="tax_policy"){await ensureGroomingInvoiceTables(db);const cityId=String(url.searchParams.get("cityId")||"blr").trim().toLowerCase();const policy=await db.prepare("SELECT city_id,tax_mode,tax_rate,status,version,effective_from,updated_by,reason,updated_at FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first();return Response.json({data:{cityId,policy:policy??null}});}
   return Response.json(await loadFinanceSnapshot(db));
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
 

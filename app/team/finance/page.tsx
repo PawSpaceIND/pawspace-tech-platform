@@ -4,6 +4,7 @@ import Link from"next/link";
 import{readReportJson}from"../../../lib/read-report-json";
 import{useEffect,useState}from"react";
 import StaffModule from "../../components/staff-workspace/StaffModule";
+import GroomingGstPanel from "./grooming-gst-panel";
 
 type LedgerItem=Record<string,unknown>;
 type LedgerResponse={source:string;summary:{bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};items:LedgerItem[];reconciliationExceptions?:LedgerItem[];error?:string};
@@ -24,6 +25,7 @@ export default function TeamFinance(){
         <div style={{display:"flex",flexWrap:"wrap",gap:10}}><button disabled={loading} onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid var(--staff-line)",background:"var(--staff-surface)",fontWeight:700}}>Refresh</button><Link href="/team/finance/cash-flow" style={{padding:"11px 16px",borderRadius:10,border:"1px solid var(--staff-line)",background:"var(--staff-surface)",fontWeight:700,textDecoration:"none",color:"var(--staff-primary)"}}>Cash flow & earned revenue</Link><Link href="/team/finance/training" style={{padding:"11px 16px",borderRadius:10,border:"1px solid var(--staff-line)",background:"var(--staff-surface)",fontWeight:700,textDecoration:"none",color:"var(--staff-primary)"}}>Training finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"var(--staff-primary)",color:"var(--staff-on-primary)",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
       </header>
 
+      <GroomingGstPanel />
       {error&&<section style={{padding:18,borderRadius:12,background:"var(--staff-danger-bg)",border:"1px solid var(--staff-line)",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"var(--staff-surface)",borderRadius:14}}>Loading canonical Grooming ledger…</section>}
       {data&&!loading&&!error&&<>

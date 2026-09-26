@@ -1,8 +1,10 @@
 import { groomingCatalogue } from "../../../lib/grooming-governance";
 import { generateCanonicalSalesQuote } from "../../../lib/sales-core-tools";
+import { quoteGroomingBookingWithLiveMultiPet } from "../../../lib/live-grooming-governance";
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { assistedCustomer, assistedPetIds } from "../../../lib/assisted-order-identity";
 
-type PetInput={sourceId:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
+type PetInput={sourceId:string;canonicalId?:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
 type Input={
   idempotencyKey:string;
   customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -55,8 +57,17 @@ export async function POST(request:Request){try{
   const input=await request.json() as Input;if(!input.idempotencyKey||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone||!input.packageCode||!input.scheduledStart||!input.scheduledEnd||!input.pets?.length)return json({error:"Complete customer, pet, package, schedule and request identity are required"},400);
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
-  const {item}=priceFor(input.packageCode,input.pets),quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"}),total=quote.totalAmount,groupId=`assist-${input.idempotencyKey}`;
-  const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds:input.pets.map(p=>p.sourceId),serviceCode:"grooming",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
+  let quote:Awaited<ReturnType<typeof generateCanonicalSalesQuote>>;
+  try{quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"});}
+  catch(error){if(error instanceof Error&&/GST policy/.test(error.message))return json({error:"Assisted booking needs a published grooming GST policy for this city. Ask Finance to publish it in Team → Finance → Grooming GST.",code:"gst_policy_required"},409);throw error;}
+  // The booking is governed at the live Pricing Control price (dynamic rules, multi-pet rows); the sales
+  // quote above only proves a GST policy is published. Pricing from the list price made every booking 409.
+  const governedQuote=await quoteGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,pets:input.pets.map(pet=>({species:pet.species})),paymentMode:"pay_after_service",cityId:input.cityId||"blr",zoneId:input.zoneId,scheduledStart:input.scheduledStart});
+  const {item}=priceFor(input.packageCode,input.pets),total=governedQuote.totalAmount,groupId=`assist-${input.idempotencyKey}`;void quote;
+  const resolved=await assistedCustomer(db,input.customer);input.customer=resolved.customer;
+  // The same pets, named by the source id stored on their canonical profile so the booking reuses them.
+  const saved=await assistedPetIds(db,resolved,input),petIds=saved.ids;input.pets=saved.pets;
+  const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds,serviceCode:"grooming",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
   const schedule=(schedulePayload.data||{}) as Record<string,unknown>,provider=schedule.provider as {id?:string;name?:string;model?:"full_time"|"commission"}|undefined;if(!provider?.id||!provider.name||!provider.model)throw new Response("Canonical scheduler did not return an assigned Grooming provider",{status:409});
   const bookingPayload=await internalPost(request,"/api/canonical-bookings",{idempotencyKey:`assisted:${input.idempotencyKey}`,scheduleGroupId:groupId,customer:input.customer,pets:input.pets,cityId:input.cityId||"blr",zoneId:input.zoneId,serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,provider,totalAmount:total,amountDueNow:0,payment:{method:"payment_link",mode:"pay_after_service",status:"created",detail:"Assisted Orders UAT: payment is not captured; no live money"},pricing:{discount:0,requirements:["staff_assisted_order","consent_evidence","test_only"]}});
   const booking=(bookingPayload.data||{}) as Record<string,unknown>,bookingId=String(booking.bookingId||"");if(!bookingId)throw new Response("Canonical booking ID was not returned",{status:500});
