@@ -117,6 +117,11 @@ export type BoardingMatchInput={
 export async function assertBoardingHostMatches(db:Db,input:BoardingMatchInput){
   await ensureBoardingHostCapabilityTables(db);
   const providerId=text(input.providerId);
+  // The stays already in residence are read beside the profile (one round trip, not two); they are judged in the same order below.
+  const start=text(input.scheduledStart),end=text(input.scheduledEnd);
+  const occupiedRead=(start&&end)
+    ? db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined') AND check_in_at<? AND check_out_at>?").bind(providerId,end,start).all<Row>().catch(()=>({results:[] as Row[]}))
+    : db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined')").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
   const row=await db.prepare("SELECT * FROM boarding_host_profiles WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null);
   if(!row)refuse("This Boarding host has no capability profile",409,{code:"boarding_host_profile_missing"});
   const missing=capabilityGapsFrom(row);
@@ -137,10 +142,7 @@ export async function assertBoardingHostMatches(db:Db,input:BoardingMatchInput){
 
   // 3. AVAILABLE capacity, not declared capacity: what is already staying counts against it.
   const at=input.at??Date.now();
-  const start=text(input.scheduledStart),end=text(input.scheduledEnd);
-  const occupied=(start&&end)
-    ? await db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined') AND check_in_at<? AND check_out_at>?").bind(providerId,end,start).all<Row>().catch(()=>({results:[] as Row[]}))
-    : await db.prepare("SELECT customer_id,pet_count FROM boarding_stays WHERE host_provider_id=? AND status NOT IN ('cancelled','completed','refunded','declined')").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}));
+  const occupied=await occupiedRead;
   void at;
   const used=occupied.results.reduce((sum,stay)=>sum+Number(stay.pet_count||0),0);
   const capacity=Number(row!.max_guest_pets||0);

@@ -1,3 +1,4 @@
+import { chunkedIn } from "./d1-chunked-in";
 /**
  * Schema drift repair.
  *
@@ -52,9 +53,9 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
   },
 ];
 
-async function tableExists(db: Db, name: string) {
-  const row = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
-  return Boolean(row);
+async function presentTables(db: Db, names: string[]) {
+  const rows = await chunkedIn(names, async (chunk, placeholders) => (await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`).bind(...chunk).all<Row>()).results);
+  return new Set(rows.map(row => String(row.name)));
 }
 
 /**
@@ -64,9 +65,15 @@ async function tableExists(db: Db, name: string) {
  */
 export async function repairSchemaDrift(db: Db) {
   const repaired: string[] = [];
+  // One probe for every table and one column read per present table, side by side: this used to be up to
+  // fourteen sequential round trips on a cold isolate's first scheduling request. What is repaired, and how,
+  // is unchanged.
+  const tables = [...new Set(REQUIRED_COLUMNS.map(item => item.table))];
+  const present = await presentTables(db, tables);
+  const columnsByTable = new Map(await Promise.all([...present].map(async table => [table, await db.prepare(`PRAGMA table_info(${table})`).all<Row>().catch(() => ({ results: [] as Row[] }))] as const)));
   for (const item of REQUIRED_COLUMNS) {
-    if (!await tableExists(db, item.table)) continue;
-    const columns = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
+    if (!present.has(item.table)) continue;
+    const columns = columnsByTable.get(item.table) ?? { results: [] as Row[] };
     if (columns.results.some(row => String(row.name) === item.column)) continue;
     try {
       await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run();

@@ -113,7 +113,9 @@ async function ensureVerificationMandateTablesUncached(db: Db) {
    * whose police clearance lapsed last month kept receiving work. Additive and nullable: a row with no
    * expiry is a check that does not expire, which is what every existing row means. [PTJA-W1-F53]
    */
-  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
+  // One table_info read decides which of the two columns below still need adding (cold-isolate cost).
+  const present = new Set((await db.prepare("PRAGMA table_info(provider_verifications)").all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results.map(row => String(row.name)));
+  if (!present.has("expires_at")) await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
     .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
   /*
    * WHEN a check passed, not just that it did. lib/payout-beneficiary-verification.ts has always
@@ -124,11 +126,14 @@ async function ensureVerificationMandateTablesUncached(db: Db) {
    * error rather than a governance refusal. Additive and nullable, like expires_at above: an
    * existing verified row simply has no recorded moment. [D31-T3]
    */
-  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN verified_at INTEGER").run()
+  if (!present.has("verified_at")) await db.prepare("ALTER TABLE provider_verifications ADD COLUMN verified_at INTEGER").run()
     .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
-  // Backfill what is already knowable: a row sitting at 'verified' was last written when it passed.
-  await db.prepare("UPDATE provider_verifications SET verified_at=updated_at WHERE status='verified' AND verified_at IS NULL").run().catch(() => {});
-  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run().catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+  // Backfill what is already knowable: a row sitting at 'verified' was last written when it passed. The index
+  // below is on another table, so both run side by side.
+  await Promise.all([
+    db.prepare("UPDATE provider_verifications SET verified_at=updated_at WHERE status='verified' AND verified_at IS NULL").run().catch(() => {}),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run().catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; }),
+  ]);
 }
 const verificationMandateTablesReady=new WeakSet<Db>();
 const verificationMandateTablesRunning=new WeakMap<Db,Promise<void>>();

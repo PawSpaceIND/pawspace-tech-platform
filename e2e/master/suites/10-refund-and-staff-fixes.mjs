@@ -10,7 +10,10 @@
 import { BASE, launch, newFlow, settle, api, otpCustomerSession, staffSession, runPhone, dismissCookies, readBookings, record, finding, writeJson, d1, isoDay } from "../lib.mjs";
 
 const SUITE = "10-refund-and-staff-fixes";
-const FINANCE = "anjali.finance33@tkpetcare.in";
+// The Finance role is MFA-gated on staging (lib/admin-mfa.ts: admin and finance are privileged) and the seeded Finance
+// persona has no MFA enrolment, so the founder (permissions ["*"], not privileged) takes the Finance actions. The Finance
+// persona is only checked for the MFA refusal.
+const FINANCE = "founder@pawspace.in", FINANCE_PERSONA = "anjali.finance33@tkpetcare.in";
 const out = { suite: SUITE };
 const browser = await launch();
 try {
@@ -33,6 +36,14 @@ try {
     const workspaceText = (await finance.page.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
     const workspaceShot = await finance.shot("boarding-finance-workspace");
     record({ suite: SUITE, journey: "Boarding finance workspace (STAFF-02)", combo: `${bookingId} waiting on Finance`, result: queue.status === 200 && listed && workspace?.status() === 200 && workspaceText.includes(bookingId) ? "PASS" : "FAIL", detail: JSON.stringify({ queue: queue.status, listed, page: workspace?.status() ?? null, text: workspaceText.slice(0, 300) }), evidence: [workspaceShot] });
+    // The Finance persona itself is refused until it enrols in MFA (a security control, not a defect).
+    const persona = await newFlow(browser, "10-refund-finance-persona");
+    try {
+      await staffSession(persona.context, FINANCE_PERSONA);
+      const refused = await api(persona.context, "GET", "/api/boarding-finance?view=queue");
+      record({ suite: SUITE, journey: "Finance persona needs MFA", combo: FINANCE_PERSONA, result: refused.status === 403 && /MFA/.test(JSON.stringify(refused.body)) ? "PASS" : "FAIL", detail: `HTTP ${refused.status} ${JSON.stringify(refused.body).slice(0, 200)}`, evidence: [] });
+    } catch (e) { record({ suite: SUITE, journey: "Finance persona needs MFA", combo: FINANCE_PERSONA, result: "BLOCKED", detail: `harness: ${String(e?.message || e).slice(0, 200)}`, evidence: [] }); }
+    await persona.close();
     const approved = await act(finance.context, "approve_cancel", { approvedRefundAmount: 500 });
     const recorded = await act(finance.context, "record_refund", { refundReference: reference });
     out.refund = { bookingId, request: { status: requested.status, body: requested.body?.data?.status ?? requested.body }, approve: { status: approved.status, body: approved.body?.data ?? approved.body }, record: { status: recorded.status, body: recorded.body?.data ?? recorded.body } };
@@ -48,8 +59,8 @@ try {
     const reachedBooks = first(books.refundCase)?.status === "processed" && first(books.refundCase)?.gateway_reference === reference
       && Number(first(books.reconciliation)?.refunded_amount) === 500 && first(books.payment)?.status === "partially_refunded"
       && Number(first(books.reversal)?.amount) === 500 && Number(first(books.timeline)?.n) === 1;
-    const stepsOk = requested.status === 200 && approved.status === 200 && recorded.status === 200 && recorded.body?.data?.refundPosted === true;
-    record({ suite: SUITE, journey: "Boarding refund reaches the books (STAFF-05)", combo: `${bookingId}: approve ₹500, record ${reference}`, result: stepsOk && reachedBooks ? "PASS" : (stepsOk || approved.status === 200 ? "FAIL" : "BLOCKED"), detail: JSON.stringify(out.refund).slice(0, 600), evidence: [] });
+    const stepsOk = [200, 202].includes(requested.status) && approved.status === 200 && recorded.status === 200 && recorded.body?.data?.refundPosted === true;
+    record({ suite: SUITE, journey: "Boarding refund reaches the books (STAFF-05)", combo: `${bookingId}: approve ₹500, record ${reference}`, result: stepsOk && reachedBooks ? "PASS" : (stepsOk || approved.status === 200 ? "FAIL" : "BLOCKED"), detail: JSON.stringify({ books, reachedBooks, request: out.refund.request, approve: approved.status, record: recorded.status, refundPosted: recorded.body?.data?.refundPosted ?? null }).slice(0, 900), evidence: [] });
     if (stepsOk && !reachedBooks) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Finance", flow: "Boarding refund", title: "A recorded Boarding refund did not reach the canonical books on staging", steps: `request_cancel, approve_cancel ₹500, record_refund ${reference} on ${bookingId}`, expected: "refund case processed, reconciliation refunded 500, payment partially_refunded, reversal posted, timeline event", actual: JSON.stringify(books).slice(0, 400), evidence: [] });
 
     // What the customer sees on the manage page.
@@ -57,7 +68,8 @@ try {
     for (const path of [`/v2/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`, `/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`]) {
       const response = await customer.page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" }).catch(() => null);
       if (!response || response.status() >= 400) continue;
-      await dismissCookies(customer.page); await settle(customer.page, 5000);
+      await dismissCookies(customer.page); await settle(customer.page, 3000);
+      await customer.page.getByText("Loading stay status").first().waitFor({ state: "detached", timeout: 45_000 }).catch(() => {});
       seen = (await customer.page.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
       shot = await customer.shot("manage-after-refund");
       if (seen) break;
@@ -71,7 +83,8 @@ try {
   const quoter = await newFlow(browser, "10-sitting-visit-quote");
   try {
     const day = isoDay(125), at = (hhmm) => new Date(`${day}T${hhmm}:00+05:30`).toISOString();
-    const quote = (end) => api(quoter.context, "POST", "/api/sitting-commercial", { packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at("10:00"), scheduledEnd: at(end), paymentMode: "prepaid" });
+    const zone = (await api(quoter.context, "GET", "/api/service-zone?pincode=560038")).body?.data?.assignment || {};
+    const quote = (end) => api(quoter.context, "POST", "/api/sitting-commercial", { packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at("10:00"), scheduledEnd: at(end), paymentMode: "prepaid", cityId: zone.cityId, zoneId: zone.zoneId });
     const hour = await quote("11:00"), twoHours = await quote("12:00");
     out.sittingVisit = { hour: { status: hour.status, total: hour.body?.data?.totalAmount ?? null, error: hour.body?.error ?? null }, twoHours: { status: twoHours.status, error: twoHours.body?.error ?? null } };
     const ok = hour.status < 300 && Number(out.sittingVisit.hour.total) === 399 && twoHours.status === 409 && /Home Visit is 60 minutes/.test(String(out.sittingVisit.twoHours.error || ""));
@@ -85,8 +98,8 @@ try {
     await visitor.page.goto(`${BASE}/relocation-enquiry`, { waitUntil: "domcontentloaded" });
     await dismissCookies(visitor.page); await settle(visitor.page, 1500);
     const page = visitor.page, byLabel = (label) => page.getByLabel(label, { exact: false }).first();
-    await byLabel("name").fill("Master E2E Relocation");
-    await page.locator("input[type='tel']").first().fill(`9${runPhone(3).slice(-9)}`);
+    await byLabel("Customer name").fill("Master E2E Relocation");
+    await byLabel("Primary phone").fill(`9${runPhone(3).slice(-9)}`);
     await page.locator("input[type='email']").first().fill(`master-e2e+${runPhone(3)}@pawspace.test`);
     await page.getByRole("radio", { name: /Domestic/ }).check();
     const dates = page.locator("input[type='date']");

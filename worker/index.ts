@@ -89,13 +89,16 @@ function observeApiResponse(request:Request,response:Response){
   return response;
 }
 
+const COUNTED_POST_PATHS=new Set(["/api/uat-scheduling","/api/canonical-bookings","/api/taxi-ride-bookings"]);
+
 const worker = {
   // Scheduling requests run inside a per-request D1 accounting scope (lib/request-d1-metrics.ts): the
   // route reports it as Server-Timing plus one scheduling_preview_timing log line (bug B2). Only DB is
   // wrapped, and only for this path; every other request is untouched. handle() is called directly, never
   // back through fetch: Sentry.withSentry wraps fetch and would instrument the counted env a second time.
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if(request.method==="POST"&&new URL(request.url).pathname==="/api/uat-scheduling")return runWithRequestD1Metrics(createRequestD1Metrics(request,true,promise=>ctx.waitUntil(promise)),()=>worker.handle(request,withRequestD1MetricsEnv(env),ctx));
+    // Boarding and Pet Taxi booking writes share the scope too, so the gateway and the route look the session up once.
+    if(request.method==="POST"&&COUNTED_POST_PATHS.has(new URL(request.url).pathname))return runWithRequestD1Metrics(createRequestD1Metrics(request,true,promise=>ctx.waitUntil(promise)),()=>worker.handle(request,withRequestD1MetricsEnv(env),ctx));
     return worker.handle(request,env,ctx);
   },
   async handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

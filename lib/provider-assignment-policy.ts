@@ -1,4 +1,4 @@
-import{registerServicePolicyDomain,resolveServicePolicy,seedServicePolicyScope}from"./service-policy-governance";
+import{registerServicePolicyDomain,resolveServicePolicy,seedServicePolicyScopes}from"./service-policy-governance";
 
 export const ASSIGNMENT_POLICY_DOMAIN="provider_assignment_policy";
 export type AssignmentMode="auto"|"customer_select"|"ops_select"|"manual_workflow";
@@ -17,5 +17,15 @@ function problem(config:Record<string,unknown>){if(!modes.has(String(config.assi
 registerServicePolicyDomain<AssignmentPolicyConfig&Record<string,unknown>>({domain:ASSIGNMENT_POLICY_DOMAIN,label:"Provider assignment policy",managePermission:"settings.manage",defaults,problem});
 
 const seeded=new WeakSet<D1Database>();
-export async function seedAssignmentPolicies(db:D1Database){if(seeded.has(db))return;await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"grooming","*",{assignmentMode:"auto",preferredProviderMode:"preference"},"Grooming uses ranked automatic assignment");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"dog_training","*",{assignmentMode:"customer_select",preferredProviderMode:"strict"},"Training customer selection is strict; never silently substitute");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"boarding","*",{assignmentMode:"customer_select",preferredProviderMode:"strict"},"Boarding host is customer-selected and revalidated");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"pet_sitting","*",{assignmentMode:"customer_select",preferredProviderMode:"strict"},"Sitting caregiver is customer-selected and revalidated");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"pet_taxi","*",{assignmentMode:"auto",preferredProviderMode:"preference"},"Taxi uses ranked automatic driver assignment");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"dog_walking","*",{assignmentMode:"auto",preferredProviderMode:"preference"},"Walking uses ranked automatic walker assignment");await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,"vet_consult","*",{assignmentMode:"auto",preferredProviderMode:"preference"},"Doorstep Vet uses ranked automatic assignment after mandatory VCI verification");for(const service of["food","relocation","funeral_memorial"])await seedServicePolicyScope(db,ASSIGNMENT_POLICY_DOMAIN,service,"*",{assignmentMode:"manual_workflow",preferredProviderMode:"disabled"},`${service} uses governed Operations workflow`);seeded.add(db);}
+export async function seedAssignmentPolicies(db:D1Database){if(seeded.has(db))return;// One batch for every scope (it was two sequential calls per scope, 22 on a cold isolate's first reserve).
+await seedServicePolicyScopes(db,ASSIGNMENT_POLICY_DOMAIN,[
+ {serviceCode:"grooming",cityId:"*",config:{assignmentMode:"auto",preferredProviderMode:"preference"},notes:"Grooming uses ranked automatic assignment"},
+ {serviceCode:"dog_training",cityId:"*",config:{assignmentMode:"customer_select",preferredProviderMode:"strict"},notes:"Training customer selection is strict; never silently substitute"},
+ {serviceCode:"boarding",cityId:"*",config:{assignmentMode:"customer_select",preferredProviderMode:"strict"},notes:"Boarding host is customer-selected and revalidated"},
+ {serviceCode:"pet_sitting",cityId:"*",config:{assignmentMode:"customer_select",preferredProviderMode:"strict"},notes:"Sitting caregiver is customer-selected and revalidated"},
+ {serviceCode:"pet_taxi",cityId:"*",config:{assignmentMode:"auto",preferredProviderMode:"preference"},notes:"Taxi uses ranked automatic driver assignment"},
+ {serviceCode:"dog_walking",cityId:"*",config:{assignmentMode:"auto",preferredProviderMode:"preference"},notes:"Walking uses ranked automatic walker assignment"},
+ {serviceCode:"vet_consult",cityId:"*",config:{assignmentMode:"auto",preferredProviderMode:"preference"},notes:"Doorstep Vet uses ranked automatic assignment after mandatory VCI verification"},
+ ...["food","relocation","funeral_memorial"].map(service=>({serviceCode:service,cityId:"*",config:{assignmentMode:"manual_workflow",preferredProviderMode:"disabled"},notes:`${service} uses governed Operations workflow`})),
+]);seeded.add(db);}
 export async function resolveAssignmentPolicy(db:D1Database,serviceCode:string,cityId:string,at=new Date()){await seedAssignmentPolicies(db);return resolveServicePolicy<AssignmentPolicyConfig&Record<string,unknown>>(db,ASSIGNMENT_POLICY_DOMAIN,{serviceCode,cityId},at);}
