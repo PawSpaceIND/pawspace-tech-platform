@@ -141,6 +141,23 @@ export async function seedServicePolicyScope(db:Db,domain:string,serviceCode:str
     .bind(`spolicy_${domain}_${service}_${city}`.replace(/\*/g,"any"),domain,service,city,JSON.stringify({...spec.defaults,...config}),notes,effectiveFrom,Date.now()).run();
 }
 
+/**
+ * seedServicePolicyScope for many scopes of one domain in ONE round trip (a cold isolate used to pay two
+ * sequential calls per scope: 22 for the assignment policy alone). Every seed is validated first, exactly as
+ * seedServicePolicyScope does, and the same scope-identity rule decides - now inside each INSERT (WHERE NOT
+ * EXISTS the same domain/service/city), so an operator's row for a scope is never shadowed by a seed.
+ */
+export async function seedServicePolicyScopes(db:Db,domain:string,scopes:Array<{serviceCode:string;cityId:string;config:Record<string,unknown>;notes:string}>,effectiveFrom="2026-08-01"){
+  const spec=registry.get(domain);
+  if(!spec)throw new Error(`Unknown policy domain ${domain}`);
+  for(const scope of scopes){const problem=spec.problem({...spec.defaults,...scope.config});if(problem)throw new Error(`Seed for ${domain}/${scope.serviceCode}/${scope.cityId} is invalid: ${problem}`);}
+  await ensureServicePolicyTables(db);
+  if(!scopes.length)return;
+  const now=Date.now();
+  await db.batch(scopes.map(scope=>{const service=normalise(scope.serviceCode),city=normalise(scope.cityId);return db.prepare("INSERT OR IGNORE INTO service_policy_configs (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at) SELECT ?,?,?,?,?,?,1,1,?,NULL,'founder_seed',? WHERE NOT EXISTS (SELECT 1 FROM service_policy_configs WHERE policy_domain=? AND service_code=? AND city_id=?)")
+    .bind(`spolicy_${domain}_${service}_${city}`.replace(/\*/g,"any"),domain,service,city,JSON.stringify({...spec.defaults,...scope.config}),scope.notes,effectiveFrom,now,domain,service,city);}));
+}
+
 function rowToRecord<T extends Record<string,unknown>>(spec:ServicePolicyDomain<T>,row:Row):ServicePolicyRecord<T>{
   // Missing keys come from the domain defaults, so adding a field does not break a stored row. Every
   // default is the strict answer, which is what makes that safe.

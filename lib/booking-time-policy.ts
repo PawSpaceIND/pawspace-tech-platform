@@ -127,13 +127,12 @@ registerServicePolicyDomain<BookingTimePolicy&Record<string,unknown>>({
 const bookingTimePoliciesSeeded=new WeakSet<Db>();
 export async function seedBookingTimePolicies(db:Db){
   if(bookingTimePoliciesSeeded.has(db))return;
-  const{seedServicePolicyDefault,seedServicePolicyScope}=await import("./service-policy-governance");
+  const{seedServicePolicyDefault,seedServicePolicyScopes}=await import("./service-policy-governance");
   await seedServicePolicyDefault(db,BOOKING_TIME_POLICY_DOMAIN);
-  for(const service of SCHEDULABLE_SERVICES){
-    await seedServicePolicyScope(db,BOOKING_TIME_POLICY_DOMAIN,service,"*",
-      {...APPROVED_BOOKING_TIME_DEFAULT,...APPROVED_BOOKING_TIME_BY_SERVICE[service]},
-      `Booking time rules - ${service}`);
-  }
+  // One batch for every service's scope (it was two sequential calls per service on a cold isolate).
+  await seedServicePolicyScopes(db,BOOKING_TIME_POLICY_DOMAIN,SCHEDULABLE_SERVICES.map(service=>({serviceCode:service,cityId:"*",
+    config:{...APPROVED_BOOKING_TIME_DEFAULT,...APPROVED_BOOKING_TIME_BY_SERVICE[service]},
+    notes:`Booking time rules - ${service}`})));
   bookingTimePoliciesSeeded.add(db);
 }
 
