@@ -11,10 +11,10 @@ export const VOICE_SALES_MODELS = { "pawspace-grooming-sales": "grooming", "paws
 export function voiceSalesService(model: unknown): VoiceSalesService | undefined {
  return Object.prototype.hasOwnProperty.call(VOICE_SALES_MODELS, String(model)) ? VOICE_SALES_MODELS[String(model) as keyof typeof VOICE_SALES_MODELS] : undefined;
 }
-export function specialistSalesPrompt(service: VoiceSalesService) {
+export function specialistSalesPrompt(service: VoiceSalesService, options: { coupons?: boolean } = {}) {
  const shared = "You are a needs-led PawSpace sales specialist, not a generic FAQ bot. Ask one question at a time, listen to the customer's answer and use the supplied canonical conversation history. Never ask again for facts already supplied. Recommend a suitable option, not automatically the most expensive. Do not invent offers, results, urgency, discounts, availability, or payment success. Handle price objections honestly. Use only server-owned catalogue/quote data. Collect the saved pet IDs, service address and PIN, package and requested appointment time before proposing checkout. When ready, propose the three registered actions schedule.reserve, booking.create, checkout.payment_order.create. The runtime will quote and preview the schedule, read the exact terms back, and require a separate explicit customer confirmation. Never tell the customer it is booked or paid yourself. A later yes confirms the stored offer, never a new model-generated plan. Do not read URLs or internal identifiers aloud. Never claim a payment link was delivered without delivery evidence. Payment and subscription activation require verified provider events. Stop selling when asked, and respect requests for a human.";
  return shared + (service === "grooming"
-  ? "\nSpecialty: Grooming only. Understand pet species, age, coat/breed, pet count, grooming goal, temperament and relevant safety concerns; collect needs without veterinary diagnosis. Explain the most relevant one-time package and, when suitable, the actual prepaid subscription alternative. Before subscription purchase explain total price, included sessions/credits, per-pet consumption, validity, eligibility, pause/expiry terms from the supplied plan. A prepaid bundle is not an auto-renewing mandate. Do not invent recurring debits. Offer only saved, owned pets; a missing customer/pet/address record needs the verified profile flow. Set schedule.serviceCode to grooming and booking.paymentMode to prepaid. No unsupported add-ons or discounts."
+  ? "\nSpecialty: Grooming only. Understand pet species, age, coat/breed, pet count, grooming goal, temperament and relevant safety concerns; collect needs without veterinary diagnosis. Explain the most relevant one-time package and, when suitable, the actual prepaid subscription alternative. Before subscription purchase explain total price, included sessions/credits, per-pet consumption, validity, eligibility, pause/expiry terms from the supplied plan. A prepaid bundle is not an auto-renewing mandate. Do not invent recurring debits. Offer only saved, owned pets; a missing customer/pet/address record needs the verified profile flow. Set schedule.serviceCode to grooming and booking.paymentMode to prepaid. No unsupported add-ons or discounts." + (options.coupons ? " A coupon is applied only when the customer accepts an offer listed in approvedOffers for the chosen package: put its exact code in booking.couponCode. The runtime validates it and reads the discounted total back; never state the discounted total yourself before that." : "")
   : "\nSpecialty: Dog Training only. Ask about dog's age and breed, goals (toilet training, walking, basic cues, puppy habits), prior training, behavior/safety concerns, household participation, preferred cadence and dates. Escalate aggression/bite risk or complex safety needs for a trainer assessment rather than promising a cure. Explain the live Meet & Greet/assessment and programme options, session count, duration, validity and approved full/split payment terms. Never guarantee behavior outcomes or invent trainer availability. Set schedule.serviceCode to dog_training. Include the selected packageCode and paymentMode prepaid or split in booking.create, and requirements as short customer-stated strings. The runtime derives session duration/count and creates a server quote. No grooming package sales through this agent.");
 }
 const text = (v: unknown) => String(v ?? "").trim();
@@ -46,6 +46,20 @@ function petIds(value: unknown) {
  if (!Array.isArray(value) || value.length < 1 || value.length > 4 || value.some(v => typeof v !== "string" || !v.trim())) throw refusal("Select one to four saved pets before checkout", 400);
  const ids = value.map(text); if (new Set(ids).size !== ids.length) throw refusal("Duplicate pets are not allowed", 400); return ids;
 }
+/**
+ * A coupon in a chat offer is one of the approved sales offers this customer can redeem (GROOM200's
+ * closing discount or GROOM400's cross-sell), quoted by the governed coupon engine against the server's
+ * own package price. The model names a code; the discount, total and eligibility are the server's.
+ */
+async function quoteSalesCoupon(db: D1Database, input: { code: string; customerId: string; cityId: string; quote: Row }) {
+ const { approvedSalesOffers, couponsLiveApproved } = await import("./ai-sales-offers");
+ const { quoteCoupon } = await import("./coupon-governance");
+ const approved = await approvedSalesOffers(db, { customerId: input.customerId, channel: "website" });
+ if (!approved.some(offer => offer.code === input.code)) throw refusal("That coupon is not an offer PawSpace AI can apply for this customer", 400);
+ const result = await quoteCoupon(db, { code: input.code, customerId: input.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: text(input.quote.packageCode), orderValue: Number(input.quote.totalAmount), paymentMode: "full", isSubscription: input.quote.offerType === "subscription" }, { liveApproved: await couponsLiveApproved() });
+ if (!result.valid || !("quoteId" in result) || !result.quoteId) throw refusal(`The coupon could not be applied: ${result.error || "not eligible for this booking"}`);
+ return { quoteId: result.quoteId, code: result.code, discount: Number(result.discount), finalAmount: Number(result.finalAmount) };
+}
 function summaryFor(service: VoiceSalesService, quote: Row, schedule: Row) {
  const at = new Date(text(schedule.scheduledStart)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
  const plan = object(quote.subscriptionPlan), recommended = object(quote.recommendedProvider);
@@ -54,17 +68,22 @@ function summaryFor(service: VoiceSalesService, quote: Row, schedule: Row) {
  const cadence=Array.isArray(schedule.weekdays)&&schedule.weekdays.length?` on ${schedule.weekdays.map(day=>["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][Number(day)]).join(", ")}`:Number(schedule.cadenceDays)>0?` every ${schedule.cadenceDays} day(s)`:"";
  const terms = service === "dog_training" ? `${quote.sessions} session(s), ${quote.minutesPerSession} minutes per session${cadence}, valid for ${quote.validityDays} days.${occurrences.length>1?` Last planned session ${last}.`:""}`
   : quote.offerType === "subscription" ? `Prepaid bundle: ${plan.sessions} credits, ${plan.reserveSessions} credit(s) for this appointment, valid for ${plan.validityValue} ${plan.validityUnit}. This does not enable automatic renewal.` : "One-time grooming appointment.";
- const remaining = Number(quote.totalAmount) - Number(quote.amountDueNow);
- return `${text(quote.packageName)} for ${quote.petCount} pet(s). ${terms} Total ${money(quote.totalAmount)}; ${money(quote.amountDueNow)} due now${remaining > 0 ? ` and ${money(remaining)} remaining under the quoted payment terms` : ""}. Requested start ${at} India time.${service === "dog_training" ? ` Recommended available trainer: ${text(recommended.name)}. Confirming also selects this trainer; you can ask for another option.` : ""} Availability was checked, not reserved. Shall I reserve this and create the booking with payment still pending?`;
+ const coupon = object(quote.coupon), discounted = text(coupon.quoteId) !== "";
+ const total = discounted ? Number(coupon.finalAmount) : Number(quote.totalAmount), dueNow = discounted ? total : Number(quote.amountDueNow);
+ const remaining = total - dueNow;
+ return `${text(quote.packageName)} for ${quote.petCount} pet(s). ${terms}${discounted ? ` Coupon ${text(coupon.code)}: ${money(coupon.discount)} off ${money(quote.totalAmount)}.` : ""} Total ${money(total)}; ${money(dueNow)} due now${remaining > 0 ? ` and ${money(remaining)} remaining under the quoted payment terms` : ""}. Requested start ${at} India time.${service === "dog_training" ? ` Recommended available trainer: ${text(recommended.name)}. Confirming also selects this trainer; you can ask for another option.` : ""} Availability was checked, not reserved. Shall I reserve this and create the booking with payment still pending?`;
 }
-export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[] }) {
+export type SalesOfferChannel = "voice" | "chat";
+export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel }) {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  const prior = await db.prepare("SELECT * FROM voice_sales_offers WHERE turn_key=?").bind(input.turnKey).first<Row>();
  if (prior) { if (prior.thread_id !== input.threadId || prior.customer_id !== input.customerId || prior.service_code !== input.service) throw refusal("Sales offer idempotency ownership mismatch", 403); return { id: text(prior.id), summary: text(prior.summary), expiresAt: Number(prior.expires_at) }; }
  if (input.actions.length !== 3 || input.actions.map(a => a.toolCode).join(",") !== "schedule.reserve,booking.create,checkout.payment_order.create") throw refusal("Sales checkout must propose reservation, booking and payment order in that order", 400);
  const schedule = { ...object(input.actions[0].arguments) }, booking = { ...object(input.actions[1].arguments) };
  onlyKeys(schedule, ["serviceCode", "petIds", "serviceAddress", "servicePincode", "scheduledStart", "scheduledEnd", "cadenceDays", "weekdays", "occurrences"]);
- onlyKeys(booking, ["petIds", "packageCode", "paymentMode", "requirements"]); onlyKeys(object(input.actions[2].arguments), []);
+ onlyKeys(booking, ["petIds", "packageCode", "paymentMode", "requirements", "couponCode"]);
+ const couponCode = text(booking.couponCode).toUpperCase(); delete booking.couponCode;
+ if (couponCode && (input.service !== "grooming" || (input.channel ?? "voice") === "voice")) throw refusal("Coupons are applied only to Grooming offers in web chat", 400); onlyKeys(object(input.actions[2].arguments), []);
  if (text(schedule.serviceCode) !== input.service) throw refusal("The proposal does not belong to this sales specialist", 403);
  const ids = petIds(schedule.petIds), bookingPets = petIds(booking.petIds);
  if (JSON.stringify([...ids].sort()) !== JSON.stringify([...bookingPets].sort())) throw refusal("Booking pets differ from the proposed appointment", 400);
@@ -90,6 +109,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   const { resolveGovernedServiceAddress } = await import("./service-discovery-address");
   const address = await resolveGovernedServiceAddress(db, { customerId: input.customerId, serviceCode: input.service, serviceAddress: text(schedule.serviceAddress), servicePincode: text(schedule.servicePincode) });
   quote = await quoteGroomingBookingWithLiveMultiPet(db, { packageCode: text(booking.packageCode), packageName: "", pets: pets.map(p => ({ species: text(p.species) as "dog" | "cat" | "other" })), paymentMode: mode, cityId: address.cityId, zoneId: address.zoneId, scheduledStart: start.toISOString() });
+  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
  }
  const { executeGovernedSchedulingRequest } = await import("../app/api/uat-scheduling/route");
  const response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor);
@@ -126,7 +146,7 @@ function resultValue(value: unknown, key: string): string {
  const row = object(value); if (typeof row[key] === "string") return row[key] as string;
  for (const child of Object.values(row)) if (child && typeof child === "object") { const found = resultValue(child, key); if (found) return found; } return "";
 }
-export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; offerId: string; confirmation: string }) {
+export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; offerId: string; confirmation: string; channel?: SalesOfferChannel }) {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  if (!isVoiceSalesConfirmation(input.confirmation)) throw refusal("A separate unambiguous confirmation of the quoted offer is required", 400);
  const offer = await db.prepare("SELECT * FROM voice_sales_offers WHERE id=? AND thread_id=? AND customer_id=? AND service_code=?").bind(input.offerId, input.threadId, input.customerId, input.service).first<Row>();
@@ -153,7 +173,7 @@ export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: Aut
    const action = actions[index], args = { ...action.arguments };
    if (action.toolCode === "booking.create") args.scheduleGroupId = groupId;
    if (action.toolCode === "checkout.payment_order.create") args.bookingId = bookingId;
-   const result = await executeGovernedConversationTool(db, { actor: input.actor, threadId: input.threadId, customerId: input.customerId, channel: "voice", intent: "booking_create", toolCode: action.toolCode, arguments: args, idempotencyKey: `${input.offerId}:${index}:${action.toolCode}`, customerConfirmed: true });
+   const result = await executeGovernedConversationTool(db, { actor: input.actor, threadId: input.threadId, customerId: input.customerId, channel: input.channel ?? "voice", intent: "booking_create", toolCode: action.toolCode, arguments: args, idempotencyKey: `${input.offerId}:${index}:${action.toolCode}`, customerConfirmed: true });
    groupId = resultValue(result, "groupId") || groupId; bookingId = resultValue(result, "bookingId") || bookingId; orderId = resultValue(result, "orderId") || orderId;
   }
   if(!groupId||!bookingId||!orderId)throw refusal("Checkout is incomplete; no successful sale can be claimed",503);

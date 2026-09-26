@@ -45,7 +45,7 @@ export default function WatiConversation(props:{
   <form className={styles.composer} onSubmit={submit}>
    <label htmlFor="v2-chat-message" className="sr-only" style={{position:"absolute",width:1,height:1,overflow:"hidden",clip:"rect(0 0 0 0)"}}>Your message</label>
    <textarea id="v2-chat-message" className={styles.input} rows={1} maxLength={4000} value={props.draft} placeholder={props.placeholder} disabled={props.busy||props.composerDisabled} onChange={event=>props.onDraft(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/>
-   <button className={styles.send} disabled={props.busy||props.composerDisabled||!props.draft.trim()}>Send</button>
+   <button data-v2-action className={styles.send} disabled={props.busy||props.composerDisabled||!props.draft.trim()}>Send</button>
   </form>
  </section>;
 }

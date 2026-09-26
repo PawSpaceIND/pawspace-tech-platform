@@ -15,6 +15,7 @@ import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 import{inspectTrustSafetyText,redactTrustSafetyText}from"./trust-safety-governance";
 import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,type ApprovedSalesOffer}from"./ai-sales-offers";
 import{activeCrossSell}from"./ai-sales-offers";
+import type{VoiceSalesService}from"./voice-sales-specialists";
 
 type Row=Record<string,unknown>;
 export type PublicAiWebHistoryTurn={role:"user"|"assistant";text:string};
@@ -142,6 +143,28 @@ type WebChatOptions={
  acceptWhileWithTeam?:boolean;
 };
 
+/**
+ * The signed-in web chat sells and books like the voice specialists. Once the customer's ownership of the
+ * chat is proven below, a Grooming or Training conversation runs as this service actor, so PawSpace AI can
+ * store a quoted offer (package, price, time and any approved coupon), read it back, and book it only on
+ * the customer's separate "yes" - the same governed, thread-bound flow, never a model-generated booking.
+ */
+const WEB_CHAT_SALES_ACTOR:AuthenticatedActor={email:"web-chat-ai@system.pawspace",name:"PawSpace web chat AI",roleCode:"service_web_chat_ai",permissions:["communications.manage","customers.manage","bookings.manage","scheduling.book"],developmentPreview:false,identitySource:"workspace",principalType:"identity_subject",principalKey:"service:web-chat-ai"};
+const SALES_SERVICE_MEMORY_MS=2*60*60*1000;
+export function chatSalesServiceNamed(message:string):VoiceSalesService|null{
+ if(/\b(groom\w*|bath|haircut|makeover|de-?shedding)\b/i.test(message))return"grooming";
+ if(/\b(train\w*|obedience|puppy class\w*)\b/i.test(message))return"dog_training";
+ return null;
+}
+/** The service this chat thread is selling: the one named now, else the one named in it in the last two hours. */
+async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
+ const named=chatSalesServiceNamed(message),now=Date.now();
+ const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
+ let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training")remembered=service;}catch{}
+ if(named&&named!==remembered)await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();
+ return named??remembered;
+}
+
 export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string},options:WebChatOptions={}){
  await ensureAiWebChatTables(db);
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
@@ -161,9 +184,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  /* The AI provider loads while the message is saved (#1093). A path that returns before using it (the
   * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
- const providerPromise=createGroundedAiRuntimeProvider(db,input.actor,"chat");providerPromise.catch(()=>{});
+ if(!prior)threadId=await openThread(db,input.customerId);
+ const salesPromise=chatSalesService(db,input.customerId,threadId,input.text);salesPromise.catch(()=>{});
+ const providerPromise=salesPromise.then(salesService=>createGroundedAiRuntimeProvider(db,salesService?WEB_CHAT_SALES_ACTOR:input.actor,"chat",{salesService}));providerPromise.catch(()=>{});
  if(!prior){
-  threadId=await openThread(db,input.customerId);messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
+  messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
   const inspected=await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-authenticated:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"authenticated_ai_web_chat"}});inspectedDetected=inspected.detected;
   await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?, ?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
  }
@@ -177,7 +202,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   * will answer here, instead of a red "AI replies are paused" error on every message they send. */
  if(options.acceptWhileWithTeam&&(await activeHandoff(db,threadId)).active)return withTeam();
  let result:Awaited<ReturnType<typeof orchestrateAiTurn>>;
- try{result=await orchestrateAiTurn(db,{actor:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider:await providerPromise});}
+ try{const provider=await providerPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider});}
  catch(error){
   // A takeover that landed between the check above and the orchestrator's own check.
   if(options.acceptWhileWithTeam&&error instanceof Response&&error.status===409&&(await activeHandoff(db,threadId)).active)return withTeam();

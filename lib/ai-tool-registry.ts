@@ -164,6 +164,16 @@ async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{
     return invoke("/api/canonical-bookings",{...common,serviceCode,packageCode,packageName:text(quote.name),totalAmount:Number(quote.total_amount),amountDueNow:Number(quote.amount_due_now),pricing:{discount:Number(quote.discount),trainingQuoteId:quoteId,requirements:Array.isArray(input.args.requirements)?input.args.requirements.filter((v):v is string=>typeof v==="string").slice(0,20):[]}});
    }
    const quote=await quoteGroomingBookingWithLiveMultiPet(db,{packageCode,packageName:"",pets:pets.map(pet=>({species:text(pet.species) as "dog"|"cat"|"other"})),paymentMode,cityId:text(first.city_id),zoneId:text(first.zone_id),scheduledStart:text(first.scheduled_start)});
+   const couponQuoteId=text(input.args.couponQuoteId);
+   if(couponQuoteId){
+    // A coupon rides only on the customer-confirmed conversation offer that quoted it, never a guessed ID.
+    const owner=await db.prepare("SELECT id FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND service_code='grooming' AND status='executing' AND json_extract(quote_json,'$.coupon.quoteId')=? LIMIT 1").bind(input.threadId,input.customerId,couponQuoteId).first<Row>();
+    if(!owner)throw new Response("Coupon quote does not belong to this confirmed conversation offer",{status:403});
+    const coupon=await db.prepare("SELECT discount_amount,final_amount,order_value FROM coupon_quotes WHERE id=? AND customer_id=?").bind(couponQuoteId,input.customerId).first<Row>();
+    if(!coupon||Number(coupon.order_value)!==Number(quote.totalAmount))throw new Response("The coupon was quoted for a different Grooming price; refresh the offer",{status:409});
+    const finalAmount=Number(coupon.final_amount);
+    return invoke("/api/canonical-bookings",{...common,serviceCode:"grooming",packageCode:quote.packageCode,packageName:quote.packageName,totalAmount:finalAmount,amountDueNow:paymentMode==="prepaid"?finalAmount:0,pricing:{discount:Number(coupon.discount_amount),couponQuoteId,addOns:[]}});
+   }
    return invoke("/api/canonical-bookings",{...common,serviceCode:"grooming",packageCode:quote.packageCode,packageName:quote.packageName,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,pricing:{discount:0,addOns:[]}});
   }
   if(definition.code==="checkout.payment_order.create"){const run=async()=>{const result=await invoke("/api/payment-order",{bookingId:text(input.args.bookingId),customerId:input.customerId}) as Row;if(result.connected!==true||!text(result.orderId))throw new Response("A verified provider order was not created; payment setup requires review",{status:503});return result;};return executeAfterMarginValidation(()=>validateSalesOfferIfPresent(db,input),run);}
