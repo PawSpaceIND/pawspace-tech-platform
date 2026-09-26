@@ -90,6 +90,7 @@ try {
       record({ suite: SUITE, journey: "payment canary", combo: "Boarding 4h ₹499 prepaid", result: /not configured/i.test(errorText.join(" ")) ? "ENV-GATED" : "FAIL", detail: `Checkout did not open: ${errorText.join(" | ")}`, evidence: [] });
     } else {
       step("Razorpay TEST checkout opened", true, "frame present");
+      out.paidAt = Date.now();
       const paid = await payRazorpayTestNetbanking(page);
       step("Netbanking test bank → Success", paid.ok, JSON.stringify(paid));
       await flow.shot("after-razorpay-success");
@@ -113,6 +114,26 @@ try {
     const inbox = await d1("SELECT event_type, processing_status, received_at FROM gateway_webhook_events WHERE raw_payload LIKE ? OR raw_payload LIKE ? ORDER BY received_at", [`%${bookingId}%`, `%${bookingId.toLowerCase()}%`]);
     step("D1 booking_payments", true, payRows); step("D1 payment_gateway_events", true, events); step("D1 webhook inbox rows for this booking", true, inbox);
     out.d1 = { payRows, events, inbox };
+    // PAY-01 live check: every Razorpay webhook received since this payment reaches a terminal state. Matched by
+    // time, not payload, because a processed row's raw payload may be privacy-scrubbed.
+    if (out.paidAt && !payRows?.skipped) {
+      // RECEIVED/PROCESSING must not linger (the PAY-01 symptom); FAILED is a processing error; DEFERRED is a
+      // governed retry and is reported, not failed.
+      let webhooks = [], pending = [], failed = [];
+      for (const started = Date.now(); Date.now() - started < 120_000;) {
+        webhooks = await d1("SELECT event_type, processing_status, COUNT(*) AS n FROM gateway_webhook_events WHERE received_at >= ? GROUP BY 1,2 ORDER BY 1,2", [out.paidAt - 5_000]);
+        const rows = Array.isArray(webhooks) ? webhooks : [];
+        pending = rows.filter(row => ["RECEIVED", "PROCESSING"].includes(String(row.processing_status)));
+        failed = rows.filter(row => String(row.processing_status) === "FAILED");
+        if (rows.length && !pending.length) break;
+        await new Promise(resolve => setTimeout(resolve, 10_000));
+      }
+      out.d1.webhooksSincePayment = webhooks;
+      pending = [...pending, ...failed];
+      const settled = Array.isArray(webhooks) && webhooks.length > 0 && pending.length === 0;
+      record({ suite: SUITE, journey: "Razorpay webhooks processed (PAY-01)", combo: "every webhook received since this payment", result: settled ? "PASS" : Array.isArray(webhooks) && webhooks.length ? "FAIL" : "BLOCKED", detail: JSON.stringify(webhooks).slice(0, 600), evidence: [] });
+      if (Array.isArray(webhooks) && webhooks.length && pending.length) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Customer", flow: "Razorpay webhooks", title: "Razorpay webhooks received after a TEST payment are stuck or failed after 2 minutes", steps: `Pay ${bookingId} in Razorpay TEST, read gateway_webhook_events since the payment`, expected: "PROCESSED (or REJECTED / DEFERRED)", actual: JSON.stringify(pending).slice(0, 300), evidence: [] });
+    }
   }
 } catch (error) {
   step("canary aborted", false, String(error?.message || error).slice(0, 500));

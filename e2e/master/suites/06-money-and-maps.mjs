@@ -168,6 +168,17 @@ try {
         record({ suite: SUITE, journey: "Pet Taxi ride 50% booking fee", combo: `Citroën one-way ₹${opt.quotedTotal}, fee ₹${opt.bookingFee}`, result: captured ? "PASS" : (r.opened ? "FAIL" : "BLOCKED"), detail: `${bookingId} ${JSON.stringify(r.status ? { bookingStatus: r.status.bookingStatus, paymentStatus: r.status.paymentStatus } : r.reason)}`, evidence: r.evidence });
         saveBooking({ suite: SUITE, bookingId, service: "pet_taxi", providerId: provider?.id, customer: account.customerId, scheduledStart: firstQuote.scheduledStart, total: Number(opt.quotedTotal), dueNow: Number(opt.bookingFee), paid: captured, paymentMode: "split_50_50" });
         out.taxiBooking = { bookingId, pay: r.status, reason: r.reason };
+        // PAY-05 live check: after the fee is captured the page must not offer another payment; the final balance
+        // is requested after drop-off. Read after a reload so the page shows the server's post-capture state.
+        if (captured) {
+          await flow.page.goto(`${BASE}/v2/booking?bookingId=${encodeURIComponent(bookingId)}`, { waitUntil: "domcontentloaded" });
+          await settle(flow.page, 4000);
+          const after = (await flow.page.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
+          const offersPayment = /Pay securely|Pay balance/.test(after), explains = /requested after drop-off/.test(after);
+          const shot = await flow.shot("taxi-booking-after-fee-reload");
+          record({ suite: SUITE, journey: "Pet Taxi — after the booking fee (PAY-05)", combo: "what the booking page asks next", result: !offersPayment && explains ? "PASS" : "FAIL", detail: after.slice(0, 600), evidence: [shot] });
+          if (offersPayment) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Customer", flow: "Pet Taxi booking fee", title: "After the Pet Taxi booking fee is captured the booking page still offers a payment", steps: `Pay the fee for ${bookingId} in Razorpay TEST, reload /v2/booking`, expected: "Booking fee paid; final balance requested after drop-off", actual: after.slice(0, 400), evidence: [shot] });
+        }
       }
     } else record({ suite: SUITE, journey: "Pet Taxi ride 50% booking fee", combo: "Citroën one-way", result: "BLOCKED", detail: "no eligible Citroën quote from part B", evidence: [] });
   } catch (e) { step("taxi booking aborted", false, String(e?.message || e).slice(0, 400)); }
