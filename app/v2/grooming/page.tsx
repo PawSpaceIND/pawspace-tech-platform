@@ -35,6 +35,7 @@ import styles from "./grooming.module.css";
 import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
 import PetManager from "../pet-form";
+import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
@@ -49,6 +50,10 @@ export default function V2GroomingPage() {
   const [selectedPetIds, setSelectedPetIds] = useState<string[]>([]);
   // New customers used to reach a dead end here: pets could only be added in V2 Account.
   const [addingPet, setAddingPet] = useState(false);
+  // Owner decision (H4): the in-app extras, in V2 before launch.
+  const [addOns, setAddOns] = useState<string[]>([]);
+  const [comfort, setComfort] = useState<"friendly" | "anxious" | "aggressive">("friendly");
+  const [specialInstructions, setSpecialInstructions] = useState("");
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
@@ -120,6 +125,9 @@ export default function V2GroomingPage() {
   const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
   // Disabled checkout buttons point at the step that explains why.
   const blockingIssue = mixedAudience ? { id: "v2-selection-issue", step: "01" } : youngIssue ? { id: "v2-young-issue", step: "02" } : null;
+  const availableAddOns = groomingAddOnsForSpecies(String(selectedPets[0]?.species || "").toLowerCase());
+  const chosenAddOns = addOns.filter(label => availableAddOns.some(item => item.label === label));
+  const addOnTotal = chosenAddOns.reduce((sum, label) => sum + (availableAddOns.find(item => item.label === label)?.price ?? 0), 0);
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
@@ -184,6 +192,7 @@ export default function V2GroomingPage() {
         account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
         scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
+        addOns: addOns.filter(label => availableAddOns.some(item => item.label === label)), comfort, specialInstructions,
       }, current => {
         if (!mounted.current) return;
         setBooking(current);
@@ -314,6 +323,11 @@ export default function V2GroomingPage() {
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
             {youngIssue && <p id="v2-young-issue" className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
+            {availableAddOns.length > 0 && <div className={styles.helper} aria-label="Extras and care notes">
+              <b>Extras</b>{availableAddOns.map(item => <label key={item.label} style={{ display: "block" }}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> {item.label} · {money(item.price)}</label>)}
+              <label style={{ display: "block", marginTop: 8 }}>How is your pet with grooming?<select style={{ display: "block", width: "100%", maxWidth: "100%" }} value={comfort} onChange={event => setComfort(event.target.value as typeof comfort)}><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
+              <label style={{ display: "block", marginTop: 8 }}>Notes for your groomer (optional)<textarea maxLength={300} value={specialInstructions} onChange={event => setSpecialInstructions(event.target.value)} placeholder="e.g. Sensitive paws, please use the balcony tap" style={{ display: "block", width: "100%", maxWidth: "100%" }} /></label>
+            </div>}
           </section>
 
           <section className={styles.step}>
@@ -361,7 +375,7 @@ export default function V2GroomingPage() {
             <div><span>When</span><b>{summaryWhen}</b></div>
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
-          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
+          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
           <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}

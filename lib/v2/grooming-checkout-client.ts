@@ -2,6 +2,7 @@ import type { CustomerAccountRecord } from "../customer-account";
 import { serviceAddressConflict } from "../service-address-consistency";
 import { v2GroomingSelectionIssue, v2GroomingServiceDate, v2YoungPackageIssue } from "./grooming-selection";
 import { stableBookingInputKey } from "../booking-input-fingerprint";
+import { groomingAddOnsForSpecies } from "../grooming-add-ons";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
 import { apiSend } from "../api-fetch";
 import { CustomerCheckoutController, checkoutReturnUrl, type CustomerConfirmationProjection, type CheckoutState } from "../customer-checkout-client";
@@ -25,7 +26,18 @@ export type V2GroomingCheckoutInput = {
   scheduledEnd: string;
   /** Keep this doorstep in the customer's saved places (only when they ticked "Save this address"). */
   saveAddress?: boolean;
+  /** Owner decision (H4): V2 offers the in-app extras. Add-on labels come from the governed catalogue. */
+  addOns?: string[];
+  comfort?: "friendly" | "anxious" | "aggressive";
+  specialInstructions?: string;
 };
+
+/** Package quote plus add-ons: the server governs the package price and adds the catalogue add-on prices. */
+export function v2GroomingTotal(input: Pick<V2GroomingCheckoutInput, "quote" | "addOns" | "selectedPets">) {
+  const species = String(input.selectedPets[0]?.species || "").toLowerCase();
+  const available = groomingAddOnsForSpecies(species);
+  return input.quote.price + (input.addOns ?? []).reduce((sum, label) => sum + (available.find(item => item.label === label)?.price ?? 0), 0);
+}
 
 export type V2GroomingBooking = CanonicalLifecycleResult & {
   idempotencyKey: string;
@@ -43,6 +55,9 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     input.address.trim(),
     input.pincode,
     String(input.quote.price),
+    ...(input.addOns ?? []).slice().sort(),
+    input.comfort ?? "",
+    (input.specialInstructions ?? "").trim(),
     input.provider.id,
     ...input.selectedPets.map(pet => pet.id).sort(),
   ];
@@ -68,6 +83,10 @@ export async function createV2GroomingBooking(
   if (!Number.isFinite(input.quote.price) || input.quote.price <= 0) throw new Error("A valid live price is required before booking.");
 
   if (input.quote.source !== "pricing_control") throw new Error("Only a published live price can enter checkout.");
+  const allowedAddOns = groomingAddOnsForSpecies(String(input.selectedPets[0]?.species || "").toLowerCase()).map(item => item.label);
+  if ((input.addOns ?? []).some(label => !allowedAddOns.includes(label)) || new Set(input.addOns ?? []).size !== (input.addOns ?? []).length) throw new Error("Choose add-ons available for this pet.");
+  if ((input.specialInstructions ?? "").length > 300) throw new Error("Keep groomer notes under 300 characters.");
+  const total = v2GroomingTotal(input);
   if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
       input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
     throw new Error("The published package must match the selected pets.");
@@ -123,15 +142,19 @@ export async function createV2GroomingBooking(
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
     provider: decision.provider,
-    totalAmount: input.quote.price,
-    amountDueNow: input.quote.price,
+    totalAmount: total,
+    amountDueNow: total,
     payment: {
       method: "upi",
       mode: "prepaid",
       status: "created",
       detail: "PawSpace V2 secure Razorpay sandbox checkout; capture requires verified gateway evidence",
     },
-    pricing: { discount: 0 },
+    // Same fields the in-app flow sends: add-ons are priced by the server; notes reach the groomer's job card.
+    pricing: { discount: 0, addOns: input.addOns ?? [], requirements: [
+      ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
+      ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
+    ] },
   });
   if (!canonical.bookingId || canonical.customerId !== input.account.customerId || canonical.scheduleGroupId !== decision.groupId) {
     throw new Error("The booking could not be matched to your account and reservation.");
