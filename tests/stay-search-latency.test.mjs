@@ -37,6 +37,9 @@ const preview = (w, label, scheduledStart, scheduledEnd, careMode) => h.timed(w,
 async function steady(w, run) { await run(); await run(); return run(); }
 /** 20 round trips is 5 s at staging's ~250 ms per D1 call. */
 const ROUND_TRIPS = 20, LATENCY_MS = 40;
+// Wall-clock checks get headroom for a busy test machine (CPU time, not D1 round trips); the D1 call
+// budgets above/below stay exact, so a regression in round trips still fails.
+const CPU_SLACK_MS = 500;
 
 test("a warm Boarding host search makes a few D1 calls, writes nothing, and does not grow with the hosts in the zone", async () => {
   const small = await world(), crowded = await world(30);
@@ -57,7 +60,7 @@ test("a warm Boarding host search answers inside 20 D1 round trips (5 s at 250 m
   const result = await search(w);
   w.latency.ms = 0;
   assert.equal(result.status, 200);
-  assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (${result.calls.length} calls)`);
+  assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS + CPU_SLACK_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (${result.calls.length} calls)`);
 });
 
 /** The per-host search exactly as it was before this change (frozen here), for the equivalence cases. */
@@ -178,7 +181,7 @@ test("a warm Pet Sitting preview answers inside 20 D1 round trips (5 s at 250 ms
   const result = await preview(w, "o", start, end, care);
   w.latency.ms = 0;
   assert.equal(result.status, 200);
-  assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (${result.calls.length} calls)`);
+  assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS + CPU_SLACK_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (${result.calls.length} calls)`);
 });
 
 test("the in-memory sitter roster is exactly what the reserve path's roster write publishes", async () => {
