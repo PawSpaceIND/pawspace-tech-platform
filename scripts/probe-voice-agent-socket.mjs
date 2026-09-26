@@ -24,3 +24,4 @@ await new Promise((resolve,reject)=>{
  socket.addEventListener('close',event=>{console.log('VOICE_SOCKET_CLOSED='+JSON.stringify({code:event.code,ms:Date.now()-started}));if(!finished)finish(Error('Agent socket closed before substantive reply')); });
 });
 console.log('VOICE_SOCKET_PROOF='+JSON.stringify({passed:true,dialed:false,agentId}));
+console.log('VOICE_SALE_AFTER_REPLY='+JSON.stringify(await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'verify-voice-sale'})));
