@@ -84,3 +84,24 @@ test("UI-04 (non-vacuity): a successful reservation is still returned unchanged"
   assert.equal(outcome.ok, true, `a good reservation must pass through: ${JSON.stringify(outcome)}`);
   assert.equal(outcome.value.groupId, "GRP-1");
 });
+
+test("UI-03: a policy refusal that names its reason in `code` gets that reason's copy, and keeps the code", async () => {
+  // Staging master run 36224833520: the mobile Training reserve got
+  //   {"error":"This service needs at least 1440 minutes' notice","code":"below_minimum_lead_time",...}
+  // and the customer saw only "We could not reserve this slot", because only `error` was looked up.
+  const { reserveUatSchedule, isProviderSlotRefusal } = await import("../lib/uat-scheduling-client.ts");
+  const refused = await withStubbedFetch({ error: "This service needs at least 1440 minutes' notice", code: "below_minimum_lead_time", minimumLeadMinutes: 1440 }, 400, () =>
+    reserveUatSchedule(REQUEST).then(() => null, (e) => e));
+  assert.match(refused.message, /needs more notice than that\. Please choose a later start time/);
+  assert.equal(refused.code, "below_minimum_lead_time");
+  assert.equal(isProviderSlotRefusal(refused), false, "a later start, not another trainer, fixes this");
+});
+
+test("UI-04: only a taken or unavailable slot lets the Meet & Greet try the next trainer", async () => {
+  const { reserveUatSchedule, isProviderSlotRefusal } = await import("../lib/uat-scheduling-client.ts");
+  for (const error of ["SLOT_TAKEN", "NO_SCHEDULE_AVAILABLE", "SELECTED_PROVIDER_UNAVAILABLE"]) {
+    const refused = await withStubbedFetch({ error }, 409, () => reserveUatSchedule(REQUEST).then(() => null, (e) => e));
+    assert.equal(isProviderSlotRefusal(refused), true, error);
+  }
+  assert.equal(isProviderSlotRefusal(new Error("network down")), false);
+});

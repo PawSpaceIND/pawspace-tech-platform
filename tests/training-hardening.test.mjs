@@ -52,6 +52,7 @@ function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__TRN_DB_
 const sessionsRoute = await import("../app/api/training-sessions/route.ts");
 const customerChangeRoute = await import("../app/api/training-customer-session-change/route.ts");
 const cancellationRoute = await import("../app/api/training-cancellation/route.ts");
+const financeRoute = await import("../app/api/training-finance/route.ts");
 const earningsRoute = await import("../app/api/training-provider-earnings/route.ts");
 const reconciliationRoute = await import("../app/api/training-reconciliation/route.ts");
 const opsRoute = await import("../app/api/training-ops/route.ts");
@@ -392,6 +393,50 @@ test("real execution: customer session-change route validates programme/session 
   assert.equal(staffLeak.status, 400);
 });
 
+test("real execution: a customer cannot change a session online within 24 hours of its start (free until then)", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  const moveTo = (ms) => sqlite.prepare("UPDATE training_sessions SET scheduled_start=? WHERE id=?").run(new Date(Date.now() + ms).toISOString(), sessions[0].id);
+  moveTo(20 * 3_600_000);
+  const late = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-late" });
+  assert.equal(late.status, 409, JSON.stringify(late.body));
+  assert.equal(late.body.code, "training_change_window_closed");
+  assert.match(late.body.error, /up to 24 hours before/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_session_recovery_cases WHERE session_id=?").get(sessions[0].id)?.n ?? 0, 0, "no recovery case is opened");
+  moveTo(30 * 3_600_000);
+  const early = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-early" });
+  assert.equal(early.status, 200, JSON.stringify(early.body));
+  assert.equal(early.body.data.status, "reschedule_requested");
+});
+
+// QA: asking to move a locked session answered {"error":"{\"error\":\"Training session cannot request_reschedule from
+// locked. ...\",\"code\":...}"} - the route re-read the lifecycle's JSON refusal as text and wrapped it a second time.
+test("real execution: a customer reschedule refusal is one plain message naming the session that can move, with status and code kept", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  assert.equal(sessions[1].status, "locked");
+  const locked = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[1].id, reason: "family trip conflicts", idempotencyKey: "cc-locked" });
+  assert.equal(locked.status, 409, JSON.stringify(locked.body));
+  assert.equal(locked.body.code, "training_session_state_conflict");
+  assert.equal(locked.body.sessionStatus, "locked");
+  assert.equal(locked.body.error, "This session opens for changes once the session before it is complete. Only your next upcoming session can be rescheduled, before it starts.");
+  assert.equal(sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(sessions[1].id).status, "locked", "a refusal changes nothing");
+  // The next session can move; asking again while that request is open is refused in the same plain form.
+  const next = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-next" });
+  assert.equal(next.status, 200, JSON.stringify(next.body));
+  const again = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-next-again" });
+  assert.equal(again.status, 409, JSON.stringify(again.body));
+  assert.equal(again.body.code, "training_session_state_conflict");
+  assert.match(again.body.error, /^A new time for this session has already been requested; our team will confirm it with you\. Only your next upcoming session can be rescheduled, before it starts\.$/);
+  // Plain-text lifecycle refusals keep their own wording, still as a plain message.
+  sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id='B1'").run();
+  const inactive = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-inactive" });
+  assert.equal(inactive.status, 409, JSON.stringify(inactive.body));
+  assert.deepEqual(inactive.body, { error: "Training booking is no longer active" });
+});
+
 test("real execution: session-change and cancellation requests from a customer who does NOT own the programme are denied (403)", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", customer: "cus_t1" });
   const db = globalThis.__TRN_DB__;
@@ -410,6 +455,20 @@ test("real execution: session-change and cancellation requests from a customer w
   seedCustomerIdentity("trisha@pawspace.test", "cus_t1");
   const owner = await callAs(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "own-3" }, "trisha@pawspace.test");
   assert.equal(owner.status, 200, JSON.stringify(owner.body));
+});
+
+// QA: the Finance page showed 'Training finance error {"error":"MFA enrollment required"}' because these
+// routes re-read the governed auth refusal (already a JSON {error} body) as text and wrapped it again.
+test("real execution: Training finance and cancellation auth refusals return a plain message, not re-encoded JSON", async () => {
+  freshDb(); baseTables();
+  await call(opsRoute.GET, "GET");
+  seedCustomerIdentity("mallory@pawspace.test", "cus_other");
+  const read = await callAs(financeRoute.GET, "GET", "", "mallory@pawspace.test");
+  assert.equal(read.status, 403, JSON.stringify(read.body));
+  assert.equal(read.body.error, "Permission denied");
+  const write = await callAs(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "none", feeValue: 0, noShowTreatment: "refundable", effectiveFrom: "2026-08-01", reason: "customer must not publish policy" }, "mallory@pawspace.test");
+  assert.equal(write.status, 403, JSON.stringify(write.body));
+  assert.equal(write.body.error, "Permission denied");
 });
 
 // ---- 5. Cancellation money math: server-computed, policy-driven, 100%-refund platform rule ----
@@ -544,6 +603,20 @@ test("real execution: trainer earnings exist ONLY for completed sessions and der
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_session_earnings").get().n, 1);
 });
 
+test("real execution: a two-dog session (120 minutes) earns twice the one-dog per-session rate", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 3 });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  const start = Date.parse(sessions[0].scheduled_start);
+  sqlite.prepare("UPDATE training_sessions SET scheduled_end=? WHERE id=?").run(new Date(start + 120 * 60_000).toISOString(), sessions[0].id);
+  await completeSession(db, sessions[0], "c1");
+  await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
+  const res = await call(earningsRoute.GET, "GET", `providerId=${TRAINER}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.data.earnings[0].gross_earning, 1400, "the rate is per dog-hour of trainer time");
+  assert.equal(res.body.data.earnings[0].rate_value, 700);
+});
+
 test("real execution: earnings are held when payment is reversed after delivery", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 4 });
   const db = globalThis.__TRN_DB__;
@@ -655,4 +728,10 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   assert.match(panel, /\/api\/training-(ops|sessions)/);
   const financePage = fs.readFileSync(new URL("../app/team/finance/training/page.tsx", import.meta.url), "utf8");
   assert.match(financePage, /\/api\/training-(finance|cancellation)/);
+  // The invoice button must use the same payment vocabulary issueTrainingInvoice enforces; it once waited
+  // for "captured", which the funding state never holds, so a fully paid invoice could never be issued.
+  const financeLib = fs.readFileSync(new URL("../lib/training-finance.ts", import.meta.url), "utf8");
+  assert.match(financeLib, /String\(existing\.payment_status\)!=="FULLY_PAID"/);
+  assert.match(financePage, /String\(row\.payment_status\)!=="FULLY_PAID"/);
+  assert.doesNotMatch(financePage, /payment_status\)!=="captured"/);
 });

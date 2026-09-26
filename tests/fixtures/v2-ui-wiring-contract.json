@@ -37,11 +37,11 @@
       "conditions": 11
     },
     "app/training/page.tsx": {
-      "sha256": "71b20d324929944b8d6e53471cce9ef005622d88ff0d7300622f4e2c1c9b86fa",
-      "functions": 70,
-      "declarations": 90,
-      "interactionProps": 43,
-      "conditions": 32
+      "sha256": "c9eea5894f2fc4014f360651d6e8c0126b90cd8e44ec3534ea5418c03216ca3a",
+      "functions": 84,
+      "declarations": 96,
+      "interactionProps": 48,
+      "conditions": 33
     },
     "app/v2/chat/page.tsx": {
       "sha256": "377cc21c4d92fc4f2d6e127f90e2fd7081741f2e7bcfafa4ce1fb713df7eeb40",

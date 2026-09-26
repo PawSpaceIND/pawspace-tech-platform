@@ -190,9 +190,12 @@ async function bookingsForProvider(db:Db,providerId:string){
   return{bookingId:text(r.id),customerId:text(r.customer_id),serviceCode:text(r.service_code),package:text(r.package_name),start:text(r.scheduled_start),end:text(r.scheduled_end),status:text(r.status),orderValue:money(r.total_amount),paymentStatus:balance?.paymentStatus??(r.pay_status?text(r.pay_status):"none"),paymentDueNow:balance?.dueNow??money(r.amount_due_now),paymentMethod:balance?.paymentMethod|| (r.pay_method?text(r.pay_method):null)};
  };
  const all=rows.results.map(map);
+ // An unpaid Training booking is not a job yet: the Training lifecycle refuses accept (409) until the
+ // customer pays, so it must not surface as the trainer's next assignment.
+ const workable=all.filter(b=>!(b.status==="payment_pending"&&b.serviceCode==="dog_training"));
  return{
-  upcoming:all.filter(b=>b.start>=nowIso&&!["completed","cancelled"].includes(b.status)),
-  today:all.filter(b=>b.start.slice(0,10)===nowIso.slice(0,10)),
+  upcoming:workable.filter(b=>b.start>=nowIso&&!["completed","cancelled"].includes(b.status)),
+  today:workable.filter(b=>b.start.slice(0,10)===nowIso.slice(0,10)),
   past:all.filter(b=>b.start<nowIso||["completed","cancelled"].includes(b.status)),
   // [LP-D10] A captured payment is not pending even when paymentDueNow still carries the amount that
   // was due at booking time; the extra `paymentDueNow>0` clause used to include it regardless of status.
@@ -217,6 +220,8 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
  ]);
  const pendingProof:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
  for(const b of bookings.past.slice(0,40)){
+  // Nothing was delivered on a cancelled or never-paid booking, so no service proof is owed.
+  if(b.status==="cancelled"||b.status==="payment_pending")continue;
   const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;
   let have:Set<string>;
   /*
@@ -234,11 +239,26 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
   }else{
    const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
    have=new Set(done.results.map(r=>text(r.proof_type)));
+   /*
+    * Training sessions record arrival and completion in training_session_events (the 250 m geofenced
+    * arrive and the exactly-once complete), not in provider_job_proofs. Reading only the generic table
+    * warned "Service proof still outstanding" on every completed Training programme.
+    */
+   if(b.serviceCode==="dog_training"){
+    const events=await db.prepare("SELECT DISTINCT event_type FROM training_session_events WHERE booking_id=? AND event_type IN ('arrive','complete')").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
+    for(const row of events.results)have.add(text(row.event_type)==="arrive"?"reached":"completed");
+   }
   }
   const missing=required.filter(r=>!have.has(r));
   if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});
  }
- const contractEarnings={netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),statements:partnerStatements.results,note:"Contract earnings are governed provider earnings, not employee salary payroll. Attendance and leave live in the People view."};
+  // Training session earnings live in their own governed ledger (training_session_earnings), the one the
+ // Trainer workspace shows; the generic payout computations never carry them, so a contract trainer saw ₹0.
+ // Read-only here: the Trainer earnings endpoint owns recalculating that ledger.
+ const trainingLedger=(await db.prepare("SELECT status,gross_earning FROM training_session_earnings WHERE provider_id=?").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]}))).results;
+ const trainingEarned=trainingLedger.filter(row=>text(row.status)==="earned"),trainingEarnings={earned:money(trainingEarned.reduce((sum,row)=>sum+Number(row.gross_earning||0),0)),sessions:trainingEarned.length,held:money(trainingLedger.filter(row=>text(row.status)!=="earned").reduce((sum,row)=>sum+Number(row.gross_earning||0),0))};
+ const contractNet=money(Number(earnings?.net||0)+trainingEarnings.earned),contractOrders=num(earnings?.orders)+trainingEarnings.sessions;
+ const contractEarnings={netPayout:contractNet,orders:contractOrders,grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:contractNet,orders:contractOrders,grossOrderValue:money(earnings?.gross)},training:trainingEarnings,settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),statements:partnerStatements.results,note:"Contract earnings are governed provider earnings, not employee salary payroll. Attendance and leave live in the People view."};
  const commissionRows=commissionOrders.results.map(row=>({bookingId:text(row.booking_id),serviceCode:text(row.service_code),orderAmount:money(row.order_amount),commissionMode:text(row.commission_mode),commissionValue:num(row.commission_value),commissionAmount:money(row.commission_amount),source:text(row.commission_source),status:text(row.status),completedAt:num(row.completed_at),dueAt:num(row.due_at)}));
  const commissionEarnings={visible:true,netPayout:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length,grossOrderValue:money(commissionRows.reduce((sum,row)=>sum+row.orderAmount,0)),computed:{commissionAmount:money(commissionRows.reduce((sum,row)=>sum+row.commissionAmount,0)),orders:commissionRows.length},commissionOrders:commissionRows,payouts:commissionPayouts.results.map(row=>({id:text(row.id),bookingId:text(row.booking_id),amount:money(row.amount),status:text(row.status),dueAt:num(row.due_at),providerReference:row.provider_reference?text(row.provider_reference):null,updatedAt:num(row.updated_at)})),statements:partnerStatements.results,note:"Commission statement is visible to the provider from governed order commissions and payout state; approval and live payout remain Finance-controlled."};
  return{providerId,engagement,features,onboardingStatus:link?text(link.status):"not_linked",bookings,liveAssignments:offers.results.map(o=>({bookingId:text(o.booking_id),serviceCode:text(o.service_code),package:text(o.package_name),start:text(o.scheduled_start),orderValue:money(o.total_amount),offeredAt:num(o.offered_at),expiresAt:o.expires_at?num(o.expires_at):null})),earnings:engagement==="commission"?commissionEarnings:contractEarnings,pendingProof,truth:{ownRecordOnly:true,liveMoney:false,mediaByReference:true,earningsFromGovernedLedgersOnly:true,commissionStatementVisible:engagement==="commission",contractSalaryPayrollExcluded:engagement==="contract",productionReady:false}};

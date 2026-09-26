@@ -1,0 +1,404 @@
+{
+ "base": "https://pawspace-staging.karthik-fce.workers.dev",
+ "phone": "8402694903",
+ "rows": [
+  {
+   "n": 1,
+   "area": "Customer",
+   "step": "Sandbox OTP sign-in (new customer)",
+   "status": "PASS",
+   "detail": "phone 8402694903",
+   "shots": [
+    "test-results/training-master/shots/001-customer-signed-in.jpg"
+   ]
+  },
+  {
+   "n": 2,
+   "area": "Maps",
+   "step": "Google Places autocomplete + resolve on staging",
+   "status": "PASS",
+   "detail": "1 suggestions; first=\"42, Indiranagar Double Road, Doopanahalli, Domlur, Bengaluru, Karnataka, India\"; resolve=configured 12.9689746,77.6360876; reverse(Koramangala)=configured \"002, KHB Colony, 4th Block, Koramangala, Bengaluru, Karnataka 560095, India\"",
+   "shots": []
+  },
+  {
+   "n": 3,
+   "area": "Maps",
+   "step": "Service zone by PIN (serviceable and not)",
+   "status": "PASS",
+   "detail": "560038=200:blr-east · 560068=200:blr-south · 560001=200:blr-central · 560102=200:blr-south · 110001=404:Zone not found for this pincode · 12345=400:Invalid pincode",
+   "shots": []
+  },
+  {
+   "n": 4,
+   "area": "Customer",
+   "step": "Save address (560038) + 3 dogs + 1 cat",
+   "status": "PASS",
+   "detail": "address 201, Bruno 201, Coco 201, Max 201, Whiskers 201",
+   "shots": [
+    "test-results/training-master/shots/002-v2-account.jpg"
+   ]
+  },
+  {
+   "n": 5,
+   "area": "Pricing",
+   "step": "Catalogue + quote matrix (8 packages × prepaid/split × 1/4/5 dogs)",
+   "status": "PASS",
+   "detail": "8 packages: Trainer Meet & Greet ₹500, Starter Plan ₹3500, Puppy Training Plan ₹6000, Basic Obedience Plan ₹12000, Leash Obedience Plan · 8 ₹12000, Leash Obedience Plan · 12 ₹16500, Advanced Obedience Plan ₹16500, Pro Training Plan ₹20000 || trainer-meet-greet/prepaid/1: ₹500 due ₹500 60m ; trainer-meet-greet/prepaid/4: ₹500 due ₹500 240m ; trainer-meet-greet/prepaid/5: 409 Training supports 1-4 pets per programme ; trainer-meet-greet/split/1: 409 Trainer Meet & Greet must be paid in full ; trainer-meet-greet/split/4: 409 Trainer Meet & Greet must be paid in full ; trainer-meet-greet/split/5: 409 Training supports 1-4 pets per programme ; training-2-starter/prepaid/1: ₹3500 due ₹3500 60m ; training-2-starter/prepaid/4: ₹3500 due ₹3500 240m ; training-2-starter/prepaid/5: 409 Training supports 1-4 pets per programme ; training-2-starter/split/1: ₹3500 due ₹1750 60m ; training-2-starter/split/4: ₹3500 due ₹1750 240m ; training-2-starter/split/5: 409 Training supports 1-4 pets per programme ; training-4-puppy/prepaid/1: ₹6000 due ₹6000 60m ; training-4-puppy/prepaid/4: ₹6000 due ₹6000 240m ; training-4-puppy/prepaid/5: 409 Training supports 1-4 pets per programme ; training-4-puppy/split/1: ₹6000 due ₹3000 60m ; training-4-puppy/split/4: ₹6000 due ₹3000 240m ; training-4-puppy/split/5: 409 Training supports 1-4 pets per programme ; training-8-basic/prepaid/1: ₹12000 due ₹12000 60m ; training-8-basic/prepaid/4: ₹12000 due ₹12000 240m ; training-8-basic/prepaid/5: 409 Training supports 1-4 pets per programme ; training-8-basic/split/1: ₹12000 due ₹6000 60m ; training-8-basic/split/4: ₹12000 due ₹6000 240m ; training-8-basic/split/5: 409 Training supports 1-4 pets per programme ; training-8-leash/prepaid/1: ₹12000 due ₹12000 60m ; training-8-leash/prepaid/4: ₹12000 due ₹12000 240m ; training-8-leash/prepaid/5: 409 Training supports 1-4 pets per programme ; training-8-leash/split/1: ₹12000 due ₹6000 60m ; training-8-leash/split/4: ₹12000 due ₹6000 240m ; training-8-leash/split/5: 409 Training supports 1-4 pets per programme ; training-12-leash/prepaid/1: ₹16500 due ₹16500 60m ; training-12-leash/prepaid/4: ₹16500 due ₹16500 240m ; training-12-leash/prepaid/5: 409 Training supports 1-4 pets per programme ; training-12-leash/split/1: ₹16500 due ₹8250 60m ; training-12-leash/split/4: ₹16500 due ₹8250 240m ; training-12-leash/split/5: 409 Training supports 1-4 pets per programme ; training-12-advanced/prepaid/1: ₹16500 due ₹16500 60m ; training-12-advanced/prepaid/4: ₹16500 due ₹16500 240m ; training-12-advanced/prepaid/5: 409 Training supports 1-4 pets per programme ; training-12-advanced/split/1: ₹16500 due ₹8250 60m ; training-12-advanced/split/4: ₹16500 due ₹8250 240m ; training-12-advanced/split/5: 409 Training supports 1-4 pets per programme ; training-16-pro/prepaid/1: ₹20000 due ₹20000 60m ; training-16-pro/prepaid/4: ₹20000 due ₹20000 240m ; training-16-pro/prepaid/5: 409 Training supports 1-4 pets per programme ; training-16-pro/split/1: ₹20000 due ₹10000 60m ; training-16-pro/split/4: ₹20000 due ₹10000 240m ; training-16-pro/split/5: 409 Training supports 1-4 pets per programme",
+   "shots": []
+  },
+  {
+   "n": 6,
+   "area": "Pricing",
+   "step": "Training coupon (UATCARE100 / WELCOME) on the quote",
+   "status": "FAIL",
+   "detail": "No coupon is accepted by the Training quote: UATCARE100: 409 Training coupon is not active or eligible · WELCOME: 409 Training coupon is not active or eligible",
+   "shots": []
+  },
+  {
+   "n": 7,
+   "area": "Customer V2",
+   "step": "Training page: dogs-only list, zone, catalogue",
+   "status": "PASS",
+   "detail": "dogs=[Bruno, Coco, Max] · Training zone East Bengaluru · confirmed from your address PIN code",
+   "shots": [
+    "test-results/training-master/shots/003-v2-training-page.jpg",
+    "test-results/training-master/shots/004-v2-training-page-full.jpg"
+   ]
+  },
+  {
+   "n": 8,
+   "area": "Payment",
+   "step": "Meet & Greet ₹500 → Razorpay TEST card → captured → confirmation",
+   "status": "PASS",
+   "detail": "PS-UAT-MUHZWX72-F7F0 · Arjun T. (UAT East) · 2026-09-29 · payment captured",
+   "shots": [
+    "test-results/training-master/shots/005-meet-before-reserve.jpg",
+    "test-results/training-master/shots/006-meet-payment-page.jpg",
+    "test-results/training-master/shots/007-meet-after-payment.jpg"
+   ]
+  },
+  {
+   "n": 9,
+   "area": "Payment",
+   "step": "Starter Plan split: ₹1,750 deposit → Razorpay → captured → programme confirmed",
+   "status": "FAIL",
+   "detail": "Razorpay card form did not appear",
+   "shots": [
+    "test-results/training-master/shots/008-starter-before-reserve.jpg",
+    "test-results/training-master/shots/009-starter-payment-page.jpg"
+   ]
+  },
+  {
+   "n": 10,
+   "area": "Customer V2",
+   "step": "Activity + booking page after deposit (balance CTA)",
+   "status": "PASS",
+   "detail": "← Your bookings | PawSpace | Starter Plan | PS-UAT-MUI018SV-D3B5 | Status: payment pending | 28 Sept, 3:00 pm IST · PawSpace Training Team (UAT) | Coco | Total: ₹3,500.00 · Payment: created | Manage serviceRefresh status | Your reserved sessions | 28/9/2026, 3:00:00 pm IST — scheduled | 5/10/2026, 3:00:00 pm IST — locked | PAYMENT · FINAL STEP | Review payment | Your service details are locked while you finish this step. | Total service value | ₹3,500.00 | Due now | ₹1,750.00 | Balance later | ₹",
+   "shots": [
+    "test-results/training-master/shots/010-v2-activity.jpg",
+    "test-results/training-master/shots/011-v2-booking-after-deposit.jpg"
+   ]
+  },
+  {
+   "n": 11,
+   "area": "Customer app",
+   "step": "Mobile 5-stage flow: goals → Basic Obedience → trainer → calendar → review",
+   "status": "PASS",
+   "detail": "Review your programme | Payment · 5 of 5 | Pets | Bruno | Programme | Basic Obedience Plan · 8 sessions | Preferred trainer | PawSpace Training Team (UAT) · final assignment checked server-side | Schedule | Wed & Sun · 9:00 AM · 60 min | Parent/caretaker participation | Joining · 15-minute coaching and homework handoff | Trainer Meet & Greet | Not booked | Validity | 62 days from service start | Complimentary care | Bath & Basic grooming | ✓ | Pay 50% upfront · no discount | ₹6,000 now · ₹6,000 ",
+   "shots": [
+    "test-results/training-master/shots/012-app-stage1.jpg",
+    "test-results/training-master/shots/013-app-stage2.jpg",
+    "test-results/training-master/shots/014-app-stage3.jpg",
+    "test-results/training-master/shots/015-app-stage4.jpg",
+    "test-results/training-master/shots/016-app-stage5.jpg"
+   ]
+  },
+  {
+   "n": 12,
+   "area": "Customer app",
+   "step": "Coupon UATCARE100 with 100% payment",
+   "status": "FAIL",
+   "detail": "Coupon shown as applied but Training quote refused it — pay button \"Refreshing server quote…\", alert [\"Training coupon is not active or eligible\"]",
+   "shots": [
+    "test-results/training-master/shots/017-app-coupon.jpg"
+   ]
+  },
+  {
+   "n": 13,
+   "area": "Payment",
+   "step": "Mobile app: Basic Obedience 50% (₹6,000) → Razorpay → captured → dashboard",
+   "status": "FAIL",
+   "detail": "locator.waitFor: Timeout 30000ms exceeded.",
+   "shots": []
+  },
+  {
+   "n": 14,
+   "area": "Customer app",
+   "step": "Programme dashboard tabs + cancellation request",
+   "status": "BLOCKED",
+   "detail": "No app booking",
+   "shots": []
+  },
+  {
+   "n": 15,
+   "area": "Trainer",
+   "step": "Partner app sandbox OTP sign-in as the assigned trainer",
+   "status": "PASS",
+   "detail": "9000000931 → uatcap_train_ft · paw | space | PARTNER | ✓ | Verified | › | Sign out | 🟢 Online | PAWSPACE PARTNER MOBILE | PawSpace Training Team (UAT) | service provider | ↻ | NEXT ASSIGNMENT | Scheduled | Basic Obedience Plan | Pet · blr-south | ◷ 15 Sept, 3:00 pm | ◉ S••••• | Accept training session | Open training session | 1",
+   "shots": [
+    "test-results/training-master/shots/018-partner-app-home.jpg"
+   ]
+  },
+  {
+   "n": 16,
+   "area": "Trainer",
+   "step": "Session 1: accept → on the way (partner app)",
+   "status": "FAIL",
+   "detail": "accept 409 {\"error\":\"The customer must complete the required Training payment before this session can proceed.\",\"code\":\"training_payment_required\"} · on the way 0 button \"On the way\" not available",
+   "shots": [
+    "test-results/training-master/shots/019-trainer-s1-on-the-way.jpg"
+   ]
+  },
+  {
+   "n": 17,
+   "area": "Maps",
+   "step": "Session 1: arrival geofence (250 m) at the geocoded doorstep",
+   "status": "FAIL",
+   "detail": "Arrived 0 button \"Arrived\" not available",
+   "shots": []
+  },
+  {
+   "n": 18,
+   "area": "Trainer",
+   "step": "Session 1: pre-check → start → photos → handover → report",
+   "status": "FAIL",
+   "detail": "start 0 button \"Start session\" not available",
+   "shots": []
+  },
+  {
+   "n": 19,
+   "area": "Staff",
+   "step": "Founder approves session 1 photos (maker/checker, Control)",
+   "status": "FAIL",
+   "detail": "approved 0/2 ()",
+   "shots": [
+    "test-results/training-master/shots/020-proof-review-ps-uat-mui018sv-d3b5.jpg"
+   ]
+  },
+  {
+   "n": 20,
+   "area": "Trainer",
+   "step": "Session 1: Complete & consume one session (trainer UI)",
+   "status": "FAIL",
+   "detail": "0 button \"Complete & consume one session\" not available",
+   "shots": [
+    "test-results/training-master/shots/021-trainer-s1-complete-ui.jpg"
+   ]
+  },
+  {
+   "n": 21,
+   "area": "Trainer",
+   "step": "Session 1: same completion with attendance confirmation (backend check)",
+   "status": "FAIL",
+   "detail": "400 {\"error\":\"Session, action and idempotency key are required\"}",
+   "shots": []
+  },
+  {
+   "n": 22,
+   "area": "Trainer",
+   "step": "Session 2 (final): accept → journey → arrive → start → photos → report",
+   "status": "FAIL",
+   "detail": "Accept 409 · On the way 0 · Arrived 0 · start 0 · Before photo: input missing; After photo: input missing · handover 0 · report 0",
+   "shots": [
+    "test-results/training-master/shots/022-trainer-s2-in-session.jpg"
+   ]
+  },
+  {
+   "n": 23,
+   "area": "Staff",
+   "step": "Founder approves session 2 photos",
+   "status": "FAIL",
+   "detail": "approved 0/2",
+   "shots": [
+    "test-results/training-master/shots/023-proof-review-ps-uat-mui018sv-d3b5.jpg"
+   ]
+  },
+  {
+   "n": 24,
+   "area": "Payment",
+   "step": "Final session blocked until balance is paid",
+   "status": "PASS",
+   "detail": "400 Session, action and idempotency key are required",
+   "shots": []
+  },
+  {
+   "n": 25,
+   "area": "Payment",
+   "step": "Customer pays remaining ₹1,750 balance via Razorpay (V2 booking page)",
+   "status": "FAIL",
+   "detail": "Razorpay card form did not appear",
+   "shots": [
+    "test-results/training-master/shots/024-balance-before.jpg"
+   ]
+  },
+  {
+   "n": 26,
+   "area": "Trainer",
+   "step": "Final session completion → programme completed + certificate",
+   "status": "FAIL",
+   "detail": "400 {\"error\":\"Session, action and idempotency key are required\"}",
+   "shots": [
+    "test-results/training-master/shots/025-trainer-programme-complete.jpg"
+   ]
+  },
+  {
+   "n": 27,
+   "area": "Trainer",
+   "step": "Earnings (trainer workspace + partner app)",
+   "status": "PASS",
+   "detail": "workspace: CANONICAL TRAINING PAYOUT LEDGER | ₹0.00 | Execution: sandbox not connected. Finance approval is required for payout. Live payout is not connected. | Completed session earnings | 0 | Rate configured + customer payment captured | Pending rate / holds  || partner app: paw | space | PARTNER | ✓ | Verified | › | Sign out | 🟢 Online | ‹ | PARTNER FINANCE | Earnings | ₹ | Settlement-controlled earnings | This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance",
+   "shots": [
+    "test-results/training-master/shots/026-trainer-earnings.jpg",
+    "test-results/training-master/shots/027-partner-app-earnings.jpg"
+   ]
+  },
+  {
+   "n": 28,
+   "area": "Staff",
+   "step": "Training operations console",
+   "status": "PASS",
+   "detail": "PAWSPACE TEAM · OPERATIONS · TRAINING | Training operations | Session recovery, trainer replacement and canonical payment records. | ← Operations | Active programmes | 20 | Canonical Training programmes | Sessions today | 3 | From canonical session calendar | Open recovery cases | 0 | Reschedule / no-show / replacement | Payment exceptions | 9 | Not marked captured in sandbox ledger | CANONICAL PR",
+   "shots": [
+    "test-results/training-master/shots/028-ops-console.jpg"
+   ]
+  },
+  {
+   "n": 29,
+   "area": "Accounts",
+   "step": "Training finance: invoice for fully-paid programme",
+   "status": "FAIL",
+   "detail": "Issue UAT invoice disabled — row: ",
+   "shots": [
+    "test-results/training-master/shots/029-finance-training.jpg",
+    "test-results/training-master/shots/030-finance-training-full.jpg"
+   ]
+  },
+  {
+   "n": 30,
+   "area": "Accounts",
+   "step": "Trainer payout statement → approve sandbox instruction",
+   "status": "BLOCKED",
+   "detail": "No payout statement row for ",
+   "shots": []
+  },
+  {
+   "n": 31,
+   "area": "Accounts",
+   "step": "Cancellation case for the app booking (policy, calculation, approval)",
+   "status": "BLOCKED",
+   "detail": "No app booking",
+   "shots": []
+  },
+  {
+   "n": 32,
+   "area": "CRM",
+   "step": "Capture a Dog Training lead and find it",
+   "status": "PASS",
+   "detail": "{\"ok\":true,\"id\":\"CU-52803\",\"leadId\":\"LEAD-1790404513225\",\"assignedOwner\":\"rahul.sales@pawspace.in\",\"ownerResolved\":true,\"ownerMappingException\":null,\"attributionBound\":false,\"organizationalScope\":{\"ci",
+   "shots": [
+    "test-results/training-master/shots/031-crm-lead.jpg"
+   ]
+  },
+  {
+   "n": 33,
+   "area": "Ops",
+   "step": "Booking Command Center lists the Training bookings",
+   "status": "PASS",
+   "detail": "found 0: ",
+   "shots": [
+    "test-results/training-master/shots/032-bcc.jpg"
+   ]
+  },
+  {
+   "n": 34,
+   "area": "Roles",
+   "step": "Manager / Finance access to Training ops + finance",
+   "status": "PASS",
+   "detail": "manager39@tkpetcare /api/training-ops 200 · manager39@tkpetcare /api/training-finance 403 Permission denied · manager39@tkpetcare /api/crm 403 CRM is outside the manager's organizational scope · manager39@tkpetcare /api/booking-command-center 200 · finance33@tkpetcare /api/training-ops 403 Permission denied · finance33@tkpetcare /api/training-finance 403 {\"error\":\"MFA enrollment required\"} · finance33@tkpetcare /api/crm 403 Permission denied · finance33@tkpetcare /api/booking-command-center 403 Permission denied",
+   "shots": []
+  },
+  {
+   "n": 35,
+   "area": "AI",
+   "step": "V2 chat (guest): training packages question",
+   "status": "PASS",
+   "detail": "200 · What dog training packages do you offer in Bengaluru and what do they cost? | PawSpace AI | Yes. PawSpace offers Training. I can help you understand the service or start from the Training section in PawSpace.",
+   "shots": [
+    "test-results/training-master/shots/033-ai-guest-chat.jpg"
+   ]
+  },
+  {
+   "n": 36,
+   "area": "AI",
+   "step": "V2 chat (signed-in customer): my training programme",
+   "status": "PASS",
+   "detail": "200 · When is my next dog training session and who is my trainer? | PawSpace AI | I’m routing this conversation to a PawSpace team member so it can be handled safely.",
+   "shots": [
+    "test-results/training-master/shots/034-ai-customer-chat.jpg"
+   ]
+  },
+  {
+   "n": 37,
+   "area": "AI",
+   "step": "AI configuration readiness (founder)",
+   "status": "PASS",
+   "detail": "PAWSPACE TEAM · AI BUSINESS CONFIGURATION | Assistant configuration & knowledge | Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate. | Disable AI Enable AI AI review Rollout | Is the assistant switched on? | Answering staff: yes · answering customers: yes. Every requirement below has to be met — any one of them missing sends every conversation to a human. | ✓ | Model provider connected | openai · gpt-5.6-terra | ✓ | Assistant profile and system policy activated | profile pawspace_default v2 · policy pawspace_system v1 · 10 approved kno",
+   "shots": [
+    "test-results/training-master/shots/035-ai-configuration.jpg"
+   ]
+  }
+ ],
+ "apiErrors": [
+  "customer 404 GET /api/service-zone {\"error\":\"Zone not found for this pincode\"}",
+  "customer 400 GET /api/service-zone {\"error\":\"Invalid pincode\",\"code\":\"invalid_pincode\"}",
+  "customer 401 GET /api/mobile-employee-ai ",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Trainer Meet & Greet must be paid in full\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Trainer Meet & Greet must be paid in full\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training supports 1-4 pets per programme\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training coupon is not active or eligible\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training coupon is not active or eligible\"}",
+  "customer 409 POST /api/training-commercial {\"error\":\"Training coupon is not active or eligible\"}",
+  "trainer 409 POST /api/training-sessions {\"error\":\"The customer must complete the required Training payment before this session can proceed.\",\"code\":\"training_payment_required\"}",
+  "trainer 404 GET /api/training-session-media {\"error\":\"Training session not found\"}",
+  "trainer 400 POST /api/training-sessions {\"error\":\"Session, action and idempotency key are required\"}",
+  "trainer 409 POST /api/training-sessions {\"error\":\"The customer must complete the required Training payment before this session can proceed.\",\"code\":\"training_payment_required\"}",
+  "trainer 404 GET /api/training-session-media {\"error\":\"Training session not found\"}",
+  "trainer 400 POST /api/training-sessions {\"error\":\"Session, action and idempotency key are required\"}",
+  "customer 403 GET /api/mobile-employee-ai ",
+  "trainer 404 GET /api/training-session-media {\"error\":\"Training session not found\"}",
+  "trainer 400 POST /api/training-sessions {\"error\":\"Session, action and idempotency key are required\"}",
+  "staff 409 GET /api/training-finance {\"error\":\"Published Training tax policy is required\"}",
+  "staff 409 GET /api/training-reconciliation {\"error\":\"Unable to reconcile Training records\"}",
+  "staff 403 GET /api/training-finance {\"error\":\"Permission denied\"}",
+  "staff 403 GET /api/crm {\"error\":\"CRM is outside the manager's organizational scope\"}",
+  "staff 403 GET /api/training-ops {\"error\":\"Permission denied\"}",
+  "staff 403 GET /api/training-finance {\"error\":\"{\\\"error\\\":\\\"MFA enrollment required\\\"}\"}",
+  "staff 403 GET /api/crm {\"error\":\"Permission denied\"}",
+  "staff 403 GET /api/booking-command-center {\"error\":\"Permission denied\"}"
+ ]
+}
