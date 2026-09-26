@@ -27,6 +27,7 @@ test('Executed permission checks still deny elevated AI and marketing actions to
 
 test('Every Team route resolves to one of the shared staff frames, including delegated pages',()=>{
  const delegates={
+  'finance/boarding/page.tsx':['./boarding-finance-workspace','app/team/finance/boarding/boarding-finance-workspace.tsx'],
   'finance/food/page.tsx':['./food-finance-workspace','app/team/finance/food/food-finance-workspace.tsx'],
   'finance/sitting/page.tsx':['./sitting-finance-workspace','app/team/finance/sitting/sitting-finance-workspace.tsx'],
   'finance/taxi/page.tsx':['./taxi-finance-workspace','app/team/finance/taxi/taxi-finance-workspace.tsx'],
