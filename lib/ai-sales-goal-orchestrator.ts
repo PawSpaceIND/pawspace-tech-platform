@@ -1,3 +1,4 @@
+import { ensureD1Once } from "./d1-ensure-once.js";
 import { enqueueCommunication } from "./communication-engine";
 import { ensureOutboundOrchestratorTables } from "./outbound-schema";
 import type {
@@ -25,6 +26,7 @@ const TARGET_TYPES = new Set<AiSalesTargetType>(["lead_generated", "subscription
 const EVENT_TYPES = new Set(["lead_generated", "booking_converted", "subscription_renewed", "training_closed", "reversed"]);
 
 export async function ensureAiSalesGoalTables(db: Db) {
+ return ensureD1Once(db,"ai_sales_goal_tables",async()=>{
   await ensureOutboundOrchestratorTables(db);
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS ai_sales_targets (id TEXT PRIMARY KEY,target_date TEXT NOT NULL,target_type TEXT NOT NULL,service_code TEXT NOT NULL DEFAULT '',city_id TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',daily_goal INTEGER NOT NULL CHECK(daily_goal>0),achieved_count INTEGER NOT NULL DEFAULT 0 CHECK(achieved_count>=0),status TEXT NOT NULL DEFAULT 'draft',max_discount_bps INTEGER NOT NULL DEFAULT 0 CHECK(max_discount_bps BETWEEN 0 AND 5000),minimum_margin_bps INTEGER NOT NULL DEFAULT 0 CHECK(minimum_margin_bps BETWEEN 0 AND 10000),free_upgrade_codes_json TEXT NOT NULL DEFAULT '[]',authorized_channels_json TEXT NOT NULL DEFAULT '[]',max_contacts_per_day INTEGER NOT NULL DEFAULT 0 CHECK(max_contacts_per_day>=0),offer_policy_version TEXT NOT NULL,prompt_policy_version TEXT NOT NULL,approved_by TEXT,approved_at INTEGER,starts_at INTEGER NOT NULL,ends_at INTEGER NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(target_date,target_type,service_code,city_id))"),
@@ -38,6 +40,7 @@ export async function ensureAiSalesGoalTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS ai_sales_dispatch_items (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,target_id TEXT NOT NULL,lead_id TEXT NOT NULL,customer_id TEXT NOT NULL,channel TEXT NOT NULL,probability REAL NOT NULL CHECK(probability BETWEEN 0.0 AND 1.0),expected_value REAL NOT NULL DEFAULT 0,quota_gap_snapshot INTEGER NOT NULL,pressure_level TEXT NOT NULL,offer_envelope_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'selected',downstream_ref TEXT,reason TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(target_id,lead_id,channel))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_ai_sales_dispatch_items_run ON ai_sales_dispatch_items(run_id,status,probability DESC)"),
   ]);
+ });
 }
 
 export async function saveAiSalesLeadPropensity(db: Db, input: {
