@@ -4,26 +4,37 @@ import{hasPermission}from"../../../lib/platform-security";
 import{computeGoogleRoute}from"../../../lib/grooming-maps";
 import{createAccountabilityCandidate,createApprovedFinancialAdjustment,ensureUniversalLocationTables,evaluatePredictedLateness,LocationConfigurationRequired,locationGovernanceSnapshot,openRecoveryCase,recordEtaSnapshot,recordLocationEvidence,reviewAccountability,startLocationSession}from"../../../lib/universal-location-recovery";
 import{selectCapacitySafeReplacement}from"../../../lib/universal-replacement-recovery";
-import{resolveLiveJourneyDestination,serviceJourneyStatus}from"../../../lib/live-journey-destination";
+import{journeyIsLive,resolveLiveJourneyDestination,serviceJourneyStatus}from"../../../lib/live-journey-destination";
 const json=(v:unknown,s=200)=>Response.json(v,{status:s,headers:{"cache-control":"no-store"}});
 function sameOrigin(r:Request){const o=r.headers.get("origin");if(o&&o!==new URL(r.url).origin)throw new Response("Cross-origin write blocked",{status:403})}
 type Row=Record<string,unknown>;
 async function ownProviderId(db:D1Database,actor:Awaited<ReturnType<typeof resolveActor>>){const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});if(binding)return String(binding.subject_id);const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Row>();return legacy&&String(legacy.status)==="active"?String(legacy.provider_id):null;}
 async function stagingDistanceFallback(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>,appEnv=String(runtime.APP_ENV??"").trim().toLowerCase(),schedulingEnv=String(runtime.PAWSPACE_SCHEDULING_ENV??"").trim().toLowerCase();return appEnv==="staging"||schedulingEnv==="uat"?2.5:null;}
+/** Where an accepted fix from this provider would be routed right now; null once the journey is over or has nowhere to go. */
+async function liveJourney(db:D1Database,bookingId:string,providerId:string){
+ const booking=await db.prepare("SELECT service_code,status FROM canonical_bookings WHERE id=? AND provider_id=?").bind(bookingId,providerId).first<Row>();
+ if(!booking)return null;
+ const serviceCode=String(booking.service_code||""),canonical=String(booking.status||"");
+ // A location session is never closed with its booking, so the booking itself must still be live: otherwise a
+ // completed, cancelled or reassigned journey keeps turning every accepted fix into a customer-facing ETA.
+ if(!journeyIsLive(serviceCode,canonical))return null;
+ const status=await serviceJourneyStatus(db,serviceCode,bookingId)||canonical;
+ const destination=await resolveLiveJourneyDestination(db,{bookingId,serviceCode,status});
+ return destination?{status,destination}:null;
+}
 async function refreshEtaForAcceptedFix(db:D1Database,input:{eventId:string;trustState:string;sessionId:string;providerId:string;lat:number;lng:number}){
  if(input.trustState!=="accepted")return null;
  const session=await db.prepare("SELECT booking_id FROM provider_location_sessions WHERE id=? AND provider_id=? AND status='active'").bind(input.sessionId,input.providerId).first<Row>();
  if(!session)return null;
- const booking=await db.prepare("SELECT service_code,status FROM canonical_bookings WHERE id=? AND provider_id=?").bind(String(session.booking_id),input.providerId).first<Row>();
- if(!booking)return null;
- const serviceCode=String(booking.service_code||"");
- if(!["dog_walking","pet_taxi"].includes(serviceCode))return null;
- const specific=await serviceJourneyStatus(db,serviceCode,String(session.booking_id)),status=specific||String(booking.status||"");
- const destination=await resolveLiveJourneyDestination(db,{bookingId:String(session.booking_id),serviceCode,status});
- if(!destination)return null;
+ const bookingId=String(session.booking_id),journey=await liveJourney(db,bookingId,input.providerId);
+ if(!journey)return null;
+ const{destination}=journey;
  const route=await computeGoogleRoute({lat:input.lat,lng:input.lng},{lat:destination.latitude,lng:destination.longitude});
+ // The Routes call is the slow step. If a transition landed meanwhile (trip started, walk completed, booking cancelled),
+ // an ETA for the phase it just left must not be stored as the latest one; the next accepted fix routes afresh.
+ if(JSON.stringify(await liveJourney(db,bookingId,input.providerId))!==JSON.stringify(journey))return null;
  const distanceMeters=Number(route.distanceMeters),durationSeconds=Number(route.durationSeconds);
- return recordEtaSnapshot(db,{bookingId:String(session.booking_id),providerId:input.providerId,originEventId:input.eventId,destination:{latitude:destination.latitude,longitude:destination.longitude,phase:destination.phase},distanceMeters:Number.isFinite(distanceMeters)?distanceMeters:undefined,durationSeconds:Number.isFinite(durationSeconds)?durationSeconds:undefined,providerStatus:route.status,providerReference:route.provider??"google_routes_sandbox",polyline:route.polyline??null});
+ return recordEtaSnapshot(db,{bookingId,providerId:input.providerId,originEventId:input.eventId,destination:{latitude:destination.latitude,longitude:destination.longitude,phase:destination.phase},distanceMeters:Number.isFinite(distanceMeters)?distanceMeters:undefined,durationSeconds:Number.isFinite(durationSeconds)?durationSeconds:undefined,providerStatus:route.status,providerReference:route.provider??"google_routes_sandbox",polyline:route.polyline??null});
 }
 export const LOCATION_ACTION_PERMISSION:Record<string,"bookings.view"|"bookings.manage"|"finance.manage">={start_session:"bookings.view",record_location:"bookings.view",calculate_eta:"bookings.view",create_financial_adjustment:"finance.manage"};
 export async function GET(request:Request){try{const actor=await resolveActor(request),db=await database();await ensureUniversalLocationTables(db);if(actor.developmentPreview||hasPermission(actor.permissions,"bookings.manage")){return json({data:await locationGovernanceSnapshot(db),productionReady:false,rawGpsCustomerExposure:false,gpsConnected:true,simulatedDistanceKm:await stagingDistanceFallback(),telemetryMode:"deterministic_sandbox"});}const providerId=await ownProviderId(db,actor);if(!providerId)throw new Response("Provider ownership denied",{status:403});await requireProviderOwnership(db,actor,providerId);const booking=await db.prepare("SELECT id,provider_id,status,scheduled_start,scheduled_end,service_code FROM canonical_bookings WHERE provider_id=? AND status IN ('confirmed','assigned','on_the_way','arrived','in_service') ORDER BY updated_at DESC LIMIT 1").bind(providerId).first<Row>();if(!booking)throw new Response("No active assigned booking for provider",{status:404});const bookingId=String(booking.id),[session,lastLocation,eta]=await Promise.all([db.prepare("SELECT id,status,starts_at,ends_at,policy_version_id FROM provider_location_sessions WHERE booking_id=? AND provider_id=? AND status='active' ORDER BY starts_at DESC LIMIT 1").bind(bookingId,providerId).first<Row>(),db.prepare("SELECT id,trust_state,accuracy_meters,server_received_at,client_captured_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? ORDER BY server_received_at DESC LIMIT 1").bind(bookingId,providerId).first<Row>(),db.prepare("SELECT id,distance_meters,duration_seconds,predicted_arrival_at,provider_status,calculated_at,stale_after FROM route_eta_snapshots WHERE booking_id=? AND provider_id=? ORDER BY calculated_at DESC LIMIT 1").bind(bookingId,providerId).first<Row>()]);const measured=Number(eta?.distance_meters),simulatedDistanceKm=Number.isFinite(measured)&&measured>=0?Math.round(measured)/1000:await stagingDistanceFallback();return json({data:{providerId,bookingId,bookingStatus:String(booking.status),serviceCode:String(booking.service_code),scheduledStart:String(booking.scheduled_start),scheduledEnd:String(booking.scheduled_end),session:session??null,lastLocation:lastLocation??null,eta:eta??null},productionReady:false,rawGpsCustomerExposure:false,gpsConnected:true,simulatedDistanceKm,telemetryMode:eta?"sandbox_adapter":"deterministic_sandbox"});}catch(e){return authError(e,"Unable to load location recovery governance")}}
