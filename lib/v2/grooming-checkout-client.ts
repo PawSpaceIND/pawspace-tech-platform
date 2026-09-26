@@ -23,6 +23,8 @@ export type V2GroomingCheckoutInput = {
   zoneId: string;
   scheduledStart: string;
   scheduledEnd: string;
+  /** Keep this doorstep in the customer's saved places (only when they ticked "Save this address"). */
+  saveAddress?: boolean;
 };
 
 export type V2GroomingBooking = CanonicalLifecycleResult & {
@@ -138,15 +140,15 @@ export async function createV2GroomingBooking(
   // Publish durable identity BEFORE another network step can fail. UI freezes and retries this ID.
   onCreated?.(booking);
   if (canonical.status !== "payment_pending") return booking; // replay: read server state, never repay
-  await saveV2GroomingDoorstep(booking.bookingId, input.account.customerId, input.address, input.pincode);
+  await saveV2GroomingDoorstep(booking.bookingId, input.account.customerId, input.address, input.pincode, input.saveAddress === true);
   return booking;
 }
 
-export async function saveV2GroomingDoorstep(bookingId: string, customerId: string, address: string, pincode: string) {
+export async function saveV2GroomingDoorstep(bookingId: string, customerId: string, address: string, pincode: string, saveAddress = false) {
   const result = await apiSend<{ bookingId: string; addressSaved: boolean; coordinatesSaved: boolean }>(
     "/api/grooming-service-location",
     { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ bookingId, customerId, address: address.trim(), pincode }) },
+      body: JSON.stringify({ bookingId, customerId, address: address.trim(), pincode, saveAddress }) },
     "Your booking exists, but its doorstep needs verification before payment. Retry the address on this booking.",
   );
   if (result.bookingId !== bookingId || result.addressSaved !== true || result.coordinatesSaved !== true) {

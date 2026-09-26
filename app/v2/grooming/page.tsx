@@ -50,6 +50,8 @@ export default function V2GroomingPage() {
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
   const [savedAddressId, setSavedAddressId] = useState("");
+  // A typed doorstep is kept in the account only when the customer asks; availability checks never save it.
+  const [saveAddress, setSaveAddress] = useState(false);
   const [pincode, setPincode] = useState("");
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [coverageBusy, setCoverageBusy] = useState(false);
@@ -178,7 +180,7 @@ export default function V2GroomingPage() {
       await createV2GroomingBooking({
         account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
-        scheduledStart, scheduledEnd,
+        scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
       }, current => {
         if (!mounted.current) return;
         setBooking(current);
@@ -313,6 +315,7 @@ export default function V2GroomingPage() {
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
               <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
             </div>
+            {!savedAddressId && address.trim().length >= 8 && <label className={styles.helper}><input type="checkbox" checked={saveAddress} onChange={event => setSaveAddress(event.target.checked)} /> Save this address to my account</label>}
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
             {coverage && <p className={styles.helper}>Service area matched only. The complete doorstep must still be map-verified before payment.</p>}
             {coverageError && <p role="alert" className={styles.inlineError}>{coverageError}</p>}

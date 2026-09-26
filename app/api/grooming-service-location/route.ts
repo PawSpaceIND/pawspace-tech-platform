@@ -6,7 +6,7 @@ import{resolveGovernedServiceAddress,type GovernedServiceAddress}from"../../../l
 import{resolveZoneByPincode}from"../../../lib/service-zones";
 import{validGpsCoordinates}from"../../../lib/gps-telemetry-policy";
 
-type Input={bookingId:string;customerId:string;address:string;pincode?:string;latitude?:number;longitude?:number};
+type Input={bookingId:string;customerId:string;address:string;pincode?:string;latitude?:number;longitude?:number;saveAddress?:boolean};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
 // Browser coordinates are never location authority here. Service discovery resolves the canonical
@@ -25,7 +25,7 @@ export async function POST(request:Request){try{
  if(!booking)return json({error:"Canonical booking not found"},404);if(String(booking.customer_id)!==customerId)return json({error:"Customer does not own this booking"},403);if(String(booking.service_code)!=="grooming")return json({error:"This endpoint is currently limited to Grooming UAT"},409);
  const resolvedZone=await resolveZoneByPincode(db,pin.pincode);if(!resolvedZone||!resolvedZone.zone.serviceAvailable)return json({error:"PawSpace is not currently serving this address",code:"service_zone_unavailable"},409);
  const resolvedCity=String(resolvedZone.assignment.cityId||"").trim().toLowerCase();if(String(booking.zone_id)!==resolvedZone.assignment.zoneId||String(booking.city_id).toLowerCase()!==resolvedCity)return json({error:"The verified address zone does not match the booking reservation"},409);
- const governed=await resolveGovernedServiceAddress(db,{customerId,serviceCode:"grooming",serviceAddress:address,servicePincode:pin.pincode,latitude:input.latitude,longitude:input.longitude});
+ const governed=await resolveGovernedServiceAddress(db,{customerId,serviceCode:"grooming",serviceAddress:address,servicePincode:pin.pincode,latitude:input.latitude,longitude:input.longitude,saveToAccount:input.saveAddress!==false});
  if(governed.zoneId!==String(booking.zone_id)||governed.cityId!==String(booking.city_id).toLowerCase())return json({error:"The verified address zone does not match the booking reservation"},409);
  const coordinates=verifiedCoordinates(governed),now=Date.now(),completeAddress=governed.address;
  await db.prepare("INSERT INTO booking_service_locations (booking_id,customer_id,provider_id,address_id,address_text,latitude,longitude,source,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,'active',?,?) ON CONFLICT(booking_id) DO UPDATE SET customer_id=excluded.customer_id,provider_id=excluded.provider_id,address_id=excluded.address_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,source=excluded.source,status='active',updated_at=excluded.updated_at").bind(bookingId,customerId,String(booking.provider_id),governed.addressId,completeAddress,coordinates.latitude,coordinates.longitude,coordinates.source,now,now).run();
