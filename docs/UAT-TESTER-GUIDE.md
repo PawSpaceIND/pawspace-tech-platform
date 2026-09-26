@@ -66,9 +66,12 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
   five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
   on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
-- **Partner app as a UAT trainer**: the six training providers have partner OTP numbers too — `9000000931`
+- **Partner app as a UAT trainer**: the training providers have partner OTP numbers too — `9000000931`
   (city-wide Training Team), `9000000933` (Kavya R., South), `9000000932` (Arjun T., East), `9000000934`
-  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). A partner identity is
+  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). The city-wide team has
+  four more seats, so testers who pick exactly the same Training date and time still each get a trainer:
+  `9000000937` (Training Team 2), `9000000938` (Team 3), `9000000939` (Team 4), `9000000940` (Team 5). Sign in
+  with the number of the seat named on your booking. A partner identity is
   the phone number, so "switching from groomer to trainer" means signing out and signing in with a trainer's
   number. Note that `/partner-app` lists and works **grooming** work orders only; a trainer signs in and sees
   the shell, but training sessions are not yet worked from this app.
@@ -82,6 +85,16 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   - **Mark arrived is GPS-gated**: the server only accepts it with a fresh GPS fix within 250 m of the customer's
     doorstep. On a phone, open **GPS & route → Start GPS** first, and book the test job to the address you are
     actually at. Without a fix the app now says so instead of failing silently.
+  - **Booked-time window (only when it is switched on)**: with `PAWSPACE_SERVICE_WINDOW_ENFORCEMENT=on` (always on
+    in production), Mark arrived and Start service work only from 60 minutes before to 2 hours after the booked
+    start. Outside it the app shows, for example, "This job starts 28 Sept, 9:00 am IST. You can mark arrival or
+    start from 28 Sept, 8:00 am IST." To run the lifecycle straight after booking, a Founder or Manager signs in
+    at `/staging-login`, opens **Control → Customer booking lifecycle**, clicks the booking (**Open →**), and
+    under **Authorise early/late start** writes a reason of at least 10 characters and taps **Authorise
+    early/late start**. The panel then shows who authorised it and when; the groomer retries Mark arrived (with
+    a fresh GPS fix) and Start service. The authorisation covers that booked time only: if the booking is
+    rescheduled (even back to the same time), authorise it again. When the window is off, the panel says so and
+    nothing is blocked.
   - **Photos need Ops approval** (maker/checker): after both photos show "awaiting Ops approval", a *different*
     person signs in at `/staging-login` (Founder or Manager), opens **Control → Customer booking lifecycle →
     Service proof awaiting review**, writes a reason and approves each photo. The partner then taps **Refresh

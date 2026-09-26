@@ -230,6 +230,11 @@ test("the workflow runs the cleanup only for suite=cleanup, dry-run by default, 
   assert.match(step, /PAWSPACE_UAT_ACCESS_CODE: \$\{\{ secrets\.PAWSPACE_UAT_ACCESS_CODE \}\}/);
   assert.match(step, /DRY_RUN: \$\{\{ github\.event\.inputs\.apply == 'apply' && 'false' \|\| 'true' \}\}/);
   assert.match(step, /run: node scripts\/uat-staging-training-cleanup\.mjs/);
-  assert.match(workflow, /- name: Run deployed Training acceptance\n\s+if: github\.event\.inputs\.suite != 'master' && github\.event\.inputs\.suite != 'cleanup'\n/);
+  assert.match(workflow, /- name: Run deployed Training acceptance\n\s+if: github\.event\.inputs\.suite == 'training-deployed'\n/);
+  // The read-only trainer check runs only its own spec and receives no secret.
+  const check = workflow.slice(workflow.indexOf("- name: Check that a tester is offered a Dog Training trainer"), workflow.indexOf("- name: Clean up stale UAT Training sessions"));
+  assert.match(check, /if: github\.event\.inputs\.suite == 'trainer-check'\n/);
+  assert.match(check, /run: npx playwright test --config playwright\.training-trainer-check\.config\.ts/);
+  assert.doesNotMatch(check, /secrets\./);
   assert.match(workflow, /default: 'https:\/\/pawspace-staging\.karthik-fce\.workers\.dev'/);
 });

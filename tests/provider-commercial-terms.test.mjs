@@ -8,19 +8,19 @@ const workforce = await read("../lib/workforce-classification.ts");
 
 test("payout engine supports the four engagement models with the correct GST treatment", () => {
   assert.match(terms, /commission_groomer|commission_standard|direct_employee|funeral_exempt/);
-  // commission_standard: GST-inclusive order -> carve embedded 18% off the top (true inclusive reverse-calc)
-  assert.match(terms, /providerGstDeducted=money\(orderValue\*18\/118\)/);
-  // ...then split the GST-exclusive net pool; provider is paid their share of it (no further deduction)
-  assert.match(terms, /const netPool=money\(orderValue-providerGstDeducted\)/);
-  assert.match(terms, /providerNetPayout=providerGrossShare/);
-  // PawSpace GST is on the platform fee only
-  assert.match(terms, /platformGst=money\(platformFee\*platformGstRate\)/);
-  // direct employee (principal): GST-inclusive order -> carve embedded 18% (18/118) + direct invoice, no payout
-  assert.match(terms, /directInvoice=true;pawspaceGstOnOrder=money\(orderValue\*18\/118\)/);
-  // funeral: GST-exempt, vendor paid a share of PawSpace's OWN standard price, no GST on the platform fee
+  // owner decision 2 (26 Sept 2026): nothing is carved off the paid amount before the split
+  assert.match(terms, /providerGstDeducted:0/);
+  // ...the provider's share is taken of the amount paid (or of an explicit funeral standard price); no further deduction
+  assert.match(terms, /providerGrossShare=money\(\(reference\|\|paid\)\*input\.providerSharePct\)/);
+  assert.match(terms, /providerNetPayout:split\.providerGrossShare/);
+  // PawSpace GST is on its commission only, through the one GST helper
+  assert.match(terms, /gstBreakdown\(platformFee,input\.gstPolicy\)/);
+  // own supply (decision 3): GST from the one setting on the full paid amount, direct invoice, no payout
+  assert.match(terms, /if\(input\.ownSupply\)\{const g=input\.gstExempt\?exempt\(paid\):gstBreakdown\(paid,input\.gstPolicy\)/);
+  // funeral (decision 4): GST-exempt everywhere; a share of an explicit standard price only when a caller passes one
   assert.match(terms, /engagementModel==="funeral_exempt"/);
-  assert.match(terms, /gstExempt=true;payoutBasis="standard_price"/);
-  assert.match(terms, /providerGrossShare=money\(standardReferencePrice\*providerSharePct\)/);
+  assert.match(terms, /payoutBasis:reference\?"standard_price"/);
+  assert.match(terms, /FUNERAL_SERVICE_CODES\.has\(serviceCode\)/);
   // fail-closed: no active term refuses rather than guessing a split
   assert.match(terms, /configuration_required: no active commercial term/);
 });
@@ -37,7 +37,7 @@ test("terms are versioned, maker/checker governed, and overridable per provider 
 test("the default GST treatment for other services is a flip-able config, not hard-coded margin", () => {
   assert.match(terms, /"provider_gst_on_behalf"/);
   assert.match(terms, /"platform_retained"/);                                         // the switch exists
-  assert.match(terms, /gstModeDefaultForOthers:"provider_gst_on_behalf"/);
+  assert.match(terms, /gstModeDefaultForOthers:"none"/);                             // carve modes retired (owner decision 2)
 });
 
 test("the route is finance-gated and blocks cross-origin writes", () => {

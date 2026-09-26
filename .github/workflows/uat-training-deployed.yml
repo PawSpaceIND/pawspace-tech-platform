@@ -7,7 +7,7 @@ on:
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
       suite:
-        description: 'training-deployed (capture + recovery), master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI) or cleanup (founder-approved cancellation of stale UAT Training sessions on staging)'
+        description: 'training-deployed (capture + recovery), master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI), cleanup (founder-approved cancellation of stale UAT Training sessions on staging) or trainer-check (read-only: is a tester offered a trainer on /v2/training)'
         required: false
         default: 'training-deployed'
         type: choice
@@ -15,6 +15,7 @@ on:
           - training-deployed
           - master
           - cleanup
+          - trainer-check
       apply:
         description: 'cleanup suite only: dry-run lists what would change; apply cancels the listed stale sessions through the governed staff API'
         required: false
@@ -27,7 +28,7 @@ jobs:
   training-acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    # contents:write is used only by the master suite's evidence step, and only on non-main branches.
+    # contents:write is used only by the master and trainer-check evidence steps, and only on non-main branches.
     permissions:
       contents: write
     concurrency:
@@ -50,7 +51,7 @@ jobs:
         if: github.event.inputs.suite != 'cleanup'
         run: npx playwright install --with-deps chromium
       - name: Run deployed Training acceptance
-        if: github.event.inputs.suite != 'master' && github.event.inputs.suite != 'cleanup'
+        if: github.event.inputs.suite == 'training-deployed'
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           E2E_REPORT: test-results/uat-training-report.md
@@ -62,6 +63,12 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           MASTER_OUT: test-results/training-master
         run: npx playwright test --config playwright.training-master.config.ts
+      - name: Check that a tester is offered a Dog Training trainer (read-only)
+        if: github.event.inputs.suite == 'trainer-check'
+        env:
+          PW_BASE_URL: ${{ github.event.inputs.base_url }}
+          TRAINER_CHECK_OUT: test-results/training-trainer-check
+        run: npx playwright test --config playwright.training-trainer-check.config.ts
       - name: Clean up stale UAT Training sessions (staging only)
         if: github.event.inputs.suite == 'cleanup'
         env:
@@ -77,6 +84,7 @@ jobs:
           cat test-results/uat-training-report.md 2>/dev/null || true
           cat test-results/training-master/report.md 2>/dev/null || true
           cat test-results/uat-training-cleanup-report.md 2>/dev/null || true
+          cat test-results/training-trainer-check/report.md 2>/dev/null || true
       - name: Commit master evidence to this branch
         if: always() && github.event.inputs.suite == 'master' && github.ref_name != 'main'
         run: |
@@ -89,6 +97,23 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$DEST"
           git commit -m "test(qa): Dog Training master E2E evidence from staging (run ${{ github.run_id }})" || exit 0
+          for attempt in 1 2 3; do
+            git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0
+            sleep 5
+          done
+          exit 1
+      - name: Commit trainer-check evidence to this branch
+        if: always() && github.event.inputs.suite == 'trainer-check' && github.ref_name != 'main'
+        run: |
+          set -e
+          [ -f test-results/training-trainer-check/report.md ] || exit 0
+          DEST="docs/qa-evidence/training-trainer-check-${{ github.run_id }}"
+          mkdir -p "$DEST"
+          cp -r test-results/training-trainer-check/. "$DEST"/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+          git commit -m "test(qa): Dog Training trainer availability check on staging (run ${{ github.run_id }})" || exit 0
           for attempt in 1 2 3; do
             git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0
             sleep 5

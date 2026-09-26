@@ -1,6 +1,7 @@
 import { bookingPaymentBalances } from "../../../lib/booking-payment-balances";
 import { bookingSupportCases } from "../../../lib/booking-support-cases";
 import { chunkedIn } from "../../../lib/d1-chunked-in";
+import { groomingRescheduleRequestSchema } from "../../../lib/grooming-reschedule-schema";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
@@ -39,6 +40,8 @@ async function ensureTables(db: Db) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_refund_cases_booking ON booking_refund_cases(booking_id,created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_experience_tickets_booking ON customer_experience_tickets(booking_id,created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_admin_actions_booking ON booking_admin_actions(booking_id,created_at)"),
+    // Pay-the-difference reschedules (lib/grooming-reschedule-payment.ts), shown beside the refunds.
+    ...groomingRescheduleRequestSchema(db),
   ]);
   bookingCommandTablesReady.add(db);
   })().finally(()=>{bookingCommandTablesEnsuring.delete(db);});
@@ -111,6 +114,12 @@ const BOOKING_CHILD_READS:ReadonlyArray<readonly [BookingChildList,(placeholders
   ["tickets",ids=>`SELECT * FROM customer_experience_tickets WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
   ["adminActions",ids=>`SELECT * FROM booking_admin_actions WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
 ];
+/**
+ * Pay-the-difference reschedule requests, the columns the per-booking read returned, grouped by booking_id.
+ * grooming_reschedule_requests has no plain booking_id index, so the per-booking read scanned it and equal
+ * created_at came back in insertion (rowid) order; the tie-break keeps that.
+ */
+const BOOKING_RESCHEDULES_READ=(ids:string)=>`SELECT booking_id,id,status,from_start,to_start,difference_amount,new_total_amount,target_provider_id,refund_case_id,failure_reason,created_at,updated_at FROM grooming_reschedule_requests WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`;
 /*
  * Pets keep the per-row predicate verbatim - the booking's own customer_id and the ids json_each yields
  * from its pet_ids_json - joined per chunk of bookings rather than read by a pooled list of pet ids. A
@@ -133,11 +142,12 @@ async function rowsByBooking(db:Db,bookingIds:string[],read:(placeholders:string
 async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
   const rows=await bookingRows(db,scope,options);
   const ids=[...new Set(rows.results.map(row=>String(row.id)))];
-  const[balances,supportCases,pets,children]=await Promise.all([
+  const[balances,supportCases,pets,children,reschedules]=await Promise.all([
     bookingPaymentBalances(db,ids),
     bookingSupportCases(db,ids),
     rowsByBooking(db,ids,BOOKING_PETS_READ),
     Promise.all(BOOKING_CHILD_READS.map(async([list,read])=>[list,await rowsByBooking(db,ids,read)] as const)).then(entries=>new Map(entries)),
+    rowsByBooking(db,ids,BOOKING_RESCHEDULES_READ),
   ]);
   const casesByBooking=new Map<string,Row[]>();
   for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
@@ -147,7 +157,8 @@ async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveMana
     const id=String(row.id),balance=balances.get(id);
     if(!balance)throw new Error("Canonical payment balance unavailable");
     const bookingPets=(pets.get(id)||[]).map(pet=>({id:pet.id,name:pet.name,species:pet.species,breed:pet.breed,vaccination_status:pet.vaccination_status}));
-    bookings.push({...row,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:bookingPets,lifecycle:child("lifecycle",id),operations:child("operations",id),notifications:child("notifications",id),rebooking:child("rebooking",id),refunds:child("refunds",id),tickets:[...child("tickets",id),...(casesByBooking.get(id)||[])],adminActions:child("adminActions",id)});
+    const rescheduleRequests=(reschedules.get(id)||[]).map(request=>({id:request.id,status:request.status,from_start:request.from_start,to_start:request.to_start,difference_amount:request.difference_amount,new_total_amount:request.new_total_amount,target_provider_id:request.target_provider_id,refund_case_id:request.refund_case_id,failure_reason:request.failure_reason,created_at:request.created_at,updated_at:request.updated_at}));
+    bookings.push({...row,rescheduleRequests,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:bookingPets,lifecycle:child("lifecycle",id),operations:child("operations",id),notifications:child("notifications",id),rebooking:child("rebooking",id),refunds:child("refunds",id),tickets:[...child("tickets",id),...(casesByBooking.get(id)||[])],adminActions:child("adminActions",id)});
   }
   return{source:"canonical UAT database snapshot + live stream",bookings,organizationalScope:scope??"global"};
 }

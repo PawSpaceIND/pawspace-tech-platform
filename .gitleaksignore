@@ -35,3 +35,10 @@ d3bff97d182c7f1e72b887e3029f88bbf3ad4504:tests/razorpay-capture-confirms-payment
 
 # Same fake identifier was mentioned in the previous explanatory comment; exact historical metadata only.
 a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret-key:32
+
+# Non-credential: two synthetic Razorpay TEST-mode key ids used only as stubbed sandbox configuration in the
+# reschedule pay-the-difference and multi-capture refund tests (PR branch commit 51dd2d7e). Exact historical
+# findings only; the current tests use short fixture ids that the rule does not match. Literals deliberately
+# not reproduced here.
+51dd2d7e94876a26e53fd2950ab23db84a6ccdf7:tests/razorpay-multi-capture-refunds.test.mjs:pawspace-payment-secret-key:42
+51dd2d7e94876a26e53fd2950ab23db84a6ccdf7:tests/grooming-reschedule-pay-difference.test.mjs:pawspace-payment-secret-key:24

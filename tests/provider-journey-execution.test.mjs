@@ -112,11 +112,11 @@ test("PRV-01 engagement: each partner type resolves to its own model, share and 
   /* Driven under the UAT env, where the derivation actually runs. */
   const cases = [
     ["a grooming commission partner", "PRV-GROOM-COMM", "grooming", "commission", "commission_groomer", 0.70, "none", 1],
-    ["a training commission partner", "PRV-TRAIN-COMM", "training", "commission", "commission_standard", 0.70, "provider_gst_on_behalf", 0],
-    ["a boarding commission host", "PRV-BOARD-COMM", "boarding", "commission", "commission_standard", 0.70, "provider_gst_on_behalf", 0],
-    ["a sitting commission partner", "PRV-SIT-COMM", "pet_sitting", "commission", "commission_standard", 0.70, "provider_gst_on_behalf", 0],
-    ["a walking commission partner", "PRV-WALK-COMM", "dog_walking", "commission", "commission_standard", 0.70, "provider_gst_on_behalf", 0],
-    ["a taxi commission driver", "PRV-TAXI-COMM", "pet_taxi", "commission", "commission_standard", 0.70, "provider_gst_on_behalf", 0],
+    ["a training commission partner", "PRV-TRAIN-COMM", "training", "commission", "commission_standard", 0.70, "none", 0], // owner decision 2: carve modes retired
+    ["a boarding commission host", "PRV-BOARD-COMM", "boarding", "commission", "commission_standard", 0.70, "none", 0], // owner decision 2: carve modes retired
+    ["a sitting commission partner", "PRV-SIT-COMM", "pet_sitting", "commission", "commission_standard", 0.70, "none", 0], // owner decision 2: carve modes retired
+    ["a walking commission partner", "PRV-WALK-COMM", "dog_walking", "commission", "commission_standard", 0.70, "none", 0], // owner decision 2: carve modes retired
+    ["a taxi commission driver", "PRV-TAXI-COMM", "pet_taxi", "commission", "commission_standard", 0.70, "none", 0], // owner decision 2: carve modes retired
     ["a salaried full-time deliverer", "PRV-SALARIED", "grooming", "full_time", "direct_employee", 0, "none", 0],
   ];
 

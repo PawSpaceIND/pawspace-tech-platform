@@ -57,6 +57,9 @@ export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting
  misses?:number;
  /** The flow stalled or the customer went off script: PawSpace AI answers anything that is not an option. */
  aiTakeover?:boolean;
+ /** A signed-in customer chose to talk rather than tap: PawSpace AI answers every typed message and the
+  * bot stays quiet until they tap a service or type "menu". */
+ aiMode?:boolean;
  /** The service a lead enquired about (its WhatsApp template was for it): a short reply starts that flow. */
  preferredFlow?:string};
 export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
@@ -364,6 +367,13 @@ export function botSummary(flow:Flow,answers:Record<string,string>,signedIn:bool
  * `choiceId` comes from a tapped button; typed text is matched against the same buttons (by label or
  * number, the way WATI accepts "1"), so a visitor who types instead of tapping is not stuck.
  */
+/* "I don't want the chatbot", "no buttons", "talk to the AI": the customer asks for a conversation. */
+const WANTS_AI=/\b(no|not|don'?t|dont|do not|stop|without|skip)\b.{0,24}\b(chat ?bot|bot|buttons?|options?)\b|\b(talk|speak|chat)\s+(to|with)\s+(the\s+)?(ai|assistant|maya|a real answer)\b/i;
+/** A sentence or a question, not a short answer such as a name, a date or "Dog". */
+function conversational(text:string){return/\?/.test(text)||text.split(/\s+/).filter(Boolean).length>=4;}
+/** No bot message: PawSpace AI's answer is the reply. */
+const QUIET:BotReply={text:"",choices:[],inputHint:"Type your message"};
+
 export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:string|null;signedIn:boolean;
  /** The live cross-sell coupon (lib/ai-sales-offers.ts activeCrossSell); null hides the offer. */
  crossSell?:BotCrossSell}):BotTurnResult{
@@ -393,6 +403,12 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step,answers},reply:askReply(steps[step],"I'll connect you with our team. "),event:{type:"none"},display};
  }
 
+ /* Signed-in customers who type rather than tap talk to PawSpace AI, which can answer, quote and book: in AI
+  * mode, when they ask for it, or when a sentence arrives at the menu or in place of a button. */
+ const toAi=()=>({state:{...initialBotState(),aiMode:true,...(state.preferredFlow?{preferredFlow:state.preferredFlow}:{})} as BotState,reply:QUIET,event:{type:"ai" as const,question:text},display});
+ // A lead's "Hi" / "Yes" still starts the service their template offered, even after a question to the AI.
+ const leadStart=Boolean(state.preferredFlow)&&state.status!=="collecting"&&(SHORT_YES.test(text)||/^(hi|hello|hey)[.! ]*$/i.test(text));
+ if(input.signedIn&&!picked&&text&&!leadStart&&(state.aiMode||WANTS_AI.test(text)))return toAi();
  if(state.status!=="collecting"){
   // A question does not forget the service a lead came in for: "Yes" afterwards still starts it.
   const keep:BotState={...initialBotState(),...(state.preferredFlow?{preferredFlow:state.preferredFlow}:{})};
@@ -403,7 +419,8 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   /* A lead who came in for a service: their first short reply ("Yes", "Book now", the template's
    * button) starts that service's questions straight away, as the WATI template flow does. */
   const preferred=!picked&&state.preferredFlow&&(SHORT_YES.test(text)||greetsPreferred||flowFromText(text)?.code===state.preferredFlow)?flowByCode(state.preferredFlow):null;
-  const flow=picked?flowByCode(picked.id):preferred||(!picked?flowFromText(text):null);
+  if(input.signedIn&&!picked&&!preferred&&text&&conversational(text))return toAi();
+ const flow=picked?flowByCode(picked.id):preferred||(!picked?flowFromText(text):null);
   if(flow)return startFlow(flow,input.signedIn,{},`Great, let's get your ${flow.service} details. `,display);
   if(!text)return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
   // A free question at the menu goes to PawSpace AI; the route answers it and offers the menu again.
@@ -416,7 +433,8 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  let value:string;
  /* An answer that does not fit the question is asked again once. A second one - or any after the AI has
   * taken over a stalled chat - goes to PawSpace AI, which answers it; the question is then asked again. */
- const offScript=(error:string):BotTurnResult=>text&&(state.aiTakeover||(state.misses??0)>=1)
+ const offScript=(error:string):BotTurnResult=>input.signedIn&&text&&(step.kind==="choice"||conversational(text))?toAi()
+  :text&&(state.aiTakeover||(state.misses??0)>=1||conversational(text))
   ?{state:{...state,misses:0},reply:askReply(step,"Whenever you're ready: ",context),event:{type:"ai",question:text},display}
   :{state:{...state,misses:(state.misses??0)+1},reply:askReply(step,error,context),event:{type:"none"},display};
  if(step.kind==="choice"){if(!picked||!step.choices?.some(item=>item.id===picked.id))return offScript("Please pick one of the options. ");value=picked.value??picked.label;}

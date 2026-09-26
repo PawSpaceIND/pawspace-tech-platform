@@ -1,3 +1,4 @@
+import{d1ServerTiming,installD1RequestTiming,withD1RequestTiming}from"../lib/d1-request-timing";
 import {sweepPartnerHeartbeats} from "../lib/partner-job-heartbeat";
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import * as Sentry from "@sentry/cloudflare";
@@ -15,6 +16,7 @@ import {runWhatsAppOutboxDispatcher,syncSubmittedMetaTemplateStatuses} from "../
 import {cleanupExpiredReservationLeases,releaseAbandonedUatCheckouts} from "../lib/scheduling-reservation-leases";
 import {runRazorpayCaptureOutboxSweep} from "../lib/razorpay-capture-atomic";
 import {runRazorpayCaptureReconciliationSweep} from "../lib/razorpay-capture-reconciliation";
+import {runGroomingRescheduleSweep} from "../lib/grooming-reschedule-payment";
 import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
@@ -212,7 +214,9 @@ const worker = {
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const supermetrics=result.supermetricsSync as Record<string,unknown>;const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(supermetrics?.status||"")==="partial_failure"||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,supermetrics,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
       const gatewayInboundTask=(async()=>{const retry=await drainGatewayInboundQueue(env.DB,{"meta-whatsapp-webhook":async({rawBody,headers})=>processQueuedMetaEnvelope(env as unknown as Record<string,unknown>&{DB:D1Database},rawBody,headers)},{now:controller.scheduledTime,limit:50,workerPrefix:"system:scheduled-worker"}),purge=await purgeExpiredInboundPayloads(env.DB,controller.scheduledTime);return{...retry,purge};})();
-      const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)};})();
+      // After the captures: a paid Grooming reschedule difference moves its booking (or is refunded), and
+      // an unpaid reschedule whose 10-minute slot hold lapsed is closed.
+      const razorpayCaptureRecoveryTask=(async()=>{const reconciliation=await runRazorpayCaptureReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50});const effects=await runRazorpayCaptureOutboxSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});const reschedules=await runGroomingRescheduleSweep(env.DB,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"});return{reconciliation,effects,reschedules,failed:Number(reconciliation.failed||0)+Number(effects.failed||0)+Number(reschedules.failed||0)};})();
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
@@ -271,6 +275,19 @@ const worker = {
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
+};
+
+/* Staging only: /api responses carry a Server-Timing header naming their slowest D1 calls. */
+const untimedFetch=worker.fetch.bind(worker);
+worker.fetch=async(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>=>{
+  if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging"||!new URL(request.url).pathname.startsWith("/api/"))return untimedFetch(request,env,ctx);
+  installD1RequestTiming(env.DB);
+  const started=Date.now();
+  const{result:response,timings}=await withD1RequestTiming(()=>untimedFetch(request,env,ctx));
+  // A route that reports its own Server-Timing (uat-scheduling, lib/request-d1-metrics) keeps it.
+  if(response.status===101||(response as Response&{webSocket?:unknown}).webSocket||response.headers.has("server-timing"))return response;
+  try{const headers=new Headers(response.headers);headers.set("Server-Timing",d1ServerTiming(timings,Date.now()-started));return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}
+  catch{return response;}
 };
 
 export default Sentry.withSentry((env:Env)=>({dsn:env.SENTRY_DSN||undefined,environment:env.PAWSPACE_DEPLOYMENT_ENV||"unknown",tracesSampleRate:0.05,sendDefaultPii:false}),worker);

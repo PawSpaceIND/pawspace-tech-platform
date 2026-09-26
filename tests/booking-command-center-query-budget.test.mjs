@@ -66,7 +66,8 @@ const preparedDdl = (source) => [...source.matchAll(/prepare\("((?:CREATE TABLE|
 
 /*
  * The snapshot as it stood at a3928d2 - bookingRows, bookingSnapshot and parse - with its per-row
- * reads unchanged. It is the oracle: the route must answer exactly what this answered.
+ * reads unchanged, plus the per-row reschedule read #1111 added. It is the oracle: the route must answer
+ * exactly what this answered.
  */
 const legacyParse = (value) => { try { return JSON.parse(String(value || "{}")); } catch { return {}; } };
 async function legacySnapshot(db, scope, options = {}) {
@@ -106,9 +107,10 @@ async function legacySnapshot(db, scope, options = {}) {
       db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all(),
       db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all(),
     ]);
+    const rescheduleRequests = (await db.prepare("SELECT id,status,from_start,to_start,difference_amount,new_total_amount,target_provider_id,refund_case_id,failure_reason,created_at,updated_at FROM grooming_reschedule_requests WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all()).results;
     const balance = balances.get(String(row.id));
     if (!balance) throw new Error("Canonical payment balance unavailable");
-    bookings.push({ ...row, original_amount_due_now: row.amount_due_now, amount_due_now: balance.dueNow, payment_stage: balance.stage, outstanding_balance: balance.outstandingBalance, pricing: legacyParse(row.pricing_json), assignment: legacyParse(row.assignment_json), paymentDetail: legacyParse(row.payment_detail_json), pets: pets.results, lifecycle: lifecycle.results, operations: operations.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results, tickets: [...tickets.results, ...(casesByBooking.get(String(row.id)) || [])], adminActions: adminActions.results });
+    bookings.push({ ...row, rescheduleRequests, original_amount_due_now: row.amount_due_now, amount_due_now: balance.dueNow, payment_stage: balance.stage, outstanding_balance: balance.outstandingBalance, pricing: legacyParse(row.pricing_json), assignment: legacyParse(row.assignment_json), paymentDetail: legacyParse(row.payment_detail_json), pets: pets.results, lifecycle: lifecycle.results, operations: operations.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results, tickets: [...tickets.results, ...(casesByBooking.get(String(row.id)) || [])], adminActions: adminActions.results });
   }
   return { source: "canonical UAT database snapshot + live stream", bookings, organizationalScope: scope ?? "global" };
 }
@@ -136,6 +138,10 @@ async function productionShapedWorld() {
   const routeTables = preparedDdl(read("app/api/booking-command-center/route.ts")).filter((sql) => sql.startsWith("CREATE TABLE"));
   assert.equal(routeTables.length, 12);
   for (const sql of routeTables) sqlite.exec(sql);
+  // The pay-the-difference reschedule table (#1111), exactly as lib/grooming-reschedule-schema.ts creates it.
+  const rescheduleDdl = [...read("lib/grooming-reschedule-schema.ts").matchAll(/prepare\("(CREATE [^"]*)"\)/g)].map((match) => match[1]);
+  assert.equal(rescheduleDdl.length, 4);
+  for (const sql of rescheduleDdl) sqlite.exec(sql);
   const canonicalIndexes = preparedDdl(read("app/api/canonical-bookings/route.ts")).filter((sql) => /idx_booking_lifecycle_events_booking|idx_canonical_pets_customer/.test(sql));
   assert.equal(canonicalIndexes.length, 2);
   for (const sql of canonicalIndexes) sqlite.exec(sql);
@@ -197,6 +203,15 @@ function seed(sqlite, { count, children }) {
       run("INSERT INTO booking_admin_actions (id,booking_id,action,reason,detail_json,actor_email,created_at) VALUES (?,?,?,?,?,?,?)", `AA-${key}`, id, "call_customer", `follow-up ${j}`, "{}", MANAGER_EMAIL, at);
     }
   }
+  // Pay-the-difference reschedules (#1111) on every third booking: two per booking sharing a timestamp, with
+  // ids against insertion order, so their order is pinned the same way as the child lists'.
+  for (let n = 3; n <= count; n += 3) {
+    const id = bookingId(n), at = BASE + n * 1000 + 5;
+    for (const [suffix, status] of [["b", "applied"], ["a", "expired"]]) {
+      run("INSERT INTO grooming_reschedule_requests (id,booking_id,customer_id,payment_id,from_start,from_end,to_start,to_end,current_provider_id,target_provider_id,booked_amount,new_slot_amount,difference_amount,booking_total_before,new_total_amount,consent_revision,status,failure_reason,refund_case_id,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        `RS-${id}-${suffix}`, id, customerId(n), `PAY-${id}`, "2026-10-01T04:30:00.000Z", "2026-10-01T05:30:00.000Z", "2026-10-02T04:30:00.000Z", "2026-10-02T05:30:00.000Z", "PRV-BUDGET", "PRV-BUDGET", 1000, 1200, 200, 1000 + n, 1200 + n, "v1", status, status === "expired" ? "hold_lapsed_before_payment" : null, null, "customer", at, at);
+    }
+  }
   // A ticket about no booking, and unified complaint cases that merge into `tickets` (plus one that must not).
   run("INSERT INTO customer_experience_tickets (id,customer_id,booking_id,lead_id,category,priority,subject,detail,owner,manager,sla_due_at,status,escalation_level,customer_status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", "TK-NO-BOOKING", customerId(1), null, "LEAD-1", "sales", "normal", "no booking", "detail", "cx", "cx-lead", BASE, "open", 0, "We received your request", "ops", BASE, BASE);
   for (let n = 7; n <= count; n += 7) {
@@ -250,6 +265,10 @@ test("the snapshot answers exactly what the per-row reads answered, for every ro
   assert.equal(withTies.operations[0].created_at, withTies.operations[1].created_at, "timestamps tie");
   assert.ok(String(withTies.operations[0].id) > String(withTies.operations[1].id), "a tie is in insertion order, which here runs against id order");
   assert.ok(String(withTies.lifecycle[0].id) < String(withTies.lifecycle[1].id), "lifecycle ties come back newest insertion first, as its index returned them");
+  const rescheduled = all.find((booking) => booking.id === bookingId(3));
+  assert.deepEqual(rescheduled.rescheduleRequests.map((request) => request.id), [`RS-${bookingId(3)}-b`, `RS-${bookingId(3)}-a`], "reschedule ties keep insertion order");
+  assert.deepEqual(Object.keys(rescheduled.rescheduleRequests[0]), ["id", "status", "from_start", "to_start", "difference_amount", "new_total_amount", "target_provider_id", "refund_case_id", "failure_reason", "created_at", "updated_at"], "the reschedule columns #1111 shows, and no join key");
+  assert.deepEqual(all.find((booking) => booking.id === bookingId(4)).rescheduleRequests, []);
   const merged = all.find((booking) => booking.id === bookingId(7));
   assert.deepEqual(merged.tickets.slice(-2).map((ticket) => ticket.source_kind), ["unified_case", "unified_case"], "complaint cases still follow the booking's own tickets");
   assert.ok(!all.some((booking) => booking.tickets.some((ticket) => ticket.id === "TK-NO-BOOKING")));
@@ -311,10 +330,13 @@ test("the route's DDL runs once per D1 binding, and the migration carries the sa
   await get("");
   const routeDdl = preparedDdl(read("app/api/booking-command-center/route.ts"));
   assert.deepEqual(ddl(w).filter((sql) => routeDdl.includes(sql)), routeDdl, "the first request on a binding sends the route's whole DDL batch");
+  const rescheduleSchema = (list) => list.filter((sql) => sql.includes("grooming_reschedule_requests") && /^CREATE /.test(sql));
+  assert.equal(rescheduleSchema(w.sql).length, 4, "with the reschedule table's schema in the same batch");
   w.reset();
   await get("");
   await get("?q=bk-budget");
   assert.deepEqual(ddl(w).filter((sql) => routeDdl.includes(sql)), [], "later requests on the same binding send none of it");
+  assert.deepEqual(rescheduleSchema(w.sql), [], "nor the reschedule schema, which #1111 had sent on every GET");
 
   const fresh = await productionShapedWorld();
   seed(fresh.sqlite, { count: 5, children: 1 });

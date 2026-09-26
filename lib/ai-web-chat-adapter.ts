@@ -422,7 +422,8 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
    * the AI itself handed the customer to a person. */
   const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:turn.event.question,idempotencyKey:key},{acceptWhileWithTeam:true});
   const handedOff="withTeam"in data||("handoff"in data&&data.handoff?.active);
-  if(!handedOff)await postBotMessage(db,{threadId:data.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
+  // An empty reply is AI mode: the AI's answer stands alone, with no bot buttons after it.
+  if(!handedOff&&turn.reply.text)await postBotMessage(db,{threadId:data.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
   return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const};
  }
  const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key});

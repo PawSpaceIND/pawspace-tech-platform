@@ -18,10 +18,12 @@ type Row = Record<string, unknown>;
 
 /*
  * A booking that has ended cannot take new money. Customer checkout already refuses these
- * (lib/customer-checkout-server.ts); every other route into a gateway order - /api/payment-order, the
- * AI checkout tool, the Sales/Atlas payment link and the taxi balance page - reaches this function, and it
- * did not check. An unpaid Dog Training booking that expired is the case that made it matter: an order
- * opened on it could still be paid. Deny-lists, so every payable state of every vertical is unchanged.
+ * (lib/customer-checkout-server.ts); every other route into a gateway order for a booking's own due amount -
+ * /api/payment-order, the AI checkout tool, the Sales/Atlas payment link and the taxi balance page - reaches
+ * createBookingPaymentOrder, and it did not check. (A Grooming reschedule difference opens its own order
+ * through openPaymentIntentOrder after its own gates, which require the booking's payment to be captured.)
+ * An unpaid Dog Training booking that expired is the case that made it matter: an order opened on it could
+ * still be paid. Deny-lists, so every payable state of every vertical is unchanged.
  */
 const NOT_PAYABLE_BOOKING_STATUSES = new Set(["cancelled", "canceled", "refunded", "failed", "expired"]);
 const NOT_PAYABLE_PAYMENT_STATUSES = new Set(["cancelled", "refunded", "partially_refunded", "refund_pending"]);
@@ -44,6 +46,57 @@ async function persistGatewayOrderLink(db: Db, input: {
   ]);
 }
 
+/**
+ * Claims the durable intent for an EXPLICIT amount and purpose and opens its Razorpay order through the
+ * outbox saga: one provider call however often the customer retries, because the idempotency key names
+ * the intent. It never touches payment_gateway_links - that row belongs to the booking's first payment,
+ * so an additional amount (a reschedule difference) keeps its order on its own intent only.
+ */
+export async function openPaymentIntentOrder(db: Db, env: Record<string, unknown>, input: {
+  bookingId: string; customerId: string; paymentId: string; idempotencyKey: string; amountPaise: number; currency: string; commercialSnapshot: Record<string, unknown>;
+}) {
+  // Initialize reconciliation schema before any irreversible Razorpay provider call. This keeps
+  // lazy DDL out of the post-provider response path while preserving webhook/reconciliation tables.
+  await ensurePaymentReconciliationTables(db);
+  const environment = paymentEnvironment(env);
+  const intent = await claimPaymentIntent(db, {
+    bookingId: input.bookingId,
+    customerId: input.customerId,
+    paymentId: input.paymentId,
+    idempotencyKey: input.idempotencyKey,
+    amountPaise: input.amountPaise,
+    currency: input.currency,
+    environment,
+    commercialSnapshot: input.commercialSnapshot,
+  });
+
+  const intentId = String(intent.id);
+  const outbox = await db.prepare("SELECT id,status FROM financial_outbox WHERE aggregate_type='payment_intent' AND aggregate_id=? AND event_type='CREATE_RAZORPAY_ORDER'").bind(intentId).first<Row>();
+  if (!outbox) throw new Error("Payment order outbox command is missing");
+
+  let orderId = String(intent.gateway_order_id || "");
+  if (!orderId) {
+    const execution = await executeRazorpayOrderOutbox(db, env, { outboxId: String(outbox.id), workerId: `checkout:${crypto.randomUUID()}` });
+    if (execution.claimed && !execution.connected) {
+      return { connected: false as const, environment, intentId, reason: execution.reason, reconciliationRequired: Boolean(execution.reconciliationRequired) };
+    }
+    if (execution.claimed && execution.connected) {
+      if (execution.reconciliationRequired) {
+        return { connected: false as const, environment, intentId, reason: execution.reason || "Razorpay order requires reconciliation before checkout may continue", reconciliationRequired: true };
+      }
+      orderId = execution.orderId;
+    }
+    if (!execution.claimed) {
+      const winner = await db.prepare("SELECT gateway_order_id,order_request_state FROM payment_intents WHERE id=?").bind(intentId).first<Row>();
+      orderId = String(winner?.gateway_order_id || "");
+      if (!orderId) {
+        throw governedJsonError({ error: "Payment order creation is already in progress; retry shortly", code: "payment_order_in_progress" }, 409);
+      }
+    }
+  }
+  return { connected: true as const, environment, intentId, orderId, amountPaise: input.amountPaise, currency: input.currency };
+}
+
 export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
   const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
   if (!bookingId || !customerId) throw new Error("A booking and customer are required");
@@ -58,21 +111,15 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
   if (!stage) throw new Error("Booking or its payment record was not found");
   if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
 
-  // Initialize reconciliation schema before any irreversible Razorpay provider call. This keeps
-  // lazy DDL out of the post-provider response path while preserving webhook/reconciliation tables.
-  await ensurePaymentReconciliationTables(db);
   const amount = stage.dueNow, currency = stage.currency, paymentId = stage.paymentId;
   const amountPaise = rupeesToPaiseExact(amount);
-  const environment = paymentEnvironment(env);
-  const idempotencyKey = `payment-order:${paymentId}:${stage.stage}:${amountPaise}`;
-  const intent = await claimPaymentIntent(db, {
+  const opened = await openPaymentIntentOrder(db, env, {
     bookingId,
     customerId,
     paymentId,
-    idempotencyKey,
+    idempotencyKey: `payment-order:${paymentId}:${stage.stage}:${amountPaise}`,
     amountPaise,
     currency,
-    environment,
     commercialSnapshot: {
       paymentStage: stage.stage,
       bookingTotal: stage.bookingTotal,
@@ -83,31 +130,8 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
       pawPointsCreditApplied: stage.pawPointsCreditApplied,
     },
   });
-
-  const intentId = String(intent.id);
-  const outbox = await db.prepare("SELECT id,status FROM financial_outbox WHERE aggregate_type='payment_intent' AND aggregate_id=? AND event_type='CREATE_RAZORPAY_ORDER'").bind(intentId).first<Row>();
-  if (!outbox) throw new Error("Payment order outbox command is missing");
-
-  let orderId = String(intent.gateway_order_id || "");
-  if (!orderId) {
-    const execution = await executeRazorpayOrderOutbox(db, env, { outboxId: String(outbox.id), workerId: `checkout:${crypto.randomUUID()}` });
-    if (execution.claimed && !execution.connected) {
-      return { connected: false, environment, reason: execution.reason, reconciliationRequired: Boolean(execution.reconciliationRequired) };
-    }
-    if (execution.claimed && execution.connected) {
-      if (execution.reconciliationRequired) {
-        return { connected: false, environment, reason: execution.reason || "Razorpay order requires reconciliation before checkout may continue", reconciliationRequired: true };
-      }
-      orderId = execution.orderId;
-    }
-    if (!execution.claimed) {
-      const winner = await db.prepare("SELECT gateway_order_id,order_request_state FROM payment_intents WHERE id=?").bind(intentId).first<Row>();
-      orderId = String(winner?.gateway_order_id || "");
-      if (!orderId) {
-        throw governedJsonError({ error: "Payment order creation is already in progress; retry shortly", code: "payment_order_in_progress" }, 409);
-      }
-    }
-  }
+  if (!opened.connected) return { connected: false, environment: opened.environment, reason: opened.reason, reconciliationRequired: opened.reconciliationRequired };
+  const { environment, orderId } = opened;
 
   // Schema is already ready before the provider call, so this is DML-only reconciliation metadata.
   // The authoritative order identity remains payment_intents.gateway_order_id.

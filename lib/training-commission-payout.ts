@@ -1,4 +1,5 @@
-import{ensureProviderCommissionTables}from"./provider-commission-governance";
+import{ensureProviderCommissionTables,migrateLegacyCommissionProfiles}from"./provider-commission-governance";
+import{providerShareForBooking}from"./provider-commercial-terms";
 import{providerPayoutDueAt,providerPayoutHoldDays}from"./provider-payout-hold";
 
 type Row=Record<string,unknown>;
@@ -27,15 +28,19 @@ export async function syncTrainingCommissionPayoutMilestones(db:D1Database,asOf=
  await ensureTrainingCommissionPayoutTables(db);
  let programmes:Row[]=[];
  try{
-  const result=await db.prepare("SELECT p.id programme_id,p.booking_id,w.provider_id,p.total_sessions,b.total_amount,c.engagement_model,c.default_commission_mode,c.default_commission_value FROM training_programmes p JOIN canonical_bookings b ON b.id=p.booking_id JOIN provider_work_orders w ON w.booking_id=p.booking_id LEFT JOIN provider_compensation_profiles c ON c.provider_id=w.provider_id AND c.status='active' WHERE b.service_code IN ('dog_training','training') AND w.provider_model='commission'").all<Row>();
+  const result=await db.prepare("SELECT p.id programme_id,p.booking_id,w.provider_id,p.total_sessions,b.total_amount,b.service_code FROM training_programmes p JOIN canonical_bookings b ON b.id=p.booking_id JOIN provider_work_orders w ON w.booking_id=p.booking_id WHERE b.service_code IN ('dog_training','training') AND w.provider_model='commission'").all<Row>();
   programmes=result.results;
  }catch{return{synced:0,skippedConfiguration:0};}
+ if(programmes.length)await migrateLegacyCommissionProfiles(db).catch(()=>null);/* the one-time legacy carry-over runs before anything is priced */
  let synced=0,skippedConfiguration=0;
  for(const p of programmes){
-  const mode=String(p.default_commission_mode||""),value=Number(p.default_commission_value);
-  if(String(p.engagement_model)!=="commission"||!["percent","fixed"].includes(mode)||!Number.isFinite(value)){
+  // The trainer's share comes from the commercial terms (their own, else the training default, or an approved order
+  // override), the same terms the completion engine pays from - never the retired provider_compensation_profiles percentage.
+  const share=await providerShareForBooking(db,{bookingId:String(p.booking_id),serviceCode:String(p.service_code),providerId:String(p.provider_id)}).catch(()=>null);
+  if(!share||share.engagementModel==="direct_employee"||!(share.providerSharePct>0)){
    skippedConfiguration++;continue;
   }
+  const mode="percent",value=money(share.providerSharePct*100);
   const totalSessions=Number(p.total_sessions||0);
   if(!Number.isInteger(totalSessions)||totalSessions<=0)continue;
   /*

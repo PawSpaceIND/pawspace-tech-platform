@@ -179,7 +179,9 @@ test("sign out is a same-origin write: a cross-site DELETE cannot end a partner'
  * signed in through the REAL partner OTP route.
  * ---------------------------------------------------------------------------------------------- */
 const TRAINERS = { uatcap_train_ft: "9000000931", uatcap_train_east: "9000000932", uatcap_train_south: "9000000933",
-  uatcap_train_north: "9000000934", uatcap_train_west: "9000000935", uatcap_train_central: "9000000936" };
+  uatcap_train_north: "9000000934", uatcap_train_west: "9000000935", uatcap_train_central: "9000000936",
+  // The four more city-wide Training Team seats (identical windows need a seat each).
+  uatcap_train_ft_2: "9000000937", uatcap_train_ft_3: "9000000938", uatcap_train_ft_4: "9000000939", uatcap_train_ft_5: "9000000940" };
 const CROSS_VERTICAL_PROVIDERS = {
   host_arjun_tara: "9000000970", host_maa_meena: "9000000971", host_maya_rohan: "9000000972", host_priya_dev: "9000000973", host_sana: "9000000974",
   sit_asha: "9000000975", sit_neha: "9000000976", sit_sana: "9000000977",
@@ -197,7 +199,7 @@ async function rosterIdentityStatements() {
 
 test("the roster gives every UAT trainer a partner OTP number that is unique and tied to a live training profile", async () => {
   const { roster, statements } = await rosterIdentityStatements();
-  const rows = [...statements[1].matchAll(/\('([a-z_]+)','blr','([^']*)','(\d{10})'/g)].map(([, id, name, phone]) => ({ id, name, phone }));
+  const rows = [...statements[1].matchAll(/\('([a-z0-9_]+)','blr','([^']*)','(\d{10})'/g)].map(([, id, name, phone]) => ({ id, name, phone }));
   const phones = rows.map(row => row.phone);
   assert.equal(new Set(phones).size, phones.length, "no two providers may share a sign-in number");
   for (const [id, phone] of Object.entries(TRAINERS)) {
