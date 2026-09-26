@@ -7,7 +7,7 @@ import {useInitialBookingReference} from "../../lib/use-initial-booking-referenc
 import styles from "./taxi-flow.module.css";
 import {createTaxiRideQuote,type TaxiRideQuote,type TaxiRideFareOption} from "../../lib/taxi-commercial-client";
 import {createCanonicalTaxiRideBooking,reserveTaxiSchedule,type AssignedDriver,type TaxiRideBookingResult} from "../../lib/taxi-booking-client";
-import {CustomerCheckoutController,type CheckoutState} from "../../lib/customer-checkout-client";
+import {CustomerCheckoutController,returnToBooking,type CheckoutState} from "../../lib/customer-checkout-client";
 import PetManager from "./pet-manager";
 import {loadCustomerPets,type CustomerPet} from "../../lib/customer-account-client";
 import {resolveServiceCoverage} from "../../lib/service-zone-client";
@@ -47,13 +47,16 @@ export default function TaxiFlow({customer,sourceBookingId,routeScope="legacy"}:
   const controller=new CustomerCheckoutController(paymentBookingId,state=>{
    if(!active)return;
    setCheckoutState(state);
-   if(state.phase==="captured"&&state.confirmation?.bookingId===paymentBookingId&&state.confirmation.status==="confirmed"){
-    setBooking(current=>current?.bookingId===paymentBookingId?{...current,status:"confirmed",paymentRequired:false}:current);
-   }
+   if(state.phase==="captured") returnToBooking(paymentBookingId);
   });
   checkoutController.current=controller;
   return()=>{active=false;if(checkoutController.current===controller)checkoutController.current=null;};
  },[paymentBookingId]);
+ useEffect(()=>{
+  if(checkoutState.phase!=="pending")return;
+  const timer=window.setInterval(()=>void checkoutController.current?.resume(),2500);
+  return()=>window.clearInterval(timer);
+ },[checkoutState.phase]);
  const chosenPets=useMemo(()=>pets.filter(p=>selectedPets.includes(p.id)),[pets,selectedPets]);
  const scheduledStart=toIso(date,time),addressesValid=pickup.trim().length>=5&&drop.trim().length>=5&&(tripType==="one_way"||returnDrop.trim().length>=5),countsValid=chosenPets.length>=1&&chosenPets.length<=6;
  const selection={originLabel:pickup,destinationLabel:drop,returnDropLabel:returnDrop,passengerCount:passengers,petIds:chosenPets.map(p=>p.id),luggageCount:luggage,scheduledStart,tripType,ridePurpose:purpose,waitingMinutes:waiting};
