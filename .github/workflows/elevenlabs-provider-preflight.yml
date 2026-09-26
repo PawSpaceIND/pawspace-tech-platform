@@ -865,6 +865,8 @@ jobs:
           node-version: '22.16.0'
       - name: Verify the confirmed tester's canonical voice sale (no dial)
         env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           VOICE_SALE_ACTION: ${{ inputs.confirm }}
           UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
           EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}

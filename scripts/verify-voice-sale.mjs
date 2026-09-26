@@ -29,6 +29,12 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  const allowed=new Set(['timestamp','outcome','wallTimeMs','cpuTimeMs','scriptName','status','colo','type','name','id','requestId','level','path']);
  function safe(value){if(Array.isArray(value))return value.map(safe);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).flatMap(([k,v])=>v&&typeof v==='object'?[[k,safe(v)]]:allowed.has(k)?[[k,v]]:[]));return undefined;}
  console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations}));
+ if(env.ELEVENLABS_API_KEY&&env.GROOMING_AGENT_ID){
+  for(const version of ['', 'agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs']){
+   const ar=await request('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID)+(version?'?version_id='+version:''),{headers:{'xi-api-key':env.ELEVENLABS_API_KEY},signal:AbortSignal.timeout(30000)});const a=await ar.json();const llm=a.conversation_config?.agent?.prompt?.custom_llm||{};
+   console.log('VOICE_AGENT_VERSION='+JSON.stringify({requestedVersion:version||'current',status:ar.status,versionId:a.version_id,branchId:a.branch_id,model:llm.model_id,url:llm.url,apiType:llm.api_type,keys:Object.keys(llm),credentialConfigured:Boolean(llm.api_key)}));
+  }
+ }
  const report={destinationLast4:last4,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
  if(!bookingId)return report;
  const offer=offers.find(o=>o.status==='completed'&&JSON.parse(o.result_json||'{}').bookingId===bookingId);
