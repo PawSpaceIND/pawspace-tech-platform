@@ -18,10 +18,13 @@ test("V2 Boarding Taxi entry preserves the exact source and waits for the signed
  assert.doesNotMatch(html,/Create canonical UAT trip|TST-101|Reserve ·|\/mobile-app/);
 });
 
-test("ordinary V2 Taxi entry remains the existing canonical service without a cross-sell source",async()=>{
+test("ordinary V2 Taxi entry uses the same authenticated customer ride flow without a cross-sell source",async()=>{
  for(const sourceBookingId of [undefined,"", "  ",["one","two"]]){
   const element=await Page({searchParams:Promise.resolve({sourceBookingId})});
-  assert.equal(element.props.routeScope,"v2");
+  const html=renderToStaticMarkup(element);
+  assert.match(html,/Plan your Pet Taxi ride/);
+  assert.match(html,/Loading your PawSpace family/);
+  assert.doesNotMatch(html,/UAT route class|sandbox_deferred|Indiranagar UAT pickup/);
   assert.equal(element.props.sourceBookingId,undefined);
  }
 });

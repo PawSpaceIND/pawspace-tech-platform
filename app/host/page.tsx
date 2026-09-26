@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
+import CaregiverConversation from "../mobile-app/caregiver-conversation";
 import {Suspense,useEffect,useMemo,useState,useSyncExternalStore} from "react";
 import {usePathname,useSearchParams} from "next/navigation";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
@@ -56,6 +57,7 @@ function HostPageContent(){
   </aside>
   <section className={styles.main}>
    <header><div><p>{today.toUpperCase()}</p><h1>{tab==="today"?`Hello, ${hostName.split(" ")[0]}`:tab==="requests"?"Canonical stay requests":tab==="calendar"?"Stay capacity":tab==="earnings"?"Settlement readiness":"Governed home profile"}</h1></div><span className={styles.live}>● UAT · canonical stays</span></header>
+   {selected&&providerId&&<CaregiverConversation key={selected.booking_id+":"+providerId} bookingId={selected.booking_id} providerId={providerId}/>}
    {error&&<section className={styles.panel}><strong>Action required</strong><p>{error}</p></section>}
    {loading&&<section className={styles.panel}><p>Loading governed Boarding stays…</p></section>}
    {!loading&&tab==="today"&&<>

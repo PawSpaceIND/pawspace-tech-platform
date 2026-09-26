@@ -1,0 +1,5 @@
+{
+  "reason": "Remote and recovered histories independently merged main. The single virtual-base conflict contained identical JSON objects on both sides; retained the existing local formatting. No source or assertion was discarded.",
+  "remote": "bd89e0a2f93d373bcf09b3a60813f981a10cf95f",
+  "identicalSemanticManifest": "tests/fixtures/ui-mainline-integration-contract.json"
+}
