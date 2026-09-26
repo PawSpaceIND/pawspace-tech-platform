@@ -7,13 +7,22 @@ on:
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
       suite:
-        description: 'training-deployed (capture + recovery) or master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI)'
+        description: 'training-deployed (capture + recovery), master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI) or cleanup (founder-approved cancellation of stale UAT Training sessions on staging)'
         required: false
         default: 'training-deployed'
         type: choice
         options:
           - training-deployed
           - master
+          - cleanup
+      apply:
+        description: 'cleanup suite only: dry-run lists what would change; apply cancels the listed stale sessions through the governed staff API'
+        required: false
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - apply
 jobs:
   training-acceptance:
     runs-on: ubuntu-latest
@@ -38,9 +47,10 @@ jobs:
       - name: Install
         run: npm run install:ci
       - name: Install Playwright Chromium
+        if: github.event.inputs.suite != 'cleanup'
         run: npx playwright install --with-deps chromium
       - name: Run deployed Training acceptance
-        if: github.event.inputs.suite != 'master'
+        if: github.event.inputs.suite != 'master' && github.event.inputs.suite != 'cleanup'
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           E2E_REPORT: test-results/uat-training-report.md
@@ -52,12 +62,21 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           MASTER_OUT: test-results/training-master
         run: npx playwright test --config playwright.training-master.config.ts
+      - name: Clean up stale UAT Training sessions (staging only)
+        if: github.event.inputs.suite == 'cleanup'
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          DRY_RUN: ${{ github.event.inputs.apply == 'apply' && 'false' || 'true' }}
+          CLEANUP_REPORT: test-results/uat-training-cleanup-report.md
+        run: node scripts/uat-staging-training-cleanup.mjs
       - name: Print report
         if: always()
         run: |
           echo '===== UAT TRAINING DEPLOYED REPORT ====='
           cat test-results/uat-training-report.md 2>/dev/null || true
           cat test-results/training-master/report.md 2>/dev/null || true
+          cat test-results/uat-training-cleanup-report.md 2>/dev/null || true
       - name: Commit master evidence to this branch
         if: always() && github.event.inputs.suite == 'master' && github.ref_name != 'main'
         run: |
