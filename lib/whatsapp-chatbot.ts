@@ -5,6 +5,7 @@ import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,whatsappUatProviders,typ
 import{buildWhatsAppInteractiveContract}from"./whatsapp-interactive-capture";
 import{ASK_AI,runBotTurn,type BotReply,type BotState}from"./web-chat-bot";
 import{advanceBotSession,loadBotSession}from"./web-chat-bot-store";
+import{activeCrossSell}from"./ai-sales-offers";
 
 type Row=Record<string,unknown>;
 type ChatbotState="service"|"collecting"|"city"|"pet"|"qualified";
@@ -102,7 +103,8 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
  if(forced)return recordHandoff(forced,"handoff");
 
  // Claimed before anything is sent: two messages arriving together cannot both answer the same question.
- const turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:context.body,signedIn:true}));
+ const crossSell=await activeCrossSell(db,{customerId:context.customerId,channel:"whatsapp"});
+ const turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:context.body,signedIn:true,crossSell}));
  if(turn.event.type==="human")return recordHandoff(turn.event.reason,"handoff");
  if(turn.event.type==="call")return recordHandoff("customer_requested_human","callback_requested",{callback:true});
  if(turn.event.type==="ai"){
@@ -121,8 +123,8 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
   db.prepare("INSERT INTO whatsapp_chatbot_sessions (thread_id,customer_id,state,service_code,city,pet_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET state=excluded.state,service_code=excluded.service_code,city=excluded.city,pet_type=excluded.pet_type,status=excluded.status,updated_at=excluded.updated_at").bind(input.threadId,context.customerId,next.state,turn.state.flow,answers.city||answers.area||answers.from||answers.address?.slice(0,120)||null,answers.petType?answers.petType.toLowerCase():null,next.status,now,now),
   db.prepare("INSERT OR IGNORE INTO whatsapp_chatbot_turns (id,thread_id,input_message_id,output_message_id,from_state,to_state,intent,action,detail_json,created_at) VALUES (?,?,?,?,?,?,?,'reply',?,?)").bind(uid("WABOT"),input.threadId,input.inputMessageId,queued.messageId,fromState,next.state,turn.event.type==="completed"?"qualified":turn.state.status==="collecting"?"question_answered":"menu",JSON.stringify({flow:turn.state.flow,step:turn.state.step,interactive:interactive?.kind??null}),now),
  ]);
- // A finished WhatsApp enquiry goes to the sales queue with the whole flow above it, as in WATI.
- const completed=turn.event.type==="completed"?await handoff(db,{threadId:input.threadId,customerId:context.customerId,actorEmail:input.actorEmail,reason:"bot_lead_qualified"}):null;
+ // A finished WhatsApp enquiry goes to the team with the whole flow above it, as in WATI (relocation to the relocation desk).
+ const completed=turn.event.type==="completed"?await handoff(db,{threadId:input.threadId,customerId:context.customerId,actorEmail:input.actorEmail,reason:turn.event.followUpReason??"bot_lead_qualified"}):null;
  const recorded=await db.prepare("SELECT id,output_message_id,from_state,to_state,intent,action,detail_json,created_at FROM whatsapp_chatbot_turns WHERE input_message_id=?").bind(input.inputMessageId).first<Row>();
  return{duplicatePrevented:"duplicatePrevented"in queued?Boolean(queued.duplicatePrevented):false,turn:recorded?{...recorded,detail:parse(recorded.detail_json,{})}:null,session:await getWhatsAppChatbotSession(db,input.threadId),...(completed?{handoff:completed}:{}),routingMode:completed?"human_only" as const:"chatbot_only" as const,externalDelivery:false,environment:"uat"};
 }
