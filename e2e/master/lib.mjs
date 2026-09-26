@@ -213,7 +213,8 @@ export const WINDOWS = { boarding: [40, 70], sitting: [71, 95], taxi: [96, 110],
 /**
  * Razorpay webhooks still RECEIVED/PROCESSING on staging in the last `hours`, dated against the live deployment
  * (read-only). A row younger than `settleMs` may still be in flight, so it is re-read until it settles or the
- * wait runs out; only rows that arrived after the deploy and are no longer in flight count as stuck.
+ * wait runs out; only rows that arrived after the deploy and are no longer in flight count as stuck. `rows` is a
+ * newest-first sample (50); `stuckAfterDeployCount` counts every stuck row in SQL, so a backlog cannot hide one.
  */
 export async function unfinishedWebhooks({ hours = 6, settleMs = 120_000 } = {}) {
   const deploy = await deployedSha();
@@ -227,17 +228,19 @@ export async function unfinishedWebhooks({ hours = 6, settleMs = 120_000 } = {})
   if (!Array.isArray(rows) || !liveSince) return { liveSince: liveSince && new Date(liveSince).toISOString(), sha: deploy?.sha || null, error: Array.isArray(rows) ? deploy : rows };
   const now = Date.now();
   // A minute of rollout margin: a delivery in the first minute may still have reached the previous version.
+  const stuck = await d1("SELECT COUNT(*) AS n FROM gateway_webhook_events WHERE processing_status IN ('RECEIVED','PROCESSING') AND received_at > ? AND received_at <= ?", [Math.max(now - hours * 3_600_000, liveSince + 60_000), now - settleMs]);
+  if (!Array.isArray(stuck)) return { liveSince: new Date(liveSince).toISOString(), sha: deploy?.sha || null, error: stuck };
   const list = rows.map(row => ({ event: row.event_type, status: row.processing_status, at: new Date(Number(row.received_at)).toISOString(), afterDeploy: Number(row.received_at) > liveSince + 60_000, inFlight: now - Number(row.received_at) < settleMs }));
-  return { liveSince: new Date(liveSince).toISOString(), sha: deploy?.sha || null, rows: list, stuckAfterDeploy: list.filter(row => row.afterDeploy && !row.inFlight) };
+  return { liveSince: new Date(liveSince).toISOString(), sha: deploy?.sha || null, rows: list, stuckAfterDeploy: list.filter(row => row.afterDeploy && !row.inFlight), stuckAfterDeployCount: Number(stuck[0]?.n || 0) };
 }
 /** Record the webhook check as a result row, and a P1 finding for any webhook stuck since the live deploy. */
 export async function recordWebhookCheck(suite) {
   const w = await unfinishedWebhooks();
   const journey = "Razorpay webhooks since the live deploy (PAY-01)";
   if (!w.rows) { record({ suite, journey, combo: "staging D1", result: "BLOCKED", detail: JSON.stringify(w).slice(0, 400), evidence: [] }); return w; }
-  const summary = { stuckAfterDeploy: w.stuckAfterDeploy, inFlight: w.rows.filter(row => row.inFlight).length, leftBeforeDeploy: w.rows.filter(row => !row.afterDeploy).length, oldestBeforeDeploy: w.rows.filter(row => !row.afterDeploy).at(-1)?.at || null };
-  record({ suite, journey, combo: `none stuck RECEIVED/PROCESSING after the ${w.liveSince} deploy (${String(w.sha || "").slice(0, 8)})`, result: w.stuckAfterDeploy.length ? "FAIL" : "PASS", detail: JSON.stringify(summary).slice(0, 600), evidence: [] });
-  if (w.stuckAfterDeploy.length) finding({ suite, severity: "P1", area: "Payments", persona: "Customer", flow: "Razorpay webhooks", title: `${w.stuckAfterDeploy.length} Razorpay webhook(s) received after the live deploy are stuck unprocessed`, steps: "Read gateway_webhook_events in RECEIVED/PROCESSING since the active staging deployment, after a 2-minute settle", expected: "none", actual: JSON.stringify(w.stuckAfterDeploy).slice(0, 400), evidence: [] });
+  const summary = { stuckAfterDeployCount: w.stuckAfterDeployCount, stuckAfterDeploy: w.stuckAfterDeploy, inFlight: w.rows.filter(row => row.inFlight).length, leftBeforeDeploy: w.rows.filter(row => !row.afterDeploy).length, oldestBeforeDeploy: w.rows.filter(row => !row.afterDeploy).at(-1)?.at || null };
+  record({ suite, journey, combo: `none stuck RECEIVED/PROCESSING after the ${w.liveSince} deploy (${String(w.sha || "").slice(0, 8)})`, result: w.stuckAfterDeployCount ? "FAIL" : "PASS", detail: JSON.stringify(summary).slice(0, 600), evidence: [] });
+  if (w.stuckAfterDeployCount) finding({ suite, severity: "P1", area: "Payments", persona: "Customer", flow: "Razorpay webhooks", title: `${w.stuckAfterDeployCount} Razorpay webhook(s) received after the live deploy are stuck unprocessed`, steps: "Read gateway_webhook_events in RECEIVED/PROCESSING since the active staging deployment, after a 2-minute settle", expected: "none", actual: JSON.stringify(w.stuckAfterDeploy).slice(0, 400), evidence: [] });
   return w;
 }
 
