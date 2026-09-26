@@ -140,14 +140,16 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
         if(!covered){eligible=false;reasons.push(`Requested time is outside roster on ${date}`);}
       }
     }
+    // Boarding shares the host's home up to capacity. Every other job, overnight Pet Sitting included (it is at the
+    // customer's home), needs the provider to itself for its window plus the travel buffer.
+    const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
+    const conflict=input.serviceCode!=="boarding"&&existing.some(b=>overlaps(new Date(occurrence.start).getTime()-buffer,new Date(occurrence.end).getTime()+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime()));
+    if(conflict){eligible=false;reasons.push("Existing booking conflicts with travel/service buffer");}
     if(overnight){
       const used=existing.filter(b=>overlaps(new Date(occurrence.start).getTime(),new Date(occurrence.end).getTime(),new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())).reduce((sum,b)=>sum+(b.capacityUnits??b.petIds.length),0);
       workload=Math.max(workload,used);residualCapacity=Math.max(0,(provider.capacity??1)-used-input.petIds.length);
       if(used+input.petIds.length>(provider.capacity??1)){eligible=false;reasons.push(`Capacity ${provider.capacity??1} exceeded for the stay range`);}
     } else {
-      const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
-      const conflict=existing.some(b=>overlaps(new Date(occurrence.start).getTime()-buffer,new Date(occurrence.end).getTime()+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime()));
-      if(conflict){eligible=false;reasons.push("Existing booking conflicts with travel/service buffer");}
       const sameDay=existing.filter(b=>dateKey(b.scheduledStart,input.cityId)===dateKey(occurrence.start,input.cityId)).length;
       workload=Math.max(workload,sameDay);residualCapacity=Math.max(residualCapacity,Math.max(0,(provider.maxDailyJobs??6)-sameDay-1));
       if(sameDay>=(provider.maxDailyJobs??6)){eligible=false;reasons.push(`Daily job limit ${provider.maxDailyJobs??6} reached`);}
