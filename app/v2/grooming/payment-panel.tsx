@@ -7,7 +7,6 @@ import {
   loadV2GroomingCheckoutReadiness, saveV2GroomingDoorstep,
   type CheckoutState, type CustomerConfirmationProjection, type V2GroomingCheckoutReadiness,
 } from "../../../lib/v2/grooming-checkout-client";
-import { returnToBooking } from "../../../lib/customer-checkout-client";
 import { formatIndiaDateTimeMedium } from "../../../lib/india-time";
 import styles from "./grooming.module.css";
 
@@ -76,9 +75,6 @@ export default function V2GroomingPaymentPanel({ bookingId, initialAddress = "",
   }, [bookingId, refresh]);
 
   const confirmed = isV2GroomingConfirmationReady(projection, bookingId);
-  useEffect(()=>{
-    if(confirmed&&attempted)returnToBooking(bookingId);
-  },[confirmed,attempted,bookingId]);
   const paymentVerified = projection?.paymentStatus === "captured" || state.phase === "captured" || state.phase === "settled";
   const canPay = !preparing && !busy && !error && readiness?.locationReady === true &&
     projection?.bookingStatus === "payment_pending" && ["created", "authorised"].includes(projection.paymentStatus) &&
