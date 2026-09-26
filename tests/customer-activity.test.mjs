@@ -8,3 +8,12 @@ test('overdue and in-progress care remain reachable with future care',()=>{
 });
 test('history includes terminal outcomes, while subscriptions are separate',()=>{const rows=['completed','cancelled','refunded','assigned'].map(s=>booking(s,s,'2026-01-01'));assert.deepEqual(customerActivityBookings(rows,'completed').map(x=>x.id),['completed','cancelled','refunded']);assert.deepEqual(customerActivityBookings(rows,'subscriptions'),[]);});
 test('management links retain the exact booking identifier and only target supported routes',()=>{for(const [serviceCode,path] of [['grooming','grooming'],['boarding','boarding'],['pet_sitting','sitting'],['dog_walking','walking'],['pet_taxi','taxi']])assert.equal(customerBookingManageHref({id:'B & 1',serviceCode,status:'assigned',scheduledStart:''}),`/${path}/manage?bookingId=B%20%26%201`);assert.equal(customerBookingManageHref({id:'B',serviceCode:'pet_food',status:'assigned',scheduledStart:''}),null);});
+// QA: V2 "Manage service" for a Training booking opened the payment-return page, where nothing could be managed.
+test('V2 manages Training on its owned booking page; only a pending payment keeps the payment page',()=>{
+ const training=status=>({id:'B & 1',serviceCode:'dog_training',status,scheduledStart:''}),payment='/mobile-app/booking-confirmation?bookingId=B%20%26%201&payment=resume';
+ for(const status of ['confirmed','assigned','in_progress','completed','cancelled'])assert.equal(customerBookingManageHref(training(status),'v2'),'/v2/booking?bookingId=B%20%26%201',status);
+ assert.equal(customerBookingManageHref(training('payment_pending'),'v2'),payment,'money due before confirmation keeps its payment path');
+ for(const status of ['payment_pending','confirmed'])assert.equal(customerBookingManageHref(training(status)),payment,'legacy surfaces keep their confirmation view');
+ assert.equal(customerBookingManageHref({id:'B',serviceCode:'grooming',status:'assigned',scheduledStart:''},'v2'),'/grooming/manage?bookingId=B','other services still map through customerScopedHref');
+ assert.equal(customerBookingManageHref({id:'',serviceCode:'dog_training',status:'confirmed',scheduledStart:''},'v2'),null);
+});

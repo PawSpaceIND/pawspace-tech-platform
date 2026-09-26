@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import styles from "./service-proof-review.module.css";
+import PartnerProofReview from "./partner-proof-review";
+import { isPartnerProofService } from "../../lib/partner-proof-client";
 
 /*
  * Founder / ops verification of a partner's before-and-after service photos.
@@ -17,7 +19,7 @@ type Asset = {
   access_status: string; scan_status: string; review_status?: string | null; review_reason?: string | null;
   mime_type: string; size_bytes: number; created_at: number;
 };
-type Listing = { assets?: Asset[]; error?: string };
+type Listing = { assets?: Asset[]; serviceCode?: string; error?: string };
 
 const PURPOSES: Array<{ purpose: string; title: string }> = [{ purpose: "before_service", title: "Before photo" }, { purpose: "after_service", title: "After photo" }];
 const STATE_LABEL: Record<string, string> = {
@@ -40,6 +42,8 @@ export default function ServiceProofReview({ bookingId }: { bookingId: string })
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  // [PARTNER-02] Which service this booking's work order is for: Boarding, Pet Sitting and Pet Taxi proof is verified in its own panel.
+  const [service, setService] = useState<{ bookingId: string; serviceCode: string }>({ bookingId: "", serviceCode: "" });
 
   useEffect(() => {
     let active = true;
@@ -49,6 +53,7 @@ export default function ServiceProofReview({ bookingId }: { bookingId: string })
         const body = await response.json() as Listing;
         if (!active) return;
         if (!response.ok) { setState("unavailable"); setNote(response.status === 404 ? "No provider work order on this booking, so there is no service proof to verify." : body.error || "Service media could not be loaded."); return; }
+        setService({ bookingId, serviceCode: String(body.serviceCode || "") });
         setAssets((body.assets ?? []).filter(asset => asset.purpose === "before_service" || asset.purpose === "after_service"));
         setState("ready");
       })
@@ -74,6 +79,8 @@ export default function ServiceProofReview({ bookingId }: { bookingId: string })
 
   const latest = (purpose: string) => { const slot = assets.filter(asset => asset.purpose === purpose); return slot.find(asset => asset.proofReady) ?? slot[slot.length - 1]; };
   const pending = assets.filter(asset => asset.proofState === "awaiting_verification");
+  const partnerService = service.bookingId === bookingId ? service.serviceCode : "";
+  if (isPartnerProofService(partnerService)) return <PartnerProofReview bookingId={bookingId} service={partnerService} />;
 
   return <section className={styles.panel} aria-label="Service proof verification">
     <div className={styles.head}><div><h3>Service proof verification</h3><p>Before and after photos the partner uploaded for this booking. Approval releases them for job completion; the uploader can never approve their own file.</p></div>{state === "ready" && <p>{pending.length} awaiting verification</p>}</div>

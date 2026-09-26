@@ -3,16 +3,18 @@ import{ensureCommunicationTables}from"./communication-engine";
 import{ensureD1Once}from"./d1-ensure-once.js";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff,routeLeadToTeamQueue,type AiHandoffReason}from"./ai-human-handoff";
-import{currentStepReply,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
+import{BOT_ESCALATE_AFTER_MS,BOT_REMINDER_AFTER_MS,botFollowUp,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
 import{advanceBotSession,claimBotSession,ensureBotSessionTable,loadBotSession,loadBotSessionVersion,purgeStalePublicBotSessions,saveBotSession}from"./web-chat-bot-store";
 import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
-import{requestAiDraft}from"./ai-provider-adapter";
+import{aiProviderConnection,requestAiDraft}from"./ai-provider-adapter";
 import{canonicalCatalogueSnapshot}from"./ai-grounded-runtime-provider";
 import{listServiceControls}from"./service-control";
 import{createDegradationLog}from"./degraded-reads";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 import{inspectTrustSafetyText,redactTrustSafetyText}from"./trust-safety-governance";
+import{listTrainingPackages}from"./training-commercial-governance";
+import{DEFAULT_EXTRA_PET_PERCENT}from"./training-pricing";
 import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,type ApprovedSalesOffer}from"./ai-sales-offers";
 import{activeCrossSell}from"./ai-sales-offers";
 import type{VoiceSalesService}from"./voice-sales-specialists";
@@ -45,8 +47,40 @@ type PublicServiceEntry={code:string;name:string;group:string;enabled:boolean};
 /** Reads the public service directory. A failed read falls back to the pre-directory chat path and is recorded as a degraded turn, never passed off as an empty catalogue. */
 async function publicServiceDirectory(db:D1Database,sessionKey:string):Promise<PublicServiceEntry[]>{const degradation=createDegradationLog();const directory=await listServiceControls(db).then(rows=>rows.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled})),error=>degradation.note("service_controls",error,[] as PublicServiceEntry[]));if(degradation.degraded())await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'service_directory_degraded',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({degraded:degradation.entries()}),Date.now()).run().catch(()=>undefined);return directory;}
 const phrase=(value:string)=>` ${value.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()} `;
+/** The phrases a question may use to name a directory service, longest first. */
+const serviceAliases=(service:PublicServiceEntry)=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].map(phrase).filter(alias=>alias.trim()).sort((a,b)=>b.length-a.length);
 /** Returns the service only when the question names exactly one distinct service; multi-service questions go to the general path. */
-function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].some(alias=>phrase(alias).trim()&&q.includes(phrase(alias))));return matches.length===1?matches[0]:null;}
+function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>serviceAliases(service).some(alias=>q.includes(alias)));return matches.length===1?matches[0]:null;}
+/** Words that only ask whether a service is offered: "Do you do boarding?", "Boarding?", "is grooming available". */
+const AVAILABILITY_WORDS=new Set(["a","an","any","are","available","availability","can","currently","do","does","get","got","guys","have","has","hello","hey","hi","i","is","now","offer","offered","offering","offers","ok","okay","pawspace","please","pls","provide","provided","provides","providing","service","services","still","the","there","u","we","yes","you","your"]);
+/**
+ * The directory only knows whether a service is offered, so it answers only a bare service question: the
+ * service's name and availability words, nothing else. What a service includes, care advice or a
+ * comparison is a real question for the model.
+ */
+function isBareServiceQuestion(service:PublicServiceEntry,question:string){let rest=phrase(question);for(const alias of serviceAliases(service))while(rest.includes(alias))rest=rest.replace(alias," ");return rest.trim().split(" ").filter(Boolean).every(word=>AVAILABILITY_WORDS.has(word));}
+const DETAIL_QUESTION=/\b(includ\w*|inclusions?|cover(?:s|ed)?|comes? with|details?)\b/i;
+/**
+ * The directory's own answer. Asked what a service includes, it gives the approved public knowledge
+ * written for that service (its title names the service) when there is any - the directory itself holds
+ * only names and availability, so nothing beyond those records is ever stated.
+ */
+function directoryAnswer(service:PublicServiceEntry,question:string,knowledge:Array<{title:string;excerpt:string}>){
+ if(!service.enabled)return`${service.name} is temporarily unavailable on PawSpace.`;
+ const offered=`PawSpace offers ${service.name}. I can help you understand the service or start from the ${service.name} section in PawSpace.`;
+ if(isBareServiceQuestion(service,question))return`Yes. ${offered}`;
+ const aliases=serviceAliases(service),approved=DETAIL_QUESTION.test(question)?knowledge.find(item=>item.excerpt&&aliases.some(alias=>phrase(item.title).includes(alias))):undefined;
+ return approved?`PawSpace offers ${service.name}. From PawSpace's approved information: ${approved.excerpt}`:offered;
+}
+
+const PRICE_QUESTION=/\b(price|prices|pricing|cost|costs|fee|fees|charge|charges|package|packages|plan|plans|how much|rate|rates)\b/i;
+const inr=(value:unknown)=>`₹${Number(value).toLocaleString("en-IN")}`;
+/**
+ * A Training price or package question is answered from the governed Training catalogue itself, the same
+ * rows the booking quote prices from, so the assistant can never quote a price the booking will not charge.
+ * Staging (26 Sep 2026) answered "PawSpace offers Training…" with no packages or prices at all.
+ */
+async function trainingCatalogueAnswer(db:D1Database){const packages=await listTrainingPackages(db).catch(()=>[] as Row[]);if(!packages.length)return null;const programme=packages.find(item=>!Number(item.meet_and_greet)),extra=Number(programme?.extra_pet_percent??DEFAULT_EXTRA_PET_PERCENT);const lines=packages.map(item=>Number(item.meet_and_greet)?`• ${text(item.name)}: one home visit to meet a trainer, ${inr(item.base_price)}, paid in full`:`• ${text(item.name)}: ${Number(item.sessions)} sessions within ${Number(item.validity_days)} days, ${inr(item.base_price)}`);return`PawSpace Dog Training plans (prices are for one dog; each extra dog adds ${extra}% of the plan price):\n${lines.join("\n")}\nProgrammes can be paid in full or 50% upfront. Open the Training section to choose a plan, a trainer and your dates.`;}
 
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
  await ensureAiWebChatTables(db);
@@ -56,12 +90,28 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const grounded=await publicAiWebKnowledge(db,{query:inspected.redacted}),history=publicHistory(input.history);
  const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted);
- if(matchedService){
-  const output=matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`;
-  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
+ const directoryReply=async(service:PublicServiceEntry,providerFailure?:string)=>{
+  const output=directoryAnswer(service,inspected.redacted,grounded.knowledge);
+  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,...(providerFailure?{providerFailure}:{}),serviceCode:service.code,serviceEnabled:service.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
   return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
+ };
+ /* The directory answers "is it offered?". Every question naming a service used to stop here, so "what is
+  * included in boarding?" or a question about an anxious dog's stay got the same one-liner and the model
+  * never saw it. Now only a bare service question does; anything more goes to the model below, grounded
+  * like every other question, and the directory answer is its fallback when no provider answers. */
+ if(matchedService){
+  // A Training price or package question is answered from the governed Training catalogue, before the model.
+  const catalogueAnswer=matchedService.enabled&&matchedService.code==="dog_training"&&PRICE_QUESTION.test(inspected.redacted)?await trainingCatalogueAnswer(db):null;
+  if(catalogueAnswer){
+   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_training_catalogue_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
+   return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output:catalogueAnswer,provider:"canonical_training_catalogue",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
+  }
+  if(isBareServiceQuestion(matchedService,inspected.redacted))return directoryReply(matchedService);
+  // No provider configured: the directory answers as it always did, without the reads a model call needs.
+  if(!(await aiProviderConnection("chat")).connected)return directoryReply(matchedService,"not_configured");
  }
- if(!grounded.knowledge.length){
+ // A named service is grounding in its own right (directory and catalogue), so it does not need a knowledge match.
+ if(!grounded.knowledge.length&&!matchedService){
   const enabledServices=serviceDirectory.filter(service=>service.enabled).map(service=>service.name).join(", ");
   const output=enabledServices?`I don’t have a verified PawSpace answer for that yet. Current PawSpace services include ${enabledServices}. For account-specific help, use My PawSpace after signing in.`:"I don’t have a verified PawSpace answer for that yet. I can help with Grooming, Dog Training, Boarding, Pet Sitting, Pet Taxi, Dog Walking, Fresh Food, bookings and other approved PawSpace information. For account-specific help, use My PawSpace after signing in.";
   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"knowledge_missing",providerConnected:false,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
@@ -75,6 +125,8 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
   maxTokens:650,channel:"chat",intent:"service_info",
  });
  const providerConnected=result.connected;
+ // No provider answered (none configured, a kill switch, a budget or an outage): a named service keeps the directory's answer, as before.
+ if(!result.connected&&matchedService)return directoryReply(matchedService,result.failure);
  /* Public chat shows the model's words directly, so an offer the server did not approve (a made-up code,
   * "20% off") is replaced before a visitor sees it. */
  const offerBlocked=providerConnected&&!offerClaimsApproved(result.text,offers);
@@ -157,7 +209,7 @@ export function chatSalesServiceNamed(message:string):VoiceSalesService|null{
  return null;
 }
 /** The service this chat thread is selling: the one named now, else the one named in it in the last two hours. */
-async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
+export async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
  const named=chatSalesServiceNamed(message),now=Date.now();
  const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
  let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training")remembered=service;}catch{}
@@ -210,7 +262,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  const turn=result.turn&&typeof result.turn==="object"?result.turn as Row:null;
  if(turn){await mirrorAiReply(db,{threadId,customerId:input.customerId,turn});if(result.duplicatePrevented)result={...result,turn:replayedTurnFromAny(turn)} as typeof result;}
- await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now()).run();
+ /* Why a turn went to a person, for whoever diagnoses it: the handoff reason and the provider failure class
+  * or thrown error type (never a message, prompt or credential). It is recorded here, not shown to the customer. */
+ let providerFailure:string|null=null;
+ if("providerFailure"in result){providerFailure=result.providerFailure??null;const shown={...result};delete shown.providerFailure;result=shown;}
+ await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,handoffReason:text(turn?.handoffReason??turn?.handoff_reason)||null,...(providerFailure?{providerFailure}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now()).run();
  const handoff=turn&&text(turn.outcome)==="handoff"?await activeHandoff(db,threadId):undefined;
  return{duplicatePrevented:Boolean(prior),messageId,threadId,ai:result,...(handoff?{handoff}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected};
 }
@@ -234,6 +290,8 @@ export async function customerWebChatTranscript(db:D1Database,input:{actor:Authe
  if(threadId){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
  else threadId=await currentWebChatThread(db,input.customerId);
  if(!threadId)return{threadId:null,messages:[] as WebChatTranscriptMessage[],handoff:{active:false,status:null}};
+ // A booking PawSpace AI made here whose payment has since been verified is confirmed in the conversation.
+ await announcePaidAiBookings(db,{threadId}).catch(()=>undefined);
  const limit=Math.min(200,Math.max(1,Math.floor(Number(input.limit)||100)));
  // A customer message and the bot's reply are often written in the same millisecond; insertion order
  // (rowid), not the random message id, keeps the reply after the message it answers.
@@ -250,6 +308,41 @@ export async function customerWebChatTranscript(db:D1Database,input:{actor:Authe
 export const WEB_CHAT_BOT_TEMPLATE_KEY="web_app_chat_bot";
 
 export const loadWebChatBotState=loadBotSession,saveWebChatBotState=saveBotSession;
+
+/**
+ * "Payment received - your booking is confirmed", in the conversation where PawSpace AI took the booking.
+ * The chat link sends the customer to pay; the verified Razorpay capture (never the customer's word) marks
+ * the payment captured, and the next chat read or follow-up sweep says so once - on web chat as a
+ * PawSpace message, on WhatsApp as an in-session reply.
+ */
+export async function announcePaidAiBookings(db:D1Database,input:{threadId?:string;asOf?:number;limit?:number}={}){
+ await ensureAiWebChatTables(db);
+ const asOf=input.asOf??Date.now(),limit=Math.min(100,Math.max(1,input.limit??25));
+ let rows:Row[]=[];
+ try{rows=(await db.prepare(`SELECT o.id offer_id,o.thread_id,o.customer_id,b.id booking_id,b.package_name FROM voice_sales_offers o JOIN booking_payments p ON p.booking_id=json_extract(o.result_json,'$.bookingId') JOIN canonical_bookings b ON b.id=p.booking_id WHERE o.status='completed' AND p.status='captured' AND o.completed_at>=? ${input.threadId?"AND o.thread_id=?":""} AND NOT EXISTS (SELECT 1 FROM ai_web_chat_events e WHERE e.id='ai-booking-paid:'||o.id) ORDER BY o.completed_at LIMIT ?`).bind(...(input.threadId?[asOf-7*86400000,input.threadId,limit]:[asOf-7*86400000,limit])).all<Row>()).results;}
+ catch(error){if(/no such table/i.test(String((error as Error)?.message)))return{announced:0};throw error;}
+ let announced=0;
+ for(const row of rows){
+  const threadId=text(row.thread_id),customerId=text(row.customer_id),offerId=text(row.offer_id);
+  // Claimed first, so a chat read and the sweep never both announce the same payment.
+  const claim=await db.prepare("INSERT OR IGNORE INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'ai_booking_paid','ai-sales-offer',?,?)").bind(`ai-booking-paid:${offerId}`,threadId,customerId,JSON.stringify({offerId,bookingId:text(row.booking_id)}),asOf).run();
+  if(Number(claim.meta?.changes)!==1)continue;
+  const message=`Payment received - your ${text(row.package_name)||"PawSpace"} booking is confirmed. Thank you! You can see it any time under Your bookings.`;
+  // A send that fails releases the claim, so the next chat read or sweep tries again.
+  const release=()=>db.prepare("DELETE FROM ai_web_chat_events WHERE id=?").bind(`ai-booking-paid:${offerId}`).run();
+  try{
+   const inbound=await db.prepare("SELECT channel,provider FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();
+   if(text(inbound?.channel)==="whatsapp"){
+    // The same transport rule as a live WhatsApp turn: an unknown provider is the sandbox simulator.
+    const{queueWhatsAppUatOutbound,whatsappUatProviders}=await import("./whatsapp-uat-adapter");const value=text(inbound?.provider),provider=(whatsappUatProviders as readonly string[]).includes(value)?value as (typeof whatsappUatProviders)[number]:"sandbox_simulator";
+    const queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:message,idempotencyKey:`ai-booking-paid:${offerId}`,createdBy:"ai-sales-offer",now:asOf});
+    if(!queued.queued){await release();continue;}
+   }else await postBotMessage(db,{threadId,customerId,reply:{text:message,choices:[],inputHint:null},idempotencyKey:`ai-booking-paid:${offerId}`});
+  }catch{await release().catch(()=>undefined);continue;}
+  announced++;
+ }
+ return{announced};
+}
 
 async function postBotMessage(db:D1Database,input:{threadId:string;customerId:string;reply:BotReply;idempotencyKey:string}){
  const now=Date.now();
@@ -336,33 +429,32 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
  * enquiry goes to the sales queue so a person follows it up. (A visitor's lead already exists from the
  * moment they gave their number, so the lead's own response clock covers them.)
  * --------------------------------------------------------------------------------------------------- */
-export const WEB_CHAT_BOT_NUDGE_AFTER_MS=15*60_000;
-export const WEB_CHAT_BOT_ESCALATE_AFTER_MS=2*60*60_000;
+/** @deprecated kept for callers; the timings live in lib/web-chat-bot.ts (botFollowUp). */
+export const WEB_CHAT_BOT_NUDGE_AFTER_MS=BOT_REMINDER_AFTER_MS;
+export const WEB_CHAT_BOT_ESCALATE_AFTER_MS=BOT_ESCALATE_AFTER_MS;
 
 export async function runWebChatBotFollowUpSweep(db:D1Database,input:{asOf?:number;limit?:number}={}){
  const asOf=input.asOf??Date.now(),limit=Math.min(200,Math.max(1,input.limit??50));
  await ensureBotSessionTable(db);await ensureAiWebChatTables(db);
- const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-WEB_CHAT_BOT_NUDGE_AFTER_MS,limit).all<Row>();
- let nudged=0,escalated=0,skipped=0;
+ const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-BOT_REMINDER_AFTER_MS,limit).all<Row>();
+ let nudged=0,takenOver=0,escalated=0,skipped=0;
  for(const row of rows.results){
   const ref=text(row.session_ref),customerId=ref.slice("customer:".length),{state,version}=await loadBotSessionVersion(db,ref);
-  if(state.status!=="collecting"){skipped++;continue;}
+  const action=botFollowUp(state,{asOf,idleSince:Number(row.updated_at),signedIn:true});
+  if(action.kind==="wait"){skipped++;continue;}
   const threadId=await currentWebChatThread(db,customerId);
   if(!threadId||(await activeHandoff(db,threadId)).active){skipped++;continue;}
-  if(!state.nudgedAt){
-   const reply=currentStepReply(state,true,"Still there? Let's finish your details so I can book this for you. ");
-   if(!reply){skipped++;continue;}
-   // Claimed first: a customer answering at this moment wins, and is not nudged about a question they just answered.
-   if(!(await claimBotSession(db,ref,{...state,nudgedAt:asOf},version,asOf))){skipped++;continue;}
-   await postBotMessage(db,{threadId,customerId,reply,idempotencyKey:`web-chat-bot-nudge:${threadId}:${state.flow}:${state.step}`});nudged++;continue;
-  }
-  if(asOf-state.nudgedAt<WEB_CHAT_BOT_ESCALATE_AFTER_MS){skipped++;continue;}
-  if(!(await claimBotSession(db,ref,{...state,status:"done"},version,asOf))){skipped++;continue;}
-  await postBotMessage(db,{threadId,customerId,reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},idempotencyKey:`web-chat-bot-escalate:${threadId}:${state.flow}`});
-  await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;
+  // Claimed first: a customer answering at this moment wins, and is not reminded of a question they just answered.
+  if(!(await claimBotSession(db,ref,action.next,version,asOf))){skipped++;continue;}
+  // A message that fails to post puts the session back as it was, so the next sweep tries again.
+  try{await postBotMessage(db,{threadId,customerId,reply:action.reply,idempotencyKey:`web-chat-bot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`});}
+  catch{await claimBotSession(db,ref,state,(version??0)+1,Number(row.updated_at)).catch(()=>undefined);skipped++;continue;}
+  if(action.kind==="escalate"){await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;}
+  else if(action.kind==="takeover")takenOver++;else nudged++;
  }
  const purged=await purgeStalePublicBotSessions(db,asOf);
- return{scanned:rows.results.length,nudged,escalated,skipped,purgedVisitorSessions:purged,externalDelivery:false};
+ const paid=await announcePaidAiBookings(db,{asOf});
+ return{scanned:rows.results.length,nudged,takenOver,escalated,skipped,purgedVisitorSessions:purged,paidAnnounced:paid.announced,externalDelivery:false};
 }
 
 /**

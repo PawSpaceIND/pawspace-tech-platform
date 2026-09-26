@@ -22,6 +22,7 @@ import {
   seedCanonicalTrip, seedVehicle, taxiUrl,
 } from "./helpers/taxi-harness.mjs";
 import { seedSittingBooking, stayUrl } from "./helpers/stay-harness.mjs";
+import { atPickupTime } from "./helpers/taxi-pickup-time.mjs";
 
 installWorkersHooks("__LP_REFUSAL_DB__", "__LP_REFUSAL_ENV__");
 
@@ -43,9 +44,9 @@ function world(env = {}) {
   return { sqlite, db };
 }
 
-const drive = (db, trip, action, extra = {}) => taxi.mutateTaxiBooking(db, {
+const drive = async (db, trip, action, extra = {}) => (action === "confirm_pickup" && await atPickupTime(db, trip.bookingId), taxi.mutateTaxiBooking(db, {
   bookingId: trip.bookingId, action, actorId: `driver:${trip.providerId}`, idempotencyKey: nextKey(action), ...extra,
-});
+}));
 const sample = (db, trip, index) => proof.mutateTaxiProof(db, {
   bookingId: trip.bookingId, action: "record_location_sample", actorId: `driver:${trip.providerId}`,
   idempotencyKey: nextKey("sample"), latitude: 12.97 + index / 1000, longitude: 77.64 + index / 1000, accuracyMeters: 9,
@@ -165,4 +166,27 @@ test("LP-N05 an expired sitter offer is refused in the sitter's own words", asyn
   assert.match(String(body.error), /Operations/i, "and says who is already handling it");
   assert.notEqual(String(body.error), "Unable to update Sitting lifecycle");
   assert.equal(body.code, "sitting_offer_expired");
+});
+
+// PARTNER-03: a Pet Taxi trip could be picked up, started and completed days before the booked pickup, raising
+// payment due and accruing payout early. The pickup handover now opens 30 minutes before the booked time.
+test("LP-N06 a Pet Taxi pickup cannot be confirmed days before the booked pickup time", async () => {
+  const { sqlite, db } = world();
+  const trip = seedCanonicalTrip(sqlite, { providerId: DRIVER });
+  await taxi.ensureTaxiLifecycleTables(db);
+  await seedActiveCommercialTerm(db);
+  await drive(db, trip, "accept");
+  await drive(db, trip, "assign_vehicle", { vehicleId: seedVehicle(sqlite, { providerId: DRIVER }) });
+  const pickupAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id=?").run(pickupAt, trip.bookingId);
+  const early = await taxi.mutateTaxiBooking(db, { bookingId: trip.bookingId, action: "confirm_pickup", actorId: `driver:${trip.providerId}`, idempotencyKey: nextKey("early"), handoverMethod: "owner" }).then(() => null, error => error);
+  assert.ok(early instanceof Response, "an early pickup must be refused");
+  assert.equal(early.status, 409);
+  const body = await early.json();
+  assert.equal(body.code, "taxi_pickup_too_early");
+  assert.equal(body.scheduledStart, pickupAt);
+  assert.equal(tripStatus(sqlite, trip), "vehicle_assigned", "nothing moved");
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id=?").run(new Date(Date.now() + 20 * 60_000).toISOString(), trip.bookingId);
+  await taxi.mutateTaxiBooking(db, { bookingId: trip.bookingId, action: "confirm_pickup", actorId: `driver:${trip.providerId}`, idempotencyKey: nextKey("ontime"), handoverMethod: "owner" });
+  assert.equal(tripStatus(sqlite, trip), "pickup_confirmed", "within 30 minutes of pickup the handover opens");
 });
