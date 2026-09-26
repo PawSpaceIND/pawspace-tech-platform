@@ -3,18 +3,19 @@
 // portal JSON section shapes; they NEVER file. Every artifact is a versioned, maker/checker DRAFT
 // with liveFilingEnabled:false, exactly like lib/gst-accounting.ts's monthly package and GSTR-9.
 //
-// Output-tax truth has two disjoint sources and both are honoured (same rule as
-// lib/finance-monthly-close.ts):
+// Output tax is read from two disjoint sources (same rule as lib/finance-monthly-close.ts):
 //   1. finance_invoices / finance_invoice_lines  - the canonical, component-split, POS/HSN-aware path
 //      (this is what becomes line-level b2b / b2cs / cdnr / hsn in GSTR-1).
-//   2. booking_invoices.tax_amount               - the five service verticals, AGGREGATE only (no
-//      rate / place-of-supply / HSN). It cannot become compliant GSTR-1 line detail, so it is
-//      surfaced in a reconciliation block, never fabricated into invoice rows.
-// For source 2, only PawSpace's OWN output GST is its statutory liability: on a marketplace supply that is
-// the COMMISSION GST alone; the provider's supply GST (carved from the GST-inclusive order) is the
-// provider's liability, remitted via s52 GST TCS / GSTR-8 - NOT PawSpace GSTR-1/3B. serviceVerticalOutputTax
-// derives the split from provider_payout_computations and falls back to the full tax for any booking without
-// a payout split, so the liability is never understated.
+//   2. booking_invoices.tax_amount               - the service verticals that write a booking invoice,
+//      AGGREGATE only (no rate / place-of-supply / HSN). It cannot become compliant GSTR-1 line detail,
+//      so it is surfaced in a reconciliation block, never fabricated into invoice rows.
+// NOT read yet: training_finance_invoices, the funeral / relocation journals, food and ledger account
+// 2130-GST Payable - that GST does not reach a return today (audit G8, the filing work package).
+// For source 2, serviceVerticalOutputTax splits PawSpace's OWN output GST using provider_payout_computations.
+// The 18/118 carve that split relied on was retired on 26 Sept 2026 (owner decision 2): new rows carry
+// provider_gst_deducted=0, so until the filing work package files PawSpace's GST straight from the payout row
+// (platform_gst on taxable_commission, pawspace_gst_on_order on own_supply_taxable_value) the full invoice tax
+// is counted - conservative, the liability is never understated.
 //
 // No tax rate is decided here: rates/components come from the tax_snapshot the issuing module already
 // computed. Missing Finance/CA-approved configuration throws ConfigurationRequired (HTTP 409), never

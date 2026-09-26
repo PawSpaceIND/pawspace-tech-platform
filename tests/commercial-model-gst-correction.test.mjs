@@ -75,21 +75,21 @@ test("commission_standard splits a GST-inclusive order true-inclusive: ₹1000 @
 
   const p = await terms.computeOrderPayout(db, { bookingId: "BK1", actorId: FINANCE });
   assert.equal(p.engagementModel, "commission_standard");
-  assert.equal(p.providerGstDeducted, 152.54, "embedded GST carved off the inclusive order (1000*18/118)");
-  assert.equal(p.providerGrossShare, 593.22, "70% of the 847.46 net pool");
-  assert.equal(p.providerNetPayout, 593.22, "provider is paid their share of the net pool, no further deduction");
-  assert.equal(p.platformFee, 254.24, "PawSpace commission = the rest of the net pool");
-  assert.equal(p.platformGst, 45.76, "PawSpace GST on its commission only (254.24*0.18)");
+  assert.equal(p.providerGstDeducted, 0, "owner decision 2 (26 Sept 2026): no GST is taken off the paid amount before the split");
+  assert.equal(p.providerGrossShare, 700, "70% of the 1000 the customer paid");
+  assert.equal(p.providerNetPayout, 700, "provider is paid their share of the paid amount, no further deduction");
+  assert.equal(p.platformFee, 300, "PawSpace commission = the rest of the paid amount");
+  assert.equal(p.platformGst, 54, "PawSpace GST on its commission only (18% of 300, the one GST setting's default)");
   assert.equal(p.pawspaceGstOnOrder, 0);
   assert.equal(p.gstExempt, false);
-  assert.equal(p.payoutBasis, "net_pool");
+  assert.equal(p.payoutBasis, "full_order");
   // The whole customer GST reconciles: PawSpace's own (45.76) + the provider's supply GST (106.78) = 152.54.
-  assert.equal(Math.round((p.platformGst + (p.providerGstDeducted - p.platformGst)) * 100) / 100, 152.54);
+  assert.equal(Math.round((p.platformGst + p.providerGstDeducted) * 100) / 100, 54, "the only GST on the order is PawSpace's 54 on its commission");
 
   const row = sqlite.prepare("SELECT provider_net_payout,platform_fee,platform_gst,provider_gst_deducted FROM provider_payout_computations WHERE booking_id='BK1'").get();
-  assert.equal(Number(row.provider_net_payout), 593.22);
-  assert.equal(Number(row.platform_gst), 45.76);
-  assert.equal(Number(row.provider_gst_deducted), 152.54);
+  assert.equal(Number(row.provider_net_payout), 700);
+  assert.equal(Number(row.platform_gst), 54);
+  assert.equal(Number(row.provider_gst_deducted), 0);
 });
 
 test("commission_groomer keeps the full-order split unchanged (no carve; GST on the fee only)", async () => {
@@ -136,8 +136,8 @@ test("direct_employee carves the embedded GST from the inclusive order (18/118),
 
   const d = await terms.computeOrderPayout(db, { bookingId: "BKD", actorId: FINANCE });
   assert.equal(d.directInvoice, true);
-  assert.equal(d.pawspaceGstOnOrder, 180, "embedded GST on a ₹1180 inclusive order (1180*18/118), not 1180*0.18=212.4");
-  assert.equal(d.platformFee, 1000, "the GST-exclusive taxable value PawSpace recognizes");
+  assert.equal(d.pawspaceGstOnOrder, 212.4, "owner decision 3: own-supply GST is 18% of the ₹1180 paid (percent_of_base), not 1180*18/118=180");
+  assert.equal(d.platformFee, 967.6, "what PawSpace keeps after its own-supply GST");
   assert.equal(d.platformGst, 0);
   assert.equal(d.providerNetPayout, 0, "no provider payout for a direct employee");
   assert.equal(d.payoutBasis, "full_order");
@@ -160,16 +160,16 @@ test("statutory package + monthly close count only PawSpace's commission GST as 
   sqlite.prepare("INSERT INTO service_invoice_ownership VALUES ('bi1','pawspace_india','reg_ka_29',?,?,?)").run(MAKER,"Explicit test invoice ownership",Date.now());
 
   const pkg = await gst.generateStatutoryPackage(db, { entityId: "pawspace_india", registrationId: "reg_ka_29", periodCode: "2026-07", reason: "close" }, MAKER);
-  assert.equal(pkg.summary.serviceOutputTax, 45.76, "package own output = commission GST only");
-  assert.equal(pkg.summary.outputTax, 45.76, "no B2B ledger output, so total own output = commission GST");
+  assert.equal(pkg.summary.serviceOutputTax, 152.54, "INTERIM until work package B: with no carve the return still counts the full invoice tax; the owner's figure is 54 on 300");
+  assert.equal(pkg.summary.outputTax, 152.54, "INTERIM until work package B (owner: 54)");
   assert.equal(pkg.summary.taxCollectedFromCustomers, 152.54);
-  assert.equal(pkg.summary.providerSupplyGstCollectedOnBehalf, 106.78);
+  assert.equal(pkg.summary.providerSupplyGstCollectedOnBehalf, 0, "nothing is carved for the provider any more");
 
   const view = await close.monthlyCloseView(db, { period: "2026-07", actorId: FINANCE });
-  assert.equal(view.gst.outputTax, 45.76, "monthly-close net-payable output is commission-only, matching GSTR-3B");
+  assert.equal(view.gst.outputTax, 152.54, "INTERIM until work package B: matches GSTR-3B, which still counts the full invoice tax (owner: 54)");
   assert.equal(view.gst.taxCollectedFromCustomers, 152.54);
-  assert.equal(view.gst.providerSupplyGstCollectedOnBehalf, 106.78);
-  assert.equal(view.gst.netPayable, 45.76, "no eligible ITC seeded, so net payable = own output");
+  assert.equal(view.gst.providerSupplyGstCollectedOnBehalf, 0, "nothing is carved for the provider any more");
+  assert.equal(view.gst.netPayable, 152.54, "no eligible ITC seeded, so net payable = own output (INTERIM until work package B)");
 });
 
 test("GSTR-3B counts only PawSpace's commission GST as output; the provider-supply GST is disclosed for GSTR-8", async () => {
@@ -190,10 +190,10 @@ test("GSTR-3B counts only PawSpace's commission GST as output; the provider-supp
   sqlite.prepare("INSERT INTO service_invoice_ownership VALUES ('bi1','pawspace_india','reg_ka_29',?,?,?)").run(MAKER,"Explicit test invoice ownership",Date.now());
 
   const r = await returns.generateGstr3b(db, { entityId: ENTITY, registrationId: REG, periodCode: "2026-07" }, MAKER);
-  assert.equal(r.summary.serviceVerticalTax, 45.76, "PawSpace's own output GST = the commission GST only");
+  assert.equal(r.summary.serviceVerticalTax, 152.54, "INTERIM until work package B: the return still counts the full invoice tax; the owner's figure is 54 on 300");
   assert.equal(r.summary.taxCollectedFromCustomers, 152.54, "the full GST collected from the customer is disclosed");
-  assert.equal(r.summary.providerSupplyGstCollectedOnBehalf, 106.78, "the provider-supply GST is disclosed for s52 TCS/GSTR-8");
-  assert.equal(r.summary.totalOutputTax, 45.76, "no B2B ledger output this period, so total = commission GST");
-  assert.equal(r.payload.sup_details.osup_det.txval, 254.24, "outward taxable value = the commission base, not the full order");
+  assert.equal(r.summary.providerSupplyGstCollectedOnBehalf, 0, "nothing is carved for the provider any more");
+  assert.equal(r.summary.totalOutputTax, 152.54, "no B2B ledger output this period (INTERIM until work package B; owner: 54)");
+  assert.equal(r.payload.sup_details.osup_det.txval, 847.46, "INTERIM until work package B: taxable value still derived from the invoice; the owner's figure is 300");
   assert.equal(r.liveFilingEnabled, false);
 });

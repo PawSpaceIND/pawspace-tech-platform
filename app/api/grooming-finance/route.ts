@@ -2,6 +2,7 @@ import{invoiceTotal}from"../../../lib/invoice-total";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
 import{ensureGroomingInvoiceTables,issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{gstSettingDirectory,publishGstSetting}from"../../../lib/gst-setting";
 
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
@@ -63,6 +64,8 @@ export async function GET(request:Request){try{
   await authorize(request,"finance.view");
   const db=await database();
   const url=new URL(request.url);
+  // The ONE GST setting for every service (owner decision 1): rate + method, per city with an all-cities default.
+  if(url.searchParams.get("scope")==="gst_setting")return Response.json({data:await gstSettingDirectory(db)});
   if(url.searchParams.get("scope")==="tax_policy"){await ensureGroomingInvoiceTables(db);const cityId=String(url.searchParams.get("cityId")||"blr").trim().toLowerCase();const policy=await db.prepare("SELECT city_id,tax_mode,tax_rate,status,version,effective_from,updated_by,reason,updated_at FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first();return Response.json({data:{cityId,policy:policy??null}});}
   return Response.json(await loadFinanceSnapshot(db));
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
@@ -75,6 +78,7 @@ export async function POST(request:Request){try{
   let data:unknown;
   if(action==="save_tax_policy")data=await saveGroomingTaxPolicy(db,{cityId:String(body.cityId||"blr"),taxMode:String(body.taxMode||"") as"inclusive"|"exclusive",taxRate:Number(body.taxRate),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});
   else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
+  else if(action==="save_gst_setting"){const saved=await publishGstSetting(db,{cityId:String(body.cityId||"*"),ratePercent:Number(body.ratePercent),method:String(body.method||""),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});await securityAudit(db,actor,"finance.gst_setting.published","gst_setting",saved.cityId,"completed",{settingId:saved.settingId,ratePercent:saved.ratePercent,method:saved.method,effectiveFrom:saved.effectiveFrom,version:saved.version,groomingQuoteCitiesUpdated:saved.groomingQuoteCitiesUpdated});return Response.json({data:saved});}
   else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
   await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
   return Response.json({data});

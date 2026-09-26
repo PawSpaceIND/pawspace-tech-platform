@@ -87,7 +87,7 @@ test("funeral manual orders charge no GST by default and exactly 18% once switch
   await funeral.setFuneralManualGstMode(db, { enabled: true, actorId: OPS });
   const withGst = await funeral.recordFuneralConvertedOrder(db, { customerName: "Sana Iqbal", phone: "9876500002", paymentMethod: "card", orderValue: 12000, orderDate: "2026-07-11", actorId: OPS });
   assert.equal(withGst.gstEnabled, true);
-  assert.equal(withGst.gstAmount, 1830.51, "18% tax is extracted from the canonical tax-inclusive Rs.12,000 customer gross");
+  assert.equal(withGst.gstAmount, 0, "owner decision 4 (26 Sept 2026): funeral / memorial is GST exempt even with the legacy toggle on");
   assert.equal(withGst.totalAmount, 12000, "canonical Funeral pricing remains the customer-gross amount when tax is enabled");
 
   // The toggle applies to future orders only: the earlier order is untouched.
@@ -100,7 +100,7 @@ test("funeral manual orders charge no GST by default and exactly 18% once switch
 
   // Rounding is money-exact, not floating-point noise.
   const odd = await funeral.recordFuneralConvertedOrder(db, { customerName: "Odd Amount", phone: "9876500003", paymentMethod: "cash", orderValue: 8333.33, orderDate: "2026-07-12", actorId: OPS });
-  assert.equal(odd.gstAmount, 1271.19, "inclusive 18% tax is extracted and rounded to paise");
+  assert.equal(odd.gstAmount, 0, "owner decision 4: funeral / memorial is GST exempt at any amount");
   assert.equal(odd.totalAmount, 8333.33);
 
   await assert.rejects(() => funeral.setFuneralManualGstMode(db, { enabled: true, gstRate: 18, actorId: OPS }), /fraction between 0 and 1/);

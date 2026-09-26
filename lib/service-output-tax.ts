@@ -4,15 +4,16 @@ import {ensureServiceInvoiceOwnershipTables,ServiceInvoiceOwnershipRequired,type
 // collected on the service provider's behalf. Every consumer (monthly close, statutory package, GSTR-9,
 // GSTR-1/3B/9C) must use this so every "output tax" figure means the same thing.
 //
-// Confirmed commercial model: all customer prices are GST-INCLUSIVE. On a MARKETPLACE supply
-// (commission_standard) only the COMMISSION GST is PawSpace's own output tax; the provider's supply GST
-// (carved from the inclusive order) is the PROVIDER's liability, remitted via s52 GST TCS / GSTR-8 - never
-// in PawSpace's own GSTR-1/3B. The engagement-model-aware split already lives in
-// provider_payout_computations:
-//   - provider_gst_deducted>0  => marketplace commission_standard: PawSpace own = platform_gst (commission);
+// Owner decisions of 26 Sept 2026: PawSpace's own GST is the one GST setting applied to its COMMISSION on a
+// commission job and to the whole paid amount on its own supply; nothing is carved off the order for the
+// provider any more. provider_payout_computations records exactly that (platform_gst + taxable_commission,
+// pawspace_gst_on_order + own_supply_taxable_value), but THIS function still reads the older signal:
+//   - provider_gst_deducted>0  => a LEGACY carve row: PawSpace own = platform_gst (commission);
 //                                 provider supply = provider_gst_deducted - platform_gst (-> TCS/GSTR-8).
-//   - provider_gst_deducted=0  => groomer / direct-employee / principal: PawSpace is the supplier of record,
-//                                 so the FULL invoice tax is PawSpace output (conservative).
+//   - provider_gst_deducted=0  => every row written since the carve was retired: the FULL invoice tax is
+//                                 counted as PawSpace output (conservative, never understated). Filing 54 on
+//                                 a 300 commission from the payout row is the filing work package (audit G6).
+// Who is the supplier of record on the customer invoice is not decided yet (owner decision 9).
 // A booking with an invoice but no payout computation cannot be split, so its full tax is counted as
 // PawSpace output (never understates the statutory liability). Cold-DB safe: a missing booking_invoices or
 // provider_payout_computations table degrades to the full booking-invoice tax (or 0 when there are none).
