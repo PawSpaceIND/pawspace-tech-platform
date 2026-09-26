@@ -127,13 +127,12 @@ registerServicePolicyDomain<BookingTimePolicy&Record<string,unknown>>({
 const bookingTimePoliciesSeeded=new WeakSet<Db>();
 export async function seedBookingTimePolicies(db:Db){
   if(bookingTimePoliciesSeeded.has(db))return;
-  const{seedServicePolicyDefault,seedServicePolicyScope}=await import("./service-policy-governance");
+  const{seedServicePolicyDefault,seedServicePolicyScopes}=await import("./service-policy-governance");
   await seedServicePolicyDefault(db,BOOKING_TIME_POLICY_DOMAIN);
-  for(const service of SCHEDULABLE_SERVICES){
-    await seedServicePolicyScope(db,BOOKING_TIME_POLICY_DOMAIN,service,"*",
-      {...APPROVED_BOOKING_TIME_DEFAULT,...APPROVED_BOOKING_TIME_BY_SERVICE[service]},
-      `Booking time rules - ${service}`);
-  }
+  // One batch for every service's scope (it was two sequential calls per service on a cold isolate).
+  await seedServicePolicyScopes(db,BOOKING_TIME_POLICY_DOMAIN,SCHEDULABLE_SERVICES.map(service=>({serviceCode:service,cityId:"*",
+    config:{...APPROVED_BOOKING_TIME_DEFAULT,...APPROVED_BOOKING_TIME_BY_SERVICE[service]},
+    notes:`Booking time rules - ${service}`})));
   bookingTimePoliciesSeeded.add(db);
 }
 
@@ -149,6 +148,9 @@ export type BookingWindowInput={
   serviceCode:string;cityId?:string|null;scheduledStart:string;scheduledEnd:string;
   /** Every occurrence, when the caller has generated them. The LAST one must also sit inside the horizon. */
   occurrences?:Array<{start:string;end:string}>|null;
+  /** The policy this request already resolved for the same service and city (a reserve checks the window
+   *  twice); read here when absent. The checks themselves always run against the current clock. */
+  policy?:Awaited<ReturnType<typeof resolveBookingTimePolicy>>|null;
 };
 
 export type BookingWindowVerdict={
@@ -180,7 +182,7 @@ export async function assertBookingWindow(db:Db,input:BookingWindowInput):Promis
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)
     refuse("A valid scheduling window is required",{code:"invalid_window"});
 
-  const policy=await resolveBookingTimePolicy(db,{serviceCode,cityId:input.cityId});
+  const policy=input.policy??await resolveBookingTimePolicy(db,{serviceCode,cityId:input.cityId});
   const config=policy.config;
   const now=Date.now();
 

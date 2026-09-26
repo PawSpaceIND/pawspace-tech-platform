@@ -10,7 +10,19 @@ const integer=(env:Env,key:string,fallback:number,min:number,max:number)=>{const
 const dayStart=(now:number)=>Math.floor(now/86_400_000)*86_400_000;
 const reservationTtlMs=(env:Env)=>integer(env,"PAWSPACE_AI_RESERVATION_TTL_MS",180_000,30_000,3_600_000);
 
+/**
+ * The second schema guard on every voice turn, and the same waste as the first: CREATE ... IF NOT
+ * EXISTS that has nothing left to create, paid for with a D1 round trip before each provider call.
+ * Keyed on the binding so each database is still guarded once.
+ */
+const runtimeControlReady=new WeakSet<D1Database>();
 export async function ensureAiProviderRuntimeControl(db:D1Database){
+ if(runtimeControlReady.has(db))return;
+ await ensureAiProviderRuntimeControlOnce(db);
+ // After the batch resolves, so a failure is retried rather than recorded as done.
+ runtimeControlReady.add(db);
+}
+async function ensureAiProviderRuntimeControlOnce(db:D1Database){
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS ai_provider_runtime_requests (id TEXT PRIMARY KEY,provider TEXT NOT NULL,model_ref TEXT NOT NULL,channel TEXT NOT NULL,intent TEXT NOT NULL,reserved_tokens INTEGER NOT NULL,reserved_cost_micros INTEGER NOT NULL DEFAULT 0,actual_tokens INTEGER,actual_cost_micros INTEGER,status TEXT NOT NULL,failure_class TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_ai_provider_runtime_requests_created ON ai_provider_runtime_requests(created_at,status)"),
@@ -24,13 +36,32 @@ export function estimateAiTokenReservation(systemPrompt:string,userPrompt:string
  return Math.max(1,inputEstimate+Math.max(1,maxOutputTokens));
 }
 
+/**
+ * Retiring reservations nobody completed is housekeeping, not a precondition for the call being
+ * made. It was a full-table write on the path of every request, and on a live phone turn it was part
+ * of the 1813ms a caller spent in silence before the first word. It now runs at most once per
+ * reservation TTL per isolate, and is not awaited, so it never sits between a question and audio.
+ *
+ * Deliberately NOT weakened: the circuit-breaker read, the quota reads and the reservation insert all
+ * still happen before the provider is called. A sweep that runs late leaves stale `reserved` rows in
+ * the quota counts for a while, which makes rate limiting slightly stricter rather than looser — the
+ * safe direction for a control whose job is to stop runaway spend.
+ */
+const lastReservationSweepAt=new WeakMap<D1Database,number>();
+function sweepExpiredReservations(db:D1Database,env:Env,now:number){
+ const ttl=reservationTtlMs(env);
+ if(now-(lastReservationSweepAt.get(db)??0)<ttl)return;
+ // Recorded before dispatch so concurrent turns in one isolate do not all launch the same sweep.
+ lastReservationSweepAt.set(db,now);
+ void db.prepare("UPDATE ai_provider_runtime_requests SET status='abandoned',failure_class='reservation_expired',updated_at=? WHERE status='reserved' AND created_at<?")
+  .bind(now,now-ttl).run().catch(()=>{/* housekeeping only; the next turn past the TTL retries */});
+}
+
 export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{provider:string;modelRef:string;channel?:string;intent?:string;systemPrompt:string;userPrompt:string;maxOutputTokens:number;asOf?:number}):Promise<AiRuntimePreflight>{
  const now=input.asOf??Date.now();
  try{
   await ensureAiProviderRuntimeControl(db);
-  await db.prepare("UPDATE ai_provider_runtime_requests SET status='abandoned',failure_class='reservation_expired',updated_at=? WHERE status='reserved' AND created_at<?").bind(now,now-reservationTtlMs(env)).run();
-  const circuit=await db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>();
-  if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
+  sweepExpiredReservations(db,env,now);
 
   const requestsPerMinute=integer(env,"PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE",240,1,10_000);
   const tokensPerDay=integer(env,"PAWSPACE_AI_MAX_RESERVED_TOKENS_PER_DAY",5_000_000,1_000,1_000_000_000);
@@ -39,21 +70,29 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
   const reservedTokens=estimateAiTokenReservation(input.systemPrompt,input.userPrompt,input.maxOutputTokens);
   const reservedCostMicros=costPer1k>0?Math.ceil((reservedTokens/1000)*costPer1k):0;
   const id=uid();
-  await db.prepare("INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'reserved',?,?)")
-   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now).run();
 
+  // The circuit read and both quota reads are independent of each other, so they cost one round trip
+  // rather than three. They now run BEFORE the reservation insert instead of after it, which is why
+  // this turn's own usage is added to each total below: the previous order inserted first and then
+  // counted the new row, so counting it explicitly here keeps the identical limit, and a refusal now
+  // costs no write at all rather than an insert followed by an update marking it blocked.
   const minute=now-60_000,start=dayStart(now);
-  const [rpm,daily]=await Promise.all([
+  const [circuit,rpm,daily]=await Promise.all([
+   db.prepare("SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=? LIMIT 1").bind(input.provider,input.modelRef).first<Row>(),
    db.prepare("SELECT COUNT(*) count FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')").bind(minute).first<Row>(),
    db.prepare("SELECT COALESCE(SUM(reserved_tokens),0) tokens,COALESCE(SUM(reserved_cost_micros),0) cost FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')").bind(start).first<Row>(),
   ]);
-  const overRequests=Number(rpm?.count||0)>requestsPerMinute;
-  const overTokens=Number(daily?.tokens||0)>tokensPerDay;
-  const overCost=costPerDay>0&&Number(daily?.cost||0)>costPerDay;
-  if(overRequests||overTokens||overCost){
-   await db.prepare("UPDATE ai_provider_runtime_requests SET status='blocked',failure_class='quota_exceeded',updated_at=? WHERE id=? AND status='reserved'").bind(now,id).run();
-   return{allowed:false,reason:"quota_exceeded"};
-  }
+  if(Number(circuit?.open_until||0)>now)return{allowed:false,reason:"circuit_open"};
+
+  // "+1" and "+reserved…" are this turn counting itself, exactly as the previous insert-then-count
+  // order did. Without them the limit would quietly allow one request more than it is configured to.
+  const overRequests=Number(rpm?.count||0)+1>requestsPerMinute;
+  const overTokens=Number(daily?.tokens||0)+reservedTokens>tokensPerDay;
+  const overCost=costPerDay>0&&Number(daily?.cost||0)+reservedCostMicros>costPerDay;
+  if(overRequests||overTokens||overCost)return{allowed:false,reason:"quota_exceeded"};
+
+  await db.prepare("INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'reserved',?,?)")
+   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now).run();
   return{allowed:true,reservation:{id,reservedTokens,reservedCostMicros}};
  }catch{return{allowed:false,reason:"runtime_control_unavailable"};}
 }

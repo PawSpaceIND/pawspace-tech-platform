@@ -386,7 +386,8 @@ test("staging runs the Worker with Smart Placement; production config is untouch
 
 test("worker/index.ts runs the scheduling request in the counted scope, in the order preview() replays", () => {
   const worker = read("worker/index.ts");
-  assert.match(worker, /if\(request\.method==="POST"&&new URL\(request\.url\)\.pathname==="\/api\/uat-scheduling"\)return runWithRequestD1Metrics\(createRequestD1Metrics\(request,true,promise=>ctx\.waitUntil\(promise\)\),\(\)=>worker\.handle\(request,withRequestD1MetricsEnv\(env\),ctx\)\);\s*return worker\.handle\(request,env,ctx\);/);
+  assert.match(worker, /const COUNTED_POST_PATHS=new Set\(\["\/api\/uat-scheduling","\/api\/canonical-bookings","\/api\/taxi-ride-bookings"\]\);/);
+  assert.match(worker, /if\(request\.method==="POST"&&COUNTED_POST_PATHS\.has\(new URL\(request\.url\)\.pathname\)\)return runWithRequestD1Metrics\(createRequestD1Metrics\(request,true,promise=>ctx\.waitUntil\(promise\)\),\(\)=>worker\.handle\(request,withRequestD1MetricsEnv\(env\),ctx\)\);\s*return worker\.handle\(request,env,ctx\);/);
   assert.doesNotMatch(worker, /=>worker\.fetch\(/, "never re-enter fetch: Sentry.withSentry wraps it and would instrument the counted env again");
   assert.match(worker, /const leaseCleanup=request\.method==="POST"&&\(url\.pathname==="\/api\/uat-scheduling"\|\|url\.pathname==="\/api\/canonical-bookings"\)\?cleanupExpiredReservationLeases\(env\.DB\):null;/);
   assert.match(worker, /const sessionAccess=await authorizePlatformSessionRequest\(inspectionRequest,env\.DB\)\.finally\(\(\)=>leaseCleanup\);/);

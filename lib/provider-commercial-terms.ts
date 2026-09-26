@@ -95,7 +95,10 @@ const PAYOUT_COMPUTATION_COLUMNS:ReadonlyArray<readonly[string,string]>=[["engag
 /* Who approved an order override (the second person) and which request it came from. */
 const OVERRIDE_APPROVAL_COLUMNS:ReadonlyArray<readonly[string,string]>=[["approved_by","TEXT"],["request_id","TEXT"]];
 const payoutColumnsReady=new WeakSet<Db>();
-export async function ensureCommercialTermsTables(db:Db){await db.batch([
+// Once per isolate and database.
+const ensureCommercialTermsTablesReady=new WeakSet<object>();
+export async function ensureCommercialTermsTables(db:Db){if(ensureCommercialTermsTablesReady.has(db as object))return;await ensureCommercialTermsTablesUncached(db);ensureCommercialTermsTablesReady.add(db as object);}
+async function ensureCommercialTermsTablesUncached(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_commercial_terms (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,provider_id TEXT,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',engagement_model TEXT NOT NULL,provider_share_pct REAL NOT NULL,gst_mode TEXT NOT NULL,platform_gst_rate REAL NOT NULL DEFAULT 0.18,cash_allowed INTEGER NOT NULL DEFAULT 0,onboarding_fee REAL NOT NULL DEFAULT 0,renewal_fee REAL NOT NULL DEFAULT 0,renewal_months INTEGER NOT NULL DEFAULT 12,effective_from TEXT NOT NULL,reason TEXT NOT NULL,created_by TEXT NOT NULL,approved_by TEXT,approval_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_terms_lookup ON provider_commercial_terms(service_code,provider_id,status,effective_from)"),
  db.prepare("CREATE TABLE IF NOT EXISTS order_commercial_overrides (booking_id TEXT PRIMARY KEY,provider_share_pct REAL,engagement_model TEXT,gst_mode TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),

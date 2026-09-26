@@ -1,3 +1,4 @@
+import { ensureD1Once } from "./d1-ensure-once.js";
 import { assertAiMayReply } from "./ai-human-handoff";
 import { quoteGroomingBookingWithLiveMultiPet } from "./live-grooming-governance";
 import { createTrainingQuote } from "./training-commercial-governance";
@@ -27,10 +28,12 @@ export function isVoiceSalesConfirmation(message: string) {
  return /^(?:yes(?:,? please|,? go ahead|,? proceed|,? book it|,? confirm)?|confirm(?: the booking)?|go ahead|proceed|book it|book this)[.! ]*$/i.test(message.trim());
 }
 export async function ensureVoiceSalesOffers(db: D1Database) {
+ return ensureD1Once(db,"voice_sales_offers",async()=>{
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS voice_sales_offers (id TEXT PRIMARY KEY,turn_key TEXT NOT NULL UNIQUE,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,status TEXT NOT NULL,quote_json TEXT NOT NULL,actions_json TEXT NOT NULL,summary TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL,confirmed_at INTEGER,result_json TEXT,completed_at INTEGER)"),
   db.prepare("CREATE INDEX IF NOT EXISTS voice_sales_offers_thread ON voice_sales_offers(thread_id,customer_id,status,created_at)"),
  ]);
+ });
 }
 async function assertOwner(db: D1Database, threadId: string, customerId: string, actor: AuthenticatedActor) {
  if (!actor.email.endsWith("@system.pawspace") || !actor.permissions.includes("communications.manage")) throw refusal("Voice sales service actor required", 403);

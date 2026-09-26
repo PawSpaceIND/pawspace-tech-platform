@@ -25,5 +25,6 @@ export async function GET(request:Request){try{
   await requireProviderOwnership(db,actor,providerId);
   const feed=await listProviderJobs(db,providerId);
   const counts:PartnerJobCounts={needsAction:feed.needsAction.length,today:feed.today.length,upcoming:feed.upcoming.length,completed:feed.completed.length,total:feed.needsAction.length+feed.today.length+feed.upcoming.length+feed.completed.length};
-  return json({data:{...feed,counts,productionReady:false}});
+  // active = needsAction+today+upcoming. Jobs with Operations (expired/withdrawn offers) and past jobs are listed, never counted as active work.
+  return json({data:{...feed,counts:{...counts,active:feed.needsAction.length+feed.today.length+feed.upcoming.length,needsOperations:feed.needsOperations.length,past:feed.past.length},productionReady:false}});
 }catch(error){return authError(error,"Unable to load the partner job feed");}}

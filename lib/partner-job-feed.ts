@@ -1,5 +1,6 @@
 import{chunkedIn}from"./d1-chunked-in";
 import{boardingProviderExtras}from"./boarding-provider-projection";
+import{acceptancePhase,loadAssignmentOffers,providerJobBucket,providerOfferView,type ProviderOfferView}from"./provider-offer-state";
 // Partner Job Feed: one unified, chronological feed of a provider's confirmed customer bookings
 // across ALL services, aggregated read-only from the real canonical tables. Founder requirement:
 // "once the booking is done the same info has to be updated in the partner app".
@@ -10,7 +11,10 @@ type Row=Record<string,unknown>;
 const rows=<T=Row>(result:{results?:unknown[]})=>(result.results||[]) as T[];
 const DAY_MS=86400000,COMPLETED_WINDOW_MS=14*DAY_MS;
 
-export type PartnerJobGroup="needs_action"|"today"|"upcoming"|"completed";
+export type PartnerJobGroup="needs_action"|"today"|"upcoming"|"completed"|"needs_operations"|"past";
+/** Services whose partner accepts a governed, expiring offer: their jobs carry the offer and are bucketed by it. */
+const OFFER_SERVICES=new Set(["pet_sitting","boarding","pet_taxi"]);
+const PAST_LIMIT=20;
 export type PartnerJob={
   bookingId:string;
   serviceCode:string;
@@ -27,8 +31,15 @@ export type PartnerJob={
   nextSlotStart:string|null;
   addOns:string[];
   safetyRequirements:string[];
+  /** Sitting, Boarding and Taxi only: the offer as the lifecycle will judge it (open with its expiry, expired, withdrawn, accepted). */
+  offer:ProviderOfferView|null;
 };
-export type PartnerJobFeed={providerId:string;needsAction:PartnerJob[];today:PartnerJob[];upcoming:PartnerJob[];completed:PartnerJob[]};
+/**
+ * needsAction/today/upcoming are the partner's ACTIVE work. needsOperations holds jobs whose offer
+ * expired or moved on (Operations is arranging cover) and past holds jobs whose window ended without
+ * the partner being mid-service; neither is ever counted as active.
+ */
+export type PartnerJobFeed={providerId:string;needsAction:PartnerJob[];today:PartnerJob[];upcoming:PartnerJob[];completed:PartnerJob[];needsOperations:PartnerJob[];past:PartnerJob[]};
 export type PartnerJobCounts={needsAction:number;today:number;upcoming:number;completed:number;total:number};
 
 // Optional service tables may not exist in every environment — same .catch fallback pattern as
@@ -87,7 +98,9 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
   }
 
   const reference=new Date(now),startOfToday=new Date(reference.getFullYear(),reference.getMonth(),reference.getDate()).getTime(),endOfToday=startOfToday+DAY_MS;
-  const feed:PartnerJobFeed={providerId:id,needsAction:[],today:[],upcoming:[],completed:[]};
+  const feed:PartnerJobFeed={providerId:id,needsAction:[],today:[],upcoming:[],completed:[],needsOperations:[],past:[]};
+  // The offer each lifecycle checks before it accepts, read (never created) for the offer-governed services.
+  const offers=await loadAssignmentOffers(db,bookings.filter(row=>OFFER_SERVICES.has(String(row.service_code))).map(row=>row.schedule_group_id));
 
   for(const booking of bookings){
     const bookingStatus=String(booking.status||"");
@@ -115,9 +128,18 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
       nextSlotStart:nextSlotByBooking.get(String(booking.id))||nextSlotByGroup.get(String(booking.schedule_group_id))||null,
       addOns:stay?extrasByStay.get(String(stay.id))??[]:pricingList(booking.pricing_json,"addOns"),
       safetyRequirements:pricingList(booking.pricing_json,"requirements"),
+      offer:null,
     };
 
     const stayFinished=stayStatus==="completed"||stayStatus==="cancelled";
+    if(OFFER_SERVICES.has(job.serviceCode)&&!stayFinished&&bookingStatus!=="completed"){
+      // A stay's own status decides its phase (its "confirmed" means the host accepted); otherwise the booking's does.
+      const phase=stay?acceptancePhase(stayStatus,{boardingStay:true}):acceptancePhase(bookingStatus);
+      job.offer=providerOfferView(offers.get(String(booking.schedule_group_id||""))??null,{providerId:id,phase,now});
+      const bucket=providerJobBucket({phase,offerState:job.offer.state,scheduledEnd:stay?.check_out_at||booking.scheduled_end,scheduledStart:stay?.check_in_at||booking.scheduled_start,now});
+      if(bucket==="past"){job.group="past";feed.past.push(job);continue;}
+      if(bucket==="needs_operations"){job.group="needs_operations";feed.needsOperations.push(job);continue;}
+    }
     if(bookingStatus==="completed"||stayStatus==="completed"){
       // Completed feed keeps only the last 14 days; older history belongs to reporting, not the job feed.
       const finishedAt=end??start;
@@ -136,6 +158,9 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
   const asc=(a:PartnerJob,b:PartnerJob)=>String(a.scheduledStart).localeCompare(String(b.scheduledStart));
   feed.needsAction.sort(asc);feed.today.sort(asc);feed.upcoming.sort(asc);
   feed.completed.sort((a,b)=>String(b.scheduledEnd).localeCompare(String(a.scheduledEnd)));
+  feed.needsOperations.sort(asc);
+  // Newest past jobs first, and only the most recent few: older history belongs to reporting.
+  feed.past.sort((a,b)=>String(b.scheduledEnd).localeCompare(String(a.scheduledEnd)));feed.past.splice(PAST_LIMIT);
   return feed;
 }
 

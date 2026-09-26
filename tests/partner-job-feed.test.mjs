@@ -213,7 +213,7 @@ test("real execution: missing optional tables (walking/taxi/reservations) never 
   const { listProviderJobs } = await import("../lib/partner-job-feed.ts");
   const { db } = freshDb();
   const feed = await listProviderJobs(db, "prov_empty", NOW);
-  assert.deepEqual(feed, { providerId: "prov_empty", needsAction: [], today: [], upcoming: [], completed: [] });
+  assert.deepEqual(feed, { providerId: "prov_empty", needsAction: [], today: [], upcoming: [], completed: [], needsOperations: [], past: [] });
 });
 
 test("real execution: a care-plan-required confirmed stay is needs_action; cancelled bookings are excluded", async () => {

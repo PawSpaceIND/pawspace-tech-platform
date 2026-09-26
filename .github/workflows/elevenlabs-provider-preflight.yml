@@ -3,12 +3,104 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls. Makes one synthetic OpenAI request and reads the existing global ElevenLabs agent. No calls or conversations.'
+        description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
+      uat_voice_call_id:
+        description: 'Exact UAT call context for confirm=resume-uat-voice (no dial)'
+        required: false
+        default: ''
+      probe_input:
+        description: 'Synthetic text for no-calls custom LLM probe'
+        required: false
+        default: 'I need grooming today for my dog.'
+      expected_destination_last4:
+        description: 'Required for direct-grooming-call: last four digits confirmed by the tester'
+        required: false
+        default: ''
+      sale_booking_id:
+        description: "Exact voice-created booking for sandbox sale proof; blank inspects readiness only"
+        required: false
+        default: ""
+      specialist_use_case:
+        description: 'grooming_sales or training_sales when confirm=specialist-call'
+        required: false
+        default: 'grooming_sales'
 permissions:
   contents: read
 jobs:
+  # Answers "would streaming actually help, and by how much" without involving staging at all.
+  # The shared staging Worker is deployed by several workstreams, so a measurement that needs a
+  # particular build to still be live is a race this cannot reliably win. The provider is the same
+  # one the Worker calls, so time-to-first-token measured here is the floor the voice turn can reach.
+  measure-voice-llm:
+    if: ${{ inputs.confirm == 'measure-voice-llm' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Compare blocking and streaming provider latency for one voice turn
+        env:
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          PAWSPACE_AI_PROVIDER: ${{ vars.PAWSPACE_AI_PROVIDER }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+          PAWSPACE_AI_PROVIDER_MODEL: ${{ vars.PAWSPACE_AI_PROVIDER_MODEL }}
+        run: |
+          node <<'NODE'
+          // Synthetic prompt only: no customer, pet, booking or catalogue data leaves this job.
+          const key=String(process.env.PAWSPACE_OPENAI_API_KEY||process.env.PAWSPACE_AI_PROVIDER_API_KEY||'').trim();
+          if(!key) throw new Error('no provider credential');
+          const configuredVoice=String(process.env.PAWSPACE_AI_VOICE_MODEL||'').trim();
+          const configuredMain=String(process.env.PAWSPACE_AI_PROVIDER_MODEL||'').trim();
+          const DEFAULT_VOICE='gpt-5.6-luna';
+          const model=configuredVoice||configuredMain||DEFAULT_VOICE;
+          console.log('MODEL_RESOLUTION='+JSON.stringify({
+            providerVar:String(process.env.PAWSPACE_AI_PROVIDER||'').trim()||null,
+            voiceModelVar:configuredVoice||null,mainModelVar:configuredMain||null,
+            resolvedModel:model,isVoiceDefault:model===DEFAULT_VOICE,
+            reasoningShortcutApplies:model===DEFAULT_VOICE}));
+          const instructions='You are PawSpace’s AI grooming concierge on a live phone call in India. Keep every spoken reply to one or two short natural sentences and ask only the next necessary question.';
+          const input='I need grooming today for my dog.';
+          const base={model,instructions,input,max_output_tokens:160,store:false,...(model===DEFAULT_VOICE?{reasoning:{effort:'none'}}:{})};
+          const url='https://api.openai.com/v1/responses';
+          const headers={'content-type':'application/json',authorization:'Bearer '+key};
+
+          const blocking=async()=>{const t=Date.now();const r=await fetch(url,{method:'POST',headers,body:JSON.stringify(base),signal:AbortSignal.timeout(60000)});const body=await r.text();return{status:r.status,totalMs:Date.now()-t,chars:body.length};};
+
+          const streaming=async()=>{
+            const t=Date.now();
+            const r=await fetch(url,{method:'POST',headers,body:JSON.stringify({...base,stream:true}),signal:AbortSignal.timeout(60000)});
+            if(!r.ok)return{status:r.status,error:(await r.text()).slice(0,400)};
+            let headersMs=Date.now()-t,firstDeltaMs=null,firstSentenceMs=null,totalMs=null,acc='',buf='';
+            const decoder=new TextDecoder();
+            for await(const chunk of r.body){
+              buf+=decoder.decode(chunk,{stream:true});
+              if(firstDeltaMs===null&&buf.includes('"response.output_text.delta"'))firstDeltaMs=Date.now()-t;
+              for(const line of buf.split('\n')){
+                if(!line.startsWith('data: '))continue;
+                try{const ev=JSON.parse(line.slice(6));if(ev.type==='response.output_text.delta'&&typeof ev.delta==='string')acc+=ev.delta;}catch{}
+              }
+              if(firstSentenceMs===null&&/[.!?]\s|[.!?]$/.test(acc))firstSentenceMs=Date.now()-t;
+            }
+            totalMs=Date.now()-t;
+            return{status:r.status,headersMs,firstDeltaMs,firstSentenceMs,totalMs,replyChars:acc.length,replyPrefix:acc.slice(0,120)};
+          };
+
+          // Wrapped in an async IIFE: piped over stdin this is parsed as a script, where `await`
+          // inside a loop body is a syntax error rather than top-level await.
+          (async()=>{
+            for(let run=1;run<=2;run++){
+              console.log('BLOCKING_'+run+'='+JSON.stringify(await blocking()));
+              console.log('STREAMING_'+run+'='+JSON.stringify(await streaming()));
+            }
+          })().catch(error=>{console.error(String(error&&error.message||error));process.exit(1);});
+          NODE
+
   preflight:
     if: ${{ inputs.confirm == 'no-calls' }}
     runs-on: ubuntu-latest
@@ -25,3 +117,793 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
         run: node scripts/elevenlabs-provider-preflight.mjs
+      - name: Inspect ElevenLabs imported phone bridge metadata (no call)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const expectedId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim();
+          if(!key) throw new Error('ELEVENLABS_API_KEY missing');
+          const headers={'xi-api-key':key};
+          const listResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{headers,signal:AbortSignal.timeout(30000)});
+          const list=await listResponse.json().catch(()=>({}));
+          if(!listResponse.ok) throw new Error('phone list failed '+listResponse.status);
+          const rows=Array.isArray(list?.phone_numbers)?list.phone_numbers:Array.isArray(list)?list:[];
+          const safeRows=rows.map(x=>({
+            phoneNumberId:x.phone_number_id||x.id||null,label:x.label||null,provider:x.provider||null,
+            phoneLast4:String(x.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+            agentId:x.agent_id||null,inboundAgentId:x.inbound_agent_id||null,outboundAgentId:x.outbound_agent_id||null,
+            hasAccountSid:Boolean(x.account_sid),hasApiKey:Boolean(x.api_key),hasApiToken:Boolean(x.api_token),
+            appId:x.app_id||null,region:x.region||x.api_subdomain||null
+          }));
+          console.log('PHONE_LIST_SAFE='+JSON.stringify(safeRows));
+          console.log('EXPECTED_PHONE_ID_PRESENT='+String(safeRows.some(x=>x.phoneNumberId===expectedId)));
+          if(expectedId){
+            const detailResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(expectedId),{headers,signal:AbortSignal.timeout(30000)});
+            const d=await detailResponse.json().catch(()=>({}));
+            console.log('EXPECTED_PHONE_DETAIL_STATUS='+detailResponse.status);
+            if(detailResponse.ok) console.log('EXPECTED_PHONE_DETAIL='+JSON.stringify({
+              phoneNumberId:d.phone_number_id||d.id||null,label:d.label||null,provider:d.provider||null,
+              phoneLast4:String(d.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+              agentId:d.agent_id||null,inboundAgentId:d.inbound_agent_id||null,outboundAgentId:d.outbound_agent_id||null,
+              hasAccountSid:Boolean(d.account_sid),hasApiKey:Boolean(d.api_key),hasApiToken:Boolean(d.api_token),
+              appId:d.app_id||null,region:d.region||d.api_subdomain||null
+            }));
+            else console.log('EXPECTED_PHONE_ERROR='+JSON.stringify(d).slice(0,1500));
+          }
+          console.log('SPECIALIST_IDS='+JSON.stringify({grooming:Boolean(process.env.GROOMING_AGENT_ID),training:Boolean(process.env.TRAINING_AGENT_ID)}));
+          const ar=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(String(process.env.GROOMING_AGENT_ID||'')),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const aj=await ar.json().catch(()=>({}));
+          if(ar.ok){
+            const cc=aj?.conversation_config||{},agent=cc?.agent||{},tts=cc?.tts||{},turn=cc?.turn||{},asr=cc?.asr||{};
+            console.log('GROOMING_AGENT_AUDIO_SAFE='+JSON.stringify({
+              firstMessage:agent?.first_message||null,
+              customLlmModel:agent?.prompt?.custom_llm?.model_id||null,
+              language:agent?.language||null,
+              tts:{modelId:tts?.model_id||tts?.model||null,voiceId:Boolean(tts?.voice_id),stability:tts?.stability??null,similarityBoost:tts?.similarity_boost??null,speed:tts?.speed??null,style:tts?.style??null,optimizeStreamingLatency:tts?.optimize_streaming_latency??null},
+              turn:{turnTimeout:turn?.turn_timeout??null,silenceEndCallTimeout:turn?.silence_end_call_timeout??null,mode:turn?.mode||null,softTimeout:turn?.soft_timeout??null},
+              asr:{provider:asr?.provider||null,quality:asr?.quality||null,language:asr?.language||null}
+            }));
+          }
+          NODE
+
+      - name: Inspect latest Grooming specialist conversation without dialing
+        env:
+          PROBE_INPUT: ${{ inputs.probe_input }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();if(!key||!agentId)throw new Error('inspection prerequisites missing');
+          const listResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=10`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const list=await listResponse.json().catch(()=>({}));if(!listResponse.ok){console.log(JSON.stringify(list).slice(0,2000));throw new Error(`conversation list failed ${listResponse.status}`);}
+          const rows=Array.isArray(list?.conversations)?list.conversations:[];if(!rows.length)throw new Error('no Grooming conversations found');
+          const latest=rows.sort((a,b)=>Number(b?.start_time_unix_secs||b?.metadata?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||a?.metadata?.start_time_unix_secs||0))[0];
+          const id=String(latest?.conversation_id||'');console.log('::add-mask::'+id);const dResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});const d=await dResponse.json().catch(()=>({}));if(!dResponse.ok)throw new Error(`conversation read failed ${dResponse.status}`);
+          const transcript=Array.isArray(d.transcript)?d.transcript:[];
+          const meta=d?.metadata&&typeof d.metadata==='object'?d.metadata:{};
+          const phoneMeta=meta?.phone_call&&typeof meta.phone_call==='object'?meta.phone_call:{};
+          const callSid=String(phoneMeta?.call_sid||phoneMeta?.callSid||meta?.call_sid||meta?.callSid||'').trim();
+          if(callSid) console.log('::add-mask::'+callSid);
+          console.log('GROOMING_LATEST='+JSON.stringify({status:d.status,agentId:d.agent_id,hasAudio:Boolean(d.has_audio),hasUserAudio:Boolean(d.has_user_audio),hasResponseAudio:Boolean(d.has_response_audio),turns:transcript.length,duration:Number(meta?.call_duration_secs||0),terminationReason:meta?.termination_reason||null,error:meta?.error||null,metadataKeys:Object.keys(meta).sort(),phoneMetadataKeys:Object.keys(phoneMeta).sort(),hasProviderCallSid:Boolean(callSid),agentNumberLast4:String(phoneMeta?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(phoneMeta?.external_number||'').replace(/\D/g,'').slice(-4)||null,phoneNumberIdPresent:Boolean(phoneMeta?.phone_number_id),safeTranscript:transcript.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const recentDetails=[];
+          for(const row of rows.slice(0,10)){
+            const cid=String(row?.conversation_id||'');if(!cid)continue;
+            const rr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(cid)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)});if(!rr.ok)continue;
+            const cd=await rr.json().catch(()=>({})),ct=Array.isArray(cd?.transcript)?cd.transcript:[],cm=cd?.metadata&&typeof cd.metadata==='object'?cd.metadata:{},cp=cm?.phone_call&&typeof cm.phone_call==='object'?cm.phone_call:{};
+            if(ct.some(x=>x?.role==='user')) recentDetails.push({status:cd?.status||null,terminationReason:cm?.termination_reason||null,error:cm?.error||null,turns:ct.length,duration:Number(cm?.call_duration_secs||0),start:Number(cd?.start_time_unix_secs||cm?.start_time_unix_secs||0),agentNumberLast4:String(cp?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(cp?.external_number||'').replace(/\D/g,'').slice(-4)||null,hasCallSid:Boolean(cp?.call_sid),sample:ct.slice(0,4).map(x=>({role:x.role,message:String(x.message||'').replace(/\s+/g,' ').slice(0,180)}))});
+          }
+          console.log('GROOMING_RECENT_ANSWERED='+JSON.stringify(recentDetails));
+          const trResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}?format=opentelemetry`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          if(trResponse.ok){
+            const otlp=await trResponse.json().catch(()=>({}));
+            const rawOtlp=JSON.stringify(otlp);
+            const callId=(rawOtlp.match(/VCALL-[A-Z0-9-]+/)||[])[0]||'';
+            const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
+            const compact=JSON.stringify(scrub(otlp)).replace(/\+?\d{10,15}/g,'[redacted-number]');
+            const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
+            console.log('GROOMING_OTLP_SIGNALS='+JSON.stringify(hits));
+            const llmSecret=String(process.env.ELEVENLABS_LLM_SECRET||'').trim();
+            if(callId&&llmSecret){
+              // A phone caller hears nothing until the FIRST text delta, so total body time is the wrong
+              // number to optimise against. Read the stream incrementally and time the first delta on its
+              // own; `.text()` would collapse all three measurements into one and hide any streaming win.
+              const configResponse=await fetch(`https://api.elevenlabs.io/v1/convai/agents/${encodeURIComponent(agentId)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)});
+              if(!configResponse.ok)throw new Error('Cannot verify the actual agent model before probing');
+              const config=await configResponse.json();
+              const probeModel=String(config?.conversation_config?.agent?.prompt?.custom_llm?.model_id||'');
+              console.log('GROOMING_PROBE_MODEL='+probeModel);
+              const started=Date.now();
+              const probe=await fetch('https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses',{
+                method:'POST',
+                headers:{'content-type':'application/json',authorization:'Bearer '+llmSecret},
+                body:JSON.stringify({model:probeModel,input:String(process.env.PROBE_INPUT||'').trim().startsWith('[')?JSON.parse(process.env.PROBE_INPUT):String(process.env.PROBE_INPUT||'I need grooming today for my dog.'),elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
+                signal:AbortSignal.timeout(30000)
+              });
+              const headersMs=Date.now()-started;
+              let firstByteMs=null,firstDeltaMs=null,firstSubstantiveDeltaMs=null,bodyText='';
+              const decoder=new TextDecoder();
+              for await (const chunk of probe.body){
+                if(firstByteMs===null)firstByteMs=Date.now()-started;
+                bodyText+=decoder.decode(chunk,{stream:true});
+                if(firstDeltaMs===null&&bodyText.includes('"response.output_text.delta"'))firstDeltaMs=Date.now()-started;
+                if(firstSubstantiveDeltaMs===null)for(const line of bodyText.split('\n')){
+                  if(!line.startsWith('data: {'))continue;
+                  try{const event=JSON.parse(line.slice(6));if(event.type==='response.output_text.delta'&&String(event.delta||'').replace(/^I'm checking the details[. ]*/i,'').trim())firstSubstantiveDeltaMs=Date.now()-started;}catch{}
+                }
+              }
+              const totalMs=Date.now()-started;
+              // One fat delta and many small ones are the same firstDeltaMs but opposite outcomes on a
+              // phone, so count them and measure the first one. The stage timings ride the FINAL event,
+              // because response headers are already sent by the time the model stages finish, so the
+              // tail has to be parsed to see them at all.
+              let deltaCount=0,firstDeltaChars=null,turnTiming=null;
+              for(const line of bodyText.split('\n')){
+                if(!line.startsWith('data: '))continue;
+                const payload=line.slice(6).trim();
+                if(!payload||payload==='[DONE]')continue;
+                let event;try{event=JSON.parse(payload);}catch{continue;}
+                if(event.type==='response.output_text.delta'&&typeof event.delta==='string'){
+                  deltaCount+=1;
+                  if(firstDeltaChars===null)firstDeltaChars=event.delta.length;
+                }
+                if(event.type==='response.completed'&&event.response&&event.response.pawspace_timing)turnTiming=event.response.pawspace_timing;
+                if(event.type==='response.failed')turnTiming={failed:event.response&&event.response.error};
+              }
+              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,headersMs,firstByteMs,firstDeltaMs,firstSubstantiveDeltaMs,totalMs,ms:totalMs,deltaCount,firstDeltaChars,contentType:probe.headers.get('content-type'),serverTiming:probe.headers.get('server-timing'),turnTiming,bodyPrefix:bodyText.slice(0,700)}));
+              console.log('GROOMING_LLM_PROBE_TAIL='+JSON.stringify({tail:bodyText.slice(-1400)}));
+            } else console.log('GROOMING_LLM_PROBE='+JSON.stringify({skipped:true,hasCallId:Boolean(callId),hasSecret:Boolean(llmSecret)}));
+          }
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),host=(String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com');
+          if(callSid&&exKey&&exToken&&exSid){
+            const auth=Buffer.from(exKey+':'+exToken).toString('base64');
+            const er=await fetch(`https://${host}/v1/Accounts/${encodeURIComponent(exSid)}/Calls/${encodeURIComponent(callSid)}.json`,{headers:{authorization:'Basic '+auth},signal:AbortSignal.timeout(30000)});
+            const ej=await er.json().catch(()=>({}));
+            const call=(ej?.Call||ej?.call||ej||{});
+            console.log('EXOTEL_GROOMING_CALL_DETAIL='+JSON.stringify({httpStatus:er.status,status:call.Status||call.status||null,direction:call.Direction||call.direction||null,duration:Number(call.Duration||call.duration||0),startTime:call.StartTime||call.start_time||null,endTime:call.EndTime||call.end_time||null,recordingPresent:Boolean(call.RecordingUrl||call.recording_url),failureCode:call.FailureCode||call.failure_code||null,failureReason:call.FailureReason||call.failure_reason||null}));
+          } else console.log('EXOTEL_GROOMING_CALL_DETAIL='+JSON.stringify({skipped:true,hasCallSid:Boolean(callSid),hasCredentials:Boolean(exKey&&exToken&&exSid)}));
+          NODE
+
+  specialist-call:
+    if: ${{ inputs.confirm == 'specialist-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
+        env:
+          SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const origin='https://pawspace-staging.karthik-fce.workers.dev';
+          const useCase=String(process.env.SPECIALIST_USE_CASE||'').trim();
+          if(!['grooming_sales','training_sales'].includes(useCase))throw new Error('specialist use case must be grooming_sales or training_sales');
+          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const agentId=useCase==='grooming_sales'?String(process.env.GROOMING_AGENT_ID||'').trim():String(process.env.TRAINING_AGENT_ID||'').trim();
+          const allow=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
+          if(!access||!elevenKey||!agentId||allow.length!==1)throw new Error('specialist UAT secrets/agent id/allowlist unavailable');
+          const digits=allow[0].replace(/\D/g,''); const phone=allow[0].startsWith('+')?allow[0]:(digits.length===10?'+91'+digits:'+'+digits);
+          console.log('::add-mask::'+phone);
+          const customerId='INBOUND-9513886363';
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+          if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
+          if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
+          const before=Date.now();
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey:'voice-specialist-uat:'+useCase+':'+Date.now(),useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const body=await call.json().catch(()=>({}));
+          const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
+          console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
+          if(call.status!==201||!body?.data?.callId||!dialed)throw new Error('specialist call was not accepted by PawSpace');
+          console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
+          let detail=null,conversationId='';
+          for(let attempt=0;attempt<40;attempt++){
+            await new Promise(r=>setTimeout(r,4000));
+            const lr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=20`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});
+            if(!lr.ok)continue;const list=await lr.json().catch(()=>({}));const rows=Array.isArray(list?.conversations)?list.conversations:[];
+            const candidate=rows.filter(x=>Number(x?.start_time_unix_secs||0)*1000>=before-15000).sort((a,b)=>Number(b?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||0))[0];
+            if(!candidate?.conversation_id)continue;conversationId=String(candidate.conversation_id);console.log('::add-mask::'+conversationId);
+            const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});if(!dr.ok)continue;detail=await dr.json().catch(()=>({}));
+            const tr=Array.isArray(detail?.transcript)?detail.transcript:[];console.log(`SPECIALIST_POLL useCase=${useCase} status=${String(detail?.status||'')} turns=${tr.length} hasAudio=${Boolean(detail?.has_audio)} userAudio=${Boolean(detail?.has_user_audio)} responseAudio=${Boolean(detail?.has_response_audio)}`);
+            if(String(detail?.status)==='failed'||String(detail?.status)==='done'||tr.length>=2||detail?.has_response_audio)break;
+          }
+          if(!detail||!conversationId)throw new Error('ElevenLabs specialist conversation not observed');
+          const tr=Array.isArray(detail.transcript)?detail.transcript:[];
+          console.log('SPECIALIST_RESULT='+JSON.stringify({useCase,status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,safeTranscript:tr.slice(0,10).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          if(String(detail.agent_id)!==agentId)throw new Error('specialist call used the wrong ElevenLabs agent');
+          if(String(detail.status)==='failed')throw new Error('ElevenLabs specialist conversation failed');
+          NODE
+
+  direct-grooming-call:
+    if: ${{ inputs.confirm == 'direct-grooming-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Place grounded ElevenLabs Grooming call and inspect carrier
+        env:
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: |
+          node <<'NODE'
+          const {conversationEvidence}=await import('./scripts/voice-uat-evidence.mjs');
+          const origin='https://pawspace-staging.karthik-fce.workers.dev';
+          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||''), key=String(process.env.ELEVENLABS_API_KEY||'').trim(), configuredPhoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim(), agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const callerDigits=String(process.env.EXOTEL_CALLER_ID||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10);
+          let phoneId=configuredPhoneId;
+          const elevenHeaders={'xi-api-key':key};
+          if(phoneId){
+            const check=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(phoneId),{headers:elevenHeaders,signal:AbortSignal.timeout(20000)});
+            if(!check.ok) phoneId='';
+          }
+          if(!phoneId){
+            const lr=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers?provider=exotel',{headers:elevenHeaders,signal:AbortSignal.timeout(30000)});
+            const lj=await lr.json().catch(()=>({}));
+            if(!lr.ok) throw new Error('ElevenLabs phone list failed: '+lr.status);
+            const rows=Array.isArray(lj?.phone_numbers)?lj.phone_numbers:Array.isArray(lj)?lj:[];
+            const exact=rows.find(x=>String(x?.phone_number||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10)===callerDigits);
+            const selected=exact||(rows.length===1?rows[0]:null);
+            phoneId=String(selected?.phone_number_id||selected?.id||'').trim();
+            if(!phoneId){
+            const fallbackExKey=String(process.env.EXOTEL_API_KEY||'').trim(),fallbackExToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),fallbackExSid=String(process.env.EXOTEL_SID||'').trim(),fallbackExHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+            if(!callerDigits||!fallbackExKey||!fallbackExToken||!fallbackExSid) throw new Error('No current Exotel phone_number_id could be resolved');
+            const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+              method:'POST',headers:{...elevenHeaders,'content-type':'application/json'},
+              body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT',phone_number:'+91'+callerDigits,account_sid:fallbackExSid,api_key:fallbackExKey,api_token:fallbackExToken,api_subdomain:fallbackExHost,app_id:'1347515'}),
+              signal:AbortSignal.timeout(30000)
+            });
+            const ib=await imp.json().catch(()=>({}));
+            if(!imp.ok||!ib?.phone_number_id) throw new Error('Self-heal Exotel phone import failed '+imp.status);
+            phoneId=String(ib.phone_number_id);
+            const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(phoneId),{
+              method:'PATCH',headers:{...elevenHeaders,'content-type':'application/json'},
+              body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),signal:AbortSignal.timeout(30000)
+            });
+            if(!patch.ok) throw new Error('Self-heal Grooming assignment failed '+patch.status);
+            console.log('ELEVENLABS_PHONE_SELF_HEAL=yes');
+          }else console.log('ELEVENLABS_PHONE_ID_FALLBACK=yes');
+          }
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim(),exToken=String(process.env.EXOTEL_API_TOKEN||'').trim(),exSid=String(process.env.EXOTEL_SID||'').trim(),exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
+          if(!access||!key||!phoneId||!agentId||!exKey||!exToken||!exSid||entries.length!==1)throw new Error('direct Grooming UAT prerequisites missing');
+          const digits=entries[0].replace(/\D/g,''); const to=entries[0].startsWith('+')?entries[0]:(digits.length===10?`+91${digits}`:`+${digits}`); console.log('::add-mask::'+to);
+          const expectedLast4=String(process.env.EXPECTED_DESTINATION_LAST4||'').trim();
+          if(!/^\d{4}$/.test(expectedLast4)||to.replace(/\D/g,'').slice(-4)!==expectedLast4)throw new Error('Destination does not match the handset confirmed by the tester');
+          const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)}); if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
+          const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0]; if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
+          const ledgerResp=await fetch(origin+'/api/voice-outbound?scope=ledger&limit=100',{headers:{cookie},signal:AbortSignal.timeout(30000)}); const ledgerBody=await ledgerResp.json().catch(()=>({})); if(!ledgerResp.ok)throw new Error('voice ledger failed: '+ledgerResp.status);
+          const rows=Array.isArray(ledgerBody?.data)?ledgerBody.data:[]; const eligible=rows.filter(r=>r?.mode==='uat'&&r?.phoneLast4===expectedLast4); const context=eligible.find(r=>r?.dialed&&r?.callId&&['booking_confirmation','grooming_sales','training_sales'].includes(String(r?.useCase||'')))||eligible.find(r=>r?.dialed&&r?.callId);
+          if(!context?.callId)throw new Error('no canonical UAT voice call context available'); const voiceCallId=String(context.callId); console.log('::add-mask::'+voiceCallId); console.log('PAWSPACE_CONTEXT_READY='+JSON.stringify({useCase:context.useCase,state:context.state,mode:context.mode,dialed:Boolean(context.dialed)}));
+          console.log('DIRECT_GROOMING_DIAL_READY='+JSON.stringify({destinationLast4:to.replace(/\D/g,'').slice(-4),requestedRingSeconds:60,observedRingBudgetSeconds:26,dialStartedAt:new Date().toISOString()}));
+          console.log('::warning::Answer immediately when the handset rings: prior unanswered calls ended at about 26 seconds despite the requested 60 seconds. Queue time is additional.');
+          const before=Date.now();
+          const callResp=await fetch('https://api.elevenlabs.io/v1/convai/exotel/outbound-call',{method:'POST',headers:{'content-type':'application/json','xi-api-key':key},body:JSON.stringify({agent_id:agentId,agent_phone_number_id:phoneId,to_number:to,conversation_initiation_client_data:{custom_llm_extra_body:{pawspace_voice_call_id:voiceCallId},dynamic_variables:{pawspace_voice_call_id:voiceCallId,pawspace_uat:'true'}},telephony_call_config:{ringing_timeout_secs:60}}),signal:AbortSignal.timeout(30000)});
+          const callBody=await callResp.json().catch(()=>({})); if(!callResp.ok||callBody?.success!==true||!callBody?.conversation_id){console.log('ELEVENLABS_CALL_ERROR='+JSON.stringify(callBody).slice(0,2200));throw new Error(`ElevenLabs outbound call refused: HTTP ${callResp.status}`);} const conversationId=String(callBody.conversation_id),callSid=String(callBody.callSid||callBody.call_sid||callBody.call_sid_exotel||''); console.log('::add-mask::'+conversationId); if(callSid)console.log('::add-mask::'+callSid); console.log('ELEVENLABS_CALL_ACCEPTED=yes'); console.log('DIRECT_GROOMING_CORRELATION='+JSON.stringify({destinationLast4:to.replace(/\D/g,'').slice(-4),callSidSuffix:callSid.slice(-8)||null}));
+          let detail=null,carrier=null;
+          for(let i=0;i<30;i++){
+            await new Promise(r=>setTimeout(r,4000));
+            const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)}); if(dr.ok)detail=await dr.json().catch(()=>({}));
+            if(callSid){const cr=await fetch(`https://${exHost}/v1/Accounts/${encodeURIComponent(exSid)}/Calls/${encodeURIComponent(callSid)}.json`,{headers:{authorization:`Basic ${Buffer.from(`${exKey}:${exToken}`).toString('base64')}`},signal:AbortSignal.timeout(20000)}); if(cr.ok){const cb=await cr.json().catch(()=>({}));const row=(cb.Call||cb.call||cb);carrier={status:String(row.Status||row.status||''),currentStatus:String(row.CurrentStatus||row.current_status||''),duration:Number(row.Duration||row.duration||0),direction:String(row.Direction||row.direction||'')};}}
+            const tr=Array.isArray(detail?.transcript)?detail.transcript:[]; console.log('DIRECT_GROOMING_POLL='+JSON.stringify({conversationStatus:detail?.status||null,turns:tr.length,hasAudio:Boolean(detail?.has_audio),hasUserAudio:Boolean(detail?.has_user_audio),hasResponseAudio:Boolean(detail?.has_response_audio),carrier}));
+            if(conversationEvidence(detail,carrier,agentId).terminal)break;
+          }
+          if(!detail)throw new Error('ElevenLabs conversation was not readable'); const tr=Array.isArray(detail.transcript)?detail.transcript:[];
+          console.log('DIRECT_GROOMING_RESULT='+JSON.stringify({status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,carrier,safeTranscript:tr.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const evidence=conversationEvidence(detail,carrier,agentId);
+          console.log('DIRECT_GROOMING_EVIDENCE='+JSON.stringify(evidence));
+          if(!evidence.passed)throw new Error('Live conversation not proven: '+evidence.reason);
+          if(String(detail.agent_id)!==agentId)throw new Error('wrong ElevenLabs Grooming agent'); if(String(detail.status)==='failed')throw new Error('ElevenLabs Grooming conversation failed');
+          NODE
+
+  repair-exotel-import:
+    if: ${{ inputs.confirm == 'repair-exotel-import' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Re-import Exotel UAT number with canonical App ID and E.164
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OLD_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
+          const exToken=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const rawCaller=String(process.env.EXOTEL_CALLER_ID||'').trim();
+          const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!key||!exKey||!exToken||!rawCaller||!agentId) throw new Error('repair prerequisites missing');
+          let digits=rawCaller.replace(/\D/g,'');
+          let phone='';
+          if(digits.length===12&&digits.startsWith('91')) phone='+'+digits;
+          else if(digits.length===11&&digits.startsWith('0')) phone='+91'+digits.slice(1);
+          else if(digits.length===10) phone='+91'+digits;
+          else throw new Error('EXOTEL_CALLER_ID cannot be normalized to Indian E.164');
+          console.log('::add-mask::'+phone);
+          const headers={'xi-api-key':key};
+          const currentResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{headers,signal:AbortSignal.timeout(30000)});
+          const currentBody=await currentResponse.json().catch(()=>({}));
+          if(!currentResponse.ok) throw new Error('current ElevenLabs phone list failed '+currentResponse.status);
+          const currentPhones=Array.isArray(currentBody?.phone_numbers)?currentBody.phone_numbers:Array.isArray(currentBody)?currentBody:[];
+          for(const existing of currentPhones.filter(x=>String(x?.provider||'').toLowerCase()==='exotel'&&String(x?.label||'')==='PawSpace Voice UAT')){
+            const id=String(existing?.phone_number_id||existing?.id||'').trim(); if(!id) continue;
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(id),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('CURRENT_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('current phone delete failed '+del.status);
+          }
+          if(oldId&&!currentPhones.some(x=>String(x?.phone_number_id||x?.id||'')===oldId)){
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('OLD_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('old phone delete failed '+del.status);
+          }
+          const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+            method:'POST',
+            headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({
+              provider:'exotel',
+              label:'PawSpace Voice UAT',
+              phone_number:phone,
+              account_sid:'pawspace2',
+              api_key:exKey,
+              api_token:exToken,
+              api_subdomain:'api.exotel.com',
+              app_id:'1347515'
+            }),
+            signal:AbortSignal.timeout(30000)
+          });
+          const ib=await imp.json().catch(()=>({}));
+          if(!imp.ok||!ib?.phone_number_id){
+            console.log('REIMPORT_ERROR='+JSON.stringify(ib).slice(0,1800));
+            throw new Error('Exotel re-import failed '+imp.status);
+          }
+          const newId=String(ib.phone_number_id);
+          console.log('REIMPORTED_PHONE_NUMBER_ID='+newId);
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(newId),{
+            method:'PATCH',
+            headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),
+            signal:AbortSignal.timeout(30000)
+          });
+          const pb=await patch.json().catch(()=>({}));
+          console.log('ASSIGN_GROOMING_STATUS='+patch.status);
+          if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
+          console.log('REPAIR_COMPLETE=yes');
+          NODE
+
+  diagnose-exophone:
+    if: ${{ inputs.confirm == 'diagnose-exophone' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Compare Exotel ExoPhones with caller-id and UAT recipient
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.EXOTEL_API_KEY||'').trim();
+          const token=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const sid=String(process.env.EXOTEL_SID||'').trim();
+          const host=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const callerRaw=String(process.env.EXOTEL_CALLER_ID||'').trim();
+          const recipientRaw=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean)[0]||'';
+          if(!key||!token||!sid) throw new Error('Exotel diagnostics prerequisites missing');
+          const norm=v=>String(v||'').replace(/\D/g,'').replace(/^0+/,'').slice(-10);
+          const callerKey=norm(callerRaw),recipientKey=norm(recipientRaw);
+          console.log('CALLER_EQUALS_UAT_RECIPIENT='+String(Boolean(callerKey&&recipientKey&&callerKey===recipientKey)));
+          const auth='Basic '+Buffer.from(key+':'+token).toString('base64');
+          const r=await fetch('https://'+host+'/v2_beta/Accounts/'+encodeURIComponent(sid)+'/IncomingPhoneNumbers',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const body=await r.json().catch(()=>({}));
+          if(!r.ok){console.log('EXOPHONE_LIST_ERROR='+JSON.stringify(body).slice(0,1500));throw new Error('ExoPhone list failed '+r.status);}
+          const rows=Array.isArray(body?.incoming_phone_numbers)?body.incoming_phone_numbers:[];
+          const safe=rows.map(x=>({
+            sidPresent:Boolean(x.sid),
+            phoneLast4:String(x.phone_number||'').replace(/\D/g,'').slice(-4)||null,
+            friendlyLast4:String(x.friendly_name||'').replace(/\D/g,'').slice(-4)||null,
+            voice:Boolean(x?.capabilities?.voice),
+            voiceUrl:x.voice_url||null,
+            region:x.region||null,
+            numberType:x.number_type||null,
+            matchesCaller:norm(x.phone_number)===callerKey,
+            matchesRecipient:norm(x.phone_number)===recipientKey,
+            voiceFlowId:(String(x.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]||null
+          }));
+          console.log('EXOPHONES_SAFE='+JSON.stringify(safe));
+          const flow1347515=safe.filter(x=>x.voiceFlowId==='1347515');
+          console.log('FLOW_1347515_EXOPHONES='+JSON.stringify(flow1347515));
+          NODE
+
+  repair-with-real-exophone:
+    if: ${{ inputs.confirm == 'repair-with-real-exophone' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Replace ElevenLabs UAT import with a real Exotel ExoPhone
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OLD_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
+          const exToken=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const exSid=String(process.env.EXOTEL_SID||'').trim();
+          const exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!elevenKey||!exKey||!exToken||!exSid||!agentId) throw new Error('repair prerequisites missing');
+          const auth='Basic '+Buffer.from(exKey+':'+exToken).toString('base64');
+          const xr=await fetch('https://'+exHost+'/v2_beta/Accounts/'+encodeURIComponent(exSid)+'/IncomingPhoneNumbers',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const xb=await xr.json().catch(()=>({}));
+          if(!xr.ok) throw new Error('ExoPhone list failed '+xr.status);
+          const phones=(Array.isArray(xb?.incoming_phone_numbers)?xb.incoming_phone_numbers:[]).filter(x=>Boolean(x?.capabilities?.voice)&&x?.phone_number);
+          if(!phones.length) throw new Error('No voice-capable ExoPhones found');
+          const chosen=phones.find(x=>String(x.region||'').toUpperCase()==='KA'&&(String(x.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]==='1347515');
+          if(!chosen) throw new Error('Dedicated KA ElevenLabs ExoPhone flow 1347515 was not found');
+          let digits=String(chosen.phone_number||'').replace(/\D/g,'');
+          let e164='';
+          if(digits.length===12&&digits.startsWith('91')) e164='+'+digits;
+          else if(digits.length===11&&digits.startsWith('0')) e164='+91'+digits.slice(1);
+          else if(digits.length===10) e164='+91'+digits;
+          else throw new Error('Selected ExoPhone cannot be normalized to Indian E.164');
+          console.log('::add-mask::'+e164);
+          console.log('SELECTED_EXOPHONE='+JSON.stringify({
+            last4:digits.slice(-4),region:chosen.region||null,numberType:chosen.number_type||null,
+            voiceFlowId:(String(chosen.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]||null
+          }));
+          const headers={'xi-api-key':elevenKey};
+          const currentResponse=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{headers,signal:AbortSignal.timeout(30000)});
+          const currentBody=await currentResponse.json().catch(()=>({}));
+          if(!currentResponse.ok) throw new Error('current ElevenLabs phone list failed '+currentResponse.status);
+          const currentPhones=Array.isArray(currentBody?.phone_numbers)?currentBody.phone_numbers:Array.isArray(currentBody)?currentBody:[];
+          for(const existing of currentPhones.filter(x=>String(x?.provider||'').toLowerCase()==='exotel'&&String(x?.label||'')==='PawSpace Voice UAT')){
+            const id=String(existing?.phone_number_id||existing?.id||'').trim();if(!id)continue;
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(id),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('CURRENT_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('current ElevenLabs phone delete failed '+del.status);
+          }
+          if(oldId&&!currentPhones.some(x=>String(x?.phone_number_id||x?.id||'')===oldId)){
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('STALE_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('stale ElevenLabs phone delete failed '+del.status);
+          }
+          const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+            method:'POST',headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({
+              provider:'exotel',label:'PawSpace Voice UAT',phone_number:e164,account_sid:exSid,
+              api_key:exKey,api_token:exToken,api_subdomain:exHost,app_id:'1347515'
+            }),signal:AbortSignal.timeout(30000)
+          });
+          const ib=await imp.json().catch(()=>({}));
+          if(!imp.ok||!ib?.phone_number_id){console.log('REAL_EXOPHONE_IMPORT_ERROR='+JSON.stringify(ib).slice(0,1800));throw new Error('real ExoPhone import failed '+imp.status);}
+          const newId=String(ib.phone_number_id);
+          console.log('REAL_EXOPHONE_PHONE_ID='+newId);
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(newId),{
+            method:'PATCH',headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),signal:AbortSignal.timeout(30000)
+          });
+          const pb=await patch.json().catch(()=>({}));
+          console.log('REAL_EXOPHONE_ASSIGN_STATUS='+patch.status);
+          if(!patch.ok) throw new Error('Grooming assignment failed '+patch.status+' '+JSON.stringify(pb).slice(0,800));
+          console.log('REAL_EXOPHONE_REPAIR_COMPLETE=yes');
+          NODE
+
+  diagnose-latest-exotel-call:
+    if: ${{ inputs.confirm == 'diagnose-latest-exotel-call' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect latest Exotel call and legs without dialing
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.EXOTEL_API_KEY||'').trim(),token=String(process.env.EXOTEL_API_TOKEN||'').trim(),sid=String(process.env.EXOTEL_SID||'').trim(),host=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          if(!key||!token||!sid) throw new Error('Exotel diagnostic prerequisites missing');
+          const auth='Basic '+Buffer.from(key+':'+token).toString('base64');
+          const list=await fetch('https://'+host+'/v1/Accounts/'+encodeURIComponent(sid)+'/Calls.json?PageSize=10&SortBy=DateCreated:desc&details=true',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const lb=await list.json().catch(()=>({}));
+          if(!list.ok) throw new Error('Exotel call list failed '+list.status+' '+JSON.stringify(lb).slice(0,800));
+          const calls=Array.isArray(lb?.Calls)?lb.Calls:Array.isArray(lb?.calls)?lb.calls:[];
+          const latest=calls.find(c=>String(c.Direction||c.direction||'').toLowerCase().includes('outbound'))||calls[0];
+          if(!latest) throw new Error('No recent Exotel calls');
+          const callSid=String(latest.Sid||latest.sid||'').trim(); if(!callSid) throw new Error('Latest call has no SID');
+          console.log('::add-mask::'+callSid);
+          console.log('LATEST_V1_SAFE='+JSON.stringify({
+            status:latest.Status||latest.status||null,currentStatus:latest.CurrentStatus||latest.current_status||null,direction:latest.Direction||latest.direction||null,
+            duration:Number(latest.Duration||latest.duration||0),dateCreated:latest.DateCreated||latest.date_created||null,startTime:latest.StartTime||latest.start_time||null,endTime:latest.EndTime||latest.end_time||null
+          }));
+          const ccmHost=host.includes('api.in.exotel.com')?'ccm-api.in.exotel.com':'ccm-api.exotel.com';
+          const det=await fetch('https://'+ccmHost+'/v3/accounts/'+encodeURIComponent(sid)+'/calls/'+encodeURIComponent(callSid),{headers:{authorization:auth,'content-type':'application/json'},signal:AbortSignal.timeout(30000)});
+          const db=await det.json().catch(()=>({}));
+          console.log('V3_DETAIL_HTTP='+det.status);
+          if(det.ok){
+            const cd=db?.response?.call_details||{};
+            console.log('V3_CALL_DETAIL='+JSON.stringify({
+              state:cd.state||null,status:cd.status||null,direction:cd.direction||null,virtualNumberLast4:String(cd.virtual_number||'').replace(/\D/g,'').slice(-4)||null,
+              startTime:cd.start_time||null,endTime:cd.end_time||null,totalDuration:cd.total_duration??null,totalTalkTime:cd.total_talk_time??null,
+              appId:cd.app_id||null,appName:cd.app_name||null,legs:cd.legs||null
+            }));
+            if(cd.legs){
+              const legsUrl='https://'+ccmHost+String(cd.legs);
+              const lr=await fetch(legsUrl,{headers:{authorization:auth,'content-type':'application/json'},signal:AbortSignal.timeout(30000)});
+              const lj=await lr.json().catch(()=>({}));
+              console.log('LEGS_HTTP='+lr.status);
+              const raw=lj?.response?.legs||lj?.legs||lj?.response||lj;
+              const legs=Array.isArray(raw)?raw:[];
+              console.log('LEGS_SAFE='+JSON.stringify(legs.map(x=>({
+                direction:x.direction||null,state:x.state||null,terminalStatus:x.terminal_status||x.status||null,
+                networkType:x.network_type||null,onCallDurationMs:Number(x.on_call_duration_ms||0),
+                bridgeStatus:x?.additional_info?.bridge_status||null,txAudioStatus:x?.additional_info?.tx_audio_status||null,rxAudioStatus:x?.additional_info?.rx_audio_status||null
+              }))));
+            }
+          } else console.log('V3_DETAIL_ERROR='+JSON.stringify(db).slice(0,1200));
+          NODE
+
+  repair-with-alternate-ka-exophone:
+    if: ${{ inputs.confirm == 'repair-with-alternate-ka-exophone' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Switch ElevenLabs UAT to alternate KA ExoPhone
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          OLD_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
+          const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
+          const exToken=String(process.env.EXOTEL_API_TOKEN||'').trim();
+          const exSid=String(process.env.EXOTEL_SID||'').trim();
+          const exHost=String(process.env.EXOTEL_SUBDOMAIN||'api.exotel.com').trim()||'api.exotel.com';
+          const agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!elevenKey||!exKey||!exToken||!exSid||!agentId) throw new Error('alternate ExoPhone prerequisites missing');
+          const auth='Basic '+Buffer.from(exKey+':'+exToken).toString('base64');
+          const xr=await fetch('https://'+exHost+'/v2_beta/Accounts/'+encodeURIComponent(exSid)+'/IncomingPhoneNumbers',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+          const xb=await xr.json().catch(()=>({}));
+          if(!xr.ok) throw new Error('ExoPhone list failed '+xr.status);
+          const phones=(Array.isArray(xb?.incoming_phone_numbers)?xb.incoming_phone_numbers:[]).filter(x=>Boolean(x?.capabilities?.voice)&&x?.phone_number&&String(x.region||'').toUpperCase()==='KA');
+          if(phones.length<2) throw new Error('No alternate KA ExoPhone available');
+          const chosen=phones.find(x=>String(x.phone_number||'').replace(/\D/g,'').slice(-4)!=='2185')||phones[1];
+          let digits=String(chosen.phone_number||'').replace(/\D/g,'');
+          let e164='';
+          if(digits.length===12&&digits.startsWith('91')) e164='+'+digits;
+          else if(digits.length===11&&digits.startsWith('0')) e164='+91'+digits.slice(1);
+          else if(digits.length===10) e164='+91'+digits;
+          else throw new Error('Alternate ExoPhone cannot be normalized');
+          console.log('::add-mask::'+e164);
+          console.log('ALTERNATE_EXOPHONE='+JSON.stringify({last4:digits.slice(-4),region:chosen.region||null,numberType:chosen.number_type||null,voiceFlowId:(String(chosen.voice_url||'').match(/start_voice\/(\d+)/)||[])[1]||null}));
+          const headers={'xi-api-key':elevenKey};
+          if(oldId){
+            const del=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(oldId),{method:'DELETE',headers,signal:AbortSignal.timeout(30000)});
+            console.log('OLD_PHONE_DELETE_STATUS='+del.status);
+            if(!del.ok&&del.status!==404) throw new Error('old phone delete failed '+del.status);
+          }
+          const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
+            method:'POST',headers:{...headers,'content-type':'application/json'},
+            body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT',phone_number:e164,account_sid:exSid,api_key:exKey,api_token:exToken,api_subdomain:exHost,app_id:'1347515'}),
+            signal:AbortSignal.timeout(30000)
+          });
+          const ib=await imp.json().catch(()=>({}));
+          if(!imp.ok||!ib?.phone_number_id){console.log('ALTERNATE_IMPORT_ERROR='+JSON.stringify(ib).slice(0,1500));throw new Error('alternate ExoPhone import failed '+imp.status);}
+          const newId=String(ib.phone_number_id); console.log('ALTERNATE_PHONE_ID='+newId);
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(newId),{
+            method:'PATCH',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT'}),signal:AbortSignal.timeout(30000)
+          });
+          console.log('ALTERNATE_ASSIGN_STATUS='+patch.status);
+          if(!patch.ok) throw new Error('alternate Grooming assignment failed '+patch.status);
+          NODE
+
+  tune-grooming-audio:
+    if: ${{ inputs.confirm == 'tune-grooming-audio' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - name: Tune Grooming agent for clear phone conversation
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
+          const headers={'xi-api-key':key,'content-type':'application/json'};
+          const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const current=await read.json().catch(()=>({}));
+          if(!read.ok) throw new Error('agent read failed '+read.status);
+          const voiceId=current?.conversation_config?.tts?.voice_id;
+          if(!voiceId) throw new Error('agent voice_id missing');
+          const body={
+            conversation_config:{
+              agent:{
+                first_message:"Hi, this is PawSpace's grooming assistant. How can I help with grooming today?"
+              },
+              tts:{
+                model_id:'eleven_flash_v2',
+                voice_id:voiceId,
+                stability:0.78,
+                similarity_boost:0.75,
+                speed:0.9,
+                optimize_streaming_latency:0
+              },
+              turn:{
+                turn_timeout:12,
+                silence_end_call_timeout:60,
+                turn_eagerness:'normal',
+                turn_model:'turn_v3',
+                soft_timeout_config:{
+                  timeout_seconds:4,
+                  message:"One moment while I check that for you.",
+                  max_soft_timeouts_per_generation:1
+                }
+              }
+            }
+          };
+          const patch=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{
+            method:'PATCH',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(30000)
+          });
+          const result=await patch.json().catch(()=>({}));
+          if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error('agent update failed '+patch.status);}
+          const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+          console.log('GROOMING_AUDIO_TUNED='+JSON.stringify({
+            firstMessage:agent.first_message||null,
+            modelId:tts.model_id||null,
+            stability:tts.stability??null,
+            similarityBoost:tts.similarity_boost??null,
+            speed:tts.speed??null,
+            turnTimeout:turn.turn_timeout??null,
+            silenceEndCallTimeout:turn.silence_end_call_timeout??null,
+            turnModel:turn.turn_model||null,
+            softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null
+          }));
+          NODE
+
+  resume-uat-voice:
+    if: ${{ inputs.confirm == 'resume-uat-voice' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Resume only the confirmed UAT low-confidence handoff without dialing
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+        run: node scripts/resume-voice-uat.mjs
+
+  verify-voice-sale:
+    if: ${{ inputs.confirm == 'verify-voice-sale' || inputs.confirm == 'capture-voice-sale-sandbox' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Verify the confirmed tester's canonical voice sale (no dial)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          VOICE_SALE_ACTION: ${{ inputs.confirm }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          SALE_BOOKING_ID: ${{ inputs.sale_booking_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/verify-voice-sale.mjs
+
+  probe-agent-socket:
+    if: ${{ inputs.confirm == 'probe-agent-socket' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Probe actual agent through WebSocket without dialing
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          PROBE_INPUT: ${{ inputs.probe_input }}
+          VOICE_SALE_ACTION: ${{ inputs.confirm }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          SALE_BOOKING_ID: ${{ inputs.sale_booking_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/probe-voice-agent-socket.mjs
