@@ -232,7 +232,7 @@ test('status returns a customer-owned ready projection with exact server slot, p
   assert.deepEqual(body.data.confirmation, {
     ready: true, bookingId: 'B1', serviceCode: 'grooming', packageCode:'', packageName: 'Bath & Basic', bookingStatus: 'confirmed', paymentId: 'P1', paymentMode: 'prepaid', paymentStatus: 'captured', transactionId: 'pay_fixture', amountDueNow: 0,
     totalAmount: 499.5, currency: 'INR', providerId: 'PRV1', providerName: 'Rahul M.', providerModel: 'full_time', workOrderStatus: 'assigned', scheduledStart: '2026-09-20T03:30:00.000Z', scheduledEnd: '2026-09-20T05:30:00.000Z', updatedAt: 1,
-    gatewayOrderId: 'order_fixture', gatewayPaymentId: 'pay_fixture', pets: [],
+    gatewayOrderId: 'order_fixture', gatewayPaymentId: 'pay_fixture', pets: [], paymentStage: 'settled',
   });
   const denied = await POST(request({ action: 'status', bookingId: 'B1' }, await cookie(db, 'C2')));
   assert.equal(denied.status, 404, 'another customer cannot read the projection');
@@ -390,4 +390,42 @@ test('requested instalment receipt never displays another order capture', async 
   const unknown=await POST(request({action:'status',bookingId:'B1',orderId:'order_not_paid'},session)), body=(await unknown.json()).data;
   assert.equal(body.status,'awaiting_confirmation');assert.equal(body.confirmation.ready,false);
   assert.equal(body.confirmation.transactionId,null);assert.equal(body.confirmation.gatewayPaymentId,null);assert.equal(body.confirmation.gatewayOrderId,null);
+});
+
+// PAY-03 / PAY-05: after a split's first instalment is captured the customer page offered the balance as a fresh
+// "Due now". The status projection now says which stage the amount belongs to and whether it may be paid yet.
+test('after a split stay deposit the status names the balance stage, what was paid and when the balance is due', async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  const dueAt = Date.parse('2026-09-19T03:30:00.000Z');
+  sqlite.exec(`CREATE TABLE stay_payment_schedules(booking_id TEXT,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT);
+    INSERT INTO stay_payment_schedules VALUES ('B1',249.75,249.75,${dueAt},'pending_balance');
+    UPDATE booking_payments SET status='captured',mode='split_50_50',amount_due_now=249.75 WHERE id='P1';`);
+  event(sqlite, { amount_subunits: 24975 });
+  const confirmation = (await (await POST(request({ action: 'status', bookingId: 'B1' }, session))).json()).data.confirmation;
+  assert.equal(confirmation.paymentStage, 'outstanding_balance');
+  assert.equal(confirmation.amountDueNow, 249.75, 'the balance, not the deposit again');
+  assert.equal(confirmation.amountPaid, 249.75);
+  assert.equal(confirmation.balanceDueAt, dueAt);
+  assert.equal(confirmation.balancePayableNow, true, 'a stay balance may be paid early');
+});
+test('a Pet Taxi final balance cannot be opened for payment before drop-off, and can once completion raises it', async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  t.mock.method(globalThis, 'fetch', async () => assert.fail('no gateway order may be opened for a balance that is not due'));
+  sqlite.exec(`UPDATE canonical_bookings SET service_code='pet_taxi' WHERE id='B1';
+    CREATE TABLE taxi_payment_schedules(booking_id TEXT PRIMARY KEY,customer_id TEXT,total_amount REAL,booking_fee_amount REAL,balance_amount REAL,status TEXT);
+    INSERT INTO taxi_payment_schedules VALUES ('B1','C1',499.50,249.75,249.75,'pending_balance');
+    UPDATE booking_payments SET status='captured',mode='split_50_50',amount_due_now=249.75 WHERE id='P1';`);
+  event(sqlite, { amount_subunits: 24975 });
+  const before = (await (await POST(request({ action: 'status', bookingId: 'B1' }, session))).json()).data.confirmation;
+  assert.equal(before.paymentStage, 'outstanding_balance');
+  assert.equal(before.balancePayableNow, false);
+  assert.equal(before.balanceDueAt, null);
+  const refused = await POST(request({ action: 'start', bookingId: 'B1' }, session));
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json()).code, 'balance_not_due_yet');
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_intents WHERE booking_id='B1'").get().n, 1, 'no new payment intent');
+  sqlite.exec(`CREATE TABLE taxi_trip_payment_events(id TEXT PRIMARY KEY,booking_id TEXT,trip_id TEXT,amount REAL,status TEXT);
+    INSERT INTO taxi_trip_payment_events VALUES ('TPE1','B1','TRIP1',249.75,'due');`);
+  const after = (await (await POST(request({ action: 'status', bookingId: 'B1' }, session))).json()).data.confirmation;
+  assert.equal(after.balancePayableNow, true, 'completion made the final balance payable');
 });
