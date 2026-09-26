@@ -1,5 +1,7 @@
 import { groomingCatalogue } from "../../../lib/grooming-governance";
 import { generateCanonicalSalesQuote } from "../../../lib/sales-core-tools";
+import { quoteCoupon } from "../../../lib/coupon-governance";
+import { couponsLiveApproved } from "../../../lib/ai-sales-offers";
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
 
 type PetInput={sourceId:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
@@ -13,6 +15,8 @@ type Input={
   scheduledStart:string;
   scheduledEnd:string;
   consent:{captured:boolean;method:"recorded_call"|"whatsapp"|"email"|"in_person";reference:string;note?:string};
+  /** Optional governed coupon the customer asked for (e.g. GROOM200); the server quotes it on the assisted_staff channel. */
+  couponCode?:string;
 };
 type Row=Record<string,unknown>;
 
@@ -56,9 +60,14 @@ export async function POST(request:Request){try{
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
   const {item}=priceFor(input.packageCode,input.pets),quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"}),total=quote.totalAmount,groupId=`assist-${input.idempotencyKey}`;
+  // A coupon is quoted before anything is reserved, so an ineligible code costs nothing and says why.
+  const couponCode=String(input.couponCode||"").trim().toUpperCase();
+  const coupon=couponCode?await quoteCoupon(db,{code:couponCode,customerId:input.customer.id,serviceCode:"grooming",cityId:input.cityId||"blr",channel:"assisted_staff",packageCode:item.code,orderValue:total,paymentMode:"after_service",isSubscription:false},{liveApproved:await couponsLiveApproved()}):null;
+  if(coupon&&(!coupon.valid||!("quoteId"in coupon)||!coupon.quoteId))return json({error:`Coupon ${couponCode}: ${coupon.error||"not eligible for this order"}`},409);
+  const discount=coupon&&"quoteId"in coupon?Number(coupon.discount):0,payable=total-discount;
   const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds:input.pets.map(p=>p.sourceId),serviceCode:"grooming",zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
   const schedule=(schedulePayload.data||{}) as Record<string,unknown>,provider=schedule.provider as {id?:string;name?:string;model?:"full_time"|"commission"}|undefined;if(!provider?.id||!provider.name||!provider.model)throw new Response("Canonical scheduler did not return an assigned Grooming provider",{status:409});
-  const bookingPayload=await internalPost(request,"/api/canonical-bookings",{idempotencyKey:`assisted:${input.idempotencyKey}`,scheduleGroupId:groupId,customer:input.customer,pets:input.pets,cityId:input.cityId||"blr",zoneId:input.zoneId,serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,provider,totalAmount:total,amountDueNow:0,payment:{method:"payment_link",mode:"pay_after_service",status:"created",detail:"Assisted Orders UAT: payment is not captured; no live money"},pricing:{discount:0,requirements:["staff_assisted_order","consent_evidence","test_only"]}});
+  const bookingPayload=await internalPost(request,"/api/canonical-bookings",{idempotencyKey:`assisted:${input.idempotencyKey}`,scheduleGroupId:groupId,customer:input.customer,pets:input.pets,cityId:input.cityId||"blr",zoneId:input.zoneId,serviceCode:"grooming",packageCode:item.code,packageName:item.name,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,provider,totalAmount:payable,amountDueNow:0,payment:{method:"payment_link",mode:"pay_after_service",status:"created",detail:"Assisted Orders UAT: payment is not captured; no live money"},pricing:{discount,...(coupon&&"quoteId"in coupon?{couponQuoteId:coupon.quoteId}:{}),requirements:["staff_assisted_order","consent_evidence","test_only"]}});
   const booking=(bookingPayload.data||{}) as Record<string,unknown>,bookingId=String(booking.bookingId||"");if(!bookingId)throw new Response("Canonical booking ID was not returned",{status:500});
   const now=Date.now(),assistedOrderId=`ASST-UAT-${crypto.randomUUID().slice(0,10).toUpperCase()}`;
   await db.batch([
@@ -66,6 +75,6 @@ export async function POST(request:Request){try{
     db.prepare("UPDATE canonical_bookings SET channel='assisted_staff',updated_at=? WHERE id=?").bind(now,bookingId),
     db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(`EVT-ASST-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bookingId,"assisted_order_created","booking",bookingId,actor.email,JSON.stringify({assistedOrderId,consentMethod:input.consent.method,consentReference:input.consent.reference.trim(),testOnly:true,liveMoney:false}),now),
   ]);
-  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false});
-  return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:total,amountDueNow:0,status:"confirmed",duplicatePrevented:false,testOnly:true,liveMoney:false}},201);
+  await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,customerId:input.customer.id,packageCode:item.code,totalAmount:payable,couponCode:discount?couponCode:null,discount,channel:"assisted_staff",testOnly:true,liveMoney:false});
+  return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:payable,discount,couponCode:discount?couponCode:null,amountDueNow:0,status:"confirmed",duplicatePrevented:false,testOnly:true,liveMoney:false}},201);
 }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to create Assisted Order UAT");}}
