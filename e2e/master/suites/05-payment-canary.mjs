@@ -75,9 +75,15 @@ try {
     const pay = page.getByRole("button", { name: /Pay securely/i }).first();
     await pay.waitFor({ timeout: 20_000 });
     await pay.click();
-    await page.waitForTimeout(3000);
-    const errorText = await page.locator("[role=alert]").allInnerTexts().catch(() => []);
-    const razorpayOpened = page.frames().some(f => /razorpay/i.test(f.url()));
+    const payClicked = Date.now();
+    let errorText = [], razorpayOpened = false;
+    while (Date.now() - payClicked < 60_000) {
+      await page.waitForTimeout(1000);
+      razorpayOpened = page.frames().some(f => f !== page.mainFrame() && /razorpay/i.test(f.url()));
+      errorText = await page.locator("[role=alert]").allInnerTexts().catch(() => []);
+      if (razorpayOpened || errorText.some(t => t.trim())) break;
+    }
+    out.checkoutOpenMs = Date.now() - payClicked;
     await flow.shot("after-pay-click");
     if (!razorpayOpened) {
       step("Razorpay TEST checkout opened", false, errorText.join(" | ") || "no Razorpay frame");
