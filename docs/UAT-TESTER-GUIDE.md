@@ -66,9 +66,12 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
   five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
   on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
-- **Partner app as a UAT trainer**: the six training providers have partner OTP numbers too — `9000000931`
+- **Partner app as a UAT trainer**: the training providers have partner OTP numbers too — `9000000931`
   (city-wide Training Team), `9000000933` (Kavya R., South), `9000000932` (Arjun T., East), `9000000934`
-  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). A partner identity is
+  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). The city-wide team has
+  four more seats, so testers who pick exactly the same Training date and time still each get a trainer:
+  `9000000937` (Training Team 2), `9000000938` (Team 3), `9000000939` (Team 4), `9000000940` (Team 5). Sign in
+  with the number of the seat named on your booking. A partner identity is
   the phone number, so "switching from groomer to trainer" means signing out and signing in with a trainer's
   number. Note that `/partner-app` lists and works **grooming** work orders only; a trainer signs in and sees
   the shell, but training sessions are not yet worked from this app.

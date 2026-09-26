@@ -26,6 +26,8 @@ const EMAIL = "uat.training.master@example.com";
 const TRAINER_PHONES: Record<string, string> = {
   "PawSpace Training Team (UAT)": "9000000931", "Arjun T. (UAT East)": "9000000932", "Kavya R. (UAT South)": "9000000933",
   "Nikhil B. (UAT North)": "9000000934", "Anitha G. (UAT West)": "9000000935", "Rohan D. (UAT Central)": "9000000936",
+  "PawSpace Training Team 2 (UAT)": "9000000937", "PawSpace Training Team 3 (UAT)": "9000000938",
+  "PawSpace Training Team 4 (UAT)": "9000000939", "PawSpace Training Team 5 (UAT)": "9000000940",
 };
 const PHONE_DEVICE = devices["Pixel 7"];
 mkdirSync(SHOTS, { recursive: true });
