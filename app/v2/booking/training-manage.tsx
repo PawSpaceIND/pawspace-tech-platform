@@ -8,7 +8,9 @@ import styles from "../customer-detail.module.css";
 // The server decides every request. These mirror its customer rules only so the page offers what it can accept:
 // the next unlocked session before it starts, and a cancellation review while the programme is still open.
 const RESCHEDULABLE=["scheduled","accepted","on_the_way","arrived"],CLOSED=["completed","completed_with_exceptions","cancelled"];
-const ONLY_NEXT="Only your next upcoming session can be rescheduled, before it starts.";
+const ONLY_NEXT="Only your next upcoming session can be rescheduled, up to 24 hours before it starts.";
+// Changes are free until 24 hours before a session; inside that window a missed session counts as used.
+const CHANGE_WINDOW_MS=24*60*60_000,withinChangeWindow=(start:string)=>{const startsIn=Date.parse(start)-Date.now();return Number.isFinite(startsIn)&&startsIn>=0&&startsIn<CHANGE_WINDOW_MS;};
 /** The outcome of a cancellation request in customer language; the stored case status is never shown raw. */
 export function trainingCancellationNotice(status:string,caseId:string,duplicate:boolean,kind="programme"){
  const reference=caseId?` Reference: ${caseId}.`:"";
@@ -33,9 +35,9 @@ export default function TrainingManage({bookingId,record,inactive,onRescheduled}
  };
  return <section className={styles.card} aria-label={`Manage your ${kind}`}><h3>{`Change or cancel your ${kind}`}</h3>
  {pending&&<p>Session {pending.sequence_no} · {formatIndiaDateTime(pending.scheduled_start)}: you asked for a new time. Our team will contact you to confirm it.</p>}
- {next?<p>Next session {next.sequence_no} · {formatIndiaDateTime(next.scheduled_start)}. {ONLY_NEXT}</p>:!pending&&<p>No session can be rescheduled right now. {ONLY_NEXT}</p>}
+ {next?<p>Next session {next.sequence_no} · {formatIndiaDateTime(next.scheduled_start)}. {withinChangeWindow(next.scheduled_start)?"It starts within 24 hours, so it can't be changed online. Please contact PawSpace support; a missed session counts as used.":ONLY_NEXT}</p>:!pending&&<p>No session can be rescheduled right now. {ONLY_NEXT}</p>}
  {form?<form className={styles.form} aria-label={form==="reschedule"?"Request a new session time":`Request ${kind} cancellation`} onSubmit={submit}><label className={styles.field}>{form==="reschedule"?`Why do you need a new time for session ${next?.sequence_no??""}?`:`Why do you want to cancel your ${kind}?`}<textarea required minLength={8} maxLength={1000} placeholder="A few words, at least 8 characters" value={reason} disabled={busy} onChange={event=>setReason(event.target.value)}/></label><p className={styles.muted}>{form==="reschedule"?"PawSpace will contact you to confirm a new time.":`Cancellation requests go to PawSpace for approval. Once approved, the unused-session value is refunded after completed sessions and adjustments are reconciled. Your ${kind==="assessment"?"assessment stays":"sessions stay"} booked until then.`}</p><div className={styles.actions}><button type="submit" className={styles.primary} disabled={busy||reason.trim().length<8}>{busy?"Sending request…":form==="reschedule"?"Send reschedule request":"Send cancellation request"}</button><button type="button" disabled={busy} onClick={()=>setForm("")}>{form==="reschedule"?"Keep current time":`Keep my ${kind}`}</button></div></form>
- :<div className={styles.actions}>{next&&<button type="button" className={styles.primary} onClick={()=>open("reschedule")}>Request reschedule</button>}{!cancelSent&&<button type="button" onClick={()=>open("cancel")}>{`Request ${kind} cancellation / refund review`}</button>}</div>}
+ :<div className={styles.actions}>{next&&!withinChangeWindow(next.scheduled_start)&&<button type="button" className={styles.primary} onClick={()=>open("reschedule")}>Request reschedule</button>}{!cancelSent&&<button type="button" onClick={()=>open("cancel")}>{`Request ${kind} cancellation / refund review`}</button>}</div>}
  {notice&&<p role="status">{notice}</p>}
  {error&&<p role="alert">{error}</p>}
  </section>;

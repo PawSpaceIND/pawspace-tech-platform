@@ -18,7 +18,7 @@ const defaults=[
  {code:"training-8-leash",name:"Leash Obedience Plan · 8",sessions:8,validityDays:62,price:12000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-12-leash",name:"Leash Obedience Plan · 12",sessions:12,validityDays:93,price:16500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
  {code:"training-12-advanced",name:"Advanced Obedience Plan",sessions:12,validityDays:93,price:16500,meet:0,maxPets:4,direct:45,coaching:15,split:50},
- {code:"training-16-pro",name:"Pro Training Plan",sessions:16,validityDays:93,price:20000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
+ {code:"training-16-pro",name:"Pro Training Plan",sessions:16,validityDays:120,price:20000,meet:0,maxPets:4,direct:45,coaching:15,split:50},
 ] as const;
 
 // Additive column for databases created before a Training quote could bind a governed coupon quote. A
@@ -37,6 +37,17 @@ export async function ensureTrainingCommercialTables(db:D1Database){await db.bat
  // Repair the original founder Meet & Greet seed (30+15=45m), which violates the scheduler's
  // governed 60-minute minimum for dog_training. Expire still-open quotes before bumping the package
  // version so a pre-repair quote can never be booked against different duration semantics.
+ // Pro's original 93-day validity could not hold 16 weekly sessions (about 106 days), so weekly Pro was
+ // never bookable. Founder decision 26 Sep 2026: 120 days. Same repair discipline as below: only the
+ // untouched founder seed moves, open quotes expire first, and the version bump keeps booked programmes on
+ // the terms they were quoted.
+ const pro=await db.prepare("SELECT validity_days,version,updated_by FROM training_commercial_packages WHERE package_code='training-16-pro'").first<Row>();
+ if(pro&&String(pro.updated_by)==="founder_seed"&&Number(pro.validity_days)===93){
+  await db.batch([
+   db.prepare("UPDATE training_commercial_quotes SET status='expired' WHERE package_code='training-16-pro' AND status='open' AND package_version=?").bind(Number(pro.version)),
+   db.prepare("UPDATE training_commercial_packages SET validity_days=120,version=version+1,updated_at=? WHERE package_code='training-16-pro' AND updated_by='founder_seed' AND validity_days=93 AND version=?").bind(now,Number(pro.version)),
+  ]);
+ }
  const meet=await db.prepare("SELECT direct_minutes_per_pet,coaching_minutes_per_pet,updated_by FROM training_commercial_packages WHERE package_code='trainer-meet-greet'").first<Row>();
  if(meet&&String(meet.updated_by)==="founder_seed"&&Number(meet.direct_minutes_per_pet)+Number(meet.coaching_minutes_per_pet)<60){
   await db.batch([

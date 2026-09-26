@@ -393,6 +393,23 @@ test("real execution: customer session-change route validates programme/session 
   assert.equal(staffLeak.status, 400);
 });
 
+test("real execution: a customer cannot change a session online within 24 hours of its start (free until then)", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  const moveTo = (ms) => sqlite.prepare("UPDATE training_sessions SET scheduled_start=? WHERE id=?").run(new Date(Date.now() + ms).toISOString(), sessions[0].id);
+  moveTo(20 * 3_600_000);
+  const late = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-late" });
+  assert.equal(late.status, 409, JSON.stringify(late.body));
+  assert.equal(late.body.code, "training_change_window_closed");
+  assert.match(late.body.error, /up to 24 hours before/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_session_recovery_cases WHERE session_id=?").get(sessions[0].id)?.n ?? 0, 0, "no recovery case is opened");
+  moveTo(30 * 3_600_000);
+  const early = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-early" });
+  assert.equal(early.status, 200, JSON.stringify(early.body));
+  assert.equal(early.body.data.status, "reschedule_requested");
+});
+
 // QA: asking to move a locked session answered {"error":"{\"error\":\"Training session cannot request_reschedule from
 // locked. ...\",\"code\":...}"} - the route re-read the lifecycle's JSON refusal as text and wrapped it a second time.
 test("real execution: a customer reschedule refusal is one plain message naming the session that can move, with status and code kept", async () => {

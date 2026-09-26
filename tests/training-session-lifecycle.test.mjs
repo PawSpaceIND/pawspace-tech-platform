@@ -426,3 +426,35 @@ test("listTrainerSessions joins programme facts and parses ledgers without inven
   assert.equal(Number(rows[0].total_sessions), 2);
   assert.equal(await listTrainerSessions(world.db, OTHER_TRAINER).then((r) => r.length), 0);
 });
+
+// --- vaccination before a programme session (founder decision 26 Sep 2026) ------------------------
+
+test("a programme session cannot start until every enrolled dog is vaccinated; the Meet & Greet can", async () => {
+  const world = freshWorld();
+  world.sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT,species TEXT,vaccination_status TEXT)");
+  world.sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,vaccination_status) VALUES ('pet_1',?,'Rex','dog','pending')").run(CUSTOMER);
+  const { sessions } = await programme(world);
+  const s1 = sessions[0];
+  await act(world, s1, "accept", "v-accept");
+  await act(world, s1, "on_the_way", "v-otw");
+  await act(world, s1, "arrive", "v-arrive", DOORSTEP);
+  const text = await refusal(act(world, s1, "start", "v-start-refused"), 409, /Vaccinations must be verified for Rex before a programme session can start/);
+  assert.match(text, /training_vaccination_required/);
+  assert.equal((await getTrainingSession(world.db, s1.id)).status, "arrived", "the refused start changes nothing");
+
+  world.sqlite.prepare("UPDATE canonical_pets SET vaccination_status='recorded' WHERE id='pet_1'").run();
+  assert.equal(await act(world, s1, "start", "v-start").then((r) => r.status), "in_session", "a recorded vaccination unblocks the start");
+
+  const meetWorld = freshWorld();
+  meetWorld.sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT,species TEXT,vaccination_status TEXT)");
+  meetWorld.sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,vaccination_status) VALUES ('pet_1',?,'Rex','dog','pending')").run(CUSTOMER);
+  // The lifecycle reads the programme's plan code; a fully paid one-session programme stands in for the
+  // Meet & Greet booking this harness does not quote.
+  const meet = await programme(meetWorld, { sessions: 1, total: 500, dueNow: 500 });
+  meetWorld.sqlite.prepare("UPDATE training_programmes SET plan_code='trainer-meet-greet' WHERE id=?").run(meet.sessions[0].programme_id);
+  const m1 = meet.sessions[0];
+  await act(meetWorld, m1, "accept", "m-accept");
+  await act(meetWorld, m1, "on_the_way", "m-otw");
+  await act(meetWorld, m1, "arrive", "m-arrive", DOORSTEP);
+  assert.equal(await act(meetWorld, m1, "start", "m-start").then((r) => r.status), "in_session", "the Meet & Greet needs no vaccination proof");
+});
