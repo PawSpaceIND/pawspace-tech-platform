@@ -860,7 +860,7 @@
     "lib/ops-intelligence-governance.ts": "1ebc6478dc6e94b8bd85ae51d94ea98197cc564ad8b87a01c289312ca952e712",
     "lib/ops-work-queue.ts": "3909fec3e75cf04afdcd16e55c25a180a761556090d1aee0348740bd10892abe",
     "lib/order-notification-delivery.ts": "7bd8a03d0de8b0ebfa58f43378990dd6f6ceaa1f10c1e448a6609dbc5c4468f0",
-    "lib/order-notification-governance.ts": "82e31fe79e952fea518f5f3c248b027eb76fea8b991ff454f5678afd9ffe149f",
+    "lib/order-notification-governance.ts": "39710f77d49535405e9ca2fd833449372da52c0f122b97573888453f4113efaf",
     "lib/organizational-scope.ts": "ceddc8fbeca1a9d2319af139468cd967ca7fe14cef5b9f2fd4233ad9842572e1",
     "lib/otp-production-runtime.ts": "a4294e38b43f23bf5ed85b6f6d2d0e23e98969220c10e3701a86fe37fb5e78ce",
     "lib/otp-sandbox-runtime.ts": "dd655d96b4138af5ee4d1b4a61050c0942a8d9e669ce36f298a2927c016aff7d",
