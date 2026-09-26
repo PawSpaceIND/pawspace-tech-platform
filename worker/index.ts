@@ -12,7 +12,7 @@ import {runCommunicationOutboxDispatcher} from "../lib/communication-outbox-disp
 import {runServiceRecoveryAudioBotSweep} from "../lib/service-recovery-audio-bot";
 import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {runWhatsAppOutboxDispatcher,syncSubmittedMetaTemplateStatuses} from "../lib/whatsapp-production-runtime";
-import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
+import {cleanupExpiredReservationLeases,releaseAbandonedUatCheckouts} from "../lib/scheduling-reservation-leases";
 import {runRazorpayCaptureOutboxSweep} from "../lib/razorpay-capture-atomic";
 import {runRazorpayCaptureReconciliationSweep} from "../lib/razorpay-capture-reconciliation";
 import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
@@ -217,7 +217,8 @@ const worker = {
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
       const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,providerPayoutQueue]=await Promise.allSettled([
-        cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
+        // UAT only (PAWSPACE_SCHEDULING_ENV=uat): also free groomers held by V2 checkouts abandoned unpaid for 30 min.
+        cleanupExpiredReservationLeases(env.DB,controller.scheduledTime).then(async result=>({...result,uatAbandoned:await releaseAbandonedUatCheckouts(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime)})),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),

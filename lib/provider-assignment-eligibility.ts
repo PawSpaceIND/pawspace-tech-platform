@@ -37,9 +37,17 @@ async function governedUatSeedFixture(db:Db,providerId:string){
   if(!uatRuntime&&!explicitTest)return false;
   const profile=await db.prepare("SELECT updated_by FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
   const provenance=text(profile?.updated_by);
-  if(uatRuntime&&provenance==="founder_seed")return true;
+  // A seeded UAT roster provider stays a fixture after a tester edits it in /control: the PATCH there
+  // rewrites updated_by to the editor's email, which used to drop the groomer from matching silently.
+  // The id - created only by scripts/uat-staging-provider-capacity.sql (uatcap_*) or the runtime
+  // founder_seed defaults - is the durable marker. UAT runtime only; an absent/other env never gets here.
+  if(uatRuntime&&(provenance==="founder_seed"||isUatRosterProviderId(providerId)))return true;
   return explicitTest&&provenance.length>0;
 }
+
+/** Ids that only the UAT roster SQL (uatcap_*) and the runtime founder_seed defaults ever create. */
+const UAT_RUNTIME_DEFAULT_PROVIDER_IDS=new Set(["groom_arun","groom_kiran","groom_sanjay","train_kiran","train_ramesh","train_meera"]);
+export function isUatRosterProviderId(providerId:string){return /^uatcap_[a-z0-9_]+$/.test(providerId)||UAT_RUNTIME_DEFAULT_PROVIDER_IDS.has(providerId);}
 
 /** A provider may receive NEW work only when current mandatory verification can be proved. */
 export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.now()):Promise<AssignmentBlock>{
@@ -121,7 +129,12 @@ async function filterAssignableShortlist<T extends{id:string}>(db:Db,providers:T
     const rows=await chunkedIn([...new Set(providers.map(provider=>text(provider.id)).filter(Boolean))],async(chunk,placeholders)=>(await db.prepare(`SELECT DISTINCT provider_id FROM provider_onboarding_applications WHERE provider_id IN (${placeholders})`).bind(...chunk).all<Row>()).results)
       .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return[] as Row[];throw error;});
     onboarded=new Set(rows.map(row=>text(row.provider_id)));
-  }catch{return[];}
+  }catch(error){
+    // Fail closed, as the per-provider path does: without the verification read nobody is assignable. Logged so an empty
+    // groomer list is explained in the Worker logs rather than silent.
+    console.error(JSON.stringify({event:"provider_eligibility_unreadable",providers:providers.length,reason:String(error instanceof Error?error.message:error).replace(/\s+/g," ").slice(0,160)}));
+    return[];
+  }
   const env=await runtimeEnv(),explicitTest=typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&process.env?.PAWSPACE_LOCAL_PREVIEW==="on",uatRuntime=uatRosterSeedingEnabled(env);
   const verdicts=await Promise.all(providers.map(async provider=>{
     try{

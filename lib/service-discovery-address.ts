@@ -1,3 +1,4 @@
+import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 import{cityFulfilmentVerdict}from"./city-coverage-authority";
 import{geocodeAddress}from"./address-autocomplete";
 import{validateIndianPincode}from"./pincode-validation";
@@ -9,6 +10,9 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export const SERVICE_DISCOVERY_RADIUS_KM=16;
+/** UAT only: every seeded groomer serves the whole city, so the geofence must span it (Kengeri-Whitefield is ~30 km). */
+export const UAT_SERVICE_DISCOVERY_RADIUS_KM=45;
+async function uatSchedulingRuntime(){const{env}=await import("cloudflare:workers");return uatRosterSeedingEnabled(env as unknown as Record<string,unknown>);}
 export type GovernedServiceAddress={addressId:string;address:string;pincode:string;cityId:string;zoneId:string;latitude:number;longitude:number;serviceRadiusKm?:number};
 
 async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
@@ -92,6 +96,6 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
       await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id=?) THEN 0 ELSE 1 END,?,? ON CONFLICT(id) DO NOTHING").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,input.customerId,now,now).run();
     }
   }
-  const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?SERVICE_DISCOVERY_RADIUS_KM:undefined;
+  const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?(await uatSchedulingRuntime()?UAT_SERVICE_DISCOVERY_RADIUS_KM:SERVICE_DISCOVERY_RADIUS_KM):undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};
 }

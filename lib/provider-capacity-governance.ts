@@ -87,7 +87,10 @@ async function attachHomeBase(db:Db,provider:LocatedProvider,at:number){const ba
  * parameter cap). Same rows, same pick: the latest effective_from live at `at`; on an exact tie the most
  * recently written row, which is the row currentHomeBase's per-provider index scan returns.
  */
-async function currentHomeBases(db:Db,providerIds:string[],at:number){await ensureProviderHomeBaseTables(db);const rows=await chunkedIn(providerIds,async(chunk,placeholders)=>(await db.prepare(`SELECT provider_id,latitude,longitude FROM provider_home_base WHERE provider_id IN (${placeholders}) AND effective_from<=? AND (effective_until IS NULL OR effective_until>?) ORDER BY provider_id,effective_from DESC,rowid DESC`).bind(...chunk,at,at).all<Row>()).results),bases=new Map<string,{latitude:number;longitude:number}>();for(const row of rows){const id=String(row.provider_id);if(!bases.has(id))bases.set(id,{latitude:Number(row.latitude),longitude:Number(row.longitude)});}return bases;}
+/** Chunks partition providerIds, so each provider's rows arrive from one chunk in that chunk's SQL order. A stable sort by provider_id
+ * reapplies the ORDER BY across chunks without disturbing each provider's effective_from/rowid order. */
+const providerContiguous=(rows:Row[])=>[...rows].sort((a,b)=>{const x=String(a.provider_id),y=String(b.provider_id);return x<y?-1:x>y?1:0;});
+async function currentHomeBases(db:Db,providerIds:string[],at:number){await ensureProviderHomeBaseTables(db);const rows=providerContiguous(await chunkedIn(providerIds,async(chunk,placeholders)=>(await db.prepare(`SELECT provider_id,latitude,longitude FROM provider_home_base WHERE provider_id IN (${placeholders}) AND effective_from<=? AND (effective_until IS NULL OR effective_until>?) ORDER BY provider_id,effective_from DESC,rowid DESC`).bind(...chunk,at,at).all<Row>()).results)),bases=new Map<string,{latitude:number;longitude:number}>();for(const row of rows){const id=String(row.provider_id);if(!bases.has(id))bases.set(id,{latitude:Number(row.latitude),longitude:Number(row.longitude)});}return bases;}
 
 /**
  * The governed candidate set: live, in-city profiles for the service and zone, with their current home
