@@ -1,4 +1,5 @@
 "use client";
+import VisualAnalytics from "../components/ui/VisualAnalytics";
 
 import { useEffect, useMemo, useState } from "react";
 import css from "./business-intelligence.module.css";
@@ -217,6 +218,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
       <button onClick={() => notify("Dashboard refreshed from the protected test snapshot")}>↻ Refresh</button>
     </section>
 
+    <VisualAnalytics serviceCode={serviceCodeByVertical[service]} title="Revenue, trends & comparisons" />
     <nav className={css.tabs}>{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
 
     {view === "Overview" && <>
