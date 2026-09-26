@@ -4,6 +4,7 @@ import { v2GroomingSelectionIssue } from "./grooming-selection";
 import { stableBookingInputKey } from "../booking-input-fingerprint";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
 import { apiSend } from "../api-fetch";
+import { quoteGovernedCoupon } from "../coupon-governance-client";
 import { CustomerCheckoutController, checkoutReturnUrl, type CustomerConfirmationProjection, type CheckoutState } from "../customer-checkout-client";
 import { openMobileRazorpayCheckout } from "../mobile/razorpay";
 import { reserveUatSchedule, type ProviderPreview } from "../uat-scheduling-client";
@@ -23,6 +24,8 @@ export type V2GroomingCheckoutInput = {
   zoneId: string;
   scheduledStart: string;
   scheduledEnd: string;
+  /** A governed coupon quote for this exact package and live price; the booking re-checks and consumes it. */
+  coupon?: { quoteId: string; code: string; discount: number };
 };
 
 export type V2GroomingBooking = CanonicalLifecycleResult & {
@@ -43,6 +46,8 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     String(input.quote.price),
     input.provider.id,
     ...input.selectedPets.map(pet => pet.id).sort(),
+    // The code, not its quote: a retry re-quotes the coupon but must keep the same booking.
+    ...(input.coupon ? [`coupon:${input.coupon.code}`] : []),
   ];
   // Retain the existing deterministic fingerprint, with SHA-256 to avoid 32-bit collisions.
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(values)));
@@ -65,6 +70,15 @@ export async function createV2GroomingBooking(
   if (!Number.isFinite(input.quote.price) || input.quote.price <= 0) throw new Error("A valid live price is required before booking.");
 
   if (input.quote.source !== "pricing_control") throw new Error("Only a published live price can enter checkout.");
+  if (input.coupon && (!input.coupon.quoteId || !input.coupon.code)) throw new Error("Reapply the coupon before booking.");
+  // The shown quote may have expired (15 minutes) or been used up since it was applied. Re-quote it now,
+  // before anything is reserved, and book with the server's fresh discount and quote - never the
+  // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: input.quote.price, paymentMode: "full", isSubscription: false }) : null;
+  if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
+  const discount = coupon ? Number(coupon.discount) : 0;
+  if (!Number.isFinite(discount) || discount < 0 || discount > input.quote.price) throw new Error("Reapply the coupon before booking.");
+  const payable = input.quote.price - discount;
   if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
       input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
     throw new Error("The published package must match the selected pets.");
@@ -114,15 +128,15 @@ export async function createV2GroomingBooking(
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
     provider: decision.provider,
-    totalAmount: input.quote.price,
-    amountDueNow: input.quote.price,
+    totalAmount: payable,
+    amountDueNow: payable,
     payment: {
       method: "upi",
       mode: "prepaid",
       status: "created",
       detail: "PawSpace V2 secure Razorpay sandbox checkout; capture requires verified gateway evidence",
     },
-    pricing: { discount: 0 },
+    pricing: coupon ? { discount, couponCode: coupon.code, couponQuoteId: coupon.quoteId } : { discount: 0 },
   });
   if (!canonical.bookingId || canonical.customerId !== input.account.customerId || canonical.scheduleGroupId !== decision.groupId) {
     throw new Error("The booking could not be matched to your account and reservation.");
