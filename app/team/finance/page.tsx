@@ -1,4 +1,5 @@
 "use client";
+import VisualAnalytics from "../../components/ui/VisualAnalytics";
 
 import Link from"next/link";
 import{readReportJson}from"../../../lib/read-report-json";
@@ -28,6 +29,7 @@ export default function TeamFinance(){
       <GroomingGstPanel />
       {error&&<section style={{padding:18,borderRadius:12,background:"var(--staff-danger-bg)",border:"1px solid var(--staff-line)",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"var(--staff-surface)",borderRadius:14}}>Loading canonical Grooming ledger…</section>}
+      <VisualAnalytics serviceCode="grooming" title="Grooming revenue trends" />
       {data&&!loading&&!error&&<>
         <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}} data-staff-grid="stats">
           {[["Bookings",data.summary.bookings],["Reconciled",data.summary.reconciled],["Unreconciled",data.summary.unreconciled],["Open exceptions",data.summary.exceptions]].map(([name,value])=><article key={String(name)} style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:14,padding:18}}><small style={{color:"var(--staff-muted)"}}>{name}</small><strong style={{display:"block",fontSize:25,marginTop:7}}>{value}</strong></article>)}
