@@ -1057,7 +1057,7 @@
     "lib/sitting-payment-governance.ts": "6fe82fee820b2dee3fd711a2d5c9c588905096306da74e76c6239ea20b4d7f34",
     "lib/sitting-proof-client.ts": "5ffc3f0c80cdb270f729eb45807fdccda846245853e4a11ce7c18e8ad3424d7f",
     "lib/sitting-proof-governance.ts": "69515c2d7af6f2f51fe8572c8ada2868ca63effe84623d19cb701d24983db181",
-    "lib/sitting-provider-projection.ts": "cd5ac9ed8f84850e93ba87259ee93f1d76d13d3993c79198ca43f517c9897bb0",
+    "lib/sitting-provider-projection.ts": "4524e21971ae900268ba01659cc54cee000faa5ea28ab092d79ff14d1e00f415",
     "lib/sitting-recovery-finalizer.ts": "a851305eefd2bea88365d8da65fbf6a3d1f3fec9444853ee557faf5dfd6667aa",
     "lib/sms-test-provider.ts": "11b86092d391cd5255e8813553f6102814f676c9d2f52ba3994b7065c366c05c",
     "lib/special-service-case-linkage.ts": "942d8745fece35dcbf3c46946e2b9d13c70939b3a353f9fe090ca53bf3b5c81f",
