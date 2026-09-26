@@ -87,7 +87,7 @@ export async function POST(request:Request){try{
   await ensureCustomerAccountTables(db);input.customer=await storedCustomer(db,input.customer);
   let quote:Awaited<ReturnType<typeof generateCanonicalSalesQuote>>;
   try{quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"});}
-  catch(error){if(error instanceof Error&&/GST policy/.test(error.message))return json({error:"Assisted booking needs a published grooming GST policy for this city. Ask Finance to publish it in Team → Finance → Grooming GST.",code:"gst_policy_required"},409);throw error;}
+  catch(error){if(error instanceof Error&&/GST policy/.test(error.message))return json({error:"Assisted booking needs a published GST setting for this city. Ask Finance to publish it in Team → Finance → GST setting.",code:"gst_policy_required"},409);throw error;}
   // The booking is governed at the live Pricing Control price (dynamic rules, multi-pet rows); the sales
   // quote above only proves a GST policy is published. Pricing from the list price made every booking 409.
   const governedQuote=await quoteGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,pets:input.pets.map(pet=>({species:pet.species})),paymentMode:"pay_after_service",cityId:input.cityId||"blr",zoneId:input.zoneId,scheduledStart:input.scheduledStart});

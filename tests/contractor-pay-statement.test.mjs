@@ -237,7 +237,10 @@ test("a full-time groomer gets no commission line: not in the commission sync, n
     job(w.sqlite, { id: booking, providerId, day: new Date(NOW).toISOString().slice(0, 10), amount: 1000 });
     w.sqlite.prepare("INSERT INTO provider_work_orders VALUES (?,?,?,'commission')").run(`WO-${booking}`, booking, providerId);
   }
-  await commission.saveProviderCompensationProfile(w.db, { providerId: "COMM1", engagementModel: "commission", commissionMode: "percent", commissionValue: 70, reason: "Commission groomer terms", actor: FIN });
+  // Owner decision 8 / G14 (26 Sept 2026): the commission is set per service in provider_commercial_terms (a maker and a
+  // different approver); the older profile no longer takes a commission percentage.
+  w.sqlite.exec("CREATE TABLE IF NOT EXISTS provider_commercial_terms (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,provider_id TEXT,version INTEGER NOT NULL,status TEXT NOT NULL,engagement_model TEXT NOT NULL,provider_share_pct REAL NOT NULL,effective_from TEXT NOT NULL,created_by TEXT,approved_by TEXT,approval_reference TEXT)");
+  w.sqlite.prepare("INSERT INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,effective_from,created_by,approved_by,approval_reference) VALUES ('PCT-COMM1','grooming','COMM1',1,'active','commission_groomer',0.70,'2026-01-01',?,?,'TEST-COMM1')").run(FIN, OPS);
   await commission.syncCompletedCommissionOrders(w.db);
   const commissions = w.sqlite.prepare("SELECT provider_id,commission_amount FROM provider_order_commissions ORDER BY provider_id").all();
   assert.deepEqual(commissions.map((c) => [c.provider_id, c.commission_amount]), [["COMM1", 700]], "the commission provider is paid per job; the full-time groomer is not");

@@ -1,5 +1,6 @@
 import { bookingPaymentBalances } from "../../../lib/booking-payment-balances";
 import { bookingSupportCases } from "../../../lib/booking-support-cases";
+import { ensureGroomingRescheduleRequestTable } from "../../../lib/grooming-reschedule-schema";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
@@ -72,6 +73,8 @@ async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveMana
   const casesByBooking=new Map<string,Row[]>();
   for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
   const bookings=[];
+  // Pay-the-difference reschedules (lib/grooming-reschedule-payment.ts), shown beside the refunds.
+  await ensureGroomingRescheduleRequestTable(db);
   for(const row of rows.results){
     const[pets,lifecycle,operations,notifications,rebooking,refunds,tickets,adminActions]=await Promise.all([
       db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
@@ -83,9 +86,10 @@ async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveMana
       db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
       db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
     ]);
+    const rescheduleRequests=(await db.prepare("SELECT id,status,from_start,to_start,difference_amount,new_total_amount,target_provider_id,refund_case_id,failure_reason,created_at,updated_at FROM grooming_reschedule_requests WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>()).results;
     const balance=balances.get(String(row.id));
     if(!balance)throw new Error("Canonical payment balance unavailable");
-    bookings.push({...row,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
+    bookings.push({...row,rescheduleRequests,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
   }
   return{source:"canonical UAT database snapshot + live stream",bookings,organizationalScope:scope??"global"};
 }

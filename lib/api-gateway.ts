@@ -185,11 +185,14 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   // (owner decision 2026-09-22, decision 4). Same permission the WhatsApp conversation control carries.
   if(url.pathname==="/api/chat-human-reply")return "communications.manage";
   if(url.pathname==="/api/grooming-lifecycle"){
-    if(method==="GET")return "bookings.view";
+    // The Ops service-window view names who authorised an early/late start, so it asks what authorising does.
+    if(method==="GET")return url.searchParams.get("view")==="service_window"?"bookings.manage":"bookings.view";
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
     // authorise_completion_without_collection closes a job with the money unaccounted for (owner
     // decision 2026-09-22, decision 7). It is an Operations action, so it carries mark_paid's
     // permission here as well as in the route - the two layers must not disagree about who may do it.
+    // authorise_service_window (QA M1) is the same kind of Operations exception, on bookings.manage.
+    if(body.action==="authorise_service_window")return "bookings.manage";
     return body.action==="mark_paid"||body.action==="authorise_completion_without_collection"?"payments.manage":"bookings.view";
   }
   if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";if(body.action==="apply_package_upgrade")return "pricing.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue","rebook_requested","refund_requested"].includes(String(body.action))?"communications.message":"bookings.manage";}

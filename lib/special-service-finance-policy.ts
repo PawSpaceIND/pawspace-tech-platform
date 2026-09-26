@@ -1,4 +1,5 @@
 import{registerServicePolicyDomain,resolveServicePolicy,seedServicePolicyScope}from"./service-policy-governance";
+import{gstOn}from"./gst-method";
 type Db=D1Database;
 export type SpecialServiceFinancePolicy={taxEnabled:boolean;taxRatePercent:number;taxMode:"inclusive";settlementDelayDays:number};
 const defaults:SpecialServiceFinancePolicy&Record<string,unknown>={taxEnabled:false,taxRatePercent:0,taxMode:"inclusive",settlementDelayDays:0};
@@ -10,4 +11,7 @@ export const funeralFinancePolicyDomain=domain(FUNERAL_FINANCE_POLICY_DOMAIN,"Fu
 export async function seedSpecialServiceFinancePolicies(db:Db){await seedServicePolicyScope(db,RELOCATION_FINANCE_POLICY_DOMAIN,"relocation","*",defaults,"Strict default: tax disabled until Finance/CA publishes a rate; vendor settlement uses quoted vendor cost");await seedServicePolicyScope(db,FUNERAL_FINANCE_POLICY_DOMAIN,"funeral_memorial","*",defaults,"Strict default: tax disabled until Finance/CA publishes a rate; vendor settlement requires explicit configured commercial terms");}
 export async function resolveRelocationFinancePolicy(db:Db,cityId="blr"){await seedSpecialServiceFinancePolicies(db);return resolveServicePolicy<SpecialServiceFinancePolicy&Record<string,unknown>>(db,RELOCATION_FINANCE_POLICY_DOMAIN,{serviceCode:"relocation",cityId});}
 export async function resolveFuneralFinancePolicy(db:Db,cityId="blr"){await seedSpecialServiceFinancePolicies(db);return resolveServicePolicy<SpecialServiceFinancePolicy&Record<string,unknown>>(db,FUNERAL_FINANCE_POLICY_DOMAIN,{serviceCode:"funeral_memorial",cityId});}
-export function taxFromGrossMargin(grossMargin:number,policy:SpecialServiceFinancePolicy){const gross=Math.max(0,Number(grossMargin||0));if(!policy.taxEnabled)return{taxStatus:"disabled_by_policy" as const,taxAmount:0,revenueNet:gross};const rate=Number(policy.taxRatePercent);const tax=Number((gross*rate/(100+rate)).toFixed(2));return{taxStatus:"resolved" as const,taxAmount:tax,revenueNet:Number((gross-tax).toFixed(2))};}
+/** Tax on a funeral or relocation gross margin. Funeral / memorial is GST exempt (owner decision 4, 26 Sept 2026): callers pass
+ * exempt and get 0 whatever the toggle says. Relocation is not classified yet (owner decision 9), so when Finance turns its tax on it
+ * keeps today's arithmetic - GST taken out of the GST-inclusive margin - computed by the one GST helper. */
+export function taxFromGrossMargin(grossMargin:number,policy:SpecialServiceFinancePolicy,options:{exempt?:boolean}={}){const gross=Math.max(0,Number(grossMargin||0));if(!policy.taxEnabled)return{taxStatus:"disabled_by_policy" as const,taxAmount:0,revenueNet:gross,exempt:Boolean(options.exempt)};if(options.exempt)return{taxStatus:"resolved" as const,taxAmount:0,revenueNet:gross,exempt:true};const tax=gstOn(gross,{ratePercent:Number(policy.taxRatePercent),method:"extract_inclusive"});return{taxStatus:"resolved" as const,taxAmount:tax,revenueNet:Number((gross-tax).toFixed(2)),exempt:false};}

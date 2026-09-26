@@ -46,7 +46,7 @@ test("Funeral manual converted orders take tax only from canonical Funeral finan
  assert.equal(changed.canonicalTaxAuthority,"funeral_commercial_finance");
  await db.prepare("UPDATE funeral_manual_gst_config SET gst_enabled=0,gst_rate=.01 WHERE id='default'").run();
  const order=await manual.recordFuneralConvertedOrder(db,{customerName:"Test Parent",phone:"9999999999",paymentMethod:"uat",orderValue:1180,orderDate:new Date().toISOString().slice(0,10),actorId:"finance@pawspace.test"});
- assert.equal(order.gstEnabled,true); assert.equal(order.gstAmount,180); assert.equal(order.totalAmount,1180);
+ assert.equal(order.gstEnabled,true); assert.equal(order.gstAmount,0,"owner decision 4: funeral / memorial is GST exempt even when the canonical toggle is on"); assert.equal(order.totalAmount,1180);
  assert.equal(order.canonicalTaxAuthority,"funeral_commercial_finance");
  const directory=await manual.funeralManualOrderDirectory(db);
  assert.equal(directory.truth.legacyGstToggleAuthoritative,false);

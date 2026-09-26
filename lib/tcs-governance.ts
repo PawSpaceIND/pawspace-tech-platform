@@ -11,7 +11,7 @@ type Row=Record<string,unknown>;
 export const TCS_PRODUCTION_READY=false;
 const MARKETPLACE_MODELS=new Set(["commission_standard","commission_groomer"]);
 const OPERATOR_STATE_CODE="29";
-const CITY_STATE_CODE:Record<string,string>={blr:"29",bengaluru:"29",hyderabad:"36",hyd:"36",chennai:"33",maa:"33",mumbai:"27",bom:"27",pune:"27",delhi:"07",del:"07",gurugram:"06",gurgaon:"06",noida:"09",kolkata:"19",ccu:"19"};
+export const CITY_STATE_CODE:Record<string,string>={blr:"29",bengaluru:"29",hyderabad:"36",hyd:"36",chennai:"33",maa:"33",mumbai:"27",bom:"27",pune:"27",delhi:"07",del:"07",gurugram:"06",gurgaon:"06",noida:"09",kolkata:"19",ccu:"19"};
 const round2=(v:number)=>Math.round(v*100)/100;
 const num=(v:unknown)=>Number(v??0);
 const text=(v:unknown)=>String(v??"").trim();

@@ -27,7 +27,7 @@ if (typeof nodeModule.registerHooks === "function") {
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const lifecycleRoute = read("app/api/grooming-lifecycle/route.ts");
 const partnerJobsRoute = read("app/api/partner-grooming-jobs/route.ts");
-const changeRoute = read("app/api/grooming-booking-change/route.ts");
+const changeRoute = read("app/api/grooming-booking-change/route.ts") + read("lib/grooming-reschedule-move.ts");
 const groomingRouteApi = read("app/api/grooming-route/route.ts");
 const walletRoute = read("app/api/subscription-wallet/route.ts");
 const walletLib = read("lib/subscription-wallet.ts");

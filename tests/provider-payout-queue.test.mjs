@@ -150,6 +150,11 @@ test("the older commission sync and the training milestones use the same 7-day h
   sqlite.prepare("INSERT INTO training_programmes VALUES ('PG-TRN','BK-TRN','PRV-LEGACY',2)").run();
   sqlite.prepare("INSERT INTO training_sessions VALUES ('S1','PG-TRN','BK-TRN',1,'completed',?,?)").run(completedAt, completedAt);
   sqlite.prepare("INSERT INTO training_sessions VALUES ('S2','PG-TRN','BK-TRN',2,'locked',NULL,?)").run(completedAt);
+  // Owner decision 8 / G14: the milestone share comes from the trainer's commercial term. The older profile percentage was
+  // carried over once, for the services known then (grooming), so training gets its own approved term.
+  const terms = await import("../lib/provider-commercial-terms.ts");
+  const trainerTerm = await terms.saveCommercialTerm(db, { serviceCode: "dog_training", providerId: "PRV-LEGACY", engagementModel: "commission_standard", providerSharePct: 0.70, effectiveFrom: "2026-01-01", reason: "Trainer commercial terms", actorId: "terms.maker@pawspace.test" });
+  await terms.activateCommercialTerm(db, { termId: trainerTerm.id, approvalReference: "TEST-TRN", actorId: "terms.checker@pawspace.test" });
   await training.syncTrainingCommissionPayoutMilestones(db, completedAt + DAY);
   const milestone = sqlite.prepare("SELECT reached_at,due_at,status FROM training_commission_payout_milestones WHERE booking_id='BK-TRN'").get();
   assert.equal(Number(milestone.due_at) - Number(milestone.reached_at), 7 * DAY);
