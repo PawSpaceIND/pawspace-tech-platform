@@ -30,6 +30,10 @@ test("D1 calls in a timed request are recorded, and the slowest lead the Server-
   assert.equal(result, "done");
   assert.deepEqual(timings.map((entry) => entry.sql), ["SELECT \"slow\", one FROM t WHERE a=?", "UPDATE t SET a=1", "BATCH(2) INSERT INTO t VALUES (1)"]);
   const header = timing.d1ServerTiming(timings, 40);
-  assert.match(header, /^app;dur=40, d1;dur=\d+;desc="3 calls", q1;dur=\d+;desc="SELECT slow one FROM t WHERE a=\?"/);
-  assert.ok(!/[^\x20-\x7e]/.test(header));
+  const slow = timing.sqlFingerprint("SELECT \"slow\", one FROM t WHERE a=?");
+  assert.match(slow, /^[0-9a-f]{8}$/);
+  assert.equal(timing.sqlFingerprint("SELECT  \"slow\",\n one FROM t WHERE a=?"), slow, "whitespace does not change a fingerprint");
+  assert.ok(header.startsWith(`app;dur=40, d1;dur=`) && header.includes(`desc="3 calls", q1;dur=`) && header.includes(`desc="${slow}"`), header);
+  // Public responses carry fingerprints only: no SQL keywords, table or column names.
+  assert.doesNotMatch(header, /SELECT|UPDATE|INSERT|BATCH|FROM| t /i);
 });

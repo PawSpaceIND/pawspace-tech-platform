@@ -1,6 +1,6 @@
 /**
  * Staging-only D1 timing. Every D1 call a request makes is timed and the slowest are reported in that
- * response's Server-Timing header, so a slow screen names the query that makes it slow.
+ * response's Server-Timing header by query fingerprint, so a slow screen names the query that makes it slow.
  *
  * The prototypes of the D1 binding and its prepared statements are patched once per isolate, which keeps
  * the binding's identity (per-database caches such as ensureD1Once are keyed on it). Only calls made
@@ -34,9 +34,16 @@ export function installD1RequestTiming(db:D1Database){
 
 export async function withD1RequestTiming<T>(run:()=>Promise<T>){const timings:Timing[]=[];const result=await recording.run(timings,run);return{result,timings};}
 
-/** Server-Timing value: total time, D1 total and count, then the slowest calls with their SQL (truncated). */
+/**
+ * A query's fingerprint: FNV-1a over its whitespace-normalised SQL. The header carries only this, never SQL
+ * or table names, so a public response reveals nothing about the schema; the same function run locally over
+ * the same code path maps a fingerprint back to its query.
+ */
+export function sqlFingerprint(sql:string){let hash=0x811c9dc5;for(const char of sql.replace(/\s+/g," ").trim()){hash^=char.charCodeAt(0);hash=Math.imul(hash,0x01000193)>>>0;}return hash.toString(16).padStart(8,"0");}
+
+/** Server-Timing value: total time, D1 total and count, then the slowest calls by fingerprint. */
 export function d1ServerTiming(timings:Timing[],totalMs:number,limit=8){
- const clean=(sql:string)=>sql.replace(/\s+/g," ").replace(/[^\x20-\x7e]|["\\,;]/g,"").trim().slice(0,70);
+ const clean=(sql:string)=>sqlFingerprint(sql);
  const sum=timings.reduce((total,entry)=>total+entry.ms,0);
  const slowest=[...timings].map((entry,index)=>({...entry,index})).sort((a,b)=>b.ms-a.ms).slice(0,limit);
  return[`app;dur=${totalMs}`,`d1;dur=${sum};desc="${timings.length} calls"`,...slowest.map(entry=>`q${entry.index+1};dur=${entry.ms};desc="${clean(entry.sql)}"`)].join(", ");
