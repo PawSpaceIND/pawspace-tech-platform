@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { world, attempt } from "./helpers/execution-harness.mjs";
+import { atPickupTime } from "./helpers/taxi-pickup-time.mjs";
 
 installWorkersHooks("__TAXI_DB__", "__TAXI_ENV__");
 
@@ -160,10 +161,10 @@ async function taxiTripWorld(over = {}) {
   return { ...w, ...win, life };
 }
 
-const drive = (life, db, action, over = {}) => attempt(() => life.mutateTaxiBooking(db, {
+const drive = (life, db, action, over = {}) => attempt(async () => (action === "confirm_pickup" && await atPickupTime(db, BOOKING), life.mutateTaxiBooking(db, {
   bookingId: BOOKING, action, actorId: DRIVER, providerId: DRIVER,
   idempotencyKey: `txi-${action}-${Math.random()}`, ...over,
-}));
+})));
 
 test("TXI-03 vehicle: a pet may only travel in an active, UAT-verified vehicle owned by that driver", async () => {
   const { db, sqlite, life } = await taxiTripWorld();

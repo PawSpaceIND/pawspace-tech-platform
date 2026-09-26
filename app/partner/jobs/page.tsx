@@ -51,6 +51,7 @@ export default function PartnerJobsPage(){
     </div>
     {job.serviceCode==="grooming"&&job.safetyRequirements.length?<div style={{fontSize:13,color:C.orange}}><b>Safety:</b> {job.safetyRequirements.map(safetyLabel).join(" · ")}</div>:null}
     {job.serviceCode==="grooming"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Add-ons:</b> {job.addOns.join(" · ")}</div>:null}
+    {job.serviceCode==="boarding"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Requested extras:</b> {job.addOns.join(" · ")} <small>(subject to your agreement)</small></div>:null}
     {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
     {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
