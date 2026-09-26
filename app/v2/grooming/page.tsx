@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { couponNeedsReapply } from "../../../lib/coupon-reapply-guard";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
 import { groomingBookingDates, groomingSlotAvailable, groomingSlotWindow } from "../../../lib/grooming-booking-calendar";
 import {
@@ -28,6 +29,7 @@ import {
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
 import V2GroomingPaymentPanel from "./payment-panel";
+import V2GroomingCouponBox from "./coupon-box";
 import ContactForm from "../../contact/contact-form";
 import { serviceAddressConflict } from "../../../lib/service-address-consistency";
 import { EXTRA_CARE_MINUTES, v2ExtraCareReason, v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } from "../../../lib/v2/grooming-selection";
@@ -76,6 +78,9 @@ export default function V2GroomingPage() {
   const [booking, setBooking] = useState<V2GroomingBooking | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  // A governed coupon quote for this exact live price; the server decides the discount and re-checks it at booking.
+  const [coupon, setCoupon] = useState({ discount: 0, code: "", quoteId: "" });
+  const onCouponChange = useCallback((discount: number, code: string, quoteId?: string) => setCoupon({ discount, code, quoteId: quoteId || "" }), []);
   const checkoutLock = useRef(false), mounted = useRef(true);
   const coverageVersion = useRef(0), careVersion = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -142,7 +147,7 @@ export default function V2GroomingPage() {
     careVersion.current++;
     setProviderBusy(false);
     setScheduledStart(""); setScheduledEnd("");
-    setQuote(null);
+    setQuote(null); setCoupon({ discount: 0, code: "", quoteId: "" });
     setProviders(null);
     setSelectedProviderId("");
     setProviderError("");
@@ -196,6 +201,7 @@ export default function V2GroomingPage() {
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
         scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
         addOns: addOns.filter(label => availableAddOns.some(item => item.label === label)), comfort, specialInstructions,
+        coupon: coupon.quoteId ? { quoteId: coupon.quoteId, code: coupon.code, discount: coupon.discount } : undefined,
       }, current => {
         if (!mounted.current) return;
         setBooking(current);
@@ -211,7 +217,7 @@ export default function V2GroomingPage() {
   const checkLiveCare = async () => {
     if (!account || !bundle || !coverage || !date || mixedAudience || youngIssue) return;
     const version = ++careVersion.current;
-    setQuote(null);
+    setQuote(null); setCoupon({ discount: 0, code: "", quoteId: "" });
     setProviderBusy(true);
     setProviderError("");
     setProviders(null);
@@ -380,8 +386,10 @@ export default function V2GroomingPage() {
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
+          {quote && account && coverage && bundle && <V2GroomingCouponBox key={`${quote.price}|${bundle.packageCode}|${scheduledStart}|${coverage.cityId}|${coverage.zoneId}`} orderValue={quote.price} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
+          {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>

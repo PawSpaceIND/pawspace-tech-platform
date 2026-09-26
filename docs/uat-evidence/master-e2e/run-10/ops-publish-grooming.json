@@ -1,0 +1,405 @@
+{
+ "suite": "_ops-publish-grooming",
+ "before": [
+  {
+   "id": "canonical_groom_dog-basic",
+   "packageCode": "dog-basic",
+   "price": 1899,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-basic",
+   "packageCode": "cat-basic",
+   "price": 1899,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-basic_2",
+   "packageCode": "dog-basic__2_pets",
+   "price": 3298,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-basic_2",
+   "packageCode": "cat-basic__2_pets",
+   "price": 3298,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-basic_3",
+   "packageCode": "dog-basic__3_pets",
+   "price": 4947,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-basic_3",
+   "packageCode": "cat-basic__3_pets",
+   "price": 4947,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-basic_4",
+   "packageCode": "dog-basic__4_pets",
+   "price": 6596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-basic_4",
+   "packageCode": "cat-basic__4_pets",
+   "price": 6596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-makeover",
+   "packageCode": "dog-makeover",
+   "price": 2399,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-makeover",
+   "packageCode": "cat-makeover",
+   "price": 2399,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-makeover_2",
+   "packageCode": "dog-makeover__2_pets",
+   "price": 4298,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-makeover_2",
+   "packageCode": "cat-makeover__2_pets",
+   "price": 4298,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-makeover_3",
+   "packageCode": "dog-makeover__3_pets",
+   "price": 6447,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-makeover_3",
+   "packageCode": "cat-makeover__3_pets",
+   "price": 6447,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-makeover_4",
+   "packageCode": "dog-makeover__4_pets",
+   "price": 8596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-makeover_4",
+   "packageCode": "cat-makeover__4_pets",
+   "price": 8596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-bath",
+   "packageCode": "dog-bath",
+   "price": 1349,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-bath_2",
+   "packageCode": "dog-bath__2_pets",
+   "price": 2298,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-bath_3",
+   "packageCode": "dog-bath__3_pets",
+   "price": 3447,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-bath_4",
+   "packageCode": "dog-bath__4_pets",
+   "price": 4596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-trim",
+   "packageCode": "dog-trim",
+   "price": 1599,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-trim",
+   "packageCode": "cat-trim",
+   "price": 1599,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-trim_2",
+   "packageCode": "dog-trim__2_pets",
+   "price": 2798,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-trim_2",
+   "packageCode": "cat-trim__2_pets",
+   "price": 2798,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-trim_3",
+   "packageCode": "dog-trim__3_pets",
+   "price": 4197,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-trim_3",
+   "packageCode": "cat-trim__3_pets",
+   "price": 4197,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_dog-trim_4",
+   "packageCode": "dog-trim__4_pets",
+   "price": 5596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-trim_4",
+   "packageCode": "cat-trim__4_pets",
+   "price": 5596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-routine",
+   "packageCode": "cat-routine",
+   "price": 1149,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-routine_2",
+   "packageCode": "cat-routine__2_pets",
+   "price": 1998,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-routine_3",
+   "packageCode": "cat-routine__3_pets",
+   "price": 2997,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_cat-routine_4",
+   "packageCode": "cat-routine__4_pets",
+   "price": 3996,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-basic",
+   "packageCode": "young-basic",
+   "price": 999,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-basic_2",
+   "packageCode": "young-basic__2_pets",
+   "price": 1798,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-basic_3",
+   "packageCode": "young-basic__3_pets",
+   "price": 2697,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-basic_4",
+   "packageCode": "young-basic__4_pets",
+   "price": 3596,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-makeover",
+   "packageCode": "young-makeover",
+   "price": 1399,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-makeover_2",
+   "packageCode": "young-makeover__2_pets",
+   "price": 2598,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-makeover_3",
+   "packageCode": "young-makeover__3_pets",
+   "price": 3897,
+   "active": 1
+  },
+  {
+   "id": "canonical_groom_young-makeover_4",
+   "packageCode": "young-makeover__4_pets",
+   "price": 5196,
+   "active": 1
+  }
+ ],
+ "published": [],
+ "alreadyActive": [
+  "canonical_groom_dog-basic",
+  "canonical_groom_cat-basic",
+  "canonical_groom_dog-basic_2",
+  "canonical_groom_cat-basic_2",
+  "canonical_groom_dog-basic_3",
+  "canonical_groom_cat-basic_3",
+  "canonical_groom_dog-basic_4",
+  "canonical_groom_cat-basic_4",
+  "canonical_groom_dog-makeover",
+  "canonical_groom_cat-makeover",
+  "canonical_groom_dog-makeover_2",
+  "canonical_groom_cat-makeover_2",
+  "canonical_groom_dog-makeover_3",
+  "canonical_groom_cat-makeover_3",
+  "canonical_groom_dog-makeover_4",
+  "canonical_groom_cat-makeover_4",
+  "canonical_groom_dog-bath",
+  "canonical_groom_dog-bath_2",
+  "canonical_groom_dog-bath_3",
+  "canonical_groom_dog-bath_4",
+  "canonical_groom_dog-trim",
+  "canonical_groom_cat-trim",
+  "canonical_groom_dog-trim_2",
+  "canonical_groom_cat-trim_2",
+  "canonical_groom_dog-trim_3",
+  "canonical_groom_cat-trim_3",
+  "canonical_groom_dog-trim_4",
+  "canonical_groom_cat-trim_4",
+  "canonical_groom_cat-routine",
+  "canonical_groom_cat-routine_2",
+  "canonical_groom_cat-routine_3",
+  "canonical_groom_cat-routine_4",
+  "canonical_groom_young-basic",
+  "canonical_groom_young-basic_2",
+  "canonical_groom_young-basic_3",
+  "canonical_groom_young-basic_4",
+  "canonical_groom_young-makeover",
+  "canonical_groom_young-makeover_2",
+  "canonical_groom_young-makeover_3",
+  "canonical_groom_young-makeover_4"
+ ],
+ "errors": [],
+ "catalogue": {
+  "status": 200,
+  "count": 10,
+  "sample": [
+   {
+    "code": "cat-basic",
+    "name": "Bath & Basic",
+    "audience": "cat",
+    "prices": [
+     "1 pet: ₹1899",
+     "2 pet: ₹3298",
+     "3 pet: ₹4947",
+     "4 pet: ₹6596"
+    ]
+   },
+   {
+    "code": "cat-makeover",
+    "name": "Complete Makeover",
+    "audience": "cat",
+    "prices": [
+     "1 pet: ₹2399",
+     "2 pet: ₹4298",
+     "3 pet: ₹6447",
+     "4 pet: ₹8596"
+    ]
+   },
+   {
+    "code": "cat-routine",
+    "name": "Routine Grooming",
+    "audience": "cat",
+    "prices": [
+     "1 pet: ₹1149",
+     "2 pet: ₹1998",
+     "3 pet: ₹2997",
+     "4 pet: ₹3996"
+    ]
+   },
+   {
+    "code": "cat-trim",
+    "name": "Just Trim",
+    "audience": "cat",
+    "prices": [
+     "1 pet: ₹1599",
+     "2 pet: ₹2798",
+     "3 pet: ₹4197",
+     "4 pet: ₹5596"
+    ]
+   },
+   {
+    "code": "dog-basic",
+    "name": "Bath & Basic",
+    "audience": "dog",
+    "prices": [
+     "1 pet: ₹1899",
+     "2 pet: ₹3298",
+     "3 pet: ₹4947",
+     "4 pet: ₹6596"
+    ]
+   },
+   {
+    "code": "dog-bath",
+    "name": "Essential Bath",
+    "audience": "dog",
+    "prices": [
+     "1 pet: ₹1349",
+     "2 pet: ₹2298",
+     "3 pet: ₹3447",
+     "4 pet: ₹4596"
+    ]
+   },
+   {
+    "code": "dog-makeover",
+    "name": "Complete Makeover",
+    "audience": "dog",
+    "prices": [
+     "1 pet: ₹2399",
+     "2 pet: ₹4298",
+     "3 pet: ₹6447",
+     "4 pet: ₹8596"
+    ]
+   },
+   {
+    "code": "dog-trim",
+    "name": "Just Trim",
+    "audience": "dog",
+    "prices": [
+     "1 pet: ₹1599",
+     "2 pet: ₹2798",
+     "3 pet: ₹4197",
+     "4 pet: ₹5596"
+    ]
+   },
+   {
+    "code": "young-basic",
+    "name": "Young Pet Bath & Basic",
+    "audience": "young",
+    "prices": [
+     "1 pet: ₹999",
+     "2 pet: ₹1798",
+     "3 pet: ₹2697",
+     "4 pet: ₹3596"
+    ]
+   },
+   {
+    "code": "young-makeover",
+    "name": "Young Pet Complete Makeover",
+    "audience": "young",
+    "prices": [
+     "1 pet: ₹1399",
+     "2 pet: ₹2598",
+     "3 pet: ₹3897",
+     "4 pet: ₹5196"
+    ]
+   }
+  ]
+ }
+}

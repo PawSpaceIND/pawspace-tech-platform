@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useRef,useState}from"react";
 import LiveTrackingPanel from"./live-tracking-panel";
+import {customerTrackingHeading} from "../../../lib/customer-tracking-heading";
 
 type TrackingState="not_started"|"not_sharing"|"live"|"stale"|"unavailable"|"ended";
 type Payload={bookingId:string;serviceCode:string;status:string;title:string;provider:{id:string|null;name:string|null};tracking:{state:TrackingState;etaMinutes:number|null;distanceKm:number|null};mapAvailable:boolean;mapVersion:number|null};
@@ -25,5 +26,5 @@ export default function CustomerServiceLiveTracking({bookingId}:{bookingId:strin
  if(!data&&error)return <p role="alert">{error}</p>;
  if(!data)return <p role="status">Loading live tracking…</p>;
  const actions=data.serviceCode==="pet_taxi"?[{label:"Chat support",href:"/chat",kind:"primary" as const},{label:"Trip help",href:"/contact",kind:"secondary" as const}]:[{label:"Chat support",href:"/chat",kind:"primary" as const},{label:"Walk help",href:"/contact",kind:"secondary" as const}];
- return <div style={{marginBottom:16}}><LiveTrackingPanel title={data.title} eyebrow={data.serviceCode==="pet_taxi"?"LIVE PET TAXI":"LIVE WALK"} state={data.tracking.state} mapUrl={data.mapAvailable&&data.tracking.state==="live"?`/api/customer-live-tracking?bookingId=${encodeURIComponent(bookingId)}&map=1&v=${mapTick}`:null} mapKey={mapTick} etaMinutes={data.tracking.etaMinutes} distanceKm={data.tracking.distanceKm} providerLabel={data.provider.name||data.provider.id} detail={copy(data.tracking.state,data.serviceCode)} live={data.tracking.state==="live"} onRecenter={data.mapAvailable?()=>setMapTick(value=>value+1):undefined} actions={actions}/>{error&&<p role="status" style={{fontSize:11,color:"#9a3d32"}}>Live tracking refresh issue: {error}</p>}</div>;
+ return <div style={{marginBottom:16}}><LiveTrackingPanel title={customerTrackingHeading({serviceCode:data.serviceCode,status:data.status,state:data.tracking.state})} eyebrow={data.serviceCode==="pet_taxi"?"LIVE PET TAXI":"LIVE WALK"} state={data.tracking.state} mapUrl={data.mapAvailable&&data.tracking.state==="live"?`/api/customer-live-tracking?bookingId=${encodeURIComponent(bookingId)}&map=1&v=${mapTick}`:null} mapKey={mapTick} etaMinutes={data.tracking.etaMinutes} distanceKm={data.tracking.distanceKm} providerLabel={data.provider.name||data.provider.id} detail={copy(data.tracking.state,data.serviceCode)} live={data.tracking.state==="live"} onRecenter={data.mapAvailable?()=>setMapTick(value=>value+1):undefined} actions={actions}/>{error&&<p role="status" style={{fontSize:11,color:"#9a3d32"}}>Live tracking refresh issue: {error}</p>}</div>;
 }

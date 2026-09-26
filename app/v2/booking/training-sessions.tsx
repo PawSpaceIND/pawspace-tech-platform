@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useState} from "react";
 import {loadTrainingProgramme,materializeTrainingProgramme,type CustomerTrainingProgramme} from "../../../lib/training-programme-client";
+import TrainingManage from "./training-manage";
 
 type Props={bookingId:string;inactive:boolean;onReady:(ready:boolean)=>void};
 /** Recovery uses the existing booking and reservations. It never reserves a second calendar. */
@@ -22,8 +23,12 @@ export default function TrainingBookingSessions({bookingId,inactive,onReady}:Pro
   catch(problem){setError(problem instanceof Error?problem.message:"Unable to prepare reserved sessions. Retry this booking.");onReady(false);}
   finally{setPreparing(false);}
  }
- return <section aria-label="Training sessions"><h2>{record?.programme.plan_code==="trainer-meet-greet"?"Your assessment":"Your reserved sessions"}</h2>
+ /** After a reschedule request, re-read the sessions so the requested one shows its new state. */
+ async function reload(){try{const value=await loadTrainingProgramme(bookingId);if(value.programme.booking_id===bookingId&&value.sessions.length)setRecord(value);}catch{/* the request was accepted; the list catches up on the next page load */}}
+ return <section id="training-sessions" aria-label="Training sessions"><h2>{record?.programme.plan_code==="trainer-meet-greet"?"Your assessment":"Your reserved sessions"}</h2>
  {loading?<p role="status">Loading session details…</p>:record?<ol>{record.sessions.map(session=><li key={session.id}>{new Date(session.scheduled_start).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST — {session.status.replaceAll("_"," ")}</li>)}</ol>:<><p>Your booking is saved. Prepare its reserved sessions before payment; this keeps the same booking and trainer.</p>{!inactive&&<button disabled={preparing} onClick={()=>void prepare()}>{preparing?"Preparing sessions…":"Prepare reserved sessions"}</button>}</>}
+ {record?.groomingBonus&&<p role="note">{record.groomingBonus.status==="awaiting_full_payment"?`Your plan includes a free ${record.groomingBonus.packageName} (worth ₹${record.groomingBonus.value.toLocaleString("en-IN")}). Your voucher appears here once the programme is fully paid.`:record.groomingBonus.status==="issued"?`Your free ${record.groomingBonus.packageName}: use code ${record.groomingBonus.code} when you book dog grooming, by ${new Date(Number(record.groomingBonus.validUntil)).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",timeZone:"Asia/Kolkata"})}.`:record.groomingBonus.status==="used"?`Your free ${record.groomingBonus.packageName} voucher has been used.`:record.groomingBonus.status==="withdrawn"?`The free ${record.groomingBonus.packageName} voucher was withdrawn because this programme is no longer fully paid.`:`Your free ${record.groomingBonus.packageName} voucher expired.`}</p>}
+ {record&&<TrainingManage bookingId={bookingId} record={record} inactive={inactive} onRescheduled={()=>void reload()}/>}
  {error&&<p role="alert">{error}</p>}
  </section>;
 }

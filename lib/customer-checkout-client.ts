@@ -9,6 +9,8 @@ export type CustomerConfirmationProjection = {
   totalAmount:number;currency:string;providerId:string;providerName:string;providerModel:string;
   workOrderStatus:string;scheduledStart:string;scheduledEnd:string;updatedAt:number;
   gatewayOrderId?:string|null;gatewayPaymentId?:string|null;pets?:Array<{id:string;name:string;species:string;breed:string|null}>;
+  /** "outstanding_balance" once a split's first instalment is captured: amountDueNow is then the balance. */
+  paymentStage?:"full"|"first_instalment"|"outstanding_balance"|"settled";amountPaid?:number;balanceDueAt?:number|null;balancePayableNow?:boolean;
 };
 type Receipt = CheckoutReceipt;
 export const CHECKOUT_RETURN_PATH = "/api/razorpay-checkout-return";

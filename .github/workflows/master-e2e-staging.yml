@@ -1,0 +1,70 @@
+name: Master E2E (staging)
+
+# End-to-end master test of the DEPLOYED staging worker: customer (Boarding, Sitting, Taxi and the other
+# V2 services), partner, employee/CRM/finance and AI journeys in a real browser, with real Razorpay TEST
+# checkout payments (Netbanking test bank → Success). Staging only; sandbox payments only.
+#
+# Secrets are read from the repository and never printed: sign-in uses /api/staging-login,
+# /api/uat-customer-switch and /api/uat-provider-switch (no access code is typed into a page, so none can
+# appear in a screenshot or video), and every text artefact is redacted. D1 access is read-only SELECT.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "preflight | all | a comma list of suite names (see e2e/master/suites/README.md)"
+        required: true
+        default: "preflight,05-payment-canary,06-money-and-maps,07-ai-probe"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-staging-sweep
+  cancel-in-progress: false
+
+jobs:
+  master:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      MASTER_OUT: artifacts/master
+      NODE_ENV: test
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      # Run-scoped OTP customers: never share (and never supersede) a human tester's persona session.
+      MASTER_CUSTOMER_MODE: otp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium for Playwright
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Run master suite
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          MASTER_SUITE: ${{ github.event.inputs.suite }}
+        run: node e2e/master/run.mjs
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-e2e-${{ github.run_id }}
+          path: artifacts/master/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Print results
+        if: always()
+        run: |
+          [ -d artifacts/master ] || exit 0
+          for f in results findings; do
+            [ -f "artifacts/master/$f.jsonl" ] || continue
+            echo "===== $f =====" && cat "artifacts/master/$f.jsonl"
+            { echo "### $f"; echo '```json'; cat "artifacts/master/$f.jsonl"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done

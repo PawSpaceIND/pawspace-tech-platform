@@ -117,7 +117,8 @@ test('provider chat replay rechecks assignment and trust before returning messag
  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM provider_chat_activity').get().n,1);
  sqlite.prepare("UPDATE provider_work_orders SET provider_id='PRV-OTHER' WHERE booking_id='BKG-TS-1'").run();
  await assert.rejects(trust.recordProviderChatMessage(db,input),error=>error instanceof Response&&error.status===403);
- await assert.rejects(trust.recordProviderChatMessage(db,{...input,providerId:'PRV-OTHER',actorId:'provider:PRV-OTHER'}),error=>error instanceof Response&&error.status===409);
+ // A stale work-order edit alone is not a reassignment: canonical ownership now denies before replay lookup.
+ await assert.rejects(trust.recordProviderChatMessage(db,{...input,providerId:'PRV-OTHER',actorId:'provider:PRV-OTHER'}),error=>error instanceof Response&&error.status===403);
  sqlite.prepare("UPDATE provider_work_orders SET provider_id='PRV-TS-1' WHERE booking_id='BKG-TS-1'").run();
  await trust.inspectTrustSafetyText(db,{text:'contact me direct on 9876543210',channel:'chat',sourceReference:'replay-strike-1',actorType:'provider',actorId:input.actorId,providerId:input.providerId,applyProviderStrikeImmediately:true});
  await trust.inspectTrustSafetyText(db,{text:'contact me direct on 9876543210',channel:'chat',sourceReference:'replay-strike-2',actorType:'provider',actorId:input.actorId,providerId:input.providerId,applyProviderStrikeImmediately:true});

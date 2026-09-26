@@ -12,7 +12,11 @@
  * on the events it returns (`ai`, `human`, `completed`), which keeps every flow testable on its own.
  */
 
-export type BotChoice={id:string;label:string};
+import{groomingCatalogue}from"./grooming-governance";
+import{GROOMING_CLOSING_COUPON,GROOMING_CROSS_SELL_COUPON}from"./coupon-governance";
+
+/** `value` is what the answer records when the button shows more than the answer (a price). */
+export type BotChoice={id:string;label:string;value?:string};
 type StepKind="choice"|"text"|"name"|"phone"|"email"|"date"|"end";
 type Answers=Record<string,string>;
 type Step={key:string;label:string;prompt:string|((answers:Answers)=>string);kind:StepKind;choices?:BotChoice[];hint?:string;
@@ -26,20 +30,33 @@ type Step={key:string;label:string;prompt:string|((answers:Answers)=>string);kin
  showSummary?:boolean;
  /** This answer sends the customer back to the start of the flow (WATI's "No" to "confirm the booking?"). */
  restartOn?:string;
+ /** WATI's "invoke flow": this answer continues the conversation in another flow. */
+ invoke?:Record<string,string>;
  max?:number};
 type Flow={code:string;service:string;label:string;steps:Step[];
  /** What the customer is told when the flow is finished, as the WATI flow says it. */
  closing?:(answers:Answers)=>string;
  /** A finished enquiry a person follows up (an existing booking, an active subscription), not the AI. */
  teamFollowUp?:(answers:Answers)=>boolean;
+ /** The Inbox queue a team follow-up goes to, when it is not the sales queue. */
+ followUpReason?:"sensitive_relocation";
  /** Ends with WATI's grooming cross-sell ("Enjoy Rs 400 off Pet Grooming"). */
  groomingOffer?:boolean};
 
-export type BotState={version:1;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
+/* Bumped whenever a flow's steps change shape: a conversation saved under an older shape starts again
+ * rather than resuming at a step index that now means a different question. */
+const BOT_STATE_VERSION=2;
+export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
  /** The CRM lead created for a visitor as soon as their number is known (web chat). */
  leadId?:string;
  /** When a stalled flow was last nudged by the follow-up sweep. */
  nudgedAt?:number;
+ /** How many reminders the stalled current question has had (10 and 20 minutes). */
+ nudges?:number;
+ /** Answers to the current question that did not fit it. */
+ misses?:number;
+ /** The flow stalled or the customer went off script: PawSpace AI answers anything that is not an option. */
+ aiTakeover?:boolean;
  /** The service a lead enquired about (its WhatsApp template was for it): a short reply starts that flow. */
  preferredFlow?:string};
 export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
@@ -48,19 +65,24 @@ export type BotEvent=
  |{type:"ai";question:string}
  |{type:"call"}
  |{type:"human";reason:"customer_requested_human"|"refund_payment_dispute"|"complaint"|"safety"|"urgent_funeral_memorial"}
- |{type:"completed";flow:string;service:string;answers:Record<string,string>;summary:string;followUp?:"team"};
+ |{type:"completed";flow:string;service:string;answers:Record<string,string>;summary:string;followUp?:"team";followUpReason?:"sensitive_relocation"};
 export type BotTurnResult={state:BotState;reply:BotReply;event:BotEvent;
  /** The customer's input as it should appear in the conversation (a button shows its label). */
  display:string};
 
 const choice=(label:string):BotChoice=>({id:label.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,""),label});
 const choices=(...labels:string[])=>labels.map(choice);
+/** "₹1,349": the Indian grouping for the prices PawSpace shows (all under a lakh). */
+export const rupees=(amount:number)=>`₹${amount>=1000?`${Math.floor(amount/1000)},${String(amount%1000).padStart(3,"0")}`:amount}`;
+/* The grooming package buttons carry the catalogue's single-pet price, as WATI's did ("Essential - 1099"),
+ * from lib/grooming-governance.ts so a price change there reaches the bot. The answer stays the package
+ * name, and typing the name still picks the button. */
+const groomingPackage=(code:string):BotChoice=>{const item=groomingCatalogue.find(row=>row.code===code&&row.active);if(!item)throw new Error(`Grooming package ${code} is not in the catalogue`);return{...choice(item.name),label:`${item.name} ${rupees(item.singlePrice)}`,value:item.name};};
 const PET=choices("Dog","Cat");
 const PET_COUNT=choices("1","2","3 & above");
 
 const NAME:Step={key:"name",label:"Name",prompt:"Please type your Name",kind:"name",hint:"Your name",anonymousOnly:true};
 const AREA:Step={key:"area",label:"Area",prompt:"Which area or pincode should we come to?",kind:"text",hint:"Area or pincode"};
-const DATE=(prompt:string):Step=>({key:"date",label:"Date",prompt,kind:"date",hint:"DD/MM"});
 
 /* ---------------------------------------------------------------------------------------------------
  * The WATI flows, mirrored from PawSpace's own WATI exports (pet_grooming_flow_app_option_mumbai,
@@ -113,8 +135,8 @@ const GROOMING:Flow={code:"grooming",service:"Grooming",label:"Grooming",steps:[
  ...breedSteps("breed","Breed",answers=>answers.petCount==="2"?"Please select the Breed of your 1st pet":"Please select the Breed of your pet",listsBreeds),
  ...breedSteps("breed2","2nd pet's breed",()=>"Please select the Breed of your 2nd pet",answers=>fresh(answers)&&answers.petCount==="2"&&!OTHER.has(answers.breed)),
  {key:"breedTyped",label:"Breed",prompt:"Please type the breed of the pet(s)",kind:"text",hint:"For example Labrador and Pug",when:answers=>fresh(answers)&&(answers.petCount==="3 & above"||OTHER.has(answers.breed)||OTHER.has(answers.breed2))},
- {key:"package",label:"Package",prompt:GROOMING_PITCH,kind:"choice",choices:choices("Essential Bath","Bath & Basic","Complete Makeover"),when:petIs("Dog")},
- {key:"package",label:"Package",prompt:GROOMING_PITCH,kind:"choice",choices:choices("Routine Grooming","Bath & Basic","Complete Makeover"),when:petIs("Cat")},
+ {key:"package",label:"Package",prompt:GROOMING_PITCH,kind:"choice",choices:["dog-bath","dog-basic","dog-makeover"].map(groomingPackage),when:petIs("Dog")},
+ {key:"package",label:"Package",prompt:GROOMING_PITCH,kind:"choice",choices:["cat-routine","cat-basic","cat-makeover"].map(groomingPackage),when:petIs("Cat")},
  {key:"date",label:"Service date",prompt:"Please type the date of service required in DD/MM format",kind:"date",hint:"DD/MM",when:fresh},
  {key:"time",label:"Service time",prompt:"Please choose service time",kind:"choice",choices:SERVICE_TIME,when:fresh},
  {key:"address",label:"Address",prompt:`Please type the service location address ${LOCATION_HINT}`,kind:"text",hint:"Address and map link",when:fresh,max:600},
@@ -163,7 +185,7 @@ function stayFlow(code:string,service:string,serviceName:string):Flow{
 }
 
 const PET_TAXI:Flow={code:"pet_taxi",service:"Pet Taxi",label:"Pet Taxi",steps:[{...NAME,prompt:"Please mention your Name"},
- {key:"travelType",label:"Travel type",prompt:"Hello,\nPlease select the travel type",kind:"choice",choices:choices("Incity","Outstation from BLR")},
+ {key:"travelType",label:"Travel type",prompt:"Hello,\nPlease select the travel type",kind:"choice",choices:choices("Incity","Outstation from BLR"),invoke:{"Outstation from BLR":"relocation"}},
  {key:"petType",label:"Pet type",prompt:"Please select the pet type for which you are looking for taxi service.",kind:"choice",choices:choices("Dog","Cat","Others")},
  {key:"petCount",label:"No. of pets",prompt:"Please select the number of pets travelling.",kind:"choice",choices:choices("1","2","3 and more")},
  ELDEST_AGE,
@@ -180,7 +202,21 @@ const PET_TAXI:Flow={code:"pet_taxi",service:"Pet Taxi",label:"Pet Taxi",steps:[
  {key:"confirm",label:"Confirmed",prompt:"Do you confirm the above details?",kind:"choice",choices:choices("Yes","No"),showSummary:true,last:is("confirm","Yes")},
  {key:"change",label:"Required change",prompt:"Please type the required change",kind:"text",hint:"What should we change?",when:is("confirm","No"),max:600}],
  closing:()=>"Thank you for providing your pet taxi booking details.\nWe're now processing your request and will send your personalised quote shortly.\nWe appreciate you choosing PawSpace Pet Taxi!",
- teamFollowUp:is("travelType","Outstation from BLR"),groomingOffer:true};
+ groomingOffer:true};
+
+/* WATI "Pet relocation short flow"; Pet Taxi's "Outstation from BLR" continues here, as WATI invokes it. */
+const RELOCATION:Flow={code:"relocation",service:"Pet Relocation",label:"Pet Relocation",steps:[NAME,
+ {key:"travelType",label:"Travel type",prompt:"Please select the travel type",kind:"choice",choices:choices("Domestic","International")},
+ {key:"email",label:"Email ID",prompt:"Please type your Email ID",kind:"email",hint:"name@example.com"},
+ {key:"petType",label:"Pet type",prompt:"Please select the pet type",kind:"choice",choices:choices("Dog","Cat","Other")},
+ {key:"petTypeTyped",label:"Pet type",prompt:"Please type the pet type",kind:"text",hint:"For example Rabbit",when:is("petType","Other")},
+ {key:"from",label:"From location",prompt:"Please type your start city\nFrom Location",kind:"text",hint:"Start city"},
+ {key:"to",label:"To location",prompt:"Please type your destination city\nTo Location",kind:"text",hint:"Destination city"},
+ {key:"date",label:"Date of travel",prompt:"Please type the travel start date (tentative) in DD/MM/YY format",kind:"date",hint:"DD/MM/YY"},
+ {key:"confirm",label:"Confirmed",prompt:"Are these details correct?",kind:"choice",choices:choices("Yes","No"),showSummary:true,last:is("confirm","Yes")},
+ {key:"change",label:"Required changes",prompt:"Please type the required changes",kind:"text",hint:"What should we change?",when:is("confirm","No"),max:600}],
+ closing:()=>"Our relocation partner team will contact you on phone within 24 hours.\nThank you.\n\nPlease explore additional services we offer.",
+ teamFollowUp:()=>true,followUpReason:"sensitive_relocation"};
 
 export const WEB_CHAT_FLOWS:Flow[]=[GROOMING,TRAINING,stayFlow("boarding","Boarding","Pet Boarding"),stayFlow("pet_sitting","Pet Sitting","Pet Sitting"),
  {code:"dog_walking",service:"Dog Walking",label:"Dog Walking",steps:[NAME,
@@ -192,13 +228,7 @@ export const WEB_CHAT_FLOWS:Flow[]=[GROOMING,TRAINING,stayFlow("boarding","Board
   {key:"petType",label:"Pet",prompt:"Is the food for a dog or a cat?",kind:"choice",choices:PET},
   {key:"plan",label:"Plan",prompt:"What would you like to try?",kind:"choice",choices:[choice("Trial pack"),choice("Monthly subscription"),choice("Not sure yet")]},
   AREA]},
- {code:"relocation",service:"Pet Relocation",label:"Pet Relocation",steps:[NAME,
-  {key:"travelType",label:"Travel type",prompt:"Please select the travel type",kind:"choice",choices:[choice("Domestic"),choice("International")]},
-  {key:"email",label:"Email",prompt:"Please type your Email ID",kind:"email",hint:"name@example.com"},
-  {key:"from",label:"From",prompt:"Which city is your pet travelling from?",kind:"text",hint:"From city"},
-  {key:"to",label:"To",prompt:"Which city or country is your pet travelling to?",kind:"text",hint:"Destination"},
-  DATE("Travel date - please type in DD/MM format"),
-  {key:"petCount",label:"Number of pets",prompt:"Please select the number of pets",kind:"choice",choices:PET_COUNT}]},
+ RELOCATION,
 ];
 
 /** A visitor who is not signed in and asks for a person: the team needs a name and number to reach them. */
@@ -216,7 +246,17 @@ const START_OVER:BotChoice={id:"start_over",label:"Start over"};
 /** WATI's closing cross-sell after Training, Boarding, Sitting and Pet Taxi. */
 export const GROOMING_OFFER:BotChoice={id:"grooming_offer",label:"Get ₹400 off"};
 const PAY_LATER:BotChoice={id:"pay_full_price_later",label:"Pay full price later"};
-const GROOMING_OFFER_TEXT="Enjoy ₹400 off Pet Grooming, Exclusively ONLY for You 🐶🛁";
+const groomingOfferText=(code:string)=>`Enjoy ₹400 off Pet Grooming, Exclusively ONLY for You 🐶🛁\nUse code ${code} when you book.`;
+/** The cross-sell coupon as the caller found it live for this customer, or null while it cannot be redeemed. */
+export type BotCrossSell={code:string;cityIds:string[]}|null;
+const DEFAULT_CROSS_SELL:BotCrossSell={code:GROOMING_CROSS_SELL_COUPON,cityIds:["blr"]};
+const CITY_IDS:Record<string,string>={Bangalore:"blr",Hyderabad:"hyd"};
+/* WATI's offer is only shown while its coupon can be used: the campaign is live, and the customer is in
+ * one of its cities (a Hyderabad enquiry is not promised a Bangalore-only code). */
+const crossSellFor=(crossSell:BotCrossSell,answers:Answers)=>crossSell&&(!answers.city||!CITY_IDS[answers.city]||crossSell.cityIds.includes(CITY_IDS[answers.city]))?crossSell:null;
+/** What the answers record for the cross-sell, so the team, the AI and the app all see the same code. */
+export const GROOMING_OFFER_NOTE="₹400 off Pet Grooming";
+export{GROOMING_CLOSING_COUPON,GROOMING_CROSS_SELL_COUPON};
 export const WEB_CHAT_MENU:BotChoice[]=[...WEB_CHAT_FLOWS.map(flow=>({id:flow.code,label:flow.label})),ASK_AI,REQUEST_CALL,TALK_TO_TEAM];
 const GREETING="Hi! I'm PawSpace AI. What can I help you with today? Pick a service to get started, or just type your question.";
 
@@ -241,10 +281,13 @@ export function flowFromText(value:string){
 }
 const SHORT_YES=/^(yes|yeah|yep|ok|okay|sure|book|book now|start|continue|interested|get started|let'?s go|go ahead)[.! ]*$/i;
 
-export function initialBotState():BotState{return{version:1,status:"menu",flow:null,step:0,answers:{}};}
+export function initialBotState():BotState{return{version:BOT_STATE_VERSION,status:"menu",flow:null,step:0,answers:{}};}
 export function parseBotState(value:unknown):BotState{
- try{const parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===1&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
- return initialBotState();
+ let parsed:unknown=null;
+ try{parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===BOT_STATE_VERSION&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
+ // An older shape restarts the questions, not the visitor: their lead and the lead's service stay theirs.
+ const old=parsed&&typeof parsed==="object"?parsed as Partial<BotState>:{};
+ return{...initialBotState(),...(typeof old.leadId==="string"&&old.leadId?{leadId:old.leadId}:{}),...(typeof old.preferredFlow==="string"&&old.preferredFlow?{preferredFlow:old.preferredFlow}:{})};
 }
 export function menuReply(text=GREETING):BotReply{return{text,choices:WEB_CHAT_MENU,inputHint:"Type a question or pick a service"};}
 export function flowByCode(code:string|null){return code===TEAM_FLOW.code?TEAM_FLOW:WEB_CHAT_FLOWS.find(flow=>flow.code===code)||null;}
@@ -260,6 +303,7 @@ function nextStep(steps:Step[],from:number,answers:Answers){
 /** A visitor's name, number and consent, carried into the next flow so they are not asked twice. */
 const CONTACT_KEYS=new Set(["name","phone","whatsapp"]);
 const contactOf=(answers:Answers)=>Object.fromEntries(Object.entries(answers).filter(([key])=>CONTACT_KEYS.has(key)));
+const offerOf=(answers:Answers)=>Object.fromEntries(Object.entries(answers).filter(([key])=>key==="offer"||key==="coupon"));
 function isLast(step:Step,answers:Answers){return typeof step.last==="function"?step.last(answers):Boolean(step.last);}
 function askReply(step:Step,prefix="",context?:{flow:Flow;answers:Answers;signedIn:boolean}):BotReply{
  const prompt=typeof step.prompt==="function"?step.prompt(context?.answers||{}):step.prompt;
@@ -273,7 +317,7 @@ function matchChoice(choices:BotChoice[],input:{text:string;choiceId?:string|nul
  let typed=input.text.trim().toLowerCase(),end=typed.length;while(end>0&&(typed[end-1]==="."||typed[end-1]==="!"))end--;typed=typed.slice(0,end);if(!typed)return null;
  const index=Number(typed);if(numbered&&Number.isInteger(index)&&index>=1&&index<=choices.length)return choices[index-1];
  // WhatsApp cuts button titles at 20 characters and list titles at 24, and sends the title back.
- return choices.find(item=>item.label.toLowerCase()===typed||item.id===typed.replace(/[^a-z0-9]+/g,"_"))
+ return choices.find(item=>item.label.toLowerCase()===typed||item.value?.toLowerCase()===typed||item.id===typed.replace(/[^a-z0-9]+/g,"_"))
   ||(typed.length>=18?choices.find(item=>item.label.toLowerCase().startsWith(typed)):undefined)||null;
 }
 
@@ -305,8 +349,10 @@ function validate(step:Step,raw:string):{value:string}|{error:string}{
 
 function summaryLines(flow:Flow,answers:Answers,signedIn:boolean){
  const seen=new Set<string>(),lines:string[]=[];
+ // The offer leads, so no length limit downstream (CRM summary, handoff snapshot) can cut the code off.
+ if(answers.offer)lines.push(`Offer: ${answers.offer}${answers.coupon?` (use code ${answers.coupon})`:""}`);
+ if(answers.via)lines.push(`Enquiry from: ${answers.via}`);
  for(const step of stepsFor(flow,signedIn)){if(seen.has(step.key)||step.kind==="end"||step.showSummary||!answers[step.key]||answers[step.key]===SHOW_MORE||answers[step.key]==="Show more")continue;seen.add(step.key);lines.push(`${step.label}: ${answers[step.key]}`);}
- if(answers.offer)lines.push(`Offer: ${answers.offer}`);
  return lines;
 }
 export function botSummary(flow:Flow,answers:Record<string,string>,signedIn:boolean){
@@ -318,11 +364,14 @@ export function botSummary(flow:Flow,answers:Record<string,string>,signedIn:bool
  * `choiceId` comes from a tapped button; typed text is matched against the same buttons (by label or
  * number, the way WATI accepts "1"), so a visitor who types instead of tapping is not stuck.
  */
-export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:string|null;signedIn:boolean}):BotTurnResult{
+export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:string|null;signedIn:boolean;
+ /** The live cross-sell coupon (lib/ai-sales-offers.ts activeCrossSell); null hides the offer. */
+ crossSell?:BotCrossSell}):BotTurnResult{
+ const crossSell=input.crossSell===undefined?DEFAULT_CROSS_SELL:input.crossSell;
  const text=String(input.text||"").trim().slice(0,800),state:BotState={...previous,answers:{...previous.answers}};
  const options=state.status==="collecting"?(stepsFor(flowByCode(state.flow)!,input.signedIn)[state.step]?.choices||[]):WEB_CHAT_MENU;
  // Numbers select only the current step's own buttons; "2" typed as an answer must not mean "Start over".
- const picked=matchChoice(options,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM,...(state.status==="done"?[GROOMING_OFFER,PAY_LATER]:[])],{text,choiceId:input.choiceId},false);
+ const picked=matchChoice(options,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM,...(state.status==="done"&&crossSellFor(crossSell,previous.answers)?[GROOMING_OFFER,PAY_LATER]:[])],{text,choiceId:input.choiceId},false);
  const display=picked?.label||text;
 
  // A greeting in reply to a service template starts that service; otherwise it (re)opens the menu.
@@ -333,7 +382,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  if(picked?.id===REQUEST_CALL.id){
   if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I'm arranging a call from PawSpace to your registered number now.",choices:[START_OVER],inputHint:"Type a message"},event:{type:"call"},display};
   const steps=stepsFor(TEAM_FLOW,false);
-  return{state:{version:1,status:"collecting",flow:TEAM_FLOW.code,step:1,answers:{topic:"Requested a call back"}},reply:askReply(steps[1],"Happy to call you. "),event:{type:"none"},display};
+  return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step:1,answers:{topic:"Requested a call back"}},reply:askReply(steps[1],"Happy to call you. "),event:{type:"none"},display};
  }
  const escalation=picked?.id===TALK_TO_TEAM.id?"customer_requested_human" as const:!picked&&text?HUMAN_PATTERNS.find(([pattern])=>pattern.test(text))?.[1]:undefined;
  if(escalation&&state.flow!==TEAM_FLOW.code){
@@ -341,7 +390,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I'm bringing in a PawSpace team member. They will reply to you here.",choices:[],inputHint:"Message the PawSpace team"},event:{type:"human",reason:escalation},display};
   const steps=stepsFor(TEAM_FLOW,false),answers:Record<string,string>=!picked&&text?{topic:text}:{};
   const step=answers.topic?1:0;
-  return{state:{version:1,status:"collecting",flow:TEAM_FLOW.code,step,answers},reply:askReply(steps[step],"I'll connect you with our team. "),event:{type:"none"},display};
+  return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step,answers},reply:askReply(steps[step],"I'll connect you with our team. "),event:{type:"none"},display};
  }
 
  if(state.status!=="collecting"){
@@ -349,7 +398,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   const keep:BotState={...initialBotState(),...(state.preferredFlow?{preferredFlow:state.preferredFlow}:{})};
   if(picked?.id===ASK_AI.id)return{state:keep,reply:{text:"Sure - type your question and I'll answer it.",choices:[],inputHint:"Type your question"},event:{type:"none"},display};
   // WATI's cross-sell: "Get Rs 400 off" goes straight into the grooming questions with the offer noted.
-  if(picked?.id===GROOMING_OFFER.id)return startFlow(GROOMING,input.signedIn,{...contactOf(previous.answers),offer:"₹400 off Pet Grooming"},"Great choice! ",display);
+  if(picked?.id===GROOMING_OFFER.id){const code=crossSellFor(crossSell,previous.answers)!.code;return startFlow(GROOMING,input.signedIn,{...contactOf(previous.answers),offer:GROOMING_OFFER_NOTE,coupon:code},`Great choice! Your code ${code} is noted. `,display);}
   if(picked?.id===PAY_LATER.id)return{state:keep,reply:menuReply("Explore our other services to find the perfect care for your furry friend! 🐾✨"),event:{type:"none"},display};
   /* A lead who came in for a service: their first short reply ("Yes", "Book now", the template's
    * button) starts that service's questions straight away, as the WATI template flow does. */
@@ -365,10 +414,20 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  if(!step)return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
  const context={flow,answers:state.answers,signedIn:input.signedIn};
  let value:string;
- if(step.kind==="choice"){if(!picked||!step.choices?.some(item=>item.id===picked.id))return{state,reply:askReply(step,"Please pick one of the options. ",context),event:{type:"none"},display};value=picked.label;}
- else{const checked=validate(step,text);if("error"in checked)return{state,reply:askReply(step,`${checked.error} `,context),event:{type:"none"},display};value=checked.value;}
+ /* An answer that does not fit the question is asked again once. A second one - or any after the AI has
+  * taken over a stalled chat - goes to PawSpace AI, which answers it; the question is then asked again. */
+ const offScript=(error:string):BotTurnResult=>text&&(state.aiTakeover||(state.misses??0)>=1)
+  ?{state:{...state,misses:0},reply:askReply(step,"Whenever you're ready: ",context),event:{type:"ai",question:text},display}
+  :{state:{...state,misses:(state.misses??0)+1},reply:askReply(step,error,context),event:{type:"none"},display};
+ if(step.kind==="choice"){if(!picked||!step.choices?.some(item=>item.id===picked.id))return offScript("Please pick one of the options. ");value=picked.value??picked.label;}
+ else{const checked=validate(step,text);if("error"in checked)return offScript(`${checked.error} `);value=checked.value;}
+ // An answered question clears its reminders and misses; the next one starts afresh.
+ delete state.misses;delete state.nudges;delete state.nudgedAt;delete state.aiTakeover;
  // "No" to "confirm the booking?": the questions start again, as the WATI flow loops back.
- if(step.restartOn&&value===step.restartOn)return startFlow(flow,input.signedIn,{...contactOf(state.answers),...(state.answers.offer?{offer:state.answers.offer}:{})},"No problem, let's go through the details again. ",display);
+ if(step.restartOn&&value===step.restartOn)return startFlow(flow,input.signedIn,{...contactOf(state.answers),...offerOf(state.answers)},"No problem, let's go through the details again. ",display);
+ // WATI's "invoke flow": this answer carries on in another flow, with the contact details and the route.
+ const invoked=step.invoke?.[value]&&flowByCode(step.invoke[value]);
+ if(invoked)return startFlow(invoked,input.signedIn,{...contactOf(state.answers),...offerOf(state.answers),via:`${flow.service} - ${value}`},`${value} trips are arranged by our ${invoked.service.toLowerCase()} team. `,display);
  state.answers[step.key]=value;
  // A step that ends its branch jumps to the visitor's WhatsApp consent (if still to ask), else finishes.
  const consentAt=steps.findIndex(item=>item.key===CONSENT.key);
@@ -382,13 +441,13 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   * visitor's becomes a lead, and an existing booking or subscription goes to a person - with the WATI
   * flow's own closing message. */
  const closing=input.signedIn&&!team?"Let me check the best option and price for you now.":flow.closing?.(state.answers)||"A PawSpace team member will get in touch with you shortly.";
- const offer=flow.groomingOffer&&!state.answers.offer;
- return{state:{...state,status:"done"},reply:{text:`Thank you! Here is what I've noted:\n${summary}\n\n${closing}${offer?`\n\n${GROOMING_OFFER_TEXT}`:""}`,choices:offer?[GROOMING_OFFER,PAY_LATER]:[START_OVER],inputHint:"Type a message"},event:{type:"completed",flow:flow.code,service:flow.service,answers:state.answers,summary,...(team&&flow.code!==TEAM_FLOW.code?{followUp:"team" as const}:{})},display};
+ const offer=flow.groomingOffer&&!state.answers.offer?crossSellFor(crossSell,state.answers):null;
+ return{state:{...state,status:"done"},reply:{text:`Thank you! Here is what I've noted:\n${summary}\n\n${closing}${offer?`\n\n${groomingOfferText(offer.code)}`:""}`,choices:offer?[GROOMING_OFFER,PAY_LATER]:[START_OVER],inputHint:"Type a message"},event:{type:"completed",flow:flow.code,service:flow.service,answers:state.answers,summary,...(team&&flow.code!==TEAM_FLOW.code?{followUp:"team" as const,...(flow.followUpReason?{followUpReason:flow.followUpReason}:{})}:{})},display};
 }
 
 function startFlow(flow:Flow,signedIn:boolean,answers:Answers,prefix:string,display:string):BotTurnResult{
  const steps=stepsFor(flow,signedIn),step=nextStep(steps,0,answers);
- return{state:{version:1,status:"collecting",flow:flow.code,step,answers:{...answers}},reply:askReply(steps[step],prefix,{flow,answers,signedIn}),event:{type:"none"},display};
+ return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:flow.code,step,answers:{...answers}},reply:askReply(steps[step],prefix,{flow,answers,signedIn}),event:{type:"none"},display};
 }
 
 /** The question the customer is currently on, re-asked (the stalled-chat nudge uses it). */
@@ -398,3 +457,30 @@ export function currentStepReply(state:BotState,signedIn:boolean,prefix=""):BotR
 }
 /** The enquiry so far, for a lead created before the flow is finished. */
 export function partialSummary(state:BotState,signedIn:boolean){const flow=flowByCode(state.flow);return flow?botSummary(flow,state.answers,signedIn):"";}
+
+/* ---------------------------------------------------------------------------------------------------
+ * A customer who stops half way, as WATI follows up: a reminder of the question at 10 minutes, then at
+ * 20 minutes PawSpace AI takes over (anything that is not an option goes to the AI from then on), and if
+ * there is still no answer two hours after that, a person follows up. Web chat and WhatsApp share this.
+ * --------------------------------------------------------------------------------------------------- */
+export const BOT_REMINDER_AFTER_MS=10*60_000;
+export const BOT_ESCALATE_AFTER_MS=2*60*60_000;
+export type BotFollowUp=
+ |{kind:"wait"}
+ |{kind:"remind"|"takeover";reply:BotReply;next:BotState}
+ |{kind:"escalate";reply:BotReply;next:BotState};
+/** What a stalled flow needs now. `idleSince` is when the session last changed (an answer or a reminder). */
+export function botFollowUp(state:BotState,input:{asOf:number;idleSince:number;signedIn:boolean}):BotFollowUp{
+ if(state.status!=="collecting")return{kind:"wait"};
+ const nudges=state.nudges??(state.nudgedAt?1:0),idle=input.asOf-input.idleSince;
+ if(nudges===0&&idle>=BOT_REMINDER_AFTER_MS){
+  const reply=currentStepReply(state,input.signedIn,"Still there? Let's finish your details so I can book this for you. ");
+  return reply?{kind:"remind",reply,next:{...state,nudges:1,nudgedAt:input.asOf}}:{kind:"wait"};
+ }
+ if(nudges===1&&idle>=BOT_REMINDER_AFTER_MS){
+  const reply=currentStepReply(state,input.signedIn,"PawSpace AI here. Pick an option, or just tell me in your own words what you need and I'll take it from there. ");
+  return reply?{kind:"takeover",reply,next:{...state,nudges:2,nudgedAt:input.asOf,aiTakeover:true}}:{kind:"wait"};
+ }
+ if(nudges>=2&&idle>=BOT_ESCALATE_AFTER_MS)return{kind:"escalate",reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},next:{...state,status:"done"}};
+ return{kind:"wait"};
+}

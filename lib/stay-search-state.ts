@@ -1,6 +1,6 @@
 /** Scope availability to the exact location, stay and pet selection that produced it. */
-export function staySearchKey(input:{cityId?:string;zoneId?:string;location?:string;start:string;end:string;careWindow:string;startTime?:string;petIds:string[];species:string[]}){
- return JSON.stringify([input.cityId||"",input.zoneId||"",input.location||"",input.start,input.end,input.careWindow,input.careWindow==="24 hours"?"09:00":input.startTime||"09:00",[...input.petIds].sort(),[...input.species].sort()]);
+export function staySearchKey(input:{cityId?:string;zoneId?:string;location?:string;start:string;end:string;careWindow:string;startTime?:string;petIds:string[];species:string[];requirements?:string[]}){
+ return JSON.stringify([input.cityId||"",input.zoneId||"",input.location||"",input.start,input.end,input.careWindow,input.careWindow==="24 hours"?"09:00":input.startTime||"09:00",[...input.petIds].sort(),[...input.species].sort(),[...(input.requirements??[])].sort()]);
 }
 export function canPlanStay(input:{datesValid:boolean;petCount:number;serviceAvailable?:boolean}){
  return input.datesValid&&input.petCount>0&&input.serviceAvailable===true;

@@ -1,0 +1,92 @@
+{
+ "base": "https://pawspace-staging.karthik-fce.workers.dev",
+ "at": "2026-09-26T08:22:00.148Z",
+ "checks": [
+  {
+   "name": "Deployed staging commit identified",
+   "ok": true,
+   "detail": "{\"versionId\":\"ea807b89-42f4-404e-964c-ef01a241c170\",\"createdOn\":\"2026-09-26T07:59:17.82602Z\",\"message\":\"staging 2474fe7b133b5f0a25a77950811ebbfc23a581c3\",\"sha\":\"2474fe7b133b5f0a25a77950811ebbfc23a581c3\"}"
+  },
+  {
+   "name": "UAT access code present",
+   "ok": true,
+   "detail": "length >= 32"
+  },
+  {
+   "name": "Cloudflare D1 read credentials present",
+   "ok": true,
+   "detail": "token/account/db id"
+  },
+  {
+   "name": "Razorpay API reachable from runner",
+   "ok": true,
+   "detail": "GET /v1/payments without auth → 401 (401 expected)"
+  },
+  {
+   "name": "Razorpay checkout.js reachable",
+   "ok": true,
+   "detail": "→ 200"
+  },
+  {
+   "name": "Staging /v2 answers",
+   "ok": true,
+   "detail": "HTTP 200"
+  },
+  {
+   "name": "Founder UAT session",
+   "ok": true,
+   "detail": "session issued"
+  },
+  {
+   "name": "Integration readiness readable",
+   "ok": true,
+   "detail": "{\"data\":{\"items\":[{\"integrationCode\":\"INT-COMMS-01\",\"category\":\"communications\",\"capability\":\"WhatsApp messaging\",\"provider\":\"Meta WhatsApp\",\"owner\":\"CRM/CX + Engineering\",\"backupOwner\":\"Operations\",\"priority\":\"P0\",\"required\":true,\"launchGateCode\":\"COMMS-01\",\"environment\":\"sandbox\",\"codeBoundaryStatus\":\"code_ready\",\"credentialStatus\":\"configured\",\"secretReference\":\"env:meta_whatsapp_uat\",\"webhookReference\":null,\"authVerificationStatus\":\"not_tested\",\"webhookVerificationStatus\":\"not_tested\",\"idempotencyStatus\":\"not_tested\",\"idempotencyStrategy\":null,\"replayStatus\":\"not_tested\",\"replayStrategy\":n"
+  },
+  {
+   "name": "Test customer A session (no OTP)",
+   "ok": true,
+   "detail": "CUS-OTP-8EA40588EC34A47755EBCAF3"
+  },
+  {
+   "name": "Google Places autocomplete via staging (Maps key accepted)",
+   "ok": true,
+   "detail": "HTTP 200 status=configured suggestions=4 "
+  },
+  {
+   "name": "Google Place details resolve to coordinates",
+   "ok": true,
+   "detail": "HTTP 200 {\"status\":\"configured\",\"address\":\"100 Feet Rd, Stage 3, Indiranagar, Bengaluru, Karnataka, India\",\"latitude\":12.9746638,\"longitude\":77.6410107}"
+  },
+  {
+   "name": "Google reverse geocode via staging",
+   "ok": true,
+   "detail": "HTTP 200 {\"status\":\"configured\",\"address\":\"Artistic Art Forum Pvt.ltd, No. 3802/B, 7th Main, Near ESI Hospital, HAL 2nd Stage,, Sodepur, Appareddipalya, Indiranagar, Bengaluru, Karnataka 560008, India\",\"latitude\":12.9719,\"longitude\":77.6412}"
+  },
+  {
+   "name": "D1: gateway_webhook_events triggers",
+   "ok": true,
+   "detail": "[{\"name\":\"gateway_webhook_events_immutable_delete\"},{\"name\":\"gateway_webhook_events_raw_payload_scrub_only\"},{\"name\":\"gateway_webhook_to_universal_inbox\"},{\"name\":\"gateway_webhook_sync_universal_status\"},{\"name\":\"gateway_webhook_events_immutable_update\"}]"
+  },
+  {
+   "name": "D1: webhook inbox by status",
+   "ok": true,
+   "detail": "[{\"processing_status\":\"FAILED\",\"n\":45,\"last\":1789158160363},{\"processing_status\":\"PROCESSED\",\"n\":80,\"last\":1789363066123},{\"processing_status\":\"PROCESSING\",\"n\":117,\"last\":1790409107876}]"
+  },
+  {
+   "name": "D1: latest webhook events",
+   "ok": true,
+   "detail": "[{\"event_type\":\"order.paid\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790409107876},{\"event_type\":\"payment.captured\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790409107625},{\"event_type\":\"payment.authorized\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790409106966},{\"event_type\":\"order.paid\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408963574},{\"event_type\":\"payment.captured\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408962780},{\"event_type\":\"payment.authorized\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408962204},{\"event_type\":\"order.paid\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408745982},{\"event_type\":\"payment.captured\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408745552},{\"event_type\":\"payment.authorized\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408744899},{\"event_type\":\"order.paid\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408218174},{\"event_type\":\"payment.captured\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408217774},{\"event_type\":\"payment.authorized\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790408216839},{\"event_type\":\"order.paid\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790406400881},{\"event_type\":\"payment.captured\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790406400872},{\"event_type\":\"payment.authorized\",\"processing_status\":\"PROCESSING\",\"failure_reason\":null,\"received_at\":1790406399788}]"
+  },
+  {
+   "name": "D1: payment gateway events by authority",
+   "ok": true,
+   "detail": "[{\"event_type\":\"payment.captured\",\"processing_status\":\"processed\",\"authority\":\"webhook_signature\",\"n\":42},{\"event_type\":\"payment.captured\",\"processing_status\":\"processed\",\"authority\":\"provider_api\",\"n\":37},{\"event_type\":\"payment.authorized\",\"processing_status\":\"processed\",\"authority\":null,\"n\":21},{\"event_type\":\"payment.captured\",\"processing_status\":\"processed\",\"authority\":null,\"n\":16},{\"event_type\":\"payment.authorized\",\"processing_status\":\"exception\",\"authority\":null,\"n\":13},{\"event_type\":\"payment.failed\",\"processing_status\":\"exception\",\"authority\":null,\"n\":6}]"
+  }
+ ],
+ "deployed": {
+  "versionId": "ea807b89-42f4-404e-964c-ef01a241c170",
+  "createdOn": "2026-09-26T07:59:17.82602Z",
+  "message": "staging 2474fe7b133b5f0a25a77950811ebbfc23a581c3",
+  "sha": "2474fe7b133b5f0a25a77950811ebbfc23a581c3"
+ }
+}

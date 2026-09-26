@@ -37,16 +37,16 @@
       "conditions": 11
     },
     "app/training/page.tsx": {
-      "sha256": "71b20d324929944b8d6e53471cce9ef005622d88ff0d7300622f4e2c1c9b86fa",
-      "functions": 70,
-      "declarations": 90,
-      "interactionProps": 43,
-      "conditions": 32
+      "sha256": "c9eea5894f2fc4014f360651d6e8c0126b90cd8e44ec3534ea5418c03216ca3a",
+      "functions": 84,
+      "declarations": 96,
+      "interactionProps": 48,
+      "conditions": 33
     },
     "app/v2/chat/page.tsx": {
-      "sha256": "cb2bbdd6b6940e7537e2618d67a79ebef6518a1e44b5ff2688f22470b6c9aae4",
+      "sha256": "377cc21c4d92fc4f2d6e127f90e2fd7081741f2e7bcfafa4ce1fb713df7eeb40",
       "functions": 39,
-      "declarations": 53,
+      "declarations": 55,
       "interactionProps": 15,
       "conditions": 23
     },
@@ -65,8 +65,8 @@
       "conditions": 0
     },
     "app/v2/stay-experience.tsx": {
-      "sha256": "aca43bf737f99a0e95dc5c6055f02579da5ec2d09cb3d305c041d7d60e86c0fc",
-      "functions": 10,
+      "sha256": "e9e92fb2600169e487f07dac8008d0ccd778e741f702dc8cf43a085f2d81f362",
+      "functions": 11,
       "declarations": 11,
       "interactionProps": 11,
       "conditions": 3

@@ -141,3 +141,22 @@ test("real execution: listAvailableCoupons validates customerId and never fabric
   await assert.rejects(() => listAvailableCoupons(db, { customerId: "" }), /customerId is required/);
   await assert.rejects(() => listAvailableCoupons(db, {}), /customerId is required/);
 });
+
+test("the WATI cross-sell and AI closing coupons are real coupons, validated at checkout, but not advertised", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const sqlite = new DatabaseSync(":memory:");
+  const db = { prepare: (sql) => { const make = (args) => ({ bind: (...b) => make(b), first: async () => sqlite.prepare(sql).get(...args) ?? null, all: async () => ({ results: sqlite.prepare(sql).all(...args) }), run: async () => { sqlite.prepare(sql).run(...args); return { success: true }; } }); return make([]); }, batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; }, exec: async (sql) => sqlite.exec(sql) };
+  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY, customer_id TEXT, service_code TEXT, status TEXT); CREATE TABLE customer_grooming_subscriptions (id TEXT, customer_id TEXT, status TEXT)");
+  const offers = await import("../lib/customer-offers.ts");
+  const coupons = await import("../lib/coupon-governance.ts");
+  const listed = await offers.listAvailableCoupons(db, { customerId: "CUS-OFFER" });
+  assert.ok(!listed.coupons.some((offer) => ["GROOM400", "GROOM200"].includes(offer.code)), "not shown to every customer in the offers card");
+  // quoteCoupon reads the real clock; the seeded window is fixed, so the test widens it to "now".
+  sqlite.prepare("UPDATE coupon_campaigns SET valid_from=0, valid_until=? WHERE id LIKE 'sales-coupon-%'").run(Date.now() + 86_400_000);
+  const quote = (code, packageCode, orderValue) => coupons.quoteCoupon(db, { code, customerId: "CUS-OFFER", serviceCode: "grooming", cityId: "blr", channel: "whatsapp", packageCode, orderValue, paymentMode: "after_service", isSubscription: false });
+  const closing = await Promise.all([["dog-bath", 1349], ["dog-basic", 1899], ["dog-makeover", 2399]].map(([code, value]) => quote("GROOM200", code, value)));
+  assert.deepEqual(closing.map((result) => result.finalAmount), [1149, 1699, 2199], "the closing prices the business set");
+  assert.equal((await quote("groom400", "cat-routine", 1149)).finalAmount, 749, "codes are case-insensitive; the cross-sell covers the WATI packages");
+  assert.equal((await quote("GROOM200", "dog-trim", 1599)).valid, false, "the closing coupon is limited to the listed packages");
+  assert.equal((await quote("GROOM400", "dog-bath", 1349)).valid, true);
+});

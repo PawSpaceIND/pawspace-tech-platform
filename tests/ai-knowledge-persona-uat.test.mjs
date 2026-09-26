@@ -41,7 +41,7 @@ test("canonical UAT catalogue coverage includes the major PawSpace service verti
 test("Chat, WhatsApp and Voice all use the same grounded runtime provider",()=>{
  const web=read("lib/ai-web-chat-adapter.ts"),wa=read("lib/meta-whatsapp-ai-executor.ts"),voice=read("lib/inbound-ai-telephony.ts");
  for(const source of[web,wa,voice])assert.match(source,/createGroundedAiRuntimeProvider/);
- assert.match(web,/createGroundedAiRuntimeProvider\(db,input\.actor,\"chat\"\)/);
- assert.match(wa,/createGroundedAiRuntimeProvider\(db,serviceActor,\"whatsapp\",/);
+ assert.match(web,/createGroundedAiRuntimeProvider\(db,salesService\?WEB_CHAT_SALES_ACTOR:input\.actor,\"chat\",\{salesService\}\)/);
+ assert.match(wa,/createGroundedAiRuntimeProvider\(db,actor,\"whatsapp\",\{dispatchItemId:salesDispatchItemId,salesService\}\)/);
  assert.match(voice,/createGroundedAiRuntimeProvider\(db,serviceActor,\"voice\"\)/);
 });

@@ -1,0 +1,1053 @@
+{
+  "reason": "User-authorized functional audit repairs supersede presentation-only hashes only for the exact changed sources. Existing assertions and unrelated protections are retained.",
+  "base": "a21bde1eef71f27ff7693a140a605149bc09b813",
+  "entries": [
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/stay-care-payment-gate.tsx",
+      "old": "11e787ab1251eca0817bd1121cad298edf5437347b96008e745edcf378d9b7e3",
+      "new": "137caadac3d40fa904c857eadecfd0113db9df11f4c707728bd74757e482b82b"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/mobile-app/stay-care-payment-gate.tsx",
+      "old": "11e787ab1251eca0817bd1121cad298edf5437347b96008e745edcf378d9b7e3",
+      "new": "137caadac3d40fa904c857eadecfd0113db9df11f4c707728bd74757e482b82b"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/api/boarding-commercial/route.ts",
+      "old": "5a09f2fa592094a6aba52aab137aa4176e80857c9f427ef1166e5e5d6ab59cd8",
+      "new": "fe948e0b5bd743d4483f3ea9fabcc3e23cbbac9fb9aeaf7185c61a9ab6fa1f9f"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/api/canonical-bookings/route.ts",
+      "old": "02d86d4b89fea015f257dea46b29f3e2a99611238bc740bf831a63dd8bd24316",
+      "new": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "4f5f5681e9c53c8c09cacf7c914630236cfe87435462358cdd5d1aa419dd8c74",
+      "new": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
+      "new": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/taxi-flow.tsx",
+      "old": "c708cee61517d4347e2aa7ef2e63aadb066ed2531c776051c18f85744c87a578",
+      "new": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/stay-experience.tsx",
+      "old": "46167d024a1f89e8ebea56932aeb7bf91e560a8e8fd8ab2ab132b5f619076580",
+      "new": "f15b9d620f78004944b3b9798a4e9430991c5beb7f57c1e6284bd449bae3c751"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "4808c0a3b3851508e5c15693044da3f6b7608d6d55291832075491acf6f682e0",
+      "new": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "dae82669fc6e497b3c57fff589d6cac3ea2f94c662c02b6966c7f9197cce17d8",
+      "new": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/boarding-commercial-client.ts",
+      "old": "b959a30bacde61d1ae7e8cdafe28b5811de70e0f654c9b1386bf1270bade107c",
+      "new": "5757e4f2bed717553b636a86f181140c33811e8a616730dbca13086b77b1b462"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/boarding-governance.ts",
+      "old": "9ecc7e1181c508dc06d68dbeed0f1ecd66d4a4ad520506ca8180bcfe2fba3be1",
+      "new": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/boarding-host-discovery.ts",
+      "old": "ac202471d036e5643ebb17db36ec571c7cc711f6b64fad6b286ea9c3388ccdac",
+      "new": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/canonical-lifecycle-client.ts",
+      "old": "705319a6a1020abe61ea853615b49c1080396ba695d38ab79399c95f952a9a7b",
+      "new": "6cd173c2b8f5f0a09e38445c21c4c66b19025dfb7e5c0de5c185f422d5739f1a"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/stay-search-state.ts",
+      "old": "a1a6301017c8ce138664946e834cebcd7c296af23f5cbb8c5736d582d774f523",
+      "new": "2bb36449d4d50c9568dc435e15391f20043d8083bb306bf3660f6f84cb3e94bb"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/taxi-booking-client.ts",
+      "old": "1cd85118120b3440e9b8540ec509f231fda35b976871dd51e4f0c28c08dd560c",
+      "new": "4ecabc0eb8f1b8898b510ce0da6233a079016e65bf064aaa019277401ad931ae"
+    },
+    {
+      "manifest": "tests/fixtures/v2-ui-wiring-contract.json",
+      "field": "files.app/v2/stay-experience.tsx",
+      "kind": "AST interaction",
+      "old": {
+        "sha256": "aca43bf737f99a0e95dc5c6055f02579da5ec2d09cb3d305c041d7d60e86c0fc",
+        "functions": 10,
+        "declarations": 11,
+        "interactionProps": 11,
+        "conditions": 3
+      },
+      "new": {
+        "sha256": "e9e92fb2600169e487f07dac8008d0ccd778e741f702dc8cf43a085f2d81f362",
+        "functions": 11,
+        "declarations": 11,
+        "interactionProps": 11,
+        "conditions": 3
+      },
+      "reason": "Inner mode selection now navigates to the matching V2 URL; reload cannot silently restore the wrong service. No authorization/payment handler changed."
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/boarding-customer-wiring.test.mjs",
+      "old": "a24109a0263cd904c0e7da145116da1c3a09327c6c41a33b4ff7e338ea5a659b",
+      "new": "64d8bbe063bb5c4fb9f8ce1a8c77c43ac1785e0d95aebbb0657204e9cf12d3ca",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/customer-payment-gate-uat.test.mjs",
+      "old": "587528f2304cf88ad7f0f9729d97d3a040cbfed04a5cda6b01204d2ce419c4d8",
+      "new": "ab6aa82e5563e67f72b9a6b1d301c9e4b3ad0e23ae303bfd96861f38fe56edc9",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/premium-customer-service-parity.test.mjs",
+      "old": "98526532b365c37a26bf64e2976ebe834ec3468ac99a9120403d702a03a20034",
+      "new": "d183fa0a96eec30048531fa0dc053c82ec2631d7cb0ea88b3713e88468696573",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/boarding-taxi-experience.tsx",
+      "old": "0d167a07257ad8f5c193c93defad1bec48aab8069ad370cdd978a95b5a1452d9",
+      "new": "e4f37912c890ee35181b77d5a40e8eea0052ddc24a5d1b65c08d1951f2a30e21",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/v2/taxi/page.tsx",
+      "old": "515dafd1d9d15a31cca09166b93ae9d2b160d5aded7d92bb59cfb499cadfbc4e",
+      "new": "c94a6ffed7db94c197f910f98a1621376ff2bca2cb14a07696d52ae24566db02",
+      "reason": "Final candidate / updated executable presentation assertions; unrelated sources unchanged."
+    }
+  ],
+  "continuation": {
+    "base": "c6b1c5d3db9ebfaecc5cd8d042fcc67e718c18e4",
+    "reason": "BST21 verified recovery, BST22 evidence-based tracking display, BST23 stable management intent; exact intended-source fingerprints only, no assertions removed.",
+    "entries": [
+      {
+        "manifest": "tests/fixtures/staff-operations-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/staff-operations-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/staff-operations-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/staff-crm-control-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/staff-crm-control-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/staff-crm-control-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/staff-team-completion-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/staff-team-completion-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/staff-team-completion-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/inbox-workspace-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/inbox-workspace-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/inbox-workspace-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/ui-display-truth-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/ui-display-truth-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/ui-display-truth-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      },
+      {
+        "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+        "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+        "old": "19d92252727d2a59ef0d20197e2db16ac4e6a52d8395a49768050374be5e634c",
+        "new": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad"
+      },
+      {
+        "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+        "field": "protected.app/mobile-app/stay-flow.tsx",
+        "old": "da2a3960408157ee15673d1ab254ffbf6ee718ec54f8dd3ccfd35edbdf6923ac",
+        "new": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4"
+      },
+      {
+        "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+        "field": "protected.app/mobile-app/taxi-flow.tsx",
+        "old": "d6f184cad82ab657a1d9ac79676326c088957eaf6004a6a78a08ed2e1b28b592",
+        "new": "16831567671fceb2993b90afd8465363a8e18d2f667105b4f833afb99ca12068"
+      }
+    ]
+  }
+}

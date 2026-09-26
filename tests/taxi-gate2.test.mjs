@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { freshSqlite, makeD1, refusal, seedCanonicalTrip, seedVehicle, nextKey, seedActiveCommercialTerm } from "./helpers/taxi-harness.mjs";
+import { atPickupTime } from "./helpers/taxi-pickup-time.mjs";
 
 installWorkersHooks("__TAXI_G2_DB__", "__TAXI_G2_ENV__");
 
@@ -51,9 +52,9 @@ async function tripWorld(overrides = {}) {
   return { sqlite, db, trip };
 }
 
-const act = (db, trip, action, extra = {}) => lifecycle.mutateTaxiBooking(db, {
+const act = async (db, trip, action, extra = {}) => (action === "confirm_pickup" && await atPickupTime(db, trip.bookingId), lifecycle.mutateTaxiBooking(db, {
   bookingId: trip.bookingId, action, actorId: trip.providerId, idempotencyKey: nextKey(action), ...extra,
-});
+}));
 
 const tripRow = async (db, trip) => db.prepare("SELECT status,vehicle_id,pickup_verification_status,dropoff_verification_status FROM taxi_trips WHERE id=?").bind(trip.tripId).first();
 const count = async (db, table, bookingId) => Number((await db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE booking_id=?`).bind(bookingId).first()).c);

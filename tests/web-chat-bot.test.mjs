@@ -185,10 +185,36 @@ test("the WATI relocation flow asks the same questions in the same shape", () =>
   assert.match(result.reply.text, /Email ID/);
 });
 
+test("WATI relocation: pet type (Other is typed), cities, a DD/MM/YY date, then confirm - and it goes to the relocation desk", () => {
+  const { result, asked } = walk("relocation", ["Domestic", "maya@example.com", "Other", "Rabbit", "Bengaluru", "Delhi", "15/11/26", "No", "Travel date is 20/11 instead"]);
+  assert.match(asked[3], /Please type the pet type/);
+  assert.match(asked[5], /destination city/);
+  assert.match(asked[6], /DD\/MM\/YY/);
+  assert.match(asked[7], /Please confirm the following details[\s\S]*Pet type: Other[\s\S]*To location: Delhi[\s\S]*Date of travel: 15\/11\/2026/);
+  assert.match(asked[8], /required changes/);
+  assert.equal(result.event.type, "completed");
+  assert.equal(result.event.followUp, "team");
+  assert.equal(result.event.followUpReason, "sensitive_relocation", "relocation goes to the relocation desk queue");
+  assert.match(result.reply.text, /relocation partner team will contact you on phone within 24 hours/);
+  assert.doesNotMatch(result.reply.text, /₹400/, "WATI shows no grooming offer after relocation");
+  assert.equal(walk("relocation", ["International", "maya@example.com", "Dog", "Bengaluru", "Dubai", "01/12/26", "Yes"]).result.event.type, "completed", "Yes finishes");
+});
+
+test("WATI pet taxi: 'Outstation from BLR' continues in the relocation flow without asking the name again", () => {
+  let result = bot.runBotTurn(bot.initialBotState(), { choiceId: "pet_taxi", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "Ravi Kumar", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "9876543210", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "Outstation from BLR", signedIn: false });
+  assert.equal(result.state.flow, "relocation");
+  assert.match(result.reply.text, /Outstation from BLR trips are arranged by our pet relocation team[\s\S]*travel type/);
+  assert.equal(result.state.answers.name, "Ravi Kumar");
+  assert.equal(result.state.answers.via, "Pet Taxi - Outstation from BLR");
+});
+
 test("answers are validated, and a typed number picks the step's own option", () => {
   let result = bot.runBotTurn(bot.initialBotState(), { choiceId: "pet_taxi", signedIn: true });
-  result = bot.runBotTurn(result.state, { text: "2", signedIn: true });
-  assert.equal(result.state.answers.travelType, "Outstation from BLR");
+  result = bot.runBotTurn(result.state, { text: "1", signedIn: true });
+  assert.equal(result.state.answers.travelType, "Incity");
   for (const typed of ["1", "1", "1", "1", "1", "2", "1"]) result = bot.runBotTurn(result.state, { text: typed, signedIn: true });
   assert.equal(result.state.answers.purpose, "Airport/station");
   assert.equal(result.state.answers.luggage, "1-2", "an airport trip asks about luggage, as in WATI");
@@ -298,7 +324,7 @@ test("a visitor's lead exists as soon as they give their number, and one that st
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM crm_activities WHERE type='web_chat_bot'").get().n), 1);
 });
 
-test("a signed-in customer who stops mid-flow is nudged once, then handed to the sales queue", async () => {
+test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpace AI takes over at 20, then a person", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-STALL", "+919900000203");
   const cookie = await customerCookie(db, "CUS-STALL", "+919900000203");
@@ -307,16 +333,50 @@ test("a signed-in customer who stops mid-flow is nudged once, then handed to the
   await call({ choiceId: "grooming", message: "", idempotencyKey: "stall-1" });
   const adapter = await import("../lib/ai-web-chat-adapter.ts");
   const sweep = (asOf) => runWithWorkersDb(db, () => adapter.runWebChatBotFollowUpSweep(db, { asOf }));
-  const now = Date.now();
-  assert.equal((await sweep(now + 5 * 60_000)).nudged, 0, "not yet stalled");
-  assert.equal((await sweep(now + 16 * 60_000)).nudged, 1);
-  assert.equal((await sweep(now + 20 * 60_000)).nudged, 0, "nudged only once");
-  const nudge = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-nudge:%'").get();
-  assert.match(JSON.parse(nudge.payload_json).text, /Still there\? .*active grooming subscription/);
-  assert.equal((await sweep(now + 16 * 60_000 + 2 * 60 * 60_000)).escalated, 1);
+  const now = Date.now(), min = 60_000;
+  assert.equal((await sweep(now + 5 * min)).nudged, 0, "not yet stalled");
+  // A reminder that fails to post leaves the session as it was, so the next sweep sends it.
+  sqlite.exec("CREATE TRIGGER messages_offline BEFORE INSERT ON communication_messages BEGIN SELECT RAISE(ABORT, 'offline'); END");
+  assert.equal((await sweep(now + 11 * min)).nudged, 0);
+  sqlite.exec("DROP TRIGGER messages_offline");
+  assert.equal((await sweep(now + 11 * min)).nudged, 1, "first reminder at 10 minutes");
+  assert.equal((await sweep(now + 15 * min)).takenOver, 0, "the second waits another 10 minutes");
+  assert.equal((await sweep(now + 22 * min)).takenOver, 1, "PawSpace AI takes over at 20 minutes");
+  const texts = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-remind:%' OR idempotency_key LIKE 'web-chat-bot-takeover:%' ORDER BY created_at, idempotency_key").all().map((row) => JSON.parse(row.payload_json).text);
+  assert.match(texts[0], /Still there\? .*active grooming subscription/);
+  assert.match(texts[1], /PawSpace AI here\. Pick an option, or just tell me in your own words/);
+  const session = JSON.parse(sqlite.prepare("SELECT state_json FROM web_chat_bot_sessions WHERE session_ref='customer:CUS-STALL'").get().state_json);
+  assert.equal(session.aiTakeover, true, "anything that is not an option now goes to the AI");
+  assert.equal((await sweep(now + 60 * min)).escalated, 0, "a person only after two more hours");
+  assert.equal((await sweep(now + 22 * min + 2 * 60 * min)).escalated, 1);
   const handoff = sqlite.prepare("SELECT reason,queue_code FROM ai_handoffs WHERE customer_id='CUS-STALL'").get();
   assert.deepEqual({ ...handoff }, { reason: "bot_abandoned", queue_code: "sales-web-chat" });
-  assert.equal((await sweep(now + 5 * 60 * 60_000)).escalated, 0, "escalated only once");
+  assert.equal((await sweep(now + 5 * 60 * min)).escalated, 0, "escalated only once");
+});
+
+test("a second answer that does not fit the question goes to PawSpace AI, then the question is asked again", () => {
+  let state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state;
+  const first = bot.runBotTurn(state, { text: "hmm what is included", signedIn: true });
+  assert.equal(first.event.type, "none"); assert.match(first.reply.text, /Please pick one of the options/);
+  const second = bot.runBotTurn(first.state, { text: "which one is best for a husky?", signedIn: true });
+  assert.deepEqual(second.event, { type: "ai", question: "which one is best for a husky?" });
+  assert.match(second.reply.text, /^Whenever you're ready: /); assert.equal(second.state.step, state.step, "the flow waits on the same question");
+  const answered = bot.runBotTurn(second.state, { choiceId: second.reply.choices[0].id, signedIn: true });
+  assert.equal(answered.state.misses, undefined, "an answer clears the misses");
+  state = { ...first.state, misses: 0, aiTakeover: true };
+  assert.equal(bot.runBotTurn(state, { text: "can you just book it", signedIn: true }).event.type, "ai", "after a takeover the first off-script answer goes to the AI");
+});
+
+test("the follow-up timing is shared by web chat and WhatsApp", () => {
+  const state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state, t = 1_000_000_000_000, min = 60_000;
+  assert.equal(bot.botFollowUp(state, { asOf: t + 9 * min, idleSince: t, signedIn: true }).kind, "wait");
+  const remind = bot.botFollowUp(state, { asOf: t + 10 * min, idleSince: t, signedIn: true });
+  assert.equal(remind.kind, "remind");
+  const takeover = bot.botFollowUp(remind.next, { asOf: t + 20 * min, idleSince: t + 10 * min, signedIn: true });
+  assert.equal(takeover.kind, "takeover"); assert.equal(takeover.next.aiTakeover, true);
+  assert.equal(bot.botFollowUp(takeover.next, { asOf: t + 20 * min + 119 * min, idleSince: t + 20 * min, signedIn: true }).kind, "wait");
+  assert.equal(bot.botFollowUp(takeover.next, { asOf: t + 20 * min + 120 * min, idleSince: t + 20 * min, signedIn: true }).kind, "escalate");
+  assert.equal(bot.botFollowUp(bot.initialBotState(), { asOf: t + 99 * min, idleSince: t, signedIn: true }).kind, "wait", "only an unfinished flow is followed up");
 });
 
 test("a short request naming a service starts it; a lead's greeting starts the service it came for", () => {
@@ -367,6 +427,12 @@ test("two messages cannot both answer the same question: a stale save is refused
 /* ---------------------------------------------------------------------------------------------------
  * The WATI flows, branch by branch, as exported from PawSpace's WATI account.
  * --------------------------------------------------------------------------------------------------- */
+function walkWith(code, inputs, crossSell, signedIn = true) {
+  let result = bot.runBotTurn(bot.initialBotState(), { choiceId: code, signedIn, crossSell });
+  for (const input of inputs) result = bot.runBotTurn(result.state, { ...(typeof input === "string" ? { text: input } : input), signedIn, crossSell });
+  return { result };
+}
+
 function walk(code, inputs, signedIn = true) {
   let result = bot.runBotTurn(bot.initialBotState(), { choiceId: code, signedIn });
   const asked = [result.reply.text];
@@ -395,7 +461,7 @@ test("WATI grooming: 'Others' breed and three or more pets are typed; a cat gets
   ({ asked } = walk("grooming", ["No", "Cat", "3 & above", "Persian and Bombay"]));
   assert.match(asked[3], /type the breed/);
   const cat = walk("grooming", ["No", "Cat", "1", "Persian Cat"]).result.reply.choices.map((choice) => choice.label);
-  assert.deepEqual(cat, ["Routine Grooming", "Bath & Basic", "Complete Makeover", "Start over"]);
+  assert.deepEqual(cat, ["Routine Grooming ₹1,149", "Bath & Basic ₹1,899", "Complete Makeover ₹2,399", "Start over"]);
 });
 
 test("WATI grooming: 'No' to confirm starts again; an active subscription goes to the team", () => {
@@ -457,5 +523,80 @@ test("WATI pet taxi: round trips ask the waiting period, and 'No' to the summary
   assert.match(asked[13], /Please confirm the following details[\s\S]*Handler: Yes[\s\S]*Do you confirm the above details\?/);
   assert.equal(result.event.type, "completed");
   assert.match(result.event.summary, /Waiting period: 60 mins[\s\S]*Required change: Pick up at 11 AM instead/);
-  assert.equal(walk("pet_taxi", ["Outstation from BLR", "Cat", "1", "3+ years", "0", "No", "Leisure (incity)trip", "05/10", "9 AM", "One way trip", "Whitefield", "Mysore", "Yes"]).result.event.followUp, "team");
+  assert.equal(walk("pet_taxi", ["Incity", "Cat", "1", "3+ years", "0", "No", "Leisure (incity)trip", "05/10", "9 AM", "One way trip", "Whitefield", "Indiranagar", "Yes"]).result.event.followUp, undefined, "an in-city trip is priced by PawSpace AI");
+});
+
+test("grooming package buttons carry the catalogue price; typing the name still picks it, and the answer is the name", async () => {
+  const { groomingCatalogue } = await import("../lib/grooming-governance.ts");
+  const price = (code) => groomingCatalogue.find((row) => row.code === code).singlePrice;
+  assert.deepEqual([price("dog-bath"), price("dog-basic"), price("dog-makeover")], [1349, 1899, 2399], "the business's regular single-pet prices");
+  const at = walk("grooming", ["No", "Dog", "1", "Labrador"]).result;
+  assert.deepEqual(at.reply.choices.map((choice) => choice.label), ["Essential Bath ₹1,349", "Bath & Basic ₹1,899", "Complete Makeover ₹2,399", "Start over"]);
+  assert.deepEqual(at.reply.choices.slice(0, 3).map((choice) => choice.id), ["essential_bath", "bath_basic", "complete_makeover"], "ids stay name-based");
+  for (const input of ["Essential Bath", "Essential Bath ₹1,349", { choiceId: "essential_bath" }, "1"]) {
+    const picked = bot.runBotTurn(at.state, { ...(typeof input === "string" ? { text: input } : input), signedIn: true });
+    assert.equal(picked.state.answers.package, "Essential Bath", JSON.stringify(input));
+  }
+});
+
+test("the ₹400 cross-sell carries its coupon code into the grooming enquiry, and the code leads the summary", () => {
+  const done = walk("training", ["Bangalore", "First-time Enquiry", "1", "Labrador", "Adult - 1-3 yrs", "Male", "Leash pulling", "01/10/2026", "5pm-7pm"]).result;
+  assert.match(done.reply.text, new RegExp(`Use code ${bot.GROOMING_CROSS_SELL_COUPON} when you book`));
+  let result = bot.runBotTurn(done.state, { choiceId: "grooming_offer", signedIn: true });
+  assert.equal(result.state.answers.coupon, "GROOM400");
+  assert.match(result.reply.text, /Your code GROOM400 is noted/);
+  for (const input of ["No", "Dog", "1", "Labrador", "Bath & Basic", "28/09", "9am-11am", "HSR Layout", "No"]) result = bot.runBotTurn(result.state, { text: input, signedIn: true });
+  assert.equal(result.state.answers.coupon, "GROOM400", "'No' to confirm starts again but keeps the code");
+  for (const input of ["No", "Dog", "1", "Labrador", "Bath & Basic", "28/09", "9am-11am", "HSR Layout", "OK"]) result = bot.runBotTurn(result.state, { text: input, signedIn: true });
+  assert.equal(result.event.type, "completed");
+  assert.match(result.event.summary.split("\n")[1], /^Offer: ₹400 off Pet Grooming \(use code GROOM400\)$/);
+});
+
+test("the ₹400 cross-sell is only promised while its coupon can be used, and in its cities", () => {
+  const finishTraining = (city, crossSell) => walkWith("training", [city, "First-time Enquiry", "1", "Labrador", "Adult - 1-3 yrs", "Male", "Leash pulling", "01/10/2026", "5pm-7pm"], crossSell).result;
+  const live = finishTraining("Bangalore", { code: "GROOM400", cityIds: ["blr"] });
+  assert.match(live.reply.text, /Use code GROOM400/);
+  const paused = finishTraining("Bangalore", null);
+  assert.doesNotMatch(paused.reply.text, /₹400|GROOM400/, "a paused or used-up campaign is not promised");
+  assert.deepEqual(paused.reply.choices.map((choice) => choice.id), ["start_over"]);
+  assert.equal(bot.runBotTurn(paused.state, { choiceId: "grooming_offer", signedIn: true, crossSell: null }).state.flow, null, "the offer button cannot be used either");
+  const hyderabad = finishTraining("Hyderabad", { code: "GROOM400", cityIds: ["blr"] });
+  assert.doesNotMatch(hyderabad.reply.text, /GROOM400/, "a Bangalore-only code is not promised to a Hyderabad enquiry");
+  const renamed = finishTraining("Bangalore", { code: "GROOM450", cityIds: ["blr"] });
+  assert.match(renamed.reply.text, /Use code GROOM450/, "the code staff set in Control > Coupons");
+  assert.equal(bot.runBotTurn(renamed.state, { choiceId: "grooming_offer", signedIn: true, crossSell: { code: "GROOM450", cityIds: ["blr"] } }).state.answers.coupon, "GROOM450");
+});
+
+test("a conversation saved before the flows changed shape starts again instead of resuming at the wrong question", () => {
+  const stale = { version: 1, status: "collecting", flow: "relocation", step: 3, answers: { travelType: "Domestic", email: "a@b.co", from: "Bengaluru" } };
+  assert.deepEqual(bot.parseBotState(JSON.stringify(stale)), bot.initialBotState());
+  assert.equal(bot.parseBotState(bot.initialBotState()).status, "menu");
+});
+
+test("a visitor's relocation - including Pet Taxi 'Outstation from BLR' - becomes a relocation lead on the relocation desk", async () => {
+  const { sqlite } = await world();
+  const sessionKey = "botvisitor0000000009";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  await call({ choiceId: "pet_taxi", message: "" });
+  await call({ message: "Ravi Kumar" });
+  await call({ message: "9876543210" });
+  assert.equal(sqlite.prepare("SELECT service FROM lead_work_items").get().service, "Pet Taxi", "the lead exists from the number");
+  let last;
+  for (const message of ["Outstation from BLR", "Domestic", "ravi@example.com", "Dog", "Bengaluru", "Delhi", "15/11/26", "Yes", "Yes, WhatsApp me"]) last = await call({ message });
+  assert.equal(last.event, "completed");
+  assert.match(last.bot.text, /relocation partner team will contact you/);
+  const lead = sqlite.prepare("SELECT service, owner FROM lead_work_items").get();
+  assert.deepEqual({ ...lead }, { service: "Pet Relocation", owner: "cx-relocation" });
+  assert.equal(last.lead.routedTo, "cx-relocation");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM lead_work_items").get().n), 1, "still one lead");
+});
+
+test("a stale saved conversation restarts the questions but keeps the visitor's lead", () => {
+  const stale = { version: 1, status: "collecting", flow: "pet_taxi", step: 4, answers: { name: "Ravi" }, leadId: "LEAD-KEEP", preferredFlow: "pet_taxi" };
+  const parsed = bot.parseBotState(JSON.stringify(stale));
+  assert.equal(parsed.status, "menu");
+  assert.equal(parsed.leadId, "LEAD-KEEP", "the lead is updated, not duplicated");
+  assert.equal(parsed.preferredFlow, "pet_taxi");
+  assert.deepEqual(parsed.answers, {});
 });

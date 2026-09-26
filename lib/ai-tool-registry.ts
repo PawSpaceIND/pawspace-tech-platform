@@ -30,7 +30,10 @@ const registry:AiToolDefinition[]=[
  {code:"provider_status.read",mode:"read",canonicalService:"canonical-bookings",intents:["booking_status","support"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["bookings.manage","providers.manage"],description:"Read only provider state already attached to an authorized canonical booking."},
  {code:"subscription_wallet.read",mode:"read",canonicalService:"subscription-wallet",intents:["subscription_wallet","booking_create","support"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["customers.manage"],description:"Read server-owned subscription and wallet status."},
  {code:"case_status.read",mode:"read",canonicalService:"unified-case-center",intents:["support","refund_review","booking_change","funeral_memorial","relocation"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:["customers.manage"],description:"Read customer-linked canonical case status."},
- {code:"approved_knowledge.read",mode:"read",canonicalService:"ai-business-configuration",intents:allCustomerIntents,channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Retrieve only approved/current knowledge visible to the caller."},
+ /* Also "unknown": web chat asks the model when the keyword classifier is unsure (ai-conversation-orchestrator),
+  * and the grounded provider reads approved knowledge first. Refusing it for "unknown" threw before the model
+  * was called, so "Which of my bookings are coming up?" was handed to a person as a provider_error. */
+ {code:"approved_knowledge.read",mode:"read",canonicalService:"ai-business-configuration",intents:[...allCustomerIntents,"unknown"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Retrieve only approved/current knowledge visible to the caller."},
  {code:"quote.request",mode:"read",canonicalService:"grooming-governance",intents:["service_info","booking_create"],channels,confirmationRequired:false,idempotencyRequired:false,staffPermissions:[],description:"Calculate a quote from server-owned active catalogue data."},
  {code:"vet.prescription.digitize",mode:"mutation",canonicalService:"vet-healthcare",intents:["support"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["providers.manage"],description:"Create a digital prescription DRAFT from attending Vet notes. It is never official until the human Vet reviews and signs it."},
  {code:"finance.vet_payout.calculate",mode:"mutation",canonicalService:"vet-healthcare",intents:["support"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:["providers.manage"],description:"Calculate and log a Vet visit payout/KPI from governed contract terms. No payment is released and vet GST is locked to zero."},
@@ -164,6 +167,16 @@ async function executeMutation(db:D1Database,definition:AiToolDefinition,input:{
     return invoke("/api/canonical-bookings",{...common,serviceCode,packageCode,packageName:text(quote.name),totalAmount:Number(quote.total_amount),amountDueNow:Number(quote.amount_due_now),pricing:{discount:Number(quote.discount),trainingQuoteId:quoteId,requirements:Array.isArray(input.args.requirements)?input.args.requirements.filter((v):v is string=>typeof v==="string").slice(0,20):[]}});
    }
    const quote=await quoteGroomingBookingWithLiveMultiPet(db,{packageCode,packageName:"",pets:pets.map(pet=>({species:text(pet.species) as "dog"|"cat"|"other"})),paymentMode,cityId:text(first.city_id),zoneId:text(first.zone_id),scheduledStart:text(first.scheduled_start)});
+   const couponQuoteId=text(input.args.couponQuoteId);
+   if(couponQuoteId){
+    // A coupon rides only on the customer-confirmed conversation offer that quoted it, never a guessed ID.
+    const owner=await db.prepare("SELECT id FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND service_code='grooming' AND status='executing' AND json_extract(quote_json,'$.coupon.quoteId')=? LIMIT 1").bind(input.threadId,input.customerId,couponQuoteId).first<Row>();
+    if(!owner)throw new Response("Coupon quote does not belong to this confirmed conversation offer",{status:403});
+    const coupon=await db.prepare("SELECT discount_amount,final_amount,order_value FROM coupon_quotes WHERE id=? AND customer_id=?").bind(couponQuoteId,input.customerId).first<Row>();
+    if(!coupon||Number(coupon.order_value)!==Number(quote.totalAmount))throw new Response("The coupon was quoted for a different Grooming price; refresh the offer",{status:409});
+    const finalAmount=Number(coupon.final_amount);
+    return invoke("/api/canonical-bookings",{...common,serviceCode:"grooming",packageCode:quote.packageCode,packageName:quote.packageName,totalAmount:finalAmount,amountDueNow:paymentMode==="prepaid"?finalAmount:0,pricing:{discount:Number(coupon.discount_amount),couponQuoteId,addOns:[]}});
+   }
    return invoke("/api/canonical-bookings",{...common,serviceCode:"grooming",packageCode:quote.packageCode,packageName:quote.packageName,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,pricing:{discount:0,addOns:[]}});
   }
   if(definition.code==="checkout.payment_order.create"){const run=async()=>{const result=await invoke("/api/payment-order",{bookingId:text(input.args.bookingId),customerId:input.customerId}) as Row;if(result.connected!==true||!text(result.orderId))throw new Response("A verified provider order was not created; payment setup requires review",{status:503});return result;};return executeAfterMarginValidation(()=>validateSalesOfferIfPresent(db,input),run);}

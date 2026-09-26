@@ -5,6 +5,13 @@ import styles from "./wati-chat.module.css";
 export type WatiChoice={id:string;label:string};
 export type WatiMessage={id:string;side:"customer"|"pawspace"|"system";author?:string|null;text:string;at?:number|null;team?:boolean;choices?:WatiChoice[]};
 
+/* PawSpace's own pay link ("Pay securely here to confirm it: /v2/booking?bookingId=...") is the only text
+ * made clickable, and only on PawSpace's side, so no reply can put an arbitrary link in front of a customer. */
+const PAY_LINK=/(\/v2\/booking\?bookingId=[A-Za-z0-9_-]+)/;
+function withPayLink(text:string):ReactNode{const parts=text.split(PAY_LINK);return parts.length===1?text:parts.map((part,index)=>index%2?<a key={index} href={part}>Pay now</a>:part);}
+/* The WhatsApp service menu, as WATI sends it: the doorstep banner over the service list, each option with
+ * its service art. Shown only on a message offering at least four of the known services. */
+function servicesCard(choices:WatiChoice[]|undefined,art:Record<string,string>|undefined){return Boolean(art&&choices&&choices.filter(choice=>art[choice.id]).length>=4);}
 const time=(at?:number|null)=>at?new Date(at).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"";
 
 /**
@@ -16,6 +23,8 @@ export default function WatiConversation(props:{
  messages:WatiMessage[];busy:boolean;error?:string;
  draft:string;onDraft:(value:string)=>void;onSend:(text:string)=>void;onChoice:(choice:WatiChoice)=>void;
  placeholder:string;composerDisabled?:boolean;
+ /** Service art by choice id (/assets/pawspace-*-cartoon.webp): a service menu becomes WATI's services card. */
+ serviceArt?:Record<string,string>;menuBanner?:string;
 }){
  const end=useRef<HTMLDivElement|null>(null);
  useEffect(()=>{end.current?.scrollIntoView({behavior:"smooth",block:"end"});},[props.messages.length,props.busy]);
@@ -32,11 +41,12 @@ export default function WatiConversation(props:{
     ?<p key={message.id} className={styles.divider}>{message.text}</p>
     :<div key={message.id} className={`${styles.row} ${message.side==="customer"?styles.rowCustomer:styles.rowPawSpace}`}>
      <article className={`${styles.bubble} ${message.side==="customer"?styles.bubbleCustomer:styles.bubblePawSpace} ${message.team?styles.bubbleTeam:""}`}>
+      {message.side==="pawspace"&&props.menuBanner&&servicesCard(message.choices,props.serviceArt)&&<img className={styles.banner} src={props.menuBanner} alt="PawSpace doorstep pet care services"/>}
       {message.side==="pawspace"&&message.author&&<span className={styles.author}>{message.author}</span>}
-      <p>{message.text}</p>
+      <p>{message.side==="pawspace"?withPayLink(message.text):message.text}</p>
       {message.at?<span className={styles.meta}>{time(message.at)}{message.side==="customer"?" ✓✓":""}</span>:null}
      </article>
-     {message===last&&message.choices?.length?<div className={styles.choices} role="group" aria-label="Choose an option">{message.choices.map(choice=><button key={choice.id} type="button" className={styles.choice} disabled={props.busy} onClick={()=>props.onChoice(choice)}>{choice.label}</button>)}</div>:null}
+     {message===last&&message.choices?.length?<div className={`${styles.choices} ${servicesCard(message.choices,props.serviceArt)?styles.serviceChoices:""}`} role="group" aria-label="Choose an option">{message.choices.map(choice=><button key={choice.id} type="button" className={styles.choice} disabled={props.busy} onClick={()=>props.onChoice(choice)}>{props.serviceArt?.[choice.id]&&<img className={styles.choiceArt} src={props.serviceArt[choice.id]} alt=""/>}<span>{choice.label}</span></button>)}</div>:null}
     </div>)}
    {props.busy&&<div className={`${styles.row} ${styles.rowPawSpace}`} role="status" aria-label="PawSpace is typing"><div className={`${styles.bubble} ${styles.typing}`}><span/><span/><span/></div></div>}
    {props.error&&<p role="alert" className={styles.error}>{props.error}</p>}
@@ -45,7 +55,7 @@ export default function WatiConversation(props:{
   <form className={styles.composer} onSubmit={submit}>
    <label htmlFor="v2-chat-message" className="sr-only" style={{position:"absolute",width:1,height:1,overflow:"hidden",clip:"rect(0 0 0 0)"}}>Your message</label>
    <textarea id="v2-chat-message" className={styles.input} rows={1} maxLength={4000} value={props.draft} placeholder={props.placeholder} disabled={props.busy||props.composerDisabled} onChange={event=>props.onDraft(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/>
-   <button className={styles.send} disabled={props.busy||props.composerDisabled||!props.draft.trim()}>Send</button>
+   <button data-v2-action className={styles.send} disabled={props.busy||props.composerDisabled||!props.draft.trim()}>Send</button>
   </form>
  </section>;
 }

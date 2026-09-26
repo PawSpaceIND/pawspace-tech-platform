@@ -77,7 +77,7 @@ function BookingConfirmationInner(props: Props) {
   const busy = ["starting", "checkout", "confirming"].includes(state.phase);
   const canResumeUnpaid = props.payment === "resume" && projection?.bookingStatus === "payment_pending" && ["created", "failed", "pending"].includes(projection.paymentStatus);
   const canPayAgain = loaded && Boolean(projection) && !verified && !busy && (canResumeUnpaid || (state.phase !== "pending" && (failedReturn || state.phase === "error" || state.phase === "ready"))) && projection?.bookingStatus === "payment_pending";
-  const manageHref = projection ? customerBookingManageHref({id:projection.bookingId,serviceCode:projection.serviceCode,scheduledStart:projection.scheduledStart,status:projection.bookingStatus}) : null;
+  const manageHref = projection ? customerBookingManageHref({id:projection.bookingId,serviceCode:projection.serviceCode,scheduledStart:projection.scheduledStart,status:projection.bookingStatus}, props.routeScope) : null;
   const serviceName = projection ? SERVICE_LABEL[projection.serviceCode] || projection.serviceCode.replaceAll("_", " ") : "PawSpace";
   const canonicalReady = Boolean(projection?.ready);
   const success = verified && canonicalReady;

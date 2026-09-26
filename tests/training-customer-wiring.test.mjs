@@ -254,21 +254,21 @@ test("the Training page never books a fixture identity on behalf of a real custo
   assert.equal(code.includes("loadCustomerAccount"), true, "identity and pets come from the platform session");
 });
 
-test('audit: Pro Training reserves and materializes all 16 sessions within unchanged validity',async t=>{
+test('audit: weekly Pro Training reserves and materializes all 16 sessions within its 120-day validity',async t=>{
  const ctx=await customerWorld(t),start=futureStart(7);
  const quote=await commercial.createTrainingQuote(ctx.db,{packageCode:'training-16-pro',petCount:1,scheduledStart:start.toISOString(),paymentMode:'split'});
- assert.equal(quote.validityDays,93);assert.equal(quote.totalAmount,20000);assert.equal(quote.amountDueNow,10000);
- const held=await schedule(ctx,quote,start,{occurrences:16,cadenceDays:6});assert.equal(held.status,200,JSON.stringify(held.body));assert.equal(held.body.data.occurrences.length,16);
+ assert.equal(quote.validityDays,120);assert.equal(quote.totalAmount,20000);assert.equal(quote.amountDueNow,10000);
+ const held=await schedule(ctx,quote,start,{occurrences:16,cadenceDays:7});assert.equal(held.status,200,JSON.stringify(held.body));assert.equal(held.body.data.occurrences.length,16);
  const booked=await book(ctx,bookingPayload(quote,held,start));assert.equal(booked.status,201,JSON.stringify(booked.body));assert.equal(booked.body.data.status,'payment_pending');
  const programme=await routeCall('../../app/api/training-programmes/route.ts','POST','/api/training-programmes',{bookingId:booked.body.data.bookingId},ctx.cookie);
  assert.equal(programme.status,201,JSON.stringify(programme.body));assert.equal(programme.body.data.sessions.length,16);
- const last=programme.body.data.sessions[15];assert.ok(Date.parse(last.scheduled_end)<=start.getTime()+93*DAY);
+ const last=programme.body.data.sessions[15];assert.ok(Date.parse(last.scheduled_end)<=start.getTime()+120*DAY);
  assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,1);
 });
-test('audit: a weekly 16-session held calendar cannot be committed outside the 93-day validity',async t=>{
+test('audit: an eight-day 16-session held calendar cannot be committed outside the 120-day validity',async t=>{
  const ctx=await customerWorld(t),start=futureStart(7);
  const quote=await commercial.createTrainingQuote(ctx.db,{packageCode:'training-16-pro',petCount:1,scheduledStart:start.toISOString(),paymentMode:'split'});
- const held=await schedule(ctx,quote,start,{occurrences:16,cadenceDays:7});assert.equal(held.status,200,JSON.stringify(held.body));
+ const held=await schedule(ctx,quote,start,{occurrences:16,cadenceDays:8});assert.equal(held.status,200,JSON.stringify(held.body));
  const refused=await book(ctx,bookingPayload(quote,held,start));assert.equal(refused.status,409,JSON.stringify(refused.body));
  assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);assert.equal(ctx.sqlite.prepare('SELECT COUNT(*) n FROM booking_payments').get().n,0);
 });

@@ -1,6 +1,7 @@
 import { authError, database, requireCustomerOwnership, resolveActor } from "../../../lib/server-auth";
 import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
+import { outstandingBalanceWindow } from "../../../lib/payment-balance-window";
 import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
 import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
 import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, readCustomerCheckoutConfirmation, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
@@ -46,6 +47,11 @@ export async function POST(request: Request) {
       const stage = await paymentStageAmount(db, bookingId);
       if (!stage) return json({ error: "Payment record was not found." }, 404);
       if (stage.stage === "settled" || stage.dueNow <= 0) return json({ data: { connected: false, status: "nothing_due", bookingId, environment: "sandbox", locks } });
+      // A Pet Taxi final balance is only known (and payable) once trip completion has raised it.
+      if (stage.stage === "outstanding_balance" && !(await outstandingBalanceWindow(db, bookingId)).payable) return json({
+        error: "Your booking fee is paid. The final balance is requested after drop-off, so nothing is due now.",
+        code: "balance_not_due_yet",
+      }, 409);
       if (stage.currency !== "INR") return json({ error: "This checkout currently supports INR payments only." }, 409);
       // Do not open a payment the receiver cannot verify. This is configuration readiness only,
       // not proof of gateway delivery. Existing receipts and settled balances remain readable.
@@ -98,6 +104,7 @@ export async function POST(request: Request) {
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
       if (!requestedOrder && paymentReady && bookingReady) status = "captured";
       const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
+      const balanceWindow = stage.stage === "outstanding_balance" ? await outstandingBalanceWindow(db, bookingId) : null;
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {
         ready: bookingReady && paymentReady, bookingId: String(projection.booking_id), serviceCode: String(projection.service_code), packageCode: String(projection.package_code||""), packageName: String(projection.package_name),
         bookingStatus, paymentId: canonical.paymentId || String(projection.payment_id), paymentMode, paymentStatus, transactionId: requestedOrder ? transactionId || null : transactionId || canonical.gatewayPaymentId, amountDueNow: stage.dueNow,
@@ -105,6 +112,9 @@ export async function POST(request: Request) {
         providerName: canonical.providerName || String(projection.provider_name), providerModel: canonical.providerModel || String(projection.provider_model), workOrderStatus: String(projection.work_order_status),
         scheduledStart: canonical.scheduledStart, scheduledEnd: canonical.scheduledEnd, updatedAt: Number(projection.updated_at || 0),
         gatewayOrderId: requestedOrder ? (transactionId ? requestedOrder : null) : canonical.gatewayOrderId, gatewayPaymentId: requestedOrder ? transactionId || null : canonical.gatewayPaymentId || transactionId || null, pets: canonical.pets,
+        // After a split's first instalment is captured, amountDueNow is the outstanding balance, not a repeat of it.
+        paymentStage: stage.stage,
+        ...(balanceWindow ? { amountPaid: Math.max(0, Math.round((stage.bookingTotal - stage.outstandingBalance) * 100) / 100), balanceDueAt: balanceWindow.dueAt, balancePayableNow: balanceWindow.payable } : {}),
       } } });
     }
     if (body.action === "confirm") {
