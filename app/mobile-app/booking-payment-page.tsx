@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CustomerCheckoutController, loadCustomerConfirmationProjection, type CheckoutState } from "../../lib/customer-checkout-client";
+import { CustomerCheckoutController, returnToBooking, loadCustomerConfirmationProjection, type CheckoutState } from "../../lib/customer-checkout-client";
 import { formatIndiaDateTime } from "../../lib/india-time";
 import styles from "./booking-payment-page.module.css";
 
@@ -22,7 +22,7 @@ function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingI
  const finishConfirmation=useCallback(async()=>{
   if(finishingRef.current||notified.current)return;
   finishingRef.current=true;setFinishing(true);setConfirmationError("");
-  try{if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}await onVerified?.();notified.current=true;}
+  try{if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}await onVerified?.();notified.current=true;if(bookingId)returnToBooking(bookingId);}
   catch(problem){setConfirmationError(problem instanceof Error?problem.message:"Payment is verified, but booking details could not be refreshed. Retry confirmation, not payment.");}
   finally{finishingRef.current=false;setFinishing(false);}
  },[bookingId,onVerified]);

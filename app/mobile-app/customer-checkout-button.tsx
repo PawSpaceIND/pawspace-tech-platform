@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { CustomerCheckoutController, type CheckoutState } from "../../lib/customer-checkout-client";
+import { CustomerCheckoutController, returnToBooking, type CheckoutState } from "../../lib/customer-checkout-client";
 import styles from "./account-tools.module.css";
 import CriticalErrorBoundary from "../components/critical-error-boundary";
 function CustomerCheckoutButtonInner({ bookingId, paymentStatus, onRefresh }: { bookingId: string; paymentStatus: string; onRefresh: () => void }) {
@@ -8,7 +8,7 @@ function CustomerCheckoutButtonInner({ bookingId, paymentStatus, onRefresh }: { 
   const controller = useRef<CustomerCheckoutController | null>(null);
   useEffect(() => {
     let active = true;
-    const instance = new CustomerCheckoutController(bookingId, value => { if (active) setState(value); });
+    const instance = new CustomerCheckoutController(bookingId, value => { if (active) { setState(value); if(value.phase === "captured") returnToBooking(bookingId); } });
     controller.current = instance;
     return () => { active = false; controller.current = null; };
   }, [bookingId]);

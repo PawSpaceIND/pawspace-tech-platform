@@ -12,7 +12,9 @@ test("Taxi uses the common checkout contract rather than calling the SDK without
  assert.match(source,/new CustomerCheckoutController\(paymentBookingId/);
  assert.match(source,/await controller.start\(\)/);
  assert.doesNotMatch(source,/openMobileRazorpayCheckout|\/api\/payment-order/);
- assert.match(source,/state.phase==="captured"&&state.confirmation\?\.bookingId===paymentBookingId&&state.confirmation.status==="confirmed"/);
+ assert.match(source,/state.phase==="captured"\) returnToBooking\(paymentBookingId\)/);
+ assert.doesNotMatch(source,/state.confirmation/);
+ assert.match(source,/checkoutController.current\?\.resume\(\)/);
 });
 
 test("Taxi half-payment reaches the actual SDK with server locks and dismissal cannot create another order",async t=>{

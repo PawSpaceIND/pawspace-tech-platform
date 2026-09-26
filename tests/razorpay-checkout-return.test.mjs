@@ -222,3 +222,32 @@ test("V2 checkout keeps success, failure and status returns in V2 without allowi
     const location=new URL(response.headers.get("location"));assert.equal(location.origin,origin);assert.equal(location.pathname,BOOKING_CONFIRMATION_PATH);
   }
 });
+
+for (const service of ["grooming","training","boarding","sitting","taxi","walking","food","funeral"]) {
+ test(`${service}: modal success closes the overlay before returning to the owned V2 booking`, async t => {
+  const {CustomerCheckoutController,returnToBooking}=await import("../lib/customer-checkout-client.ts");
+  let closed=0,destination;const actions=[];
+  const bookingId=`BK-${service}`;
+  browser(t,{location:{origin,pathname:`/v2/${service}`,assign:value=>{destination=value;}},Razorpay:class {
+   constructor(options){this.options=options;}on(){}
+   open(){this.options.handler({razorpay_order_id:opts.orderId,razorpay_payment_id:"pay_ReturnFixture1",razorpay_signature:signature});}
+   close(){closed++;this.options.modal.ondismiss();}
+  }});
+  const controller=new CustomerCheckoutController(bookingId,state=>{if(state.phase==="captured")returnToBooking(bookingId);},{
+   open:sdk.openMobileRazorpayCheckout,
+   fetch:async(url,init)=>{const body=JSON.parse(init.body);actions.push(body.action);return Response.json({data:body.action==="start"?{connected:true,environment:"sandbox",bookingId,orderId:opts.orderId,keyId:opts.keyId,amountPaise:50000,currency:"INR",locks}:{bookingId,orderId:opts.orderId,receiptVerified:true,environment:"sandbox",status:"captured"}});}
+  });
+  await controller.start();await controller.start();
+  assert.equal(closed,1);assert.equal(destination,`/v2/booking-confirmation?bookingId=${bookingId}`);
+  assert.deepEqual(actions,["start","confirm"],"return cannot create a second charge");
+ });
+}
+
+test("Taxi manage exposes deposit and completed-trip balance through the shared payment component",async()=>{
+ const {readFileSync}=await import("node:fs");
+ const source=readFileSync(new URL("../app/taxi/manage/taxi-customer-management.tsx",import.meta.url),"utf8");
+ assert.match(source,/schedule.status\)==="booking_fee_pending"/);
+ assert.match(source,/serviceName="Pet Taxi booking fee"/);
+ assert.match(source,/serviceName="Pet Taxi final balance"/);
+ assert.doesNotMatch(source,/openMobileRazorpayCheckout|\/api\/payment-order/);
+});
