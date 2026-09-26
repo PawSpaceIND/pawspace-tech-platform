@@ -183,7 +183,8 @@ async function signedInWorld() {
   sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('CUS-NEW','blr','Nila','9876500009',NULL,NULL,'customer_app','{}',?,?)").run(NOW, NOW);
   return { sqlite, db, actor: customerActor(sqlite, "CUS-NEW") };
 }
-const BOOKINGS_QUESTION = "Which of my bookings are coming up, and what do I still need to pay?";
+// No booking_status keyword ("my booking", "when is my", ...) on purpose: AI-02 is about a question the classifier cannot place.
+const BOOKINGS_QUESTION = "What have I got coming up with PawSpace, and what do I still need to pay?";
 const chat = (db, actor, idempotencyKey, text = BOOKINGS_QUESTION) => adapter.runAuthenticatedAiWebChat(db, { actor, customerId: "CUS-NEW", text, idempotencyKey }, { acceptWhileWithTeam: true });
 const lastAuthenticatedEvent = (sqlite) => JSON.parse(sqlite.prepare("SELECT detail_json FROM ai_web_chat_events WHERE event_type='authenticated_turn' ORDER BY rowid DESC LIMIT 1").get().detail_json);
 

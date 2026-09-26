@@ -91,7 +91,9 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
 
   for(const booking of bookings){
     const bookingStatus=String(booking.status||"");
-    if(bookingStatus==="cancelled")continue;
+    // An unpaid Training booking is not a job yet: the Training lifecycle refuses accept (409) until the
+    // customer pays, so it must not surface as the trainer's next assignment.
+    if(bookingStatus==="cancelled"||bookingStatus==="payment_pending"&&String(booking.service_code)==="dog_training")continue;
     const stay=stayByBooking.get(String(booking.id))||null;
     const stayStatus=stay?String(stay.status||""):null;
     const carePlanStatus=stay?String(stay.care_plan_status||""):null;

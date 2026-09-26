@@ -60,3 +60,42 @@
 .send{min-height:50px;font-size:16px;padding:0 24px}
 @media(max-width:640px){.row{max-width:92%}.choices{grid-template-columns:1fr 1fr}.canvas{padding:14px}.bubble p{font-size:16px}.choice{font-size:15px;padding:12px 10px}}
 
+/* ---------------------------------------------------------------------------------------------------
+ * WhatsApp look, as customers see PawSpace on WhatsApp and staff see it in WATI: the beige patterned
+ * canvas, white PawSpace bubbles and green customer bubbles with tails, grey timestamps, blue ticks and
+ * WhatsApp-teal answer buttons. V2's dark mode switches to WhatsApp's dark palette.
+ * --------------------------------------------------------------------------------------------------- */
+.pane{--wa-canvas:#efeae2;--wa-dots:#d8d2c7;--wa-in:#ffffff;--wa-out:#d9fdd3;--wa-text:#111b21;--wa-meta:#667781;--wa-accent:#00a884;--wa-accent-dark:#008069;--wa-head:#f0f2f5;--wa-line:#e9edef;--wa-tick:#53bdeb}
+:global([data-paw-mode="dark"]) .pane{--wa-canvas:#0b141a;--wa-dots:#1c272e;--wa-in:#202c33;--wa-out:#005c4b;--wa-text:#e9edef;--wa-meta:#8696a0;--wa-accent:#00a884;--wa-accent-dark:#06cf9c;--wa-head:#202c33;--wa-line:#2a3942}
+.pane{background:var(--wa-canvas);border-color:var(--wa-line)}
+.head{background:var(--wa-head);border-bottom-color:var(--wa-line)}
+.person strong{color:var(--wa-text)}
+.person small{color:var(--wa-meta)}
+.dot{background:var(--wa-accent)}
+.status{background:transparent;border-color:var(--wa-line);color:var(--wa-meta)}
+.canvas{background-color:var(--wa-canvas);background-image:radial-gradient(var(--wa-dots) 1px,transparent 1px),radial-gradient(var(--wa-dots) 1px,transparent 1px);background-size:26px 26px;background-position:0 0,13px 13px}
+.divider{color:var(--wa-meta)}
+.divider::before,.divider::after{display:none}
+.divider{align-self:center;background:var(--wa-in);border-radius:8px;padding:5px 12px;box-shadow:0 1px .5px rgba(11,20,26,.13);font-size:13px}
+.bubble{position:relative;border:0;border-radius:8px;box-shadow:0 1px .5px rgba(11,20,26,.13);background:var(--wa-in);color:var(--wa-text);padding:8px 12px 6px}
+.bubblePawSpace{border-top-left-radius:0}
+.bubblePawSpace::before{content:"";position:absolute;top:0;left:-8px;border-top:0 solid transparent;border-right:8px solid var(--wa-in);border-bottom:10px solid transparent}
+.bubbleCustomer{background:var(--wa-out);color:var(--wa-text);border-top-right-radius:0;border-bottom-right-radius:8px}
+.bubbleCustomer::before{content:"";position:absolute;top:0;right:-8px;border-left:8px solid var(--wa-out);border-bottom:10px solid transparent}
+.bubbleTeam{border-left:0;box-shadow:inset 3px 0 0 var(--brand-gold,#c79a3b),0 1px .5px rgba(11,20,26,.13)}
+.author{color:var(--wa-accent-dark)}
+.meta{color:var(--wa-meta);opacity:1}
+.rowCustomer .meta{color:var(--wa-meta)}
+.bubble a{color:var(--wa-accent-dark);font-weight:800}
+.banner{display:block;width:calc(100% + 18px);max-height:170px;object-fit:cover;object-position:center 30%;margin:-4px -9px 8px;border-radius:6px}
+.choices{gap:0;background:var(--wa-in);border-radius:8px;box-shadow:0 1px .5px rgba(11,20,26,.13);overflow:hidden;grid-template-columns:1fr 1fr}
+.choice{border:0;border-top:1px solid var(--wa-line);border-radius:0;background:var(--wa-in);color:var(--wa-accent-dark);font-weight:650;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px}
+.choice:nth-child(odd){border-right:1px solid var(--wa-line)}
+.choice:hover:not(:disabled){background:color-mix(in srgb,var(--wa-accent) 8%,var(--wa-in));border-color:var(--wa-line)}
+.serviceChoices .choice{justify-content:flex-start;text-align:left}
+.choiceArt{width:34px;height:34px;border-radius:50%;object-fit:cover;flex:0 0 auto;background:var(--wa-canvas)}
+.composer{background:var(--wa-head);border-top:0}
+.input{border:0;border-radius:24px;background:var(--wa-in);color:var(--wa-text);padding-left:18px}
+.send{background:var(--wa-accent);color:#fff}
+.typing{background:var(--wa-in)}
+@media(max-width:640px){.choices{grid-template-columns:1fr}.choice:nth-child(odd){border-right:0}.banner{max-height:170px}}

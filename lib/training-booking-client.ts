@@ -17,6 +17,9 @@ export async function createCanonicalTrainingBooking(input:{
  scheduledStart:string;
  scheduledEnd:string;
  provider:TrainingTrainer|{id:string;name:string;model:"full_time"|"commission"};
+ /** What the customer wants from the programme; the trainer sees these as the programme requirements. */
+ requirements?:string[];
+ behaviourNotes?:string;
 }){
  const quote=input.trainingQuote;
  /*
@@ -40,7 +43,7 @@ export async function createCanonicalTrainingBooking(input:{
   totalAmount:quote.totalAmount,
   amountDueNow:quote.amountDueNow,
   payment:{method:"internal_uat",mode:quote.paymentMode,status:"created",detail:"Training checkout awaiting verified provider capture"},
-  pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId},
+  pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId,requirements:input.requirements?.length?input.requirements:undefined,behaviourNotes:input.behaviourNotes?.trim()||undefined},
  });
  return{...data,liveMoney:false} satisfies TrainingBookingResult;
 }
