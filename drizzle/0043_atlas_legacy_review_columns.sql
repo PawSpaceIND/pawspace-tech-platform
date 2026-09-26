@@ -1,0 +1,10 @@
+-- Legacy review evidence stays unknown; never backfill authority or hashes.
+-- @add-column-if-missing atlas_proposal_reviews|reviewer_role_code|TEXT
+-- @add-column-if-missing atlas_proposal_reviews|reviewer_authority_source|TEXT
+-- @add-column-if-missing atlas_proposal_reviews|review_auth_assurance_type|TEXT
+-- @add-column-if-missing atlas_proposal_reviews|review_auth_session_id|TEXT
+-- @add-column-if-missing atlas_proposal_reviews|review_mfa_verified_at|INTEGER
+-- @add-column-if-missing atlas_proposal_reviews|review_hash_version|INTEGER
+-- @add-column-if-missing atlas_proposal_reviews|review_sequence|INTEGER
+-- @add-column-if-missing atlas_proposal_reviews|previous_review_hash|TEXT
+-- @add-column-if-missing atlas_proposal_reviews|review_hash|TEXT
