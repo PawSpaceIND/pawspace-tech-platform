@@ -197,11 +197,11 @@ export async function inspectTrustSafetyText(db: Db, input: {
   asOf?: number;
   applyProviderStrikeImmediately?: boolean;
 }) {
-  await ensureTrustSafetyTables(db);
   const source = text(input.sourceReference);
   if (!source) throw new Error("Trust & Safety source reference is required");
   const inspected = redactTrustSafetyText(text(input.text));
   if (!inspected.detected) return { ...inspected, eventId: null, strike: null };
+  await ensureTrustSafetyTables(db);
   const now = input.asOf ?? Date.now();
   const eventId = uid("TSEVT");
   const hash = await sha256(text(input.text));
