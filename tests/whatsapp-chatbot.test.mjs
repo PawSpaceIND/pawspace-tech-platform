@@ -138,3 +138,24 @@ test("every WATI button and list row fits WhatsApp's limits",async()=>{
   if(labels.length<=2)for(const label of labels)assert.ok(label.length<=20,`${flow.code}.${step.key}: "${label}" is longer than a WhatsApp button title`);
  }
 });
+
+test("a WhatsApp customer who stops mid-flow is reminded at 10 minutes, PawSpace AI takes over at 20, then a person",async()=>{
+ const{sqlite,db}=await world();
+ const first=await inbound(sqlite,db,"stall-0","hi");
+ await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable certified deterministic chatbot"});
+ await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:first,actorEmail:"whatsapp-chatbot"});
+ const pick=await inbound(sqlite,db,"stall-1","Grooming");
+ await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:pick,actorEmail:"whatsapp-chatbot"});
+ const now=Date.now(),min=60_000,sweep=asOf=>chatbot.runWhatsAppChatbotFollowUpSweep(db,{asOf});
+ assert.equal((await sweep(now+5*min)).nudged,0,"not yet stalled");
+ assert.equal((await sweep(now+11*min)).nudged,1,"first reminder at 10 minutes");
+ assert.equal((await sweep(now+22*min)).takenOver,1,"PawSpace AI takes over at 20 minutes");
+ const sent=sqlite.prepare("SELECT payload_json FROM communication_messages WHERE direction='outbound' AND (idempotency_key LIKE '%whatsapp-chatbot-remind:%' OR idempotency_key LIKE '%whatsapp-chatbot-takeover:%') ORDER BY created_at").all().map(row=>JSON.parse(row.payload_json));
+ assert.equal(sent.length,2);assert.match(sent[0].text,/^Still there\?/);assert.match(sent[1].text,/^PawSpace AI here\./);
+ assert.ok(sent[1].interactive,"the question's buttons are sent again");
+ const offScript=await inbound(sqlite,db,"stall-2","which is best for a shih tzu?");
+ const answered=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:offScript,actorEmail:"whatsapp-chatbot"});
+ assert.equal(answered.aiRequested,true,"after the takeover an answer that is not an option goes to the AI");
+ await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"human_only",actorEmail:staffActor.email,reason:"Team took over"});
+ assert.equal((await sweep(now+4*60*min)).escalated,0,"a conversation a person owns is never followed up by the bot");
+});

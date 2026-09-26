@@ -3,7 +3,7 @@ import{ensureCommunicationTables}from"./communication-engine";
 import{ensureD1Once}from"./d1-ensure-once.js";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff,routeLeadToTeamQueue,type AiHandoffReason}from"./ai-human-handoff";
-import{currentStepReply,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
+import{BOT_ESCALATE_AFTER_MS,BOT_REMINDER_AFTER_MS,botFollowUp,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
 import{advanceBotSession,claimBotSession,ensureBotSessionTable,loadBotSession,loadBotSessionVersion,purgeStalePublicBotSessions,saveBotSession}from"./web-chat-bot-store";
 import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
@@ -157,7 +157,7 @@ export function chatSalesServiceNamed(message:string):VoiceSalesService|null{
  return null;
 }
 /** The service this chat thread is selling: the one named now, else the one named in it in the last two hours. */
-async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
+export async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
  const named=chatSalesServiceNamed(message),now=Date.now();
  const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
  let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training")remembered=service;}catch{}
@@ -234,6 +234,8 @@ export async function customerWebChatTranscript(db:D1Database,input:{actor:Authe
  if(threadId){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
  else threadId=await currentWebChatThread(db,input.customerId);
  if(!threadId)return{threadId:null,messages:[] as WebChatTranscriptMessage[],handoff:{active:false,status:null}};
+ // A booking PawSpace AI made here whose payment has since been verified is confirmed in the conversation.
+ await announcePaidAiBookings(db,{threadId}).catch(()=>undefined);
  const limit=Math.min(200,Math.max(1,Math.floor(Number(input.limit)||100)));
  // A customer message and the bot's reply are often written in the same millisecond; insertion order
  // (rowid), not the random message id, keeps the reply after the message it answers.
@@ -250,6 +252,35 @@ export async function customerWebChatTranscript(db:D1Database,input:{actor:Authe
 export const WEB_CHAT_BOT_TEMPLATE_KEY="web_app_chat_bot";
 
 export const loadWebChatBotState=loadBotSession,saveWebChatBotState=saveBotSession;
+
+/**
+ * "Payment received - your booking is confirmed", in the conversation where PawSpace AI took the booking.
+ * The chat link sends the customer to pay; the verified Razorpay capture (never the customer's word) marks
+ * the payment captured, and the next chat read or follow-up sweep says so once - on web chat as a
+ * PawSpace message, on WhatsApp as an in-session reply.
+ */
+export async function announcePaidAiBookings(db:D1Database,input:{threadId?:string;asOf?:number;limit?:number}={}){
+ await ensureAiWebChatTables(db);
+ const asOf=input.asOf??Date.now(),limit=Math.min(100,Math.max(1,input.limit??25));
+ let rows:Row[]=[];
+ try{rows=(await db.prepare(`SELECT o.id offer_id,o.thread_id,o.customer_id,b.id booking_id,b.package_name FROM voice_sales_offers o JOIN booking_payments p ON p.booking_id=json_extract(o.result_json,'$.bookingId') JOIN canonical_bookings b ON b.id=p.booking_id WHERE o.status='completed' AND p.status='captured' AND o.completed_at>=? ${input.threadId?"AND o.thread_id=?":""} AND NOT EXISTS (SELECT 1 FROM ai_web_chat_events e WHERE e.id='ai-booking-paid:'||o.id) ORDER BY o.completed_at LIMIT ?`).bind(...(input.threadId?[asOf-7*86400000,input.threadId,limit]:[asOf-7*86400000,limit])).all<Row>()).results;}
+ catch(error){if(/no such table/i.test(String((error as Error)?.message)))return{announced:0};throw error;}
+ let announced=0;
+ for(const row of rows){
+  const threadId=text(row.thread_id),customerId=text(row.customer_id),offerId=text(row.offer_id);
+  // Claimed first, so a chat read and the sweep never both announce the same payment.
+  const claim=await db.prepare("INSERT OR IGNORE INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'ai_booking_paid','ai-sales-offer',?,?)").bind(`ai-booking-paid:${offerId}`,threadId,customerId,JSON.stringify({offerId,bookingId:text(row.booking_id)}),asOf).run();
+  if(Number(claim.meta?.changes)!==1)continue;
+  const message=`Payment received - your ${text(row.package_name)||"PawSpace"} booking is confirmed. Thank you! You can see it any time under Your bookings.`;
+  const inbound=await db.prepare("SELECT channel,provider FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();
+  if(text(inbound?.channel)==="whatsapp"){
+   const{queueWhatsAppUatOutbound,whatsappUatProviders}=await import("./whatsapp-uat-adapter");const provider=text(inbound?.provider) as (typeof whatsappUatProviders)[number];
+   if(whatsappUatProviders.includes(provider))await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:message,idempotencyKey:`ai-booking-paid:${offerId}`,createdBy:"ai-sales-offer",now:asOf});
+  }else await postBotMessage(db,{threadId,customerId,reply:{text:message,choices:[],inputHint:null},idempotencyKey:`ai-booking-paid:${offerId}`});
+  announced++;
+ }
+ return{announced};
+}
 
 async function postBotMessage(db:D1Database,input:{threadId:string;customerId:string;reply:BotReply;idempotencyKey:string}){
  const now=Date.now();
@@ -336,33 +367,30 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
  * enquiry goes to the sales queue so a person follows it up. (A visitor's lead already exists from the
  * moment they gave their number, so the lead's own response clock covers them.)
  * --------------------------------------------------------------------------------------------------- */
-export const WEB_CHAT_BOT_NUDGE_AFTER_MS=15*60_000;
-export const WEB_CHAT_BOT_ESCALATE_AFTER_MS=2*60*60_000;
+/** @deprecated kept for callers; the timings live in lib/web-chat-bot.ts (botFollowUp). */
+export const WEB_CHAT_BOT_NUDGE_AFTER_MS=BOT_REMINDER_AFTER_MS;
+export const WEB_CHAT_BOT_ESCALATE_AFTER_MS=BOT_ESCALATE_AFTER_MS;
 
 export async function runWebChatBotFollowUpSweep(db:D1Database,input:{asOf?:number;limit?:number}={}){
  const asOf=input.asOf??Date.now(),limit=Math.min(200,Math.max(1,input.limit??50));
  await ensureBotSessionTable(db);await ensureAiWebChatTables(db);
- const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-WEB_CHAT_BOT_NUDGE_AFTER_MS,limit).all<Row>();
- let nudged=0,escalated=0,skipped=0;
+ const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-BOT_REMINDER_AFTER_MS,limit).all<Row>();
+ let nudged=0,takenOver=0,escalated=0,skipped=0;
  for(const row of rows.results){
   const ref=text(row.session_ref),customerId=ref.slice("customer:".length),{state,version}=await loadBotSessionVersion(db,ref);
-  if(state.status!=="collecting"){skipped++;continue;}
+  const action=botFollowUp(state,{asOf,idleSince:Number(row.updated_at),signedIn:true});
+  if(action.kind==="wait"){skipped++;continue;}
   const threadId=await currentWebChatThread(db,customerId);
   if(!threadId||(await activeHandoff(db,threadId)).active){skipped++;continue;}
-  if(!state.nudgedAt){
-   const reply=currentStepReply(state,true,"Still there? Let's finish your details so I can book this for you. ");
-   if(!reply){skipped++;continue;}
-   // Claimed first: a customer answering at this moment wins, and is not nudged about a question they just answered.
-   if(!(await claimBotSession(db,ref,{...state,nudgedAt:asOf},version,asOf))){skipped++;continue;}
-   await postBotMessage(db,{threadId,customerId,reply,idempotencyKey:`web-chat-bot-nudge:${threadId}:${state.flow}:${state.step}`});nudged++;continue;
-  }
-  if(asOf-state.nudgedAt<WEB_CHAT_BOT_ESCALATE_AFTER_MS){skipped++;continue;}
-  if(!(await claimBotSession(db,ref,{...state,status:"done"},version,asOf))){skipped++;continue;}
-  await postBotMessage(db,{threadId,customerId,reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},idempotencyKey:`web-chat-bot-escalate:${threadId}:${state.flow}`});
-  await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;
+  // Claimed first: a customer answering at this moment wins, and is not reminded of a question they just answered.
+  if(!(await claimBotSession(db,ref,action.next,version,asOf))){skipped++;continue;}
+  await postBotMessage(db,{threadId,customerId,reply:action.reply,idempotencyKey:`web-chat-bot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`});
+  if(action.kind==="escalate"){await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;}
+  else if(action.kind==="takeover")takenOver++;else nudged++;
  }
  const purged=await purgeStalePublicBotSessions(db,asOf);
- return{scanned:rows.results.length,nudged,escalated,skipped,purgedVisitorSessions:purged,externalDelivery:false};
+ const paid=await announcePaidAiBookings(db,{asOf});
+ return{scanned:rows.results.length,nudged,takenOver,escalated,skipped,purgedVisitorSessions:purged,paidAnnounced:paid.announced,externalDelivery:false};
 }
 
 /**

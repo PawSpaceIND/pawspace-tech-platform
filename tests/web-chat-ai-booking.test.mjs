@@ -50,10 +50,10 @@ const plan = (w, booking = {}) => [
   { toolCode: "booking.create", arguments: { petIds: [w.petId], packageCode: "dog-basic", paymentMode: "prepaid", ...booking } },
   { toolCode: "checkout.payment_order.create", arguments: {} },
 ];
-async function chatTurn(w, message, key, provider) {
+async function chatTurn(w, message, key, provider, channel = "chat") {
   const now = Date.now(), messageId = `MSG-${key}`;
-  w.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'pawspace_web','chat','inbound','transactional','web_app_chat',?,'received',?,'chat-test',?,?)").run(messageId, w.threadId, w.customerId, JSON.stringify({ text: message }), key, now, now);
-  return orchestrator.orchestrateAiTurn(w.db, { actor, threadId: w.threadId, customerId: w.customerId, inputMessageId: messageId, idempotencyKey: key, channel: "chat", provider });
+  w.sqlite.prepare(`INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'${channel === "chat" ? "pawspace_web" : "meta_whatsapp"}','${channel}','inbound','transactional','web_app_chat',?,'received',?,'chat-test',?,?)`).run(messageId, w.threadId, w.customerId, JSON.stringify({ text: message }), key, now, now);
+  return orchestrator.orchestrateAiTurn(w.db, { actor, threadId: w.threadId, customerId: w.customerId, inputMessageId: messageId, idempotencyKey: key, channel, provider });
 }
 const salesModel = (actions) => { let calls = 0; return { get calls() { return calls; }, salesService: "grooming", status: "connected", provider: "mock-chat-sales", modelRef: "proof", async generate() { calls++; return { text: "Here is your booking", provider: "mock-chat-sales", modelRef: "proof", latencyMs: 1, actionRequests: actions }; } }; };
 const bookings = (w) => w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get() ? w.sqlite.prepare("SELECT id,total_amount,pricing_json FROM canonical_bookings WHERE customer_id=?").all(w.customerId) : [];
@@ -78,6 +78,29 @@ test("web chat: a GROOM200 offer is read back with the server's discount, and 'y
   assert.equal(pricing.couponCode, "GROOM200"); assert.equal(pricing.discount, 200);
   assert.deepEqual(w.orders, [Math.round(stored.coupon.finalAmount * 100)], "the payment order is for the discounted total");
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions WHERE code='GROOM200' AND customer_id=? AND status='consumed'").get(w.customerId).n, 1);
+  assert.ok(confirmed.turn.output.includes(`Pay securely here to confirm it: /v2/booking?bookingId=${booking.id}`), confirmed.turn.output);
+
+  // Nothing is announced until the verified capture marks the payment captured; then exactly once.
+  assert.deepEqual(await webChat.announcePaidAiBookings(w.db, { threadId: w.threadId }), { announced: 0 });
+  w.sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE booking_id=?").run(booking.id);
+  assert.deepEqual(await webChat.announcePaidAiBookings(w.db, { threadId: w.threadId }), { announced: 1 });
+  assert.deepEqual(await webChat.announcePaidAiBookings(w.db, {}), { announced: 0 }, "the sweep does not announce it again");
+  const offerId = w.sqlite.prepare("SELECT id FROM voice_sales_offers WHERE thread_id=? AND status='completed'").get(w.threadId).id;
+  const paid = w.sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key=?").get(`ai-booking-paid:${offerId}`);
+  assert.match(JSON.parse(paid.payload_json).text, /^Payment received - your .+ booking is confirmed\./);
+});
+
+test("WhatsApp: the AI books through the same stored offer, with the WhatsApp coupon channel and a full pay link", async (t) => {
+  const w = await world(t), model = salesModel(plan(w, { couponCode: "GROOM200" }));
+  const offered = await chatTurn(w, "Book Bath & Basic with GROOM200", "wa-offer", model, "whatsapp");
+  assert.equal(offered.turn.policyDecision, "customer_confirmation_required");
+  const stored = JSON.parse(w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE thread_id=?").get(w.threadId).quote_json);
+  assert.equal(w.sqlite.prepare("SELECT channel FROM coupon_quotes WHERE id=?").get(stored.coupon.quoteId).channel, "whatsapp");
+  const confirmed = await chatTurn(w, "yes", "wa-yes", model, "whatsapp");
+  assert.equal(confirmed.turn.policyDecision, "customer_confirmed_action_executed");
+  const [booking] = bookings(w);
+  assert.ok(confirmed.turn.output.includes(`https://pawspace.in/v2/booking?bookingId=${booking.id}`), confirmed.turn.output);
+  assert.equal(booking.total_amount, stored.coupon.finalAmount);
 });
 
 test("web chat: an offer the server cannot quote is said back to the customer, not booked or handed off", async (t) => {
@@ -109,4 +132,12 @@ test("the chat remembers which service it is selling from what the customer name
   for (const message of ["Yes", "Saturday 10am", "What is my booking status?"]) assert.equal(webChat.chatSalesServiceNamed(message), null, message);
   assert.match(sales.specialistSalesPrompt("grooming", { coupons: true }), /booking\.couponCode/);
   assert.doesNotMatch(sales.specialistSalesPrompt("grooming"), /couponCode/);
+});
+
+test("only PawSpace's own pay link is clickable in the chat, and only on PawSpace's side", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const pane = await readFile(new URL("../app/components/wati-chat/WatiConversation.tsx", import.meta.url), "utf8");
+  assert.match(pane, /const PAY_LINK=\/\(\\\/v2\\\/booking\\\?bookingId=\[A-Za-z0-9_-\]\+\)\//);
+  assert.match(pane, /message\.side==="pawspace"\?withPayLink\(message\.text\):message\.text/);
+  assert.doesNotMatch(pane, /dangerouslySetInnerHTML/);
 });
