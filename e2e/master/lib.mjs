@@ -14,6 +14,8 @@ export const hasAccessCode = () => CODE.length >= 32;
 export function redact(value) {
   let text = typeof value === "string" ? value : JSON.stringify(value, null, 1);
   for (const secret of SECRETS) text = text.split(secret).join("[REDACTED]");
+  // Playwright call logs echo request headers: never keep session cookies or auth headers.
+  text = text.replace(/(cookie|authorization):[^\n"]*/gi, "$1: [REDACTED]").replace(/(pawspace_[a-z_]*=)[^;\s"\\]+/gi, "$1[REDACTED]");
   return text;
 }
 
@@ -196,8 +198,8 @@ export function saveBooking(row) { appendFileSync(join(OUT, "bookings.jsonl"), r
 export function readBookings(filter = () => true) { return readJsonl("bookings.jsonl").filter(filter); }
 
 /** JSON API call inside a signed-in browser context (same cookies as the page). */
-export async function api(context, method, path, data) {
-  const opts = { headers: { origin: BASE, "content-type": "application/json" }, timeout: 30_000 };
+export async function api(context, method, path, data, { timeout = 30_000 } = {}) {
+  const opts = { headers: { origin: BASE, "content-type": "application/json" }, timeout };
   if (data !== undefined) opts.data = data;
   const res = await context.request.fetch(BASE + path, { method, ...opts });
   let body = null; const text = await res.text().catch(() => "");

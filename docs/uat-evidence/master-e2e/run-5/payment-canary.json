@@ -34,7 +34,7 @@
   {
    "name": "canary aborted",
    "ok": false,
-   "detail": "apiRequestContext.fetch: Timeout 30000ms exceeded.\nCall log:\n  - → POST https://pawspace-staging.karthik-fce.workers.dev/api/uat-scheduling\n    - user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36\n    - accept: */*\n    - accept-encoding: gzip,deflate,br\n    - origin: https://pawspace-staging.karthik-fce.workers.dev\n    - content-type: application/json\n    - content-length: 475\n    - cookie: pawspace_identity_session=qm_cs"
+   "detail": "apiRequestContext.fetch: Timeout 30000ms exceeded.\nCall log:\n  - → POST https://pawspace-staging.karthik-fce.workers.dev/api/uat-scheduling\n    - user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36\n    - accept: */*\n    - accept-encoding: gzip,deflate,br\n    - origin: https://pawspace-staging.karthik-fce.workers.dev\n    - content-type: application/json\n    - content-length: 475\n    - cookie: pawspace_identity_session=[REDACTED]"
   }
  ],
  "bookingId": null

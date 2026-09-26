@@ -44,8 +44,11 @@ try {
   step("verified boarding hosts for the window", Boolean(host), `${commercial.status} ${commercial.body?.data?.hosts?.length ?? 0} hosts`);
   const quote = (await api(context, "POST", "/api/boarding-commercial", { packageCode: "boarding-4h", petCount: 1, cityId, zoneId, scheduledStart, scheduledEnd, paymentMode: "prepaid", providerId: host?.providerId })).body?.data;
   step("4-hour daycare quote", quote?.totalAmount === 499, `₹${quote?.totalAmount} (rule ₹499)`);
-  const reserve = await api(context, "POST", "/api/uat-scheduling", { clientRequestId: `canary-${runPhone(5)}-${Date.now()}`, customerId: account.customerId, petIds: [pet.id], serviceCode: "boarding", serviceAddress: "100 Feet Road, HAL 2nd Stage, Indiranagar, Bengaluru, 560038", servicePincode: "560038", cityId, zoneId, scheduledStart, scheduledEnd, careMode: "visit", preferredProviderId: host?.providerId });
-  step("scheduler reservation (uses Google geocoding on staging)", reserve.status === 200 || reserve.status === 201, `HTTP ${reserve.status} ${JSON.stringify(reserve.body?.error || reserve.body?.data?.provider || "").slice(0, 200)}`);
+  const reserveStarted = Date.now();
+  const reserve = await api(context, "POST", "/api/uat-scheduling", { clientRequestId: `canary-${runPhone(5)}-${Date.now()}`, customerId: account.customerId, petIds: [pet.id], serviceCode: "boarding", serviceAddress: "100 Feet Road, HAL 2nd Stage, Indiranagar, Bengaluru, 560038", servicePincode: "560038", cityId, zoneId, scheduledStart, scheduledEnd, careMode: "visit", preferredProviderId: host?.providerId }, { timeout: 150_000 });
+  const reserveMs = Date.now() - reserveStarted; out.reserveMs = reserveMs;
+  step("scheduler reservation (uses Google geocoding on staging)", reserve.status === 200 || reserve.status === 201, `HTTP ${reserve.status} in ${reserveMs} ms ${JSON.stringify(reserve.body?.error || reserve.body?.data?.provider?.id || "").slice(0, 200)}`);
+  if (reserveMs > 10_000) finding({ suite: SUITE, severity: "P2", area: "Scheduling performance", persona: "Customer", flow: "Boarding confirm (POST /api/uat-scheduling)", title: `Scheduler reservation took ${Math.round(reserveMs / 1000)} s on staging`, steps: "Reserve a 4-hour Boarding daycare for one dog (Indiranagar)", expected: "< 5 s", actual: `${reserveMs} ms, HTTP ${reserve.status}`, evidence: [] });
   const decision = reserve.body?.data;
   const created = await api(context, "POST", "/api/canonical-bookings", {
     idempotencyKey: `canary-${decision?.groupId}`, scheduleGroupId: decision?.groupId,
