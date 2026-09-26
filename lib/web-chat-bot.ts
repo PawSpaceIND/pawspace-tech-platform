@@ -136,7 +136,8 @@ function askReply(step:Step,prefix=""):BotReply{return{text:`${prefix}${step.pro
 
 function matchChoice(choices:BotChoice[],input:{text:string;choiceId?:string|null},numbered=true){
  const id=String(input.choiceId||"").trim();if(id){const byId=choices.find(item=>item.id===id);if(byId)return byId;}
- const typed=input.text.trim().toLowerCase().replace(/[.!]+$/,"");if(!typed)return null;
+ // Trailing "." and "!" are dropped with a loop, not /[.!]+$/, which backtracks quadratically on "....x".
+ let typed=input.text.trim().toLowerCase(),end=typed.length;while(end>0&&(typed[end-1]==="."||typed[end-1]==="!"))end--;typed=typed.slice(0,end);if(!typed)return null;
  const index=Number(typed);if(numbered&&Number.isInteger(index)&&index>=1&&index<=choices.length)return choices[index-1];
  // WhatsApp cuts button titles at 20 characters and list titles at 24, and sends the title back.
  return choices.find(item=>item.label.toLowerCase()===typed||item.id===typed.replace(/[^a-z0-9]+/g,"_"))
@@ -156,7 +157,8 @@ function validate(step:Step,raw:string):{value:string}|{error:string}{
  const value=raw.trim().replace(/\s+/g," ");
  if(step.kind==="name")return/^[\p{L}][\p{L} .'-]{1,79}$/u.test(value)?{value}:{error:"Please type your name using letters only."};
  if(step.kind==="phone"){const digits=value.replace(/\D/g,"").replace(/^91(?=\d{10}$)/,"").replace(/^0(?=\d{10}$)/,"");return/^[6-9]\d{9}$/.test(digits)?{value:`+91${digits}`}:{error:"Please type a valid 10-digit Indian mobile number."};}
- if(step.kind==="email")return/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)&&value.length<=160?{value:value.toLowerCase()}:{error:"That doesn't look like an email address. Please type it like name@example.com."};
+ // Domain labels are split on the dot so the pattern has one way to match (no polynomial backtracking).
+ if(step.kind==="email")return value.length<=160&&/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value)&&(value.split(".").at(-1)?.length??0)>=2?{value:value.toLowerCase()}:{error:"That doesn't look like an email address. Please type it like name@example.com."};
  if(step.kind==="date"){const date=parseDayMonth(value);return date?{value:date}:{error:"Please type the date in DD/MM format, for example 28/09."};}
  return value.length>=2&&value.length<=160?{value}:{error:"Please type a little more detail."};
 }

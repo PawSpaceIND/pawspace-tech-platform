@@ -87,7 +87,8 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
  const known=new Set<number>();
  const walk=(value:unknown,key=""):void=>{if(Array.isArray(value)){value.forEach(item=>walk(item,key));return;}if(value&&typeof value==="object"){for(const[child,inner]of Object.entries(value as Row))walk(inner,child);return;}if(/price|amount/i.test(key)&&Number.isFinite(Number(value))&&Number(value)>0)known.add(Math.round(Number(value)));};
  walk(catalogue);
- const amounts=[...reply.matchAll(/(?:₹|\brs\.?|\binr)\s*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:rupees|\/-)/gi)].map(match=>Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")))).filter(Number.isFinite);
+  // Each amount starts at a digit that does not continue a number, so matching stays linear in the reply.
+ const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)].map(match=>Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")))).filter(Number.isFinite);
  return amounts.every(amount=>known.has(amount));
 }
 

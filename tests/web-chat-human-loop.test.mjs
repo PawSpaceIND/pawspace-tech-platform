@@ -14,6 +14,9 @@ import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__AI_WEB_CHAT_DB__", "__AI_WEB_CHAT_ENV__");
+/* Load the route before any request exists. Under the loader-hook fallback (Node 22.16 in CI), the first
+ * import of the route module while a cloned request body is pending leaves the original body unreadable. */
+const route = await import("../app/api/ai-web-chat/route.ts");
 
 const ORIGIN = "https://app.pawspace.in";
 const ENDPOINT = `${ORIGIN}/api/ai-web-chat`;
@@ -120,7 +123,6 @@ async function callEndpoint(request) {
   // the body before route.ts read it, even though worker/index.ts never does that in production.
   const gate = await throughGateway(request.clone());
   if (gate.refused) return { reachedRoute: false, response: gate.refused };
-  const route = await import("../app/api/ai-web-chat/route.ts");
   const handler = request.method === "GET" ? route.GET : route.POST;
   let response;
   try {

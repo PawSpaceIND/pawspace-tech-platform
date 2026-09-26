@@ -451,3 +451,15 @@ test("intent signals match whole words, not fragments of other words", () => {
   assert.equal(orchestrator.classifyAiIntent("What grooming services do you offer?").intent, "service_info");
   assert.equal(orchestrator.classifyAiIntent("Show me your packages and prices").intent, "service_info");
 });
+
+test("a sales reply may quote only prices that are in the server-owned catalogue", async () => {
+  const grounded = await import("../lib/ai-grounded-runtime-provider.ts");
+  const catalogue = { grooming: [{ package_code: "dog-trim", base_price: 1599 }, { package_code: "dog-bath", base_price: 1349 }], petTaxi: [{ route_code: "short", amount: 499 }] };
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹1,599 and a short taxi is Rs. 499.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("Our Essential Bath costs 1349 rupees.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹999 today only.", catalogue), false, "an invented price must not count as grounded");
+  assert.equal(grounded.pricesMatchCatalogue("We have great grooming packages.", catalogue), true, "no amount quoted, nothing to verify");
+  const started = Date.now();
+  grounded.pricesMatchCatalogue("1,".repeat(50_000) + "x", catalogue);
+  assert.ok(Date.now() - started < 500, "a hostile reply must not stall the price check");
+});
