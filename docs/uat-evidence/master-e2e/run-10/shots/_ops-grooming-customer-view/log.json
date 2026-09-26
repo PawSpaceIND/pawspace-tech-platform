@@ -1,0 +1,14 @@
+{
+ "name": "_ops-grooming-customer-view",
+ "steps": [
+  {
+   "n": 1,
+   "label": "v2-grooming-after-publish",
+   "file": "01-v2-grooming-after-publish.png",
+   "url": "/v2/grooming"
+  }
+ ],
+ "apiFailures": [],
+ "consoleErrors": [],
+ "pageErrors": []
+}

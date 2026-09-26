@@ -1,0 +1,19 @@
+{
+ "name": "_ops-publish-grooming",
+ "steps": [
+  {
+   "n": 1,
+   "label": "control-after-publish",
+   "file": "01-control-after-publish.png",
+   "url": "/control"
+  }
+ ],
+ "apiFailures": [],
+ "consoleErrors": [
+  {
+   "at": 0,
+   "text": "Failed to load resource: the server responded with a status of 401 ()"
+  }
+ ],
+ "pageErrors": []
+}
