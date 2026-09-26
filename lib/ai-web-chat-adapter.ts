@@ -13,6 +13,8 @@ import{listServiceControls}from"./service-control";
 import{createDegradationLog}from"./degraded-reads";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 import{inspectTrustSafetyText,redactTrustSafetyText}from"./trust-safety-governance";
+import{listTrainingPackages}from"./training-commercial-governance";
+import{DEFAULT_EXTRA_PET_PERCENT}from"./training-pricing";
 import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,type ApprovedSalesOffer}from"./ai-sales-offers";
 import{activeCrossSell}from"./ai-sales-offers";
 
@@ -47,6 +49,15 @@ const phrase=(value:string)=>` ${value.toLowerCase().replace(/[^a-z0-9]+/g," ").
 /** Returns the service only when the question names exactly one distinct service; multi-service questions go to the general path. */
 function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].some(alias=>phrase(alias).trim()&&q.includes(phrase(alias))));return matches.length===1?matches[0]:null;}
 
+const PRICE_QUESTION=/\b(price|prices|pricing|cost|costs|fee|fees|charge|charges|package|packages|plan|plans|how much|rate|rates)\b/i;
+const inr=(value:unknown)=>`₹${Number(value).toLocaleString("en-IN")}`;
+/**
+ * A Training price or package question is answered from the governed Training catalogue itself, the same
+ * rows the booking quote prices from, so the assistant can never quote a price the booking will not charge.
+ * Staging (26 Sep 2026) answered "PawSpace offers Training…" with no packages or prices at all.
+ */
+async function trainingCatalogueAnswer(db:D1Database){const packages=await listTrainingPackages(db).catch(()=>[] as Row[]);if(!packages.length)return null;const programme=packages.find(item=>!Number(item.meet_and_greet)),extra=Number(programme?.extra_pet_percent??DEFAULT_EXTRA_PET_PERCENT);const lines=packages.map(item=>Number(item.meet_and_greet)?`• ${text(item.name)}: one home visit to meet a trainer, ${inr(item.base_price)}, paid in full`:`• ${text(item.name)}: ${Number(item.sessions)} sessions within ${Number(item.validity_days)} days, ${inr(item.base_price)}`);return`PawSpace Dog Training plans (prices are for one dog; each extra dog adds ${extra}% of the plan price):\n${lines.join("\n")}\nProgrammes can be paid in full or 50% upfront. Open the Training section to choose a plan, a trainer and your dates.`;}
+
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
  await ensureAiWebChatTables(db);
  const query=text(input.query).slice(0,4000);if(!query)throw new Response("Question is required",{status:400});
@@ -56,9 +67,10 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted);
  if(matchedService){
-  const output=matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`;
-  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
-  return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
+  const catalogueAnswer=matchedService.enabled&&matchedService.code==="dog_training"&&PRICE_QUESTION.test(inspected.redacted)?await trainingCatalogueAnswer(db):null;
+  const output=catalogueAnswer??(matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`);
+  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:catalogueAnswer?"canonical_training_catalogue_answer":"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
+  return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:catalogueAnswer?"canonical_training_catalogue":"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
  }
  if(!grounded.knowledge.length){
   const enabledServices=serviceDirectory.filter(service=>service.enabled).map(service=>service.name).join(", ");

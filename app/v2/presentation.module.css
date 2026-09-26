@@ -56,6 +56,10 @@
   :global(body:has([data-pawspace-v2]) .ps-order-fab > button) { width: 44px !important; height: 44px !important; }
   :global(body:has([data-pawspace-v2]) .ps-order-fab [role="dialog"]) { max-height: 55dvh !important; }
 }
+/* The chat composer sits where the floating order-updates and appearance buttons float, and they covered
+   Send on phones (staging master run 36224833520). Chat has its own dock, so they are not shown there. */
+:global(body:has([data-pawspace-v2]):has([data-v2-chat]) .ps-order-fab),
+:global(body:has([data-pawspace-v2]):has([data-v2-chat]) .paw-appearance-trigger) { display: none !important; }
 /* Shared OTP components expose a neutral hook; only V2 gives it this variant. */
 .canvas.canvas [data-paw-action="primary"] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;

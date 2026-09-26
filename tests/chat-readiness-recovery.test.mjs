@@ -80,3 +80,29 @@ test('public AI never exposes the operator-entered disabled reason',async t=>{
  assert.ok(!serialized.includes('disabledReason'),serialized);
  assert.equal(result.serviceDirectory.find(service=>service.code==='relocation')?.enabled,false);
 });
+
+test('public AI answers Training package and price questions from the governed Training catalogue',async t=>{
+ // Staging 26 Sep 2026: "What dog training packages do you offer in Bengaluru and what do they cost?" got only
+ // "Yes. PawSpace offers Training." The answer now lists the catalogue the booking quote prices from.
+ const {db}=await world(t);
+ const result=await adapter.runPublicAiWebChat(db,{query:'What dog training packages do you offer in Bengaluru and what do they cost?',sessionKey:'training-price-check'});
+ assert.equal(result.ai.turn.provider,'canonical_training_catalogue');
+ const output=result.ai.turn.output;
+ assert.match(output,/Trainer Meet & Greet: one home visit to meet a trainer, ₹500, paid in full/);
+ assert.match(output,/Starter Plan: 2 sessions within 31 days, ₹3,500/);
+ assert.match(output,/Pro Training Plan: 16 sessions within 120 days, ₹20,000/);
+ assert.match(output,/each extra dog adds 60% of the plan price/);
+ assert.match(output,/50% upfront/);
+ const plain=await adapter.runPublicAiWebChat(db,{query:'Do you offer dog training?',sessionKey:'training-yes-no'});
+ assert.equal(plain.ai.turn.provider,'canonical_service_directory','a yes/no question keeps the short answer');
+});
+
+test('a signed-in customer asking about their own next session is a booking-status question, not a hand-off',async ()=>{
+ const {classifyAiIntent}=await import('../lib/ai-conversation-orchestrator.ts');
+ for(const question of ['When is my Meet & Greet and who is my trainer?','When is my next session?','Who is my trainer?','What is my booking status?']){
+  const decision=classifyAiIntent(question);
+  assert.equal(decision.intent,'booking_status',question);
+  assert.ok(decision.confidence>=0.65,question);
+ }
+ assert.equal(classifyAiIntent('I want a refund for my booking').intent,'refund_review','money questions still go to a person');
+});

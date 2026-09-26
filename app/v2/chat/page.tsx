@@ -92,7 +92,7 @@ export default function V2Chat(){
  const presence=mode==="public"?"PawSpace bot · PawSpace AI":withTeam?(transcript?.handoff.status==="staff_active"?"PawSpace team · Available":"Connecting you to the PawSpace team"):"PawSpace bot · Account-aware";
  const placeholder=mode==="public"?publicHint||"Ask PawSpace AI":withTeam?"Message the PawSpace team":lastThread?.role==="bot"&&lastThread.inputHint?lastThread.inputHint:"Type your message";
 
- return <main className={styles.page} data-identity={identity}>
+ return <main className={styles.page} data-identity={identity} data-v2-chat="true">
   <div className={styles.chatShell}>
    <div className={styles.modeBar} aria-label="Chat topic"><button aria-pressed={mode==="public"} disabled={busy} onClick={()=>choose("public")}>Ask PawSpace AI</button><button aria-pressed={mode==="authenticated"} disabled={busy} onClick={()=>choose("authenticated")}>My PawSpace</button><Link href="/v2" className={styles.back}>Home</Link></div>
    {mode==="authenticated"&&identity!=="customer"?<section className={styles.notice} role="status"><h1>Ask PawSpace anything.</h1>{identity==="checking"?<p>Checking your PawSpace sign-in...</p>:identity==="unavailable"?<><p>We could not check your sign-in.</p><button onClick={()=>window.location.reload()}>Check again</button></>:<><p>Sign in from the V2 home to discuss bookings and account details.</p><Link href="/v2">Open V2 home</Link></>}</section>
