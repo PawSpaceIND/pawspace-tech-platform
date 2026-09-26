@@ -154,6 +154,18 @@ test("Pet Sitting overnight: eight overlapping overnight stays in one zone all g
   assert.equal(new Set(assigned).size, 8);
 });
 
+test("Pet Sitting overnight: a zone sitter takes a two-pet overnight (pets count against capacity)", async () => {
+  const w = await world();
+  const stay = { serviceCode: "pet_sitting", zoneId: "blr-south", careMode: "overnight", scheduledStart: istTomorrow(20), scheduledEnd: istTomorrow(20, 12) };
+  const zoneSitters = [];
+  for (let i = 0; i < 8; i++) {
+    const decision = await reserve(w, { ...stay, petIds: [`PET-TWO${i}A`, `PET-TWO${i}B`] });
+    assert.ok(decision.provider, `two-pet overnight ${i + 1} must get a sitter`);
+    if (decision.provider.id.startsWith("uatcap_sit_south_")) zoneSitters.push(decision.provider.id);
+  }
+  assert.ok(zoneSitters.length >= 7, `the south zone sitters take two-pet overnights (got ${zoneSitters.length})`);
+});
+
 test("Pet Taxi: ten overlapping rides in one 3-hour window and zone each get a driver AND a Citroen eC3", async () => {
   const w = await world();
   const window = { serviceCode: "pet_taxi", zoneId: "blr-south", scheduledStart: istTomorrow(10), scheduledEnd: istTomorrow(10, 3) };
