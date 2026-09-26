@@ -493,7 +493,7 @@
     "app/crm/crm.module.css": "1eb86dc1030672f16a1468c17eaa9df90171d55cfd77318a36708e94c06dc9b4",
     "app/crm/layout.tsx": "fde28eb8364e1ea855371ce1700a1820149be2306deac67847eacb1da4c55267",
     "app/crm/live-chat-panel.tsx": "f7fbbcb7199ad5aa1fdcdaed1db9cd6aa3e1e94f7385cd711ff51cd3c64a9ff8",
-    "app/crm/page.tsx": "72004e675b8464c1f96cbf1a4becbbecb4bd8e52d0857a3ac02ecabdcdc39f80",
+    "app/crm/page.tsx": "33efd8f329dd244cde1a0cf605e0c0ee363686558a703582bdaf0f088cb0b9e2",
     "app/crm/revenue-engine-panel.tsx": "06ee2e6339cd5e5295f743272a8c62e002cc233265d80aca3197e948c816cf58",
     "app/crm/revenue-engine.module.css": "ddf050dedbb93f7db8035ae6ee027bdaef178a26fece3d21f3d468a7f505c7a6",
     "app/discover/page.tsx": "aa4aa845065d99faa507443804de1980fd4fa0e4699a7efe608b45958225d731",
