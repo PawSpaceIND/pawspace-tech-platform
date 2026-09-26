@@ -151,6 +151,8 @@ test("the WATI cross-sell and AI closing coupons are real coupons, validated at 
   const coupons = await import("../lib/coupon-governance.ts");
   const listed = await offers.listAvailableCoupons(db, { customerId: "CUS-OFFER" });
   assert.ok(!listed.coupons.some((offer) => ["GROOM400", "GROOM200"].includes(offer.code)), "not shown to every customer in the offers card");
+  // quoteCoupon reads the real clock; the seeded window is fixed, so the test widens it to "now".
+  sqlite.prepare("UPDATE coupon_campaigns SET valid_from=0, valid_until=? WHERE id LIKE 'sales-coupon-%'").run(Date.now() + 86_400_000);
   const quote = (code, packageCode, orderValue) => coupons.quoteCoupon(db, { code, customerId: "CUS-OFFER", serviceCode: "grooming", cityId: "blr", channel: "whatsapp", packageCode, orderValue, paymentMode: "after_service", isSubscription: false });
   const closing = await Promise.all([["dog-bath", 1349], ["dog-basic", 1899], ["dog-makeover", 2399]].map(([code, value]) => quote("GROOM200", code, value)));
   assert.deepEqual(closing.map((result) => result.finalAmount), [1149, 1699, 2199], "the closing prices the business set");
