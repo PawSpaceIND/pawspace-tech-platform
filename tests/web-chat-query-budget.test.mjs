@@ -144,8 +144,9 @@ function post(body, headers = {}) {
 
 /** A valid answer for any step the bot asks. */
 /* Every signed-in chat read and bot tap resolves the session several times (gateway, actor, ownership). On
- * staging each D1 call costs about 0.3 s, so table setup that re-ran on every request and a last-seen write
- * per resolve made one bot tap take 10-15 s. Warm requests must not repeat schema work or session writes. */
+ * staging each D1 call costs about 0.3-0.5 s, so table setup that re-ran on every request, a last-seen write
+ * per resolve, and a second request to read the reply made one bot tap take 10-15 s. Warm requests must not
+ * repeat schema work, session reads or session writes, and a tap answers with the conversation itself. */
 test("a warm chat read and bot tap stay within their D1 query budget", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-BUDGET", "+919900000301");
@@ -159,9 +160,14 @@ test("a warm chat read and bot tap stay within their D1 query budget", async () 
   const read = await (await callEndpoint(new Request(`${ENDPOINT}?mode=thread`, { headers: { cookie } }))).response.json();
   assert.equal(read.data.messages.length, 3);
   const readQueries = log.splice(0);
-  assert.equal((await call({ choiceId: "no", message: "", idempotencyKey: "budget-2" })).status, 200);
+  const tap = await call({ choiceId: "no", message: "", idempotencyKey: "budget-2" });
   const tapQueries = log.splice(0);
-  for (const [label, queries, budget] of [["read", readQueries, 10], ["tap", tapQueries, 22]]) {
+  assert.equal(tap.status, 200);
+  // The answer carries the conversation, so the page needs no second request to show the reply.
+  const tapped = await tap.json();
+  assert.deepEqual(tapped.data.transcript.messages.map((message) => message.role), ["bot", "customer", "bot", "customer", "bot"]);
+  assert.equal(tapped.data.transcript.messages[3].text, "No");
+  for (const [label, queries, budget] of [["read", readQueries, 6], ["tap", tapQueries, 20]]) {
     const schema = queries.filter((sql) => /^\s*(CREATE|ALTER)\b/i.test(sql));
     assert.deepEqual(schema, [], `${label} repeated schema work`);
     assert.ok(!queries.some((sql) => /SET last_seen_at/.test(sql)), `${label} rewrote the session's last-seen time`);

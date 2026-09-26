@@ -53,7 +53,9 @@ export default function V2Chat(){
  const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(r.status===401){setIdentity("guest");return null;}if(!r.ok)return null;const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(payload?.data)setTranscript(payload.data);return payload?.data||null;},[]);
  const withTeam=Boolean(transcript?.handoff.active);
  useEffect(()=>{if(mode!=="authenticated"||identity!=="customer")return;let active=true;const controller=new AbortController();
-  const open=()=>{void loadTranscript(controller.signal).then(async data=>{if(active&&data&&!data.messages.length){await post({mode:"authenticated",bot:true,start:true}).catch(()=>null);if(active)await loadTranscript(controller.signal);}}).catch(()=>{});};open();
+  /* One request opens the chat: start is a no-op for a conversation that already exists, and it returns
+   * the conversation either way. */
+  const open=()=>{void post({mode:"authenticated",bot:true,start:true}).then(async payload=>{const data=(payload as {data?:{transcript?:Transcript|null}}|null)?.data?.transcript;if(!active)return;if(data)setTranscript(data);else await loadTranscript(controller.signal);}).catch(()=>{if(active)void loadTranscript(controller.signal).catch(()=>{});});};open();
   const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void loadTranscript(controller.signal).catch(()=>{});},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
   return()=>{active=false;controller.abort();clearInterval(timer);};
  },[mode,identity,withTeam,loadTranscript]);
@@ -76,8 +78,10 @@ export default function V2Chat(){
     if(data?.lead?.captured)next.push({id:localId(),side:"system",text:"Your details were shared with the PawSpace team"});
     setPublicMessages(current=>[...current,...next]);setPublicHint(data?.bot?.inputHint||null);
    }else{
-    await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key});
-    await loadTranscript();
+    // The customer's message shows at once; the server's answer replaces the conversation with the stored one.
+    const sentAt=Date.now();setTranscript(current=>current?{...current,messages:[...current.messages,{id:`pending-${sentAt}`,role:"customer",text:shown,createdAt:sentAt} as Transcript["messages"][number]]}:current);
+    const payload=await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key}) as {data?:{transcript?:Transcript|null}}|null;
+    if(payload?.data?.transcript)setTranscript(payload.data.transcript);else await loadTranscript();
    }
    setDraft("");pending.current=null;
   }catch(cause){setError(cause instanceof Error?cause.message:"Chat is temporarily unavailable.");if(mode==="authenticated")void loadTranscript().catch(()=>{});}
