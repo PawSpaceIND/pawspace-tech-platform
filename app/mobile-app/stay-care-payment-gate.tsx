@@ -1,4 +1,6 @@
 "use client";
+import Link from "next/link";
+import {scopedBookingHref} from "../../lib/customer-booking-safety";
 import { useEffect, useRef, useState } from 'react';
 import { saveCustomerBoardingCare } from '../../lib/boarding-customer-care';
 import { saveSittingCustomerPlan } from '../../lib/sitting-customer-view';
@@ -7,12 +9,12 @@ import BookingPaymentPage from './booking-payment-page';
 import styles from './booking-payment-page.module.css';
 
 type Props = {
-  mode: 'boarding' | 'sitting'; carePlan: SittingCarePlan;
+  routeScope?:'legacy'|'v2'; mode: 'boarding' | 'sitting'; carePlan: SittingCarePlan;
   payment: { bookingId: string; serviceName: string; total: number; dueNow: number; mode: 'prepaid' | 'split_50_50' };
   onVerified: () => void;
 };
 /** Retrying this boundary only saves care on the SAME booking. It cannot reserve or charge again. */
-export default function StayCarePaymentGate({ mode, carePlan, payment, onVerified }: Props) {
+export default function StayCarePaymentGate({ mode, carePlan, payment, onVerified,routeScope="legacy" }: Props) {
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(true);
   const [error, setError] = useState(''), [attempt, setAttempt] = useState(0);
   const initialPlan = useRef(carePlan);
@@ -25,8 +27,8 @@ export default function StayCarePaymentGate({ mode, carePlan, payment, onVerifie
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
   }, [mode, payment.bookingId, attempt]);
-  if (ready) return <BookingPaymentPage serviceName={payment.serviceName} bookingId={payment.bookingId}
-    totalAmount={payment.total} amountDueNow={payment.dueNow} mode={payment.mode} onVerified={onVerified}/>;
+  if (ready) return <><p>Booking reference: <b>{payment.bookingId}</b> · <Link href={scopedBookingHref(mode,payment.bookingId,routeScope==="v2")}>Saved care instructions</Link></p><BookingPaymentPage serviceName={payment.serviceName} bookingId={payment.bookingId}
+    totalAmount={payment.total} amountDueNow={payment.dueNow} mode={payment.mode} onVerified={onVerified}/></>;
   return <section className={styles.page} aria-label="Save stay care before payment">
     <h3>Save care instructions before payment</h3>
     <p>Booking reference: <b>{payment.bookingId}</b>. Your booking has been created, but payment is not confirmed.</p>

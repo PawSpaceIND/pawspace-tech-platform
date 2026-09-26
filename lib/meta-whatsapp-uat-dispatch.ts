@@ -34,9 +34,19 @@ async function whatsappAllowed(db:D1Database,customerId:string){
  return Boolean(row&&Number(row.whatsapp_consent)===1&&Number(row.opt_out||0)!==1);
 }
 
-export function buildMetaWhatsAppRequest(input:{recipient:string;templateKey?:string|null;language?:string|null;messageText?:string|null;withinSession:boolean}){
+/**
+ * A governed interactive contract as a Meta Cloud API interactive message: the bot's reply buttons (up
+ * to 3) or its list (up to 10 rows). Only inside the customer-service window, like any free-form reply.
+ */
+function metaInteractive(body:string,contract:unknown){
+ if(!contract||typeof contract!=="object")return null;const value=contract as Record<string,unknown>;
+ if(value.kind==="reply_buttons"&&Array.isArray(value.buttons)&&value.buttons.length)return{type:"button",body:{text:body.slice(0,1024)},action:{buttons:(value.buttons as Array<Record<string,unknown>>).slice(0,3).map(button=>({type:"reply",reply:{id:text(button.id).slice(0,256),title:text(button.title).slice(0,20)}}))}};
+ if(value.kind==="list"&&Array.isArray(value.sections)&&value.sections.length)return{type:"list",body:{text:body.slice(0,4096)},action:{button:text(value.button)||"Choose",sections:(value.sections as Array<Record<string,unknown>>).map(section=>({title:text(section.title).slice(0,24),rows:(Array.isArray(section.rows)?section.rows as Array<Record<string,unknown>>:[]).slice(0,10).map(row=>({id:text(row.id).slice(0,200),title:text(row.title).slice(0,24),...(text(row.description)?{description:text(row.description).slice(0,72)}:{})}))}))}};
+ return null;
+}
+export function buildMetaWhatsAppRequest(input:{recipient:string;templateKey?:string|null;language?:string|null;messageText?:string|null;withinSession:boolean;interactive?:unknown}){
  const to=digits(input.recipient);if(!to)throw new Error("Meta WhatsApp recipient is required");
- if(input.withinSession){const body=text(input.messageText);if(!body)throw new Error("Session reply text is required");return{messaging_product:"whatsapp",recipient_type:"individual",to,type:"text",text:{preview_url:false,body}};}
+ if(input.withinSession){const body=text(input.messageText);if(!body)throw new Error("Session reply text is required");const interactive=metaInteractive(body,input.interactive);if(interactive)return{messaging_product:"whatsapp",recipient_type:"individual",to,type:"interactive",interactive};return{messaging_product:"whatsapp",recipient_type:"individual",to,type:"text",text:{preview_url:false,body}};}
  const name=text(input.templateKey),language=text(input.language)||"en";if(!name)throw new Error("Approved Meta template is required outside the customer-service window");
  return{messaging_product:"whatsapp",to,type:"template",template:{name,language:{code:language}}};
 }
@@ -54,7 +64,7 @@ export async function dispatchMetaWhatsAppUat(db:D1Database,env:Env,input:{messa
  const session=await db.prepare("SELECT last_inbound_at FROM whatsapp_uat_sessions WHERE customer_id=? AND provider='meta_whatsapp'").bind(text(message.customer_id)).first<Row>(),now=Date.now(),withinSession=Boolean(session&&now-Number(session.last_inbound_at||0)<=24*60*60_000);
  const templateKey=text(message.template_key),payload=json<Record<string,unknown>>(message.payload_json,{}),language=text((payload.language as string)||"en");
  if(!withinSession){const approved=await db.prepare("SELECT status,approved_language FROM whatsapp_uat_templates WHERE template_key=?").bind(templateKey).first<Row>();if(!approved||text(approved.status)!=="approved"||text(approved.approved_language)!==language)return{status:"approved_template_required_outside_session",provider:"meta_whatsapp",externalDelivery:false,productionDelivery:false};}
- const requestBody=buildMetaWhatsAppRequest({recipient:input.recipient,templateKey,language,messageText:text(payload.text),withinSession});
+ const requestBody=buildMetaWhatsAppRequest({recipient:input.recipient,templateKey,language,messageText:text(payload.text),withinSession,interactive:payload.interactive});
  const locked=await db.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=?,updated_at=? WHERE message_id=? AND status IN ('queued','retry_pending','scheduled')").bind(now,now,input.messageId).run();
  if(Number(locked.meta?.changes||0)!==1)return{status:"dispatch_race_lost",provider:"meta_whatsapp",externalDelivery:false,productionDelivery:false};
  let response:Response;try{response=await(input.fetcher??fetch)(graphUrl(env,`${phoneNumberId}/messages`),{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(requestBody)});}catch(error){const retry=await failOutboxAttempt(db,input.messageId,"meta_network_failure");return{...retry,provider:"meta_whatsapp",reason:error instanceof Error?error.message:"meta_network_failure",externalDelivery:false,productionDelivery:false};}

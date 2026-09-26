@@ -130,3 +130,18 @@ test('sandbox and no-auto-charge notices survive customer-copy changes', () => {
 });
 
 }
+
+// Compact navigation is allowed to move; executable data-flow, validation and submission are not.
+import {uiDataFlowContract} from './helpers/ui-wiring-contract.mjs';
+{
+ const compact=JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json')).compactDataFlow;
+ for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(read(file).toString(),file),expected));
+ test('Compact UI keeps the exact official PawSpace logo bytes',()=>assert.equal(hash(read('public/assets/pawspace-official-lockup.png')),compact.logoSha256));
+ test('Data-flow guard rejects a changed booking call despite navigation exclusions',()=>{
+  const file='app/v2/page.tsx',source=read(file).toString(),changed=source.replace('loadV2CustomerAccount()', 'loadDifferentCustomerAccount()');
+  assert.notEqual(changed,source);assert.notDeepEqual(uiDataFlowContract(changed,file),uiDataFlowContract(source,file));
+ });
+ test('Funeral V2 entry reuses the established support component without a new data path',()=>{
+  const source=read('app/v2/funeral-memorial/page.tsx').toString();assert.match(source,/<FuneralMemorialPage homeHref="\/v2"\/>/);assert.doesNotMatch(source,/fetch\(|useEffect|useState|localStorage/);
+ });
+}

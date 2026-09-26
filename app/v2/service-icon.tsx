@@ -1,4 +1,6 @@
 const paths: Record<string, string> = {
+  funeral_memorial: "M12 21C7 18 3 14 3 10c5 0 8 3 9 8 1-5 4-8 9-8 0 4-4 8-9 11ZM12 17c-5-5-5-10 0-14 5 4 5 9 0 14Z",
+  vet_consult: "M6 3v7a5 5 0 0 0 10 0V3M3 3h5M14 3h5M11 15v2a4 4 0 0 0 8 0v-2M21 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z",
   grooming: "M4 4l16 16M20 4L4 20M8 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0M22 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
   boarding: "M3 11l9-8 9 8M5 10v11h14V10M9 21v-7h6v7",
   dog_training: "M9 4h6v3H9zM8 5H5v16h14V5h-3M8 13l3 3 5-6",

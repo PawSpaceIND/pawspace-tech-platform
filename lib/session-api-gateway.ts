@@ -5,6 +5,7 @@ type SessionAccess={actor:{email:string;roleCode:string;permissions:string[];pre
 type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:string};
 
 async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
+  if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname)&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
   // The published V2 grooming catalogue is intentionally outside session scope. Checkout is
   // customer-only; booking ownership remains in the route and never trusts a client customer ID.
   if(method==="GET"&&url.pathname==="/api/v2/grooming-checkout")return{permission:"scheduling.book",subjectType:"customer"};
@@ -14,6 +15,7 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/provider-chat"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"communications.message",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/provider-safety-flag"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"communications.message",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/ai-web-chat"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/ai-web-chat"&&method==="GET"&&url.searchParams.get("mode")==="thread")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/uat-scheduling"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return !body.action||body.action==="reserve"?{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")}:undefined;}
   if(url.pathname==="/api/canonical-bookings"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as {customer?:{id?:string}};return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customer?.id||"")};}
   if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};

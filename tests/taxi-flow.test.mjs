@@ -35,7 +35,7 @@ test("pickup, drop, round trip and city coverage use the v2 commercial contract"
 });
 
 test("the flow remains a standalone customer component",()=>{
- assert.match(flowSource,/^"use client";/m);assert.match(flowSource,/export default function TaxiFlow\(\{customer,sourceBookingId\}:\{customer:LoggedInCustomer;sourceBookingId\?:string\}\)/);assert.doesNotMatch(flowSource,/from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/);assert.doesNotMatch(flowSource,/globalThis/);assert.match(flowSource,/from "\.\/taxi-flow\.module\.css"/);assert.match(cssSource,/#01261F/i);assert.match(cssSource,/#E6B34E/i);
+ assert.match(flowSource,/^"use client";/m);assert.match(flowSource,/export default function TaxiFlow\(\{customer,sourceBookingId,routeScope="legacy"\}:\{customer:LoggedInCustomer;sourceBookingId\?:string;routeScope\?:"legacy"\|"v2"\}\)/);assert.doesNotMatch(flowSource,/from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/);assert.doesNotMatch(flowSource,/globalThis/);assert.match(flowSource,/from "\.\/taxi-flow\.module\.css"/);assert.match(cssSource,/#01261F/i);assert.match(cssSource,/#E6B34E/i);
 });
 
 test("3-hour Taxi reservations expose only pickup times that can finish inside 06:00-22:00 IST",()=>{
@@ -47,7 +47,7 @@ test("legacy Taxi client signatures remain additive beside Taxi v2",()=>{
 });
 
 test("confirmation shows real reserved vehicle, assigned driver, rating when present, and verified-payment truth",()=>{
- assert.match(flowSource,/booking\.reservedVehicle\.label/);assert.match(flowSource,/driver\?\.name/);assert.match(flowSource,/driver\?\.rating/);assert.match(flowSource,/3-hour reserved window/);assert.match(flowSource,/Pay 50% booking fee/);assert.match(flowSource,/signed Razorpay capture webhook/);assert.match(flowSource,/Verified PawSpace \+ partner fleet/);
+ assert.match(flowSource,/booking\.reservedVehicle\.label/);assert.match(flowSource,/driver\?\.name/);assert.match(flowSource,/driver\?\.rating/);assert.match(flowSource,/3-hour reserved window/);assert.match(flowSource,/Pay 50% booking fee/);assert.match(flowSource,/signed Razorpay capture webhook/);assert.match(flowSource,/PawSpace and partner fleet/);
 });
 
 // --- Real-execution tests: the exact server contract the flow depends on --------------------

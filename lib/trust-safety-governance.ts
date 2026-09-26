@@ -263,6 +263,7 @@ export async function recordProviderChatMessage(db: Db, input: {
   if (!text(thread.booking_id)) throw new Response("Provider chat is available only for a booked service", { status: 409 });
   let assigned = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(error => { if (/no such table: provider_work_orders/i.test(error instanceof Error ? error.message : String(error))) return null; throw error; });
   if (!assigned) assigned = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
+  const currentBooking=await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(text(thread.booking_id)).first<Row>();if(!currentBooking||text(currentBooking.provider_id)!==providerId)throw new Response("Provider is no longer assigned to this booking",{status:403});
   if (!assigned || text(assigned.provider_id) !== providerId) throw new Response("Provider is not assigned to this conversation", { status: 403 });
   const trust = await db.prepare("SELECT status,suspended_until FROM provider_trust_state WHERE provider_id=?").bind(providerId).first<Row>();
   if (trust && ["suspended", "banned_permanent"].includes(text(trust.status))) throw new Response("Provider messaging is suspended by Trust & Safety", { status: 403 });

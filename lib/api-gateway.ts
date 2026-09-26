@@ -29,6 +29,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/admin/sales-targets")return "settings.manage";
   if(url.pathname==="/api/customer-billing"||url.pathname==="/api/customer-notifications"||url.pathname==="/api/order-notifications")return "scheduling.book";
 
+  if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname))return ["GET","POST"].includes(method)?"scheduling.book":"settings.manage";
   if(url.pathname==="/api/customer-offers")return "scheduling.book";
   if(url.pathname==="/api/pawspace-wallet"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="credit"?"finance.manage":"scheduling.book";}
   if(url.pathname==="/api/paw-points"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["grant_goodwill","grant_winback"].includes(String(body.action))?"marketing.manage":"scheduling.book";}
@@ -58,7 +59,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/communications"){if(method==="GET")return "communications.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.manage";}
   if(url.pathname==="/api/conversations"||url.pathname==="/api/ai-human-handoff")return "communications.manage";
   if(url.pathname==="/api/ai-web-chat"){
-    if(method==="GET")return null;
+    if(method==="GET")return url.searchParams.get("mode")==="thread"?"scheduling.book":null;
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
     return String(body.mode||"public")==="authenticated"?"scheduling.book":null;
   }

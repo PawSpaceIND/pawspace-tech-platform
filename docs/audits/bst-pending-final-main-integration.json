@@ -1,0 +1,60 @@
+{
+  "main": "8874579bc95aa4b655a1d3ef1c22041dfc13d98b",
+  "reason": "Keep merged AI hot-path improvements and current canonical caregiver assignment checks together. Only overlapping exact source fingerprints were reconciled against the actual merged file.",
+  "entries": [
+    {
+      "field": "tests/fixtures/customer-partner-theme-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/inbox-workspace-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/partner-services-presentation-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/staff-admin-self-service-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/staff-crm-control-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/staff-operations-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/staff-team-completion-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/ui-display-truth-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    },
+    {
+      "field": "tests/fixtures/ui-mainline-integration-contract.json.protected.lib/trust-safety-governance.ts",
+      "ours": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c",
+      "upstream": "e13a79e0008fc2e2760b050a46c50ed2f8c2ab8828c89df1b7da5c652a9c301b",
+      "merged": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d"
+    }
+  ]
+}

@@ -294,7 +294,8 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
  await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);await ensureCustomerPet(page);
  const savedAddress=await page.request.post("/api/customer-account",{data:{action:"upsert_address",idempotencyKey:`phase2-address-${mode}-${Date.now()}`,address:{label:"Home",line1:"42, Indiranagar Double Road",area:"Indiranagar",city:"Bengaluru",postalCode:"560038",isDefault:true}}});expect(savedAddress.ok(),await savedAddress.text()).toBeTruthy();
- await page.goto(`/${mode}`);
+ await page.goto(`/v2/${mode}`);
+ const privacy=page.getByRole("button",{name:"Essential only",exact:true});if(await privacy.isVisible())await privacy.click();
  await expect(page.getByRole("button",{name:"Change Address",exact:true})).toBeEnabled();
  await expect(page.getByRole("region",{name:"Care location"})).toContainText("42, Indiranagar Double Road");
  await expect(page.locator("#grooming-address-line-1")).toHaveCount(0);
@@ -327,14 +328,26 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await page.getByLabel("Vet contact",{exact:true}).fill("UAT vet contact: 9000000951");
  await page.getByLabel("Emergency contact",{exact:true}).fill("UAT emergency contact: 9000000952");
  if(mode==="sitting")await page.getByLabel("Home access instructions",{exact:true}).fill("UAT fixture: call the customer at the gate.");
+ // Exercise the separate introduction UI against the real local sandbox route, not a mocked success.
+ const intro=page.getByRole("region",{name:"Separate caregiver introduction",exact:true});
+ await expect(intro.getByRole("combobox",{name:"Introduction format",exact:true})).toBeVisible();
+ const introConsent=intro.getByRole("checkbox",{name:/Request this separate introduction/});await expect(introConsent).not.toBeChecked();
+ const meetingDay=new Date(Date.parse(`${date}T00:00:00Z`)-2*86400000).toISOString().slice(0,10);
+ await intro.getByLabel("Preferred introduction (IST)",{exact:true}).fill(`${meetingDay}T10:00`);await introConsent.check();
+ const requested=page.waitForResponse(r=>r.url().endsWith("/api/customer-meet-and-greet")&&r.request().method()==="POST");
+ await intro.getByRole("button",{name:"Request introduction",exact:true}).click();const meetingResponse=await requested;expect(meetingResponse.status(),await meetingResponse.text()).toBe(201);
+ const meeting=(await meetingResponse.json()).data;expect(meeting.request.id).toMatch(/^MGR-/);expect(meeting.request.status).toBe("requested");expect(meeting.request.format).toBe("phone");expect(meeting.request.priceCharged).toBe(0);expect(meeting.paymentCollected).toBe(false);
+ await expect(intro).toContainText(meeting.request.id);await expect(intro).toContainText("not proof of payment or service completion");
+ await intro.getByRole("button",{name:"Refresh introduction requests",exact:true}).click();await expect(intro).toContainText(meeting.request.id);
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
  const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:00 pm":"6:00 pm");await expect(review).toContainText("4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
+ // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
- await expect(page.getByRole("button",{name:/^Pay .* (create canonical stay|request final partner approval)$/})).toBeDisabled();
+ await expect(page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true})).toBeDisabled();
  await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});
  await consent.check();
- const pay=page.getByRole("button",{name:/^Pay .* (create canonical stay|request final partner approval)$/});
+ const pay=page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true});
  if(mode==="boarding"){
   const before=await page.context().request.get("/api/customer-account");expect(before.ok()).toBeTruthy();const initial=await before.json();
   const writes:string[]=[];page.on("request",request=>{if(request.method()==="POST"&&/\/api\/(uat-scheduling|canonical-bookings|boarding-bookings|boarding-payment)/.test(request.url()))writes.push(request.url());});
@@ -347,9 +360,10 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await expect(page.getByText("Secure Razorpay checkout",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
   const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
-  await page.goto(`/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
+  await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("payment pending");
+  const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
   await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
   // Verify-first contract: provider execution remains locked until signed Razorpay evidence advances payment.
   return;

@@ -199,7 +199,10 @@ test("a verified customer can run its own authenticated AI turn through the real
   assert.equal(result.response.status, 200);
   const body = await result.response.json();
   assert.equal(body.data.autonomousExecution, false);
-  assert.equal(count(sqlite, "communication_messages"), 1);
+  // The customer's message, and the AI's reply mirrored into the same thread so staff and the customer
+  // read one transcript.
+  assert.equal(count(sqlite, "communication_messages"), 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM communication_messages WHERE direction='outbound' AND template_key='web_app_chat_ai_reply'").get().count, 1);
   assert.equal(count(sqlite, "ai_web_chat_events"), 1);
   assert.equal(count(sqlite, "ai_handoffs"), 1, "without a live provider/rollout, the customer is safely handed to a human");
 });
