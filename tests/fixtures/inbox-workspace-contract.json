@@ -1456,7 +1456,7 @@
     "lib/types/sales-work-queue.ts": "dd22e1f5ed3f58a8aa598e8feec331c089595561c7b578367c0fb46fa791f607",
     "lib/uat-customer-testing.ts": "aa2a8cc0e9c739a47409035a567cca130f12fab04b6df7b6bf600b832c63a270",
     "lib/uat-sandbox-readiness.ts": "5a9cbfceb481052172891b6a33da5a18b9116fc45d498fdf5d42ac6b66dbbd56",
-    "lib/uat-scheduling-client.ts": "47bb0f8c140e41f3a5f080ab800a4cde4fc8d508db622595ddf20374c045d087",
+    "lib/uat-scheduling-client.ts": "a6770456af02472c8620c32b67294fbc39e5cd4bd20ce66379361af30dc9753c",
     "lib/uat-staging-auth.ts": "504dd41e4273bbd51bf4bbd3ef37ff38ec106eb1ac5799493ebe7d520e237ac2",
     "lib/unified-case-center.ts": "34386da564f66a556deb55d20e61e2f10e290b4522fa8ca1aab62381f7f14e38",
     "lib/unit-economics.ts": "53391564e19fcc4a849b7c7f6e9ff16e13dc4b8ee7e31701d7cc262ecd0a0897",
