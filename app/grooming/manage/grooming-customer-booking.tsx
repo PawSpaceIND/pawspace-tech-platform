@@ -31,7 +31,7 @@ export default function GroomingCustomerBooking({bookingId,routeScope="legacy"}:
   {!bookingId?<p>Open a Grooming booking from your Activity to view its details.</p>:!loaded?<p role="status">Loading your booking…</p>:error?<section className={styles.card}><p role="alert">{error}</p><button onClick={reload}>Try again</button><Link href={routeScope==="v2"?"/v2/activity":"/mobile-app"}>Open your account</Link></section>:!booking?<section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not available on your account. Check that you are signed in to the account that made the booking.</p></section>:<>
    {notice?.bookingId===booking.id&&<p role="status">{notice.text}</p>}
    <section className={styles.card} aria-label="Booking details"><p className={styles.status}>{booking.status.replaceAll("_"," ")}</p><h2>{booking.packageName}</h2><p className={styles.reference}>Booking reference · {booking.id}</p>
-    <dl><div><dt>Starts</dt><dd>{formatDate(booking.scheduledStart)} IST</dd></div><div><dt>Ends</dt><dd>{formatDate(booking.scheduledEnd)} IST</dd></div><div><dt>Booking total</dt><dd>{new Intl.NumberFormat("en-IN",{style:"currency",currency:booking.currency}).format(booking.totalAmount)}</dd></div></dl>
+    <dl><div><dt>Starts</dt><dd>{formatDate(booking.scheduledStart)}</dd></div><div><dt>Ends</dt><dd>{formatDate(booking.scheduledEnd)}</dd></div><div><dt>Booking total</dt><dd>{new Intl.NumberFormat("en-IN",{style:"currency",currency:booking.currency}).format(booking.totalAmount)}</dd></div></dl>
     <p className={styles.note}>The booking total is not a receipt or confirmation of payment.</p>
     {
      /* [CUST-L-D05] a payment_pending booking had Refresh controls and "Cancellation unavailable" but
