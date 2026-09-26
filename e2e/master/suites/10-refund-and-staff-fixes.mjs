@@ -4,6 +4,7 @@
 //    processed, reconciliation refunded ₹500, the booking payment partially refunded, the collection reversal
 //    posted and the refund on the booking timeline, and the customer's manage page must show the refund.
 //  - STAFF-02: the cancellation waits in Finance's Boarding queue, and /team/finance/boarding opens on it.
+//  - SIT-04: a Pet Sitting Home Visit quotes ₹399 for 60 minutes and is refused for 2 hours.
 //  - STAFF-03: the public relocation enquiry form submits through the screen (the Domestic/International choice).
 // Only this run's own synthetic booking and a clearly labelled synthetic enquiry are touched.
 import { BASE, launch, newFlow, settle, api, otpCustomerSession, staffSession, runPhone, dismissCookies, readBookings, record, finding, writeJson, d1, isoDay } from "../lib.mjs";
@@ -65,6 +66,18 @@ try {
     record({ suite: SUITE, journey: "Customer sees the Boarding refund (STAFF-05)", combo: "manage page after the refund", result: shows ? "PASS" : (seen ? "FAIL" : "BLOCKED"), detail: (seen.match(/The stay is cancelled[^.]*\.[^.]*\./)?.[0] || seen).slice(0, 400), evidence: shot ? [shot] : [] });
   } catch (e) { record({ suite: SUITE, journey: "Boarding refund reaches the books (STAFF-05)", combo: "06 split stay", result: "BLOCKED", detail: `harness: ${String(e?.message || e).slice(0, 300)}`, evidence: [] }); }
   await customer.close(); await finance.close();
+
+  // SIT-04 — a Home Visit is one 60-minute visit (owner decision): 60 minutes quotes ₹399, 2 hours is refused.
+  const quoter = await newFlow(browser, "10-sitting-visit-quote");
+  try {
+    const day = isoDay(125), at = (hhmm) => new Date(`${day}T${hhmm}:00+05:30`).toISOString();
+    const quote = (end) => api(quoter.context, "POST", "/api/sitting-commercial", { packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at("10:00"), scheduledEnd: at(end), paymentMode: "prepaid" });
+    const hour = await quote("11:00"), twoHours = await quote("12:00");
+    out.sittingVisit = { hour: { status: hour.status, total: hour.body?.data?.totalAmount ?? null, error: hour.body?.error ?? null }, twoHours: { status: twoHours.status, error: twoHours.body?.error ?? null } };
+    const ok = hour.status < 300 && Number(out.sittingVisit.hour.total) === 399 && twoHours.status === 409 && /Home Visit is 60 minutes/.test(String(out.sittingVisit.twoHours.error || ""));
+    record({ suite: SUITE, journey: "Pet Sitting Home Visit is 60 minutes (SIT-04)", combo: "1 pet: 60 min vs 2 h", result: ok ? "PASS" : "FAIL", detail: JSON.stringify(out.sittingVisit), evidence: [] });
+  } catch (e) { record({ suite: SUITE, journey: "Pet Sitting Home Visit is 60 minutes (SIT-04)", combo: "quote", result: "BLOCKED", detail: `harness: ${String(e?.message || e).slice(0, 300)}`, evidence: [] }); }
+  await quoter.close();
 
   // STAFF-03 — the relocation enquiry form, through the screen.
   const visitor = await newFlow(browser, "10-relocation-enquiry");
