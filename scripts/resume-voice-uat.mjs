@@ -26,7 +26,7 @@ const handoff=rows.find(row=>row.thread_id===threadId||row.threadId===threadId);
 if(!handoff)throw new Error('Test handoff was not found in the queue; no state changed');
 const customerId=handoff.customer_id||handoff.customerId;
 const snapshot=await api('/api/ai-human-handoff?threadId='+encodeURIComponent(threadId)+'&customerId='+encodeURIComponent(customerId));
-if(snapshot.current?.status!=='queued'||snapshot.current?.reason!=='low_confidence')throw new Error('Only a queued low-confidence UAT handoff may be reset');
+if(snapshot.current?.status!=='queued'||!['low_confidence','provider_error'].includes(snapshot.current?.reason))throw new Error('Only a queued low-confidence or provider-error UAT handoff may be reset');
 const reason='Owner-authorized voice UAT retry after fixing follow-up context; no customer outreach';
 await api('/api/ai-human-handoff',{action:'take_over',threadId,customerId,reason});
 await api('/api/ai-human-handoff',{action:'resume_ai',threadId,customerId,reason});
