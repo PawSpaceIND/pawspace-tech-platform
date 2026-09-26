@@ -10,7 +10,7 @@ import planStyles from "./training-plans.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import CouponField from "./coupon-field";
 import BookingPaymentPage from "./booking-payment-page";
-import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
+import { isProviderSlotRefusal, reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import StayAddress from "./stay-address";
 import type { StayLocation } from "../../lib/stay-saved-address";
@@ -243,11 +243,19 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const meetTrainers=await loadTrainingTrainers({cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,at:meetSlot});
-        const meetTrainer=meetTrainers.providers.find(item=>item.id===trainerId)||meetTrainers.providers[0]||null;
-        if(!meetTrainer)throw new Error("No eligible trainer is available for this Meet & Greet slot");
+        // The chosen trainer first, then every other eligible trainer for the same slot: a busy default
+        // trainer used to end the booking with SLOT_TAKEN while another trainer was free.
+        const candidates=[...meetTrainers.providers.filter(item=>item.id===trainerId),...meetTrainers.providers.filter(item=>item.id!==trainerId)];
+        if(!candidates.length)throw new Error("No eligible trainer is available for this Meet & Greet slot");
         const start=new Date(meetSlot),quote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:start.toISOString(),paymentMode:"prepaid"}),end=new Date(start.getTime()+quote.minutesPerSession*60_000);
-        const requestId=`training-meet-${customer.customerId}-${meetTrainer.id}-${start.toISOString()}`;
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:meetTrainer.id});
+        let reserved:{requestId:string;decision:Awaited<ReturnType<typeof reserveUatSchedule>>}|null=null,lastRefusal:unknown=null;
+        for(const meetTrainer of candidates){
+          const requestId=`training-meet-${customer.customerId}-${meetTrainer.id}-${start.toISOString()}`;
+          try{reserved={requestId,decision:await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:meetTrainer.id})};break;}
+          catch(problem){if(!isProviderSlotRefusal(problem))throw problem;lastRefusal=problem;}
+        }
+        if(!reserved)throw lastRefusal??new Error("No eligible trainer is available for this Meet & Greet slot");
+        const {requestId,decision}=reserved;
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);setPendingPayment({kind:"meet",bookingId:canonical.bookingId,total:quote.totalAmount,dueNow:quote.amountDueNow,mode:"prepaid",trainerName:decision.provider.name});
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {actionLock.current=false;setScheduling(false);}
