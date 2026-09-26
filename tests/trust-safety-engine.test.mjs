@@ -31,6 +31,12 @@ async function freshTrustDb() {
   return { sqlite, db, now };
 }
 
+test("clean trust-safety text takes the zero-D1 fast path", async () => {
+  const db={prepare(){throw new Error("clean text must not touch D1");},batch(){throw new Error("clean text must not touch D1");}};
+  const result=await trust.inspectTrustSafetyText(db,{text:"Please tell me about grooming at home.",channel:"chat",sourceReference:"clean-fast-path",actorType:"customer",customerId:"CUST-CLEAN"});
+  assert.equal(result.detected,false);assert.equal(result.eventId,null);assert.equal(result.strike,null);
+});
+
 test("provider UPI/direct contact in chat is redacted and immediately records strike 1", async () => {
   const { sqlite, db, now } = await freshTrustDb();
   const result = await trust.recordProviderChatMessage(db, {
