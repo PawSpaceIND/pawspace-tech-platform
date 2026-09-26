@@ -264,7 +264,7 @@
     "app/api/leaderboard/route.ts": "675763ffde2884aaf40d893c697f708c9dfb93c9001a00b29bfdad34faa62519",
     "app/api/lifecycle-reminders/route.ts": "9ebd331dca0878f71fe3deb6774a25d785b6891a0391262c35f010cf8eb311ca",
     "app/api/live-price-quote/route.ts": "d332ce0ba09446046476f5c133aaae6c62b5ae89d5642b4de9e656f868fa9a5d",
-    "app/api/location-recovery/route.ts": "101e747c5f8f246eafbea4d33da70064ac7e66f4028e5f05d0b975ff46240a17",
+    "app/api/location-recovery/route.ts": "8100c9c79c797c65c914900f17e66e11806ba055fe5abc2c288b33347a354ecb",
     "app/api/manager-dashboard/route.ts": "e316fc05e96bff599ffc149e8b238e1e3ec914fcfd390cb19073732b90631f6d",
     "app/api/marketing-control/route.ts": "6af23c15637fd021128bec82c0a38cdec1b77662c9a20e3abc58a9481491c0c1",
     "app/api/me/route.ts": "34464c2498d5d8d942de66fdc9be1cba6ea3318059f9cb942d11d7b66e8fb6eb",
