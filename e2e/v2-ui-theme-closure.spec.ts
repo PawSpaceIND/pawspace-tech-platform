@@ -126,12 +126,17 @@ test("Walking mobile summary stays in flow and quote details remain available", 
   await expect(summary.locator("details em")).toBeVisible();
   await expect(summary.locator("button")).toBeDisabled();
 });
-test("V2 actions share the primary control variant", async ({ page }) => {
+test("V2 actions retain primary controls and the WATI composer", async ({ page }) => {
   const appearance: Appearance = { theme: "signature", mode: "light", style: "professional" };
   await choose(page, appearance);
   for (const route of ["/v2/training", "/v2/food", "/v2/partner", "/v2/boarding", "/v2/chat"]) {
-    await visit(page, route, appearance); const action = page.locator('[data-v2-action], [data-paw-action="primary"]').first();
-    await expect(action).toBeVisible(); await expect(action).toHaveCSS("border-radius", "14px");
+    await visit(page, route, appearance);
+    // Chat now uses the shared WATI composer; assert its real Send control instead of the retired V2 marker.
+    const action = route === "/v2/chat"
+      ? page.getByRole("button", { name: "Send", exact: true })
+      : page.locator('[data-v2-action], [data-paw-action="primary"]').first();
+    await expect(action, route).toBeVisible();
+    await expect(action).toHaveCSS("border-radius", route === "/v2/chat" ? "12px" : "14px");
     expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
 });

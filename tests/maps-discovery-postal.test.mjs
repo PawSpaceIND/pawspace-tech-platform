@@ -1,3 +1,6 @@
+// Load React's CommonJS runtime before installing Node 22 module hooks.
+import 'react';
+import 'react/jsx-runtime';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
