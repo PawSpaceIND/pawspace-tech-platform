@@ -1215,7 +1215,7 @@
     "lib/pincode-validation": "abbd7094e725091686f8a1c208242665b6625620941ca122cc24dbfcd80f70b3",
     "lib/pincode-validation.ts": "8184d7600d45d8682e88b2a657db97c6a0fc54180bc6b08f21eef91a0ce018f5",
     "lib/platform-security.ts": "a2fc0a16d238e7dfe129da87737cffae87e82bcc2e933e733c5cd3e68111b827",
-    "lib/platform-session.ts": "9e608cfc05d7fd7259ed751ef8ce024089f161c69aae83327173dedbb8635667",
+    "lib/platform-session.ts": "e032235f1671d1bc58c76babf483223c70c66194d379e21195d9c0b229b10a14",
     "lib/pnl-reporting.ts": "e64c96eb235633e8d7c224e46b9ec82b16914dc3d9a7ce77b63d81e80d1b8bd8",
     "lib/policies/dynamic-sla-engine.ts": "abdd496c6d4fc3129a0a7ae5d58fe7600d0e9fc86be6cffa475a6d80556e38ab",
     "lib/policies/surge-pricing-engine.ts": "b704d039e63e5a0c345866a3b408a6d687804fe9cfd2f624b8074277f6498c9a",
