@@ -149,6 +149,18 @@ test("STAFF-02 the Boarding finance screen is gated to Finance: the queue needs 
 test("STAFF-02 each workspace action posts exactly what the route validates, and the server applies it", async () => {
   const { seed, customer, one } = await world();
   const { bookingId } = await seed("BKG-FLOW");
+  // The stay invoice is issued while the payment is captured: once a refund is recorded the payment is refunded
+  // (partially here) and the invoice gate refuses it.
+  const tax = await as(CHECKER, () => client.saveBoardingFinanceTaxPolicy({ cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-09-01", reason: "GST 18% approved for Boarding" }));
+  assert.deepEqual(tax.calls[0].body, { action: "save_tax_policy", cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-09-01", reason: "GST 18% approved for Boarding" });
+  assert.equal(tax.value.status, "published");
+
+  const invoice = await as(CHECKER, () => client.issueBoardingFinanceInvoice({ bookingId, reason: "Issue the stay invoice for the records" }));
+  assert.deepEqual(invoice.calls[0].body, { action: "issue_invoice", bookingId, reason: "Issue the stay invoice for the records" });
+  assert.match(String(invoice.value.invoiceNumber), /^BRD-BLR-\d{2}-\d{2}-000001$/);
+  const reissued = await as(CHECKER, () => client.issueBoardingFinanceInvoice({ bookingId, reason: "Issue the stay invoice for the records" }));
+  assert.equal(reissued.value.duplicatePrevented, true);
+  assert.equal(reissued.value.invoiceNumber, invoice.value.invoiceNumber, "issuing again returns the same number");
   const requested = await customer(bookingId, "request_cancel");
   assert.equal(requested.status, "policy_review_required");
 
@@ -179,16 +191,6 @@ test("STAFF-02 each workspace action posts exactly what the route validates, and
   assert.deepEqual(early.calls[0].body, { bookingId, action: "prepare_settlement", idempotencyKey: `boarding-finance:settlement:${bookingId}` });
   assert.equal(early.error?.message, "Host settlement can be prepared only after canonical checkout");
 
-  const tax = await as(CHECKER, () => client.saveBoardingFinanceTaxPolicy({ cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-09-01", reason: "GST 18% approved for Boarding" }));
-  assert.deepEqual(tax.calls[0].body, { action: "save_tax_policy", cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-09-01", reason: "GST 18% approved for Boarding" });
-  assert.equal(tax.value.status, "published");
-
-  const invoice = await as(CHECKER, () => client.issueBoardingFinanceInvoice({ bookingId, reason: "Issue the stay invoice for the records" }));
-  assert.deepEqual(invoice.calls[0].body, { action: "issue_invoice", bookingId, reason: "Issue the stay invoice for the records" });
-  assert.match(String(invoice.value.invoiceNumber), /^BRD-BLR-\d{2}-\d{2}-000001$/);
-  const reissued = await as(CHECKER, () => client.issueBoardingFinanceInvoice({ bookingId, reason: "Issue the stay invoice for the records" }));
-  assert.equal(reissued.value.duplicatePrevented, true);
-  assert.equal(reissued.value.invoiceNumber, invoice.value.invoiceNumber, "issuing again returns the same number");
 
   // What the screen shows after an action: the confirmation and the server's own response.
   const html = render(workspace.BoardingFinanceOutcome, { error: "", message: "Cancellation approved under explicit Finance authority.", response: approved.value });
