@@ -877,3 +877,28 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
         run: node scripts/verify-voice-sale.mjs
+
+  probe-agent-socket:
+    if: ${{ inputs.confirm == 'probe-agent-socket' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Probe actual agent through WebSocket without dialing
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          VOICE_SALE_ACTION: ${{ inputs.confirm }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          SALE_BOOKING_ID: ${{ inputs.sale_booking_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/probe-voice-agent-socket.mjs
