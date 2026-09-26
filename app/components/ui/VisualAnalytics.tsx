@@ -1,24 +1,32 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import TrendChart from "./TrendChart";
 import { alignDaily, comparisonLabel, previousRange, rangeDays, recentRange, type DateRange } from "../../../lib/analytics-visuals";
 import css from "./visual-analytics.module.css";
 type Snapshot = { daily?: { date: string; gmv: number }[]; degraded?: { headline: string; entries: { source: string; reason: string }[] } | null; money: { gmv: number; collected: number }; bookings: { total: number; completed: number; cancelled: number }; customers: { unique: number }; services: Record<string, { gmv: number; collected: number; bookings: number }> };
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 const compact = (value: number) => new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-export default function VisualAnalytics({ serviceCode, title = "Business performance" }: { serviceCode?: string; title?: string }) {
-  const [range, setRange] = useState<DateRange | null>(null);
-  const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
-  const [result, setResult] = useState<{ current: Snapshot; previous: Snapshot; updated: string } | null>(null);
-  const [error, setError] = useState("");
+type Props = { serviceCode?: string; title?: string };
+const subscribeToHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+export default function VisualAnalytics(props: Props) {
+  // Date presets are calculated only after hydration, avoiding a midnight server/client mismatch.
+  const hydrated = useSyncExternalStore(subscribeToHydration, clientSnapshot, serverSnapshot);
+  return hydrated ? <VisualAnalyticsContent {...props} /> : <p role="status">Loading performance controls…</p>;
+}
+function VisualAnalyticsContent({ serviceCode, title = "Business performance" }: Props) {
+  const [range, setRange] = useState<DateRange>(() => recentRange(30));
+  const [draft, setDraft] = useState<DateRange>(range);
   const [validation, setValidation] = useState("");
-  const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
-  useEffect(() => { const initial = recentRange(30); setRange(initial); setDraft(initial); }, []);
+  const requestKey = `${range.from}:${range.to}:${serviceCode ?? ""}:${revision}`;
+  const [responseState, setResponseState] = useState<{ key: string; result?: { current: Snapshot; previous: Snapshot; updated: string }; error?: string } | null>(null);
+  const loading = responseState?.key !== requestKey;
+  const result = loading ? null : responseState?.result ?? null;
+  const error = loading ? "" : responseState?.error ?? "";
   useEffect(() => {
-    if (!range) return;
     const controller = new AbortController();
-    setLoading(true); setError(""); setResult(null);
     const read = async (window: DateRange): Promise<Snapshot> => {
       const query = new URLSearchParams(window);
       if (serviceCode) query.set("serviceCode", serviceCode);
@@ -28,10 +36,10 @@ export default function VisualAnalytics({ serviceCode, title = "Business perform
       return body.data;
     };
     Promise.all([read(range), read(previousRange(range))]).then(([current, previous]) => {
-      if (!controller.signal.aborted) setResult({ current, previous, updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) });
-    }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Performance data unavailable."); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+      if (!controller.signal.aborted) setResponseState({ key: requestKey, result: { current, previous, updated: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } });
+    }).catch(reason => { if (!controller.signal.aborted) setResponseState({ key: requestKey, error: reason instanceof Error ? reason.message : "Performance data unavailable." }); });
     return () => controller.abort();
-  }, [range, serviceCode, revision]);
+  }, [range, serviceCode, requestKey]);
   const apply = () => { try { if (rangeDays(draft) > 366) throw new Error("Choose 366 days or fewer."); setValidation(""); setRange({ ...draft }); } catch (reason) { setValidation((reason as Error).message); } };
   const prior = range ? previousRange(range) : null;
   const current = result?.current, previous = result?.previous;
