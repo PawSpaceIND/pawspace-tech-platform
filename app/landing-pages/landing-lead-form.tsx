@@ -31,7 +31,7 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
     <h2>{formTitle}</h2><p>Share your number and we&apos;ll call to confirm availability, pricing and your booking.</p>
     <form className={styles.formGrid} onSubmit={onSubmit}>
       <input aria-label="Your name" name="name" required minLength={2} placeholder="Your name"/>
-      <input aria-label="Phone number" name="phone" type="tel" required pattern="[0-9+\s-]{10,15}" placeholder="Phone number"/>
+      <input aria-label="Phone number" name="phone" type="tel" required pattern="[0-9+\s\-]{10,15}" placeholder="Phone number"/>
       <input aria-label="Area or location" name="area" placeholder="Area / location"/>
       <select aria-label="Pet type" name="pet" disabled><option>{pet}</option></select>
       <label style={{gridColumn:"1 / -1",display:"flex",gap:8,alignItems:"flex-start",fontSize:12,lineHeight:1.4}}><input name="whatsappConsent" value="yes" type="checkbox"/> I agree that PawSpace may send one WhatsApp response about this enquiry. This is not marketing, and I can reply STOP at any time.</label>

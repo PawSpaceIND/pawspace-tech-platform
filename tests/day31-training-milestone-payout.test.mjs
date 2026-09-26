@@ -71,8 +71,8 @@ test("half the sessions completed opens the first milestone at half the commissi
   const first = milestone(sqlite, "first_50_percent");
   assert.ok(first, "reaching half the sessions must open the first milestone");
   assert.equal(first.payout_amount, 6000, "half of 50% of Rs 24,000");
-  assert.equal(first.status, "waiting_5_days");
-  assert.equal(Number(first.due_at) - Number(first.reached_at), 5 * DAY);
+  assert.equal(first.status, "waiting_payout_hold");
+  assert.equal(Number(first.due_at) - Number(first.reached_at), 7 * DAY);
   assert.equal(milestone(sqlite, "final_50_percent"), undefined, "the programme is not finished");
 });
 
@@ -84,7 +84,7 @@ test("the five-day hold genuinely holds - finance cannot approve inside it", asy
   await assert.rejects(
     () => payout.approveTrainingCommissionMilestone(db, {
       bookingId: BOOKING, milestoneCode: "first_50_percent", idempotencyKey: "early-1",
-      actorId: "finance@pawspace.in", reason: "Day-31 early approval attempt", asOf: now + 5 * DAY - 1000,
+      actorId: "finance@pawspace.in", reason: "Day-31 early approval attempt", asOf: now + 7 * DAY - 1000,
     }),
     (error) => { assert.equal(error.status, 409); return true; },
     "the money must not be approvable one second before the hold expires",
@@ -92,7 +92,7 @@ test("the five-day hold genuinely holds - finance cannot approve inside it", asy
 
   const approved = await payout.approveTrainingCommissionMilestone(db, {
     bookingId: BOOKING, milestoneCode: "first_50_percent", idempotencyKey: "ontime-1",
-    actorId: "finance@pawspace.in", reason: "Day-31 approval after the five-day hold", asOf: now + 5 * DAY,
+    actorId: "finance@pawspace.in", reason: "Day-31 approval after the five-day hold", asOf: now + 7 * DAY,
   });
   assert.equal(approved.status, "instruction_ready_sandbox");
   assert.equal(approved.amount, 6000);
@@ -105,7 +105,7 @@ test("approving the same milestone twice pays once", async () => {
   await payout.syncTrainingCommissionPayoutMilestones(db, now);
   const args = {
     bookingId: BOOKING, milestoneCode: "first_50_percent", idempotencyKey: "dup-1",
-    actorId: "finance@pawspace.in", reason: "Day-31 duplicate approval", asOf: now + 6 * DAY,
+    actorId: "finance@pawspace.in", reason: "Day-31 duplicate approval", asOf: now + 8 * DAY,
   };
   const first = await payout.approveTrainingCommissionMilestone(db, args);
   const second = await payout.approveTrainingCommissionMilestone(db, args);
@@ -132,7 +132,7 @@ test("sessions completed OUT OF ORDER must not start the five-day clock early", 
 
   assert.equal(Number(first.reached_at), reachedAt,
     "the milestone is reached at the THIRD completion, not at the earliest-numbered one");
-  assert.equal(first.status, "waiting_5_days",
+  assert.equal(first.status, "waiting_payout_hold",
     "the hold must be running on the day the milestone is reached, not already expired");
 
   await assert.rejects(

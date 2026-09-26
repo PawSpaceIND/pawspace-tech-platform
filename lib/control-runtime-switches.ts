@@ -11,10 +11,15 @@ export const CONTROL_SWITCHES=[
 export type ControlSwitchCode=(typeof CONTROL_SWITCHES)[number]["code"];
 const text=(value:unknown)=>String(value??"").trim();
 const PROVIDER_INGRESS=new Set(["/api/razorpay-webhook","/api/razorpayx-webhook","/api/voice-provider-webhook","/api/webhooks/exotel/call-event","/api/provider-verification-callback","/api/communication-provider-callback","/api/whatsapp/meta-webhook","/api/email-provider-webhook","/api/dialler/callback"]);
-export async function ensureControlRuntimeTables(db:Db){
+// Once per isolate, and the six defaults in ONE batch: this ran on every API write before (a CREATE and
+// six sequential INSERT OR IGNOREs, seven D1 round trips in front of every scheduling request).
+async function ensureControlRuntimeTablesUncached(db:Db){
  await db.prepare("CREATE TABLE IF NOT EXISTS control_runtime_switches (code TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 1,reason TEXT NOT NULL DEFAULT 'default enabled',updated_by TEXT NOT NULL DEFAULT 'system',updated_at INTEGER NOT NULL)").run();
- const now=Date.now();for(const item of CONTROL_SWITCHES)await db.prepare("INSERT OR IGNORE INTO control_runtime_switches (code,enabled,reason,updated_by,updated_at) VALUES (?,1,'default enabled','system',?)").bind(item.code,now).run();
+ const now=Date.now();await db.batch(CONTROL_SWITCHES.map(item=>db.prepare("INSERT OR IGNORE INTO control_runtime_switches (code,enabled,reason,updated_by,updated_at) VALUES (?,1,'default enabled','system',?)").bind(item.code,now)));
 }
+// Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
+const controlRuntimeTablesReady=new WeakSet<object>();
+export async function ensureControlRuntimeTables(db:Db){if(controlRuntimeTablesReady.has(db))return;await ensureControlRuntimeTablesUncached(db);controlRuntimeTablesReady.add(db);}
 export async function listControlRuntimeSwitches(db:Db){await ensureControlRuntimeTables(db);const rows=await db.prepare("SELECT code,enabled,reason,updated_by,updated_at FROM control_runtime_switches ORDER BY code").all<Row>();return CONTROL_SWITCHES.map(meta=>{const row=rows.results.find(item=>text(item.code)===meta.code);return{...meta,enabled:Number(row?.enabled??1)===1,reason:text(row?.reason)||"default enabled",updatedBy:text(row?.updated_by)||"system",updatedAt:Number(row?.updated_at||0)}})}
 const matches=(code:ControlSwitchCode,path:string)=>{
  if(code==="voice_outbound")return ["/api/voice-outbound","/api/outbound-orchestrator","/api/ai-voice-uat"].includes(path);

@@ -1,3 +1,4 @@
+import{groomingCommercialPackages}from"./grooming-commercial-catalogue";
 type Db=D1Database;
 
 type CanonicalPricingSeed={
@@ -22,10 +23,21 @@ const groomingMultiPerPet:Record<string,number>={
   "young-basic":899,"young-makeover":1299,
 };
 
+/** Bundle slot by pet count, never shorter than one pet of the same package (a 2-pet makeover got 120 of 150 min). */
+const legacyBundleMinutes=(count:number)=>count>=4?240:count===3?150:120;
+const bundleMinutes=(count:number,singleMinutes:number)=>Math.max(singleMinutes,legacyBundleMinutes(count));
 const seeds:CanonicalPricingSeed[]=[];
+const bundleRepairs:Array<{id:string;from:number;to:number}>=[];
+/** Customer-facing copy from the commercial catalogue (V2 used to show "Canonical Grooming price for ..."). */
+const inclusions=(code:string)=>groomingCommercialPackages.find(item=>item.code===code)?.included??[];
+const customerDescription=(code:string,count=1)=>{const included=inclusions(code);if(!included.length)return"";return`${count>1?`For ${count} pets, each groomed in full. `:""}Includes ${included.join(", ")}.`;};
+const descriptionRepairs:Array<{id:string;from:string;to:string}>=[];
 for(const [code,name,price,minutes] of groomingSingles){
-  seeds.push({id:`canonical_groom_${code}`,serviceCode:"grooming",packageCode:code,name,description:`Canonical Grooming price for ${name}`,basePrice:price,slotMinutes:minutes,blockingMinutes:minutes+30});
-  for(const count of [2,3,4])seeds.push({id:`canonical_groom_${code}_${count}`,serviceCode:"grooming",packageCode:`${code}__${count}_pets`,name:`${name} · ${count} pets`,description:`Canonical ${count}-pet Grooming bundle price`,basePrice:groomingMultiPerPet[code]*count,slotMinutes:count>=4?240:count===3?150:120,blockingMinutes:(count>=4?240:count===3?150:120)+30});
+  seeds.push({id:`canonical_groom_${code}`,serviceCode:"grooming",packageCode:code,name,description:customerDescription(code)||`Canonical Grooming price for ${name}`,basePrice:price,slotMinutes:minutes,blockingMinutes:minutes+30});
+  for(const count of [2,3,4])seeds.push({id:`canonical_groom_${code}_${count}`,serviceCode:"grooming",packageCode:`${code}__${count}_pets`,name:`${name} · ${count} pets`,description:customerDescription(code,count)||`Canonical ${count}-pet Grooming bundle price`,basePrice:groomingMultiPerPet[code]*count,slotMinutes:bundleMinutes(count,minutes),blockingMinutes:bundleMinutes(count,minutes)+30});
+  if(customerDescription(code))descriptionRepairs.push({id:`canonical_groom_${code}`,from:`Canonical Grooming price for ${name}`,to:customerDescription(code)});
+  for(const count of [2,3,4])if(customerDescription(code,count))descriptionRepairs.push({id:`canonical_groom_${code}_${count}`,from:`Canonical ${count}-pet Grooming bundle price`,to:customerDescription(code,count)});
+  for(const count of [2,3,4])if(bundleMinutes(count,minutes)!==legacyBundleMinutes(count))bundleRepairs.push({id:`canonical_groom_${code}_${count}`,from:legacyBundleMinutes(count),to:bundleMinutes(count,minutes)});
 }
 seeds.push(
   {id:"canonical_training_meet",serviceCode:"dog_training",packageCode:"trainer-meet-greet",name:"Trainer Meet & Greet",description:"Canonical paid trainer introduction",basePrice:500,slotMinutes:45,blockingMinutes:90},
@@ -63,6 +75,17 @@ export async function seedCanonicalPricingPackages(db:Db){
   if(pricingPackagesSeeded.has(db))return;await ensurePricingControlSchema(db);
   const ids=seeds.map(item=>item.id);const row=await db.prepare(`SELECT COUNT(*) n FROM service_packages WHERE id IN (${ids.map(()=>"?").join(",")})`).bind(...ids).first<Record<string,unknown>>();
   if(Number(row?.n||0)!==seeds.length){const now=Date.now();await db.batch(seeds.map(item=>db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now)));}
+  // Rows seeded before the bundle fix keep the short slot (INSERT OR IGNORE). Repair only rows whose duration
+  // fields are still exactly as seeded, so a duration staff chose is never overwritten; each repair is audited.
+  for(const repair of bundleRepairs){
+    const changed=await db.prepare("UPDATE service_packages SET slot_minutes=?,blocking_minutes=?,version=version+1,updated_at=? WHERE id=? AND slot_minutes=? AND blocking_minutes=? RETURNING id").bind(repair.to,repair.to+30,Date.now(),repair.id,repair.from,repair.from+30).first<Record<string,unknown>>();
+    if(changed)await db.prepare("INSERT INTO pricing_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`price_audit_${crypto.randomUUID().slice(0,12)}`,"package",repair.id,"seed_repair",JSON.stringify({slot_minutes:repair.from,blocking_minutes:repair.from+30}),JSON.stringify({slot_minutes:repair.to,blocking_minutes:repair.to+30}),"system",`A multi-pet bundle must not be shorter than one pet (${repair.to} min)`,Date.now()).run();
+  }
+  // Replace the seeded internal text only where it is still exactly as seeded; staff-written copy stays.
+  for(const repair of descriptionRepairs){
+    const changed=await db.prepare("UPDATE service_packages SET description=?,version=version+1,updated_at=? WHERE id=? AND description=? RETURNING id").bind(repair.to,Date.now(),repair.id,repair.from).first<Record<string,unknown>>();
+    if(changed)await db.prepare("INSERT INTO pricing_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`price_audit_${crypto.randomUUID().slice(0,12)}`,"package",repair.id,"seed_repair",JSON.stringify({description:repair.from}),JSON.stringify({description:repair.to}),"system","Customer-facing package description",Date.now()).run();
+  }
   pricingPackagesSeeded.add(db);
 }
 

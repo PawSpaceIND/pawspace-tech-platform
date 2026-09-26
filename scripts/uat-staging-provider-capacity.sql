@@ -370,3 +370,19 @@ UPDATE ai_audience_rollout SET stage='customers',reason='UAT-ONLY: owner decisio
 -- automatically would be inventing compensation policy rather than repairing a seed. Finance's own
 -- published rule supersedes this one on version order and is never modified here.
 UPDATE training_compensation_rules SET status='published',updated_at=1789300000000 WHERE id='UAT-TRAINER-RATE-BLR' AND status!='published' AND updated_by='uat_staging_seed' AND reason LIKE 'UAT-ONLY-NOT-PRODUCTION:%';
+
+-- ---------------------------------------------------------------------------------------------------
+-- 5. UAT GROOMER DRIFT REPAIR. Testers change the shared staging roster: /control Provider Capacity "Save"
+--    rewrites updated_by to their email (the scheduler then drops the groomer before evaluation), a partner
+--    "unavailable" toggle writes a 10-year provider_unavailability row, trust-safety strikes and verification
+--    holds set live=0. Every run of this file puts the seeded grooming roster back to bookable. Seeded ids only
+--    (uatcap_groom* and the runtime east defaults); partner_app / operations availability rows are untouched.
+-- ---------------------------------------------------------------------------------------------------
+UPDATE provider_capacity_profiles
+SET updated_by='founder_seed',live=1,status='active',version=version+1,updated_at=strftime('%s','now')*1000
+WHERE (id LIKE 'uatcap\_groom%' ESCAPE '\' OR id IN ('groom_arun','groom_kiran','groom_sanjay'))
+  AND (updated_by!='founder_seed' OR live!=1 OR status!='active');
+CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+UPDATE provider_unavailability
+SET status='cleared',ends_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),updated_at=strftime('%s','now')*1000
+WHERE status='active' AND (provider_id LIKE 'uatcap\_groom%' ESCAPE '\' OR provider_id IN ('groom_arun','groom_kiran','groom_sanjay'));

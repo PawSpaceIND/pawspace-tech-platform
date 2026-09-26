@@ -1,4 +1,6 @@
 import {ensurePlatformSessionTables,resolvePlatformSession} from "./platform-session";
+import {markRequestFlag} from "./request-d1-metrics";
+import {uatRosterSeedingEnabled} from "./scheduling-roster-authority";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -58,11 +60,16 @@ export async function reservationLeaseForRequest(db:Db,request:Request,customerI
   };
 }
 
+/** Set on the request once its lease cleanup has completed, so a read-only preview can skip a second pass. */
+export const RESERVATION_LEASE_CLEANUP_FLAG="scheduling-reservation-lease-cleanup";
+// Tables are never dropped at runtime, so a table seen once stays seen; absence is always re-checked.
+const canonicalBookingsPresent=new WeakSet<Db>();
 export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
-  const running=cleanupRunning.get(db);if(running)return running;
+  const done=(result:{groups:number;reservations:number})=>{markRequestFlag(RESERVATION_LEASE_CLEANUP_FLAG);return result;};
+  const running=cleanupRunning.get(db);if(running)return running.then(done);
   const pending=(async()=>{
     if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
-    const hasCanonical=await tableExists(db,"canonical_bookings");
+    const hasCanonical=canonicalBookingsPresent.has(db)||await tableExists(db,"canonical_bookings");if(hasCanonical)canonicalBookingsPresent.add(db);
     const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
     // Missing, revoked, expired and unknown session states fail closed. Superseded is deliberately valid
     // until the server-owned lease ends: issuing a replacement login must not silently discard checkout.
@@ -86,5 +93,45 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
     return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
   })();
   cleanupRunning.set(db,pending);
-  try{return await pending;}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
+  try{return done(await pending);}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
+}
+
+/** How long an unpaid UAT grooming checkout may hold its groomer after the booking was created. */
+export const UAT_ABANDONED_CHECKOUT_GRACE_MS=30*60_000;
+
+/**
+ * UAT ONLY. cleanupExpiredReservationLeases deliberately never releases a group that already has a
+ * canonical booking, and nothing expires a V2 grooming booking that stays payment_pending - so every
+ * "Reserve & review payment" a tester (or the automated staging journey) abandons holds its groomer for
+ * that slot, and for the neighbouring slots through the travel buffer, forever. On a declared
+ * PAWSPACE_SCHEDULING_ENV=uat runtime this releases such holds once the booking has sat unpaid for the
+ * grace period: the booking, work order and payment are cancelled first and the reservation only follows
+ * inside the same batch when that cancellation happened, so a capture that won the race keeps its slot
+ * (razorpay capture only confirms status='payment_pending'). Every other runtime returns immediately.
+ */
+export async function releaseAbandonedUatCheckouts(db:Db,env:Record<string,unknown>|null|undefined,now=Date.now()){
+  if(!uatRosterSeedingEnabled(env))return{released:0,skipped:"not_uat_runtime"};
+  if(!(await tableExists(db,"canonical_bookings"))||!(await tableExists(db,"scheduling_reservations")))return{released:0};
+  const stale=await db.prepare(`SELECT b.id booking_id,b.schedule_group_id group_id FROM canonical_bookings b
+    WHERE b.status='payment_pending' AND b.service_code='grooming' AND b.created_at<=?
+      AND EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=b.schedule_group_id AND r.status='assigned')
+      AND NOT EXISTS (SELECT 1 FROM booking_payments p WHERE p.booking_id=b.id AND p.status IN ('captured','paid','authorized'))
+    LIMIT 20`).bind(now-UAT_ABANDONED_CHECKOUT_GRACE_MS).all<Row>();
+  if(!stale.results.length)return{released:0};
+  const hasOffers=await tableExists(db,"provider_assignment_offers");
+  const statements=[];
+  for(const row of stale.results){
+    const bookingId=String(row.booking_id),groupId=String(row.group_id),reason="uat_abandoned_checkout";
+    const cancelledNow="EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.id=? AND b.status='cancelled' AND b.updated_at=?)";
+    statements.push(
+      db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status='payment_pending'").bind(now,bookingId),
+      db.prepare(`UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=? AND status='payment_pending' AND ${cancelledNow}`).bind(now,bookingId,bookingId,now),
+      db.prepare(`UPDATE booking_payments SET status='cancelled',detail_json=json_set(detail_json,'$.cancelReason',?),updated_at=? WHERE booking_id=? AND status NOT IN ('captured','paid','authorized') AND ${cancelledNow}`).bind(reason,now,bookingId,bookingId,now),
+      db.prepare(`UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status='assigned' AND ${cancelledNow}`).bind(groupId,bookingId,now),
+      db.prepare(`UPDATE scheduling_assignment_decisions SET status='expired',actor_id='system:uat-abandoned-checkout',reason=?,updated_at=? WHERE group_id=? AND status IN ('assigned','awaiting_admin') AND ${cancelledNow}`).bind(reason,now,groupId,bookingId,now),
+    );
+    if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending' AND ${cancelledNow}`).bind(now,reason,now,groupId,bookingId,now));
+  }
+  const results=await db.batch(statements);
+  return{released:stale.results.length,bookingsCancelled:results.filter((_,i)=>i%(hasOffers?6:5)===0).reduce((n,r)=>n+Number(r?.meta?.changes||0),0)};
 }

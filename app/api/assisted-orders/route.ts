@@ -1,5 +1,6 @@
 import { groomingCatalogue } from "../../../lib/grooming-governance";
 import { generateCanonicalSalesQuote } from "../../../lib/sales-core-tools";
+import { quoteGroomingBookingWithLiveMultiPet } from "../../../lib/live-grooming-governance";
 import { quoteCoupon } from "../../../lib/coupon-governance";
 import { couponsLiveApproved } from "../../../lib/ai-sales-offers";
 import { ensureCustomerAccountTables, mutateCustomerAccount } from "../../../lib/customer-account";
@@ -84,14 +85,20 @@ export async function POST(request:Request){try{
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
   await ensureCustomerAccountTables(db);input.customer=await storedCustomer(db,input.customer);
-  const {item}=priceFor(input.packageCode,input.pets),quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"}),total=quote.totalAmount,groupId=`assist-${input.idempotencyKey}`;
+  let quote:Awaited<ReturnType<typeof generateCanonicalSalesQuote>>;
+  try{quote=await generateCanonicalSalesQuote(db,{packageCode:input.packageCode,petCount:input.pets.length,cityId:input.cityId||"blr"});}
+  catch(error){if(error instanceof Error&&/GST policy/.test(error.message))return json({error:"Assisted booking needs a published grooming GST policy for this city. Ask Finance to publish it in Team → Finance → Grooming GST.",code:"gst_policy_required"},409);throw error;}
+  // The booking is governed at the live Pricing Control price (dynamic rules, multi-pet rows); the sales
+  // quote above only proves a GST policy is published. Pricing from the list price made every booking 409.
+  const governedQuote=await quoteGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,pets:input.pets.map(pet=>({species:pet.species})),paymentMode:"pay_after_service",cityId:input.cityId||"blr",zoneId:input.zoneId,scheduledStart:input.scheduledStart});
+  const {item}=priceFor(input.packageCode,input.pets),total=governedQuote.totalAmount,groupId=`assist-${input.idempotencyKey}`;void quote;
   // A coupon is quoted before anything is reserved, so an ineligible code costs nothing and says why.
   const couponCode=String(input.couponCode||"").trim().toUpperCase();
   const coupon=couponCode?await quoteCoupon(db,{code:couponCode,customerId:input.customer.id,serviceCode:"grooming",cityId:input.cityId||"blr",channel:"assisted_staff",packageCode:item.code,orderValue:total,paymentMode:"after_service",isSubscription:false},{liveApproved:await couponsLiveApproved()}):null;
   if(coupon&&(!coupon.valid||!("quoteId"in coupon)||!coupon.quoteId))return json({error:`Coupon ${couponCode}: ${coupon.error||"not eligible for this order"}`},409);
   const discount=coupon&&"quoteId"in coupon?Number(coupon.discount):0,payable=total-discount;
   const petIds=await schedulingPetIds(db,actor,input);
-  const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds,serviceCode:"grooming",zoneId:input.zoneId,serviceAddress:input.serviceAddress,servicePincode:input.servicePincode,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
+  const schedulePayload=await internalPost(request,"/api/uat-scheduling",{clientRequestId:groupId,customerId:input.customer.id,petIds,serviceCode:"grooming",zoneId:input.zoneId,serviceAddress:input.serviceAddress,servicePincode:input.servicePincode,saveAddress:Boolean(input.serviceAddress?.trim()),scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:1});
   const schedule=(schedulePayload.data||{}) as Record<string,unknown>,provider=schedule.provider as {id?:string;name?:string;model?:"full_time"|"commission"}|undefined;if(!provider?.id||!provider.name||!provider.model)throw new Response("Canonical scheduler did not return an assigned Grooming provider",{status:409});
   // The scheduler derives city and zone from the service address, and the booking must match what it reserved.
   const reserved=(schedule.addressAuthority||{}) as {cityId?:string;zoneId?:string};

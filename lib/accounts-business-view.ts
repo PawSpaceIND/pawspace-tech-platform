@@ -69,8 +69,10 @@ export async function buildAccountsBusinessView(db: Db) {
     const rows = await safeAll(db, `SELECT amount FROM ${table} WHERE status='sandbox_pending'`);
     for (const r of rows) { refundPending += Number(r.amount || 0); refundPendingCount++; }
   }
+  // 'queued_for_release' is written by the provider payout queue (lib/provider-payout-queue.ts): the payout
+  // is waiting for Finance's release click, so the money is still owed to the provider.
   for (const { table } of SETTLEMENT_LEDGER_VERTICALS) {
-    const rows = await safeAll(db, `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed') AND payout_amount IS NOT NULL`);
+    const rows = await safeAll(db, `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL`);
     for (const r of rows) { providerPayable += Number(r.payout_amount || 0); providerPayableCount++; }
   }
 

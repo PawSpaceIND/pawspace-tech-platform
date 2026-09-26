@@ -74,12 +74,19 @@ export function advertisedPincodes(raw:unknown){
   return out;
 }
 
+// Tables are never dropped at runtime: once city_launch_configs is seen, the per-request schema probe is
+// skipped for this database object. Absence is always re-checked, so a table created later is picked up.
+const launchConfigsSeen=new WeakSet<object>();
+
 /** Is this launched city still open, and does it still advertise this pincode? */
 export async function cityFulfilmentVerdict(db:Db,cityId:string,pincode:string):Promise<CityFulfilmentVerdict>{
   const cityCode=String(cityId||"").trim().toLowerCase();
   if(!cityCode)return{open:true,cityCode,reason:"no_launch_governance"};
-  const table=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='city_launch_configs'").first<Row>();
-  if(!table)return{open:true,cityCode,reason:"no_launch_governance"};
+  if(!launchConfigsSeen.has(db)){
+    const table=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='city_launch_configs'").first<Row>();
+    if(!table)return{open:true,cityCode,reason:"no_launch_governance"};
+    launchConfigsSeen.add(db);
+  }
   const row=await db.prepare("SELECT city,status,pincodes FROM city_launch_configs WHERE city_code=?").bind(cityCode).first<Row>();
   // A city with no launch config is governed by its reviewed service_zone_mappings rows alone. That is
   // this repository's existing second-city path and it is not overridden here.
