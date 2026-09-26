@@ -33,3 +33,28 @@
 @media(max-width:480px) { .chatHead,.messages,.composer { padding:14px; } .cardHead { flex-wrap:wrap; } .bubble { max-width:95%; } }
 /* Do not make an enabled Send action look disabled; its original disabled gate is unchanged. */
 .send:not(:disabled) { opacity:1; background:var(--staff-primary); color:var(--staff-on-primary); }
+/* ---------------------------------------------------------------------------------------------------
+ * WATI look for the shared inbox: the WhatsApp beige patterned conversation, customer messages in white
+ * on the left and PawSpace (bot, AI, team) in WhatsApp green on the right with bubble tails and grey
+ * timestamps, WATI-style list rows with a green selection bar, and a pill composer with a green Send.
+ * --------------------------------------------------------------------------------------------------- */
+.chat{--wa-canvas:#efeae2;--wa-dots:#d8d2c7;--wa-in:#ffffff;--wa-out:#d9fdd3;--wa-text:#111b21;--wa-meta:#667781;--wa-accent:#00a884;--wa-head:#f0f2f5;--wa-line:#e9edef;background:var(--wa-canvas)}
+.chatHead{background:var(--wa-head);border-bottom-color:var(--wa-line)}
+.avatar{background:#dfe5e7;color:#54656f}
+.messages{background-color:var(--wa-canvas);background-image:radial-gradient(var(--wa-dots) 1px,transparent 1px),radial-gradient(var(--wa-dots) 1px,transparent 1px);background-size:26px 26px;background-position:0 0,13px 13px;gap:8px}
+.bubble{position:relative;border:0;border-radius:8px;border-top-left-radius:0;background:var(--wa-in);color:var(--wa-text);box-shadow:0 1px .5px rgba(11,20,26,.13);padding:7px 11px 6px}
+.bubble::before{content:"";position:absolute;top:0;left:-8px;border-right:8px solid var(--wa-in);border-bottom:10px solid transparent}
+.bubbleOut{background:var(--wa-out);border-top-left-radius:8px;border-top-right-radius:0}
+.bubbleOut::before{left:auto;right:-8px;border-right:0;border-left:8px solid var(--wa-out)}
+.bubble small{color:var(--wa-meta);font-size:13px}
+.bubble p{color:var(--wa-text)}
+.composer{background:var(--wa-head);border-top:0}
+.composer input{border:0;border-radius:24px;background:#fff;color:var(--wa-text);padding:11px 18px}
+.send:not(:disabled){background:var(--wa-accent);color:#fff}
+.aiBar{background:#fff;border-color:var(--wa-line)}
+.list{background:#fff}
+.row{border-bottom-color:#f0f2f5;border-left:3px solid transparent}
+.row:hover{background:#f5f6f6}
+.row[aria-current="true"]{background:#f0f2f5;border-left-color:#00a884}
+.filter{border-color:#d1d7db;color:#54656f}
+.filterActive{background:#e7fce3;color:#008069;border-color:#b6e7c3}
