@@ -45,6 +45,24 @@ const phrase=(value:string)=>` ${value.toLowerCase().replace(/[^a-z0-9]+/g," ").
 /** Returns the service only when the question names exactly one distinct service; multi-service questions go to the general path. */
 function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].some(alias=>phrase(alias).trim()&&q.includes(phrase(alias))));return matches.length===1?matches[0]:null;}
 
+const PRICE_QUESTION=/\b(price|prices|pricing|cost|costs|charge|charges|rate|rates|fee|fees|how much)\b|₹|\brs\.?\s*\d/i;
+/** Owner decision: the assistant may quote published prices as "from Rs X", never a final amount. */
+async function publishedPriceAnswer(db:D1Database,service:PublicServiceEntry){
+ // One table per service: a missing table for another vertical must not hide this service's prices.
+ const sql=({
+  grooming:"SELECT MIN(base_price) price FROM service_packages WHERE service_code='grooming' AND active=1 AND instr(package_code,'__')=0",
+  dog_training:"SELECT MIN(base_price) price FROM training_commercial_packages WHERE active=1",
+  boarding:"SELECT MIN(base_price_per_pet) price FROM boarding_commercial_packages WHERE active=1",
+  pet_sitting:"SELECT MIN(base_price_per_pet) price FROM sitting_commercial_packages WHERE active=1",
+  dog_walking:"SELECT MIN(amount_per_walk) price FROM walking_commercial_packages WHERE active=1",
+ } as Record<string,string>)[service.code];
+ if(!sql)return null;
+ const row=await db.prepare(sql).first<Record<string,unknown>>().catch(()=>null),price=Number(row?.price);
+ if(!Number.isFinite(price)||price<=0)return null;
+ const from=new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(price);
+ return`${service.name} starts from ${from} for one pet. The final price depends on the package, date and time, and is confirmed at checkout.`;
+}
+
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
  await ensureAiWebChatTables(db);
  const query=text(input.query).slice(0,4000);if(!query)throw new Response("Question is required",{status:400});
@@ -54,7 +72,8 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted);
  if(matchedService){
-  const output=matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`;
+  const priceAnswer=matchedService.enabled&&PRICE_QUESTION.test(inspected.redacted)?await publishedPriceAnswer(db,matchedService).catch(()=>null):null;
+  const output=priceAnswer??(matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`);
   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
   return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
  }
