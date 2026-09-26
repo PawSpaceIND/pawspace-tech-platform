@@ -75,6 +75,10 @@ cfg.name = WORKER_NAME;
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
+/* Smart Placement: run the Worker next to its D1 database instead of next to the visitor. A signed-in chat
+ * request makes several sequential D1 calls, so the Worker-to-database distance, not the visitor's, sets
+ * how fast a reply appears. Staging only for now, to compare before production takes it. */
+cfg.placement = { mode: "smart" };
 // Same-zone global fetches from pawspace-staging to another *.workers.dev Worker are refused by
 // Cloudflare. Bind exactly the certified checkout Worker when shadow relay is enabled; never grant
 // staging a broad Worker-to-Worker global-fetch capability.
