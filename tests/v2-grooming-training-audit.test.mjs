@@ -72,4 +72,15 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(assisted,/requestedCustomerId\?\(effectiveCrmCustomer\?\.id===requestedCustomerId\?effectiveCrmCustomer:null\)/);
   assert.match(assisted,/setRequestedCustomerId\(requested\);setCrmCustomer\(null\);/);
  });
+ // QA regression (trainer-complete): the server half of this wire is executed in tests/training-session-lifecycle.test.mjs.
+ test('review: the trainer pre-check is saved after start and stays confirmable until completion',()=>{
+  const trainer=read('app/trainer/page.tsx');
+  assert.match(trainer,/action:"start"\}\);try\{await trainingSessionAction\(\{sessionId:selected\.id,action:"save_report",\.\.\.attendanceOnly\}/,'the pre-check is persisted right after a successful start');
+  assert.match(trainer,/const attendanceOnly:Record<string,unknown>=\{report:\{attendance:report\.attendance\}\}/,'only attendance is saved at start, so no default scores are recorded');
+  assert.match(trainer,/onClick=\{\(\)=>void startSession\(\)\}>Start session</);
+  assert.match(trainer,/<span>ATTENDANCE & SAFETY<\/span>.*\{attendanceControls\}<\/section><div className=\{styles\.actions\}><button disabled=\{busy\} onClick=\{\(\)=>void act\("save_report",\{report\}\)\}>Save report/,'the in-session report keeps the confirmations editable');
+  assert.match(trainer,/!selected\.ownerHandover\|\|!attendanceReady\} onClick=\{\(\)=>void act\("complete",\{report\}\)\}/,'completion waits for a genuine confirmation');
+  assert.match(trainer,/const attendanceReady=safeArea&&\(attendanceMode!=="parent"\|\|parentConfirmed\);/);
+  assert.match(trainer,/<strong>\{trainerName\|\|providerId\}<\/strong>/,'the header shows the trainer name, falling back to the provider id');
+ });
 }
