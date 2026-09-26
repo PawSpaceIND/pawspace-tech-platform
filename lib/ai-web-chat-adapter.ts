@@ -138,12 +138,13 @@ type WebChatOptions={
 };
 
 export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string},options:WebChatOptions={}){
- await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
+ await ensureAiWebChatTables(db);
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
  const aiKey=`ai:${input.idempotencyKey}`;
- const prior=await db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+ // Ownership and the retry lookup are independent reads, so they share one round trip (#1093).
+ const[,prior]=await Promise.all([requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
- let threadId:string,messageId:string,inspectedDetected=false;
+ let threadId="",messageId="",inspectedDetected=false;
  if(prior){
   /* A retry of a message that was already saved - most often because the browser gave up waiting.
    * It used to answer "This message was already received" and nothing else, so the reply the customer
@@ -152,7 +153,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   threadId=text(prior.thread_id);messageId=text(prior.id);
   const stored=await db.prepare("SELECT * FROM ai_conversation_turns WHERE idempotency_key=?").bind(aiKey).first<Row>().catch(()=>null);
   if(stored)return{duplicatePrevented:true,messageId,threadId,ai:{duplicatePrevented:true,turn:replayedTurn(stored),autonomousExecution:false},autonomousExecution:false};
- }else{
+ }
+ /* The AI provider loads while the message is saved (#1093). A path that returns before using it (the
+  * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
+ const providerPromise=createGroundedAiRuntimeProvider(db,input.actor,"chat");providerPromise.catch(()=>{});
+ if(!prior){
   threadId=await openThread(db,input.customerId);messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
   const inspected=await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-authenticated:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"authenticated_ai_web_chat"}});inspectedDetected=inspected.detected;
   await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?, ?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
@@ -167,7 +172,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   * will answer here, instead of a red "AI replies are paused" error on every message they send. */
  if(options.acceptWhileWithTeam&&(await activeHandoff(db,threadId)).active)return withTeam();
  let result:Awaited<ReturnType<typeof orchestrateAiTurn>>;
- try{result=await orchestrateAiTurn(db,{actor:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider:await createGroundedAiRuntimeProvider(db,input.actor,"chat")});}
+ try{result=await orchestrateAiTurn(db,{actor:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider:await providerPromise});}
  catch(error){
   // A takeover that landed between the check above and the orchestrator's own check.
   if(options.acceptWhileWithTeam&&error instanceof Response&&error.status===409&&(await activeHandoff(db,threadId)).active)return withTeam();
