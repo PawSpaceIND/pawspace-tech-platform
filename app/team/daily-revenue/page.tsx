@@ -1,4 +1,6 @@
 "use client";
+import TrendChart from "../../components/ui/TrendChart";
+import visual from "../../components/ui/visual-analytics.module.css";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "../../components/ui";
@@ -92,6 +94,7 @@ export default function DailyRevenuePriorityPage() {
         </div>
       </section>
 
+      {!error && opportunities.length > 0 && <section className={visual.panel}><span className={visual.eyebrow}>OPPORTUNITY INTELLIGENCE</span><h2>Where the pipeline value sits</h2><p className={visual.muted}>Current opportunity snapshot · expected values are estimates or modelled amounts, not collected revenue. Historical opportunity snapshots are not available for date comparisons.</p><div className={visual.grid}><article className={visual.chart}><h3>Expected value by opportunity type</h3><TrendChart type="bar" data={Object.entries(opportunities.reduce<Record<string, number>>((totals, row) => { totals[row.opportunity_type] = (totals[row.opportunity_type] || 0) + row.expected_revenue; return totals; }, {})).map(([type, value]) => ({ type: type.replaceAll("_", " "), value }))} xKey="type" series={[{ key: "value", label: "Expected value" }]} valueFormatter={value => `₹${value.toLocaleString("en-IN")}`} /></article><article className={visual.chart}><h3>Pipeline status</h3><TrendChart type="bar" data={Object.entries(opportunities.reduce<Record<string, number>>((totals, row) => { totals[row.status] = (totals[row.status] || 0) + 1; return totals; }, {})).map(([status, count]) => ({ status, count }))} xKey="status" series={[{ key: "count", label: "Opportunities" }]} /></article></div></section>}
       <section style={{ marginTop: 24 }}>
         <h2>Prioritised list ({opportunities.length})</h2>
         {!opportunities.length && <EmptyState title="No opportunities generated yet" body="This list is built from real customer scoring, open inbound leads and subscription renewals due. It fills once leads exist and a daily target is set above." action={<Link href="/team/sales" style={{fontWeight:700}}>Open the customer worklist →</Link>} />}

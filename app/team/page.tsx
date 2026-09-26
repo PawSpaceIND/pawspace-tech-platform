@@ -1,4 +1,5 @@
 "use client";
+import VisualAnalytics from "../components/ui/VisualAnalytics";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./team.module.css";
@@ -91,6 +92,7 @@ export default function TeamHome() {
       </section>
       {/* The synthetic transaction engine lived on /admin and /ops; this front door replaced them. */}
       <details className={styles.testPanel}><summary>Sandbox test tools</summary><TestSyncPanel surface="ops" /></details>
+      {data && hasPermission(data.actor.permissions, "reports.view") && <VisualAnalytics title="Company performance" />}
       <section className={styles.workspaceSection}>
         <div className={styles.sectionHead}><div><p>ROLE-BASED WORKSPACES</p><h2>Choose what you need to run.</h2></div><span>Showing what your role can open</span></div>
         {/* Only the workspaces this role can actually open are shown. A tile the role has no permission

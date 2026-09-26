@@ -117,6 +117,9 @@ test("company analytics: GMV excludes cancelled+draft, collected counts only cap
   // GMV: 5000 (completed) + 3000 (completed) + 1000 (confirmed) = 9000.
   // NOT 11800 — the cancelled 2000 and draft 800 must be excluded, matching P&L recognition.
   assert.equal(data.money.gmv, 9000);
+  assert.equal(data.daily.reduce((sum, row) => sum + row.gmv, 0), data.money.gmv);
+  assert.equal(data.daily.reduce((sum, row) => sum + row.collected, 0), data.money.collected);
+  assert.equal(data.daily.reduce((sum, row) => sum + row.bookings, 0), data.bookings.total);
   // Collected: 5000 + 1500 captured. Refunded 2000 and initiated 1000 do not count.
   assert.equal(data.money.collected, 6500);
   assert.equal(data.bookings.total, 5);
