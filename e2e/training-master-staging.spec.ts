@@ -64,14 +64,15 @@ async function step(area: string, name: string, fn: () => Promise<string | void>
 }
 /** Click Send in the V2 chat; when it cannot be clicked, say why (disabled, covered, or not rendered) with a screenshot. */
 async function sendChat(page: Page, label: string) {
-  const send = page.getByRole("button", { name: "Send message" });
+  // V2 chat names the button "Send" since #1092; older staging builds called it "Send message".
+  const send = page.getByRole("button", { name: /^Send( message)?$/ });
   try { await send.click({ timeout: 20_000 }); return; } catch {
     await shot(page, `${label}-send-blocked`);
     const why = await send.evaluate((el) => {
       const b = el as HTMLButtonElement, r = b.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return `disabled=${b.disabled} aria-disabled=${b.getAttribute("aria-disabled")} rect=${Math.round(r.top)},${Math.round(r.height)} covered-by=${top && top !== b && !b.contains(top) ? (top.tagName + "." + String(top.className).slice(0, 60) + " \"" + (top.textContent || "").trim().slice(0, 60) + "\"") : "none"}`;
     }).catch(() => "Send button not rendered");
-    throw fail(`Send message could not be clicked (${why}); page: ${(await mainText(page)).replace(/\n+/g, " | ").slice(0, 300)}`);
+    throw fail(`Send could not be clicked (${why}); page: ${(await mainText(page)).replace(/\n+/g, " | ").slice(0, 300)}`);
   }
 }
 
