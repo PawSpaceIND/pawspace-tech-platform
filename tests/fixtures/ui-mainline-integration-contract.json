@@ -24,7 +24,7 @@
     "app/mobile-app/pet-manager.tsx": "498d4a1f5c7c633abfdf7c54329ad868f78971e627d77a858b08fccdaa49c591",
     "app/mobile-app/stay-care-payment-gate.tsx": "11e787ab1251eca0817bd1121cad298edf5437347b96008e745edcf378d9b7e3",
     "app/mobile-app/stay-flow.tsx": "be56f278f9071fc56ae39d70eb68ec710f8c7b1e9967a1f9c70dc71806ea1850",
-    "app/v2/grooming/page.tsx": "997b4c547f8949c2081c0af002782ee18c0867dec4358858078df07fe5a57146",
+    "app/v2/grooming/page.tsx": "2843d1121f38deea57d2ee4eb5eae221d5c535fb5a69a4050b7adbdb6ccfb6a7",
     "docs/uat/2026-09-24-explicit-v2-grooming-recheck.md": "8e75309949e9b72165624809ff773dbda0e00083320a624fcaaab721b81379d6",
     "docs/uat/2026-09-24-paid-journey-remediation.md": "e30fa3b5e4db36d006a92f6a30e944eff187f7e82e21fe33a4d334031f1eaae5",
     "e2e/paid-journey-remediation.spec.ts": "ade05702571c0bf81391a4fe1f997f5285e1d501cdd60e9bea351c9a07d1974b",

@@ -34,6 +34,7 @@ import { v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } 
 import styles from "./grooming.module.css";
 import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
+import PetManager from "../pet-form";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
@@ -46,6 +47,8 @@ export default function V2GroomingPage() {
   const [loading, setLoading] = useState(true);
   const [fatal, setFatal] = useState("");
   const [selectedPetIds, setSelectedPetIds] = useState<string[]>([]);
+  // New customers used to reach a dead end here: pets could only be added in V2 Account.
+  const [addingPet, setAddingPet] = useState(false);
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
@@ -286,6 +289,12 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div>
+            <button type="button" className={styles.liveButton} aria-expanded={addingPet} onClick={() => setAddingPet(open => !open)}>{addingPet ? "Close pet form" : account.pets.length ? "＋ Add another pet" : "＋ Add your pet to start"}</button>
+            {addingPet && <PetManager customer={{ customerId: account.customerId, customerName: account.name, phone: account.primaryPhone }} onPetsChanged={pets => {
+              const known = new Set(account.pets.map(pet => pet.id)), added = pets.find(pet => !known.has(pet.id));
+              setAccount(current => current ? { ...current, pets } as CustomerAccountRecord : current);
+              if (added) { invalidateCare(); setSelectedPetIds([added.id]); setAddingPet(false); }
+            }} />}
             <p className={styles.helper}>{selectedPetIds.length}/4 pets selected. Multi-pet prices come from the governed catalogue. More than four opens a team enquiry.</p>
             {mixedAudience && <p id="v2-selection-issue" className={styles.inlineError} role="alert">{selectionIssue}</p>}
           </section>
@@ -309,7 +318,7 @@ export default function V2GroomingPage() {
 
           <section className={styles.step}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2>Where should we come?</h2></div></div>
-            {account.addresses.length>0&&<label>Saved service address<select value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
+            {account.addresses.length>0&&<label>Saved service address<select style={{display:"block",width:"100%",maxWidth:"100%"}} value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
