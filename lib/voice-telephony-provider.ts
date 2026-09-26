@@ -207,9 +207,10 @@ export function elevenLabsAgentIdForUseCase(env: Env, useCase?: string | null) {
   return val(env, "ELEVENLABS_AGENT_ID");
 }
 export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
-  const apiKey = val(env, "ELEVENLABS_API_KEY"), defaultAgentId = val(env, "ELEVENLABS_AGENT_ID"), phoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
-  if (!apiKey || !defaultAgentId || !phoneNumberId) return disconnectedTelephony;
+  const apiKey = val(env, "ELEVENLABS_API_KEY"), defaultAgentId = val(env, "ELEVENLABS_AGENT_ID"), configuredPhoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
+  if (!apiKey || !defaultAgentId || !configuredPhoneNumberId) return disconnectedTelephony;
   const base = (val(env, "ELEVENLABS_API_BASE") || "https://api.in.residency.elevenlabs.io").replace(/\/$/, "");
+  const callerLast10 = val(env, "EXOTEL_CALLER_ID").replace(/\D/g, "").slice(-10);
   return {
     provider: ELEVENLABS_EXOTEL_PROVIDER, status: "connected", productionCapable: true,
     async createCall(intent) {
@@ -217,30 +218,56 @@ export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
       const agentId = elevenLabsAgentIdForUseCase(env, intent.useCase);
       if (!agentId) throw new TelephonyProviderUnavailable("ElevenLabs agent is not configured for this voice use case");
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
+      const headers = { "content-type": "application/json", "xi-api-key": apiKey };
+      const bodyFor = (phoneNumberId: string) => JSON.stringify({
+        agent_id: agentId,
+        agent_phone_number_id: phoneNumberId,
+        to_number: intent.toNumber,
+        conversation_initiation_client_data: {
+          custom_llm_extra_body: { pawspace_voice_call_id: intent.callRef },
+          dynamic_variables: {
+            pawspace_voice_call_id: intent.callRef,
+            pawspace_customer_id: intent.customerId || "",
+            pawspace_lead_id: intent.leadId || "",
+            pawspace_booking_id: intent.bookingId || "",
+            pawspace_voice_use_case: intent.useCase || "",
+          },
+        },
+      });
+      const place = async (phoneNumberId: string) => {
+        const response = await fetch(`${base}/v1/convai/exotel/outbound-call`, { method: "POST", signal: controller.signal, headers, body: bodyFor(phoneNumberId) });
+        return { response, raw: await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES) };
+      };
+      const resolveCurrentPhoneNumberId = async () => {
+        const candidates = [...new Set([base, "https://api.elevenlabs.io"])];
+        for (const apiBase of candidates) {
+          let response: Response, raw: string;
+          try {
+            response = await fetch(`${apiBase}/v1/convai/phone-numbers?provider=exotel`, { signal: controller.signal, headers: { "xi-api-key": apiKey } });
+            raw = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
+          } catch { continue; }
+          if (!response.ok) continue;
+          let parsed: { phone_numbers?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+          try { parsed = JSON.parse(raw) as typeof parsed; } catch { continue; }
+          const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed.phone_numbers) ? parsed.phone_numbers : [];
+          const exotel = rows.filter(row => !row.provider || String(row.provider).toLowerCase() === "exotel");
+          const matching = callerLast10 ? exotel.filter(row => String(row.phone_number || "").replace(/\D/g, "").slice(-10) === callerLast10) : exotel;
+          const selected = matching.length === 1 ? matching[0] : (!callerLast10 && exotel.length === 1 ? exotel[0] : null);
+          const id = String(selected?.phone_number_id || selected?.id || "").trim();
+          if (id) return id;
+        }
+        throw new TelephonyProviderUnavailable("ElevenLabs Exotel phone number is stale and no unique current ExoPhone could be resolved");
+      };
       try {
         let response: Response, raw: string;
         try {
-          response = await fetch(`${base}/v1/convai/exotel/outbound-call`, {
-            method: "POST", signal: controller.signal,
-            headers: { "content-type": "application/json", "xi-api-key": apiKey },
-            body: JSON.stringify({
-              agent_id: agentId,
-              agent_phone_number_id: phoneNumberId,
-              to_number: intent.toNumber,
-              conversation_initiation_client_data: {
-                custom_llm_extra_body: { pawspace_voice_call_id: intent.callRef },
-                dynamic_variables: {
-                  pawspace_voice_call_id: intent.callRef,
-                  pawspace_customer_id: intent.customerId || "",
-                  pawspace_lead_id: intent.leadId || "",
-                  pawspace_booking_id: intent.bookingId || "",
-                  pawspace_voice_use_case: intent.useCase || "",
-                },
-              },
-            }),
-          });
-          raw = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
+          ({ response, raw } = await place(configuredPhoneNumberId));
+          if (response.status === 404) {
+            const currentPhoneNumberId = await resolveCurrentPhoneNumberId();
+            ({ response, raw } = await place(currentPhoneNumberId));
+          }
         } catch (error) {
+          if (error instanceof TelephonyProviderUnavailable) throw error;
           throw new TelephonyProviderUnavailable(controller.signal.aborted ? `ElevenLabs outbound provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `ElevenLabs outbound provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
         }
         if (!response.ok) throw new TelephonyProviderUnavailable(`ElevenLabs outbound provider rejected the call request (${response.status})`);
