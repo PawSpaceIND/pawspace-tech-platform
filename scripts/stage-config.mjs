@@ -29,11 +29,13 @@ export function readSecret(env, name, minLength, purpose) {
 }
 
 const d1Id = String(process.env.STAGING_D1_ID || "").trim();
+const placementRegion = String(process.env.STAGING_WORKER_PLACEMENT_REGION || "").trim();
 const r2BucketName = String(process.env.STAGING_R2_BUCKET_NAME || "").trim();
 const razorpayRelayOrigin = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN || "").trim();
 const razorpayRelaySha = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA || "").trim();
 let razorpayRelayWorker = "";
 const problems = [];
+if (placementRegion && !/^(aws|gcp|azure):[a-z0-9-]+$/.test(placementRegion)) problems.push("STAGING_WORKER_PLACEMENT_REGION must be a cloud region hint such as aws:ap-southeast-1.");
 if (Boolean(razorpayRelayOrigin) !== Boolean(razorpayRelaySha)) problems.push("Razorpay sandbox relay origin and SHA must be configured together.");
 if (razorpayRelayOrigin && razorpayRelaySha) {
   let relayUrl;
@@ -78,7 +80,9 @@ cfg.ai = { binding: "AI" };
 /* Smart Placement: run the Worker next to its D1 database instead of next to the visitor. A signed-in chat
  * request makes several sequential D1 calls, so the Worker-to-database distance, not the visitor's, sets
  * how fast a reply appears. Staging only for now, to compare before production takes it. */
-cfg.placement = { mode: "smart" };
+// An explicit, measured database location avoids waiting for Smart Placement to learn
+// from sparse voice traffic. Staging D1 was verified as primary SIN on 26 Sep 2026.
+cfg.placement = placementRegion ? { region: placementRegion } : { mode: "smart" };
 // Same-zone global fetches from pawspace-staging to another *.workers.dev Worker are refused by
 // Cloudflare. Bind exactly the certified checkout Worker when shadow relay is enabled; never grant
 // staging a broad Worker-to-Worker global-fetch capability.

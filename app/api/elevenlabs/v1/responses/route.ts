@@ -31,16 +31,13 @@ export async function POST(request:Request){
    // Speech is released as the model produces it, except for a governed action envelope, which is
    // withheld so the phone never hears JSON; see speechGate.
    const gate=speechGate(text=>send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta:text}));
-   let progress="";
    try{
-    const result=await runElevenLabsGroundedTurn(db,body,clock,delta=>gate.push(delta),delta=>{
-     progress+=delta;send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta});
-    });
+    const result=await runElevenLabsGroundedTurn(db,body,clock,delta=>gate.push(delta));
     // Nothing spoken yet means the turn was withheld as an envelope, or served by a path that does
-    // not stream; the resolved substantive reply follows any separate progress text.
+    // not stream; either way the resolved reply is the first and only thing the caller hears.
     if(gate.unspoken)send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta:result.output});
-    send({type:"response.output_text.done",item_id:`${id}_msg`,output_index:0,content_index:0,text:progress+result.output});
-    send({type:"response.completed",response:{id,object:"response",created_at:created,status:"completed",model,output:[{id:`${id}_msg`,type:"message",role:"assistant",content:[{type:"output_text",text:progress+result.output,annotations:[]}]}],
+    send({type:"response.output_text.done",item_id:`${id}_msg`,output_index:0,content_index:0,text:result.output});
+    send({type:"response.completed",response:{id,object:"response",created_at:created,status:"completed",model,output:[{id:`${id}_msg`,type:"message",role:"assistant",content:[{type:"output_text",text:result.output,annotations:[]}]}],
      // Durations only, carried here rather than in Server-Timing because response headers are already
      // on the wire by the time the model stages finish. Consumers ignore unknown response fields.
      pawspace_timing:{path:result.path,modelRef:result.modelRef,providerRef:result.providerRef,upstreamMs:result.upstreamMs,spoken:!gate.unspoken,...result.timings}}});

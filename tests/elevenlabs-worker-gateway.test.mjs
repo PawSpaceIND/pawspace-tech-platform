@@ -246,13 +246,12 @@ test("active staff pause produces a spoken status without invoking the LLM", asy
   await requestAiHumanHandoff(w.db,{threadId:"THREAD-EL-TURN",customerId:"CUS-EL-TURN",reason:"low_confidence",actorEmail:"test@pawspace.test"});
   const mock=stubFetch(()=>{throw new Error("unknown intent must not call provider");});
   t.after(()=>mock.restore());
-  const r=await dispatch(w,request("/api/elevenlabs/v1/responses",JSON.stringify({model:"pawspace-grooming-sales",input:"What grooming packages do you offer?",elevenlabs_extra_body:{pawspace_customer_id:"CUS-EL-TURN",pawspace_thread_id:"THREAD-EL-TURN"}}),{authorization:`Bearer ${credentials.ELEVENLABS_LLM_SECRET}`}));
+  const r=await dispatch(w,request("/api/elevenlabs/v1/responses",JSON.stringify({input:"What grooming packages do you offer?",elevenlabs_extra_body:{pawspace_customer_id:"CUS-EL-TURN",pawspace_thread_id:"THREAD-EL-TURN"}}),{authorization:`Bearer ${credentials.ELEVENLABS_LLM_SECRET}`}));
   const sse=await r.response.text();
   assert.match(sse,/response\.completed/);
   assert.doesNotMatch(sse,/response\.failed/);
   assert.match(sse,/waiting for a PawSpace team member/);
   assert.match(sse,/"path":"human_handoff"/);
-  assert.doesNotMatch(sse,/checking the details/);
   assert.equal(mock.calls.length,0);
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1);
 });
