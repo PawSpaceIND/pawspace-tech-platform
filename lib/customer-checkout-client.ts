@@ -23,6 +23,13 @@ export function checkoutReturnUrl(bookingId: string, origin = typeof window === 
   if (!/^https?:\/\/[^/]+$/.test(origin)) return undefined;
   return `${origin}${CHECKOUT_RETURN_PATH}?bookingId=${encodeURIComponent(bookingId)}${isV2CustomerPath(pathname) ? "&scope=v2" : ""}`;
 }
+/** One fixed, same-app destination for modal success; the destination re-reads server truth. */
+export function bookingConfirmationHref(bookingId:string, pathname:string):string {
+  return `${isV2CustomerPath(pathname)?"/v2/booking-confirmation":BOOKING_CONFIRMATION_PATH}?bookingId=${encodeURIComponent(bookingId)}`;
+}
+export function returnToBooking(bookingId:string):void {
+  if(typeof window!=="undefined") window.location.assign(bookingConfirmationHref(bookingId,window.location.pathname));
+}
 type Dependencies = { fetch: typeof fetch; open: (options: MobileRazorpayCheckoutOptions, env?: Record<string, unknown>) => Promise<MobileRazorpayResult> };
 export async function loadCustomerConfirmationProjection(bookingId:string,signal?:AbortSignal):Promise<CustomerConfirmationProjection>{
   const response=await fetch("/api/customer-checkout",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"content-type":"application/json"},signal,body:JSON.stringify({action:"status",bookingId})});
