@@ -141,7 +141,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  await ensureAiWebChatTables(db);
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
  const aiKey=`ai:${input.idempotencyKey}`;
- // Ownership and the retry lookup are independent reads, so they share one round trip (#1093).
+ // Ownership and the retry lookup are independent reads; a failed ownership check still rejects before any write.
  const[,prior]=await Promise.all([requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
  let threadId="",messageId="",inspectedDetected=false;
