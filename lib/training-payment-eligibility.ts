@@ -37,11 +37,25 @@ export async function trainingPaymentPredicate(db:D1Database,bookingId:string,fu
  return{sql:`EXISTS(SELECT 1 FROM (${funding.sql}) WHERE bookingId=? AND valid=1 AND ROUND(amountPaid*100)>=ROUND((${required})*100))`,binds:[...funding.binds,bookingId]};
 }
 
-export async function trainingBookingPaymentState(db:D1Database,bookingId:string){
- const funding=await trainingFundingQuery(db);
- const row=await db.prepare(`SELECT * FROM (${funding.sql}) WHERE bookingId=?`).bind(...funding.binds,bookingId).first<FundingRow>();
+function paymentState(row:FundingRow|null){
  if(!row)return{status:'UNPAID' as const,amountPaid:0,cashPaid:0,creditPaid:0,remainingAmount:null,totalAmount:0,paymentMode:''};
  const amountPaid=Number(row.amountPaid),totalAmount=Number(row.totalAmount);
  const status=row.valid===1&&Math.round(amountPaid*100)>=Math.round(totalAmount*100)?'FULLY_PAID' as const:amountPaid>0?'PARTIALLY_PAID' as const:'UNPAID' as const;
  return{status,amountPaid,cashPaid:Number(row.cashPaid),creditPaid:Number(row.creditPaid),remainingAmount:Math.max(0,round2(totalAmount-amountPaid)),totalAmount,paymentMode:row.paymentMode};
+}
+
+export async function trainingBookingPaymentState(db:D1Database,bookingId:string){
+ const funding=await trainingFundingQuery(db);
+ return paymentState(await db.prepare(`SELECT * FROM (${funding.sql}) WHERE bookingId=?`).bind(...funding.binds,bookingId).first<FundingRow>());
+}
+
+/** trainingBookingPaymentState for many bookings in one funding read, so a provider job list costs the same D1 calls at any size. */
+export async function trainingBookingPaymentStates(db:D1Database,bookingIds:readonly string[]){
+ const states=new Map<string,ReturnType<typeof paymentState>>();
+ if(!bookingIds.length)return states;
+ const funding=await trainingFundingQuery(db);
+ const rows=await db.prepare(`SELECT * FROM (${funding.sql}) WHERE bookingId IN (SELECT value FROM json_each(?))`).bind(...funding.binds,JSON.stringify(bookingIds)).all<FundingRow>();
+ for(const row of rows.results)if(!states.has(String(row.bookingId)))states.set(String(row.bookingId),paymentState(row));
+ for(const bookingId of bookingIds)if(!states.has(bookingId))states.set(bookingId,paymentState(null));
+ return states;
 }
