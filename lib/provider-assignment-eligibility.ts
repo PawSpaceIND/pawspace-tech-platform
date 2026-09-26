@@ -30,12 +30,13 @@ async function runtimeEnv():Promise<Record<string,unknown>>{
  * fixture provenance so historical harnesses can exercise scheduling without fabricating verification
  * evidence. Those fixtures stay evaluated:false and therefore remain launch blockers.
  */
-async function governedUatSeedFixture(db:Db,providerId:string){
+/** `known` is the provider's capacity-profile row when the caller already read it; otherwise it is read here. */
+async function governedUatSeedFixture(db:Db,providerId:string,known?:Row|null){
   const env=await runtimeEnv();
   const explicitTest=typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&process.env?.PAWSPACE_LOCAL_PREVIEW==="on";
   const uatRuntime=uatRosterSeedingEnabled(env);
   if(!uatRuntime&&!explicitTest)return false;
-  const profile=await db.prepare("SELECT updated_by FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
+  const profile=known??await db.prepare("SELECT updated_by FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
   const provenance=text(profile?.updated_by);
   // A seeded UAT roster provider stays a fixture after a tester edits it in /control: the PATCH there
   // rewrites updated_by to the editor's email, which used to drop the groomer from matching silently.
@@ -55,13 +56,15 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
   if(!id)return block(id,"no_provider");
   try{
     await ensureVerificationMandateTables(db);
+    // The profile columns the no-application path needs are read beside the application (one wave, not three).
+    const profileRead=db.prepare("SELECT services_json,updated_by FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>();profileRead.catch(()=>undefined);
     const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>()
       .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
     if(!application){
-      const rawProfile=await db.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>().catch(()=>null);
+      const rawProfile=await profileRead.catch(()=>null);
       let services:string[]=[];try{services=JSON.parse(text(rawProfile?.services_json)||"[]") as string[];}catch{}
       if(services.includes("vet_consult"))return block(id,"vet_requires_verified_vci_onboarding");
-      if(await governedUatSeedFixture(db,id))return allowUnevaluatedFixture(id,"uat_seed_fixture_exemption");
+      if(await governedUatSeedFixture(db,id,rawProfile))return allowUnevaluatedFixture(id,"uat_seed_fixture_exemption");
       return block(id,"no_onboarding_verification_record");
     }
 

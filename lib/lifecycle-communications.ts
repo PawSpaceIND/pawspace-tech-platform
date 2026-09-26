@@ -83,13 +83,16 @@ export function lifecycleCommunicationPurpose(templateCode:string):Communication
  return RECOVERY_MARKERS.test(templateCode)?"service_recovery":"transactional";
 }
 
+const communicationTablesReady=new WeakSet<object>();
 export async function ensureLifecycleCommunicationTables(db:Db){
+ if(communicationTablesReady.has(db as object))return;
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS lifecycle_communication_links (notification_id TEXT PRIMARY KEY,source_table TEXT NOT NULL,booking_id TEXT NOT NULL,channel TEXT NOT NULL,template_code TEXT NOT NULL,message_id TEXT,outcome TEXT NOT NULL,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_comm_links_booking ON lifecycle_communication_links(booking_id,created_at)"),
   db.prepare("CREATE TABLE IF NOT EXISTS lifecycle_communication_failures (id TEXT PRIMARY KEY,notification_id TEXT,source_table TEXT NOT NULL,booking_id TEXT,channel TEXT,template_code TEXT,error_name TEXT NOT NULL,error_message TEXT NOT NULL,error_stack TEXT,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_comm_failures_booking ON lifecycle_communication_failures(booking_id,created_at)"),
  ]);
+ communicationTablesReady.add(db as object);
 }
 
 /**

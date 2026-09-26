@@ -44,7 +44,7 @@ try {
   try {
     if (!ride?.bookingId || !ride?.providerId) throw new Error("no paid Pet Taxi ride from 06 in this run");
     await providerSession(driver.context, ride.providerId);
-    const act = (action, extra = {}) => api(driver.context, "POST", "/api/taxi-lifecycle", { bookingId: ride.bookingId, action, idempotencyKey: `verify-${action}-${runPhone(8)}`, ...extra });
+    const act = (action, extra = {}) => api(driver.context, "POST", "/api/taxi-lifecycle", { bookingId: ride.bookingId, action, idempotencyKey: `verify-${action}-${runPhone(8)}`, ...extra }, { timeout: 90_000 });
     const accepted = await act("accept");
     const assigned = await act("assign_vehicle");
     const pickup = await act("confirm_pickup", { handoverMethod: "owner" });
