@@ -281,3 +281,40 @@ test('valid Bangalore alias and property numbers remain bookable in explicit V2'
   const f = network(t), value = input(); value.address = 'Flat 123456, 21 HSR Main Road, Bangalore 560102';
   await client.createV2GroomingBooking(value); assert.equal(f.calls.length, 3);
 });
+function multiPetInput(count) {
+  const value = input(), pets = Array.from({ length: count }, (_, index) => ({ ...value.selectedPets[0], id: `PET-${index + 1}`, sourceId: `PET-${index + 1}`, name: `Dog ${index + 1}` }));
+  const bundle = { ...value.bundle, petCount: count, packageCode: `dog-basic__${count}_pets`, price: 3034 };
+  Object.assign(value, { selectedPets: pets, bundle, quote: { price: 3034, source: "pricing_control" } });
+  value.account.pets = pets; value.pkg.bundles = [value.pkg.bundles[0], bundle];
+  return value;
+}
+test("V2 multi-pet bookings send the governed base package code with every pet and the quoted bundle price", async t => {
+  const f = network(t);
+  await client.createV2GroomingBooking(multiPetInput(2));
+  const canonical = f.calls.find(call => call.url === "/api/canonical-bookings").body;
+  assert.equal(canonical.packageCode, "dog-basic");
+  assert.equal(canonical.pets.length, 2);
+  assert.equal(canonical.totalAmount, 3034); assert.equal(canonical.amountDueNow, 3034);
+});
+function youngInput(profile) {
+  const value = input(), pet = { ...value.selectedPets[0], name: "Tiny", ageYears: 0.25, profile };
+  value.selectedPets = [pet]; value.account.pets = [pet]; value.pkg = { ...value.pkg, code: "young-basic", audience: "young" };
+  value.bundle = { ...value.bundle, packageCode: "young-basic", price: 999 }; value.pkg.bundles = [value.bundle];
+  value.quote = { price: 919, source: "pricing_control" };
+  return value;
+}
+test("V2 refuses a young package for a pet without a date of birth before reserving a groomer", async t => {
+  const f = network(t);
+  await assert.rejects(client.createV2GroomingBooking(youngInput({ ageBand: "< 6 months" })), /date of birth/);
+  assert.equal(f.calls.length, 0);
+});
+test("V2 refuses a young package when the date of birth is over six months before the service date", async t => {
+  const f = network(t), born = new Date(Date.parse(`${future}T00:00:00Z`) - 200 * 86400000).toISOString().slice(0, 10);
+  await assert.rejects(client.createV2GroomingBooking(youngInput({ ageBand: "6–12 months", dateOfBirth: born })), /up to 6 months/);
+  assert.equal(f.calls.length, 0);
+});
+test("V2 books a young package when the date of birth is within six months of the service date", async t => {
+  const f = network(t), born = new Date(Date.parse(`${future}T00:00:00Z`) - 90 * 86400000).toISOString().slice(0, 10);
+  await client.createV2GroomingBooking(youngInput({ ageBand: "< 6 months", dateOfBirth: born }));
+  assert.equal(f.calls.find(call => call.url === "/api/canonical-bookings").body.packageCode, "young-basic");
+});

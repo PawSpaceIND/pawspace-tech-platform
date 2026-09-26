@@ -30,7 +30,7 @@ import { useQueryParameter } from "../../../lib/use-query-parameter";
 import V2GroomingPaymentPanel from "./payment-panel";
 import ContactForm from "../../contact/contact-form";
 import { serviceAddressConflict } from "../../../lib/service-address-consistency";
-import { v2GroomingPetAudience, v2GroomingSelectionIssue } from "../../../lib/v2/grooming-selection";
+import { v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } from "../../../lib/v2/grooming-selection";
 import styles from "./grooming.module.css";
 import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
@@ -112,6 +112,7 @@ export default function V2GroomingPage() {
   );
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
   const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
@@ -167,7 +168,7 @@ export default function V2GroomingPage() {
   };
 
   const beginSecureCheckout = async () => {
-    if (checkoutLock.current || providerBusy || mixedAudience) return;
+    if (checkoutLock.current || providerBusy || mixedAudience || youngIssue) return;
     const provider = providers?.providers.find(item => item.id === selectedProviderId);
     if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
     checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
@@ -189,7 +190,7 @@ export default function V2GroomingPage() {
   };
 
   const checkLiveCare = async () => {
-    if (!account || !bundle || !coverage || !date || mixedAudience) return;
+    if (!account || !bundle || !coverage || !date || mixedAudience || youngIssue) return;
     const version = ++careVersion.current;
     setQuote(null);
     setProviderBusy(true);
@@ -299,6 +300,7 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
+            {youngIssue && <p className={styles.inlineError} role="alert">{youngIssue} <a href="/v2/account">Add a date of birth in your account</a>.</p>}
           </section>
 
           <section className={styles.step}>
@@ -321,7 +323,7 @@ export default function V2GroomingPage() {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
-            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
           </section>
 
@@ -346,7 +348,7 @@ export default function V2GroomingPage() {
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue)} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>

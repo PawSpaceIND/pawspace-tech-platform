@@ -1,4 +1,5 @@
 import type { V2GroomingPackage } from './grooming-client';
+import { youngGroomingEligibility, type GroomingPetAge } from '../grooming-package-eligibility';
 
 type Pet = { species: string; ageYears?: number | null };
 export function v2GroomingPetAudience(pet: Pet): V2GroomingPackage['audience'] | null {
@@ -18,5 +19,24 @@ export function v2GroomingSelectionIssue(pets: Pet[], audience?: V2GroomingPacka
     return 'Young-pet and adult care need separate appointments with the appropriate package.';
   if (audience && pets.some(pet => v2GroomingPetAudience(pet) !== audience))
     return 'The published package must match the selected pets and their age category.';
+  return null;
+}
+
+/** IST calendar date of a service start, the date the young-package limit is measured on. */
+export function v2GroomingServiceDate(scheduledStart: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(scheduledStart));
+}
+
+/**
+ * Young packages are chosen from a saved age band, but booking needs a date of birth within six months
+ * of the service date. Applying the server's own rule here stops V2 from quoting and reserving a groomer
+ * for a booking the server will refuse.
+ */
+export function v2YoungPackageIssue(pets: Array<Pet & Pick<GroomingPetAge, 'name' | 'profile'>>, serviceDate: string): string | null {
+  for (const pet of pets) {
+    const issue = youngGroomingEligibility({ name: pet.name, species: String(pet.species || '').toLowerCase(), ageYears: pet.ageYears ?? null, profile: pet.profile ?? null }, serviceDate);
+    if (issue) return issue;
+  }
   return null;
 }

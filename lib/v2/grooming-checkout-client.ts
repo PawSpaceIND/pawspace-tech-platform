@@ -1,6 +1,6 @@
 import type { CustomerAccountRecord } from "../customer-account";
 import { serviceAddressConflict } from "../service-address-consistency";
-import { v2GroomingSelectionIssue } from "./grooming-selection";
+import { v2GroomingSelectionIssue, v2GroomingServiceDate, v2YoungPackageIssue } from "./grooming-selection";
 import { stableBookingInputKey } from "../booking-input-fingerprint";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
 import { apiSend } from "../api-fetch";
@@ -73,6 +73,10 @@ export async function createV2GroomingBooking(
   const start = Date.parse(input.scheduledStart), end = Date.parse(input.scheduledEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start <= Date.now() || end <= start ||
       end - start !== input.bundle.slotMinutes * 60_000) throw new Error("Refresh the exact grooming time before booking.");
+  if (input.pkg.audience === "young") {
+    const youngIssue = v2YoungPackageIssue(input.selectedPets, v2GroomingServiceDate(input.scheduledStart));
+    if (youngIssue) throw new Error(youngIssue);
+  }
   const idempotencyKey = await v2GroomingIdempotencyKey(input);
   const decision = await reserveUatSchedule({
     clientRequestId: idempotencyKey,
@@ -109,7 +113,9 @@ export async function createV2GroomingBooking(
     cityId: input.cityId,
     zoneId: input.zoneId,
     serviceCode: "grooming",
-    packageCode: input.bundle.packageCode,
+    // The server governs packages by base code and prices 2-4 pets from the matching
+    // `<code>__<n>_pets` Pricing Control row itself; it has no catalogue entry for bundle codes.
+    packageCode: input.pkg.code,
     packageName: input.pkg.name,
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
