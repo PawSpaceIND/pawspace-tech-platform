@@ -177,7 +177,7 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
     }
     const rosterCache = new Map<string, Set<string>>();
     async function roster(at: string) {
-      const key = at.slice(0, 10);
+      const key = at; // the roster is read for this exact start time
       if (!rosterCache.has(key)) {
         const listed = await api(page, `/api/training-trainers?cityId=blr&zoneId=blr-east&at=${encodeURIComponent(at)}`);
         rosterCache.set(key, new Set(((listed.body?.data?.providers || []) as Array<{ id: string }>).map(item => item.id)));
