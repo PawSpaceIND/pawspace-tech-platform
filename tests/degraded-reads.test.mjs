@@ -107,10 +107,13 @@ test("the notice never leaks bound values or SQL onto an operator's screen", asy
 });
 
 test("the analytics screen renders the notice instead of only the zero", async () => {
+  // The Team analytics page renders the shared VisualAnalytics panel, which now owns the notice.
   const page = await readFile(new URL("../app/team/analytics/page.tsx", import.meta.url), "utf8");
-  assert.match(page, /degraded/, "the page reads the degraded field");
-  assert.match(page, /data\.degraded\.headline/, "and renders what could not be read");
-  assert.match(page, /entry\.source/, "naming the source, so an operator knows which figure to distrust");
+  assert.match(page, /<VisualAnalytics\b/, "the analytics page renders the shared panel");
+  const panel = await readFile(new URL("../app/components/ui/VisualAnalytics.tsx", import.meta.url), "utf8");
+  assert.match(panel, /degraded/, "the panel reads the degraded field");
+  assert.match(panel, /notice!?\.headline/, "and renders what could not be read");
+  assert.match(panel, /entry\.source/, "naming the source, so an operator knows which figure to distrust");
 });
 
 test("the module says why swallowing without recording is the dangerous shape", async () => {
