@@ -15,6 +15,42 @@ export type CouponCampaign={
 };
 export type CouponQuoteInput={code:string;customerId:string;serviceCode:CouponService;cityId:string;channel:CouponChannel;packageCode:string;orderValue:number;paymentMode:"full"|"partial"|"after_service";isSubscription:boolean};
 
+/*
+ * PawSpace's sales coupons: the offers the WATI flows and PawSpace AI may give a customer.
+ *
+ * - GROOM400 is WATI's cross-sell ("Enjoy ₹400 off Pet Grooming, Exclusively ONLY for You"), shown after
+ *   a Training, Boarding, Pet Sitting or Pet Taxi enquiry. The customer has only enquired, so it is not
+ *   tied to a completed earlier booking (the coupon engine's cross-sell rule requires one).
+ * - GROOM200 is the closing discount PawSpace AI may offer a customer who hesitates on price: ₹200 off a
+ *   single-pet Essential Bath, Bath & Basic or Complete Makeover (1349 / 1899 / 2399 becomes
+ *   1149 / 1699 / 2199).
+ *
+ * Both are real coupon campaigns, so checkout validates and redeems them like any other coupon: once per
+ * customer, grooming only, the listed packages only. Neither is listed in the customer's offers card - they
+ * reach a customer through the bot or PawSpace AI. Staff change the window, limits or status in
+ * Control > Coupons; the seed only inserts them once (INSERT OR IGNORE) and never overwrites those edits.
+ */
+export const GROOMING_CROSS_SELL_COUPON="GROOM400";
+export const GROOMING_CLOSING_COUPON="GROOM200";
+/** Codes given out by the bot or the AI, not advertised to every customer in the offers list. */
+export const UNLISTED_COUPON_CODES:readonly string[]=[GROOMING_CROSS_SELL_COUPON,GROOMING_CLOSING_COUPON];
+
+/** Single-pet regular packages whose closing price the business set (1149 / 1699 / 2199). */
+export const CLOSING_COUPON_PACKAGES=["dog-bath","dog-basic","dog-makeover","cat-basic","cat-makeover"] as const;
+/** The packages the WATI grooming flow offers; the cross-sell applies to any of them. */
+export const CROSS_SELL_COUPON_PACKAGES=["dog-bath","dog-basic","dog-makeover","cat-routine","cat-basic","cat-makeover"] as const;
+
+/* 1 Sep 2026 to 31 Mar 2027 (end of day, India time); staff extend it in Control > Coupons. */
+const VALID_FROM=Date.UTC(2026,8,1),VALID_UNTIL=Date.UTC(2027,2,31,18,29,59);
+
+export function salesCouponCampaigns(now:number):CouponCampaign[]{
+ const common={status:"active" as const,testOnly:true,serviceCodes:["grooming" as const],cityIds:["blr"],channels:["customer_app","website","whatsapp","assisted_staff"] as CouponCampaign["channels"],customerKinds:["new","existing","subscriber"] as CouponCampaign["customerKinds"],packageScope:"selected" as const,crossSellFromServices:[],firstOrderOnly:false,minOrder:999,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:false,discountType:"fixed" as const,perCustomerLimit:1,validFrom:VALID_FROM,validUntil:VALID_UNTIL,createdAt:now,updatedAt:now};
+ return[
+  {...common,id:"sales-coupon-groom400",code:GROOMING_CROSS_SELL_COUPON,name:"Grooming cross-sell ₹400 off (WATI offer)",packageCodes:[...CROSS_SELL_COUPON_PACKAGES],discountValue:400,maxDiscount:400,totalLimit:5000},
+  {...common,id:"sales-coupon-groom200",code:GROOMING_CLOSING_COUPON,name:"PawSpace AI closing ₹200 off grooming",packageCodes:[...CLOSING_COUPON_PACKAGES],discountValue:200,maxDiscount:200,totalLimit:5000},
+ ];
+}
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export type CouponBookingPreparation={
@@ -44,7 +80,9 @@ export function rowToCampaign(row:Row):CouponCampaign{return{id:String(row.id),c
 export async function seedUatCoupons(db:Db){
   await ensureCouponTables(db);const now=Date.now(),start=now-DAY,end=now+120*DAY;const seeds:CouponCampaign[]=[
     {id:"uat-coupon-care100",code:"UATCARE100",name:"UAT care coupon",status:"active",testOnly:true,serviceCodes:["grooming","dog_training","boarding","pet_sitting"],cityIds:["blr"],channels:["customer_app","assisted_staff"],customerKinds:["new","existing","subscriber"],packageScope:"all",packageCodes:[],crossSellFromServices:[],firstOrderOnly:false,minOrder:500,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:false,discountType:"fixed",discountValue:100,maxDiscount:100,perCustomerLimit:2,totalLimit:100,validFrom:start,validUntil:end,createdAt:now,updatedAt:now},
-    {id:"uat-coupon-first200",code:"UATFIRST200",name:"UAT first booking coupon",status:"active",testOnly:true,serviceCodes:["grooming"],cityIds:["blr"],channels:["customer_app"],customerKinds:["new"],packageScope:"single_session",packageCodes:[],crossSellFromServices:[],firstOrderOnly:true,minOrder:1000,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:true,discountType:"fixed",discountValue:200,maxDiscount:200,perCustomerLimit:1,totalLimit:50,validFrom:start,validUntil:end,createdAt:now,updatedAt:now}
+    {id:"uat-coupon-first200",code:"UATFIRST200",name:"UAT first booking coupon",status:"active",testOnly:true,serviceCodes:["grooming"],cityIds:["blr"],channels:["customer_app"],customerKinds:["new"],packageScope:"single_session",packageCodes:[],crossSellFromServices:[],firstOrderOnly:true,minOrder:1000,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:true,discountType:"fixed",discountValue:200,maxDiscount:200,perCustomerLimit:1,totalLimit:50,validFrom:start,validUntil:end,createdAt:now,updatedAt:now},
+    // The WATI cross-sell and PawSpace AI's closing coupon (lib/sales-coupons.ts), seeded once like the rest.
+    ...salesCouponCampaigns(now)
   ];
   for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO coupon_campaigns (id,code,name,status,test_only,service_codes_json,city_ids_json,channels_json,customer_kinds_json,package_scope,package_codes_json,cross_sell_from_services_json,first_order_only,min_order,max_order,subscription_eligible,full_payment_only,discount_type,discount_value,max_discount,per_customer_limit,total_limit,valid_from,valid_until,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(item.id,item.code,item.name,item.status,1,JSON.stringify(item.serviceCodes),JSON.stringify(item.cityIds),JSON.stringify(item.channels),JSON.stringify(item.customerKinds),item.packageScope,JSON.stringify(item.packageCodes),JSON.stringify(item.crossSellFromServices),item.firstOrderOnly?1:0,item.minOrder,item.maxOrder,item.subscriptionEligible?1:0,item.fullPaymentOnly?1:0,item.discountType,item.discountValue,item.maxDiscount,item.perCustomerLimit,item.totalLimit,item.validFrom,item.validUntil,item.createdAt,item.updatedAt).run();
 }

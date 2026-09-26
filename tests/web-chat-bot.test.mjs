@@ -185,10 +185,36 @@ test("the WATI relocation flow asks the same questions in the same shape", () =>
   assert.match(result.reply.text, /Email ID/);
 });
 
+test("WATI relocation: pet type (Other is typed), cities, a DD/MM/YY date, then confirm - and it goes to the relocation desk", () => {
+  const { result, asked } = walk("relocation", ["Domestic", "maya@example.com", "Other", "Rabbit", "Bengaluru", "Delhi", "15/11/26", "No", "Travel date is 20/11 instead"]);
+  assert.match(asked[3], /Please type the pet type/);
+  assert.match(asked[5], /destination city/);
+  assert.match(asked[6], /DD\/MM\/YY/);
+  assert.match(asked[7], /Please confirm the following details[\s\S]*Pet type: Other[\s\S]*To location: Delhi[\s\S]*Date of travel: 15\/11\/2026/);
+  assert.match(asked[8], /required changes/);
+  assert.equal(result.event.type, "completed");
+  assert.equal(result.event.followUp, "team");
+  assert.equal(result.event.followUpReason, "sensitive_relocation", "relocation goes to the relocation desk queue");
+  assert.match(result.reply.text, /relocation partner team will contact you on phone within 24 hours/);
+  assert.doesNotMatch(result.reply.text, /₹400/, "WATI shows no grooming offer after relocation");
+  assert.equal(walk("relocation", ["International", "maya@example.com", "Dog", "Bengaluru", "Dubai", "01/12/26", "Yes"]).result.event.type, "completed", "Yes finishes");
+});
+
+test("WATI pet taxi: 'Outstation from BLR' continues in the relocation flow without asking the name again", () => {
+  let result = bot.runBotTurn(bot.initialBotState(), { choiceId: "pet_taxi", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "Ravi Kumar", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "9876543210", signedIn: false });
+  result = bot.runBotTurn(result.state, { text: "Outstation from BLR", signedIn: false });
+  assert.equal(result.state.flow, "relocation");
+  assert.match(result.reply.text, /Outstation from BLR trips are arranged by our pet relocation team[\s\S]*travel type/);
+  assert.equal(result.state.answers.name, "Ravi Kumar");
+  assert.equal(result.state.answers.via, "Pet Taxi - Outstation from BLR");
+});
+
 test("answers are validated, and a typed number picks the step's own option", () => {
   let result = bot.runBotTurn(bot.initialBotState(), { choiceId: "pet_taxi", signedIn: true });
-  result = bot.runBotTurn(result.state, { text: "2", signedIn: true });
-  assert.equal(result.state.answers.travelType, "Outstation from BLR");
+  result = bot.runBotTurn(result.state, { text: "1", signedIn: true });
+  assert.equal(result.state.answers.travelType, "Incity");
   for (const typed of ["1", "1", "1", "1", "1", "2", "1"]) result = bot.runBotTurn(result.state, { text: typed, signedIn: true });
   assert.equal(result.state.answers.purpose, "Airport/station");
   assert.equal(result.state.answers.luggage, "1-2", "an airport trip asks about luggage, as in WATI");
@@ -395,7 +421,7 @@ test("WATI grooming: 'Others' breed and three or more pets are typed; a cat gets
   ({ asked } = walk("grooming", ["No", "Cat", "3 & above", "Persian and Bombay"]));
   assert.match(asked[3], /type the breed/);
   const cat = walk("grooming", ["No", "Cat", "1", "Persian Cat"]).result.reply.choices.map((choice) => choice.label);
-  assert.deepEqual(cat, ["Routine Grooming", "Bath & Basic", "Complete Makeover", "Start over"]);
+  assert.deepEqual(cat, ["Routine Grooming ₹1,149", "Bath & Basic ₹1,899", "Complete Makeover ₹2,399", "Start over"]);
 });
 
 test("WATI grooming: 'No' to confirm starts again; an active subscription goes to the team", () => {
@@ -457,5 +483,31 @@ test("WATI pet taxi: round trips ask the waiting period, and 'No' to the summary
   assert.match(asked[13], /Please confirm the following details[\s\S]*Handler: Yes[\s\S]*Do you confirm the above details\?/);
   assert.equal(result.event.type, "completed");
   assert.match(result.event.summary, /Waiting period: 60 mins[\s\S]*Required change: Pick up at 11 AM instead/);
-  assert.equal(walk("pet_taxi", ["Outstation from BLR", "Cat", "1", "3+ years", "0", "No", "Leisure (incity)trip", "05/10", "9 AM", "One way trip", "Whitefield", "Mysore", "Yes"]).result.event.followUp, "team");
+  assert.equal(walk("pet_taxi", ["Incity", "Cat", "1", "3+ years", "0", "No", "Leisure (incity)trip", "05/10", "9 AM", "One way trip", "Whitefield", "Indiranagar", "Yes"]).result.event.followUp, undefined, "an in-city trip is priced by PawSpace AI");
+});
+
+test("grooming package buttons carry the catalogue price; typing the name still picks it, and the answer is the name", async () => {
+  const { groomingCatalogue } = await import("../lib/grooming-governance.ts");
+  const price = (code) => groomingCatalogue.find((row) => row.code === code).singlePrice;
+  assert.deepEqual([price("dog-bath"), price("dog-basic"), price("dog-makeover")], [1349, 1899, 2399], "the business's regular single-pet prices");
+  const at = walk("grooming", ["No", "Dog", "1", "Labrador"]).result;
+  assert.deepEqual(at.reply.choices.map((choice) => choice.label), ["Essential Bath ₹1,349", "Bath & Basic ₹1,899", "Complete Makeover ₹2,399", "Start over"]);
+  assert.deepEqual(at.reply.choices.slice(0, 3).map((choice) => choice.id), ["essential_bath", "bath_basic", "complete_makeover"], "ids stay name-based");
+  for (const input of ["Essential Bath", "Essential Bath ₹1,349", { choiceId: "essential_bath" }, "1"]) {
+    const picked = bot.runBotTurn(at.state, { ...(typeof input === "string" ? { text: input } : input), signedIn: true });
+    assert.equal(picked.state.answers.package, "Essential Bath", JSON.stringify(input));
+  }
+});
+
+test("the ₹400 cross-sell carries its coupon code into the grooming enquiry, and the code leads the summary", () => {
+  const done = walk("training", ["Bangalore", "First-time Enquiry", "1", "Labrador", "Adult - 1-3 yrs", "Male", "Leash pulling", "01/10/2026", "5pm-7pm"]).result;
+  assert.match(done.reply.text, new RegExp(`Use code ${bot.GROOMING_CROSS_SELL_COUPON} when you book`));
+  let result = bot.runBotTurn(done.state, { choiceId: "grooming_offer", signedIn: true });
+  assert.equal(result.state.answers.coupon, "GROOM400");
+  assert.match(result.reply.text, /Your code GROOM400 is noted/);
+  for (const input of ["No", "Dog", "1", "Labrador", "Bath & Basic", "28/09", "9am-11am", "HSR Layout", "No"]) result = bot.runBotTurn(result.state, { text: input, signedIn: true });
+  assert.equal(result.state.answers.coupon, "GROOM400", "'No' to confirm starts again but keeps the code");
+  for (const input of ["No", "Dog", "1", "Labrador", "Bath & Basic", "28/09", "9am-11am", "HSR Layout", "OK"]) result = bot.runBotTurn(result.state, { text: input, signedIn: true });
+  assert.equal(result.event.type, "completed");
+  assert.match(result.event.summary.split("\n")[1], /^Offer: ₹400 off Pet Grooming \(use code GROOM400\)$/);
 });

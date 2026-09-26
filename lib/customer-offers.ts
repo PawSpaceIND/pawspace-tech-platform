@@ -10,7 +10,7 @@
 // campaign management. A customer must not need a staff permission just to see which coupon codes
 // exist, so this module is read-only and deliberately has no save/quote/consume surface of its own.
 
-import { ensureCouponTables, seedUatCoupons, customerFacts, rowToCampaign, type CouponCampaign } from "./coupon-governance";
+import { ensureCouponTables, seedUatCoupons, customerFacts, rowToCampaign, UNLISTED_COUPON_CODES, type CouponCampaign } from "./coupon-governance";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -112,7 +112,10 @@ export async function listAvailableCoupons(db: Db, input: { customerId: string }
   const eligible = rows.results
     .map(rowToCampaign)
     .filter((campaign) => campaign.customerKinds.includes(facts.kind))
-    .filter((campaign) => !campaign.firstOrderOnly || facts.orderCount === 0);
+    .filter((campaign) => !campaign.firstOrderOnly || facts.orderCount === 0)
+    // GROOM400 and GROOM200 reach a customer through the WATI bot or PawSpace AI; they are typed at
+    // checkout, not advertised here to every customer.
+    .filter((campaign) => !UNLISTED_COUPON_CODES.includes(campaign.code));
 
   const coupons = eligible.map((campaign) => toOffer(campaign, campaign.code === WELCOME_COUPON_CODE && facts.orderCount === 0));
   const autoApply = coupons.find((offer) => offer.autoApply) ?? null;
