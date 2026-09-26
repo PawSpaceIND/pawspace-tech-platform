@@ -85,9 +85,12 @@ export async function validateBookingMargin(db: Db, input: { bookingId: string; 
   }
   const postOfferPaise = basePaise - discountPaise;
   const feesPaise = Math.ceil(postOfferPaise * Number(policy.razorpay_fee_bps) / 10_000) + Number(policy.razorpay_fee_fixed_paise);
+  // GST is every GST the engine's split books: PawSpace's GST on its commission or on its own supply, both from the one GST
+  // setting through lib/gst-method.ts, plus any GST a legacy split carved off the top. This check used to leave the carve out
+  // (G23) and so overstated the old standard model's margin by the whole 18/118. The discount stays PawSpace-funded, as before.
   const components: MarginComponents = {
     baseServicePricePaise: basePaise, proposedDiscountPaise: discountPaise, freeUpgradeCostPaise: upgradeCostPaise,
-    partnerPayoutPaise: Math.round(payout.providerNetPayout * 100), gstPaise: Math.round((payout.platformGst + payout.pawspaceGstOnOrder) * 100),
+    partnerPayoutPaise: Math.round(payout.providerNetPayout * 100), gstPaise: Math.round((payout.platformGst + payout.pawspaceGstOnOrder + (payout.providerGstDeducted || 0)) * 100),
     razorpayFeesPaise: feesPaise, minimumMarginBps: Number(policy.minimum_margin_bps), minimumMarginPaise: Number(policy.minimum_margin_paise),
   };
   let decision = "allowed", result: ReturnType<typeof calculateMargin>;

@@ -14,11 +14,11 @@ import{schedulingCalendarReads}from"./scheduling-calendar-reads";
  * with the same governed quote a booking uses (quoteGroomingBookingWithLiveMultiPet: the booking's
  * package, its pets' species, its city/zone and the NEW start). Owner decision:
  *   - same or lower: the booking moves and the booked price is kept; the difference is not refunded.
- *   - higher: the booking does not move and nothing is charged. The customer has to approve and pay
- *     the difference first, and there is no signature-verified way to collect an additional amount on
- *     an existing booking yet (booking_payments, payment_gateway_links and post_service_payment_requests
- *     each hold exactly one payment per booking, and a capture that differs from it is reconciled as
- *     capture_amount_mismatch), so the route refuses rather than inventing a money path.
+ *   - higher: the booking does not move and nothing is charged until the customer approves and pays
+ *     the difference (owner decision M4). The difference is collected on its own payment intent and
+ *     Razorpay order, confirmed only by a signed webhook or an authenticated provider read, and the
+ *     booking moves after that capture (lib/grooming-reschedule-payment.ts). Where that is not
+ *     available the route refuses with the difference, as before.
  * A booking whose price is covered by a subscription entitlement is not re-priced per slot.
  *
  * Groomers. When the assigned groomer cannot take the new slot, the governed scheduler (the same
@@ -98,11 +98,12 @@ async function activeSchedulingRules(db:Db,cityId:string,zoneId:string):Promise<
  return rows.results.flatMap(row=>parse<CustomScheduleRule[]>(row.condition_json,[]));
 }
 
-function rescheduleRepository(db:Db,input:{cityId:string;groupId:string;start:string;end:string;offsetMinutes:number;loaded:(providers:Provider[])=>void}):PlatformRepository{
+function rescheduleRepository(db:Db,input:{cityId:string;groupIds:string[];start:string;end:string;offsetMinutes:number;loaded:(providers:Provider[])=>void}):PlatformRepository{
  const appointmentAt=new Date(input.start),calendar=schedulingCalendarReads(db,input.cityId,[{start:input.start,end:input.end}],input.offsetMinutes);
  let reservations:Promise<Row[]>|undefined;
- // The booking's own reservation is the one being moved, so it never blocks its replacement.
- const rows=()=>reservations??=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!='cancelled' AND group_id!=?").bind(input.cityId,input.groupId).all<Row>().then(result=>result.results);
+ // The booking's own reservation is the one being moved, so it never blocks its replacement; nor does a
+ // paid reschedule's own slot hold, which the move releases.
+ const rows=()=>reservations??=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!='cancelled' AND group_id NOT IN (SELECT value FROM json_each(?))").bind(input.cityId,JSON.stringify(input.groupIds)).all<Row>().then(result=>result.results);
  return{
   async listEligibleProviders(cityId:string,zoneId:string,serviceCode:string){const providers=await loadGovernedProviders(db,cityId,zoneId,serviceCode,appointmentAt);input.loaded(providers);return providers;},
   async listBookings(_cityId:string,providerId?:string){return (await rows()).filter(row=>!providerId||String(row.provider_id)===providerId).map(row=>({id:String(row.id),legacyIds:[],idempotencyKey:String(row.id),cityId:String(row.city_id),zoneId:String(row.zone_id),customerId:String(row.customer_id),petIds:parse<string[]>(row.pet_ids_json,[]),serviceCode:String(row.service_code),packageCode:"reschedule",addonCodes:[],scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),status:String(row.status) as Booking["status"],channel:"customer_app",totalAmount:0,providerId:String(row.provider_id),assignmentMode:"automatic",scheduleGroupId:String(row.group_id),occurrenceNumber:Number(row.occurrence_number),capacityUnits:Number(row.capacity_units),careMode:row.care_mode as Booking["careMode"],createdBy:String(row.customer_id),createdAt:new Date(Number(row.created_at)).toISOString(),updatedAt:new Date(Number(row.created_at)).toISOString()}));},
@@ -119,14 +120,14 @@ function rescheduleRepository(db:Db,input:{cityId:string;groupId:string;start:st
  * policy's ranking weights. The currently assigned groomer is excluded: the route only asks when that
  * groomer has already failed the slot check.
  */
-export async function rankReschedulingGroomers(db:Db,input:{booking:Row;scheduledStart:string;scheduledEnd:string;excludeProviderIds:string[];offsetMinutes:number}):Promise<{providers:Provider[];evaluations:ProviderEvaluation[]}>{
+export async function rankReschedulingGroomers(db:Db,input:{booking:Row;scheduledStart:string;scheduledEnd:string;excludeProviderIds:string[];offsetMinutes:number;excludeGroupIds?:string[]}):Promise<{providers:Provider[];evaluations:ProviderEvaluation[]}>{
  const{booking}=input,cityId=String(booking.city_id),zoneId=String(booking.zone_id),groupId=String(booking.schedule_group_id);
  const stored=await tableExists(db,"scheduling_assignment_decisions")?await db.prepare("SELECT shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first<Row>():null;
  const original=parse<{request?:Record<string,unknown>}>(stored?.shortlist_json,{}).request??{};
  const geofence=original.serviceRadiusKm!==undefined&&original.serviceRadiusKm!==null?{latitude:Number(original.latitude),longitude:Number(original.longitude),serviceRadiusKm:Number(original.serviceRadiusKm)}:{};
  const policy=(await resolveAssignmentPolicy(db,"grooming",cityId,new Date(input.scheduledStart))).config;
  let governed:Provider[]=[];
- const decision=await schedule(rescheduleRepository(db,{cityId,groupId,start:input.scheduledStart,end:input.scheduledEnd,offsetMinutes:input.offsetMinutes,loaded:providers=>{governed=providers;}}),{
+ const decision=await schedule(rescheduleRepository(db,{cityId,groupIds:[groupId,...(input.excludeGroupIds??[])],start:input.scheduledStart,end:input.scheduledEnd,offsetMinutes:input.offsetMinutes,loaded:providers=>{governed=providers;}}),{
   cityId,zoneId,serviceCode:"grooming",petIds:parse<unknown[]>(booking.pet_ids_json,[]).map(String),scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,...geofence,
   excludeProviderIds:input.excludeProviderIds,preferredProviderMode:"disabled",
   rankingWeights:{qualityWeight:policy.qualityWeight,fullTimeBonus:policy.fullTimeBonus,preferredProviderBonus:policy.preferredProviderBonus,repeatProviderBonus:policy.repeatProviderBonus,distanceWeight:policy.distanceWeight,residualCapacityWeight:policy.residualCapacityWeight,workloadPenalty:policy.workloadPenalty},

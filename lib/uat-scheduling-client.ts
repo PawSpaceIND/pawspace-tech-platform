@@ -23,10 +23,20 @@ export async function previewUatProviders(input:UatScheduleRequest,options:{time
  const timer=setTimeout(abort,timeout);
  try{
   const remembered=!input.serviceAddress&&!input.servicePincode?selectedAddress():null;
-  const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});
-  const body=await response.json() as {data?:ProviderPreview;error?:string};
-  if(!response.ok||!body.data||!Array.isArray(body.data.providers))throw new Error(body.error||"Unable to load available care professionals. Please try again.");
-  return body.data;
+  for(let attempt=0;;attempt+=1){
+   const response=await fetch("/api/uat-scheduling",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,...remembered,action:"preview"}),signal:controller.signal});
+   const body=await response.json() as {data?:ProviderPreview;error?:string;code?:string;retryAfterSeconds?:number};
+   // The server stops at its own 20 s deadline with 503 SCHEDULING_PREVIEW_TIMEOUT and finishes warming up in the
+   // background, so a second check after Retry-After usually answers in a few seconds. Retry once, inside the same
+   // overall time limit, instead of asking the customer to press the button again.
+   if(attempt===0&&response.status===503&&body.code==="SCHEDULING_PREVIEW_TIMEOUT"){
+    const waitMs=Math.min(10,Math.max(1,Number(body.retryAfterSeconds)||5))*1000;
+    await new Promise<void>((resolve,reject)=>{const wait=setTimeout(resolve,waitMs);controller.signal.addEventListener("abort",()=>{clearTimeout(wait);reject(new Error("aborted"));},{once:true});});
+    continue;
+   }
+   if(!response.ok||!body.data||!Array.isArray(body.data.providers))throw new Error(body.error||"Unable to load available care professionals. Please try again.");
+   return body.data;
+  }
  }catch(error){
   if(controller.signal.aborted)throw new Error("Availability search timed out. Please try again.");
   if(error instanceof SyntaxError)throw new Error("Availability response could not be read. Please try again.");

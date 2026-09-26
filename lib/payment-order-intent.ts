@@ -34,41 +34,28 @@ async function persistGatewayOrderLink(db: Db, input: {
   ]);
 }
 
-export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
-  const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
-  if (!bookingId || !customerId) throw new Error("A booking and customer are required");
-  const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
-  if (!row) throw new Error("Booking or its payment record was not found");
-  if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
-
-  const stage = await paymentStageAmount(db, bookingId);
-  if (!stage) throw new Error("Booking or its payment record was not found");
-  if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
-
+/**
+ * Claims the durable intent for an EXPLICIT amount and purpose and opens its Razorpay order through the
+ * outbox saga: one provider call however often the customer retries, because the idempotency key names
+ * the intent. It never touches payment_gateway_links - that row belongs to the booking's first payment,
+ * so an additional amount (a reschedule difference) keeps its order on its own intent only.
+ */
+export async function openPaymentIntentOrder(db: Db, env: Record<string, unknown>, input: {
+  bookingId: string; customerId: string; paymentId: string; idempotencyKey: string; amountPaise: number; currency: string; commercialSnapshot: Record<string, unknown>;
+}) {
   // Initialize reconciliation schema before any irreversible Razorpay provider call. This keeps
   // lazy DDL out of the post-provider response path while preserving webhook/reconciliation tables.
   await ensurePaymentReconciliationTables(db);
-  const amount = stage.dueNow, currency = stage.currency, paymentId = stage.paymentId;
-  const amountPaise = rupeesToPaiseExact(amount);
   const environment = paymentEnvironment(env);
-  const idempotencyKey = `payment-order:${paymentId}:${stage.stage}:${amountPaise}`;
   const intent = await claimPaymentIntent(db, {
-    bookingId,
-    customerId,
-    paymentId,
-    idempotencyKey,
-    amountPaise,
-    currency,
+    bookingId: input.bookingId,
+    customerId: input.customerId,
+    paymentId: input.paymentId,
+    idempotencyKey: input.idempotencyKey,
+    amountPaise: input.amountPaise,
+    currency: input.currency,
     environment,
-    commercialSnapshot: {
-      paymentStage: stage.stage,
-      bookingTotal: stage.bookingTotal,
-      dueNow: amount,
-      outstandingBalance: stage.outstandingBalance,
-      creditsApplied: stage.creditsApplied,
-      walletCreditApplied: stage.walletCreditApplied,
-      pawPointsCreditApplied: stage.pawPointsCreditApplied,
-    },
+    commercialSnapshot: input.commercialSnapshot,
   });
 
   const intentId = String(intent.id);
@@ -79,11 +66,11 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
   if (!orderId) {
     const execution = await executeRazorpayOrderOutbox(db, env, { outboxId: String(outbox.id), workerId: `checkout:${crypto.randomUUID()}` });
     if (execution.claimed && !execution.connected) {
-      return { connected: false, environment, reason: execution.reason, reconciliationRequired: Boolean(execution.reconciliationRequired) };
+      return { connected: false as const, environment, intentId, reason: execution.reason, reconciliationRequired: Boolean(execution.reconciliationRequired) };
     }
     if (execution.claimed && execution.connected) {
       if (execution.reconciliationRequired) {
-        return { connected: false, environment, reason: execution.reason || "Razorpay order requires reconciliation before checkout may continue", reconciliationRequired: true };
+        return { connected: false as const, environment, intentId, reason: execution.reason || "Razorpay order requires reconciliation before checkout may continue", reconciliationRequired: true };
       }
       orderId = execution.orderId;
     }
@@ -95,6 +82,41 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
       }
     }
   }
+  return { connected: true as const, environment, intentId, orderId, amountPaise: input.amountPaise, currency: input.currency };
+}
+
+export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
+  const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
+  if (!bookingId || !customerId) throw new Error("A booking and customer are required");
+  const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
+  if (!row) throw new Error("Booking or its payment record was not found");
+  if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
+
+  const stage = await paymentStageAmount(db, bookingId);
+  if (!stage) throw new Error("Booking or its payment record was not found");
+  if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
+
+  const amount = stage.dueNow, currency = stage.currency, paymentId = stage.paymentId;
+  const amountPaise = rupeesToPaiseExact(amount);
+  const opened = await openPaymentIntentOrder(db, env, {
+    bookingId,
+    customerId,
+    paymentId,
+    idempotencyKey: `payment-order:${paymentId}:${stage.stage}:${amountPaise}`,
+    amountPaise,
+    currency,
+    commercialSnapshot: {
+      paymentStage: stage.stage,
+      bookingTotal: stage.bookingTotal,
+      dueNow: amount,
+      outstandingBalance: stage.outstandingBalance,
+      creditsApplied: stage.creditsApplied,
+      walletCreditApplied: stage.walletCreditApplied,
+      pawPointsCreditApplied: stage.pawPointsCreditApplied,
+    },
+  });
+  if (!opened.connected) return { connected: false, environment: opened.environment, reason: opened.reason, reconciliationRequired: opened.reconciliationRequired };
+  const { environment, orderId } = opened;
 
   // Schema is already ready before the provider call, so this is DML-only reconciliation metadata.
   // The authoritative order identity remains payment_intents.gateway_order_id.

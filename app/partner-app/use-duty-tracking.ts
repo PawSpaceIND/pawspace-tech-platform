@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
 import {boundedFetch} from "../../lib/bounded-fetch";
-import {gpsIngestionKey} from "../../lib/gps-telemetry-policy";
+import {IMPLAUSIBLE_SPEED_NOTE,gpsIngestionKey} from "../../lib/gps-telemetry-policy";
 import {PushNotifications} from "@capacitor/push-notifications";
 import {Capacitor,registerPlugin} from "@capacitor/core";
 type Fix={latitude:number;longitude:number;accuracy:number;time:number;simulated?:boolean};
@@ -28,7 +28,7 @@ export function useDutyTracking(job:{bookingId:string;providerId:string}|null,on
       if(fix.simulated){setNotice("Simulated GPS is not accepted as service evidence.");return;}
       sending=true;lastSent=Date.now();
       const point={bookingId,providerId,latitude:fix.latitude,longitude:fix.longitude,accuracyMeters:fix.accuracy,capturedAt:fix.time};
-      try{const response=await boundedFetch("/api/grooming-route",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...point,idempotencyKey:gpsIngestionKey(point)})});const body=await response.json();if(disposed)return;if(!response.ok)throw new Error(body.error||"Location could not be verified");setNotice(Capacitor.isNativePlatform()?"Background location active for this job":"Location active while this browser is open");await heartbeat();}
+      try{const response=await boundedFetch("/api/grooming-route",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...point,idempotencyKey:gpsIngestionKey(point)})});const body=await response.json();if(disposed)return;if(!response.ok)throw new Error(body.data?.rejectionReason==="implausible_speed"?IMPLAUSIBLE_SPEED_NOTE:body.error||"Location could not be verified");setNotice(Capacitor.isNativePlatform()?"Background location active for this job":"Location active while this browser is open");await heartbeat();}
       catch(problem){if(!disposed)setNotice(problem instanceof Error?problem.message:"Waiting for GPS connection");}finally{sending=false;}
     };
     queueMicrotask(()=>{if(!disposed)setNotice("Requesting location permission for your active job…");});
