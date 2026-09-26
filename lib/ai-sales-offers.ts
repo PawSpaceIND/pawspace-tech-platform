@@ -18,7 +18,8 @@ export type ApprovedSalesOffer={name:string;code:string;usage:"closing"|"cross_s
 
 const CAMPAIGN_USAGE:Record<string,ApprovedSalesOffer["usage"]>={"sales-coupon-groom200":"closing","sales-coupon-groom400":"cross_sell"};
 const CAMPAIGN_IDS=Object.keys(CAMPAIGN_USAGE);
-const SQL_IDS=CAMPAIGN_IDS.map(()=>"?").join(",");
+/** The two seeded campaigns, bound as a fixed pair of placeholders. */
+const SQL_IDS="?,?";
 
 async function readCampaigns(db:D1Database){
  const read=async()=>(await db.prepare(`SELECT * FROM coupon_campaigns WHERE id IN (${SQL_IDS})`).bind(...CAMPAIGN_IDS).all<Row>()).results;
