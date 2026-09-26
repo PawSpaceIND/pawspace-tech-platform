@@ -785,7 +785,7 @@
     "app/v2/booking/page.tsx": "9d93013240e2e9bf2203303e5c48ef3d44e2ac06a8e913d46a5cf169aeea22dc",
     "app/v2/booking/training-sessions.tsx": "24dd3f0a9058eeee0c14a5f7198262a8732018dc43766b25913756bf8f64ad52",
     "app/v2/chat/page.module.css": "b576608579a95976332fe2db0d859a3094a722cf61b5e03a6b0c233a4cf35ed9",
-    "app/v2/chat/page.tsx": "e1f4a7213040176726e643caad8ad02d630efa527ba5fbd874a083457fad8cae",
+    "app/v2/chat/page.tsx": "a691fae17caebcd574d2968dac9fa9a50c489290ea7e1408f671be94aefae890",
     "app/v2/control-center/page.tsx": "c6fad6c2a14b65931137943c3482eee771066f941404b904deee0355e03c4df8",
     "app/v2/crm/page.tsx": "011d842adbd4dd147f7c0431955029079bf68456889f14d592cb93b32091defa",
     "app/v2/customer-detail.module.css": "141efb6bae3de31f2744f0caf9d1aa12b40fbb69bc6fd9af25d619a3828f131e",
@@ -1524,7 +1524,7 @@
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
     "package-lock.json": "0529313ccf934b3072bc4ca32f39d1dbdd3067e76d897d79e95fe28bd15db4d1",
     "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362",
-    "app/team/customer-experience/whatsapp-inbox.module.css": "0f0ece7fbd3693e90d7faa3e1303a7831e2a3bca33dfbbe5b66b0ef7ef8c662d",
+    "app/team/customer-experience/whatsapp-inbox.module.css": "efc40bda57eb29b54f1a62b32e86b105131f3a63fb1c9cfb51250d6f04aa8bba",
     "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
   }
 }
