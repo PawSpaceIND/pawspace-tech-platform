@@ -7,4 +7,6 @@ test('progress and fallback filler never prove a substantive voice response',()=
 test('the checked follow-up after progress counts as a real response',()=>{
  assert.equal(isSubstantiveVoiceReply("I'm checking the details... Which grooming package would you like for Bruno?"),true);
  assert.equal(isSubstantiveVoiceReply('What address and pincode should I use?'),true);
+ assert.equal(isSubstantiveVoiceReply('One moment while I check that for you. Please share the full service address with the six-digit pincode, and choose Bruno’s package.'),true);
+ assert.equal(isSubstantiveVoiceReply("I'm checking the details... One moment while I check that for you. I'm checking the details..."),false);
 });
