@@ -16,6 +16,7 @@ async function api(path,body){
 }
 const ledger=await api('/api/voice-outbound?scope=ledger&limit=100');
 const call=ledger.find(row=>row.callId===callId);
+console.log('VOICE_UAT_CONTEXT_CHECK='+JSON.stringify({found:Boolean(call),mode:call?.mode||null,productionCall:call?.productionCall??null,phoneLast4:call?.phoneLast4||null,expectedLast4:expected,matchingCandidates:ledger.filter(row=>row.mode==='uat'&&!row.productionCall&&row.phoneLast4===expected).map(row=>({callId:row.callId,state:row.state,useCase:row.useCase})).slice(0,5)}));
 if(!call||call.mode!=='uat'||call.productionCall||call.phoneLast4!==expected)throw new Error('Call is not the confirmed UAT test context');
 const threadId='THREAD-VOICE-'+callId;
 const queue=await api('/api/ai-human-handoff?mode=queue&limit=100');
