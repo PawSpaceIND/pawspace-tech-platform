@@ -2,3 +2,5 @@
 
 .controls label{min-width:0}.controls input,.controls select{width:100%;min-width:0;box-sizing:border-box}
 @media(max-width:700px){.controls label{flex:1 1 130px;min-width:130px}}
+
+.action{font:inherit;border:1px solid var(--staff-line,var(--paw-line,#ccc));border-radius:8px;padding:7px 10px;cursor:pointer;background:var(--staff-surface,var(--paw-surface,#fff));color:var(--staff-primary,var(--paw-primary,#11885b))}.panel button:disabled{opacity:.5;cursor:not-allowed}.panel button:focus-visible,.panel summary:focus-visible{outline:3px solid var(--staff-primary,var(--paw-primary,#11885b));outline-offset:3px}
