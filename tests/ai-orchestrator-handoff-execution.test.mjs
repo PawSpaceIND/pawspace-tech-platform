@@ -454,10 +454,12 @@ test("intent signals match whole words, not fragments of other words", () => {
 
 test("a sales reply may quote only prices that are in the server-owned catalogue", async () => {
   const grounded = await import("../lib/ai-grounded-runtime-provider.ts");
-  const catalogue = { grooming: [{ package_code: "dog-trim", base_price: 1599 }, { package_code: "dog-bath", base_price: 1349 }], petTaxi: [{ route_code: "short", amount: 499 }] };
+  const catalogue = { grooming: [{ package_code: "dog-trim", name: "Just Trim", base_price: 1599 }, { package_code: "dog-bath", name: "Essential Bath", base_price: 1349 }], petTaxi: [{ route_code: "short", name: "Short trip", amount: 499 }] };
   assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹1,599 and a short taxi is Rs. 499.", catalogue), true);
   assert.equal(grounded.pricesMatchCatalogue("Our Essential Bath costs 1349 rupees.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("A grooming session starts at 1349 rupees.", catalogue), true, "the service named is enough");
   assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹999 today only.", catalogue), false, "an invented price must not count as grounded");
+  assert.equal(grounded.pricesMatchCatalogue("Grooming for your dog is ₹499.", catalogue), false, "a taxi fare must not ground a grooming price");
   assert.equal(grounded.pricesMatchCatalogue("We have great grooming packages.", catalogue), true, "no amount quoted, nothing to verify");
   const started = Date.now();
   grounded.pricesMatchCatalogue("1,".repeat(50_000) + "x", catalogue);

@@ -84,13 +84,28 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  * themselves are compared against the catalogue, so an invented or altered price still fails.
  */
 export function pricesMatchCatalogue(reply:string,catalogue:unknown){
- const known=new Set<number>();
- const walk=(value:unknown,key=""):void=>{if(Array.isArray(value)){value.forEach(item=>walk(item,key));return;}if(value&&typeof value==="object"){for(const[child,inner]of Object.entries(value as Row))walk(inner,child);return;}if(/price|amount/i.test(key)&&Number.isFinite(Number(value))&&Number(value)>0)known.add(Math.round(Number(value)));};
- walk(catalogue);
-  // Each amount starts at a digit that does not continue a number, so matching stays linear in the reply.
+ /* An amount counts only against the service it belongs to: it must be a price in a catalogue row whose
+  * package, or whose service, the reply actually names. A taxi fare of 499 does not ground "grooming for
+  * 499". */
+ const lower=reply.toLowerCase(),groups=catalogue&&typeof catalogue==="object"?Object.entries(catalogue as Row):[];
+ const rows:Array<{amounts:Set<number>;named:boolean}>=[];
+ for(const[group,value]of groups){
+  if(!Array.isArray(value))continue;
+  const serviceNamed=Object.entries(SERVICE_GROUP_WORDS).some(([key,pattern])=>group===key&&pattern.test(lower));
+  for(const item of value){
+   if(!item||typeof item!=="object")continue;const row=item as Row,amounts=new Set<number>();
+   for(const[key,field]of Object.entries(row))if(/price|amount/i.test(key)&&Number.isFinite(Number(field))&&Number(field)>0)amounts.add(Math.round(Number(field)));
+   const name=text(row.name).toLowerCase();
+   if(amounts.size)rows.push({amounts,named:serviceNamed||(name.length>2&&lower.includes(name))});
+  }
+ }
+ // Each amount starts at a digit that does not continue a number, so matching stays linear in the reply.
  const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)].map(match=>Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")))).filter(Number.isFinite);
- return amounts.every(amount=>known.has(amount));
+ return amounts.every(amount=>rows.some(row=>row.named&&row.amounts.has(amount)));
 }
+/** The words that name each catalogue group's service in a reply. */
+const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};
+
 
 /** Only persisted, same-customer turns enter sales memory; caller-supplied chat history is not trusted. */
 async function specialistConversationHistory(db:D1Database,threadId:string,customerId:string){

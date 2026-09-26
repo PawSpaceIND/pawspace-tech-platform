@@ -40,7 +40,10 @@ export default function V2Chat(){
  /* Ask PawSpace AI (not signed in): the bot greets with the service buttons as soon as the page opens. */
  const startPublic=useCallback(async()=>{try{const payload=await post({mode:"public",bot:true,start:true,sessionKey:publicSessionKey}) as PublicTurn;const bot=payload.data?.bot;if(bot){setPublicMessages([{id:localId(),side:"system",text:"PawSpace bot started"},{id:localId(),side:"pawspace",author:"PawSpace bot",text:bot.text,choices:bot.choices,at:Date.now()}]);setPublicHint(bot.inputHint);}}catch(cause){setError(cause instanceof Error?cause.message:"Chat is temporarily unavailable.");}
  },[publicSessionKey]);
- useEffect(()=>{if(mode!=="public")return;const greet=()=>{void startPublic();};greet();},[mode,startPublic]);
+ /* Greeted once per visit: switching back from My PawSpace shows the same conversation, in step with the
+  * bot state the server holds for this session, instead of starting it again. */
+ const publicStarted=useRef(false);
+ useEffect(()=>{if(mode!=="public"||publicStarted.current)return;publicStarted.current=true;const greet=()=>{void startPublic();};greet();},[mode,startPublic]);
 
  /* My PawSpace reads the conversation back from the server, so replies from the PawSpace team appear here
   * and nothing is lost on reload. */

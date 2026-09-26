@@ -4,7 +4,7 @@ import{getWhatsAppConversationMode,setWhatsAppConversationMode}from"./whatsapp-c
 import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,whatsappUatProviders,type WhatsAppUatProvider}from"./whatsapp-uat-adapter";
 import{buildWhatsAppInteractiveContract}from"./whatsapp-interactive-capture";
 import{ASK_AI,runBotTurn,type BotReply,type BotState}from"./web-chat-bot";
-import{loadBotSession,saveBotSession}from"./web-chat-bot-store";
+import{advanceBotSession,loadBotSession}from"./web-chat-bot-store";
 
 type Row=Record<string,unknown>;
 type ChatbotState="service"|"collecting"|"city"|"pet"|"qualified";
@@ -101,12 +101,12 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
  const forced=escalationReason(lower(context.body));
  if(forced)return recordHandoff(forced,"handoff");
 
- const turn=runBotTurn(prior,{text:context.body,signedIn:true});
+ // Claimed before anything is sent: two messages arriving together cannot both answer the same question.
+ const turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:context.body,signedIn:true}));
  if(turn.event.type==="human")return recordHandoff(turn.event.reason,"handoff");
  if(turn.event.type==="call")return recordHandoff("customer_requested_human","callback_requested",{callback:true});
  if(turn.event.type==="ai"){
   // A question the flows do not answer: the governed WhatsApp AI answers it; the bot keeps the thread.
-  await saveBotSession(db,ref,turn.state);
   const turnId=uid("WABOT");
   await db.prepare("INSERT OR IGNORE INTO whatsapp_chatbot_turns (id,thread_id,input_message_id,output_message_id,from_state,to_state,intent,action,detail_json,created_at) VALUES (?,?,?,NULL,?,?,'question','ai_answer',?,?)").bind(turnId,input.threadId,input.inputMessageId,fromState,"service",JSON.stringify({question:turn.event.question.slice(0,200)}),Date.now()).run();
   return{duplicatePrevented:false,aiRequested:true,turn:{id:turnId,fromState,toState:"service",intent:"question",action:"ai_answer"},routingMode:"chatbot_only" as const,externalDelivery:false,environment:"uat"};
@@ -117,7 +117,6 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
  if(!queued.queued)return recordHandoff("provider_error","outbound_blocked",{reason:text(queued.reason)||"governed_outbound_policy"}).then(result=>({...result,turn:{...result.turn,reason:text(queued.reason)||"governed_outbound_policy"}}));
 
  const next=legacySession(turn.state),now=Date.now(),answers=turn.state.answers;
- await saveBotSession(db,ref,turn.state);
  await db.batch([
   db.prepare("INSERT INTO whatsapp_chatbot_sessions (thread_id,customer_id,state,service_code,city,pet_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET state=excluded.state,service_code=excluded.service_code,city=excluded.city,pet_type=excluded.pet_type,status=excluded.status,updated_at=excluded.updated_at").bind(input.threadId,context.customerId,next.state,turn.state.flow,answers.area||answers.from||null,answers.petType?answers.petType.toLowerCase():null,next.status,now,now),
   db.prepare("INSERT OR IGNORE INTO whatsapp_chatbot_turns (id,thread_id,input_message_id,output_message_id,from_state,to_state,intent,action,detail_json,created_at) VALUES (?,?,?,?,?,?,?,'reply',?,?)").bind(uid("WABOT"),input.threadId,input.inputMessageId,queued.messageId,fromState,next.state,turn.event.type==="completed"?"qualified":turn.state.status==="collecting"?"question_answered":"menu",JSON.stringify({flow:turn.state.flow,step:turn.state.step,interactive:interactive?.kind??null}),now),

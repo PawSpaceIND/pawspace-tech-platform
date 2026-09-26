@@ -3,8 +3,8 @@ import{ensureCommunicationTables}from"./communication-engine";
 import{ensureD1Once}from"./d1-ensure-once.js";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff}from"./ai-human-handoff";
-import{currentStepReply,initialBotState,menuReply,parseBotState,runBotTurn,type BotReply}from"./web-chat-bot";
-import{ensureBotSessionTable,loadBotSession,saveBotSession}from"./web-chat-bot-store";
+import{currentStepReply,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
+import{advanceBotSession,claimBotSession,ensureBotSessionTable,loadBotSession,loadBotSessionVersion,purgeStalePublicBotSessions,saveBotSession}from"./web-chat-bot-store";
 import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
 import{requestAiDraft}from"./ai-provider-adapter";
@@ -231,7 +231,7 @@ async function recordCustomerMessage(db:D1Database,input:{actor:AuthenticatedAct
 }
 
 /** The bot's opening message for a signed-in customer with no conversation yet, or one restarting. */
-export async function startAuthenticatedWebChatBot(db:D1Database,input:{actor:AuthenticatedActor;customerId:string}){
+export async function startCustomerWebChatBot(db:D1Database,input:{actor:AuthenticatedActor;customerId:string}){
  await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
  const existing=await currentWebChatThread(db,input.customerId);
  if(existing){const any=await db.prepare("SELECT id FROM communication_messages WHERE thread_id=? LIMIT 1").bind(existing).first<Row>();if(any)return{threadId:existing,started:false};}
@@ -247,7 +247,7 @@ export async function startAuthenticatedWebChatBot(db:D1Database,input:{actor:Au
  * One signed-in customer message through the bot. Returns what happened so the route can report it;
  * the customer's page then reads the thread back, which already holds every message written here.
  */
-export async function runAuthenticatedWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string}){
+export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string}){
  await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
  const key=text(input.idempotencyKey);if(!key)throw new Response("Idempotency key is required",{status:400});
  const prior=await db.prepare("SELECT thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(key).first<Row>();
@@ -256,20 +256,21 @@ export async function runAuthenticatedWebChatBotTurn(db:D1Database,input:{actor:
  const current=await currentWebChatThread(db,input.customerId);
  // A person owns the conversation: no bot and no AI, the message goes to the team.
  if(current&&(await activeHandoff(db,current)).active){const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:text(input.text)||text(input.choiceId),idempotencyKey:key},{acceptWhileWithTeam:true});return{duplicatePrevented:false,threadId:data.threadId,path:"team" as const};}
- const ref=`customer:${input.customerId}`,state=await loadWebChatBotState(db,ref),turn=runBotTurn(state,{text:input.text,choiceId:input.choiceId,signedIn:true});
+ if(!text(input.text)&&!text(input.choiceId))throw new Response("Message is required",{status:400});
+ // The turn claims the bot's position before anything is written, so two messages sent together
+ // cannot both answer the same question.
+ const ref=`customer:${input.customerId}`,turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:input.text,choiceId:input.choiceId,signedIn:true}));
  if(!turn.display)throw new Response("Message is required",{status:400});
  if(turn.event.type==="ai"){
   /* A question: PawSpace AI answers it in the same thread, then the bot offers the menu again - unless
    * the AI itself handed the customer to a person. */
   const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:turn.event.question,idempotencyKey:key},{acceptWhileWithTeam:true});
-  await saveWebChatBotState(db,ref,turn.state);
   const handedOff="withTeam"in data||("handoff"in data&&data.handoff?.active);
   if(!handedOff)await postBotMessage(db,{threadId:data.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
   return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const};
  }
  const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key});
  await postBotMessage(db,{threadId:recorded.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
- await saveWebChatBotState(db,ref,turn.state);
  if(turn.event.type==="human"){
   // A person asked for: the Inbox queue, with the whole bot conversation above it.
   await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.reason,confidence:null});
@@ -300,22 +301,24 @@ export async function runWebChatBotFollowUpSweep(db:D1Database,input:{asOf?:numb
  const rows=await db.prepare("SELECT session_ref,state_json,updated_at FROM web_chat_bot_sessions WHERE session_ref LIKE 'customer:%' AND updated_at<=? ORDER BY updated_at LIMIT ?").bind(asOf-WEB_CHAT_BOT_NUDGE_AFTER_MS,limit).all<Row>();
  let nudged=0,escalated=0,skipped=0;
  for(const row of rows.results){
-  const state=parseBotState(row.state_json),ref=text(row.session_ref),customerId=ref.slice("customer:".length);
+  const ref=text(row.session_ref),customerId=ref.slice("customer:".length),{state,version}=await loadBotSessionVersion(db,ref);
   if(state.status!=="collecting"){skipped++;continue;}
   const threadId=await currentWebChatThread(db,customerId);
   if(!threadId||(await activeHandoff(db,threadId)).active){skipped++;continue;}
   if(!state.nudgedAt){
    const reply=currentStepReply(state,true,"Still there? Let's finish your details so I can book this for you. ");
    if(!reply){skipped++;continue;}
-   await postBotMessage(db,{threadId,customerId,reply,idempotencyKey:`web-chat-bot-nudge:${threadId}:${state.flow}:${state.step}`});
-   await saveBotSession(db,ref,{...state,nudgedAt:asOf},asOf);nudged++;continue;
+   // Claimed first: a customer answering at this moment wins, and is not nudged about a question they just answered.
+   if(!(await claimBotSession(db,ref,{...state,nudgedAt:asOf},version,asOf))){skipped++;continue;}
+   await postBotMessage(db,{threadId,customerId,reply,idempotencyKey:`web-chat-bot-nudge:${threadId}:${state.flow}:${state.step}`});nudged++;continue;
   }
   if(asOf-state.nudgedAt<WEB_CHAT_BOT_ESCALATE_AFTER_MS){skipped++;continue;}
+  if(!(await claimBotSession(db,ref,{...state,status:"done"},version,asOf))){skipped++;continue;}
   await postBotMessage(db,{threadId,customerId,reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},idempotencyKey:`web-chat-bot-escalate:${threadId}:${state.flow}`});
-  await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});
-  await saveBotSession(db,ref,{...state,status:"done"},asOf);escalated++;
+  await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;
  }
- return{scanned:rows.results.length,nudged,escalated,skipped,externalDelivery:false};
+ const purged=await purgeStalePublicBotSessions(db,asOf);
+ return{scanned:rows.results.length,nudged,escalated,skipped,purgedVisitorSessions:purged,externalDelivery:false};
 }
 
 /**

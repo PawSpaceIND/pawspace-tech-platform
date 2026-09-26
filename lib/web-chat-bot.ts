@@ -145,12 +145,18 @@ function matchChoice(choices:BotChoice[],input:{text:string;choiceId?:string|nul
 }
 
 /** DD/MM or DD/MM/YYYY, a real calendar date. */
-export function parseDayMonth(value:string){
+/**
+ * DD/MM or DD/MM/YYYY, a real calendar date. Without a year it means the next time that date comes round
+ * (today counts), so 29/02 is valid only when a leap year is next, and the stored answer carries the year.
+ */
+export function parseDayMonth(value:string,now=Date.now()){
  const match=value.trim().match(/^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2}|\d{4}))?$/);if(!match)return null;
- const day=Number(match[1]),month=Number(match[2]),year=match[3]?Number(match[3].length===2?`20${match[3]}`:match[3]):2024;
- const date=new Date(Date.UTC(year,month-1,day));
- if(date.getUTCFullYear()!==year||date.getUTCMonth()!==month-1||date.getUTCDate()!==day)return null;
- return`${String(day).padStart(2,"0")}/${String(month).padStart(2,"0")}${match[3]?`/${year}`:""}`;
+ const day=Number(match[1]),month=Number(match[2]);
+ const real=(year:number)=>{const date=new Date(Date.UTC(year,month-1,day));return date.getUTCFullYear()===year&&date.getUTCMonth()===month-1&&date.getUTCDate()===day?date:null;};
+ let year:number;
+ if(match[3])year=Number(match[3].length===2?`20${match[3]}`:match[3]);
+ else{const today=new Date(now),start=Date.UTC(today.getUTCFullYear(),today.getUTCMonth(),today.getUTCDate());year=today.getUTCFullYear();const thisYear=real(year);if(!thisYear||thisYear.getTime()<start)year+=1;}
+ return real(year)?`${String(day).padStart(2,"0")}/${String(month).padStart(2,"0")}/${year}`:null;
 }
 
 function validate(step:Step,raw:string):{value:string}|{error:string}{
@@ -200,7 +206,9 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  }
 
  if(state.status!=="collecting"){
-  if(picked?.id===ASK_AI.id)return{state:initialBotState(),reply:{text:"Sure - type your question and I'll answer it.",choices:[],inputHint:"Type your question"},event:{type:"none"},display};
+  // A question does not forget the service a lead came in for: "Yes" afterwards still starts it.
+  const keep:BotState={...initialBotState(),...(state.preferredFlow?{preferredFlow:state.preferredFlow}:{})};
+  if(picked?.id===ASK_AI.id)return{state:keep,reply:{text:"Sure - type your question and I'll answer it.",choices:[],inputHint:"Type your question"},event:{type:"none"},display};
   /* A lead who came in for a service: their first short reply ("Yes", "Book now", the template's
    * button) starts that service's questions straight away, as the WATI template flow does. */
   const preferred=!picked&&state.preferredFlow&&(SHORT_YES.test(text)||greetsPreferred||flowFromText(text)?.code===state.preferredFlow)?flowByCode(state.preferredFlow):null;
@@ -208,7 +216,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   if(flow){const steps=stepsFor(flow,input.signedIn);return{state:{version:1,status:"collecting",flow:flow.code,step:0,answers:{}},reply:askReply(steps[0],`Great, let's get your ${flow.service} details. `),event:{type:"none"},display};}
   if(!text)return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
   // A free question at the menu goes to PawSpace AI; the route answers it and offers the menu again.
-  return{state:initialBotState(),reply:menuReply("Anything else? Pick a service or ask another question."),event:{type:"ai",question:text},display};
+  return{state:keep,reply:menuReply("Anything else? Pick a service or ask another question."),event:{type:"ai",question:text},display};
  }
 
  const flow=flowByCode(state.flow)!,steps=stepsFor(flow,input.signedIn),step=steps[state.step];

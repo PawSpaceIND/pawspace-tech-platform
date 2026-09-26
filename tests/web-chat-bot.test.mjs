@@ -325,3 +325,17 @@ test("a short request naming a service starts it; a lead's greeting starts the s
   for (const reply of ["Hi", "Yes", "Plan relocation", "book now"]) assert.equal(bot.runBotTurn(lead, { text: reply, signedIn: true }).state.flow, "relocation", reply);
   assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "Hi", signedIn: true }).state.flow, null, "without a lead service a greeting opens the menu");
 });
+
+test("two messages cannot both answer the same question: a stale save is refused and re-run", async () => {
+  const { db } = await world();
+  const store = await import("../lib/web-chat-bot-store.ts");
+  await store.saveBotSession(db, "customer:CUS-RACE", bot.initialBotState());
+  const read = await store.loadBotSessionVersion(db, "customer:CUS-RACE");
+  const first = bot.runBotTurn(read.state, { choiceId: "grooming", signedIn: true });
+  const second = bot.runBotTurn(read.state, { choiceId: "boarding", signedIn: true });
+  assert.equal(await store.claimBotSession(db, "customer:CUS-RACE", first.state, read.version), true);
+  assert.equal(await store.claimBotSession(db, "customer:CUS-RACE", second.state, read.version), false, "the stale turn must not overwrite the first");
+  assert.equal((await store.loadBotSession(db, "customer:CUS-RACE")).flow, "grooming");
+  const rerun = await store.advanceBotSession(db, "customer:CUS-RACE", (state) => bot.runBotTurn(state, { choiceId: "dog", signedIn: true }));
+  assert.equal(rerun.state.answers.petType, "Dog", "the re-run answers the question the customer is actually on");
+});

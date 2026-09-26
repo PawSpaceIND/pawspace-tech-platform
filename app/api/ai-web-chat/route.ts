@@ -1,7 +1,8 @@
 import{resolvePlatformSession}from"../../../lib/platform-session";
-import{authError,database,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{captureAiWebLead,completeWebChatBotLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,runAuthenticatedAiWebChat,runAuthenticatedWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startAuthenticatedWebChatBot}from"../../../lib/ai-web-chat-adapter";
+import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{captureAiWebLead,completeWebChatBotLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,runAuthenticatedAiWebChat,runCustomerWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startCustomerWebChatBot}from"../../../lib/ai-web-chat-adapter";
 import{flowByCode,initialBotState,menuReply,partialSummary,runBotTurn}from"../../../lib/web-chat-bot";
+import{advanceBotSession}from"../../../lib/web-chat-bot-store";
 import{POST as submitPublicContact}from"../public-contact/route";
 import{withinPublicRateLimit}from"../../../lib/public-abuse-gate";
 import{requestAiHumanHandoff}from"../../../lib/ai-human-handoff";
@@ -15,6 +16,8 @@ async function runtime(){const{env}=await import("cloudflare:workers");return en
 /** Anonymous AI turns are paid model calls. Per-origin budget, sized for a real conversation. */
 const PUBLIC_AI_CHAT_TURN_LIMIT=30;
 const PUBLIC_AI_CHAT_WINDOW_MS=10*60*1000;
+/** Guided-bot turns per origin in the same window: a whole flow is about 10 taps, several flows fit. */
+const PUBLIC_BOT_TURN_LIMIT=80;
 
 export async function GET(request:Request){try{const db=await database(),url=new URL(request.url);
  /* The signed-in customer's own conversation, including replies from the PawSpace team. Without this a
@@ -38,10 +41,12 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
   throw error;
  }
  const session=await resolvePlatformSession(db,request);body.customerId=body.customerId||(session?.subjectType==="customer"?session.subjectId:undefined);const customerId=body.customerId;if(!customerId)return json({error:"Customer, message and idempotency key are required"},400);
+ // Ownership is settled once, before the request's own fields choose what happens next.
+ await requireCustomerOwnership(db,actor,customerId);
  if(body.bot===true){
-  if(body.start===true)return json({data:{mode:"authenticated",bot:await startAuthenticatedWebChatBot(db,{actor,customerId})}});
+  if(body.start===true)return json({data:{mode:"authenticated",bot:await startCustomerWebChatBot(db,{actor,customerId})}});
   if(!(body.message||body.choiceId)||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
-  const result=await runAuthenticatedWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey});
+  const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey});
   await securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
   if(result.path==="call"){
    /* The customer tapped "Request a call": PawSpace's governed callback places it (consent, quiet hours
@@ -73,18 +78,26 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
 async function publicBotTurn(db:D1Database,request:Request,body:Body){
  const sessionKey=String(body.sessionKey||"").trim().slice(0,120);
  if(!/^[-A-Za-z0-9_]{16,120}$/.test(sessionKey))return json({error:"A chat session is required",code:"chat_session_required"},400);
+ /* Every bot turn counts against a per-origin budget: a finished flow writes a CRM lead, so the flow
+  * itself - not only the paid AI call - must not be repeatable without limit. */
+ if(!(await withinPublicRateLimit(db,request,{table:"web_chat_bot_public_rate",now:Date.now(),limit:PUBLIC_BOT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);
  const ref=`public:${sessionKey}`;
- if(body.start===true){await saveWebChatBotState(db,ref,initialBotState());return json({data:{mode:"public",sessionKey,bot:menuReply()}});}
- const previous=await loadWebChatBotState(db,ref),turn=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false});
+ if(body.start===true){
+  // Reopening the chat restarts the conversation, not the visitor: a lead already created stays theirs.
+  const previous=await loadWebChatBotState(db,ref);
+  await saveWebChatBotState(db,ref,{...initialBotState(),...(previous.leadId?{leadId:previous.leadId}:{})});
+  return json({data:{mode:"public",sessionKey,bot:menuReply()}});
+ }
+ if(!String(body.message||"").trim()&&!String(body.choiceId||"").trim())return json({error:"Message is required"},400);
  // "Start over" resets the flow, not the visitor: the lead created for their number stays theirs.
- if(previous.leadId&&!turn.state.leadId)turn.state.leadId=previous.leadId;
+ const turn=await advanceBotSession(db,ref,previous=>{const result=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false});return previous.leadId&&!result.state.leadId?{...result,state:{...result.state,leadId:previous.leadId}}:result;});
  if(!turn.display)return json({error:"Message is required"},400);
  let ai:unknown=null,lead:unknown=null;
  if(turn.event.type==="ai"){
   if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);
   ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey})).ai;
  }
- let state=turn.state;
+ const state=turn.state;
  if(turn.event.type==="completed"){
   // The lead usually exists already (created when the number was given); the answers complete it.
   lead=state.leadId?await completeWebChatBotLead(db,{leadId:state.leadId,service:turn.event.service,summary:turn.event.summary,whatsappConsent:/^yes/i.test(turn.event.answers.whatsapp||"")}):await submitBotLead(request,sessionKey,{service:turn.event.service,answers:turn.event.answers,summary:turn.event.summary});
@@ -92,9 +105,8 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
   /* The visitor's number is known: the lead is created now, as WATI has it from the first message, so a
    * visitor who stops half way is still followed up by the lead's own response clock. */
   const flow=flowByCode(state.flow),partial=await submitBotLead(request,sessionKey,{service:flow?.service||"Web chat enquiry",answers:state.answers,summary:`${partialSummary(state,false)}\n(Web chat in progress)`,partial:true});
-  if(partial.captured&&partial.leadId)state={...state,leadId:String(partial.leadId)};
+  if(partial.captured&&partial.leadId){const leadId=String(partial.leadId);await advanceBotSession(db,ref,current=>({state:{...current,leadId}}));}
  }
- await saveWebChatBotState(db,ref,state);
  return json({data:{mode:"public",sessionKey,display:turn.display,bot:turn.reply,event:turn.event.type,ai,lead}});
 }
 

@@ -104,7 +104,14 @@ export async function staffTakeOverConversation(db:D1Database,input:{actor:Authe
  const active=await db.prepare("SELECT status FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(input.threadId).first<Row>();
  if(active&&text(active.status)==="staff_active")return{handoff:await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND status='staff_active'").bind(input.threadId).first<Row>(),aiPaused:true,alreadyWithStaff:true};
  if(!active)await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:input.threadId,customerId:input.customerId,reason:"staff_initiated",confidence:null});
- return{...await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:input.customerId,action:"take_over",reason:input.reason||"staff_initiated_takeover"}),alreadyWithStaff:false};
+ try{return{...await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:input.customerId,action:"take_over",reason:input.reason||"staff_initiated_takeover"}),alreadyWithStaff:false};}
+ catch(error){
+  // Another member of staff took it over in the same moment: report who has it, not a conflict.
+  if(!(error instanceof Response)||error.status!==409)throw error;
+  const taken=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND status='staff_active'").bind(input.threadId).first<Row>();
+  if(!taken)throw error;
+  return{handoff:taken,aiPaused:true,alreadyWithStaff:true};
+ }
 }
 
 export async function aiHumanHandoffSnapshot(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string}){await ensureAiHumanHandoff(db);await authorizeThread(db,input.actor,input.threadId,input.customerId);const current=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(input.threadId).first<Row>(),events=current?await db.prepare("SELECT * FROM ai_handoff_events WHERE handoff_id=? ORDER BY created_at").bind(current.id).all<Row>():{results:[]};let parsedSummary:Record<string,unknown>|null=null;if(current)try{parsedSummary=JSON.parse(text(current.summary_json)||"{}")as Record<string,unknown>}catch{}return{current:current?{...current,summary:parsedSummary}:null,events:events.results,aiPaused:Boolean(current&&["queued","staff_active"].includes(text(current.status))),sameCanonicalThread:true};}
