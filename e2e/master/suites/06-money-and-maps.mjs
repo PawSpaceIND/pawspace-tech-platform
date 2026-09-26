@@ -83,6 +83,7 @@ try {
     const t0 = Date.now();
     const reserve = await api(context, "POST", "/api/uat-scheduling", { clientRequestId: `money-split-${runPhone(6)}-${Date.now()}`, customerId: account.customerId, petIds: [dog.id], serviceCode: "boarding", serviceAddress: "100 Feet Road, HAL 2nd Stage, Indiranagar, Bengaluru, 560038", servicePincode: "560038", cityId, zoneId, scheduledStart, scheduledEnd, careMode: "overnight", preferredProviderId: hosts[0]?.providerId }, { timeout: 150_000 });
     step("split reservation", reserve.status === 200, `HTTP ${reserve.status} in ${Date.now() - t0} ms`);
+    const createdAt = Date.now();
     const created = await api(context, "POST", "/api/canonical-bookings", {
       idempotencyKey: `money-split-${reserve.body?.data?.groupId}`, scheduleGroupId: reserve.body?.data?.groupId,
       customer: { id: account.customerId, name: account.name, primaryPhone: account.primaryPhone },
@@ -90,7 +91,9 @@ try {
       cityId, zoneId, serviceCode: "boarding", packageCode: quote.packageCode, packageName: quote.packageName, scheduledStart, scheduledEnd,
       provider: reserve.body?.data?.provider, totalAmount: quote.totalAmount, amountDueNow: quote.amountDueNow,
       payment: { method: "upi", mode: "split_50_50", status: "created", detail: "Awaiting verified Razorpay payment" }, pricing: { discount: 0, boardingQuoteId: quote.quoteId },
-    });
+    }, { timeout: 150_000 });
+    const createMs = Date.now() - createdAt;
+    if (createMs > 15_000) finding({ suite: SUITE, severity: "P2", area: "Booking performance", persona: "Customer", flow: "Boarding confirm (POST /api/canonical-bookings)", title: `Creating the Boarding booking took ${Math.round(createMs / 1000)} s on staging`, steps: "Confirm a 5-night split Boarding stay after the reservation", expected: "< 5 s", actual: `${createMs} ms, HTTP ${created.status}`, evidence: [] });
     const bookingId = created.body?.data?.bookingId;
     step("split booking created", Boolean(bookingId), `HTTP ${created.status} ${bookingId || JSON.stringify(created.body).slice(0, 200)}`);
     if (bookingId) {
@@ -162,7 +165,7 @@ try {
         pets: [{ sourceId: dog.sourceId ?? dog.id, name: dog.name, species: "dog", vaccinationStatus: dog.vaccinationStatus }],
         cityId, zoneId, scheduledStart: firstQuote.scheduledStart, scheduledEnd: firstQuote.scheduledEnd, provider,
         totalAmount: Number(opt.quotedTotal), amountDueNow: Number(opt.bookingFee), hyperactivePet: false, channel: "customer_app",
-      });
+      }, { timeout: 150_000 });
       const bookingId = created.body?.data?.bookingId;
       step("taxi ride booking created", Boolean(bookingId), `HTTP ${created.status} ${bookingId || JSON.stringify(created.body).slice(0, 200)}`);
       if (bookingId) {
