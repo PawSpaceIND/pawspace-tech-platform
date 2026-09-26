@@ -22,9 +22,10 @@ test("public service screen disables today's already-started slots at render tim
   const slots=html.match(/<div class="slots-grid">(.*?)<\/div>/)?.[1];
   assert.ok(slots);
   const buttons=[...slots.matchAll(/<button([^>]*)>(.*?)<\/button>/g)];
-  assert.equal(buttons.length,4);
+  assert.equal(buttons.length,5);
   assert.match(buttons[0][1],/disabled/);
   assert.match(buttons[1][1],/disabled/);
   assert.doesNotMatch(buttons[2][1],/disabled/);
   assert.doesNotMatch(buttons[3][1],/disabled/);
+  assert.doesNotMatch(buttons[4][1],/disabled/);
 });

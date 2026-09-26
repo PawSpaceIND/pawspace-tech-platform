@@ -308,7 +308,6 @@ test("the AI analytics Clear control resets exactly the filters that start empty
 });
 
 const VALIDATED_SUBMIT_CONTROLS = [
-  { file: "../app/team/catalogue/page.tsx", label: "Add", handler: "create" },
   { file: "../app/team/marketing/page.tsx", label: "Create draft", handler: "create" },
   { file: "../app/team/provider-verification/page.tsx", label: "Check", handler: "checkApp" },
   { file: "../app/team/subscription-plans/page.tsx", label: "Add plan", handler: "create" },

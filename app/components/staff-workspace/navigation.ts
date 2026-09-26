@@ -49,7 +49,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "System integrations", href: "/control/integrations", permission: "settings.manage" },
     { label: "Lifecycle automation", href: "/team/lifecycle-reminders", permission: "settings.manage" },
     { label: "Subscription plans", href: "/team/subscription-plans", permission: "pricing.view" },
-    { label: "Catalogue & services", href: "/team/catalogue", permission: "pricing.manage" },
+    { label: "Pricing & packages", href: "/team/catalogue", permission: "pricing.manage" },
   ] },
 ];
 
