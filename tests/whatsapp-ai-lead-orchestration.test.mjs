@@ -119,8 +119,8 @@ test("a lead gets its service's approved template, and its reply starts that ser
  const turn=await chatbot.runWhatsAppChatbotTurn(ctx.db,{threadId:specific.thread_id,inputMessageId:inboundId,actorEmail:"whatsapp-chatbot"});
  assert.equal(turn.session.service_code,"grooming");
  const question=JSON.parse(ctx.sqlite.prepare("SELECT payload_json FROM communication_messages WHERE id=?").get(turn.turn.output_message_id).payload_json);
- assert.match(question.text,/dog or a cat/);
- assert.deepEqual(question.interactive.buttons.map(button=>button.title),["Dog","Cat","Start over"]);
+ assert.match(question.text,/active grooming subscription/,"the WATI grooming flow's first question");
+ assert.deepEqual(question.interactive.buttons.map(button=>button.title),["Yes","No","Start over"]);
  assert.equal(templates.flowForLeadService("Pet Relocation - Meta lead form"),"relocation");
  assert.equal(templates.flowForLeadService("General enquiry"),null);
 });

@@ -40,14 +40,22 @@ test("WhatsApp runs the same guided flows as web chat, with reply buttons and li
  // The customer taps "Grooming" in the list: WhatsApp sends the row title back as the message text.
  const service=(await say("Grooming")).result;
  assert.equal(service.session.service_code,"grooming");
- const petButtons=payloadOf(sqlite,service.turn.output_message_id).interactive;
+ // The WATI grooming flow: subscription first, then pet, count, breed (a list) and package.
+ assert.deepEqual(payloadOf(sqlite,service.turn.output_message_id).interactive.buttons.map(button=>button.title),["Yes","No","Start over"]);
+ const petButtons=payloadOf(sqlite,(await say("No")).result.turn.output_message_id).interactive;
  assert.equal(petButtons.kind,"reply_buttons");
  assert.deepEqual(petButtons.buttons.map(button=>button.title),["Dog","Cat","Start over"]);
- await say("Dog");await say("1");await say("Not sure yet");
+ await say("Dog");
+ const breeds=payloadOf(sqlite,(await say("1")).result.turn.output_message_id).interactive;
+ assert.equal(breeds.kind,"list");
+ assert.equal(breeds.sections[0].rows.length,10,"WhatsApp lists hold ten rows: nine breeds and Show more breeds");
+ await say("Labrador");await say("Bath & Basic");
  const invalidDate=(await say("next week")).result;
  assert.equal(invalidDate.session.state,"collecting","an invalid date is asked again");
- await say("28/09");
- const done=(await say("Indiranagar Bengaluru")).result;
+ await say("28/09");await say("11am-1pm");
+ const confirm=payloadOf(sqlite,(await say("Indiranagar Bengaluru")).result.turn.output_message_id);
+ assert.match(confirm.text,/Please confirm the following details[\s\S]*Package: Bath & Basic/);
+ const done=(await say("OK")).result;
  assert.equal(done.session.state,"qualified");
  assert.equal(done.session.status,"qualified");
  assert.equal(done.session.pet_type,"dog");
@@ -119,4 +127,14 @@ test("bot buttons and lists reach Meta as interactive messages inside the servic
  assert.ok(listed.interactive.action.sections[0].rows.every(row=>row.title.length<=24));
  const outside=dispatch.buildMetaWhatsAppRequest({recipient:"919876500011",templateKey:"lead_first_response",withinSession:false,interactive:buttons});
  assert.equal(outside.type,"template","outside the 24-hour window only an approved template may be sent");
+});
+
+test("every WATI button and list row fits WhatsApp's limits",async()=>{
+ const bot=await import("../lib/web-chat-bot.ts");
+ for(const flow of bot.WEB_CHAT_FLOWS)for(const step of flow.steps){
+  const labels=(step.choices||[]).map(choice=>choice.label);
+  assert.ok(labels.length<=10,`${flow.code}.${step.key} has ${labels.length} options; a WhatsApp list holds ten`);
+  for(const label of labels)assert.ok(label.length<=24,`${flow.code}.${step.key}: "${label}" is longer than a WhatsApp list row title`);
+  if(labels.length<=2)for(const label of labels)assert.ok(label.length<=20,`${flow.code}.${step.key}: "${label}" is longer than a WhatsApp button title`);
+ }
 });

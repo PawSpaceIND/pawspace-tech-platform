@@ -276,6 +276,12 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
   await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.reason,confidence:null});
   return{duplicatePrevented:false,threadId:recorded.threadId,path:"human" as const};
  }
+ if(turn.event.type==="completed"&&turn.event.followUp==="team"){
+  /* An existing booking, an active grooming subscription or an outstation trip: WATI assigns these to
+   * the team, so the enquiry goes to the sales queue with the whole flow above it. */
+  await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:"bot_lead_qualified",confidence:null});
+  return{duplicatePrevented:false,threadId:recorded.threadId,path:"completed" as const,handedOff:true};
+ }
  if(turn.event.type==="completed"){
   /* The finished enquiry goes to PawSpace AI, which recommends the package, quotes the catalogue price
    * and books through the governed booking tools once the customer confirms. If the AI cannot, it hands
