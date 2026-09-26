@@ -159,7 +159,12 @@ export async function openMobileRazorpayCheckout(options: MobileRazorpayCheckout
       let rzp: Checkout;
       try {
         rzp = new Constructor({ ...payload, retry: { enabled: false },
-          handler: (data: Receipt) => finish(receiptResult(data, options.orderId)),
+          handler: (data: Receipt) => {
+            // Resolve before closing: some SDK versions call ondismiss synchronously from close().
+            // That dismissal must never replace a successful receipt or strand the app under an overlay.
+            finish(receiptResult(data, options.orderId));
+            try { rzp.close?.(); } catch { /* The receipt remains available for server verification. */ }
+          },
           modal: { ondismiss: () => finish(failure("USER_DISMISSED", "Checkout closed. No payment confirmation has been recorded here.")) } });
         rzp.on("payment.failed", () => {
           finish(failure("PAYMENT_FAILED", "Payment was unsuccessful. Check payment status before retrying."));
