@@ -393,6 +393,12 @@ test("two messages cannot both answer the same question: a stale save is refused
 /* ---------------------------------------------------------------------------------------------------
  * The WATI flows, branch by branch, as exported from PawSpace's WATI account.
  * --------------------------------------------------------------------------------------------------- */
+function walkWith(code, inputs, crossSell, signedIn = true) {
+  let result = bot.runBotTurn(bot.initialBotState(), { choiceId: code, signedIn, crossSell });
+  for (const input of inputs) result = bot.runBotTurn(result.state, { ...(typeof input === "string" ? { text: input } : input), signedIn, crossSell });
+  return { result };
+}
+
 function walk(code, inputs, signedIn = true) {
   let result = bot.runBotTurn(bot.initialBotState(), { choiceId: code, signedIn });
   const asked = [result.reply.text];
@@ -510,4 +516,44 @@ test("the ₹400 cross-sell carries its coupon code into the grooming enquiry, a
   for (const input of ["No", "Dog", "1", "Labrador", "Bath & Basic", "28/09", "9am-11am", "HSR Layout", "OK"]) result = bot.runBotTurn(result.state, { text: input, signedIn: true });
   assert.equal(result.event.type, "completed");
   assert.match(result.event.summary.split("\n")[1], /^Offer: ₹400 off Pet Grooming \(use code GROOM400\)$/);
+});
+
+test("the ₹400 cross-sell is only promised while its coupon can be used, and in its cities", () => {
+  const finishTraining = (city, crossSell) => walkWith("training", [city, "First-time Enquiry", "1", "Labrador", "Adult - 1-3 yrs", "Male", "Leash pulling", "01/10/2026", "5pm-7pm"], crossSell).result;
+  const live = finishTraining("Bangalore", { code: "GROOM400", cityIds: ["blr"] });
+  assert.match(live.reply.text, /Use code GROOM400/);
+  const paused = finishTraining("Bangalore", null);
+  assert.doesNotMatch(paused.reply.text, /₹400|GROOM400/, "a paused or used-up campaign is not promised");
+  assert.deepEqual(paused.reply.choices.map((choice) => choice.id), ["start_over"]);
+  assert.equal(bot.runBotTurn(paused.state, { choiceId: "grooming_offer", signedIn: true, crossSell: null }).state.flow, null, "the offer button cannot be used either");
+  const hyderabad = finishTraining("Hyderabad", { code: "GROOM400", cityIds: ["blr"] });
+  assert.doesNotMatch(hyderabad.reply.text, /GROOM400/, "a Bangalore-only code is not promised to a Hyderabad enquiry");
+  const renamed = finishTraining("Bangalore", { code: "GROOM450", cityIds: ["blr"] });
+  assert.match(renamed.reply.text, /Use code GROOM450/, "the code staff set in Control > Coupons");
+  assert.equal(bot.runBotTurn(renamed.state, { choiceId: "grooming_offer", signedIn: true, crossSell: { code: "GROOM450", cityIds: ["blr"] } }).state.answers.coupon, "GROOM450");
+});
+
+test("a conversation saved before the flows changed shape starts again instead of resuming at the wrong question", () => {
+  const stale = { version: 1, status: "collecting", flow: "relocation", step: 3, answers: { travelType: "Domestic", email: "a@b.co", from: "Bengaluru" } };
+  assert.deepEqual(bot.parseBotState(JSON.stringify(stale)), bot.initialBotState());
+  assert.equal(bot.parseBotState(bot.initialBotState()).status, "menu");
+});
+
+test("a visitor's relocation - including Pet Taxi 'Outstation from BLR' - becomes a relocation lead on the relocation desk", async () => {
+  const { sqlite } = await world();
+  const sessionKey = "botvisitor0000000009";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  await call({ choiceId: "pet_taxi", message: "" });
+  await call({ message: "Ravi Kumar" });
+  await call({ message: "9876543210" });
+  assert.equal(sqlite.prepare("SELECT service FROM lead_work_items").get().service, "Pet Taxi", "the lead exists from the number");
+  let last;
+  for (const message of ["Outstation from BLR", "Domestic", "ravi@example.com", "Dog", "Bengaluru", "Delhi", "15/11/26", "Yes", "Yes, WhatsApp me"]) last = await call({ message });
+  assert.equal(last.event, "completed");
+  assert.match(last.bot.text, /relocation partner team will contact you/);
+  const lead = sqlite.prepare("SELECT service, owner FROM lead_work_items").get();
+  assert.deepEqual({ ...lead }, { service: "Pet Relocation", owner: "cx-relocation" });
+  assert.equal(last.lead.routedTo, "cx-relocation");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM lead_work_items").get().n), 1, "still one lead");
 });

@@ -43,7 +43,10 @@ type Flow={code:string;service:string;label:string;steps:Step[];
  /** Ends with WATI's grooming cross-sell ("Enjoy Rs 400 off Pet Grooming"). */
  groomingOffer?:boolean};
 
-export type BotState={version:1;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
+/* Bumped whenever a flow's steps change shape: a conversation saved under an older shape starts again
+ * rather than resuming at a step index that now means a different question. */
+const BOT_STATE_VERSION=2;
+export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
  /** The CRM lead created for a visitor as soon as their number is known (web chat). */
  leadId?:string;
  /** When a stalled flow was last nudged by the follow-up sweep. */
@@ -237,7 +240,14 @@ const START_OVER:BotChoice={id:"start_over",label:"Start over"};
 /** WATI's closing cross-sell after Training, Boarding, Sitting and Pet Taxi. */
 export const GROOMING_OFFER:BotChoice={id:"grooming_offer",label:"Get ₹400 off"};
 const PAY_LATER:BotChoice={id:"pay_full_price_later",label:"Pay full price later"};
-const GROOMING_OFFER_TEXT=`Enjoy ₹400 off Pet Grooming, Exclusively ONLY for You 🐶🛁\nUse code ${GROOMING_CROSS_SELL_COUPON} when you book.`;
+const groomingOfferText=(code:string)=>`Enjoy ₹400 off Pet Grooming, Exclusively ONLY for You 🐶🛁\nUse code ${code} when you book.`;
+/** The cross-sell coupon as the caller found it live for this customer, or null while it cannot be redeemed. */
+export type BotCrossSell={code:string;cityIds:string[]}|null;
+const DEFAULT_CROSS_SELL:BotCrossSell={code:GROOMING_CROSS_SELL_COUPON,cityIds:["blr"]};
+const CITY_IDS:Record<string,string>={Bangalore:"blr",Hyderabad:"hyd"};
+/* WATI's offer is only shown while its coupon can be used: the campaign is live, and the customer is in
+ * one of its cities (a Hyderabad enquiry is not promised a Bangalore-only code). */
+const crossSellFor=(crossSell:BotCrossSell,answers:Answers)=>crossSell&&(!answers.city||!CITY_IDS[answers.city]||crossSell.cityIds.includes(CITY_IDS[answers.city]))?crossSell:null;
 /** What the answers record for the cross-sell, so the team, the AI and the app all see the same code. */
 export const GROOMING_OFFER_NOTE="₹400 off Pet Grooming";
 export{GROOMING_CLOSING_COUPON,GROOMING_CROSS_SELL_COUPON};
@@ -265,9 +275,9 @@ export function flowFromText(value:string){
 }
 const SHORT_YES=/^(yes|yeah|yep|ok|okay|sure|book|book now|start|continue|interested|get started|let'?s go|go ahead)[.! ]*$/i;
 
-export function initialBotState():BotState{return{version:1,status:"menu",flow:null,step:0,answers:{}};}
+export function initialBotState():BotState{return{version:BOT_STATE_VERSION,status:"menu",flow:null,step:0,answers:{}};}
 export function parseBotState(value:unknown):BotState{
- try{const parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===1&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
+ try{const parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===BOT_STATE_VERSION&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
  return initialBotState();
 }
 export function menuReply(text=GREETING):BotReply{return{text,choices:WEB_CHAT_MENU,inputHint:"Type a question or pick a service"};}
@@ -345,11 +355,14 @@ export function botSummary(flow:Flow,answers:Record<string,string>,signedIn:bool
  * `choiceId` comes from a tapped button; typed text is matched against the same buttons (by label or
  * number, the way WATI accepts "1"), so a visitor who types instead of tapping is not stuck.
  */
-export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:string|null;signedIn:boolean}):BotTurnResult{
+export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:string|null;signedIn:boolean;
+ /** The live cross-sell coupon (lib/ai-sales-offers.ts activeCrossSell); null hides the offer. */
+ crossSell?:BotCrossSell}):BotTurnResult{
+ const crossSell=input.crossSell===undefined?DEFAULT_CROSS_SELL:input.crossSell;
  const text=String(input.text||"").trim().slice(0,800),state:BotState={...previous,answers:{...previous.answers}};
  const options=state.status==="collecting"?(stepsFor(flowByCode(state.flow)!,input.signedIn)[state.step]?.choices||[]):WEB_CHAT_MENU;
  // Numbers select only the current step's own buttons; "2" typed as an answer must not mean "Start over".
- const picked=matchChoice(options,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM,...(state.status==="done"?[GROOMING_OFFER,PAY_LATER]:[])],{text,choiceId:input.choiceId},false);
+ const picked=matchChoice(options,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM,...(state.status==="done"&&crossSellFor(crossSell,previous.answers)?[GROOMING_OFFER,PAY_LATER]:[])],{text,choiceId:input.choiceId},false);
  const display=picked?.label||text;
 
  // A greeting in reply to a service template starts that service; otherwise it (re)opens the menu.
@@ -360,7 +373,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  if(picked?.id===REQUEST_CALL.id){
   if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I'm arranging a call from PawSpace to your registered number now.",choices:[START_OVER],inputHint:"Type a message"},event:{type:"call"},display};
   const steps=stepsFor(TEAM_FLOW,false);
-  return{state:{version:1,status:"collecting",flow:TEAM_FLOW.code,step:1,answers:{topic:"Requested a call back"}},reply:askReply(steps[1],"Happy to call you. "),event:{type:"none"},display};
+  return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step:1,answers:{topic:"Requested a call back"}},reply:askReply(steps[1],"Happy to call you. "),event:{type:"none"},display};
  }
  const escalation=picked?.id===TALK_TO_TEAM.id?"customer_requested_human" as const:!picked&&text?HUMAN_PATTERNS.find(([pattern])=>pattern.test(text))?.[1]:undefined;
  if(escalation&&state.flow!==TEAM_FLOW.code){
@@ -368,7 +381,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I'm bringing in a PawSpace team member. They will reply to you here.",choices:[],inputHint:"Message the PawSpace team"},event:{type:"human",reason:escalation},display};
   const steps=stepsFor(TEAM_FLOW,false),answers:Record<string,string>=!picked&&text?{topic:text}:{};
   const step=answers.topic?1:0;
-  return{state:{version:1,status:"collecting",flow:TEAM_FLOW.code,step,answers},reply:askReply(steps[step],"I'll connect you with our team. "),event:{type:"none"},display};
+  return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step,answers},reply:askReply(steps[step],"I'll connect you with our team. "),event:{type:"none"},display};
  }
 
  if(state.status!=="collecting"){
@@ -376,7 +389,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   const keep:BotState={...initialBotState(),...(state.preferredFlow?{preferredFlow:state.preferredFlow}:{})};
   if(picked?.id===ASK_AI.id)return{state:keep,reply:{text:"Sure - type your question and I'll answer it.",choices:[],inputHint:"Type your question"},event:{type:"none"},display};
   // WATI's cross-sell: "Get Rs 400 off" goes straight into the grooming questions with the offer noted.
-  if(picked?.id===GROOMING_OFFER.id)return startFlow(GROOMING,input.signedIn,{...contactOf(previous.answers),offer:GROOMING_OFFER_NOTE,coupon:GROOMING_CROSS_SELL_COUPON},`Great choice! Your code ${GROOMING_CROSS_SELL_COUPON} is noted. `,display);
+  if(picked?.id===GROOMING_OFFER.id){const code=crossSellFor(crossSell,previous.answers)!.code;return startFlow(GROOMING,input.signedIn,{...contactOf(previous.answers),offer:GROOMING_OFFER_NOTE,coupon:code},`Great choice! Your code ${code} is noted. `,display);}
   if(picked?.id===PAY_LATER.id)return{state:keep,reply:menuReply("Explore our other services to find the perfect care for your furry friend! 🐾✨"),event:{type:"none"},display};
   /* A lead who came in for a service: their first short reply ("Yes", "Book now", the template's
    * button) starts that service's questions straight away, as the WATI template flow does. */
@@ -412,13 +425,13 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
   * visitor's becomes a lead, and an existing booking or subscription goes to a person - with the WATI
   * flow's own closing message. */
  const closing=input.signedIn&&!team?"Let me check the best option and price for you now.":flow.closing?.(state.answers)||"A PawSpace team member will get in touch with you shortly.";
- const offer=flow.groomingOffer&&!state.answers.offer;
- return{state:{...state,status:"done"},reply:{text:`Thank you! Here is what I've noted:\n${summary}\n\n${closing}${offer?`\n\n${GROOMING_OFFER_TEXT}`:""}`,choices:offer?[GROOMING_OFFER,PAY_LATER]:[START_OVER],inputHint:"Type a message"},event:{type:"completed",flow:flow.code,service:flow.service,answers:state.answers,summary,...(team&&flow.code!==TEAM_FLOW.code?{followUp:"team" as const,...(flow.followUpReason?{followUpReason:flow.followUpReason}:{})}:{})},display};
+ const offer=flow.groomingOffer&&!state.answers.offer?crossSellFor(crossSell,state.answers):null;
+ return{state:{...state,status:"done"},reply:{text:`Thank you! Here is what I've noted:\n${summary}\n\n${closing}${offer?`\n\n${groomingOfferText(offer.code)}`:""}`,choices:offer?[GROOMING_OFFER,PAY_LATER]:[START_OVER],inputHint:"Type a message"},event:{type:"completed",flow:flow.code,service:flow.service,answers:state.answers,summary,...(team&&flow.code!==TEAM_FLOW.code?{followUp:"team" as const,...(flow.followUpReason?{followUpReason:flow.followUpReason}:{})}:{})},display};
 }
 
 function startFlow(flow:Flow,signedIn:boolean,answers:Answers,prefix:string,display:string):BotTurnResult{
  const steps=stepsFor(flow,signedIn),step=nextStep(steps,0,answers);
- return{state:{version:1,status:"collecting",flow:flow.code,step,answers:{...answers}},reply:askReply(steps[step],prefix,{flow,answers,signedIn}),event:{type:"none"},display};
+ return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:flow.code,step,answers:{...answers}},reply:askReply(steps[step],prefix,{flow,answers,signedIn}),event:{type:"none"},display};
 }
 
 /** The question the customer is currently on, re-asked (the stalled-chat nudge uses it). */

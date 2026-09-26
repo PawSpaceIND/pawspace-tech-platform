@@ -5,6 +5,7 @@ import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,whatsappUatProviders,typ
 import{buildWhatsAppInteractiveContract}from"./whatsapp-interactive-capture";
 import{ASK_AI,runBotTurn,type BotReply,type BotState}from"./web-chat-bot";
 import{advanceBotSession,loadBotSession}from"./web-chat-bot-store";
+import{activeCrossSell}from"./ai-sales-offers";
 
 type Row=Record<string,unknown>;
 type ChatbotState="service"|"collecting"|"city"|"pet"|"qualified";
@@ -102,7 +103,8 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
  if(forced)return recordHandoff(forced,"handoff");
 
  // Claimed before anything is sent: two messages arriving together cannot both answer the same question.
- const turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:context.body,signedIn:true}));
+ const crossSell=await activeCrossSell(db,{customerId:context.customerId,channel:"whatsapp"});
+ const turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:context.body,signedIn:true,crossSell}));
  if(turn.event.type==="human")return recordHandoff(turn.event.reason,"handoff");
  if(turn.event.type==="call")return recordHandoff("customer_requested_human","callback_requested",{callback:true});
  if(turn.event.type==="ai"){
