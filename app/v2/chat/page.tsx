@@ -20,6 +20,9 @@ const REPLY_TIMEOUT_MS=30000;
 /* While a person has the conversation their replies arrive on their own, so look for them often. */
 const TEAM_POLL_MS=4000,IDLE_POLL_MS=20000;
 const AVATAR="/assets/pawspace-icon.jpeg";
+/* WATI's service menu card: the doorstep banner, and each service with its own art. */
+const MENU_BANNER="/assets/pawspace-doorstep.png";
+const SERVICE_ART:Record<string,string>={grooming:"/assets/pawspace-grooming-cartoon.webp",training:"/assets/pawspace-training-cartoon.webp",boarding:"/assets/pawspace-boarding-cartoon.webp",pet_sitting:"/assets/pawspace-sitting-cartoon.webp",dog_walking:"/assets/pawspace-walking-cartoon.webp",pet_taxi:"/assets/pawspace-taxi-cartoon.webp",fresh_food:"/assets/pawspace-food-cartoon.webp",relocation:"/assets/pawspace-relocation-cartoon.webp"};
 const cleanAiText=(value:string)=>value.replace(/\*\*/g,"").trim();
 let sequence=0;const localId=()=>`local-${++sequence}`;
 
@@ -96,7 +99,7 @@ export default function V2Chat(){
   <div className={styles.chatShell}>
    <div className={styles.modeBar} aria-label="Chat topic"><button aria-pressed={mode==="public"} disabled={busy} onClick={()=>choose("public")}>Ask PawSpace AI</button><button aria-pressed={mode==="authenticated"} disabled={busy} onClick={()=>choose("authenticated")}>My PawSpace</button><Link href="/v2" className={styles.back}>Home</Link></div>
    {mode==="authenticated"&&identity!=="customer"?<section className={styles.notice} role="status"><h1>Ask PawSpace anything.</h1>{identity==="checking"?<p>Checking your PawSpace sign-in...</p>:identity==="unavailable"?<><p>We could not check your sign-in.</p><button onClick={()=>window.location.reload()}>Check again</button></>:<><p>Sign in from the V2 home to discuss bookings and account details.</p><Link href="/v2">Open V2 home</Link></>}</section>
-   :<WatiConversation name="PawSpace" presence={presence} status={withTeam&&authenticatedReady?"With our team":"Open"} avatarSrc={AVATAR}
+   :<WatiConversation name="PawSpace" presence={presence} status={withTeam&&authenticatedReady?"With our team":"Open"} avatarSrc={AVATAR} serviceArt={SERVICE_ART} menuBanner={MENU_BANNER}
      intro={<h1 className={styles.watiIntro}>Ask PawSpace anything.</h1>}
      messages={messages} busy={busy} error={error} draft={draft} onDraft={setDraft}
      onSend={text=>void send(text)} onChoice={choice=>void send(choice.label,choice)} placeholder={placeholder}/>}

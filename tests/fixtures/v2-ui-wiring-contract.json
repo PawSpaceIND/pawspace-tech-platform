@@ -44,9 +44,9 @@
       "conditions": 33
     },
     "app/v2/chat/page.tsx": {
-      "sha256": "cb2bbdd6b6940e7537e2618d67a79ebef6518a1e44b5ff2688f22470b6c9aae4",
+      "sha256": "377cc21c4d92fc4f2d6e127f90e2fd7081741f2e7bcfafa4ce1fb713df7eeb40",
       "functions": 39,
-      "declarations": 53,
+      "declarations": 55,
       "interactionProps": 15,
       "conditions": 23
     },
