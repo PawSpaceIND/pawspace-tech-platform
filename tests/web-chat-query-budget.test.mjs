@@ -144,27 +144,50 @@ function post(body, headers = {}) {
 
 /** A valid answer for any step the bot asks. */
 /* Every signed-in chat read and bot tap resolves the session several times (gateway, actor, ownership). On
- * staging each D1 call costs about 0.3 s, so table setup that re-ran on every request and a last-seen write
- * per resolve made one bot tap take 10-15 s. Warm requests must not repeat schema work or session writes. */
+ * staging each D1 call costs about 0.3-0.5 s, so table setup that re-ran on every request, a last-seen write
+ * per resolve, and a second request to read the reply made one bot tap take 10-15 s. Warm requests must not
+ * repeat schema work, session reads or session writes, and a tap answers with the conversation itself. */
 test("a warm chat read and bot tap stay within their D1 query budget", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-BUDGET", "+919900000301");
   const cookie = await customerCookie(db, "CUS-BUDGET", "+919900000301");
-  const call = async (body) => (await callEndpoint(post({ mode: "authenticated", bot: true, ...body }, { cookie }))).response;
+  // Cloudflare stamps every request with its own cf-ray; the session is reused only within one request.
+  let ray = 0;
+  const headers = () => ({ cookie, "cf-ray": `test-ray-${++ray}` });
+  const call = async (body) => (await callEndpoint(post({ mode: "authenticated", bot: true, ...body }, headers()))).response;
   assert.equal((await call({ start: true })).status, 200);
   assert.equal((await call({ choiceId: "grooming", message: "", idempotencyKey: "budget-1" })).status, 200);
-  assert.equal((await callEndpoint(new Request(`${ENDPOINT}?mode=thread`, { headers: { cookie } }))).response.status, 200);
+  assert.equal((await callEndpoint(new Request(`${ENDPOINT}?mode=thread`, { headers: headers() }))).response.status, 200);
   const log = globalThis.__QLOG__;
   log.splice(0);
-  const read = await (await callEndpoint(new Request(`${ENDPOINT}?mode=thread`, { headers: { cookie } }))).response.json();
+  const read = await (await callEndpoint(new Request(`${ENDPOINT}?mode=thread`, { headers: headers() }))).response.json();
   assert.equal(read.data.messages.length, 3);
   const readQueries = log.splice(0);
-  assert.equal((await call({ choiceId: "no", message: "", idempotencyKey: "budget-2" })).status, 200);
+  const tap = await call({ choiceId: "no", message: "", idempotencyKey: "budget-2" });
   const tapQueries = log.splice(0);
-  for (const [label, queries, budget] of [["read", readQueries, 10], ["tap", tapQueries, 22]]) {
+  assert.equal(tap.status, 200);
+  // The answer carries the conversation, so the page needs no second request to show the reply.
+  const tapped = await tap.json();
+  assert.deepEqual(tapped.data.transcript.messages.map((message) => message.role), ["bot", "customer", "bot", "customer", "bot"]);
+  assert.equal(tapped.data.transcript.messages[3].text, "No");
+  for (const [label, queries, budget] of [["read", readQueries, 6], ["tap", tapQueries, 21]]) {
     const schema = queries.filter((sql) => /^\s*(CREATE|ALTER)\b/i.test(sql));
     assert.deepEqual(schema, [], `${label} repeated schema work`);
     assert.ok(!queries.some((sql) => /SET last_seen_at/.test(sql)), `${label} rewrote the session's last-seen time`);
     assert.ok(queries.length <= budget, `${label} made ${queries.length} D1 calls (budget ${budget}):\n${queries.join("\n")}`);
   }
+});
+
+test("a session is reused only within one request: a suspended binding stops the very next request", async () => {
+  const { sqlite, db } = await world();
+  seedCustomer(sqlite, "CUS-MEMO", "+919900000302");
+  const cookie = await customerCookie(db, "CUS-MEMO", "+919900000302");
+  const { resolvePlatformSession } = await import("../lib/platform-session.ts");
+  const request = (ray) => new Request(ENDPOINT, { headers: { cookie, "cf-ray": ray } });
+  assert.ok(await resolvePlatformSession(db, request("ray-a")));
+  const log = globalThis.__QLOG__; log.splice(0);
+  assert.ok(await resolvePlatformSession(db, request("ray-a")), "the same request reuses its session");
+  assert.equal(log.length, 0, "a repeat resolve within one request makes no D1 call");
+  sqlite.prepare("UPDATE identity_bindings SET status='suspended' WHERE subject_id='CUS-MEMO'").run();
+  assert.equal(await resolvePlatformSession(db, request("ray-b")), null, "a new request reads the session afresh");
 });

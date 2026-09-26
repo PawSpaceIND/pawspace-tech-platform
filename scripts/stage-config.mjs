@@ -75,9 +75,9 @@ cfg.name = WORKER_NAME;
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
-// Smart Placement runs the Worker next to the staging D1 instead of at the tester's edge. The V2
-// availability preview makes many sequential D1 reads, and each one paid the full edge-to-database
-// distance (bug B2: east zone 502 after ~30 s). Staging only; scripts/prod-config.mjs is unchanged.
+/* Smart Placement: run the Worker next to its D1 database instead of next to the visitor. A signed-in chat
+ * request makes several sequential D1 calls, so the Worker-to-database distance, not the visitor's, sets
+ * how fast a reply appears. Staging only for now, to compare before production takes it. */
 cfg.placement = { mode: "smart" };
 // Same-zone global fetches from pawspace-staging to another *.workers.dev Worker are refused by
 // Cloudflare. Bind exactly the certified checkout Worker when shadow relay is enabled; never grant

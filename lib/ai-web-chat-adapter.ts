@@ -308,8 +308,9 @@ export type WebChatTranscriptMessage={id:string;role:"customer"|"ai"|"bot"|"team
  * customer, and only customer-visible chat messages come back - never notes, other channels or staff
  * identities beyond "PawSpace team".
  */
-export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number}){
- await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
+export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number;ownershipVerified?:boolean}){
+ // ownershipVerified: the same request has just proved this actor owns the customer (a bot turn or start).
+ await ensureAiWebChatTables(db);if(!input.ownershipVerified)await requireCustomerOwnership(db,input.actor,input.customerId);
  let threadId=text(input.threadId);
  if(threadId){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
  else threadId=await currentWebChatThread(db,input.customerId);
@@ -370,9 +371,12 @@ export async function announcePaidAiBookings(db:D1Database,input:{threadId?:stri
 
 async function postBotMessage(db:D1Database,input:{threadId:string;customerId:string;reply:BotReply;idempotencyKey:string}){
  const now=Date.now();
- await db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_bot',NULL,?,?,'web-chat-bot',?,?)")
-  .bind(`MSG-BOT-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_BOT_TEMPLATE_KEY,JSON.stringify({text:input.reply.text,choices:input.reply.choices,inputHint:input.reply.inputHint}),input.idempotencyKey,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,deterministicBot:true}),now,now).run();
- await db.prepare("UPDATE communication_threads SET updated_at=? WHERE id=?").bind(now,input.threadId).run();
+ // Message and thread touch go in one D1 round trip.
+ await db.batch([
+  db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_bot',NULL,?,?,'web-chat-bot',?,?)")
+  .bind(`MSG-BOT-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_BOT_TEMPLATE_KEY,JSON.stringify({text:input.reply.text,choices:input.reply.choices,inputHint:input.reply.inputHint}),input.idempotencyKey,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,deterministicBot:true}),now,now),
+  db.prepare("UPDATE communication_threads SET updated_at=? WHERE id=?").bind(now,input.threadId),
+ ]);
 }
 
 async function recordCustomerMessage(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string}){
