@@ -213,13 +213,23 @@ export async function aiProviderConnection(channel?: string): Promise<{
   };
 }
 
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number }): Promise<AiDraftResult> {
+/**
+ * `onDelta` opts one caller into a streamed provider response. Supplying it changes only when text
+ * becomes available, never what is generated, governed, reserved or accounted: a live phone caller
+ * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
+ * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
+ */
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
   if (!apiKey) return fail("not_configured");
   const { modelRef } = aiModelRef(env, input.channel);
-  if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
+  const mark = (stage: string) => { try { input.onTiming?.(stage); } catch { /* Diagnostics cannot affect provider controls. */ } };
+  mark("governanceStarted");
+  const governanceAllowed = await governanceAllowsExternalAi(env, input, modelRef, providerRef);
+  mark("governanceCompleted");
+  if (!governanceAllowed) return fail("governance_blocked");
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -229,7 +239,9 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   let reservation: AiRuntimeReservation = null;
   if (db) {
+    mark("reservationStarted");
     const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    mark("reservationCompleted");
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
   }
@@ -243,6 +255,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
+  const streaming = Boolean(input.onDelta) && providerRef === "openai";
   try {
     let response: Response;
     try {
@@ -251,7 +264,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             method: "POST",
             signal: controller.signal,
             headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
+            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(streaming ? { stream: true } : {}), ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
           })
         : await fetch(ANTHROPIC_MESSAGES_URL, {
             method: "POST",
@@ -273,6 +286,53 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
         else if([400,404].includes(response.status)&&/model/i.test(message)&&/not found|does not exist|not available|not have access|deprecated|retired/i.test(message))failure="model_unavailable";
       }catch{/* Status-based classification remains available for malformed or oversized failures. */}
       return await finishFailure(failure, response.status);
+    }
+
+    if (streaming) {
+      // Same byte ceiling and the same failure classes as the buffered path; the only difference is
+      // that each delta is handed to the caller as it lands instead of after the generation ends.
+      let streamed = "", pending = "", bytes = 0, stopReason: string | null = null, usageTokens: number | undefined;
+      try {
+        const decoder = new TextDecoder();
+        // An explicit reader rather than for-await: the Workers ReadableStream is not async iterable.
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > MAX_AI_RESPONSE_BYTES) { await reader.cancel().catch(() => {}); return await finishFailure("oversized_output"); }
+          pending += decoder.decode(value, { stream: true });
+          const lines = pending.split("\n");
+          // The last element may be a partial line; keep it for the next chunk.
+          pending = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6).trim();
+            if (!payload || payload === "[DONE]") continue;
+            let event: { type?: unknown; delta?: unknown; response?: { status?: unknown; usage?: { total_tokens?: unknown; input_tokens?: unknown; output_tokens?: unknown } } };
+            try { event = JSON.parse(payload); } catch { continue; }
+            if (event.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
+              streamed += event.delta;
+              input.onDelta?.(event.delta);
+            } else if (event.type === "response.completed" && event.response) {
+              if (typeof event.response.status === "string") stopReason = event.response.status;
+              const total = Number(event.response.usage?.total_tokens);
+              const inTok = Number(event.response.usage?.input_tokens), outTok = Number(event.response.usage?.output_tokens);
+              usageTokens = Number.isFinite(total) && total >= 0 ? Math.floor(total)
+                : (Number.isFinite(inTok) && inTok >= 0 && Number.isFinite(outTok) && outTok >= 0 ? Math.floor(inTok + outTok) : undefined);
+            }
+          }
+        }
+      } catch {
+        return await finishFailure(controller.signal.aborted ? "timeout" : "network");
+      }
+      if (!streamed.trim()) return await finishFailure("empty_output");
+      if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: usageTokens });
+      return {
+        connected: true, text: streamed, modelRef, providerRef,
+        latencyMs: Date.now() - started, stopReason,
+        ...(usageTokens === undefined ? {} : { usageTokens }),
+      };
     }
 
     let raw: string;

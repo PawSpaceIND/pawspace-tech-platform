@@ -17,11 +17,20 @@ function makeD1(sqlite) {
     },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
+  // D1 runs each batch atomically and one after another. A request that starts independent work side by side
+  // (schema set-up, a lease pass and a roster write while it reads) can issue two batches at once, so they are
+  // queued here exactly as tests/helpers/execution-harness.mjs queues them, instead of opening a transaction
+  // inside a transaction. beforeBatch still runs first, outside the queue, so an injected competitor can commit.
+  let batchQueue = Promise.resolve();
   const db = {
     beforeBatch: null,
     prepare: (sql) => statement(sql),
     batch: async (items) => {
       if (typeof db.beforeBatch === "function") await db.beforeBatch(items);
+      const previous = batchQueue;
+      let release;
+      batchQueue = new Promise((resolve) => { release = resolve; });
+      await previous;
       sqlite.exec("BEGIN IMMEDIATE");
       try {
         const results = [];
@@ -31,6 +40,8 @@ function makeD1(sqlite) {
       } catch (error) {
         sqlite.exec("ROLLBACK");
         throw error;
+      } finally {
+        release();
       }
     },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
