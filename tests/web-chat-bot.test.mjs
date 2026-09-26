@@ -326,6 +326,27 @@ test("a short request naming a service starts it; a lead's greeting starts the s
   assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "Hi", signedIn: true }).state.flow, null, "without a lead service a greeting opens the menu");
 });
 
+test("a lead's service survives a question to the AI and 'Ask a question'", () => {
+  let state = { ...bot.initialBotState(), preferredFlow: "relocation" };
+  for (const input of [{ text: "how much does relocation cost?" }, { choiceId: "ask_ai" }, { text: "Hi" }]) {
+    const result = bot.runBotTurn(state, { ...input, signedIn: true });
+    state = result.state;
+    if (state.flow) break;
+    assert.equal(state.preferredFlow, "relocation", JSON.stringify(input));
+  }
+  assert.equal(bot.runBotTurn(state, { text: "Yes", signedIn: true }).state.flow, "relocation");
+});
+
+test("a date without a year means its next occurrence and is stored with the year", () => {
+  const now = Date.UTC(2026, 8, 26);
+  assert.equal(bot.parseDayMonth("26/09", now), "26/09/2026", "today counts");
+  assert.equal(bot.parseDayMonth("25/09", now), "25/09/2027");
+  assert.equal(bot.parseDayMonth("5-1", now), "05/01/2027");
+  assert.equal(bot.parseDayMonth("29/02", Date.UTC(2027, 5, 1)), "29/02/2028", "a leap day waits for the next leap year");
+  assert.equal(bot.parseDayMonth("31/04", now), null);
+  assert.equal(bot.parseDayMonth("29/02/2027", now), null);
+});
+
 test("two messages cannot both answer the same question: a stale save is refused and re-run", async () => {
   const { db } = await world();
   const store = await import("../lib/web-chat-bot-store.ts");
