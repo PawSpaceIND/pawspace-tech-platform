@@ -113,6 +113,8 @@ export default function V2GroomingPage() {
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
   const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
   const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
+  // Disabled checkout buttons point at the step that explains why.
+  const blockingIssue = mixedAudience ? { id: "v2-selection-issue", step: "01" } : youngIssue ? { id: "v2-young-issue", step: "02" } : null;
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
@@ -283,7 +285,7 @@ export default function V2GroomingPage() {
               })}
             </div>
             <p className={styles.helper}>{selectedPetIds.length}/4 pets selected. Multi-pet prices come from the governed catalogue. More than four opens a team enquiry.</p>
-            {mixedAudience && <p className={styles.inlineError} role="alert">{selectionIssue}</p>}
+            {mixedAudience && <p id="v2-selection-issue" className={styles.inlineError} role="alert">{selectionIssue}</p>}
           </section>
 
           <section className={styles.step}>
@@ -300,7 +302,7 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
-            {youngIssue && <p className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
+            {youngIssue && <p id="v2-young-issue" className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
           </section>
 
           <section className={styles.step}>
@@ -323,7 +325,8 @@ export default function V2GroomingPage() {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
-            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
           </section>
 
@@ -348,7 +351,7 @@ export default function V2GroomingPage() {
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue)} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
