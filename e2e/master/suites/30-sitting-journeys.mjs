@@ -29,9 +29,10 @@ const RUN_KEY = String(process.env.GITHUB_RUN_ID || process.env.MASTER_RUN_ID ||
 const ATTEMPT = Math.max(1, Number(process.env.GITHUB_RUN_ATTEMPT || 1));
 const SEED = Number(RUN_KEY.slice(-6)) + (ATTEMPT - 1) * 7;
 // Run-scoped 10-digit "97…" phones (the partner-due suite discovers bookings by a 97… phone, a CUS-OTP- id and a
-// "Master E2E" name): 97 + the run id's last 5 digits + attempt + "3" + journey. runPhone(1..9) of the other suites
-// puts the run id's last 7 digits in the same places, so the two never coincide within a run.
-const phone = k => `97${RUN_KEY.replace(/\D/g, "").slice(-5).padStart(5, "0")}${ATTEMPT % 10}3${k}`;
+// "Master E2E" name): 97 + (the run id's last 7 digits + 5,000,000 + attempt, mod 10^7) + journey. Other suites'
+// runPhone(slot) is 97 + the run id's last 7 digits + slot, and the offset block can never equal it (for attempt
+// 1..9), so a Sitting journey never shares a customer with another suite in the same run.
+const phone = k => `97${String((Number(RUN_KEY.replace(/\D/g, "").slice(-7).padStart(7, "0")) + 5_000_000 + ATTEMPT) % 10_000_000).padStart(7, "0")}${k}`;
 const [W0, W1] = WINDOWS.sitting;
 const BASE_DAY = W0 + (SEED % 12); // S4 ends at BASE_DAY + 10 ≤ W1 - 2
 const VISIT_TIMES = ["10:00", "11:00", "12:00", "14:00", "15:00", "16:00"];

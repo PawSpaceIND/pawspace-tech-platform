@@ -191,6 +191,9 @@ test("the Driver and Host workspaces gate Accept on the offer too", () => {
   assert.match(host, /requestBucket\(item\)==="active"/, "only an open, still-ahead offer is a pending host request");
   assert.match(host, /<h3>Needs Operations<\/h3>/);
   assert.match(host, /<h3>Past<\/h3>/);
+  // A replacement host (recovery_pending) can accept, as the lifecycle allows, on /partner/jobs too.
+  const jobs = read("app/partner/jobs/page.tsx");
+  assert.match(jobs, /job\.serviceCode==="boarding"&&\["awaiting_host_acceptance","recovery_pending"\]\.includes\(job\.status\)&&job\.stayId&&acceptAvailable/);
 });
 
 test("the Partner app counts only active work and gives non-grooming partners Jobs and GPS that lead somewhere", () => {
@@ -204,6 +207,9 @@ test("the Partner app counts only active work and gives non-grooming partners Jo
   assert.match(page, /aria-label="GPS for Sitting, Boarding and Taxi jobs"/, "the GPS tab routes to the job's own workspace");
   assert.match(page, /aria-label="Open GPS and navigation" onClick=\{\(\) => setTab\("tracking"\)\}/, "the GPS tile opens GPS");
   assert.match(page, /if \(state === "open"\) return "Review & accept";/);
+  // A 30-second refresh must not blank known work: the lists clear only when the partner changes.
+  assert.match(page, /useEffect\(\(\)=>\{queueMicrotask\(\(\)=>\{setOtherJobs\(\[\]\);setOtherCompleted\(\[\]\);setOtherOps\(\[\]\);setOtherPast\(\[\]\);setFeedError\(""\);\}\);\},\[identity\?\.subjectId\]\);/);
+  assert.doesNotMatch(page, /if\(!controller\.signal\.aborted\)\{setOtherJobs\(\[\]\)/, "the refresh effect no longer clears the lists");
   assert.doesNotMatch(page, /other verticals sign in but see their jobs elsewhere/);
   const route = read("app/api/partner-job-feed/route.ts");
   assert.match(route, /active:feed\.needsAction\.length\+feed\.today\.length\+feed\.upcoming\.length,needsOperations:feed\.needsOperations\.length,past:feed\.past\.length/);

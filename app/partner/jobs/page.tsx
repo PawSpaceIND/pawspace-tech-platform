@@ -56,7 +56,7 @@ export default function PartnerJobsPage(){
     {job.serviceCode==="boarding"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Requested extras:</b> {job.addOns.join(" · ")} <small>(subject to your agreement)</small></div>:null}
     {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
     {job.offer?<div style={{fontSize:13,color:job.offer.state==="expired"||job.offer.state==="withdrawn"?C.orange:C.dim}}><b style={{color:C.ink}}>{describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).label}</b> · {describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).detail}</div>:null}
-    {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId&&acceptAvailable(job.offer??{state:"open"},job.group==="past"?"past":undefined)?<div style={{display:"flex",gap:8}}>
+    {job.serviceCode==="boarding"&&["awaiting_host_acceptance","recovery_pending"].includes(job.status)&&job.stayId&&acceptAvailable(job.offer??{state:"open"},job.group==="past"?"past":undefined)?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
       <button disabled={busy} style={{...btn,background:"transparent",color:C.dim,border:`1px solid ${C.line}`}} onClick={()=>void stayAction(job.stayId as string,"decline")}>Decline</button>
     </div>:null}

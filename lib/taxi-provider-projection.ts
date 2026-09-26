@@ -88,3 +88,20 @@ export function projectTaxiProviderBooking(row: Row) {
     offer: projectOfferView(row.offer),
   };
 }
+
+/**
+ * A driver reading one ride by booking id (the /driver workspace) gets the lifecycle row in its own
+ * snake_case shape, minus what a driver has no need for: idempotency and pricing internals, who created
+ * the booking, source pet ids, raw event detail (sanitised as in the list projection) and payment
+ * event amounts (status only). Staff with bookings.manage still read the full row.
+ */
+const PROVIDER_HIDDEN_KEYS = new Set(["idempotency_key", "pricing_json", "created_by", "source_pet_ids_json"]);
+export function redactTaxiBookingForProvider(row: Row) {
+  const out: Row = {};
+  for (const [key, value] of Object.entries(row)) if (!PROVIDER_HIDDEN_KEYS.has(key)) out[key] = value;
+  out.events = Array.isArray(row.events) ? (row.events as Row[]).map(event => ({ id: String(event.id || ""), trip_id: event.trip_id != null ? String(event.trip_id) : null, event_type: String(event.event_type || ""), created_at: Number(event.created_at || 0), detail: sanitizeDetail(event.detail ?? event.detail_json) })) : [];
+  const payment = row.tripPayment as Row | null | undefined;
+  out.tripPayment = payment ? { status: payment.status != null ? String(payment.status) : null } : null;
+  out.offer = projectOfferView(row.offer);
+  return out;
+}

@@ -266,12 +266,14 @@ function PartnerMobileAppContent() {
   }, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);
 
   useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
+  // Another partner's work must never show, so the lists are cleared when the signed-in partner changes;
+  // a periodic refresh keeps what is on screen until it has something newer (a failed refresh keeps it).
+  useEffect(()=>{queueMicrotask(()=>{setOtherJobs([]);setOtherCompleted([]);setOtherOps([]);setOtherPast([]);setFeedError("");});},[identity?.subjectId]);
   useEffect(()=>{
     const controller=new AbortController();
-    queueMicrotask(()=>{if(!controller.signal.aborted){setOtherJobs([]);setOtherCompleted([]);setOtherOps([]);setOtherPast([]);setFeedError("");}});
     if(!identity?.subjectId)return()=>controller.abort();
     const others=(list:FeedJob[]|undefined)=>(list??[]).filter(job=>!["grooming","dog_training"].includes(job.serviceCode));
-    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(controller.signal.aborted)return;setOtherJobs(others([...feed.needsAction,...feed.today,...feed.upcoming]));setOtherCompleted(others(feed.completed));setOtherOps(others(feed.needsOperations));setOtherPast(others(feed.past));}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
+    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(controller.signal.aborted)return;setOtherJobs(others([...feed.needsAction,...feed.today,...feed.upcoming]));setOtherCompleted(others(feed.completed));setOtherOps(others(feed.needsOperations));setOtherPast(others(feed.past));setFeedError("");}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
     return()=>controller.abort();
   },[identity?.subjectId,refreshKey]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
