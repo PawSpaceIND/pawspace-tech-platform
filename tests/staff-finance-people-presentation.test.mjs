@@ -33,7 +33,7 @@ test('standalone styles are scoped, responsive, and do not hide operational cont
   assert.match(css,/--staff-surface/);assert.match(css,/--staff-primary/);
 });
 test('existing async query-param forwarding routes were not replaced by client shortcuts',()=>{
-  for(const [service,key] of [['sitting','bookingId'],['taxi','bookingId'],['walking','bookingId'],['food','orderId']]){
+  for(const [service,key] of [['boarding','bookingId'],['sitting','bookingId'],['taxi','bookingId'],['walking','bookingId'],['food','orderId']]){
     const source=read(`app/team/finance/${service}/page.tsx`);
     assert.match(source,/await searchParams/);assert.ok(source.includes('params.'+key));assert.doesNotMatch(source,/StaffModule|useRouter/);
   }

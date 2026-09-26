@@ -1,6 +1,10 @@
 {
   "base": "82d4158b339bedebd9485f8bc5324c54475f96de",
   "files": {
+    "app/team/finance/boarding/boarding-finance-workspace.tsx": {
+      "semantic": "5c5bf47763e32f9c4d4e6e9c2c86e2d610567a9ccf560886153dc4710d259b0e",
+      "mainRoots": 1
+    },
     "app/team/finance/cash-flow/page.tsx": {
       "semantic": "e0cb0c0245bdf0e4c6ce621a1d26014291c92900be1e709ca8514edf34f8eb6d",
       "mainRoots": 1
@@ -14,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "ff9e5156a619b1ba70232c765fb2dbc53bb38da42f0e051b725e6f9d6a877469",
+      "semantic": "a15e45ffcdb583492dd2cb4ff4e5d997ff8a1a5db446a2a8f041730f397120a6",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
@@ -91,6 +95,7 @@
     }
   },
   "pages": [
+    "app/team/finance/boarding",
     "app/team/finance/cash-flow",
     "app/team/finance/food",
     "app/team/finance/funeral-memorial",

@@ -50,3 +50,5 @@
  .bar + :global(main:not([class])):has(button[aria-pressed]) > header::after { position:relative; display:block; inset:auto; width:100%; height:160px; margin-top:18px; background-size:contain; }
  .bar + :global(main:not([class])) > section[style*="sticky"] { position:static !important; } .bar + :global(main:not([class])) > section[style*="sticky"] > button { width:100%; }
 }
+/* Native app only (html[data-pawspace-native], set by native-shell.tsx): the sticky bar stays below the status bar. */
+:global(html[data-pawspace-native]) .bar { top:env(safe-area-inset-top,0px); }

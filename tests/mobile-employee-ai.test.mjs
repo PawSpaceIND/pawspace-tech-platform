@@ -73,8 +73,9 @@ test("native customer shells declare microphone permission for employee AI voice
   assert.match(ios, /authorized employee starts an AI Voice session/);
 });
 
-test("customer Capacitor target still points at the shared mobile app surface", () => {
+test("customer Capacitor target points at the V2 customer surface", () => {
   const config = source("capacitor.customer.config.ts");
   assert.match(config, /appId: "com\.pawspace\.customer"/);
-  assert.match(config, /pathname !== "\/mobile-app"/);
+  assert.match(config, /pathname !== "\/v2"/);
+  assert.doesNotMatch(config, /mobile-app/);
 });

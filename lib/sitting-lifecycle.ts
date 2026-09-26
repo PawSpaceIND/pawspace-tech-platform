@@ -26,7 +26,9 @@ export async function listSittingBookings(db:D1Database,input:{providerId?:strin
  for(const row of rows.results){
   const care=await db.prepare("SELECT status,plan_json,updated_at FROM sitting_care_plan_snapshots WHERE booking_id=?").bind(row.id).first<Row>(),
    events=await db.prepare("SELECT id,event_type,actor_id,detail_json,created_at FROM sitting_care_events WHERE booking_id=? ORDER BY created_at DESC LIMIT 40").bind(row.id).all<Row>(),
-   recovery=await db.prepare("SELECT * FROM sitting_recovery_cases WHERE booking_id=? ORDER BY opened_at DESC LIMIT 1").bind(row.id).first<Row>();
+   recovery=await db.prepare("SELECT * FROM sitting_recovery_cases WHERE booking_id=? ORDER BY opened_at DESC LIMIT 1").bind(row.id).first<Row>(),
+   // The Meet & Greet table is created on first use; no table or column means nothing was linked.
+   meetGreet=await db.prepare("SELECT id,format,status,preferred_at,price_charged,price_waived_reason FROM meet_greet_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(row.id).first<Row>().catch(()=>null);
   const activeLocation=["assigned","in_progress"].includes(String(row.status))
    ?await db.prepare("SELECT address_text,latitude,longitude,source FROM booking_service_locations WHERE booking_id=? AND status='active'").bind(row.id).first<Row>().catch(()=>null)
    :null;
@@ -34,7 +36,7 @@ export async function listSittingBookings(db:D1Database,input:{providerId?:strin
   const serviceLocation=activeLocation&&Number.isFinite(latitude)&&Number.isFinite(longitude)
    ?{addressText:String(activeLocation.address_text||""),latitude,longitude,source:String(activeLocation.source||"canonical_booking")}
    :null;
-  result.push({...row,carePlan:care?{status:String(care.status),plan:parse(care.plan_json,{}),updatedAt:Number(care.updated_at)}:null,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,serviceLocation});
+  result.push({...row,carePlan:care?{status:String(care.status),plan:parse(care.plan_json,{}),updatedAt:Number(care.updated_at)}:null,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,serviceLocation,meetGreet:meetGreet??null});
  }
  return result;
 }

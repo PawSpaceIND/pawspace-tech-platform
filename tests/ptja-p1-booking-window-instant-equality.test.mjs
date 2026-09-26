@@ -58,9 +58,10 @@ const CUSTOMER = "CUS-WINDOWEQ-1", PROVIDER = "PRV-WINDOWEQ-1";
 const CITY = "blr", ZONE = "koramangala";
 
 /** Exactly what backend/src/scheduling.ts writes: the engine's canonical UTC spelling. */
-const RESERVED_START = "2026-11-04T04:30:00.000Z", RESERVED_END = "2026-11-04T06:30:00.000Z";
+/** One hour: a Sitting Home Visit is one 60-minute window (SIT-04), and every vertical here only compares instants. */
+const RESERVED_START = "2026-11-04T04:30:00.000Z", RESERVED_END = "2026-11-04T05:30:00.000Z";
 /** Exactly what app/training/page.tsx sends: the same two instants, spelled in IST. */
-const IST_START = "2026-11-04T10:00:00+05:30", IST_END = "2026-11-04T12:00:00+05:30";
+const IST_START = "2026-11-04T10:00:00+05:30", IST_END = "2026-11-04T11:00:00+05:30";
 
 const GENERIC_WINDOW_MESSAGE = "The booking window does not match the scheduling reservation";
 const VERTICAL_WINDOW_MESSAGE = {
@@ -157,7 +158,7 @@ test("P1-W03 a genuinely different instant is still refused as a window mismatch
     // instant. If this were green in P1-W01's shape the rule would have been deleted, not fixed.
     const result = await book(sqlite, {
       key: `weq-diff-${serviceCode}`, group: `SG-WEQ-DIFF-${serviceCode}`, serviceCode,
-      start: "2026-11-04T11:00:00+05:30", end: "2026-11-04T13:00:00+05:30",
+      start: "2026-11-04T11:00:00+05:30", end: "2026-11-04T12:00:00+05:30",
     });
     assert.equal(result.status, 409, `${serviceCode}: a different instant must be refused: ${JSON.stringify(result.body)}`);
     assert.equal(result.body?.error, GENERIC_WINDOW_MESSAGE,

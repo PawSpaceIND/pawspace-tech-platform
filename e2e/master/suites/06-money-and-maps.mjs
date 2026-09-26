@@ -5,7 +5,7 @@
 //  C) One Pet Taxi ride reserved and its 50% booking fee paid.
 import {
   BASE, launch, newFlow, settle, api, customerSession, otpCustomerSession, runPhone, dismissCookies, d1, isoDay,
-  payRazorpayTestNetbanking, record, finding, saveBooking, writeJson,
+  payRazorpayTestNetbanking, record, finding, saveBooking, writeJson, recordWebhookCheck,
 } from "../lib.mjs";
 
 const SUITE = "06-money-and-maps";
@@ -115,7 +115,10 @@ try {
   } catch (e) { step("split journey aborted", false, String(e?.message || e).slice(0, 400)); record({ suite: SUITE, journey: "Boarding 5 nights split 50/50", combo: "deposit", result: "BLOCKED", detail: `harness: ${String(e?.message || e).slice(0, 300)}`, evidence: [] }); }
 
   // ---------- B) Pet Taxi fares from real Google Routes ----------
-  const taxiStart = istIso(isoDay(138), "09:00");
+  // A slot of its own per run: rides booked by earlier runs keep their fleet car reserved, so a fixed slot
+  // eventually has no Citroen eC3 free (run 11: 409 "No Citroen eC3 is free for this 3-hour Taxi window").
+  const seed = Number(String(process.env.GITHUB_RUN_ID || Date.now()).slice(-6));
+  const taxiStart = istIso(isoDay(139 + (seed % 20)), ["09:00", "12:00", "15:00"][Math.floor(seed / 20) % 3]);
   const base = { originLabel: "100 Feet Road, Indiranagar, Bengaluru 560038", destinationLabel: "Koramangala 5th Block, Bengaluru 560095", scheduledStart: taxiStart };
   const combos = [
     ["one-way 1 pax 1 pet", { ...base, passengerCount: 1, petCount: 1, luggageCount: 0, tripType: "one_way", ridePurpose: "regular", waitingMinutes: 0 }],
@@ -168,6 +171,17 @@ try {
         record({ suite: SUITE, journey: "Pet Taxi ride 50% booking fee", combo: `Citroën one-way ₹${opt.quotedTotal}, fee ₹${opt.bookingFee}`, result: captured ? "PASS" : (r.opened ? "FAIL" : "BLOCKED"), detail: `${bookingId} ${JSON.stringify(r.status ? { bookingStatus: r.status.bookingStatus, paymentStatus: r.status.paymentStatus } : r.reason)}`, evidence: r.evidence });
         saveBooking({ suite: SUITE, bookingId, service: "pet_taxi", providerId: provider?.id, customer: account.customerId, scheduledStart: firstQuote.scheduledStart, total: Number(opt.quotedTotal), dueNow: Number(opt.bookingFee), paid: captured, paymentMode: "split_50_50" });
         out.taxiBooking = { bookingId, pay: r.status, reason: r.reason };
+        // PAY-05 live check: after the fee is captured the page must not offer another payment; the final balance
+        // is requested after drop-off. Read after a reload so the page shows the server's post-capture state.
+        if (captured) {
+          await flow.page.goto(`${BASE}/v2/booking?bookingId=${encodeURIComponent(bookingId)}`, { waitUntil: "domcontentloaded" });
+          await settle(flow.page, 4000);
+          const after = (await flow.page.locator("main").innerText().catch(() => "")).replace(/\s+/g, " ");
+          const offersPayment = /Pay securely|Pay balance/.test(after), explains = /requested after drop-off/.test(after);
+          const shot = await flow.shot("taxi-booking-after-fee-reload");
+          record({ suite: SUITE, journey: "Pet Taxi — after the booking fee (PAY-05)", combo: "what the booking page asks next", result: !offersPayment && explains ? "PASS" : "FAIL", detail: after.slice(0, 600), evidence: [shot] });
+          if (offersPayment) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Customer", flow: "Pet Taxi booking fee", title: "After the Pet Taxi booking fee is captured the booking page still offers a payment", steps: `Pay the fee for ${bookingId} in Razorpay TEST, reload /v2/booking`, expected: "Booking fee paid; final balance requested after drop-off", actual: after.slice(0, 400), evidence: [shot] });
+        }
       }
     } else record({ suite: SUITE, journey: "Pet Taxi ride 50% booking fee", combo: "Citroën one-way", result: "BLOCKED", detail: "no eligible Citroën quote from part B", evidence: [] });
   } catch (e) { step("taxi booking aborted", false, String(e?.message || e).slice(0, 400)); }
@@ -175,6 +189,9 @@ try {
   // Webhook inbox evidence for everything this suite paid (read-only).
   out.inboxSince = await d1("SELECT event_type, processing_status, COUNT(*) AS n FROM gateway_webhook_events WHERE received_at > ? GROUP BY 1,2", [Date.now() - 60 * 60_000]);
   step("webhook inbox, last hour", true, out.inboxSince);
+  // PAY-01 regression watch: webhooks stuck since the live deploy (in-flight ones are given 2 minutes to settle).
+  out.unfinishedWebhooks = await recordWebhookCheck(SUITE);
+  step("webhooks stuck since the live deploy", !out.unfinishedWebhooks.stuckAfterDeployCount, out.unfinishedWebhooks.stuckAfterDeploy || out.unfinishedWebhooks.error);
 } catch (error) {
   step("suite aborted", false, String(error?.message || error).slice(0, 500));
 } finally {
