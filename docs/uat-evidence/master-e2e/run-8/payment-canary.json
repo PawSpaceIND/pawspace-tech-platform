@@ -1,0 +1,144 @@
+{
+ "suite": "05-payment-canary",
+ "steps": [
+  {
+   "name": "customer session",
+   "ok": true,
+   "detail": "CUS-OTP-B70AF7A5B7D65FB88F56305B"
+  },
+  {
+   "name": "add vaccinated dog",
+   "ok": true,
+   "detail": "HTTP 201"
+  },
+  {
+   "name": "add Indiranagar address",
+   "ok": true,
+   "detail": "HTTP 201"
+  },
+  {
+   "name": "service zone 560038",
+   "ok": true,
+   "detail": "blr/blr-east"
+  },
+  {
+   "name": "verified boarding hosts for the window",
+   "ok": true,
+   "detail": "200 2 hosts"
+  },
+  {
+   "name": "4-hour daycare quote",
+   "ok": true,
+   "detail": "₹499 (rule ₹499)"
+  },
+  {
+   "name": "scheduler reservation (uses Google geocoding on staging)",
+   "ok": true,
+   "detail": "HTTP 200 in 28267 ms \"host_priya_dev\""
+  },
+  {
+   "name": "canonical booking created",
+   "ok": true,
+   "detail": "HTTP 201 PS-UAT-MUI33MXZ-278F"
+  },
+  {
+   "name": "care plan saved",
+   "ok": true,
+   "detail": "HTTP 200"
+  },
+  {
+   "name": "Razorpay TEST checkout opened",
+   "ok": true,
+   "detail": "frame present"
+  },
+  {
+   "name": "Netbanking test bank → Success",
+   "ok": true,
+   "detail": "{\"ok\":true,\"netbanking\":true,\"bank\":true}"
+  },
+  {
+   "name": "server shows payment captured + booking confirmed",
+   "ok": true,
+   "detail": "{\"bookingStatus\":\"confirmed\",\"paymentStatus\":\"captured\"}"
+  },
+  {
+   "name": "D1 booking_payments",
+   "ok": true,
+   "detail": [
+    {
+     "status": "captured",
+     "amount": 499,
+     "amount_due_now": 499
+    }
+   ]
+  },
+  {
+   "name": "D1 payment_gateway_events",
+   "ok": true,
+   "detail": [
+    {
+     "event_type": "payment.captured",
+     "processing_status": "processed",
+     "authority": "provider_api"
+    }
+   ]
+  },
+  {
+   "name": "D1 webhook inbox rows for this booking",
+   "ok": true,
+   "detail": [
+    {
+     "event_type": "payment.authorized",
+     "processing_status": "PROCESSING",
+     "received_at": 1790408744899
+    },
+    {
+     "event_type": "payment.captured",
+     "processing_status": "PROCESSING",
+     "received_at": 1790408745552
+    },
+    {
+     "event_type": "order.paid",
+     "processing_status": "PROCESSING",
+     "received_at": 1790408745982
+    }
+   ]
+  }
+ ],
+ "reserveMs": 28267,
+ "checkoutOpenMs": 12058,
+ "d1": {
+  "payRows": [
+   {
+    "status": "captured",
+    "amount": 499,
+    "amount_due_now": 499
+   }
+  ],
+  "events": [
+   {
+    "event_type": "payment.captured",
+    "processing_status": "processed",
+    "authority": "provider_api"
+   }
+  ],
+  "inbox": [
+   {
+    "event_type": "payment.authorized",
+    "processing_status": "PROCESSING",
+    "received_at": 1790408744899
+   },
+   {
+    "event_type": "payment.captured",
+    "processing_status": "PROCESSING",
+    "received_at": 1790408745552
+   },
+   {
+    "event_type": "order.paid",
+    "processing_status": "PROCESSING",
+    "received_at": 1790408745982
+   }
+  ]
+ },
+ "bookingId": "PS-UAT-MUI33MXZ-278F"
+}

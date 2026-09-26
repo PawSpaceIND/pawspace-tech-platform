@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { atPickupTime } from "./helpers/taxi-pickup-time.mjs";
 
 // ---------------------------------------------------------------------------
 // Module hooks: (1) extensionless relative .ts imports for Node's native ESM
@@ -255,8 +256,8 @@ const wMutate = (stack, bookingId, action, extra = {}) =>
     ...(action === "start_walk" ? { latitude: FIXTURE_DOORSTEP.latitude, longitude: FIXTURE_DOORSTEP.longitude } : {}),
     ...extra,
   });
-const tMutate = (stack, bookingId, action, extra = {}) =>
-  taxiLifecycle.mutateTaxiBooking(stack.db, { bookingId, action, actorId: extra.actorId ?? "driver1@test", idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(), ...extra });
+const tMutate = async (stack, bookingId, action, extra = {}) => (action === "confirm_pickup" && await atPickupTime(stack.db, bookingId), 
+  taxiLifecycle.mutateTaxiBooking(stack.db, { bookingId, action, actorId: extra.actorId ?? "driver1@test", idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(), ...extra }));
 const wProof = (stack, bookingId, action, extra = {}) =>
   walkingProof.mutateWalkingProof(stack.db, { bookingId, action, actorId: extra.actorId ?? "walker1@test", idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(), ...extra });
 const tProof = (stack, bookingId, action, extra = {}) =>

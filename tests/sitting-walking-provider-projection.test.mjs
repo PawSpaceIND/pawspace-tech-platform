@@ -69,8 +69,28 @@ test("booking-only Sitting provider GET uses the redacted provider projection", 
   assert.equal(response.status,200,await response.clone().text());
   const row=(await response.json()).data[0];
   assert.equal(row.provider_id,providerId); assert.equal(row.providerId,undefined); assert.equal(row.events[0].actor_id,"provider_or_system");
-  assert.equal(row.carePlan.plan.emergencyContact,"9876543210"); assert.equal(row.carePlan.plan.vet,"9999999999"); assert.equal(row.carePlan.plan.homeAccess,"PIN 4455");
+  // SIT-02: a paid booking the sitter has not accepted yet keeps home access, emergency contact and vet back.
+  assert.equal(row.status,"confirmed");
+  assert.equal(row.carePlan.plan.feeding,"Kibble"); assert.equal(row.carePlan.plan.specialInstructions,"Quiet dog");
+  assert.equal(row.carePlan.plan.emergencyContact,undefined); assert.equal(row.carePlan.plan.vet,undefined); assert.equal(row.carePlan.plan.homeAccess,undefined);
+  assert.deepEqual(row.carePlan.withheldUntilAccepted,["emergencyContact","vet","homeAccess"]);
+  assert.ok(!JSON.stringify(row).includes("PIN 4455"));
   assert.ok(!JSON.stringify(row).includes("ops@pawspace.in")); assert.ok(!JSON.stringify(row).includes("staffNote"));
+});
+
+test("SIT-02: home access, emergency contact and vet reach the sitter only for a paid, accepted booking", () => {
+  const care = { status:"ready", plan:{ feeding:"Kibble", emergencyContact:"Asha 9000000002", vet:"Dr Rao", homeAccess:"Key with security desk; code 4321" }, updatedAt:1 };
+  for (const status of ["payment_pending","confirmed","awaiting_acceptance","completed","cancelled"]) {
+    const out = projectSittingProviderBooking({ id:"B1", status, carePlan:care });
+    assert.equal(out.carePlan.plan.homeAccess, undefined, status); assert.equal(out.carePlan.plan.emergencyContact, undefined, status); assert.equal(out.carePlan.plan.vet, undefined, status);
+    assert.equal(out.carePlan.plan.feeding, "Kibble", status);
+    assert.ok(!JSON.stringify(out).includes("4321"), status);
+  }
+  for (const status of ["assigned","in_progress"]) {
+    const out = projectSittingProviderBooking({ id:"B1", status, carePlan:care });
+    assert.equal(out.carePlan.plan.homeAccess, "Key with security desk; code 4321", status);
+    assert.equal(out.carePlan.withheldUntilAccepted, undefined, status);
+  }
 });
 
 test("booking-only Sitting provider GET preserves only the acceptance-gated canonical doorstep", async t => {

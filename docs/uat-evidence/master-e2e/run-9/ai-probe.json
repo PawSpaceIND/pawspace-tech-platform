@@ -1,0 +1,76 @@
+{
+ "suite": "07-ai-probe",
+ "public": [
+  {
+   "q": "What is included in PawSpace boarding?",
+   "status": 200,
+   "providerConnected": false,
+   "provider": "canonical_service_directory",
+   "modelRef": null,
+   "outcome": "reply_ready",
+   "handoffReason": null,
+   "output": "Yes. PawSpace offers Boarding. I can help you understand the service or start from the Boarding section in PawSpace."
+  },
+  {
+   "q": "My indie dog gets anxious during thunderstorms. What should I tell the boarding host before a 3-night stay?",
+   "status": 200,
+   "providerConnected": false,
+   "provider": "canonical_service_directory",
+   "modelRef": null,
+   "outcome": "reply_ready",
+   "handoffReason": null,
+   "output": "Yes. PawSpace offers Boarding. I can help you understand the service or start from the Boarding section in PawSpace."
+  },
+  {
+   "q": "Can a senior cat with kidney issues be boarded, and what should I pack?",
+   "status": 200,
+   "providerConnected": true,
+   "provider": "openai",
+   "modelRef": "gpt-5.6-terra",
+   "outcome": "reply_ready",
+   "handoffReason": null,
+   "output": "For a senior cat with kidney issues, I’d recommend **Overnight Pet Sitting at home — ₹799 per pet** rather than boarding, since staying in a familiar environment can be less stressful.\n\nI can’t verify whether a boarding provider can accept your cat’s specific medical needs, so share the kidney condition, current symptoms, diet, medication schedule, and vet instructions before booking. Please also "
+  }
+ ],
+ "customer": [
+  {
+   "q": "Which of my bookings are coming up, and what do I still need to pay?",
+   "status": 200,
+   "providerConnected": false,
+   "provider": "openai",
+   "modelRef": "gpt-5.6-terra",
+   "outcome": "handoff",
+   "handoffReason": "provider_error",
+   "output": "I’m routing this conversation to a PawSpace team member so it can be handled safely.",
+   "raw": "{\"data\":{\"duplicatePrevented\":false,\"messageId\":\"MSG-CHAT-549B1477-C54\",\"threadId\":\"THREAD-33487866-156\",\"ai\":{\"duplicatePrevented\":false,\"turn\":{\"id\":\"AITURN-EC744FB9-BF4\",\"sessionId\":\"AISES-D2847374-42F\",\"threadId\":\"THREAD-33487866-156\",\"inputMessageId\":\"MSG-CHAT-549B1477-C54\",\"intent\":{\"intent\":\"unknown\",\"confidence\":0.25,\"confidenceBasis\":\"keyword_heuristic_sandbox\",\"signals\":[],\"policyRisk\":false},\"contextId\":\"AICTX-AE0FE088-7C1\",\"provider\":\"openai\",\"modelRef\":\"gpt-5.6-terra\",\"output\":\"I’m routing this conversation to a PawSpace team member so it can be handled safely.\",\"latencyMs\":2813,\"inputTokens\":null,\"outputTokens\":null,\"costMinor\":null,\"policyDecision\":\"human_handoff\",\"outcome\":\"handoff\",\"handoffReason\":\"provider_error\",\"suggestionId\":\"AISUG-6C810C3E-E51\"},\"autonomousExecution\":"
+  }
+ ],
+ "d1": {
+  "outcomes": [
+   {
+    "outcome": "draft_review_required",
+    "provider": null,
+    "n": 14,
+    "last": 1790397885392
+   },
+   {
+    "outcome": "reply_ready",
+    "provider": "openai",
+    "n": 10,
+    "last": 1790409240298
+   },
+   {
+    "outcome": "handoff",
+    "provider": null,
+    "n": 9,
+    "last": 1790409319840
+   },
+   {
+    "outcome": "canonical_service_answer",
+    "provider": null,
+    "n": 5,
+    "last": 1790409272756
+   }
+  ]
+ }
+}

@@ -60,3 +60,27 @@ test("the V2 training recovery banner links to the owned booking & payment page 
   assert.match(source, /href=\{bookingRecordHref\(recoveryBookingId\)\}/);
   assert.match(source, /bookingRecordHref=\(bookingId:string\)=>routeScope==="v2"\?`\/v2\/booking\?bookingId=\$\{encodeURIComponent\(bookingId\)\}`/);
 });
+
+// PAY-03 / PAY-05: once a split's first instalment is captured the page offered the balance as a fresh "Due now".
+test("after the first instalment the payment surface shows the balance with what was paid, never the deposit again", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const { default: BookingPaymentPage } = await import("../app/mobile-app/booking-payment-page.tsx");
+  const text = (props) => renderToStaticMarkup(React.createElement(BookingPaymentPage, { serviceName: "Luxury Stay", bookingId: "B1", totalAmount: 3495, amountDueNow: 1747.5, mode: "split_50_50", ...props })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const deposit = text({});
+  assert.match(deposit, /Due now ₹1,747\.50/);
+  assert.match(deposit, /Pay securely · ₹1,747\.50/);
+  const balance = text({ stage: "balance", paidAmount: 1747.5, balanceDueAt: Date.parse("2027-02-09T04:30:00.000Z") });
+  assert.doesNotMatch(balance, /Due now|Pay securely/, balance);
+  assert.match(balance, /Paid so far ₹1,747\.50/);
+  assert.match(balance, /Balance · due by .*₹1,747\.50/);
+  assert.match(balance, /Pay balance · ₹1,747\.50/);
+});
+
+test("the booking page labels a captured split's balance and never offers a Pet Taxi balance before drop-off", () => {
+  const source = fs.readFileSync(new URL("../app/v2/booking/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /paymentStage==="outstanding_balance"/);
+  assert.match(source, /balancePayableNow!==false/, "payment is offered only when the balance may be paid now");
+  assert.match(source, /stage=\{balanceStage\?"balance":undefined\}/);
+  assert.match(source, /requested after drop-off/);
+});

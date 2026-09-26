@@ -7,7 +7,7 @@ import{BOT_ESCALATE_AFTER_MS,BOT_REMINDER_AFTER_MS,botFollowUp,initialBotState,m
 import{advanceBotSession,claimBotSession,ensureBotSessionTable,loadBotSession,loadBotSessionVersion,purgeStalePublicBotSessions,saveBotSession}from"./web-chat-bot-store";
 import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
-import{requestAiDraft}from"./ai-provider-adapter";
+import{aiProviderConnection,requestAiDraft}from"./ai-provider-adapter";
 import{canonicalCatalogueSnapshot}from"./ai-grounded-runtime-provider";
 import{listServiceControls}from"./service-control";
 import{createDegradationLog}from"./degraded-reads";
@@ -45,8 +45,31 @@ type PublicServiceEntry={code:string;name:string;group:string;enabled:boolean};
 /** Reads the public service directory. A failed read falls back to the pre-directory chat path and is recorded as a degraded turn, never passed off as an empty catalogue. */
 async function publicServiceDirectory(db:D1Database,sessionKey:string):Promise<PublicServiceEntry[]>{const degradation=createDegradationLog();const directory=await listServiceControls(db).then(rows=>rows.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled})),error=>degradation.note("service_controls",error,[] as PublicServiceEntry[]));if(degradation.degraded())await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'service_directory_degraded',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({degraded:degradation.entries()}),Date.now()).run().catch(()=>undefined);return directory;}
 const phrase=(value:string)=>` ${value.toLowerCase().replace(/[^a-z0-9]+/g," ").trim()} `;
+/** The phrases a question may use to name a directory service, longest first. */
+const serviceAliases=(service:PublicServiceEntry)=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].map(phrase).filter(alias=>alias.trim()).sort((a,b)=>b.length-a.length);
 /** Returns the service only when the question names exactly one distinct service; multi-service questions go to the general path. */
-function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>[service.code.replaceAll("_"," "),service.name,...(service.code==="relocation"?["relocation"]:[])].some(alias=>phrase(alias).trim()&&q.includes(phrase(alias))));return matches.length===1?matches[0]:null;}
+function matchPublicService(directory:PublicServiceEntry[],question:string){const q=phrase(question);const matches=directory.filter(service=>serviceAliases(service).some(alias=>q.includes(alias)));return matches.length===1?matches[0]:null;}
+/** Words that only ask whether a service is offered: "Do you do boarding?", "Boarding?", "is grooming available". */
+const AVAILABILITY_WORDS=new Set(["a","an","any","are","available","availability","can","currently","do","does","get","got","guys","have","has","hello","hey","hi","i","is","now","offer","offered","offering","offers","ok","okay","pawspace","please","pls","provide","provided","provides","providing","service","services","still","the","there","u","we","yes","you","your"]);
+/**
+ * The directory only knows whether a service is offered, so it answers only a bare service question: the
+ * service's name and availability words, nothing else. What a service includes, care advice or a
+ * comparison is a real question for the model.
+ */
+function isBareServiceQuestion(service:PublicServiceEntry,question:string){let rest=phrase(question);for(const alias of serviceAliases(service))while(rest.includes(alias))rest=rest.replace(alias," ");return rest.trim().split(" ").filter(Boolean).every(word=>AVAILABILITY_WORDS.has(word));}
+const DETAIL_QUESTION=/\b(includ\w*|inclusions?|cover(?:s|ed)?|comes? with|details?)\b/i;
+/**
+ * The directory's own answer. Asked what a service includes, it gives the approved public knowledge
+ * written for that service (its title names the service) when there is any - the directory itself holds
+ * only names and availability, so nothing beyond those records is ever stated.
+ */
+function directoryAnswer(service:PublicServiceEntry,question:string,knowledge:Array<{title:string;excerpt:string}>){
+ if(!service.enabled)return`${service.name} is temporarily unavailable on PawSpace.`;
+ const offered=`PawSpace offers ${service.name}. I can help you understand the service or start from the ${service.name} section in PawSpace.`;
+ if(isBareServiceQuestion(service,question))return`Yes. ${offered}`;
+ const aliases=serviceAliases(service),approved=DETAIL_QUESTION.test(question)?knowledge.find(item=>item.excerpt&&aliases.some(alias=>phrase(item.title).includes(alias))):undefined;
+ return approved?`PawSpace offers ${service.name}. From PawSpace's approved information: ${approved.excerpt}`:offered;
+}
 
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
  await ensureAiWebChatTables(db);
@@ -56,12 +79,22 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const grounded=await publicAiWebKnowledge(db,{query:inspected.redacted}),history=publicHistory(input.history);
  const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted);
- if(matchedService){
-  const output=matchedService.enabled?`Yes. PawSpace offers ${matchedService.name}. I can help you understand the service or start from the ${matchedService.name} section in PawSpace.`:`${matchedService.name} is temporarily unavailable on PawSpace.`;
-  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
+ const directoryReply=async(service:PublicServiceEntry,providerFailure?:string)=>{
+  const output=directoryAnswer(service,inspected.redacted,grounded.knowledge);
+  await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,...(providerFailure?{providerFailure}:{}),serviceCode:service.code,serviceEnabled:service.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
   return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
+ };
+ /* The directory answers "is it offered?". Every question naming a service used to stop here, so "what is
+  * included in boarding?" or a question about an anxious dog's stay got the same one-liner and the model
+  * never saw it. Now only a bare service question does; anything more goes to the model below, grounded
+  * like every other question, and the directory answer is its fallback when no provider answers. */
+ if(matchedService){
+  if(isBareServiceQuestion(matchedService,inspected.redacted))return directoryReply(matchedService);
+  // No provider configured: the directory answers as it always did, without the reads a model call needs.
+  if(!(await aiProviderConnection("chat")).connected)return directoryReply(matchedService,"not_configured");
  }
- if(!grounded.knowledge.length){
+ // A named service is grounding in its own right (directory and catalogue), so it does not need a knowledge match.
+ if(!grounded.knowledge.length&&!matchedService){
   const enabledServices=serviceDirectory.filter(service=>service.enabled).map(service=>service.name).join(", ");
   const output=enabledServices?`I don’t have a verified PawSpace answer for that yet. Current PawSpace services include ${enabledServices}. For account-specific help, use My PawSpace after signing in.`:"I don’t have a verified PawSpace answer for that yet. I can help with Grooming, Dog Training, Boarding, Pet Sitting, Pet Taxi, Dog Walking, Fresh Food, bookings and other approved PawSpace information. For account-specific help, use My PawSpace after signing in.";
   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"knowledge_missing",providerConnected:false,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
@@ -75,6 +108,8 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
   maxTokens:650,channel:"chat",intent:"service_info",
  });
  const providerConnected=result.connected;
+ // No provider answered (none configured, a kill switch, a budget or an outage): a named service keeps the directory's answer, as before.
+ if(!result.connected&&matchedService)return directoryReply(matchedService,result.failure);
  /* Public chat shows the model's words directly, so an offer the server did not approve (a made-up code,
   * "20% off") is replaced before a visitor sees it. */
  const offerBlocked=providerConnected&&!offerClaimsApproved(result.text,offers);
@@ -210,7 +245,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  const turn=result.turn&&typeof result.turn==="object"?result.turn as Row:null;
  if(turn){await mirrorAiReply(db,{threadId,customerId:input.customerId,turn});if(result.duplicatePrevented)result={...result,turn:replayedTurnFromAny(turn)} as typeof result;}
- await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now()).run();
+ /* Why a turn went to a person, for whoever diagnoses it: the handoff reason and the provider failure class
+  * or thrown error type (never a message, prompt or credential). It is recorded here, not shown to the customer. */
+ let providerFailure:string|null=null;
+ if("providerFailure"in result){providerFailure=result.providerFailure??null;const shown={...result};delete shown.providerFailure;result=shown;}
+ await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,handoffReason:text(turn?.handoffReason??turn?.handoff_reason)||null,...(providerFailure?{providerFailure}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now()).run();
  const handoff=turn&&text(turn.outcome)==="handoff"?await activeHandoff(db,threadId):undefined;
  return{duplicatePrevented:Boolean(prior),messageId,threadId,ai:result,...(handoff?{handoff}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected};
 }
