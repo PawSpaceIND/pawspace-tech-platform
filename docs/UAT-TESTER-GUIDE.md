@@ -36,6 +36,10 @@ usable — and each gets only its own role's permissions, so signing in as the a
 you an associate's view.
 All demo rows are prefixed `UATD-` / `Demo ·` so they are obvious in every list.
 
+**Staff and customer sign-ins are separate.** Booking as a customer (phone OTP) does not sign you in as staff, and a staff
+sign-in is what Team pages use. If a Team page says you are signed in as a customer or partner, open `/staging-login` in
+the same browser and sign in with a staff identity above; your customer session keeps working for booking.
+
 **Customers do NOT log in here.** Open the app root on your phone, browse as a guest, and log in with any Indian-format mobile number when booking — the OTP is **shown on screen** (sandbox; no real SMS is sent). Every fresh number creates a fresh customer, which is the easiest way to test the new-customer welcome coupon.
 
 ## 2. Sandbox rules (not bugs)
@@ -66,9 +70,12 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   OTP is shown on screen (sandbox). The seeded roster (`scripts/uat-staging-provider-capacity.sql`) covers all
   five Bengaluru zones for Grooming, Training, Boarding, Sitting, Walking and Taxi, so "No provider is available"
   on an otherwise valid slot means the roster was not loaded — re-run the **Seed staging D1** workflow.
-- **Partner app as a UAT trainer**: the six training providers have partner OTP numbers too — `9000000931`
+- **Partner app as a UAT trainer**: the training providers have partner OTP numbers too — `9000000931`
   (city-wide Training Team), `9000000933` (Kavya R., South), `9000000932` (Arjun T., East), `9000000934`
-  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). A partner identity is
+  (Nikhil B., North), `9000000935` (Anitha G., West), `9000000936` (Rohan D., Central). The city-wide team has
+  four more seats, so testers who pick exactly the same Training date and time still each get a trainer:
+  `9000000937` (Training Team 2), `9000000938` (Team 3), `9000000939` (Team 4), `9000000940` (Team 5). Sign in
+  with the number of the seat named on your booking. A partner identity is
   the phone number, so "switching from groomer to trainer" means signing out and signing in with a trainer's
   number. Note that `/partner-app` lists and works **grooming** work orders only; a trainer signs in and sees
   the shell, but training sessions are not yet worked from this app.

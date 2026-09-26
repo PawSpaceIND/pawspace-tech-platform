@@ -72,7 +72,7 @@ test("candidates are de-duplicated and ordered by booking then sequence", () => 
   assert.equal(rows[0].bookingStatus, "unknown");
 });
 
-test("unpaid Training bookings older than 7 days are reported, newer ones are not", () => {
+test("unpaid Training bookings older than 7 days are counted as a health check (the scheduled expiry should leave none), newer ones are not", () => {
   const unpaid = selectStaleUnpaidBookings([
     { id: "P1", booking_id: "B1", booking_status: "payment_pending", created_at: NOW - 8 * DAY },
     { id: "P2", booking_id: "B2", booking_status: "payment_pending", created_at: NOW - 6 * DAY },
@@ -169,6 +169,9 @@ test("the default dry run only reads, lists the plan and never prints the code o
   assert.deepEqual(report.unpaid.map(row => row.bookingId), ["B8"]);
   const output = `${logs.join("\n")}\n${fs.readFileSync(reportPath, "utf8")}`;
   assert.match(output, /DRY RUN - nothing changed/);
+  // Unpaid bookings now expire on their own; the count is a health check, and the report says so.
+  assert.match(output, /Unpaid \(payment_pending\) Training bookings older than 7 days: 1 \(expected 0\)\. Left unchanged here - the scheduled unpaid-booking expiry cancels these automatically, without moving money, at 7 days after booking or at the first session's start, whichever is earlier\./);
+  assert.doesNotMatch(output, /no governed expire\/cancel-unpaid action/, "the report must not claim the expiry does not exist");
   assert.match(output, /session id\s+\| booking id\s+\| provider\s+\| scheduled start\s+\| old status\s+\| action\s+\| result/);
   assert.doesNotMatch(output, new RegExp(`${CODE}|${TOKEN}`));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -227,6 +230,11 @@ test("the workflow runs the cleanup only for suite=cleanup, dry-run by default, 
   assert.match(step, /PAWSPACE_UAT_ACCESS_CODE: \$\{\{ secrets\.PAWSPACE_UAT_ACCESS_CODE \}\}/);
   assert.match(step, /DRY_RUN: \$\{\{ github\.event\.inputs\.apply == 'apply' && 'false' \|\| 'true' \}\}/);
   assert.match(step, /run: node scripts\/uat-staging-training-cleanup\.mjs/);
-  assert.match(workflow, /- name: Run deployed Training acceptance\n\s+if: github\.event\.inputs\.suite != 'master' && github\.event\.inputs\.suite != 'cleanup'\n/);
+  assert.match(workflow, /- name: Run deployed Training acceptance\n\s+if: github\.event\.inputs\.suite == 'training-deployed'\n/);
+  // The read-only trainer check runs only its own spec and receives no secret.
+  const check = workflow.slice(workflow.indexOf("- name: Check that a tester is offered a Dog Training trainer"), workflow.indexOf("- name: Clean up stale UAT Training sessions"));
+  assert.match(check, /if: github\.event\.inputs\.suite == 'trainer-check'\n/);
+  assert.match(check, /run: npx playwright test --config playwright\.training-trainer-check\.config\.ts/);
+  assert.doesNotMatch(check, /secrets\./);
   assert.match(workflow, /default: 'https:\/\/pawspace-staging\.karthik-fce\.workers\.dev'/);
 });

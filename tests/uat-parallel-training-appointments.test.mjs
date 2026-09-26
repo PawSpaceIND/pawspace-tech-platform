@@ -169,6 +169,9 @@ test("seed: the city-wide UAT team trainer is loaded with capacity 25 / 200 dail
   for (const zone of ["east", "south", "north", "west", "central"]) {
     assert.equal(profile(ctx.sqlite, `uatcap_train_${zone}`).capacity, 1, `uatcap_train_${zone} keeps exercising the one-at-a-time path`);
   }
+  for (const seat of [2, 3, 4, 5]) {
+    assert.deepEqual({ ...profile(ctx.sqlite, `uatcap_train_ft_${seat}`) }, { capacity: 25, max_daily_jobs: 200, version: 1, updated_by: "founder_seed" }, `Training Team seat ${seat} is a full team profile`);
+  }
   runProfileSeed(ctx.sqlite);
   assert.equal(profile(ctx.sqlite, "uatcap_train_ft").version, 1, "re-running the seed on the next deploy changes nothing");
 });
@@ -201,17 +204,25 @@ const sessionDates = Array.from({ length: SESSIONS }, (_, i) => iso(FIRST + i * 
  * covers every session date - so a declared and an undeclared runtime see exactly the same roster and
  * the ONLY difference is the scheduling environment declaration.
  */
-async function stagingWorld(t, { uat }) {
+async function stagingWorld(t, { uat, seats = false }) {
   const ctx = await setupJourney(); t.after(ctx.close);
   if (!uat) delete globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_SCHEDULING_ENV;
   const { sqlite, db } = ctx;
   for (const statement of seedStatements(/^(INSERT OR IGNORE INTO provider_capacity_profiles .*'uatcap_train_ft'|UPDATE provider_capacity_profiles SET capacity=|CREATE TABLE IF NOT EXISTS (provider_home_base|scheduling_availability) )/)) sqlite.exec(statement);
   sqlite.exec(seedStatements(/^INSERT INTO provider_home_base .*'UAT-PHB-uatcap_train_ft'/)[0]);
+  const team = ["uatcap_train_ft"];
+  if (seats) {
+    // The seed's four more Training Team seats: their own profile and home base statements, verbatim.
+    const statements = seedStatements(/^(INSERT OR IGNORE INTO provider_capacity_profiles .*'uatcap_train_ft_\d'|INSERT INTO provider_home_base .*'UAT-PHB-uatcap_train_ft_\d')/);
+    assert.equal(statements.length, 8, "four seat profiles and four seat home bases");
+    for (const statement of statements) sqlite.exec(statement);
+    team.push("uatcap_train_ft_2", "uatcap_train_ft_3", "uatcap_train_ft_4", "uatcap_train_ft_5");
+  }
   sqlite.exec("UPDATE provider_capacity_profiles SET live=0 WHERE id IN ('train_kiran','train_ramesh','train_meera')");
   const publish = sqlite.prepare("INSERT INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)");
-  for (const date of sessionDates) publish.run(`ops_uatcap_train_ft_${date}`, "uatcap_train_ft", "blr", "blr-east", date, '["06:00-22:00"]', "operations", Date.now());
+  for (const providerId of team) for (const date of sessionDates) publish.run(`ops_${providerId}_${date}`, providerId, "blr", "blr-east", date, '["06:00-22:00"]', "operations", Date.now());
   const customers = {};
-  for (const id of ["A", "B", "C"]) {
+  for (const id of ["A", "B", "C", "D", "E", "F"]) {
     await seedOwnedPet(db, `CUST-PAR-${id}`, `PET-PAR-${id}`, `Dog ${id}`);
     customers[id] = await sessionCookie(db, "customer", `CUST-PAR-${id}`, `customer:CUST-PAR-${id}`);
   }
@@ -222,7 +233,7 @@ async function stagingWorld(t, { uat }) {
       serviceAddress: "42 Indiranagar Double Road, Bengaluru", servicePincode: "560038",
       scheduledStart: iso(start), scheduledEnd: iso(start + 60 * MINUTE_MS), occurrences: over.occurrences ?? SESSIONS, cadenceDays: CADENCE,
       // Training is customer_select: the tester reserves the trainer they picked from the preview.
-      ...(over.action ? { action: over.action } : { preferredProviderId: "uatcap_train_ft" }),
+      ...(over.action ? { action: over.action } : { preferredProviderId: over.preferredProviderId ?? "uatcap_train_ft" }),
     }, customers[id]);
   };
   const held = (customerId) => sqlite.prepare("SELECT provider_id,scheduled_start,status FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled' ORDER BY scheduled_start").all(customerId);
@@ -296,6 +307,31 @@ test("route, declared UAT: the identical window is still refused, because the sa
   assert.equal(refused.body.error, "SELECTED_PROVIDER_UNAVAILABLE");
   assert.ok(refused.body.evaluations[0].reasons.includes("Existing booking already holds this exact window"));
   assert.equal(world.held("CUST-PAR-C").length, 0);
+});
+
+test("route, declared UAT: testers who pick the identical window each get another Training Team seat", async (t) => {
+  const world = await stagingWorld(t, { uat: true, seats: true });
+  // A holds the team trainer for the whole programme at 10:30 IST; B to E keep exactly the same choices.
+  const taken = [];
+  for (const id of ["B", "C", "D", "E"]) {
+    const preview = await world.call(id, { action: "preview", shiftMinutes: 30 });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    const offered = preview.body.data.providers.map((provider) => provider.id);
+    assert.ok(offered.length > 0, `tester ${id} is offered a trainer instead of "No available trainer"`);
+    assert.ok(!offered.includes("uatcap_train_ft") && offered.every((seat) => !taken.includes(seat)), `a seat that already holds this exact window is never offered again: ${offered}`);
+    const reserved = await world.call(id, { shiftMinutes: 30, preferredProviderId: offered[0] });
+    assert.equal(reserved.status, 200, JSON.stringify(reserved.body));
+    assert.equal(world.held(`CUST-PAR-${id}`).length, SESSIONS, "every session of the programme is held");
+    taken.push(reserved.body.data.provider.id);
+  }
+  assert.deepEqual([...taken].sort(), ["uatcap_train_ft_2", "uatcap_train_ft_3", "uatcap_train_ft_4", "uatcap_train_ft_5"]);
+  // Five seats hold five identical programmes; a sixth identical one has no seat left, while a different
+  // start time still shares a seat in parallel.
+  const sixth = await world.call("F", { action: "preview", shiftMinutes: 30 });
+  assert.deepEqual(sixth.body.data.providers, []);
+  const shifted = await world.call("F", { action: "preview", shiftMinutes: 15 });
+  assert.equal(shifted.status, 200, JSON.stringify(shifted.body));
+  assert.ok(shifted.body.data.providers.length > 0, "a quarter of an hour later is offered again");
 });
 
 test("route, declared UAT: an Ops reassign with no replacement restores the parallel-held programme instead of losing it", async (t) => {

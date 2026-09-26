@@ -11,7 +11,7 @@
  * Each paid journey uses its own new customer and browser context, so one checkout's saved state can
  * never change what the next checkout shows.
  */
-import { test, devices, type Browser, type BrowserContext, type Page, type Locator } from "@playwright/test";
+import { test, devices, type Browser, type BrowserContext, type Page, type Locator, type Request as PwRequest, type Response as PwResponse } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 
@@ -22,10 +22,19 @@ const SHOTS = `${OUT}/shots`;
 const RUN_BASE = Date.now();
 let phoneSeq = 0;
 const nextPhone = () => `8${String(RUN_BASE + (phoneSeq++) * 7919).slice(-9)}`;
+/**
+ * A per-run first-session time, 10:00-17:00 IST in 30-minute steps, inside the 09:00-19:00 trainer roster. Every run
+ * used to book 11:00 and 15:00, and unpaid staging bookings keep their trainer's slot, so those hours ran out of
+ * trainers (run 36243387701: 28 Sept 11:00 had none, 29 Sept offered only one).
+ */
+const runSlot = (offset: number) => { const minutes = 600 + 30 * ((Math.floor(RUN_BASE / 1000) + offset) % 15); return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`; };
+const MEET_TIME = runSlot(0), STARTER_TIME = runSlot(7);
 const EMAIL = "uat.training.master@example.com";
 const TRAINER_PHONES: Record<string, string> = {
   "PawSpace Training Team (UAT)": "9000000931", "Arjun T. (UAT East)": "9000000932", "Kavya R. (UAT South)": "9000000933",
   "Nikhil B. (UAT North)": "9000000934", "Anitha G. (UAT West)": "9000000935", "Rohan D. (UAT Central)": "9000000936",
+  "PawSpace Training Team 2 (UAT)": "9000000937", "PawSpace Training Team 3 (UAT)": "9000000938",
+  "PawSpace Training Team 4 (UAT)": "9000000939", "PawSpace Training Team 5 (UAT)": "9000000940",
 };
 const PHONE_DEVICE = devices["Pixel 7"];
 mkdirSync(SHOTS, { recursive: true });
@@ -102,8 +111,29 @@ function answerDialogs(page: Page) {
 }
 const queueAnswers = (page: Page, ...answers: string[]) => dialogAnswers.get(page)?.push(...answers);
 const visible = (locator: Locator, timeout = 3000) => locator.first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false);
+// After the first load networkidle has already fired and Playwright does not re-arm it, so after a client-side click
+// this is a plain fixed delay. Never read a server-dependent outcome after it; wait for the outcome itself.
 async function settle(page: Page, ms = 1200) { await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {}); await page.waitForTimeout(ms); }
 const mainText = async (page: Page) => (await page.locator("main").first().innerText().catch(() => "")).replace(/\n+/g, " | ");
+const pathOf = (url: string) => { try { return new URL(url).pathname; } catch { return ""; } };
+/** What the browser shows when it gives up on a slow request: apiSend's two messages and boundedFetch's. */
+const CLIENT_TIMEOUT = /took too long|couldn't reach|timed out/i;
+const alertTexts = async (page: Page) => (await page.locator("[role=alert]").allInnerTexts().catch(() => [] as string[])).map(text => text.trim()).filter(Boolean);
+const freshAlerts = async (page: Page, before: string[]) => (await alertTexts(page)).filter(text => !before.includes(text));
+const usable = async (locator: Locator) => (await locator.first().isVisible().catch(() => false)) && (await locator.first().isEnabled({ timeout: 1000 }).catch(() => false));
+const inr = (amount: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+/** Log how long each matching request took (request.timing()), so the report shows the latency staging served. */
+function timeRequests(page: Page, paths: RegExp) {
+  const started = Date.now(), log: string[] = [];
+  const finished = async (request: PwRequest) => {
+    if (!paths.test(pathOf(request.url()))) return;
+    const timing = request.timing(), response = await request.response().catch(() => null);
+    log.push(`${request.method()} ${pathOf(request.url())} ${response?.status() ?? "?"} in ${timing.responseEnd >= 0 ? `${Math.round(timing.responseEnd)} ms` : "n/a"} at +${Math.round(timing.startTime - started)} ms`);
+  };
+  const failed = (request: PwRequest) => { if (paths.test(pathOf(request.url()))) log.push(`${request.method()} ${pathOf(request.url())} FAILED ${request.failure()?.errorText || ""} at +${Date.now() - started} ms`); };
+  page.on("requestfinished", finished); page.on("requestfailed", failed);
+  return { log, stop: () => { page.off("requestfinished", finished); page.off("requestfailed", failed); } };
+}
 async function api(page: Page, path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) {
   return page.evaluate(async ({ path, init }) => {
     const response = await fetch(path, { method: init.method || "GET", credentials: "include", headers: { "content-type": "application/json", ...(init.headers || {}) }, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
@@ -162,8 +192,8 @@ async function cleanCheckoutContext(browser: Browser, from: Customer): Promise<C
   const page = await context.newPage(); watchApi(page, `customer:${from.name}`); answerDialogs(page);
   return { context, page, phone: from.phone, name: from.name };
 }
-async function partnerLogin(page: Page, phone: string) {
-  await page.goto("/partner-app"); await settle(page);
+async function partnerLogin(page: Page, phone: string, path = "/partner-app", beforeVerify?: () => void) {
+  await page.goto(path); await settle(page);
   await page.getByPlaceholder("10-digit phone number").fill(phone);
   await page.getByRole("button", { name: "Send OTP" }).click();
   const sandbox = page.getByText(/Sandbox code \(no real SMS yet\):/i);
@@ -172,6 +202,7 @@ async function partnerLogin(page: Page, phone: string) {
   await page.getByPlaceholder("6-digit code").fill(code);
   const nameBox = page.getByPlaceholder("Your name (first time only)");
   if (await visible(nameBox, 1500)) await nameBox.fill("UAT Trainer");
+  beforeVerify?.();
   await page.getByRole("button", { name: "Verify & continue" }).click();
   for (let i = 0; i < 40; i++) {
     const r = await page.evaluate(() => fetch("/api/identity-session", { credentials: "include" }).then(async r => ({ s: r.status, b: await r.json().catch(() => null) })));
@@ -297,17 +328,81 @@ async function v2Choose(page: Page, input: { pkg: RegExp; dogs: string[]; mode?:
   }
   throw fail(`No date in the next 18 days had a trainer available for ${input.label}`);
 }
+const isCreate = (request: PwRequest) => request.method() === "POST" && pathOf(request.url()) === "/api/canonical-bookings";
+/** The reserve itself: a trainer preview is the same POST /api/uat-scheduling with action "preview". */
+const isReserve = (request: PwRequest) => request.method() === "POST" && pathOf(request.url()) === "/api/uat-scheduling" && !/"action":"preview"/.test(request.postData() || "");
+/**
+ * Click the reserve button and report what actually happened. apiSend gives up on the create after 20 s, and an
+ * aborted fetch never raises a "response" event, so a bare waitForResponse turned a slow staging create into a
+ * 120 s timeout with no evidence (run 36243387701, where staging took about 0.26-0.4 s per D1 round trip). Race the
+ * create's response against a failed reserve or create request and a new alert. A client-side timeout is a
+ * staging-latency failure, never a pass and never a product refusal.
+ */
+async function createBooking(page: Page, label: string, click: () => Promise<void>) {
+  const started = Date.now(), ms = () => Date.now() - started;
+  const before = await alertTexts(page);
+  const reserves: string[] = [], failed: string[] = []; let createSent = -1, settled = false;
+  const onRequest = (request: PwRequest) => { if (isCreate(request) && createSent < 0) createSent = ms(); };
+  const onResponse = (response: PwResponse) => { if (isReserve(response.request())) reserves.push(`${response.status()} at ${ms()} ms`); };
+  const onFailed = (request: PwRequest) => { if (isReserve(request) || isCreate(request)) failed.push(`${pathOf(request.url())} ${request.failure()?.errorText || "failed"} at ${ms()} ms`); };
+  page.on("request", onRequest); page.on("response", onResponse); page.on("requestfailed", onFailed);
+  const timing = () => `reserve ${reserves.join(", ") || "no response"} · create ${createSent < 0 ? "not sent" : `sent at ${createSent} ms`}`;
+  try {
+    const created = page.waitForResponse(r => isCreate(r.request()), { timeout: 120_000 }).then(response => ({ response })).catch(() => null);
+    const aborted = page.waitForEvent("requestfailed", { predicate: r => isReserve(r) || isCreate(r), timeout: 120_000 }).then(() => ({ aborted: true })).catch(() => null);
+    const alerted = (async () => { while (!settled && ms() < 120_000) { await page.waitForTimeout(500).catch(() => {}); if ((await freshAlerts(page, before)).length) return { alert: true }; } return null; })();
+    await click();
+    const first = await Promise.race([created, aborted, alerted]);
+    settled = true;
+    if (first && "response" in first) {
+      const body = await first.response.json().catch(() => null) as { data?: { bookingId?: string }; error?: string } | null;
+      if (first.response.status() === 201 && body?.data?.bookingId) return { bookingId: body.data.bookingId, timing: `${timing()}, answered 201 at ${ms()} ms` };
+      await shot(page, `${label}-create-refused`);
+      throw fail(`${label}: booking create ${first.response.status()} ${JSON.stringify(body).slice(0, 200)} · ${timing()} · ${await committedAnyway(page)}`);
+    }
+    // A failed request lands a moment before the page shows its alert, so give the alert a few seconds.
+    let alerts = await freshAlerts(page, before);
+    for (let i = 0; i < 10 && first && !alerts.length; i++) { await page.waitForTimeout(500); alerts = await freshAlerts(page, before); }
+    await shot(page, `${label}-reserve-failed`);
+    const verdict = failed.length || alerts.some(text => CLIENT_TIMEOUT.test(text)) ? "the browser gave up waiting: a client-side timeout on staging (latency), not a product refusal"
+      : alerts.length ? "refused before a booking was created" : "no create response, failed request or alert within 120 s";
+    const detail = `${verdict} · alert ${JSON.stringify(alerts)} · failed requests [${failed.join("; ")}] · ${timing()} · ${ms()} ms after the click`;
+    throw fail(`${label}: ${detail} · ${createSent < 0 ? "no create was sent" : await committedAnyway(page)}`);
+  } finally {
+    settled = true;
+    page.off("request", onRequest); page.off("response", onResponse); page.off("requestfailed", onFailed);
+  }
+}
+/** After a failed create: did the server commit the booking anyway? An unpaid orphan keeps its trainer's slot. */
+async function committedAnyway(page: Page) {
+  // Every journey signs in a brand-new customer, so any Training booking on the account came from this attempt.
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await page.waitForTimeout(15_000);
+      const account = await api(page, "/api/customer-account");
+      if (account.status !== 200) return `server check: customer-account ${account.status}`;
+      const bookings = ((account.body?.data?.bookings || []) as Array<{ id: string; serviceCode: string; packageName: string; status: string; scheduledStart: string }>).filter(booking => booking.serviceCode === "dog_training");
+      if (!bookings.length) continue;
+      const programme = await api(page, `/api/training-programmes?bookingId=${encodeURIComponent(bookings[0].id)}`);
+      return `server committed it anyway: ${bookings.map(booking => `${booking.id} ${booking.packageName} ${booking.status} ${booking.scheduledStart}`).join(", ")}; programme read ${programme.status} ${programme.body?.data?.programme?.status || programme.body?.error || ""}`.trim();
+    }
+    return "server check: no Training booking on the customer's account 30 s later";
+  } catch (error) { return `server check failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`; }
+}
+/** After the create the page prepares the programme (POST /api/training-programmes, also under apiSend's 20 s deadline). */
+async function awaitPayButton(page: Page, label: string, made: { bookingId: string; timing: string }) {
+  if (await visible(page.getByRole("button", { name: /^Pay securely/ }), 60_000)) return made;
+  await shot(page, `${label}-no-pay-button`);
+  const alerts = await alertTexts(page);
+  throw fail(`${label}: booking ${made.bookingId} was created (${made.timing}) but no "Pay securely" button appeared within 60 s${alerts.some(text => CLIENT_TIMEOUT.test(text)) ? ": a client-side timeout on staging (latency), not a refusal" : ""} · alert ${JSON.stringify(alerts)}`);
+}
 async function v2Reserve(page: Page, label: string) {
-  const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 });
-  await page.getByRole("button", { name: /Reserve trainer/ }).click();
-  const response = await created; const body = await response.json().catch(() => null) as { data?: { bookingId?: string }; error?: string } | null;
-  if (response.status() !== 201 || !body?.data?.bookingId) throw fail(`${label}: booking create ${response.status()} ${JSON.stringify(body).slice(0, 200)}`);
-  await page.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 });
-  return body.data.bookingId;
+  return awaitPayButton(page, label, await createBooking(page, label, () => page.getByRole("button", { name: /Reserve trainer/ }).click()));
 }
 async function payOnPage(page: Page, contactPhone: string, bookingId: string, label: string) {
-  const pay = page.getByRole("button", { name: /^Pay securely/ });
-  if (!(await visible(pay, 30_000))) { await shot(page, `${label}-no-pay-button`); throw fail(`${label}: no "Pay securely" button (${(await mainText(page)).slice(0, 200)})`); }
+  // A first payment reads "Pay securely · ₹…"; a split's outstanding balance reads "Pay balance · ₹…" (#1098).
+  const pay = page.getByRole("button", { name: /^Pay (securely|balance)/ });
+  if (!(await visible(pay, 30_000))) { await shot(page, `${label}-no-pay-button`); throw fail(`${label}: no "Pay securely" or "Pay balance" button (${(await mainText(page)).slice(0, 200)})`); }
   const payLabel = (await pay.first().innerText()).trim();
   await shot(page, `${label}-payment-page`);
   await pay.first().click();
@@ -330,14 +425,55 @@ async function confirmScreen(page: Page, heading: RegExp) {
 }
 
 // ---------------------------------------------------------------- trainer helpers
+/**
+ * Open (or reload) the trainer workspace on one session and wait until that session is rendered. The page shows only
+ * "Loading trainer workspace…" until identity, sessions and photos have loaded, about 55 sequential D1 round trips:
+ * 18-24 s on staging in run 36243387701, longer than the fixed wait that read it.
+ */
+async function openTrainerSession(page: Page, bookingId: string, sessionId: string, reload = false) {
+  const started = Date.now(), ms = () => Date.now() - started;
+  if (reload) await page.reload(); else await page.goto(`/trainer?bookingId=${encodeURIComponent(bookingId)}&sessionId=${encodeURIComponent(sessionId)}`);
+  const loaded = await page.getByRole("heading", { name: "Loading trainer workspace…" }).waitFor({ state: "detached", timeout: 120_000 }).then(() => true).catch(() => false);
+  const head = page.getByText(`${sessionId} · Booking ${bookingId}`);
+  // Whatever the workspace settles on: this session, another one, no sessions, or the sign-in refusal.
+  const shown = head.or(page.getByText(/ · Booking /)).or(page.getByText("No Training sessions are currently assigned")).or(page.getByRole("heading", { name: "Trainer sign-in required" }));
+  if (loaded && await visible(shown, Math.max(5000, 120_000 - ms())) && await visible(head, 1000)) return ms();
+  await shot(page, `trainer-${sessionId}-not-open`);
+  throw fail(`Trainer workspace ${loaded ? `does not show ${sessionId} · Booking ${bookingId}` : "still shows \"Loading trainer workspace…\""} after ${ms()} ms: ${(await mainText(page)).slice(0, 250)}`);
+}
+/** The workspace disables every action, and its ledger "Refresh", while an action or its follow-up refresh runs. */
+const ledgerRefresh = (page: Page) => page.getByRole("button", { name: "Refresh", exact: true });
+async function workspaceIdle(page: Page, timeout = 120_000) {
+  const until = Date.now() + timeout;
+  while (Date.now() < until) { if (await usable(ledgerRefresh(page))) return true; await page.waitForTimeout(500); }
+  return false;
+}
+/** check()/fill() only a rendered control: an absent label would otherwise burn the 20 s actionTimeout each time. */
+async function checkIfShown(page: Page, label: string) { const box = page.getByLabel(label); if (await box.count()) await box.first().check().catch(() => {}); }
+async function fillIfShown(page: Page, label: string, value: string) { const box = page.getByLabel(label); if (await box.count()) await box.first().fill(value).catch(() => {}); }
 async function sessionAction(page: Page, name: string) {
-  const button = page.getByRole("button", { name, exact: true });
-  if (!(await button.count()) || !(await button.first().isEnabled())) return { status: 0, body: `button "${name}" not available` };
-  const response = page.waitForResponse(r => r.url().includes("/api/training-sessions") && r.request().method() === "POST", { timeout: 30_000 }).catch(() => null);
-  await button.first().click();
-  const r = await response; const text = r ? await r.text().catch(() => "") : "no request";
-  await settle(page, 1200);
-  return { status: r?.status() ?? 0, body: text.slice(0, 300) };
+  const started = Date.now(), ms = () => Date.now() - started;
+  const button = page.getByRole("button", { name, exact: true }).first();
+  // Wait up to 60 s for the action to become usable. Once the workspace has sat idle for 10 s without it, only
+  // another action could enable it, so stop there instead of waiting out the minute.
+  for (let idleSince = 0; !(await usable(button));) {
+    idleSince = (await usable(ledgerRefresh(page))) ? idleSince || Date.now() : 0;
+    if (ms() > 60_000 || (idleSince && Date.now() - idleSince > 10_000)) return { status: 0, body: `button "${name}" not available (${(await button.count()) ? "disabled" : "not shown"} after ${ms()} ms)`, ms: ms() };
+    await page.waitForTimeout(500);
+  }
+  const posted = Date.now();
+  const isAction = (request: PwRequest) => request.method() === "POST" && pathOf(request.url()) === "/api/training-sessions";
+  const response = page.waitForResponse(r => isAction(r.request()), { timeout: 90_000 }).then(r => ({ r })).catch(() => null);
+  const aborted = page.waitForEvent("requestfailed", { predicate: isAction, timeout: 90_000 }).then(request => ({ failure: request.failure()?.errorText || "failed" })).catch(() => null);
+  await button.click();
+  const first = await Promise.race([response, aborted]);
+  // The action is over when the ledger Refresh is usable again: `busy` holds every button through the post-action refresh.
+  const tail = (await workspaceIdle(page, 120_000)) ? "" : " (workspace still busy 120 s later)";
+  if (first && "r" in first) return { status: first.r.status(), body: `${(await first.r.text().catch(() => "")).slice(0, 300)}${tail}`, ms: ms() };
+  const alerts = await alertTexts(page);
+  const why = !first ? "no answer to POST /api/training-sessions within 90 s"
+    : `the browser gave up on POST /api/training-sessions after ${Date.now() - posted} ms (${first.failure})${/ABORTED/i.test(first.failure) || alerts.some(text => CLIENT_TIMEOUT.test(text)) ? ": a client-side timeout on staging (latency), not a refusal" : ""}`;
+  return { status: 0, body: `${why}; alert ${JSON.stringify(alerts)}${tail}`, ms: ms() };
 }
 function metersFrom(latitude: number, longitude: number, lat0: number, lng0: number) {
   return { x: (longitude - lng0) * Math.cos(lat0 * Math.PI / 180) * 111_320, y: (latitude - lat0) * 110_540 };
@@ -365,10 +501,12 @@ async function uploadEvidence(page: Page) {
   for (const [label, rgb] of [["Before photo", [200, 90, 40]], ["After photo", [30, 150, 210]]] as const) {
     const input = page.getByLabel(label, { exact: true });
     if (!(await input.count())) { results.push(`${label}: input missing`); continue; }
-    const response = page.waitForResponse(r => r.url().includes("/api/training-session-media") && r.request().method() === "POST", { timeout: 30_000 }).catch(() => null);
+    // The workspace ignores a photo chosen while it is busy, so start each upload from an idle workspace.
+    await workspaceIdle(page);
+    const response = page.waitForResponse(r => r.url().includes("/api/training-session-media") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
     await input.setInputFiles({ name: `${label.replace(/\W/g, "-").toLowerCase()}.png`, mimeType: "image/png", buffer: png(rgb as unknown as [number, number, number]) });
     const r = await response; results.push(`${label}: ${r?.status() ?? "no request"}`);
-    await settle(page, 1500);
+    await workspaceIdle(page);
   }
   return results.join("; ");
 }
@@ -471,11 +609,12 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       return `dogs=[${dogs.join(", ")}] · ${zone}`;
     });
     await step("Customer V2", "Reserve Meet & Greet (1 dog, prepaid ₹500)", async () => {
-      const picked = await v2Choose(a.page, { pkg: /^Trainer Meet & Greet/, dogs: ["Bruno"], time: "11:00", trainers: [/PawSpace Training Team/], label: "meet" });
+      const picked = await v2Choose(a.page, { pkg: /^Trainer Meet & Greet/, dogs: ["Bruno"], time: MEET_TIME, trainers: [/PawSpace Training Team/], label: "meet" });
       await shot(a.page, "meet-before-reserve");
       state.meet = { trainer: picked.trainerText, date: picked.date };
-      state.meet.bookingId = await v2Reserve(a.page, "meet");
-      return `${state.meet.bookingId} · ${picked.trainerText} · ${picked.date}`;
+      const made = await v2Reserve(a.page, "meet");
+      state.meet.bookingId = made.bookingId;
+      return `${state.meet.bookingId} · ${picked.trainerText} · ${picked.date} ${MEET_TIME} · ${made.timing}`;
     });
     await step("Payment", "Meet & Greet: pay ₹500 with Razorpay TEST card → captured", async () => {
       if (!state.meet?.bookingId) throw blocked("Meet & Greet was not reserved");
@@ -488,20 +627,66 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       return `${state.meet.bookingId} confirmed`;
     });
     await step("Customer app", "Coupon UATCARE100 on the Training review step (fresh page)", async () => {
-      await a.page.goto("/mobile-app?service=dog_training"); await settle(a.page, 3000);
-      await a.page.getByRole("button", { name: /^(See training options|Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(a.page, 2500);
-      await a.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(a.page, 2000);
-      await a.page.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(a.page, 1200);
-      await a.page.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(a.page, 3000);
-      await a.page.getByRole("button", { name: /Pay 100% upfront/ }).click(); await settle(a.page, 2500);
-      const codes = a.page.getByRole("button", { name: /available code/ }); if (await codes.count()) { await codes.click(); await settle(a.page, 1000); }
-      const offer = a.page.locator("button").filter({ hasText: /UATCARE100|WELCOME/ }).first();
-      if (!(await offer.count())) throw info("No coupon offered for Dog Training");
-      await offer.click(); await settle(a.page, 3500); await shot(a.page, "app-coupon"); await shot(a.page, "app-coupon-full", true);
-      const payLabel = (await a.page.getByRole("button", { name: /Pay ₹|Refreshing server quote/ }).first().innerText().catch(() => "")).trim();
-      const alerts = await a.page.locator("[role=alert]").allInnerTexts();
-      if (/Refreshing/.test(payLabel) || alerts.some(t => /coupon/i.test(t))) throw fail(`Coupon shown as applied but Training quote refused it — pay button "${payLabel}", alert ${JSON.stringify(alerts)}`);
-      return `pay button "${payLabel}"`;
+      // The coupon is two sequential server answers: CouponField's coupon quote, then the Training quote bound to it.
+      // Read each when the page shows it. Run 36243387701 read the pay button at a fixed 3.5 s, while the Training
+      // quote was still in flight ("Refreshing server quote…"), and reported that as a refusal.
+      const requests = timeRequests(a.page, /^\/api\/(customer-offers|coupon-governance|training-commercial)$/);
+      try {
+        await a.page.goto("/mobile-app?service=dog_training"); await settle(a.page, 3000);
+        await a.page.getByRole("button", { name: /^(See training options|Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(a.page, 2500);
+        await a.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(a.page, 2000);
+        await a.page.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(a.page, 1200);
+        await a.page.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(a.page, 3000);
+        const full = a.page.getByRole("button", { name: /Pay 100% upfront/ });
+        await full.click();
+        const price = Number((await full.innerText()).match(/₹([\d,]+) before an eligible coupon/)?.[1]?.replace(/,/g, "") ?? NaN);
+        // The codes are listed only after /api/customer-offers answers.
+        const codes = a.page.getByRole("button", { name: /available code/ });
+        if (!(await visible(codes, 20_000))) throw info(`No coupon offered for Dog Training within 20 s · ${requests.log.join("; ")}`);
+        await codes.first().click();
+        const offer = a.page.locator("button").filter({ hasText: /UATCARE100|WELCOME/ }).first();
+        if (!(await visible(offer, 5000))) throw info("No coupon offered for Dog Training");
+        if (!Number.isFinite(price)) throw fail(`Could not read the plan price from "Pay 100% upfront": ${(await full.innerText()).replace(/\s+/g, " ")}`);
+        const code = (await offer.innerText()).match(/UATCARE100|WELCOME/)?.[0] || "";
+        // CouponField's own section: the review step's outer section also contains its text (and a <small> of its own).
+        const coupon = a.page.getByText("Coupon code · UAT governed", { exact: true }).locator("xpath=ancestor::section[1]");
+        const apply = coupon.getByRole("button", { name: "Apply", exact: true });
+        await apply.waitFor({ timeout: 25_000 }).catch(() => {}); // a welcome code the page auto-applies may still be checking
+        const alertsBefore = await alertTexts(a.page);
+        const clicked = Date.now(), since = () => Date.now() - clicked;
+        const couponAnswer = a.page.waitForResponse(r => pathOf(r.url()) === "/api/coupon-governance" && r.request().method() === "POST", { timeout: 25_000 }).catch(() => null);
+        await offer.click();
+        // 1. CouponField's own outcome: "you save ₹N", or its error line. Its button reads "Checking…" until then.
+        const couponResponse = await couponAnswer;
+        if (couponResponse) await apply.waitFor({ timeout: 10_000 }).catch(() => {});
+        const couponLine = (await coupon.locator("small").first().innerText().catch(() => "")).trim();
+        const saved = Number(couponLine.match(/you save ₹([\d,]+)/)?.[1]?.replace(/,/g, "") ?? NaN);
+        if (!couponResponse || !Number.isFinite(saved)) {
+          await shot(a.page, "app-coupon");
+          throw fail(couponResponse ? `${code} was not applied: "${couponLine}" (coupon quote ${couponResponse.status()} after ${since()} ms) · ${requests.log.join("; ")}`
+            : `Coupon quote did not answer within 25 s of choosing ${code} (coupon line "${couponLine}") · ${requests.log.join("; ")}`);
+        }
+        // 2. The Training quote bound to that coupon: its "Coupon saving" line, or a new alert. 30 s outlasts apiSend's 20 s deadline.
+        const saving = a.page.getByText(/^Coupon saving −₹/);
+        let answered = false, fresh: string[] = [];
+        for (const until = Date.now() + 30_000; Date.now() < until;) {
+          if (await saving.first().isVisible().catch(() => false)) { answered = true; break; }
+          fresh = await freshAlerts(a.page, alertsBefore); if (fresh.length) break;
+          await a.page.waitForTimeout(500);
+        }
+        const elapsed = since();
+        await shot(a.page, "app-coupon"); await shot(a.page, "app-coupon-full", true);
+        const payLabel = (await a.page.getByRole("button", { name: /Pay ₹|Refreshing server quote/ }).first().innerText().catch(() => "")).trim();
+        const evidence = `${elapsed} ms after choosing ${code} · ${requests.log.join("; ")}`;
+        if (fresh.some(text => CLIENT_TIMEOUT.test(text))) throw fail(`Training quote timed out on staging (latency), not a refusal: ${JSON.stringify(fresh)} · pay button "${payLabel}" · ${evidence}`);
+        if (fresh.length) throw fail(`Training quote refused the applied coupon: ${JSON.stringify(fresh)} · pay button "${payLabel}" · ${evidence}`);
+        if (!answered) throw fail(`No Training quote answer within 30 s of the coupon (pay button "${payLabel}", coupon "${couponLine}") · ${evidence}`);
+        const savingText = (await saving.first().innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        const quoted = Number(savingText.match(/−₹([\d,]+)/)?.[1]?.replace(/,/g, "") ?? NaN);
+        const expected = `Pay ${inr(price - saved)} & request trainer approval`;
+        if (quoted !== saved || payLabel !== expected) throw fail(`${code}: "${couponLine}", but the page shows "${savingText}" and pay button "${payLabel}", expected a ${inr(saved)} saving and "${expected}" · ${evidence}`);
+        return `${code}: ${couponLine} · ${savingText} · pay button "${payLabel}" · ${evidence}`;
+      } finally { requests.stop(); }
     });
 
     // ================= Journey B: Starter split programme → deposit → trainer lifecycle → balance → completion
@@ -512,14 +697,15 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
     const b = B as Customer | null;
     if (b) {
       await step("Customer V2", "Reserve Starter Plan (2 sessions, 50% split)", async () => {
-        const picked = await v2Choose(b.page, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: "15:00", trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter", requireKnownTrainer: true });
+        const picked = await v2Choose(b.page, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: STARTER_TIME, trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter", requireKnownTrainer: true });
         await shot(b.page, "starter-before-reserve");
         state.starter = { trainer: picked.trainerText, date: picked.date };
-        state.starter.bookingId = await v2Reserve(b.page, "starter");
+        const made = await v2Reserve(b.page, "starter");
+        state.starter.bookingId = made.bookingId;
         const prog = await api(b.page, `/api/training-programmes?bookingId=${encodeURIComponent(state.starter.bookingId)}`);
         state.starter.sessions = (prog.body?.data?.sessions || []).map((s: { id: string; sequence_no: number; status: string }) => ({ id: s.id, n: s.sequence_no, status: s.status }));
         state.starter.providerId = prog.body?.data?.programme?.provider_id;
-        return `${state.starter.bookingId} · ${picked.trainerText} (${state.starter.providerId}) · sessions ${JSON.stringify(state.starter.sessions)}`;
+        return `${state.starter.bookingId} · ${picked.trainerText} (${state.starter.providerId}) · ${picked.date} ${STARTER_TIME} · sessions ${JSON.stringify(state.starter.sessions)} · ${made.timing}`;
       });
       await step("Payment", "Starter deposit: pay ₹1,750 with Razorpay TEST card → captured", async () => {
         if (!state.starter?.bookingId) throw blocked("Starter was not reserved");
@@ -542,23 +728,41 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       });
     }
     const trainerPhone = TRAINER_PHONES[String(state.starter?.trainer || "").trim()] || "";
-    const trainerReady = await step("Trainer", "Partner app sandbox OTP sign-in as the assigned trainer", async () => {
+    // The lifecycle below needs a signed-in trainer, not a fast partner-jobs feed: /trainer reads its own endpoint.
+    await step("Trainer", "Partner app sandbox OTP sign-in as the assigned trainer", async () => {
       if (!state.starter?.depositPaid) throw blocked("Deposit not captured, so the trainer is correctly not allowed to start");
       if (!trainerPhone) throw blocked(`Assigned trainer "${state.starter?.trainer}" has no known UAT phone`);
       trainerContext = await browser.newContext({ ...PHONE_DEVICE, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata", permissions: ["geolocation"], geolocation: state.doorGuess || { latitude: 12.9784, longitude: 77.6408 } });
       open.push(trainerContext);
-      trainer = await trainerContext.newPage(); watchApi(trainer, "trainer"); answerDialogs(trainer);
-      const subject = await partnerLogin(trainer, trainerPhone); await settle(trainer, 2500); await shot(trainer, "partner-app-home");
-      return `${trainerPhone} → ${subject} · ${(await mainText(trainer)).slice(0, 300)}`;
+      const page = await trainerContext.newPage(); trainer = page; watchApi(page, "trainer"); answerDialogs(page);
+      // The home shows "No assigned jobs" until GET /api/partner-jobs answers, which took about 26-30 s on staging in
+      // run 36243387701, where a screenshot taken before it counted as a pass. Judge the feed the home is built from.
+      let jobs: Promise<PwResponse | null> = Promise.resolve(null), asked = Date.now();
+      const subject = await partnerLogin(page, trainerPhone, `/partner-app?bookingId=${encodeURIComponent(state.starter.bookingId)}`, () => {
+        asked = Date.now();
+        jobs = page.waitForResponse(r => pathOf(r.url()) === "/api/partner-jobs" && r.request().method() === "GET", { timeout: 120_000 }).catch(() => null);
+      });
+      state.trainerSignedIn = true;
+      const response = await jobs, answeredMs = Date.now() - asked;
+      const body = response ? await response.json().catch(() => null) as { jobs?: Array<{ trainingSessionId?: string }>; error?: string } | null : null;
+      const listed = (body?.jobs || []).map(job => String(job.trainingSessionId || "")).filter(Boolean);
+      const expected = ((state.starter.sessions || []) as Array<{ id: string }>).map(session => session.id);
+      const missing = expected.filter(id => !listed.includes(id));
+      await visible(page.getByText(state.starter.bookingId), 15_000);
+      await shot(page, "partner-app-home");
+      const home = (await mainText(page)).slice(0, 300);
+      if (!response) throw fail(`${trainerPhone} → ${subject}: GET /api/partner-jobs did not answer within 120 s of Verify · ${home}`);
+      if (response.status() !== 200 || !expected.length || missing.length) throw fail(`${trainerPhone} → ${subject}: GET /api/partner-jobs ${response.status()} after ${answeredMs} ms lists ${listed.length} Training session(s), not ${(missing.length ? missing : ["the Starter sessions"]).join(", ")} of ${state.starter.bookingId} ${body?.error || ""} · ${home}`);
+      return `${trainerPhone} → ${subject} · partner-jobs listed ${expected.join(", ")} after ${answeredMs} ms · ${home}`;
     });
     const s1 = state.starter?.sessions?.[0]?.id, s2 = state.starter?.sessions?.[1]?.id;
-    if (trainerReady === "PASS" && trainer && s1 && s2) {
+    if (state.trainerSignedIn && trainer && s1 && s2) {
       const t = trainer as Page, tc = trainerContext as unknown as BrowserContext;
       await step("Trainer", "Session 1: accept → on the way", async () => {
-        await t.goto(`/trainer?bookingId=${encodeURIComponent(state.starter.bookingId)}&sessionId=${encodeURIComponent(s1)}`); await settle(t, 3000);
+        const opened = await openTrainerSession(t, state.starter.bookingId, s1);
         const x = await sessionAction(t, "Accept"); const y = await sessionAction(t, "On the way"); await shot(t, "trainer-s1-on-the-way");
-        if (x.status !== 200 || y.status !== 200) throw fail(`accept ${x.status} ${x.body} · on the way ${y.status} ${y.body}`);
-        return "accepted + on the way";
+        if (x.status !== 200 || y.status !== 200) throw fail(`accept ${x.status} ${x.body} · on the way ${y.status} ${y.body} · workspace opened in ${opened} ms`);
+        return `accepted (${x.ms} ms) + on the way (${y.ms} ms) · workspace opened in ${opened} ms`;
       });
       await step("Maps", "Session 1: arrival geofence (250 m) at the geocoded doorstep", async () => {
         const first = await sessionAction(t, "Arrived");
@@ -566,19 +770,23 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         if (!/doorstep|geofence|location/i.test(first.body)) throw fail(`Arrived ${first.status} ${first.body}`);
         const door = await locateDoorstep(t, s1, state.doorGuess || { latitude: 12.9784, longitude: 77.6408 });
         state.door = door;
-        if (door.arrivedByProbe) return `first app arrival refused (${first.body.slice(0, 110)}); arrival accepted on a probe`;
-        await tc.setGeolocation({ latitude: door.latitude, longitude: door.longitude, accuracy: 10 }); await t.reload(); await settle(t, 2500);
+        if (door.arrivedByProbe) {
+          // The probe arrived through the API, so reload for the workspace to show the session as arrived.
+          await openTrainerSession(t, state.starter.bookingId, s1, true).catch(() => 0);
+          return `first app arrival refused (${first.body.slice(0, 110)}); arrival accepted on a probe`;
+        }
+        await tc.setGeolocation({ latitude: door.latitude, longitude: door.longitude, accuracy: 10 }); await openTrainerSession(t, state.starter.bookingId, s1, true);
         const r = await sessionAction(t, "Arrived"); await shot(t, "trainer-s1-arrived");
         if (r.status !== 200) throw fail(`Arrived ${r.status} ${r.body}`);
         return `first app arrival refused (${first.body.slice(0, 110)}); server doorstep located at ${door.latitude.toFixed(5)},${door.longitude.toFixed(5)}; app arrival then 200`;
       });
       await step("Trainer", "Session 1: pre-check → start → photos → handover → report", async () => {
-        await t.getByLabel("Parent/caretaker attendance confirmed").check().catch(() => {}); await t.getByLabel("Training area is safe").check().catch(() => {});
+        await checkIfShown(t, "Parent/caretaker attendance confirmed"); await checkIfShown(t, "Training area is safe");
         await shot(t, "trainer-s1-precheck");
         const start = await sessionAction(t, "Start session"); if (start.status !== 200) throw fail(`start ${start.status} ${start.body}`);
         const uploads = await uploadEvidence(t);
-        await t.getByLabel("Minutes completed").fill("15").catch(() => {}); const handover = await sessionAction(t, "Record completed handover");
-        await t.getByLabel("Homework for pet parent").fill("Practise sit-stay 3x daily for 5 minutes; loose-leash walk 10 minutes each evening.").catch(() => {});
+        await fillIfShown(t, "Minutes completed", "15"); const handover = await sessionAction(t, "Record completed handover");
+        await fillIfShown(t, "Homework for pet parent", "Practise sit-stay 3x daily for 5 minutes; loose-leash walk 10 minutes each evening.");
         const save = await sessionAction(t, "Save report"); await shot(t, "trainer-s1-in-session"); await shot(t, "trainer-s1-in-session-full", true);
         return `start 200 · ${uploads} · handover ${handover.status} · report ${save.status}`;
       });
@@ -587,8 +795,8 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         const r = await approveProof(staff, state.starter.bookingId); if (r.approved < 2) throw fail(`approved ${r.approved}/2 (${r.notes})`); return `approved ${r.approved} photos`;
       });
       await step("Trainer", "Session 1: Complete & consume one session (trainer screen)", async () => {
-        await t.reload(); await settle(t, 2500);
-        const refresh = t.getByRole("button", { name: "Refresh photo approval" }); if (await refresh.count()) { await refresh.click(); await settle(t, 1500); }
+        await openTrainerSession(t, state.starter.bookingId, s1, true);
+        const refresh = t.getByRole("button", { name: "Refresh photo approval" }); if (await refresh.count()) { await refresh.click(); await workspaceIdle(t); }
         const r = await sessionAction(t, "Complete & consume one session");
         await t.evaluate(() => window.scrollTo(0, 0)); await shot(t, "trainer-s1-complete-ui");
         state.s1UiComplete = r;
@@ -600,14 +808,14 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         if (r.status !== 200) throw fail(`${r.status} ${JSON.stringify(r.body).slice(0, 250)}`); return JSON.stringify(r.body?.data).slice(0, 250);
       });
       await step("Trainer", "Session 2 (final): accept → journey → arrive → start → photos → report", async () => {
-        await t.goto(`/trainer?bookingId=${encodeURIComponent(state.starter.bookingId)}&sessionId=${encodeURIComponent(s2)}`); await settle(t, 3000);
+        await openTrainerSession(t, state.starter.bookingId, s2);
         const out: string[] = [];
         for (const name of ["Accept", "On the way", "Arrived"]) { const r = await sessionAction(t, name); out.push(`${name} ${r.status}`); }
-        await t.getByLabel("Parent/caretaker attendance confirmed").check().catch(() => {}); await t.getByLabel("Training area is safe").check().catch(() => {});
+        await checkIfShown(t, "Parent/caretaker attendance confirmed"); await checkIfShown(t, "Training area is safe");
         out.push(`start ${(await sessionAction(t, "Start session")).status}`);
         out.push(await uploadEvidence(t));
-        await t.getByLabel("Minutes completed").fill("15").catch(() => {}); out.push(`handover ${(await sessionAction(t, "Record completed handover")).status}`);
-        await t.getByLabel("Homework for pet parent").fill("Keep daily recall games; add distractions gradually over two weeks.").catch(() => {});
+        await fillIfShown(t, "Minutes completed", "15"); out.push(`handover ${(await sessionAction(t, "Record completed handover")).status}`);
+        await fillIfShown(t, "Homework for pet parent", "Keep daily recall games; add distractions gradually over two weeks.");
         out.push(`report ${(await sessionAction(t, "Save report")).status}`); await shot(t, "trainer-s2-in-session");
         if (out.some(o => / (0|4\d\d|5\d\d)$/.test(o))) throw fail(out.join(" · "));
         return out.join(" · ");
@@ -631,24 +839,34 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         return `${result} · booking page now: ${(await mainText(clean.page)).slice(0, 250)}`;
       });
     }
-    if (trainerReady === "PASS" && trainer && s2) {
+    if (state.trainerSignedIn && trainer && s2) {
       const t = trainer as Page;
       await step("Trainer", "Final session completion → programme completed + certificate", async () => {
         if (!state.starter?.balancePaid) throw blocked("Balance not paid");
         let r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks.");
         for (let i = 0; i < 6 && r.status === 409 && /payment/i.test(JSON.stringify(r.body)); i++) { await t.waitForTimeout(15_000); r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks."); }
-        await t.reload(); await settle(t, 2500); await shot(t, "trainer-programme-complete");
+        await openTrainerSession(t, state.starter.bookingId, s2, true).catch(() => 0); await shot(t, "trainer-programme-complete");
         if (r.status !== 200) throw fail(`${r.status} ${JSON.stringify(r.body).slice(0, 250)}`);
         state.starter.completed = true;
         return JSON.stringify(r.body?.data).slice(0, 300);
       });
       await step("Trainer", "Earnings (trainer workspace + partner app)", async () => {
-        await t.getByRole("button", { name: /Earnings/ }).first().click(); await settle(t, 2500); await shot(t, "trainer-earnings");
-        const workspace = (await mainText(t)).match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}|TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || (await mainText(t)).slice(0, 300);
+        const opened = Date.now();
+        await t.getByRole("button", { name: /Earnings/ }).first().click();
+        // "Loading Training earnings…" stays up until /api/training-provider-earnings answers (about 60 D1 round trips).
+        const unavailable = t.getByRole("heading", { name: "Training earnings are unavailable" });
+        const ready = await visible(t.getByText("CANONICAL TRAINING PAYOUT LEDGER").or(unavailable), 120_000);
+        const elapsed = Date.now() - opened;
+        await shot(t, "trainer-earnings");
+        const shown = await mainText(t);
+        const latency = CLIENT_TIMEOUT.test(shown) ? ": a client-side timeout on staging (latency), not a refusal" : "";
+        if (!ready) throw fail(`"Loading Training earnings…" still shown after ${elapsed} ms${latency} · page: ${shown.slice(0, 300)}`);
+        if (await unavailable.first().isVisible().catch(() => false)) throw fail(`Training earnings are unavailable after ${elapsed} ms${latency} · page: ${shown.slice(0, 300)}`);
+        const workspace = shown.match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}|TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || shown.slice(0, 300);
         await t.goto("/partner-app"); await settle(t, 2500);
         const tab = t.getByRole("button", { name: /Earnings/ }).first(); if (await tab.count()) { await tab.click(); await settle(t, 2500); }
         await shot(t, "partner-app-earnings");
-        return `workspace: ${workspace.slice(0, 250)} || partner app: ${(await mainText(t)).slice(0, 300)}`;
+        return `workspace (earnings answered in ${elapsed} ms): ${workspace.slice(0, 250)} || partner app: ${(await mainText(t)).slice(0, 300)}`;
       });
     }
 
@@ -679,17 +897,10 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await step("Customer app", "Reserve Basic Obedience with 50% split", async () => {
         const pay = c.page.getByRole("button", { name: /Pay ₹[\d,]+ & request trainer approval/ });
         if (!(await visible(pay, 45_000))) { await shot(c.page, "app-no-pay-button", true); throw fail(`Pay button not ready: "${(await c.page.getByRole("button", { name: /Pay ₹|Refreshing/ }).first().innerText().catch(() => "?")).trim()}" alerts ${JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts())}`); }
-        const alertsBefore = JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts());
-        const created = c.page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 }).catch(() => null);
-        const refused = (async () => { for (let i = 0; i < 240; i++) { await c.page.waitForTimeout(500); const now = JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts().catch(() => [])); if (now !== alertsBefore && now !== "[]") return "alert" as const; } return null; })();
-        await pay.click();
-        const first = await Promise.race([created, refused]);
-        if (first === "alert" || first === null) { await shot(c.page, "app-reserve-refused"); throw fail(`Reservation refused before booking: ${JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts())}`); }
-        const body = await first.json().catch(() => null) as { data?: { bookingId?: string } } | null;
-        state.app = { bookingId: String(body?.data?.bookingId || "") };
-        if (!state.app.bookingId) throw fail(`booking create ${first.status()}`);
-        await c.page.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 });
-        return state.app.bookingId;
+        // Same race as V2: in run 36243387701 this create hit apiSend's 20 s deadline ("The request took too long").
+        const made = await awaitPayButton(c.page, "app", await createBooking(c.page, "app", () => pay.click()));
+        state.app = { bookingId: made.bookingId };
+        return `${state.app.bookingId} · ${made.timing}`;
       });
       await step("Payment", "Mobile app: pay ₹6,000 deposit with Razorpay TEST card → captured", async () => {
         if (!state.app?.bookingId) throw blocked("App programme not reserved");
@@ -792,16 +1003,20 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       return (await r.text().catch(() => "")).slice(0, 200);
     });
     await step("Ops", "Booking Command Center finds each Training booking", async () => {
-      await staff.goto("/booking-command-center"); await settle(staff, 4000);
+      await staff.goto("/booking-command-center");
       const ids = [state.meet?.bookingId, state.starter?.bookingId, state.app?.bookingId].filter(Boolean) as string[];
       if (!ids.length) throw blocked("No bookings created");
       const search = staff.getByPlaceholder("Search booking, customer, pet, phone or provider");
+      await search.waitFor({ timeout: 30_000 }).catch(() => {});
       const found: string[] = [], missing: string[] = [];
       for (const id of ids) {
-        // Wait for this id's server search, not a fixed delay: the first search raced the heavy initial list load.
-        const searched = staff.waitForResponse(r => r.url().includes("/api/booking-command-center?") && decodeURIComponent(r.url()).includes(id), { timeout: 30_000 }).catch(() => null);
-        await search.fill(id); await searched; await settle(staff, 1000);
-        ((await staff.getByText(id).count()) ? found : missing).push(id);
+        // Wait for the id itself. The list renders only once the initial snapshot has loaded, and a search result stays
+        // hidden behind it; that snapshot took about 50 s on staging (run 36243387701), past the old fixed waits.
+        const started = Date.now();
+        const searched = staff.waitForResponse(r => r.url().includes("/api/booking-command-center?") && decodeURIComponent(r.url()).includes(id), { timeout: 90_000 }).then(r => `search ${r.status()} at ${Date.now() - started} ms`).catch(() => "no search response");
+        await search.fill(id);
+        const shown = await visible(staff.getByText(id), 90_000);
+        (shown ? found : missing).push(`${id} (${shown ? "shown" : "not shown"} after ${Date.now() - started} ms; ${await Promise.race([searched, Promise.resolve("search pending")])})`);
       }
       await shot(staff, "bcc");
       if (missing.length) throw fail(`not found: ${missing.join(", ")} (found ${found.join(", ")})`);
@@ -823,19 +1038,29 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await g.getByLabel("Your message").fill("What dog training packages do you offer in Bengaluru and what do they cost?");
       const response = g.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
       await sendChat(g, "ai-guest");
-      const r = await response; await settle(g, 4000); await shot(g, "ai-guest-chat");
+      const r = await response;
+      await g.getByRole("status", { name: "PawSpace is typing" }).waitFor({ state: "hidden", timeout: 75_000 }).catch(() => {});
+      await settle(g, 1500); await shot(g, "ai-guest-chat");
       const convo = (await g.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(g))).replace(/\n+/g, " | ");
       return `${r?.status()} · ${convo.slice(-700)}`;
     });
-    await step("AI", "V2 chat (signed-in customer with a confirmed Meet & Greet): my next session", async () => {
-      await a.page.goto("/v2/chat"); await settle(a.page, 2500);
-      const mine = a.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
-      await a.page.getByLabel("Your message").fill("When is my Meet & Greet and who is my trainer?");
-      const response = a.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
-      await sendChat(a.page, "ai-customer");
-      const r = await response; await settle(a.page, 4000); await shot(a.page, "ai-customer-chat");
-      const convo = (await a.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(a.page))).replace(/\n+/g, " | ");
-      return `${r?.status()} · ${convo.slice(-700)}`;
+    await step("AI", "V2 chat (signed-in customer with a confirmed programme): my next session", async () => {
+      // Ask as the customer whose Starter programme is paid and confirmed; without one there is nothing to ask about.
+      const who = b && state.starter?.bookingId ? b : state.meet?.bookingId ? a : null;
+      if (!who) throw blocked("No confirmed Training booking to ask about");
+      await who.page.goto("/v2/chat"); await settle(who.page, 2500);
+      const mine = who.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
+      await who.page.getByLabel("Your message").fill("When is my next training session and who is my trainer?");
+      const response = who.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
+      await sendChat(who.page, "ai-customer");
+      const r = await response;
+      // Wait for the reply itself, not just the request: the typing indicator goes away when the answer is shown.
+      await who.page.getByRole("status", { name: "PawSpace is typing" }).waitFor({ state: "hidden", timeout: 75_000 }).catch(() => {});
+      await settle(who.page, 1500); await shot(who.page, "ai-customer-chat");
+      const convo = (await who.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(who.page))).replace(/\n+/g, " | ");
+      const answer = convo.split("When is my next training session and who is my trainer?").pop() ?? "";
+      if (!/PawSpace Training Team|trainer|session|Sept|Oct|\d{1,2}:\d{2}/i.test(answer)) throw fail(`No answer about the booking (${r?.status()}): ${convo.slice(-500)}`);
+      return `${r?.status()} · ${answer.slice(0, 600)}`;
     });
     await step("AI", "AI configuration readiness (founder)", async () => {
       await staffLogin(staff, "founder@pawspace.in");

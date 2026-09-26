@@ -124,6 +124,19 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 -- nothing once applied, so re-running it on every staging deploy is a no-op.
 UPDATE provider_capacity_profiles SET capacity=max(capacity,25),max_daily_jobs=max(max_daily_jobs,200),version=version+1,updated_at=1789300000000 WHERE id='uatcap_train_ft' AND updated_by='founder_seed' AND (capacity<25 OR max_daily_jobs<200);
 
+-- STAGING ONLY: four more seats of the same city-wide team (owner decision 2026-09-26, same request).
+-- Parallel sessions cover overlapping windows, but never the IDENTICAL one: the unique index
+-- uq_scheduling_reservations_active_provider_window allows one active hold per provider per exact
+-- (start,end). Testers who keep /v2/training's defaults (3 days ahead, 10:00, weekly) pick exactly the
+-- same windows, so the second of them could not share the team trainer and, with the zone trainer
+-- busy, the third was told "No available trainer". Each seat takes one more identical window. The
+-- seats are full profiles of their own (capacity 25, 200 daily jobs, founder_seed provenance, a home
+-- base and a partner OTP number below), so whichever seat a booking gets, a tester can sign in as it.
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft_2','blr','PawSpace Training Team 2 (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,25,45,200,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft_3','blr','PawSpace Training Team 3 (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,25,45,200,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft_4','blr','PawSpace Training Team 4 (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,25,45,200,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft_5','blr','PawSpace Training Team 5 (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,25,45,200,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+
 -- ---------------------------------------------------------------------------------------------------
 -- Boarding / Pet sitting / Dog walking / Pet taxi: not radius-gated, city-wide.
 -- ---------------------------------------------------------------------------------------------------
@@ -185,6 +198,10 @@ INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effect
 INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_groom_central_8','uatcap_groom_central_8','UAT base: Ulsoor, Bengaluru 560008',12.9810,77.6200,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_groom_central_8');
 
 INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft','uatcap_train_ft','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft_2','uatcap_train_ft_2','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft_2');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft_3','uatcap_train_ft_3','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft_3');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft_4','uatcap_train_ft_4','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft_4');
+INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_ft_5','uatcap_train_ft_5','UAT base: MG Road, Bengaluru 560001',12.9756,77.6066,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_ft_5');
 INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_east','uatcap_train_east','UAT base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_east');
 INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_south','uatcap_train_south','UAT base: BTM Layout 2nd Stage, Bengaluru 560068',12.9166,77.6101,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_south');
 INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) SELECT 'UAT-PHB-uatcap_train_north','uatcap_train_north','UAT base: Hebbal, Bengaluru 560024',13.0358,77.5970,0,NULL,'UAT staging roster home base','founder_seed',1789300000000 WHERE NOT EXISTS (SELECT 1 FROM provider_home_base WHERE provider_id='uatcap_train_north');
@@ -204,7 +221,8 @@ INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effect
 -- synthetic partner OTP number per UAT groomer AND per UAT trainer lets a tester sign in to /partner-app
 -- with the sandbox OTP (shown on screen; no real SMS). partner-otp matches canonical_providers by
 -- 10-digit phone, and the row id is the provider_capacity_profiles id so the session owns that
--- provider's work orders. Groomers use 9000000901-907, trainers 9000000931-936.
+-- provider's work orders. Groomers use 9000000901-907, trainers 9000000931-936, and the four more
+-- Training Team seats 9000000937-940.
 -- ---------------------------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',verified_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('asha.groomer1@tkpetcare.in','uatcap_groom_ft','active',1785542400000,1785542400000) ON CONFLICT(email) DO UPDATE SET provider_id=excluded.provider_id,status='active',verified_at=excluded.verified_at,updated_at=excluded.updated_at;
@@ -244,6 +262,10 @@ INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,cr
  ('uatcap_train_north','blr','Nikhil B. (UAT North)','9000000934',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_train_west','blr','Anitha G. (UAT West)','9000000935',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('uatcap_train_central','blr','Rohan D. (UAT Central)','9000000936',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft_2','blr','PawSpace Training Team 2 (UAT)','9000000937',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft_3','blr','PawSpace Training Team 3 (UAT)','9000000938',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft_4','blr','PawSpace Training Team 4 (UAT)','9000000939',NULL,'uat_staging_seed',1789300000000,1789300000000),
+ ('uatcap_train_ft_5','blr','PawSpace Training Team 5 (UAT)','9000000940',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('host_arjun_tara','blr','Arjun & Tara','9000000970',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('host_maa_meena','blr','Meena & Karthik','9000000971',NULL,'uat_staging_seed',1789300000000,1789300000000),
  ('host_maya_rohan','blr','Maya & Rohan','9000000972',NULL,'uat_staging_seed',1789300000000,1789300000000),

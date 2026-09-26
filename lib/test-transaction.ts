@@ -1,6 +1,7 @@
 export type TestBookingStatus="confirmed"|"awaiting_acceptance"|"assigned"|"on_the_way"|"arrived"|"in_service"|"completed"|"cancelled";
 export type TestBookingEvent={at:string;surface:"customer"|"crm"|"admin"|"provider"|"ops"|"accounts"|"system";label:string};
-export type TestPaymentStatus="paid"|"payment_pending"|"due_after_service"|"credit_reserved"|"credit_consumed"|"cancelled";
+// deposit_paid: a split Dog Training programme whose deposit is captured; the balance is due before the final session.
+export type TestPaymentStatus="paid"|"deposit_paid"|"payment_pending"|"due_after_service"|"credit_reserved"|"credit_consumed"|"cancelled";
 export type TestTransaction={
   id:string;customerId:string;customerName:string;primary:string;secondary:string;pets:string;petCount:number;service:string;packageName:string;
   area:string;slot:string;duration:string;amount:number;payment:string;paymentStatus:TestPaymentStatus;

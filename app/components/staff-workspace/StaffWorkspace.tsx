@@ -20,6 +20,8 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
   const actor = suppliedActor === undefined ? currentNavigation?.actor ?? null : suppliedActor;
   const navigationError = currentNavigation?.error ?? "";
   const signInUrl = currentNavigation?.signInUrl ?? "";
+  // Only a customer or partner session is in this browser (no staff sign-in): the server says so.
+  const staffSignInNeeded = currentNavigation?.code === "staff_sign_in_required";
   const active = activeStaffLink(pathname);
   const groups = visibleStaffGroups(actor?.permissions ?? [], query);
 
@@ -28,13 +30,14 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
   useEffect(() => {
     if (suppliedActor !== undefined) return;
     const abort = new AbortController();
-    let responseStatus = 0, nextSignInUrl = "";
+    let responseStatus = 0, nextSignInUrl = "", nextCode = "";
     void fetch("/api/team-overview", { cache: "no-store", signal: abort.signal })
       .then(async response => {
-        const body = await response.json() as { data?: { actor?: StaffActor }; error?: string; signInUrl?: string };
+        const body = await response.json() as { data?: { actor?: StaffActor }; error?: string; signInUrl?: string; code?: string };
         responseStatus = response.status;
         if (!response.ok) {
           nextSignInUrl = body.signInUrl === "/staging-login" ? body.signInUrl : "";
+          nextCode = typeof body.code === "string" ? body.code : "";
           throw new Error(body.error || "Workspace navigation is unavailable.");
         }
         const next = body.data?.actor;
@@ -44,7 +47,7 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
         if (!abort.signal.aborted) setNavigationSnapshot({pathname, attempt, actor: next, error: "", signInUrl: "", status: responseStatus});
       })
       .catch(error => {
-        if (!abort.signal.aborted) setNavigationSnapshot({pathname, attempt, actor: null, error: error instanceof Error ? error.message : "Navigation unavailable.", signInUrl: nextSignInUrl, status: responseStatus});
+        if (!abort.signal.aborted) setNavigationSnapshot({pathname, attempt, actor: null, error: error instanceof Error ? error.message : "Navigation unavailable.", signInUrl: nextSignInUrl, status: responseStatus, code: nextCode});
       });
     return () => abort.abort();
   }, [suppliedActor, pathname, attempt]);
@@ -66,15 +69,15 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
           <div>{group.links.map(link => <Link key={link.href} href={link.href} className={link.href === active ? styles.selected : ""} aria-current={link.href === active ? "page" : undefined} onClick={() => setMobileOpen(false)}>{link.label}</Link>)}</div>
         </details>)}
       </nav>
-      {!actor && <p className={styles.navHint} role="status">{navigationError ? currentNavigation?.status === 403 ? "Your role does not include the Team menu. The current page below keeps its own access checks." : "Navigation unavailable. Your workspace below keeps its existing access checks." : actorPending || suppliedActor === undefined ? "Checking your workspace access..." : "Your role has not been verified."}</p>}
+      {!actor && <p className={styles.navHint} role="status">{navigationError ? staffSignInNeeded ? navigationError : currentNavigation?.status === 403 ? "Your role does not include the Team menu. The current page below keeps its own access checks." : "Navigation unavailable. Your workspace below keeps its existing access checks." : actorPending || suppliedActor === undefined ? "Checking your workspace access..." : "Your role has not been verified."}</p>}
       {!actor && navigationError && pathname === "/me" && <a className={styles.home} href="#staff-workspace-content">Current page: My workspace</a>}
       {actor && groups.length === 0 && <p className={styles.navHint}>{query ? "No permitted workspace matches your search." : "No workspaces enabled for your role."}</p>}
-      {navigationError && <div className={styles.navRecovery}><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry navigation</button>{signInUrl && <Link href={signInUrl}>Sign in again</Link>}</div>}
+      {navigationError && <div className={styles.navRecovery}><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry navigation</button>{signInUrl && <Link href={signInUrl}>{staffSignInNeeded ? "Sign in as staff" : "Sign in again"}</Link>}</div>}
       <div className={styles.sidebarFooter}>
         <p><strong>{actor?.name || "PawSpace Team"}</strong><span>{actor?.roleCode?.replace(/_/g, " ") || "Role-based access"}</span></p>
         <details><summary>Other experiences</summary><Link href="/">Customer home</Link><Link href="/v2">Customer app</Link><Link href="/partner">Partner workspace</Link></details>
       </div>
     </aside>
-    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}>{children}</div>
+    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}>{staffSignInNeeded && <p className={styles.signInNotice} role="alert">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>
   </div>;
 }

@@ -95,6 +95,47 @@ test("4. provider identity authorization is unchanged", async () => {
   assert.doesNotMatch(page, /subjectType\s*\?\?\s*"provider"|subjectId\s*\?\?\s*"/, "no defaulted provider identity");
 });
 
+// Staging E2E 36243387701 (row 16): the home read "NEXT ASSIGNMENT · No assigned jobs · 0 active jobs · 0
+// completed" for a trainer whose paid booking /api/partner-jobs did return - it was still loading (~26-30 s at
+// staging's D1 latency). And a response slower than the 30 s tick was discarded by the refetch that tick started.
+const jobsEffect = (page) => {
+  const start = page.indexOf("jobsInFlight.current += 1;");
+  return page.slice(start, page.indexOf("}, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);", start));
+};
+
+test("5. the home shows a loading state, not 'No assigned jobs' or 0 counts, until the first partner-jobs answer", async () => {
+  const page = await source("app/partner-app/page.tsx");
+  assert.match(page, /const \[jobsLoaded, setJobsLoaded\] = useState\(false\);/);
+  // Only a delivered, current answer marks the jobs loaded: after the 401 / cancelled / superseded-session guard.
+  assert.equal((page.match(/setJobsLoaded\(true\)/g) || []).length, 1);
+  assert.match(jobsEffect(page), /if \(next === null \|\| cancelled \|\| version !== sessionVersion\.current\) return;\s*setJobs\(next\);\s*setJobsLoaded\(true\);/);
+  // The empty state and the counts are only reachable once loaded.
+  const hero = page.slice(page.indexOf("<span>NEXT ASSIGNMENT</span>"), page.indexOf("<div className={styles.stats}>"));
+  assert.ok(hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') >= 0 && hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') < hero.indexOf('"No assigned jobs"'), "NEXT ASSIGNMENT says loading before it may say no assigned jobs");
+  const stats = page.slice(page.indexOf("<div className={styles.stats}>"), page.indexOf("<small>tap to start</small>"));
+  assert.equal((stats.match(/<span>\{jobsLoaded\?[^}]*:"…"\}<\/span>/g) || []).length, 2, "both job counts show … until loaded");
+  assert.match(page, /\{jobs\.length === 0 && !error && <div className=\{styles\.empty\}>\{jobsLoaded \? "No canonical jobs assigned to this provider yet\." : "Loading your jobs…"\}<\/div>\}/);
+  // A new account starts unloaded again, so it never inherits the previous partner's "loaded, empty" state.
+  const unauthorized = page.slice(page.indexOf("const handleUnauthorized = () => {"), page.indexOf("};", page.indexOf("const handleUnauthorized = () => {")));
+  assert.match(unauthorized, /setJobs\(\[\]\);\s*setJobsLoaded\(false\);/);
+  assert.match(page, /const resetAccountState = \(\) => \{\s*setIdentity\(null\); setJobs\(\[\]\); setJobsLoaded\(false\);/);
+});
+
+test("6. the 30 s refresh skips while a partner-jobs request is in flight", async () => {
+  const page = await source("app/partner-app/page.tsx");
+  assert.match(page, /const jobsInFlight = useRef\(0\);/);
+  // Counted from the fetch until it settles, whether it succeeds, fails or was superseded.
+  const effect = jobsEffect(page);
+  assert.match(effect, /^jobsInFlight\.current \+= 1;\s*fetch\(`\/api\/partner-jobs\?/);
+  assert.match(effect, /\.catch\([^\n]*\)\s*\.finally\(\(\) => \{ jobsInFlight\.current -= 1; \}\);\s*return \(\) => \{ cancelled = true; \};\s*$/);
+  assert.equal((page.match(/jobsInFlight\.current (\+|-)= 1/g) || []).length, 2, "one increment, one settle");
+  // The tick is the only automatic refetch; it checks the ref inside the callback, so it never cancels a slow answer.
+  assert.match(page, /const timer=setInterval\(\(\)=>\{if\(jobsInFlight\.current>0\)return;setRefreshKey\(value=>value\+1\);\},30000\);/);
+  const timers = page.match(/setInterval\([\s\S]*?,\s*[\d_]+\)/g) || [];
+  assert.equal(timers.length, 4);
+  assert.equal(timers.filter((timer) => timer.includes("setRefreshKey")).length, 1, "no other timer advances refreshKey");
+});
+
 test("the closed finding needed no closure-harness change: the gate already skips disabled controls", async () => {
   // Documents why closure #19's finding clears without any exemption: the probe never treats a
   // disabled control as a wiring failure. Asserted, not modified.

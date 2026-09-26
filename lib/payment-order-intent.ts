@@ -16,6 +16,18 @@ import { executeRazorpayOrderOutbox } from "./razorpay-order-outbox-saga";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
+/*
+ * A booking that has ended cannot take new money. Customer checkout already refuses these
+ * (lib/customer-checkout-server.ts); every other route into a gateway order for a booking's own due amount -
+ * /api/payment-order, the AI checkout tool, the Sales/Atlas payment link and the taxi balance page - reaches
+ * createBookingPaymentOrder, and it did not check. (A Grooming reschedule difference opens its own order
+ * through openPaymentIntentOrder after its own gates, which require the booking's payment to be captured.)
+ * An unpaid Dog Training booking that expired is the case that made it matter: an order opened on it could
+ * still be paid. Deny-lists, so every payable state of every vertical is unchanged.
+ */
+const NOT_PAYABLE_BOOKING_STATUSES = new Set(["cancelled", "canceled", "refunded", "failed", "expired"]);
+const NOT_PAYABLE_PAYMENT_STATUSES = new Set(["cancelled", "refunded", "partially_refunded", "refund_pending"]);
+
 async function persistGatewayOrderLink(db: Db, input: {
   bookingId: string; paymentId: string; gatewayOrderId: string; environment: "sandbox" | "live"; expectedAmount: number; currency: string;
 }) {
@@ -88,9 +100,12 @@ export async function openPaymentIntentOrder(db: Db, env: Record<string, unknown
 export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
   const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
   if (!bookingId || !customerId) throw new Error("A booking and customer are required");
-  const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
+  const row = await db.prepare("SELECT b.customer_id customer_id,b.status booking_status,p.id payment_id,p.status payment_status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
   if (!row) throw new Error("Booking or its payment record was not found");
   if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
+  if (NOT_PAYABLE_BOOKING_STATUSES.has(String(row.booking_status)) || NOT_PAYABLE_PAYMENT_STATUSES.has(String(row.payment_status))) {
+    throw governedJsonError({ error: "This booking cannot accept a new payment. Contact billing support.", code: "booking_not_payable" }, 409);
+  }
 
   const stage = await paymentStageAmount(db, bookingId);
   if (!stage) throw new Error("Booking or its payment record was not found");
