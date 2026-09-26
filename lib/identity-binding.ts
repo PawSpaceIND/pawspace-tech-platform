@@ -1,14 +1,18 @@
-import{ensureD1Once}from"./d1-ensure-once.js";
 export type IdentitySubjectType="customer"|"provider";
 export type IdentitySource="workspace"|"customer_otp"|"partner_otp"|"migration"|"uat_persona";
 export type PrincipalType="email"|"identity_subject";
 type Row=Record<string,unknown>;
 
-export async function ensureIdentityBindingTables(db:D1Database){return ensureD1Once(db,"identity_binding_tables",async()=>{await db.batch([
+// Once per isolate: every session lookup, ownership check and binding write came through here, so the
+// same DDL batch ran several times on every authenticated request.
+async function ensureIdentityBindingTablesUncached(db:D1Database){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS identity_bindings (id TEXT PRIMARY KEY,identity_source TEXT NOT NULL,principal_type TEXT NOT NULL,principal_key TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,city_id TEXT,status TEXT NOT NULL DEFAULT 'active',verification_state TEXT NOT NULL DEFAULT 'verified',verified_at INTEGER,expires_at INTEGER,metadata_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(identity_source,principal_type,principal_key,subject_type))"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_identity_bindings_subject ON identity_bindings(subject_type,subject_id,status,verification_state)"),
   db.prepare("CREATE TABLE IF NOT EXISTS identity_binding_audit (id TEXT PRIMARY KEY,binding_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-]);});}
+]);}
+// Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
+const identityBindingTablesReady=new WeakSet<object>();
+export async function ensureIdentityBindingTables(db:D1Database){if(identityBindingTablesReady.has(db))return;await ensureIdentityBindingTablesUncached(db);identityBindingTablesReady.add(db);}
 
 export function normalizePrincipal(type:PrincipalType,value:string){const trimmed=value.trim();return type==="email"?trimmed.toLowerCase():trimmed;}
 

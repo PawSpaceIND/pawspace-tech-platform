@@ -49,7 +49,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Execute V2 runtime and database contracts
-        run: node --experimental-strip-types --test tests/v2-grooming-checkout.test.mjs tests/v2-grooming-integration.test.mjs tests/v2-grooming-foundation.test.mjs tests/v2-grooming-worker-gateway.test.mjs
+        run: node --experimental-strip-types --test tests/v2-grooming-checkout.test.mjs tests/v2-grooming-multipet-booking.test.mjs tests/v2-grooming-integration.test.mjs tests/v2-grooming-foundation.test.mjs tests/v2-grooming-worker-gateway.test.mjs
         env:
           PAWSPACE_LOCAL_PREVIEW: 'on'
           PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'

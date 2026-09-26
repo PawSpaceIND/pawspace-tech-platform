@@ -7,6 +7,7 @@ import styles from"../team-console.module.css";
 type SopRequirement={id:string;title:string;module_version:number;status:string;evidence_note?:string|null};
 type TimelineItem={kind:string;type:string;actor:string;detail:unknown;at:number};
 type CaseRow={id:string;case_type:string;severity:string;status:string;title:string;description:string;owner_team:string;owner_email?:string|null;first_response_due_at?:number|null;resolution_due_at?:number|null;manager_escalation_due_at?:number|null;first_responded_at?:number|null;created_at:number;sopRequirements?:SopRequirement[];timeline?:TimelineItem[];sourceState?:Record<string,unknown>|null;links?:{customerId?:string|null;bookingId?:string|null;paymentId?:string|null;leadId?:string|null;providerId?:string|null}};
+type SlaCoverage={total:number;covered:number;fullyCovered:boolean};
 type Directory={summary:{open:number;critical:number;unowned:number;firstResponseOverdue:number;resolutionOverdue:number};cases:CaseRow[];truth:{productionReady:boolean;automaticExternalNotification:boolean}};
 
 const when=(v:unknown)=>v?new Date(Number(v)).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}):"—";
@@ -24,13 +25,14 @@ async function request(body?:Record<string,unknown>){
 
 export default function CasesPage(){
  const[data,setData]=useState<Directory|null>(null);
+ const[slaCoverage,setSlaCoverage]=useState<SlaCoverage|null>(null);
  const[filter,setFilter]=useState("open");
  const[error,setError]=useState("");
  const[loading,setLoading]=useState(false);
 
  const load=useCallback(async()=>{
   setLoading(true);
-  try{setData((await request()).directory as Directory);setError("");}
+  try{const payload=await request();setData(payload.directory as Directory);setSlaCoverage((payload.slaCoverage as SlaCoverage)||null);setError("");}
   catch(cause){setError(cause instanceof Error?cause.message:String(cause));}
   finally{setLoading(false);}
  },[]);
@@ -57,6 +59,12 @@ export default function CasesPage(){
     >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
+
+  {slaCoverage&&!slaCoverage.fullyCovered?<div className={styles.panel}>
+   <b>{slaCoverage.total-slaCoverage.covered} of {slaCoverage.total} case types have no SLA clock, so those cases are never chased.</b>
+   <p>Apply the default times: for example, a critical provider issue gets a first response within 15 minutes and a resolution within 4 hours; safety incidents are faster and back-office reconciliation slower. Case types that already have a policy are left unchanged, and every default can be edited later.</p>
+   <Button size="sm" onClick={()=>{void act({action:"seed_default_policies",approvalReference:"OWNER-DEFAULT-SLA-2026-09-26"});}}>Apply default SLA times</Button>
+  </div>:null}
 
   <section className={styles.tiles}>
    <StatCard label="Open" value={data?.summary.open||0} />

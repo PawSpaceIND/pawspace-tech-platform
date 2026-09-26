@@ -3,7 +3,7 @@
   "pages": {
     "app/team/finance-compliance/page.tsx": "3f34056ad0e6a2d431514de8e8106ef1da6701c2c2b4de49f6d88e814b234b3c",
     "app/team/scheduling/page.tsx": "b8d675b40201ff0648b5726d1d37d73850577c1fb48e6fef439e77af6383391e",
-    "app/team/cases/page.tsx": "31b6149961c8be2ca98a98567f02372e1d24bb0bb189b2197fad4ca9e1841da3",
+    "app/team/cases/page.tsx": "630b97694ffe25c8f69caee719be51379fa26cfc4d69d1ea2db4eaf8fe10ce15",
     "app/team/revenue-mission/page.tsx": "cdd47cf401b9048ba788d633f219d06a8b207e83bec25cf76cc77bf605a0abe8",
     "app/team/operations/page.tsx": "6b2690bd925ef75ac59f59fe9002aa979f11a37a4432dcb56ed03e61654f9dd2",
     "app/team/customer-experience/page.tsx": "63a6db7ffcf216bae41b2e0c909716cedc5bad352c9f98467685a9d5735a9095",

@@ -309,7 +309,7 @@ test("Dog Walking settlement converges to canonical provider payable with Financ
 
   const tooEarly = await refusal(money(db, booking, "approve_settlement", {}));
   assert.equal(tooEarly?.status, 409);
-  assert.match(tooEarly.message, /five days/);
+  assert.match(tooEarly.message, /7 days after the last walk is completed/);
   await db.prepare("UPDATE walking_walker_settlement_ledger SET eligible_at=? WHERE booking_id=?").bind(Date.now()-1, booking.bookingId).run();
   const approved = await money(db, booking, "approve_settlement", {});
   assert.equal(approved.status, "ready");

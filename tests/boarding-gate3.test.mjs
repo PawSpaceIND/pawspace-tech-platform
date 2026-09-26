@@ -280,7 +280,7 @@ test("Boarding Gate 3 host settlement waits for checkout and projects canonical 
   assert.equal(settlement.tax_status, "resolved");
   assert.equal(settlement.approval_status, "awaiting_finance_approval");
   assert.equal(settlement.payout_status, "not_instructed", "projection must not bypass Finance approval");
-  assert.equal(Number(settlement.eligible_at), resolvedAt + 5 * 24 * 60 * 60 * 1000, "host payout is eligible exactly five days after canonical completion finance");
+  assert.equal(Number(settlement.eligible_at), resolvedAt + 7 * 24 * 60 * 60 * 1000, "host payout is eligible exactly seven days after canonical completion finance");
 });
 
 // ---------------------------------------------------------------------------------------------

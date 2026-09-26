@@ -703,7 +703,7 @@ test("BRD-14 settlement: prepared only after checkout, and it asserts no payout 
   assert.equal(row.approval_status, "awaiting_finance_approval");
   assert.equal(row.payout_status, "not_instructed", "preparation must never bypass finance approval or instruct money movement");
   const full = sqlite.prepare("SELECT eligible_at FROM boarding_host_settlement_ledger WHERE booking_id=?").get(BOOKING);
-  assert.equal(Number(full.eligible_at), Number(providerPayable.resolved_at) + 5 * 24 * 60 * 60 * 1000, "Boarding host payout eligibility is exactly five days after canonical completion finance");
+  assert.equal(Number(full.eligible_at), Number(providerPayable.resolved_at) + 7 * 24 * 60 * 60 * 1000, "Boarding host payout eligibility is exactly seven days after canonical completion finance");
 
   const again = await settle("brd-st-3");
   assert.equal(again.ok, true, "preparing twice is idempotent on the booking, not a second obligation");

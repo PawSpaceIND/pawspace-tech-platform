@@ -30,9 +30,9 @@ import { couponNeedsReapply } from "../../lib/coupon-reapply-guard";
 
 type PetType = "dog" | "cat" | "puppy" | "kitten";
 type Pack = {id:string;name:string;detail:string;price:number;badge:string;bestFor:string;includes:string[];missing:string[]};
-export const GROOMING_SLOTS=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM"];
+export const GROOMING_SLOTS=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM","5:00–7:00 PM"];
 const slots=GROOMING_SLOTS;
-const IST_SLOT_HOUR=[9,11,13,15];
+const IST_SLOT_HOUR=[9,11,13,15,17];
 // Keep a rolling 31-day IST window so month-end customers can always request dates in the next month.
 function buildDates(){return groomingBookingDates(Date.now(),31).map(({day,date,isoDate})=>({iso:isoDate,label:`${day}, ${date}`}));}
 const packages:Record<PetType,Pack[]>={

@@ -295,7 +295,7 @@ test("Pet Sitting Gate 3 sitter settlement waits for checkout and projects canon
   assert.equal(prepared.tax, "resolved");
   assert.equal(prepared.approvalStatus, "awaiting_finance_approval");
   assert.equal(prepared.payoutStatus, "not_instructed");
-  assert.equal(prepared.payoutSlaDays, 5);
+  assert.equal(prepared.payoutSlaDays, 7);
 
   const settlement = await world.db.prepare("SELECT * FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(world.bookingId).first();
   const payable = await world.db.prepare("SELECT ROUND(COALESCE(SUM(credit-debit),0),2) amount,MAX(created_at) resolved_at FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? AND account_code='2110-Provider Payable' AND posted=1").bind(world.bookingId).first();
@@ -305,7 +305,7 @@ test("Pet Sitting Gate 3 sitter settlement waits for checkout and projects canon
   assert.equal(settlement.tax_status, "resolved");
   assert.equal(settlement.approval_status, "awaiting_finance_approval");
   assert.equal(settlement.payout_status, "not_instructed");
-  assert.equal(Number(settlement.eligible_at), Number(payable.resolved_at) + 5 * 24 * 60 * 60 * 1000, "eligibility is exactly five days after canonical completion finance");
+  assert.equal(Number(settlement.eligible_at), Number(payable.resolved_at) + 7 * 24 * 60 * 60 * 1000, "eligibility is exactly seven days after canonical completion finance");
 
   const replay = await world.act("prepare_settlement", { actorId: CHECKER, idempotencyKey: settlementKey });
   assert.equal(replay.duplicatePrevented, true, "same action key must replay without creating a second obligation");
@@ -315,7 +315,7 @@ test("Pet Sitting Gate 3 sitter settlement waits for checkout and projects canon
   assert.equal(Number(count.n), 1, "replay and refresh still leave exactly one sitter settlement projection");
   const tooEarly = await refusal(world.act("approve_settlement", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-APPROVE-EARLY"), reason: "finance reviewed canonical sitter payable" }));
   assert.equal(tooEarly?.status, 409);
-  assert.match(tooEarly.message, /not yet eligible under the 5-day payout policy/i);
+  assert.match(tooEarly.message, /not yet eligible under the 7-day payout policy/i);
 
   await world.db.prepare("UPDATE sitting_sitter_settlement_ledger SET eligible_at=? WHERE booking_id=?").bind(Date.now()-1,world.bookingId).run();
   const approved = await world.act("approve_settlement", { actorId: CHECKER, idempotencyKey: nextKey("G3-SETTLE-APPROVE"), reason: "finance reviewed canonical sitter payable" });

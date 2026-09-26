@@ -187,6 +187,9 @@ test("Relocation runs the lead-to-delivery lifecycle with trackable manual opera
   const journal = await db.prepare("SELECT SUM(debit) debit,SUM(credit) credit FROM finance_journal_entries WHERE source_id=?").bind(created.id).first();
   assert.equal(Number(journal.debit), 120_000);
   assert.equal(Number(journal.credit), 120_000);
+  // Owner decision 6 (26 Sept 2026): the vendor becomes payable 7 days after completion, not straight away.
+  assert.ok(Number(delivered.settlement.eligible_at) - Date.now() > 6.9 * 86_400_000);
+  await db.prepare("UPDATE relocation_vendor_settlements SET eligible_at=? WHERE case_id=?").bind(Date.now() - 1, created.id).run();
   const approved = await governance.mutateRelocationCase(db,{caseId:created.id,action:"approve_vendor_settlement",actorId:FINANCE});
   assert.equal(approved.settlement.approval_status,"approved");
   const reconciled = await governance.mutateRelocationCase(db,{caseId:created.id,action:"reconcile_finance",actorId:FINANCE});

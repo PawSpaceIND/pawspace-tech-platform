@@ -1,4 +1,4 @@
-import{ensureProviderCapacityTables}from"../../../lib/provider-capacity-governance";
+import{ensureProviderCapacityTables,getProviderAcceptanceTimeout}from"../../../lib/provider-capacity-governance";
 import{CUSTOMER_CANCELLABLE_WORK_STATUSES,groomingChangePreview}from"../../../lib/grooming-change-preview";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,securityAuditStatement,type AuthenticatedActor}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
@@ -8,6 +8,11 @@ import{evaluateCancellationRefund,resolveRefundPolicy}from"../../../lib/refund-p
 import{openCancellationCase}from"../../../lib/cancellation-case-governance";
 import{cityOffsetMinutes,scheduleRules}from"../../../backend/src/scheduling";
 import{listAuthoritativeAvailability}from"../../../lib/scheduling-roster-authority";
+import{automaticReassignmentAllowed,formatRupees,quoteGroomingReschedule,rankReschedulingGroomers,reassignedReservationMove,ReschedulePricingUnavailable,type GroomingReschedulePricing}from"../../../lib/grooming-reschedule-governance";
+import{captureProviderAssignmentAuthority}from"../../../lib/provider-assignment-authority";
+import{providerAssignmentBlock}from"../../../lib/provider-assignment-eligibility";
+import{groomingRecoveryLifecycle}from"../../../lib/grooming-recovery-lifecycle";
+import type{Provider}from"../../../backend/src/domain";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -191,34 +196,75 @@ export async function executeGroomingBookingChange(request:Request,actorOverride
     const bookedDuration=Date.parse(String(booking.scheduled_end))-Date.parse(String(booking.scheduled_start));
     if(!Number.isFinite(bookedDuration)||bookedDuration<=0||String(work.scheduled_start)!==String(booking.scheduled_start)||String(work.scheduled_end)!==String(booking.scheduled_end))return json({error:"The existing booking schedule requires review before it can be moved"},409);
     if(end.getTime()-start.getTime()!==bookedDuration)return json({error:"Rescheduling must preserve the booked service duration"},400);
-    const providerId=String(work.provider_id),cityId=String(booking.city_id),zoneId=String(booking.zone_id),offsetMinutes=cityOffsetMinutes(cityId);
-    const profile=await db.prepare("SELECT travel_buffer_minutes,max_daily_jobs,live,status,effective_from,effective_to FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
-    if(!profile||Number(profile.live)!==1||String(profile.status)!=="active")return json({error:"The assigned provider is no longer available for that slot"},409);
-    const travelBufferMinutes=profile.travel_buffer_minutes===null||profile.travel_buffer_minutes===undefined?scheduleRules.grooming.bufferMinutes:Number(profile.travel_buffer_minutes);
-    const maxDailyJobs=profile.max_daily_jobs===null||profile.max_daily_jobs===undefined?6:Number(profile.max_daily_jobs);
-    if(!Number.isFinite(travelBufferMinutes)||travelBufferMinutes<0||!Number.isInteger(maxDailyJobs)||maxDailyJobs<0)return json({error:"The assigned provider capacity configuration is invalid"},409);
+    const assignedProviderId=String(work.provider_id),cityId=String(booking.city_id),zoneId=String(booking.zone_id),offsetMinutes=cityOffsetMinutes(cityId);
     const localStart=minutesOfLocalDay(start.toISOString(),offsetMinutes),localEnd=minutesOfLocalDay(end.toISOString(),offsetMinutes);
-    if(localStart.date!==localEnd.date)return json({error:"The assigned provider is no longer available for that slot"},409);
-    const effectiveFrom=String(profile.effective_from||""),effectiveTo=profile.effective_to?String(profile.effective_to):null;
-    if((effectiveFrom&&localStart.date<effectiveFrom)||(effectiveTo&&localStart.date>effectiveTo))return json({error:"The assigned provider is no longer available for that slot"},409);
-    const roster=await listAuthoritativeAvailability(db,providerId,localStart.date);
-    const rosterCovered=roster.some(row=>String(row.city_id)===cityId&&String(row.zone_id)===zoneId&&(()=>{try{return (JSON.parse(String(row.windows_json||"[]")) as string[]).some(window=>rosterWindowCovers(window,localStart.minutes,localEnd.minutes));}catch{return false;}})());
-    if(!rosterCovered)return json({error:"The assigned provider is no longer available for that slot"},409);
-    const localDayStartUtc=shiftIso(`${localStart.date}T00:00:00.000Z`,-offsetMinutes*60_000),localDayEndUtc=shiftIso(localDayStartUtc,86_400_000);
-    const unavailable=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(providerId,localDayEndUtc,localDayStartUtc).first<Row>();
-    if(unavailable)return json({error:"The assigned provider is no longer available for that slot"},409);
-    const bufferMs=travelBufferMinutes*60_000,bufferedStart=shiftIso(start.toISOString(),-bufferMs),bufferedEnd=shiftIso(end.toISOString(),bufferMs),offsetModifier=`${offsetMinutes>=0?"+":""}${offsetMinutes} minutes`;
-    // Fast pre-check for a friendly error; the authoritative write below repeats the same predicates.
-    const conflicts=await db.prepare("SELECT id,group_id FROM scheduling_reservations WHERE provider_id=? AND group_id!=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>? LIMIT 1").bind(providerId,booking.schedule_group_id,bufferedEnd,bufferedStart).first<Row>();
-    if(conflicts)return json({error:"The assigned provider is no longer available for that slot"},409);
-    const daily=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE provider_id=? AND group_id!=? AND status!='cancelled' AND substr(datetime(scheduled_start,?),1,10)=?").bind(providerId,booking.schedule_group_id,offsetModifier,localStart.date).first<Row>();
-    if(Number(daily?.count||0)>=maxDailyJobs)return json({error:"The assigned provider is no longer available for that slot"},409);
+    if(localStart.date!==localEnd.date)return json({error:"Choose a time that lets the service finish on the same day. Your booking has not been changed.",code:"reschedule_slot_unavailable",bookingUnchanged:true},409);
+    const localDayStartUtc=shiftIso(`${localStart.date}T00:00:00.000Z`,-offsetMinutes*60_000),localDayEndUtc=shiftIso(localDayStartUtc,86_400_000),offsetModifier=`${offsetMinutes>=0?"+":""}${offsetMinutes} minutes`;
+    /*
+     * Can this groomer take the new slot? Profile, capacity configuration, effective dates, authored
+     * roster for this city and zone, leave that local day, travel-buffered conflicts and the daily-job
+     * cap - the same predicates the guarded write below repeats atomically. [QA M4] This used to run
+     * for the assigned groomer only and answer "The assigned provider is no longer available for that
+     * slot" when it failed; the other groomers in the zone were never asked.
+     */
+    const slotFor=async(providerId:string)=>{
+      const profile=await db.prepare("SELECT travel_buffer_minutes,max_daily_jobs,live,status,effective_from,effective_to FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
+      if(!profile||Number(profile.live)!==1||String(profile.status)!=="active")return null;
+      const travelBufferMinutes=profile.travel_buffer_minutes===null||profile.travel_buffer_minutes===undefined?scheduleRules.grooming.bufferMinutes:Number(profile.travel_buffer_minutes);
+      const maxDailyJobs=profile.max_daily_jobs===null||profile.max_daily_jobs===undefined?6:Number(profile.max_daily_jobs);
+      if(!Number.isFinite(travelBufferMinutes)||travelBufferMinutes<0||!Number.isInteger(maxDailyJobs)||maxDailyJobs<0)return null;
+      const effectiveFrom=String(profile.effective_from||""),effectiveTo=profile.effective_to?String(profile.effective_to):null;
+      if((effectiveFrom&&localStart.date<effectiveFrom)||(effectiveTo&&localStart.date>effectiveTo))return null;
+      const roster=await listAuthoritativeAvailability(db,providerId,localStart.date);
+      const rosterCovered=roster.some(row=>String(row.city_id)===cityId&&String(row.zone_id)===zoneId&&(()=>{try{return (JSON.parse(String(row.windows_json||"[]")) as string[]).some(window=>rosterWindowCovers(window,localStart.minutes,localEnd.minutes));}catch{return false;}})());
+      if(!rosterCovered)return null;
+      const unavailable=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(providerId,localDayEndUtc,localDayStartUtc).first<Row>();
+      if(unavailable)return null;
+      const bufferMs=travelBufferMinutes*60_000,bufferedStart=shiftIso(start.toISOString(),-bufferMs),bufferedEnd=shiftIso(end.toISOString(),bufferMs);
+      // Fast pre-check for a friendly error; the authoritative write below repeats the same predicates.
+      const conflicts=await db.prepare("SELECT id,group_id FROM scheduling_reservations WHERE provider_id=? AND group_id!=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>? LIMIT 1").bind(providerId,booking.schedule_group_id,bufferedEnd,bufferedStart).first<Row>();
+      if(conflicts)return null;
+      const daily=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE provider_id=? AND group_id!=? AND status!='cancelled' AND substr(datetime(scheduled_start,?),1,10)=?").bind(providerId,booking.schedule_group_id,offsetModifier,localStart.date).first<Row>();
+      if(Number(daily?.count||0)>=maxDailyJobs)return null;
+      return{profile,travelBufferMinutes,maxDailyJobs,bufferedStart,bufferedEnd};
+    };
+    let slot=await slotFor(assignedProviderId),replacement:Provider|null=null,replacementAuthority:Awaited<ReturnType<typeof captureProviderAssignmentAuthority>>|null=null;
+    if(!slot){
+      // Another groomer in the same zone, chosen by the governed scheduler and held to the same checks.
+      if(!await automaticReassignmentAllowed(db,cityId,start))return json({error:"Your groomer is not available at that time, and a change of groomer in your city is arranged by PawSpace Operations. Your booking has not been changed - choose another time or contact PawSpace support.",code:"reschedule_reassignment_requires_operations",bookingUnchanged:true},409);
+      const ranked=await rankReschedulingGroomers(db,{booking,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),excludeProviderIds:[assignedProviderId],offsetMinutes});
+      for(const candidate of ranked.providers){
+        const candidateSlot=await slotFor(candidate.id);if(!candidateSlot)continue;
+        if((await providerAssignmentBlock(db,candidate.id,start.getTime())).blocked)continue;
+        // Snapshot the verification authority, then re-evaluate it: the write asserts it is unchanged.
+        const authority=await captureProviderAssignmentAuthority(db,candidate.id);
+        if((await providerAssignmentBlock(db,candidate.id,start.getTime())).blocked)continue;
+        slot=candidateSlot;replacement=candidate;replacementAuthority=authority;break;
+      }
+      if(!slot||!replacement||!replacementAuthority)return json({error:"No groomer in your area is available at that time. Your booking has not been changed - please choose another time.",code:"reschedule_no_provider_available",bookingUnchanged:true},409);
+    }
+    const{profile,travelBufferMinutes,maxDailyJobs,bufferedStart,bufferedEnd}=slot,providerId=replacement?.id??assignedProviderId;
+    /*
+     * The new slot is priced with the governed quote a booking uses. Same or lower: the booked price is
+     * kept and the difference is not refunded. Higher: nothing moves and nothing is charged - the
+     * customer must approve and pay the difference first, and no verified way to collect an additional
+     * amount on a booking exists yet, so the move is refused with the difference. [QA M4]
+     */
+    let reschedulePricing:GroomingReschedulePricing;
+    try{reschedulePricing=await quoteGroomingReschedule(db,{booking,payment,scheduledStart:start.toISOString()});}
+    catch(error){if(error instanceof ReschedulePricingUnavailable)return json({error:"The new time could not be priced, so your booking has not been moved. Please choose another time or contact PawSpace support.",code:"reschedule_price_unavailable",bookingUnchanged:true},409);throw error;}
+    if(reschedulePricing.priceDifference>0)return json({
+      error:`This time costs ${formatRupees(reschedulePricing.priceDifference)} more than your booked price. Your booking has not been moved and nothing has been charged. Paying the difference online is not available yet, so choose a time at the same or a lower price, or contact PawSpace support to move to this time.`,
+      code:"reschedule_price_increase",priceDifference:reschedulePricing.priceDifference,bookedAmount:reschedulePricing.bookedAmount,newSlotAmount:reschedulePricing.newSlotAmount,currency:reschedulePricing.currency,
+      bookingUnchanged:true,charged:false,differencePaymentAvailable:false,pricing:reschedulePricing,
+    },409);
+    const pricingEvidence={...reschedulePricing,storedPriceKept:true,differenceRefunded:false};
     const oldStart=String(booking.scheduled_start),oldEnd=String(booking.scheduled_end);
     // TOCTOU-safe move: travel buffer, authored roster authority, daily-job cap, active provider status
     // and provider unavailability are all rechecked by the same guarded UPDATE that moves the reservation.
     const groupRows=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id).first<Row>(),expectedRows=Number(groupRows?.count||0);
     if(expectedRows<1)return json({error:"The booking has no active scheduling reservation to move"},409);
-    const moveStatement=db.prepare(`UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned'
+    const moveStatement=replacement?reassignedReservationMove(db,{providerId,groupId:String(booking.schedule_group_id),start:start.toISOString(),end:end.toISOString(),bufferedStart,bufferedEnd,offsetModifier,localDate:localStart.date,maxDailyJobs,cityId,zoneId,startMinutes:localStart.minutes,endMinutes:localEnd.minutes,localDayStartUtc,localDayEndUtc}):db.prepare(`UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned'
       WHERE group_id=? AND status!='cancelled'
         AND NOT EXISTS (SELECT 1 FROM scheduling_reservations other WHERE other.provider_id=scheduling_reservations.provider_id AND other.group_id!=? AND other.status!='cancelled' AND other.scheduled_start<? AND other.scheduled_end>?)
         AND (SELECT COUNT(*) FROM scheduling_reservations other WHERE other.provider_id=scheduling_reservations.provider_id AND other.group_id!=? AND other.status!='cancelled' AND substr(datetime(other.scheduled_start,?),1,10)=?)<?
@@ -226,28 +272,62 @@ export async function executeGroomingBookingChange(request:Request,actorOverride
         AND EXISTS (SELECT 1 FROM scheduling_availability a,json_each(a.windows_json) w WHERE a.provider_id=scheduling_reservations.provider_id AND a.city_id=? AND a.zone_id=? AND a.date=? AND (a.source IN ('partner_app','operations','roster') OR NOT EXISTS (SELECT 1 FROM scheduling_availability authored WHERE authored.provider_id=a.provider_id AND authored.date=a.date AND authored.source IN ('partner_app','operations','roster'))) AND (CAST(substr(w.value,1,2) AS INTEGER)*60+CAST(substr(w.value,4,2) AS INTEGER))<=? AND (CAST(substr(w.value,7,2) AS INTEGER)*60+CAST(substr(w.value,10,2) AS INTEGER))>=?)
         AND NOT EXISTS (SELECT 1 FROM provider_unavailability u WHERE u.provider_id=scheduling_reservations.provider_id AND u.status='active' AND u.starts_at<? AND u.ends_at>?)`)
       .bind(start.toISOString(),end.toISOString(),booking.schedule_group_id,booking.schedule_group_id,bufferedEnd,bufferedStart,booking.schedule_group_id,offsetModifier,localStart.date,maxDailyJobs,localStart.date,localStart.date,cityId,zoneId,localStart.date,localStart.minutes,localEnd.minutes,localDayEndUtc,localDayStartUtc);
-    const awaitingAcceptance=String(work.status)==="awaiting_acceptance",nextBookingStatus=awaitingAcceptance?status:"assigned",nextWorkStatus=awaitingAcceptance?"awaiting_acceptance":"assigned";
+    const awaitingAcceptance=replacement?replacement.model==="commission":String(work.status)==="awaiting_acceptance";
+    const nextBookingStatus=replacement?(awaitingAcceptance?"confirmed":"assigned"):awaitingAcceptance?status:"assigned",nextWorkStatus=awaitingAcceptance?"awaiting_acceptance":"assigned";
     const assertionId=crypto.randomUUID();
+    /*
+     * A different groomer takes the booking over exactly as provider recovery hands a job over: the
+     * canonical service lifecycle moves to the new groomer, a commission groomer gets a pending offer
+     * to accept (a full-time groomer's stale pending offer is withdrawn), the doorstep location follows
+     * the booking, and the offer, lifecycle and verification authority read above are asserted
+     * unchanged in the same transaction.
+     */
+    const handoverGuards:D1PreparedStatement[]=[],handover:D1PreparedStatement[]=[];let nextOffer:{timeoutMinutes:number;expiresAt:number}|null=null;
+    if(replacement&&replacementAuthority){
+      const offer=await db.prepare("SELECT * FROM provider_assignment_offers WHERE group_id=?").bind(booking.schedule_group_id).first<Row>();
+      let lifecycle:Awaited<ReturnType<typeof groomingRecoveryLifecycle>>;
+      try{lifecycle=await groomingRecoveryLifecycle(db,booking,"replace",replacement.id,auditActor);}
+      catch(error){if(error instanceof Response&&error.status===409)return json({error:"Your booking is being updated right now. Refresh your booking before choosing another time.",code:"reschedule_lifecycle_busy",bookingUnchanged:true},409);throw error;}
+      const offerPredicate=offer?"EXISTS (SELECT 1 FROM provider_assignment_offers WHERE group_id=? AND provider_id IS ? AND status IS ? AND expires_at IS ? AND updated_at IS ?)":"NOT EXISTS (SELECT 1 FROM provider_assignment_offers WHERE group_id=?)";
+      const offerValues=[booking.schedule_group_id,...(offer?[offer.provider_id,offer.status,offer.expires_at,offer.updated_at]:[])].map(value=>value??null);
+      handoverGuards.push(db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN (${offerPredicate}) AND (${lifecycle.guard.sql}) AND (${replacementAuthority.sql}) THEN 1 ELSE 0 END`).bind(`${assertionId}-handover`,...offerValues,...lifecycle.guard.values,...replacementAuthority.values));
+      const timeoutMinutes=replacement.model==="commission"?await getProviderAcceptanceTimeout(db,replacement.id):null;
+      nextOffer=timeoutMinutes===null?null:{timeoutMinutes,expiresAt:now+timeoutMinutes*60_000};
+      const locations=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='booking_service_locations'").first<Row>();
+      handover.push(
+        ...lifecycle.statements,
+        db.prepare("UPDATE canonical_bookings SET provider_id=?,updated_at=? WHERE id=?").bind(replacement.id,now,input.bookingId),
+        db.prepare("UPDATE provider_work_orders SET provider_id=?,provider_name=?,provider_model=?,updated_at=? WHERE booking_id=?").bind(replacement.id,replacement.name,replacement.model,now,input.bookingId),
+        db.prepare("UPDATE scheduling_assignment_decisions SET selected_provider_id=?,updated_at=? WHERE group_id=?").bind(replacement.id,now,booking.schedule_group_id),
+        nextOffer
+          ?db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=excluded.booking_id,provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(booking.schedule_group_id,input.bookingId,replacement.id,now,nextOffer.expiresAt,Number(offer?.attempt_no||0)+1,now)
+          :db.prepare("UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending'").bind(now,"Customer rescheduled to a time another groomer took",now,booking.schedule_group_id),
+        ...(locations?[db.prepare("UPDATE booking_service_locations SET provider_id=?,updated_at=? WHERE booking_id=? AND status='active'").bind(replacement.id,now,input.bookingId)]:[]),
+      );
+    }
+    const providerChange={providerChanged:Boolean(replacement),previousProviderId:assignedProviderId,provider:replacement?{id:replacement.id,name:replacement.name,model:replacement.model}:{id:assignedProviderId,name:String(work.provider_name||""),model:String(work.provider_model||"")},...(nextOffer?{offer:nextOffer}:{})};
     try{await db.batch([
       db.prepare(`INSERT INTO grooming_change_assertions (id,ok) SELECT ?,CASE WHEN
         EXISTS (SELECT 1 FROM canonical_bookings WHERE id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
         AND EXISTS (SELECT 1 FROM provider_work_orders WHERE booking_id=? AND status=? AND scheduled_start=? AND scheduled_end=? AND provider_id=? AND updated_at=?)
         AND EXISTS (SELECT 1 FROM provider_capacity_profiles WHERE id=? AND travel_buffer_minutes IS ? AND max_daily_jobs IS ?)
         AND (SELECT COUNT(*) FROM scheduling_reservations WHERE group_id=? AND status!='cancelled')=?
-        THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,oldStart,oldEnd,providerId,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,providerId,work.updated_at,providerId,profile.travel_buffer_minutes??null,profile.max_daily_jobs??null,booking.schedule_group_id,expectedRows),
+        THEN 1 ELSE 0 END`).bind(assertionId,input.bookingId,status,oldStart,oldEnd,assignedProviderId,booking.updated_at,input.bookingId,work.status,work.scheduled_start,work.scheduled_end,assignedProviderId,work.updated_at,providerId,profile.travel_buffer_minutes??null,profile.max_daily_jobs??null,booking.schedule_group_id,expectedRows),
+      ...handoverGuards,
       moveStatement,
       db.prepare("INSERT INTO grooming_change_assertions (id,ok) VALUES (?,CASE WHEN changes()=? THEN 1 ELSE 0 END)").bind(`${assertionId}-move`,expectedRows),
+      ...handover,
       db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),nextBookingStatus,now,input.bookingId),
       db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status=?,updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),nextWorkStatus,now,input.bookingId),
       db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
-      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_rescheduled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}),now),
-      securityAuditStatement(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date}),
-      db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?)").bind(assertionId,`${assertionId}-move`),
+      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,"booking_rescheduled","booking",input.bookingId,auditActor,JSON.stringify({customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,...providerChange,capacityRevalidated:true,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,pricing:pricingEvidence}),now),
+      securityAuditStatement(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId,providerChanged:providerChange.providerChanged,previousProviderId:assignedProviderId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,travelBufferMinutes,maxDailyJobs,rosterDate:localStart.date,pricing:{basis:pricingEvidence.basis,bookedAmount:pricingEvidence.bookedAmount,newSlotAmount:pricingEvidence.newSlotAmount,priceDifference:pricingEvidence.priceDifference,storedPriceKept:true}}),
+      db.prepare("DELETE FROM grooming_change_assertions WHERE id IN (?,?,?)").bind(assertionId,`${assertionId}-move`,`${assertionId}-handover`),
     ]);}catch(error){
       if(/CHECK constraint failed.*grooming_change_assertion/i.test(error instanceof Error?error.message:String(error)))return json({error:"The booking or provider availability changed. Refresh before requesting another time."},409);
       throw error;
     }
-    return json({data:{bookingId:input.bookingId,status:nextBookingStatus,workOrderStatus:nextWorkStatus,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount}});
+    return json({data:{bookingId:input.bookingId,status:nextBookingStatus,workOrderStatus:nextWorkStatus,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId,...providerChange,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount,pricing:pricingEvidence}});
   }catch(error){return authError(error,"Unable to change Grooming booking");}
 }
 

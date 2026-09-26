@@ -1,6 +1,7 @@
+import{invoiceTotal}from"../../../lib/invoice-total";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
-import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{ensureGroomingInvoiceTables,issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
 
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
@@ -51,7 +52,7 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
     return{...row,receivable:Math.max(0,amount-captured),net_collected:Math.max(0,captured-refunded),reconciled:reconciliationStatus==="matched"&&Number(row.open_reconciliation_exceptions||0)===0,invoiced:Boolean(row.invoice_id)};
   });
   const summary=items.reduce((acc:FinanceSummary,item)=>{
-    acc.bookings+=1;if(item.invoiced)acc.invoiced+=Number(item.net_amount||0);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;return acc;
+    acc.bookings+=1;if(item.invoiced)acc.invoiced+=invoiceTotal(item);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;return acc;
   },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0});
   return{source:"canonical Grooming booking/payment/invoice/reconciliation ledger",summary,items,reconciliationExceptions:recentExceptions};
  })().finally(()=>{if(financeReads.get(db)===pending)financeReads.delete(db);});
@@ -61,6 +62,8 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
 export async function GET(request:Request){try{
   await authorize(request,"finance.view");
   const db=await database();
+  const url=new URL(request.url);
+  if(url.searchParams.get("scope")==="tax_policy"){await ensureGroomingInvoiceTables(db);const cityId=String(url.searchParams.get("cityId")||"blr").trim().toLowerCase();const policy=await db.prepare("SELECT city_id,tax_mode,tax_rate,status,version,effective_from,updated_by,reason,updated_at FROM grooming_tax_policies WHERE city_id=?").bind(cityId).first();return Response.json({data:{cityId,policy:policy??null}});}
   return Response.json(await loadFinanceSnapshot(db));
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
 

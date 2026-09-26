@@ -43,6 +43,18 @@ export function haversineDistanceMeters(from:{latitude:number;longitude:number},
  return radiusMeters*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
+/** Owner decision (QA M2): fixes 5 km apart 70 s apart (~260 km/h) were both trusted, so a spoofed location
+ * could pass the arrival geofence. A fix implying more than 120 km/h since the last trusted fix is rejected.
+ * Each fix's reported accuracy is subtracted first and jumps under 500 m are ignored, so GPS noise is not flagged. */
+export const MAX_PLAUSIBLE_SPEED_KMH=120;
+export function implausibleGpsJump(previous:{latitude:number;longitude:number;capturedAt:number;accuracyMeters?:number|null},next:{latitude:number;longitude:number;capturedAt:number;accuracyMeters?:number|null}){
+ const distance=haversineDistanceMeters(previous,next);if(!Number.isFinite(distance))return false;
+ const slack=Math.max(0,Number(previous.accuracyMeters)||0)+Math.max(0,Number(next.accuracyMeters)||0),moved=Math.max(0,distance-slack);
+ if(moved<500)return false;
+ const seconds=Math.max(1,(Number(next.capturedAt)-Number(previous.capturedAt))/1000);
+ return moved/seconds*3.6>MAX_PLAUSIBLE_SPEED_KMH;
+}
+
 export function arrivalGeofenceVerdict(from:{latitude:number;longitude:number},to:{latitude:number;longitude:number},thresholdMeters=ARRIVAL_GEOFENCE_METERS){
  const distanceMeters=Math.round(haversineDistanceMeters(from,to));
  return{within:Number.isFinite(distanceMeters)&&distanceMeters<=thresholdMeters,distanceMeters,thresholdMeters};

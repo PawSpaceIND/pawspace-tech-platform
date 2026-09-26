@@ -810,3 +810,19 @@ INSERT OR IGNORE INTO taxi_vehicle_profiles (id,provider_id,label,vehicle_type,p
  ('TXV-UATCAP-TAXI-CENTRAL-8','uatcap_taxi_central_8','Hari R. UAT vehicle','hatchback','rear-seat harness','uat_verified',1,1789300000000),
  ('TXV-UATCAP-TAXI-CENTRAL-9','uatcap_taxi_central_9','Irfan S. UAT vehicle','hatchback','rear-seat harness','uat_verified',1,1789300000000),
  ('TXV-UATCAP-TAXI-CENTRAL-10','uatcap_taxi_central_10','Jagdish T. UAT vehicle','hatchback','rear-seat harness','uat_verified',1,1789300000000);
+
+-- ---------------------------------------------------------------------------------------------------
+-- 5. UAT GROOMER DRIFT REPAIR. Testers change the shared staging roster: /control Provider Capacity "Save"
+--    rewrites updated_by to their email (the scheduler then drops the groomer before evaluation), a partner
+--    "unavailable" toggle writes a 10-year provider_unavailability row, trust-safety strikes and verification
+--    holds set live=0. Every run of this file puts the seeded grooming roster back to bookable. Seeded ids only
+--    (uatcap_groom* and the runtime east defaults); partner_app / operations availability rows are untouched.
+-- ---------------------------------------------------------------------------------------------------
+UPDATE provider_capacity_profiles
+SET updated_by='founder_seed',live=1,status='active',version=version+1,updated_at=strftime('%s','now')*1000
+WHERE (id LIKE 'uatcap\_groom%' ESCAPE '\' OR id IN ('groom_arun','groom_kiran','groom_sanjay'))
+  AND (updated_by!='founder_seed' OR live!=1 OR status!='active');
+CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+UPDATE provider_unavailability
+SET status='cleared',ends_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),updated_at=strftime('%s','now')*1000
+WHERE status='active' AND (provider_id LIKE 'uatcap\_groom%' ESCAPE '\' OR provider_id IN ('groom_arun','groom_kiran','groom_sanjay'));
