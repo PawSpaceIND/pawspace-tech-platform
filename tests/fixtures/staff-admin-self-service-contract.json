@@ -666,7 +666,7 @@
     "lib/crm-transactional-merge.ts": "6088fa610247684513bacefad412cbc5df7eabcab055af7ea055aa99dd25c832",
     "lib/customer-360.ts": "7eb6d9106cb2687fb01900e410d384c9cfa190fa17289799a9bdef50f6a946f5",
     "lib/customer-account-client.ts": "1af7d8fbdf545b8a2eb64b237415a54c77e6ca29c4441ede3906384b6e68c202",
-    "lib/customer-account.ts": "4638722ef6dabdf7ebf25ea9f2bb941f76b8d10ddc701f0e95123c8474768b94",
+    "lib/customer-account.ts": "ba241dd002c69254af12b73462af69314d54fc62338332a75ad1417d5e51b0c2",
     "lib/customer-activity.ts": "2db6bc126ccc563938b55428006cf58c8667fd6592bf59cae0ad229be00e571b",
     "lib/customer-billing.ts": "7f7b9087d9cbf1373dc4b8f6d8f0bd1994a3f31c90cd6b3ca92862a731d2a155",
     "lib/customer-business-view.ts": "9a4b42765ec6fcf28503ba5649878f62e0d667c34428b8ac3bb35ff032420ab2",
