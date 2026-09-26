@@ -39,6 +39,8 @@ const SHIFT_RAW = Number(process.env.MASTER_SIT_SHIFT);
 const SHIFT = Number.isInteger(SHIFT_RAW) && SHIFT_RAW >= 0 && SHIFT_RAW <= 3 ? SHIFT_RAW : Math.floor(Date.now() / 3_600_000) % 4;
 const day = n => { const offset = W0 + SHIFT + n; if (offset > W1) throw new Error(`date offset ${offset} outside sitting window`); return isoDay(offset); };
 
+const addDays = (date, k) => new Date(Date.parse(`${date}T00:00:00Z`) + k * 86_400_000).toISOString().slice(0, 10);
+const offsetOf = date => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${isoDay(0)}T00:00:00Z`)) / 86_400_000);
 const PRICE = { visitBase: 399, visitExtra: 149, nightBase: 799, nightExtra: 399, meetVisit: 499 };
 const CARE = {
   "Food and water routine": "Master E2E: two meals, 8am and 7pm; fresh water always",
@@ -213,22 +215,26 @@ async function openSitting(flow) {
 }
 
 /** If the saved address is not resolved/serviceable, pick the Indiranagar address through the AddressPicker (Google Places on staging). */
-async function ensureServiceAddress(flow) {
+async function ensureServiceAddress(flow, { force = false } = {}) {
   const { page } = flow;
   const cta = page.getByRole("button", { name: /See available sitters|Verify a service address|Select a pet/ });
   const text = await cta.innerText().catch(() => "");
-  if (!/Verify a service address/.test(text)) return { changed: false, address: await page.locator("[aria-label='Care location'] p").first().innerText().catch(() => "") };
-  flow.note("saved address not serviceable/resolved — choosing Indiranagar through the address picker");
+  const saved = await page.locator("[aria-label='Care location'] p").first().innerText().catch(() => "");
+  if (!force && !/Verify a service address/.test(text)) return { changed: false, address: saved };
+  flow.note(force ? "choosing the care address through the address picker (Google Places on staging)" : "saved address not serviceable/resolved — choosing Indiranagar through the address picker");
   await page.getByRole("button", { name: "Change Address" }).click();
   const input = page.getByPlaceholder("House / flat, street, area and city");
   await input.fill("100 Feet Road, HAL 2nd Stage, Indiranagar, Bengaluru 560038");
-  const suggestion = page.locator("[aria-label='Google address suggestions'] button").first();
-  if (await suggestion.waitFor({ timeout: 10_000 }).then(() => true).catch(() => false)) await suggestion.click();
+  const list = page.locator("[aria-label='Google address suggestions'] button");
+  const hasSuggestions = await list.first().waitFor({ timeout: 12_000 }).then(() => true).catch(() => false);
+  const suggestions = hasSuggestions ? (await list.allInnerTexts()).map(flat).slice(0, 5) : [];
+  if (hasSuggestions) await list.first().click();
   else await page.getByRole("button", { name: /Verify service address/ }).first().click().catch(() => {});
   await page.getByText("Checking service area…").waitFor({ state: "detached", timeout: 30_000 }).catch(() => {});
+  const shot = await flow.shot("address-picker");
   await page.getByRole("button", { name: "Use this address" }).click({ timeout: 20_000 });
   await settle(page, 1000);
-  return { changed: true, address: await page.locator("[aria-label='Care location'] p").first().innerText().catch(() => "") };
+  return { changed: true, savedBefore: saved, suggestions, address: await page.locator("[aria-label='Care location'] p").first().innerText().catch(() => ""), cta: await cta.innerText().catch(() => ""), shot };
 }
 
 async function setWindow(page, { start, startTime, end, endTime }) {
@@ -291,7 +297,8 @@ async function waitForPricedCta(page) {
 async function planToReview(flow, spec, observed) {
   const { page } = flow;
   await openSitting(flow);
-  observed.address = await ensureServiceAddress(flow);
+  observed.address = await ensureServiceAddress(flow, { force: Boolean(spec.pickAddress) });
+  if (observed.address.shot) observed.evidence.push(observed.address.shot);
   await setWindow(page, spec);
   observed.pets = await selectPets(page, spec.petObjs);
   for (const need of spec.needs || []) await page.getByRole("button", { name: new RegExp(need) }).click();
@@ -461,6 +468,20 @@ async function payAndVerify(flow, observed, spec) {
     if (st.http === 401) { await reauthIfExpired(flow, [st.error || "sign_in_required"], "payment status poll"); continue; }
     if (st.status === "captured" && st.ready && ui) break;
   }
+  if (!ui) {
+    // Fallback evidence: the V2 booking page in a second tab of the same session.
+    const tab = await context.newPage();
+    try {
+      await tab.goto(`${BASE}/v2/booking?bookingId=${encodeURIComponent(observed.bookingId)}`, { waitUntil: "domcontentloaded" });
+      await tab.getByText("Loading your booking…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+      await tab.waitForTimeout(1500);
+      pay.bookingPageAfter = flat(await tab.locator("main").innerText().catch(() => "")).slice(0, 400);
+      if (/Status:\s*confirmed/i.test(pay.bookingPageAfter) && /Payment:\s*captured/i.test(pay.bookingPageAfter)) ui = "booking-page (second tab)";
+      const file = `${flow.dir}/zz-booking-page-after-payment.png`;
+      await tab.screenshot({ path: file, fullPage: true }).catch(() => {});
+      pay.bookingPageShot = `shots/${flow.name}/zz-booking-page-after-payment.png`;
+    } finally { await tab.close().catch(() => {}); }
+  }
   pay.ui = ui; pay.status = st;
   pay.statusMessages = (await page.locator("[role=status],[role=alert]").allInnerTexts().catch(() => [])).map(flat).filter(Boolean).slice(0, 6);
   pay.outcome = st?.status === "captured" && st?.ready ? (ui ? "captured" : "captured-api-only") : "not-verified";
@@ -482,11 +503,11 @@ async function meetGreetRows(sinceMs) {
 // ---------------------------------------------------------------- combo journeys
 const COMBOS = [
   { key: "c1", journey: "sit-c1-visit-1h-dog", combo: "1-hour visit · 1 dog · no Meet & Greet · pay in full", start: day(1), startTime: "10:00", end: day(1), endTime: "11:00", pets: [{ species: "dog" }], meet: false, pay: true },
-  { key: "c2", journey: "sit-c2-visit-4h-cat", combo: "4-hour visit · 1 cat · M&G phone call (free) · left unpaid", start: day(2), startTime: "09:00", end: day(2), endTime: "13:00", pets: [{ species: "cat" }], meet: "call", pay: false },
+  { key: "c2", journey: "sit-c2-visit-4h-cat", combo: "4-hour visit · 1 cat · M&G phone call (free) · left unpaid", start: day(2), startTime: "09:00", end: day(2), endTime: "13:00", pets: [{ species: "cat" }], meet: "call", pay: false, pickAddress: true },
   { key: "c3", journey: "sit-c3-day-10h-dog", combo: "10-hour day 09:00–19:00 · 1 dog · M&G house visit · left unpaid (revenue-leak check)", start: day(3), startTime: "09:00", end: day(3), endTime: "19:00", pets: [{ species: "dog" }], meet: "visit", pay: false },
-  { key: "c4", journey: "sit-c4-overnight-1n-dog-cat-mg-visit", combo: "Overnight 1 night 19:00→09:00 · dog + cat · Medication need · M&G house visit ₹499 separate · pay in full", start: day(5), startTime: "19:00", end: day(6), endTime: "09:00", pets: [{ species: "dog" }, { species: "cat" }], needs: ["Medication"], meet: "visit", pay: true, video: true },
+  { key: "c4", journey: "sit-c4-overnight-1n-dog-cat-mg-visit", combo: "Overnight 1 night 19:00→09:00 · dog + cat · Medication need · M&G house visit ₹499 separate · pay in full", start: day(5), startTime: "19:00", end: day(6), endTime: "09:00", pets: [{ species: "dog" }, { species: "cat" }], needs: ["Medication"], meet: "visit", pay: true, video: true, plannedRequest: "customer date-change request (sit-m2) — booking dates stay unchanged" },
   { key: "c5", journey: "sit-c5-3n-3pets-mg-call", combo: "3 nights · 3 pets (2 dogs + cat) · M&G phone call · left unpaid", start: day(7), startTime: "10:00", end: day(10), endTime: "10:00", pets: [{ species: "dog" }, { species: "cat" }, { species: "dog" }], needs: ["Two daily walks"], meet: "call", pay: false },
-  { key: "c6", journey: "sit-c6-5n-split-deposit", combo: "5 nights · 1 dog · split 50/50 · M&G house visit (waived ≥5 nights) · pay the 50% deposit", start: day(12), startTime: "10:00", end: day(17), endTime: "10:00", pets: [{ species: "dog", prefer: "Rocky" }], meet: "visit", split: true, pay: true },
+  { key: "c6", journey: "sit-c6-5n-split-deposit", combo: "5 nights · 1 dog · split 50/50 · M&G house visit (waived ≥5 nights) · pay the 50% deposit", start: day(12), startTime: "10:00", end: day(17), endTime: "10:00", pets: [{ species: "dog", prefer: "Rocky" }], meet: "visit", split: true, pay: true, plannedRequest: "customer cancellation request (sit-m3) — policy_review_required, booking stays confirmed" },
 ];
 
 async function runCombo(browser, spec, attempt = 1) {
@@ -499,7 +520,7 @@ async function runCombo(browser, spec, attempt = 1) {
   const save = paid => {
     if (bookingSaved || !observed.bookingId) return;
     bookingSaved = true;
-    saveBooking({ suite: SUITE, bookingId: observed.bookingId, service: "pet_sitting", packageCode: observed.governedQuote?.packageCode || spec.expected.packageCode, providerId: observed.status?.providerId || null, providerName: observed.status?.providerName || observed.sitter || null, customer: "customer-a", scheduledStart: new Date(istMs(spec.start, spec.startTime)).toISOString(), scheduledEnd: new Date(istMs(spec.end, spec.endTime)).toISOString(), total: observed.governedQuote?.total ?? spec.expected.total, dueNow: observed.governedQuote?.dueNow ?? spec.expected.dueNow, paid, paymentMode: observed.governedQuote?.mode || spec.expected.mode, pets: observed.pets, combo: spec.key, meetGreet: spec.meet || "none" });
+    saveBooking({ suite: SUITE, bookingId: observed.bookingId, service: "pet_sitting", packageCode: observed.governedQuote?.packageCode || spec.expected.packageCode, providerId: observed.status?.providerId || null, providerName: observed.status?.providerName || observed.sitter || null, customer: "customer-a", scheduledStart: new Date(istMs(spec.start, spec.startTime)).toISOString(), scheduledEnd: new Date(istMs(spec.end, spec.endTime)).toISOString(), total: observed.governedQuote?.total ?? spec.expected.total, dueNow: observed.governedQuote?.dueNow ?? spec.expected.dueNow, paid, paymentMode: observed.governedQuote?.mode || spec.expected.mode, pets: observed.pets, combo: spec.key, meetGreet: spec.meet || "none", ...(spec.plannedRequest ? { plannedRequest: spec.plannedRequest } : {}) });
   };
   try {
     const who = await customerSession(flow.context, "customer-a");
@@ -508,7 +529,16 @@ async function runCombo(browser, spec, attempt = 1) {
     spec.petObjs = pickPets(spec.pets);
     spec.expected = expectedQuote({ ...spec, petCount: spec.petObjs.length });
     flow.note(`${spec.key}: ${spec.start} ${spec.startTime} → ${spec.end} ${spec.endTime} pets=${spec.petObjs.map(p => p.name).join("+")} expected ${JSON.stringify(spec.expected)}`);
-    const reached = await planToReview(flow, spec, observed);
+    // Sitter capacity is shared with earlier runs (unpaid bookings keep their hold): if nobody is free, move the whole
+    // window by a day (same duration → same expected price), staying inside WINDOWS.sitting.
+    let reached = await planToReview(flow, spec, observed);
+    for (let k = 1; k <= 3 && !reached && observed.blockedAt === "sitter" && /No sitter is available/i.test(observed.sitterAlerts.join(" ")) && offsetOf(addDays(spec.end, 1)) <= W1; k++) {
+      (observed.movedFrom ||= []).push(`${spec.start}→${spec.end}: ${observed.sitterAlerts.join(" / ")}`);
+      spec.start = addDays(spec.start, 1); spec.end = addDays(spec.end, 1);
+      flow.note(`no sitter free — moving ${spec.key} to ${spec.start}`);
+      observed.blockedAt = null;
+      reached = await planToReview(flow, spec, observed);
+    }
     observed.reviewQuote = quoteCalls(net).filter(q => q.status < 300).at(-1) || null;
     if (!reached) {
       if (sessionLost(flow) && attempt < 3) { await flow.close(); return runCombo(browser, spec, attempt + 1); }
@@ -554,7 +584,7 @@ async function runCombo(browser, spec, attempt = 1) {
       if (sessionLost(flow)) { await customerSession(flow.context, "customer-a"); flow.note("session was superseded after booking creation — re-issued before paying"); }
       const pay = await payAndVerify(flow, observed, spec);
       observed.pay = pay;
-      for (const e of [pay.razorpayShot, pay.evidence, pay.panelShot]) if (e) observed.evidence.push(e);
+      for (const e of [pay.razorpayShot, pay.evidence, pay.panelShot, pay.bookingPageShot]) if (e) observed.evidence.push(e);
       const dbv = await d1Booking(observed.bookingId);
       observed.d1 = dbv;
       const d1Row = Array.isArray(dbv.rows) ? dbv.rows[0] : null;
@@ -594,7 +624,10 @@ async function runCombo(browser, spec, attempt = 1) {
     if (ruleMiss.length) fileFinding(`rule-mismatch-${spec.key}`, { severity: "P1", area: "Pet Sitting pricing", flow: spec.journey, title: `Sitting quote differs from the published pricing rule (${spec.key}: ${ruleMiss.map(c => c.label).join("; ")})`, steps: `/v2/sitting → ${spec.combo}`, expected: `${exp.packageCode} × ${exp.units} = ${inr(exp.total)}, due now ${inr(exp.dueNow)} (${exp.mode})`, actual: JSON.stringify(q), evidence: observed.evidence.filter(e => /review/.test(e)) });
     if (q.total != null && observed.status?.totalAmount != null && q.total !== observed.status.totalAmount) fileFinding(`server-total-differs-${spec.key}`, { severity: "P0", area: "Pet Sitting pricing", flow: spec.journey, title: `Booking total saved on the server differs from the price shown at review (${spec.key})`, steps: `/v2/sitting → ${spec.combo} → Pay & request final partner approval`, expected: `server total ${q.total}`, actual: `server total ${observed.status.totalAmount} for ${observed.bookingId}`, evidence: observed.evidence });
     const priceText = `quote ${q.packageCode} units=${q.units} base=${q.base} extra=${q.extra} total=${q.total} dueNow=${q.dueNow} mode=${q.mode} (expected ${exp.packageCode} ×${exp.units} = ${exp.total}, due ${exp.dueNow})`;
-    record({ suite: SUITE, journey: spec.journey, combo: spec.combo, result, detail: `booking ${observed.bookingId} with ${observed.sitter}; window ${spec.start} ${spec.startTime}→${spec.end} ${spec.endTime}; pets ${observed.pets.join("+")}; ${priceText}; bill: ${observed.bill}; CTA "${observed.reviewCta}"; sitter card price labels ${JSON.stringify([...new Set(observed.sitterPriceLabels)])}; checks: ${checks.map(c => `${c.ok ? "ok" : "MISMATCH"} ${c.label}`).join("; ")}; reserve calls ${observed.reserveCalls.length} / booking POST statuses ${JSON.stringify(observed.bookingPostStatuses)}${flow.reauths ? ` (customer-a session re-issued ${flow.reauths}× after being superseded)` : ""}; payment page shows booking ref: ${observed.paymentPageShowsBookingRef} (PAY-04 ${observed.paymentPageShowsBookingRef === false ? REPRO : NOT_REPRO})${exp.splitEligible ? `; one-decimal rupees on review (BRD-05): ${/₹[\d,]+\.\d(?!\d)/.test(`${observed.payChoice} ${observed.reviewCta}`) ? REPRO : NOT_REPRO}` : ""}; ${payDetail}`, evidence: observed.evidence });
+    const movedText = observed.movedFrom ? `no sitter free on ${JSON.stringify(observed.movedFrom)} — window moved; ` : "";
+    const addressText = movedText + (observed.address?.changed ? `address picked via ${LOCAL ? "fixture geocoder" : "Google Places"}: suggestions ${JSON.stringify(observed.address.suggestions)} → "${observed.address.address}" (CTA "${observed.address.cta}"); ` : `saved address "${observed.address?.address}" resolved; `);
+    if (spec.pickAddress && observed.address?.changed && !observed.address.suggestions?.length) { checks.push({ ok: false, label: "address picker returned no suggestions" }); result = result === "PASS" ? "PARTIAL" : result; }
+    record({ suite: SUITE, journey: spec.journey, combo: spec.combo, result, detail: `${addressText}booking ${observed.bookingId} with ${observed.sitter}; window ${spec.start} ${spec.startTime}→${spec.end} ${spec.endTime}; pets ${observed.pets.join("+")}; ${priceText}; bill: ${observed.bill}; CTA "${observed.reviewCta}"; sitter card price labels ${JSON.stringify([...new Set(observed.sitterPriceLabels)])}; checks: ${checks.map(c => `${c.ok ? "ok" : "MISMATCH"} ${c.label}`).join("; ")}; reserve calls ${observed.reserveCalls.length} / booking POST statuses ${JSON.stringify(observed.bookingPostStatuses)}${flow.reauths ? ` (customer-a session re-issued ${flow.reauths}× after being superseded)` : ""}; payment page shows booking ref: ${observed.paymentPageShowsBookingRef} (PAY-04 ${observed.paymentPageShowsBookingRef === false ? REPRO : NOT_REPRO})${exp.splitEligible ? `; one-decimal rupees on review (BRD-05): ${/₹[\d,]+\.\d(?!\d)/.test(`${observed.payChoice} ${observed.reviewCta}`) ? REPRO : NOT_REPRO}` : ""}; ${payDetail}`, evidence: observed.evidence });
     summary.combos[spec.key] = { result, bookingId: observed.bookingId, quote: q, expected: exp, bill: observed.bill, cta: observed.reviewCta, sitters: observed.sitters, pay: observed.pay ? { outcome: observed.pay.outcome, ui: observed.pay.ui, status: observed.pay.status } : null, d1: observed.d1 || null, meetGreetCalls: observed.meetGreetCalls };
     // ---- product findings driven by what this combo showed
     const perVisitLabel = observed.sitterPriceLabels.find(l => /\/\s*night/i.test(l));
@@ -865,7 +898,7 @@ async function runDateChange(browser) {
     const d1Ok = Array.isArray(rows) ? rows.some(r => r.id === requestId && r.status === "commercial_quote_required") : null;
     record({ suite: SUITE, journey, combo, result: requestId && unchanged && d1Ok !== false ? "PASS" : "FAIL", detail: `requested ${reqStart} → ${reqEnd} (IST); message ${JSON.stringify(msgs)}; booking unchanged: ${unchanged} (${before.scheduledStart} ₹${before.totalAmount} ${before.bookingStatus} → ${after.scheduledStart} ₹${after.totalAmount} ${after.bookingStatus}); d1 sitting_date_change_requests ${JSON.stringify(rows).slice(0, 400)}`, evidence });
     if (made.c4) made.c4.dateChangeRequestId = requestId;
-    saveBooking({ suite: SUITE, bookingId: b.bookingId, service: "pet_sitting", packageCode: "sitting-overnight", customer: "customer-a", paid: after.paymentStatus === "captured", total: after.totalAmount, dueNow: after.amountDueNow, paymentMode: after.paymentMode, providerId: after.providerId, scheduledStart: after.scheduledStart, update: "date_change_requested", dateChangeRequestId: requestId, requestedStart: reqStart, requestedEnd: reqEnd });
+    summary.requests = { ...(summary.requests || {}), dateChange: { bookingId: b.bookingId, requestId, requestedStart: reqStart, requestedEnd: reqEnd } };
   }, { combo });
 }
 
@@ -896,7 +929,7 @@ async function runCancelRequest(browser) {
     const ok = id1 && unchanged && (id2 === null || id2 === id1) && (d1Rows === null || (d1Rows.length === 1 && d1Rows[0].status === "policy_review_required"));
     record({ suite: SUITE, journey, combo, result: ok ? "PASS" : "FAIL", detail: `booking ${before.bookingStatus}/${before.paymentStatus} (paid: ${b.paid}); first submit ${JSON.stringify(msg1)}; repeat submit ${JSON.stringify(msg2)} (same request id: ${id1 === id2}); booking unchanged: ${unchanged} (${after.bookingStatus}/${after.paymentStatus}); d1 sitting_cancellation_requests ${JSON.stringify(rows).slice(0, 400)}`, evidence });
     if (d1Rows && d1Rows.length > 1) fileFinding("cancel-duplicate", { severity: "P2", area: "Pet Sitting manage", flow: journey, title: "Repeat 'Submit cancellation request' creates duplicate cancellation requests", steps: `Manage ${b.bookingId} → Request cancellation → submit twice with the same reason`, expected: "One request (idempotent)", actual: `${d1Rows.length} rows: ${JSON.stringify(d1Rows).slice(0, 300)}`, evidence });
-    saveBooking({ suite: SUITE, bookingId: b.bookingId, service: "pet_sitting", packageCode: "sitting-overnight", customer: "customer-a", paid: after.paymentStatus === "captured", total: after.totalAmount, dueNow: after.amountDueNow, paymentMode: after.paymentMode, providerId: after.providerId, scheduledStart: after.scheduledStart, update: "cancellation_requested", cancellationRequestId: id1 });
+    summary.requests = { ...(summary.requests || {}), cancellation: { bookingId: b.bookingId, requestId: id1 } };
   }, { combo });
 }
 

@@ -77,6 +77,17 @@ async function capi(context, method, path, data) {
   return r;
 }
 const is401 = (x) => Number(x?.http) === 401 || /sign-in has expired|sign_in_required/i.test(String(x?.error || x?.code || ""));
+/** Navigate and wait; if the page's own API calls were refused 401 while loading, re-issue the session and reload. */
+async function gotoSignedIn(flow, url, ready, tries = 3) {
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    const before = flow.saw401 || 0;
+    if (url) await flow.page.goto(url, { waitUntil: "domcontentloaded" }); else await flow.page.reload({ waitUntil: "domcontentloaded" });
+    await dismissCookies(flow.page);
+    const ok = await ready();
+    if (((flow.saw401 || 0) === before && ok !== false) || attempt === tries) return ok;
+    await reauth(flow.context, `${(url || flow.page.url()).replace(BASE, "").split("?")[0]} load → 401`);
+  }
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // server reads
@@ -135,17 +146,20 @@ async function pickDates(context, zone, { prefer, spanDays, startTime, endTime, 
 // UI steps
 async function openBoarding(flow) {
   const { page } = flow;
-  await page.goto(`${BASE}/v2/boarding`, { waitUntil: "domcontentloaded" });
-  await dismissCookies(page);
-  await page.getByText("Loading your PawSpace family…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await settle(page, 800);
-  if (await page.getByText("Sign in to plan care.").isVisible().catch(() => false)) {
-    await reauth(flow.context, "/v2/boarding rendered signed-out");
-    await page.reload({ waitUntil: "domcontentloaded" });
+  const petButton = page.locator("[class*=petList] button[aria-pressed]").first();
+  const loaded = await gotoSignedIn(flow, `${BASE}/v2/boarding`, async () => {
     await page.getByText("Loading your PawSpace family…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-    await settle(page, 800);
-    if (await page.getByText("Sign in to plan care.").isVisible().catch(() => false)) throw new Error("harness: /v2/boarding shows the signed-out state after customerSession");
-  }
+    const until = Date.now() + 20_000;
+    while (Date.now() < until) {
+      if (await petButton.isVisible().catch(() => false)) break;
+      if (await page.locator("[class*=petList] [role=alert]").first().isVisible().catch(() => false)) break;
+      if (await page.getByText("Sign in to plan care.").isVisible().catch(() => false)) break;
+      await page.waitForTimeout(400);
+    }
+    await settle(page, 600);
+    return !(await page.getByText("Sign in to plan care.").isVisible().catch(() => false)) && await petButton.isVisible().catch(() => false);
+  });
+  if (!loaded) throw new Error("harness: /v2/boarding did not load signed in with the customer's pets");
 }
 
 /** Pick the service address through the booking AddressPicker (first Google suggestion; typed verify as fallback). */
@@ -173,7 +187,8 @@ async function chooseServiceAddress(flow) {
     return "timeout";
   };
   const readAttempt = async (path) => {
-    await available.waitFor({ timeout: 20_000 }).catch(() => {});
+    const until = Date.now() + 20_000;
+    while (Date.now() < until && !(await available.isVisible().catch(() => false)) && !(await care.locator('[role="alert"]').first().isVisible().catch(() => false))) await page.waitForTimeout(400);
     const a = { path, caption: oneLine(await care.locator("[class*=locationLine]").first().innerText({ timeout: 2000 }).catch(() => ""), 200), alert: oneLine(await care.locator('[role="alert"]').first().innerText({ timeout: 800 }).catch(() => ""), 200), usable: await use.isEnabled().catch(() => false) };
     out.attempts.push(a);
     return a;
@@ -190,7 +205,7 @@ async function chooseServiceAddress(flow) {
     if (round === 1 && autocomplete401 && state !== "suggestions") { await reauth(flow.context, "address autocomplete → 401"); await line1.fill(""); continue; }
     if (state === "suggestions") {
       out.suggestions = (await suggestions.allInnerTexts()).slice(0, 5).map(t => oneLine(t, 120));
-      await suggestions.first().scrollIntoViewIfNeeded().catch(() => {});
+      await suggestions.first().evaluate(el => el.scrollIntoView({ block: "center" })).catch(() => {});
       out.shot = await flow.shot("0-address-suggestions", { fullPage: false });
       await robustClick(suggestions.first());
       attempt = await readAttempt("google-suggestion");
@@ -372,6 +387,7 @@ async function runBoarding(flow, opts) {
   r.shots.push(await flow.shot("5-after-create"));
   r.stage = r.bookingId ? "created" : "confirm-blocked";
   if (!r.bookingId) return r;
+  flow.pendingHandoff = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: null, customer: PERSONA, scheduledStart: r.quote?.scheduledStart, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: false, paymentMode: r.quote?.paymentMode, pets: r.selectedPets, note: "saved by the journey error handler" };
   // payment page
   const payPage = page.locator('section[aria-label="Boarding payment"]').first();
   r.paymentPage = oneLine(await payPage.innerText().catch(() => ""), 600);
@@ -405,12 +421,14 @@ async function runBoarding(flow, opts) {
   flow.note(`razorpay result ${JSON.stringify(r.razorpay)}`);
   r.stage = "paid-submitted";
   r.capture = await waitForCapture(flow, r.bookingId, r.razorpay?.ok ? 90_000 : 20_000);
+  if (flow.pendingHandoff) flow.pendingHandoff.paid = Boolean(r.capture.server);
   r.shots.push(await flow.shot("7-after-payment"));
   r.stage = r.capture.server ? "captured" : "capture-pending";
   return r;
 }
 
-/** Poll page + customer projection until the capture is verified (UI) and projected (server). */
+/** Poll page + customer projection until the capture is verified (UI), projected (server) and the booking confirmed. */
+const CONFIRMED = ["confirmed", "assigned", "in_progress"];
 async function waitForCapture(flow, bookingId, timeoutMs = 90_000) {
   const { page, context } = flow;
   const deadline = Date.now() + timeoutMs;
@@ -418,33 +436,31 @@ async function waitForCapture(flow, bookingId, timeoutMs = 90_000) {
   while (Date.now() < deadline) {
     const text = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
     ui = /Payment verified by PawSpace|Boarding booking ·/.test(text) || (/booking-confirmation/.test(page.url()) && /confirmed|captured|verified/i.test(text));
-    uiText = oneLine((text.match(/(Payment verified[^\n]*|Boarding booking ·[^\n]*|Razorpay returned[^\n]*|Waiting for signed[^\n]*|Payment is verified, but[^\n]*|Razorpay was closed[^\n]*)/) || [""])[0], 200);
+    uiText = oneLine((text.match(/(Boarding booking ·[^\n]*|Payment verified[^\n]*|Razorpay returned[^\n]*|Waiting for signed[^\n]*|Payment is verified, but[^\n]*|Razorpay was closed[^\n]*|Payment was unsuccessful[^\n]*)/) || [""])[0], 200);
     const status = await checkoutStatus(context, bookingId);
     // The instalment is captured once the payment record says so; booking confirmation is asserted separately.
     if (status.paymentStatus === "captured") { server = status; if (!serverAt) serverAt = Date.now(); }
-    if (server && ui) break;
-    if (server && Date.now() - serverAt > 25_000) break;
+    if (server && ui && CONFIRMED.includes(String(status.bookingStatus)) && /Boarding booking ·/.test(text)) break;
+    if (server && Date.now() - serverAt > 40_000) break;
     const check = page.getByRole("button", { name: /Check payment status|Retry booking confirmation/ }).first();
     if (Date.now() - lastCheck > 8000 && await check.isVisible().catch(() => false) && await check.isEnabled().catch(() => false)) { lastCheck = Date.now(); await check.click().catch(() => {}); }
     await page.waitForTimeout(2500);
   }
   await settle(page, 1500);
   const final = await checkoutStatus(context, bookingId);
-  return { ui, uiText, server: Boolean(server) || final.paymentStatus === "captured", final, waitedMs: timeoutMs - Math.max(0, deadline - Date.now()) };
+  const text = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
+  ui = ui || /Payment verified by PawSpace|Boarding booking ·/.test(text);
+  return { ui, liveStay: /Boarding booking ·/.test(text), uiText, server: Boolean(server) || final.paymentStatus === "captured", final, waitedMs: timeoutMs - Math.max(0, deadline - Date.now()) };
 }
 
 /** Customer-facing booking page /v2/booking?bookingId= — what the customer sees after checkout. */
 async function readBookingPage(flow, bookingId, label) {
   const { page } = flow;
-  await page.goto(`${BASE}/v2/booking?bookingId=${encodeURIComponent(bookingId)}`, { waitUntil: "domcontentloaded" });
-  await page.getByText("Loading your booking…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await settle(page, 1200);
-  if (await page.getByRole("button", { name: "Retry booking" }).isVisible().catch(() => false)) {
-    await reauth(flow.context, "/v2/booking load failed");
-    await page.getByRole("button", { name: "Retry booking" }).click().catch(() => {});
+  await gotoSignedIn(flow, `${BASE}/v2/booking?bookingId=${encodeURIComponent(bookingId)}`, async () => {
     await page.getByText("Loading your booking…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
     await settle(page, 1200);
-  }
+    return !(await page.getByRole("button", { name: "Retry booking" }).isVisible().catch(() => false));
+  });
   const text = oneLine(await mainText(page), 1200);
   const shot = await flow.shot(label);
   return {
@@ -459,16 +475,11 @@ async function readBookingPage(flow, bookingId, label) {
 
 async function readManagePage(flow, bookingId, label) {
   const { page } = flow;
-  await page.goto(`${BASE}/v2/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`, { waitUntil: "domcontentloaded" });
-  await dismissCookies(page);
-  await page.getByText("Loading stay status…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await settle(page, 1200);
-  if (/Stay record unavailable/.test(await mainText(page)) && /sign|expired|401/i.test(await mainText(page))) {
-    await reauth(flow.context, "manage page signed-out");
-    await page.reload({ waitUntil: "domcontentloaded" });
+  await gotoSignedIn(flow, `${BASE}/v2/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`, async () => {
     await page.getByText("Loading stay status…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
     await settle(page, 1200);
-  }
+    return !/Stay record unavailable/.test(await mainText(page));
+  });
   const text = oneLine(await mainText(page), 1500);
   const status = oneLine(await page.locator("[class*=careLive] h4").first().innerText({ timeout: 3000 }).catch(() => ""), 80);
   const shot = await flow.shot(label);
@@ -511,6 +522,8 @@ const created = {};
 async function journey(name, combo, fn, { mobile = false, video = false, useBrowser = null } = {}) {
   if (timeLeft() < 90_000) { record({ suite: SUITE, journey: name, combo, result: "SKIPPED", detail: "suite time budget exhausted", evidence: [] }); return null; }
   const flow = await newFlow(useBrowser || browser, `${SUITE}/${name}`, { mobile, video });
+  flow.saw401 = 0;
+  flow.page.on("response", (res) => { const u = res.url(); if (res.status() === 401 && u.startsWith(BASE) && u.includes("/api/") && !u.includes("/api/identity-session")) flow.saw401 += 1; });
   const t0 = Date.now();
   try {
     await customerSession(flow.context, PERSONA);
@@ -518,6 +531,7 @@ async function journey(name, combo, fn, { mobile = false, video = false, useBrow
     summary.journeys.push({ name, combo, ms: Date.now() - t0, result: out?.result });
     return out;
   } catch (e) {
+    if (flow.pendingHandoff) { saveBooking(flow.pendingHandoff); flow.pendingHandoff = null; }
     const shot = await flow.shot("error").catch(() => null);
     const harness = /harness:|Timeout|locator|waiting for|strict mode|Target closed|net::/i.test(String(e));
     record({ suite: SUITE, journey: name, combo, result: "BLOCKED", detail: `${harness ? "harness: " : ""}${oneLine(String(e?.message || e), 600)}`, evidence: [shot].filter(Boolean) });
@@ -540,11 +554,12 @@ async function setupPets(flow) {
   const vaccinated = (e) => ["verified", "vaccinated"].includes(String(e?.vaccinationStatus));
   const wrong = PETS.filter(p => { const e = existing.find(x => x.name === p.name); return e && vaccinated(e) !== (p.vaccinated === "yes"); });
   flow.note(`customer-a pets before: ${existing.map(p => `${p.name}(${p.species},${p.vaccinationStatus})`).join(", ") || "none"}; missing: ${missing.map(p => p.name).join(", ") || "none"}; vaccination to reset: ${wrong.map(p => p.name).join(", ") || "none"}`);
-  await page.goto(`${BASE}/v2/account`, { waitUntil: "domcontentloaded" });
-  await dismissCookies(page);
-  await page.getByText("Loading your account…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await page.getByText("Loading your pets…").first().waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await settle(page, 800);
+  await gotoSignedIn(flow, `${BASE}/v2/account`, async () => {
+    await page.getByText("Loading your account…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+    await page.getByText("Loading your pets…").first().waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+    await settle(page, 800);
+    return await page.getByRole("button", { name: /Add pet/ }).first().isVisible().catch(() => false);
+  });
   const shots = [await flow.shot("account-pets-before")];
   const added = [], issues = [];
   for (const p of missing) {
@@ -640,7 +655,7 @@ async function comboJourney(flow, { name, combo, opts, requireCapture }) {
   else if (r.razorpay && !r.razorpay.ok) result = "BLOCKED";
   else if (r.capture?.server) {
     const dbOk = d1Captured(db);
-    const confirmed = ["confirmed", "assigned", "in_progress"].includes(String(r.capture.final?.bookingStatus));
+    const confirmed = CONFIRMED.includes(String(r.capture.final?.bookingStatus));
     result = confirmed && r.capture.ui && dbOk !== false ? "PASS" : "PARTIAL";
   } else result = "FAIL";
   if (r.razorpay && !r.razorpay.ok) parts.push("harness: Razorpay TEST netbanking success control was not reached");
@@ -657,14 +672,15 @@ async function comboJourney(flow, { name, combo, opts, requireCapture }) {
   if (r.net?.scheduling?.code === "SERVICE_ADDRESS_UNVERIFIED") reportFinding({ severity: "P1", area: "Maps / Boarding", flow: `/v2/boarding ${combo}`, title: "Reserve refused SERVICE_ADDRESS_UNVERIFIED after the AddressPicker verified the address (MAP-01 — CONFIRMED-ON-STAGING if BASE is staging)", steps: `AddressPicker "${ADDRESS_QUERY}" → ${r.address?.path} → plan → review → Pay & create`, expected: "Canonical stay created", actual: `POST /api/uat-scheduling ${r.net.scheduling.http} ${r.net.scheduling.code}; UI: "${r.confirmAlert}"`, evidence });
   if (r.bookingId && r.paymentPage && !r.paymentPageShowsRef) reportFinding({ severity: "P2", area: "Payment page", flow: `/v2/boarding ${combo} payment step`, once: true, title: "Payment step shows no booking reference while payment is pending (PAY-04 — re-verified)", steps: "Pay & create canonical stay → payment step", expected: `Booking reference ${r.bookingId} visible`, actual: `Payment step text: "${oneLine(r.paymentPage, 250)}"`, evidence });
   if (opts.pay && r.razorpay?.ok && !r.capture?.server) reportFinding({ severity: "P1", area: "Payments", flow: `/v2/boarding ${combo}`, title: "Razorpay TEST payment succeeded but PawSpace never projected the capture", steps: "Pay securely → Razorpay TEST Netbanking → Success", expected: "Booking payment captured within 90 s", actual: `${r.capture?.uiText || "no UI confirmation"}; status=${r.capture?.final?.status} payment=${r.capture?.final?.paymentStatus}; ${d1Brief(db)}`, evidence });
-  if (r.capture?.server && !["confirmed", "assigned", "in_progress"].includes(String(r.capture.final?.bookingStatus))) reportFinding({ severity: "P1", area: "Booking lifecycle", flow: `/v2/boarding ${combo}`, title: "Captured Boarding payment did not confirm the booking", steps: "Pay with Razorpay TEST", expected: "bookingStatus confirmed", actual: `bookingStatus=${r.capture.final?.bookingStatus} paymentStatus=${r.capture.final?.paymentStatus}`, evidence });
+  if (r.capture?.server && !CONFIRMED.includes(String(r.capture.final?.bookingStatus))) reportFinding({ severity: "P1", area: "Booking lifecycle", flow: `/v2/boarding ${combo}`, title: "Captured Boarding payment did not confirm the booking", steps: "Pay with Razorpay TEST", expected: "bookingStatus confirmed", actual: `bookingStatus=${r.capture.final?.bookingStatus} paymentStatus=${r.capture.final?.paymentStatus}`, evidence });
   if (r.capture?.server && r.capture.final?.paymentMode === "prepaid" && r.bookingPage?.payButton) reportFinding({ severity: "P1", area: "Payment page", flow: `/v2/booking ${combo}`, title: "Fully paid booking still offers 'Pay securely'", steps: "Pay in full, open /v2/booking", expected: "No payment control", actual: r.bookingPage.text.slice(0, 300), evidence });
 
   if (r.bookingId) {
     const row = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: null, providerName: r.capture?.final?.providerName || r.afterCreate?.providerName || r.host, customer: PERSONA, scheduledStart: r.quote?.scheduledStart || `${opts.start}T${opts.startTime}+05:30`, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: Boolean(r.capture?.server), paymentMode: r.quote?.paymentMode, pets: r.selectedPets, combo };
-    const pid = await api(flow.context, "GET", `/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(r.bookingId)}`).catch(() => null);
+    const pid = await capi(flow.context, "GET", `/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(r.bookingId)}`);
     row.providerId = pid?.body?.data?.[0]?.host_provider_id || null;
     saveBooking(row);
+    flow.pendingHandoff = null;
     created[name] = { ...row, result, run: r };
     summary.bookings[name] = row;
   }
@@ -703,7 +719,7 @@ async function main() {
   // date planning (read-only capacity probe so re-runs on staging do not collide with earlier stays)
   const plan = {};
   await journey("plan-dates", "capacity probe", async (flow) => {
-    const z = zoneCtx.zone || (await api(flow.context, "GET", "/api/service-zone?pincode=560038")).body?.data?.assignment;
+    const z = zoneCtx.zone || (await capi(flow.context, "GET", "/api/service-zone?pincode=560038")).body?.data?.assignment;
     const zone = z ? { cityId: z.cityId, zoneId: z.zoneId } : null;
     const specs = {
       c1: { prefer: 41, spanDays: 0, startTime: "09:00", endTime: "13:00", pets: 1, species: ["dog"] },
@@ -869,12 +885,13 @@ async function main() {
     record({ suite: SUITE, journey: "manage-extension-state", combo: `booking ${id}`, result: extEnabled === expectedEnabled ? "PASS" : "FAIL", detail: `stay status ${status}; "Request extension" enabled=${extEnabled} (expected ${expectedEnabled} — enabled only once the host accepted); disabled state explained=${explains}; extension_status=${stayAfterCare?.extension_status}`, evidence: [shots[0]] });
     if (extEnabled === false && !explains) reportFinding({ severity: "P3", area: "Boarding manage page", flow: "/v2/boarding/manage extension", title: "'Request extension' is disabled with no explanation until the host accepts (BRD-10 — re-verified)", steps: "Open Manage for a paid stay awaiting host acceptance", expected: "Say why extension is unavailable", actual: `Stay ${status}; disabled button, no explanatory text`, evidence: [shots[0]] });
     // date change request (+1 day on both ends, reason)
-    const inAt = new Date(new Date(stayAfterCare?.check_in_at || `${p3.start}T10:00:00+05:30`).getTime() + 86_400_000);
-    const outAt = new Date(new Date(stayAfterCare?.check_out_at || `${p3.end}T10:00:00+05:30`).getTime() + 86_400_000);
+    const baseIn = new Date(stayAfterCare?.check_in_at || `${p3.start}T10:00:00+05:30`).getTime(), baseOut = new Date(stayAfterCare?.check_out_at || `${p3.end}T10:00:00+05:30`).getTime();
+    const shift = baseOut + 86_400_000 <= Date.parse(`${isoDay(W_TO)}T23:59:00+05:30`) ? 86_400_000 : -86_400_000;
+    const inAt = new Date(baseIn + shift), outAt = new Date(baseOut + shift);
     const local = (dt) => new Date(dt.getTime() + 5.5 * 3600_000).toISOString().slice(0, 16);
     await page.getByLabel("Requested check-in").fill(local(inAt));
     await page.getByLabel("Requested checkout").fill(local(outAt));
-    await page.getByPlaceholder("Why do you need to change the stay dates?").fill("Master E2E: flight moved by one day");
+    await page.getByPlaceholder("Why do you need to change the stay dates?").fill(`Master E2E: flight moved by one day (${shift > 0 ? "+1" : "-1"} day)`);
     let dc = null, dcBody = null;
     for (let attempt = 1; attempt <= 2; attempt++) {
       const dcResp = page.waitForResponse(res => res.url().includes("/api/boarding-finance") && res.request().method() === "POST", { timeout: 20_000 }).catch(() => null);
@@ -894,9 +911,17 @@ async function main() {
     // Add Pet Taxi for this stay → hand-off to the taxi suite
     const taxiLink = page.getByRole("link", { name: /Add Pet Taxi for this stay/ });
     const href = await taxiLink.getAttribute("href").catch(() => null);
+    const before401 = flow.saw401 || 0;
     await robustClick(taxiLink);
     await page.waitForURL(/\/v2\/taxi\?sourceBookingId=/, { timeout: 20_000 }).catch(() => {});
-    await settle(page, 2000);
+    const taxiReady = async () => {
+      await page.getByText("Loading pets…").first().waitFor({ state: "detached", timeout: 20_000 }).catch(() => {});
+      await page.locator("[class*=petGrid] button[class*=selected]").first().waitFor({ timeout: 10_000 }).catch(() => {});
+      await settle(page, 1000);
+      return true;
+    };
+    await taxiReady();
+    if ((flow.saw401 || 0) > before401) await gotoSignedIn(flow, null, taxiReady, 2);
     const taxiText = oneLine(await mainText(page), 400);
     shots.push(await flow.shot("4-add-pet-taxi"));
     const taxiOk = page.url().includes(`sourceBookingId=${encodeURIComponent(id)}`);
