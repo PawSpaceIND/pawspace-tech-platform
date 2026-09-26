@@ -62,7 +62,7 @@ test("without extras the booking is unchanged", async t => {
   await client.createV2GroomingBooking(input());
   const body = calls.find(call => call.url === "/api/canonical-bookings").body;
   assert.equal(body.totalAmount, 1899);
-  assert.deepEqual(body.pricing, { discount: 0, addOns: [], requirements: [] });
+  assert.deepEqual(body.pricing, { discount: 0 }, "no add-on or care fields are sent when none were chosen");
 });
 
 // Owner decision (QA M10): same price, 30 extra minutes for a giant dog or an aggressive temperament.

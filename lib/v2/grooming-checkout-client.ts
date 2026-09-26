@@ -100,6 +100,10 @@ export async function createV2GroomingBooking(
   const discount = coupon ? Number(coupon.discount) : 0;
   if (!Number.isFinite(discount) || discount < 0 || discount > input.quote.price) throw new Error("Reapply the coupon before booking.");
   const payable = v2GroomingTotal(input) - discount;
+  const addOns = input.addOns ?? [], requirements = [
+    ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
+    ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
+  ];
   if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
       input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
     throw new Error("The published package must match the selected pets.");
@@ -165,10 +169,7 @@ export async function createV2GroomingBooking(
     },
     // Same fields the in-app flow sends: add-ons are priced by the server; notes reach the groomer's job card;
     // a coupon is re-checked and consumed by the booking.
-    pricing: { ...(coupon ? { discount, couponCode: coupon.code, couponQuoteId: coupon.quoteId } : { discount: 0 }), addOns: input.addOns ?? [], requirements: [
-      ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
-      ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
-    ] },
+    pricing: { ...(coupon ? { discount, couponCode: coupon.code, couponQuoteId: coupon.quoteId } : { discount: 0 }), ...(addOns.length ? { addOns } : {}), ...(requirements.length ? { requirements } : {}) },
   });
   if (!canonical.bookingId || canonical.customerId !== input.account.customerId || canonical.scheduleGroupId !== decision.groupId) {
     throw new Error("The booking could not be matched to your account and reservation.");

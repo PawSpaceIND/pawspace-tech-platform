@@ -18,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
-      "semantic": "5ef17517178921b8eec7eb69a48c3ac4970309360fb8cde2394ec4cc784dc79d",
+      "semantic": "e372b42d26e694deded4b96d2e2fdb24fd009f1c725968d69bca276c8f052ce2",
       "mainRoots": 1
     },
     "app/team/finance/relocation/page.tsx": {
@@ -26,7 +26,7 @@
       "mainRoots": 1
     },
     "app/team/finance/sitting/sitting-finance-workspace.tsx": {
-      "semantic": "cce87069a275b580c294efebd7b9646b13781bfda2bcb4a1b07efa4f1eecfd5a",
+      "semantic": "bfcce787ec049a852c8fc50016ace019caa507c318e2b5ce202c00a4f63a0b86",
       "mainRoots": 1
     },
     "app/team/finance/statutory/page.tsx": {
