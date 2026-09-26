@@ -1028,7 +1028,7 @@
     "tests/pet-manager.test.mjs": "d0adfef582717f7fc4c9da0d912875d75d79c66fbc44f6f34f74f145c5ed68eb",
     "tests/premium-customer-service-parity.test.mjs": "d183fa0a96eec30048531fa0dc053c82ec2631d7cb0ea88b3713e88468696573",
     "tests/ptja-p1-04-governed-grooming-entry.test.mjs": "94c7543cc8d5d1a69018e309f3adf116401e759184c1145543b90ab50068927b",
-    "tests/rendered-html.test.mjs": "a69dbbce2b03863954b190d8f234de0f668594b3765c9a4b89599097e2e75157",
+    "tests/rendered-html.test.mjs": "13fe226d0cac1eea002fa9627bc2f4a2f831b89f2131c29bb89fbbed2414f72e",
     "tests/service-discovery-capacity.test.mjs": "3a3c95947a4fd2e6a56d519c2cda23a26b52a38892a759df350237f49758f782",
     "tests/staging-certification.test.mjs": "60e319a4767e1738aa7b6c4a42d5f21413dd77df6aadbd42493c748c3bfc0e14",
     "tests/training-availability-preview.test.mjs": "ad6a743ad3bf28108734dcaff5d7018306043cd77b18ce3431695022daa08000",

@@ -469,6 +469,13 @@
       "field": "protected.lib/trust-safety-governance.ts",
       "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
       "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.tests/rendered-html.test.mjs",
+      "old": "a69dbbce2b03863954b190d8f234de0f668594b3765c9a4b89599097e2e75157",
+      "new": "13fe226d0cac1eea002fa9627bc2f4a2f831b89f2131c29bb89fbbed2414f72e",
+      "reason": "Exact digest of the reviewed display test change: preserve payment timing and server-owned introduction pricing assertions, replacing obsolete uncreated included-trial text with persisted separate-request identity. No unrelated style/source digest was altered."
     }
   ]
 }
