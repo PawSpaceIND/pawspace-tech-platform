@@ -1,5 +1,6 @@
 import { authError } from "../../../../lib/server-auth";
 import { ensurePricingControlRuntime } from "../../../../lib/pricing-control-runtime";
+import { groomingCommercialPackages } from "../../../../lib/grooming-commercial-catalogue";
 
 type Row = Record<string, unknown>;
 
@@ -44,6 +45,19 @@ function publicName(name: string) {
   return name.replace(/\s*·\s*\d+\s+pets$/i, "").trim();
 }
 
+const commercialIncludes = new Map(groomingCommercialPackages.map(item => [item.code, item.included]));
+
+/**
+ * Seeded rows carry an internal note ("Canonical Grooming price for …") as their description. Customers see
+ * what the package includes from the approved commercial catalogue instead; an operator-written description wins.
+ */
+function customerDescription(code: string, stored: unknown) {
+  const text = String(stored || "").trim();
+  if (text && !/^canonical\b/i.test(text)) return text;
+  const included = commercialIncludes.get(code);
+  return included?.length ? `Includes ${included.join(", ")}.` : "Professional doorstep grooming by PawSpace.";
+}
+
 /**
  * Customer-safe V2 catalogue projection.
  *
@@ -85,7 +99,7 @@ export async function GET() {
       const current = grouped.get(code) || {
         code,
         name: publicName(String(row.name || code)),
-        description: String(row.description || "Professional doorstep grooming by PawSpace."),
+        description: customerDescription(code, row.description),
         audience,
         bundles: [],
       };
