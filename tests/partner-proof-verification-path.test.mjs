@@ -280,3 +280,14 @@ test("the BCC panel and the partner pages are wired to the governed path", () =>
   assert.equal(typeof sittingProof.receiveSittingMediaUpload, "function");
   assert.equal(typeof taxiProof.receiveTaxiMediaUpload, "function");
 });
+
+test("a chunked proof upload without Content-Length is refused once it passes the limit, without buffering it whole", async () => {
+  const { readPartnerProofUpload } = await import("../lib/partner-proof-upload.ts");
+  let pulled = 0;
+  const body = new ReadableStream({ pull(controller) { pulled += 1; if (pulled > 50) { controller.close(); return; } controller.enqueue(new Uint8Array(1024)); } });
+  const request = new Request("https://proof.pawspace.test/api/boarding-proof?stayId=S1", { method: "PUT", body, duplex: "half", headers: { "content-type": "image/jpeg" } });
+  await assert.rejects(readPartnerProofUpload(request, 4096), error => error instanceof Response && error.status === 413);
+  assert.ok(pulled < 10, `stopped reading at the limit (read ${pulled} chunks)`);
+  const ok = await readPartnerProofUpload(new Request("https://proof.pawspace.test/x", { method: "PUT", body: new Uint8Array([1, 2, 3]), headers: { "content-type": "image/jpeg" } }), 4096);
+  assert.deepEqual([...ok.bytes], [1, 2, 3]);
+});
