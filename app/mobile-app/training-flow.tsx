@@ -380,7 +380,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
           <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
           {selectedPetObjs.some(pet => !isVaccinatedStatus(pet.vaccinationStatus)) && <p className={styles.durationRule} role="note">Vaccinations for {selectedPetObjs.filter(pet => !isVaccinatedStatus(pet.vaccinationStatus)).map(pet => pet.name).join(", ")} must be verified before the first programme session. You can still book, and a Meet &amp; Greet needs no proof.</p>}
-          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "Book a Meet & Greet"}</button>
+          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See training options"}</button>
         </section>
       )}
       {stage === 2 && (
