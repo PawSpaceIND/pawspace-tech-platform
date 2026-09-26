@@ -1,0 +1,41 @@
+{
+ "suite": "05-payment-canary",
+ "steps": [
+  {
+   "name": "customer session",
+   "ok": true,
+   "detail": "CUS-OTP-1FDCF021D0C5E15DBC5B813F"
+  },
+  {
+   "name": "add vaccinated dog",
+   "ok": true,
+   "detail": "HTTP 201"
+  },
+  {
+   "name": "add Indiranagar address",
+   "ok": true,
+   "detail": "HTTP 201"
+  },
+  {
+   "name": "service zone 560038",
+   "ok": true,
+   "detail": "blr/blr-east"
+  },
+  {
+   "name": "verified boarding hosts for the window",
+   "ok": true,
+   "detail": "200 4 hosts"
+  },
+  {
+   "name": "4-hour daycare quote",
+   "ok": true,
+   "detail": "₹499 (rule ₹499)"
+  },
+  {
+   "name": "canary aborted",
+   "ok": false,
+   "detail": "apiRequestContext.fetch: Timeout 30000ms exceeded.\nCall log:\n  - → POST https://pawspace-staging.karthik-fce.workers.dev/api/uat-scheduling\n    - user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36\n    - accept: */*\n    - accept-encoding: gzip,deflate,br\n    - origin: https://pawspace-staging.karthik-fce.workers.dev\n    - content-type: application/json\n    - content-length: 475\n    - cookie: pawspace_identity_session=qm_cs"
+  }
+ ],
+ "bookingId": null
+}
