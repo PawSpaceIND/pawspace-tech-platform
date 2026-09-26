@@ -219,13 +219,17 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
   if (!apiKey) return fail("not_configured");
   const { modelRef } = aiModelRef(env, input.channel);
-  if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
+  const mark = (stage: string) => { try { input.onTiming?.(stage); } catch { /* Diagnostics cannot affect provider controls. */ } };
+  mark("governanceStarted");
+  const governanceAllowed = await governanceAllowsExternalAi(env, input, modelRef, providerRef);
+  mark("governanceCompleted");
+  if (!governanceAllowed) return fail("governance_blocked");
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -235,7 +239,9 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   let reservation: AiRuntimeReservation = null;
   if (db) {
+    mark("reservationStarted");
     const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    mark("reservationCompleted");
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
   }

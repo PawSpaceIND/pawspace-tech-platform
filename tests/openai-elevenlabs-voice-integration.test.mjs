@@ -338,3 +338,29 @@ test("an open circuit still refuses before any reservation is written",async()=>
  assert.equal(blocked.allowed,false,"an open circuit must still stop the call");
  assert.equal(blocked.reason,"circuit_open");
 });
+
+test("timing separates governance and reservation without bypassing either control",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const {db,sqlite}=freshCountingD1();
+ sqlite.exec("CREATE TABLE ai_kill_switches (scope_type TEXT,scope_key TEXT,reason TEXT,disabled INTEGER)");
+ const previousDb=globalThis.__AI_DB__,previousEnv=globalThis.__PAWSPACE_TEST_ENV__;
+ globalThis.__AI_DB__=db;
+ globalThis.__PAWSPACE_TEST_ENV__={DB:db,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-key",PAWSPACE_DEPLOYMENT_ENV:"production",PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE:"1"};
+ const marks=[];
+ const stub=stubFetch(()=>jsonResponse({status:"completed",output_text:"Hello"}));
+ const input={systemPrompt:"system",userPrompt:"hello",channel:"voice",onTiming:stage=>{marks.push(stage);}};
+ try{
+  assert.equal((await adapter.requestAiDraft(input)).connected,true);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"quota_exceeded");
+  assert.equal(stub.calls.length,1);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  sqlite.exec("INSERT INTO ai_kill_switches VALUES ('global','all','test',1)");
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"governance_blocked");
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted"]);
+  assert.equal((await adapter.requestAiDraft({...input,onTiming:()=>{throw new Error('diagnostic failure');}})).failure,"governance_blocked");
+  assert.equal(stub.calls.length,1);
+ }finally{stub.restore();globalThis.__AI_DB__=previousDb;globalThis.__PAWSPACE_TEST_ENV__=previousEnv;sqlite.close();}
+});
