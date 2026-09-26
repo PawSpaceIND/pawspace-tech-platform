@@ -54,6 +54,10 @@ on:
         options:
           - 'off'
           - 'on'
+      atlas_smoke:
+        description: "Run real-provider Atlas staging scenarios (synthetic founder questions only)"
+        type: boolean
+        default: false
       sms_smoke:
         description: 'Use disabled for normal sandbox certification; choose approved only for the second-stage Fast2SMS smoke + live customer OTP activation'
         required: true
@@ -528,3 +532,19 @@ jobs:
         run: |
           echo "Certified staging deploy of $EXPECTED_SHA at $STAGING_URL"
           echo "Append the module paths from docs/STAGING_DEPLOY.md. Sign in at /staging-login with the seeded staff identities in docs/UAT-TESTER-GUIDE.md."
+
+      - name: Atlas live scenario certification
+        if: ${{ github.event.inputs.atlas_smoke == 'true' }}
+        timeout-minutes: 20
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node tests/e2e/atlas-live-certification.mjs
+      - name: Upload Atlas live evidence
+        if: ${{ always() && github.event.inputs.atlas_smoke == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-live-certification
+          path: artifacts/atlas-live/
+          retention-days: 7
