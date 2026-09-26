@@ -870,7 +870,7 @@
     "lib/ai-sales-propensity-refresh.ts": "c23d59c7e3150504aacbedeff31fabb86cd17e4145ff31814a951790a802d231",
     "lib/ai-tool-registry.ts": "4413e4c2c97e54ab4f985fdbdeccffd5bc6b67a303c50d86587de91ee0a36ff7",
     "lib/ai-voice-uat.ts": "cadb99312de93ecce5766a5c07f386da0d36d51f8f5e13ad78657f56094cb371",
-    "lib/ai-web-chat-adapter.ts": "bba355331ba4a9f08bf8c562e7ad27b00185c40812ed3c9e2ef326328b91a499",
+    "lib/ai-web-chat-adapter.ts": "57fdc44e0aa0bd51a8a9a999d208afaa74919e17781dea45b31d13c71aa59733",
     "lib/api-error-message.ts": "587ec81fb07e5d460594845930bf9b3582a7e2bc84a578fc064f0cb53a81516e",
     "lib/api-fetch.ts": "7f73fb6c6646f210e79a43f4c9b23522cbdc3b501df9a6b82feffa63a60f58b7",
     "lib/api-gateway.ts": "30918a62847a49312d5d92e4e07fd5ba84fc8abd9647c2ac7ed5013dbd786389",
