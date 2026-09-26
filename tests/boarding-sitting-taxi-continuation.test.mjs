@@ -46,3 +46,12 @@ test('BST23: management handlers consume intent keys rather than minting new key
  assert.doesNotMatch(source,/extension:\$\{crypto\.randomUUID\(\)\}|cancel:\$\{crypto\.randomUUID\(\)\}|date-change:\$\{crypto\.randomUUID\(\)\}/);
  assert.match(source,/changeLock\.current=true/);
 });
+
+test('recovery offers a separate booking: the reload drops only the saved booking reference',async()=>{
+ const {withoutBookingReference}=await import('../lib/booking-reference-recovery.ts');
+ assert.equal(withoutBookingReference('https://pawspace.test/v2/taxi?bookingId=PS-1&sourceBookingId=BKG-9#pay'),'/v2/taxi?sourceBookingId=BKG-9#pay');
+ assert.equal(withoutBookingReference('https://pawspace.test/v2/boarding?bookingId=PS-2'),'/v2/boarding');
+ const view=readFileSync(new URL('../app/mobile-app/booking-reference-recovery.tsx',import.meta.url),'utf8');
+ assert.match(view,/window\.location\.assign\(withoutBookingReference\(window\.location\.href\)\)/);
+ assert.equal((view.match(/\{startSeparate\}/g)||[]).length,2,'both the unverified and the verified recovery screens offer a separate booking');
+});

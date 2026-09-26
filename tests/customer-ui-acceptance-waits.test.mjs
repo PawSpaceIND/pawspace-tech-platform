@@ -115,7 +115,7 @@ test("customer acceptance allows the governed Boarding/Sitting re-quote before t
   assert.match(source, /safePosts=\[\]/); // observeFinal still defaults to no allowance
   assert.match(source, /\[\/POST \\\/api\\\/\(boarding\|sitting\)-commercial\//);
   // The final scheduling mutation remains the required target for both stays.
-  assert.match(source, /request final partner approval/);
+  assert.match(source, /\(create stay request\|request sitter\) & review payment/);
   assert.match(source, /POST \\\/api\\\/uat-scheduling/);
 });
 

@@ -11,12 +11,16 @@ export async function discoverBoardingHosts(db:D1Database,input:BoardingHostDisc
  await ensureBoardingStayLifecycleTables(db);
  const startMs=new Date(input.scheduledStart).getTime(),endMs=new Date(input.scheduledEnd).getTime();
  if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw new Response("A valid Boarding stay window is required for host discovery",{status:400});
+ // Effective dates compare against the calendar date the customer booked, the same way the quote's
+ // activePackage() reads it. Only the instants are normalised to UTC, for the lock/reservation range checks,
+ // so an IST window such as 01:00+05:30 is not moved to the previous day.
+ const bookedDate=String(input.scheduledStart).slice(0,10);
  input={...input,scheduledStart:new Date(startMs).toISOString(),scheduledEnd:new Date(endMs).toISOString()};
  const requirements=requireBoardingRequirements(input.requirements);
  const petCount=Number(input.petCount);if(!Number.isInteger(petCount)||petCount<1||petCount>4)throw new Response("Boarding host discovery supports 1-4 pets",{status:400});
  const requestedSpecies=[...new Set(input.species.map(value=>String(value).trim().toLowerCase()).filter(Boolean))];if(!requestedSpecies.length)throw new Response("Pet species are required for Boarding host discovery",{status:400});
  const candidates=await db.prepare("SELECT h.provider_id,h.area,h.species_json,h.max_guest_pets,h.one_family_only,h.medication_support,h.resident_pets,h.home_verified,h.kyc_status,h.background_check_status,h.version,p.name,p.provider_model,p.rating,p.quality_score,p.capacity,p.status,p.live,p.services_json,p.zones_json,p.effective_from,p.effective_to FROM boarding_host_profiles h JOIN provider_capacity_profiles p ON p.id=h.provider_id WHERE h.city_id=? AND h.zone_id=? AND h.active=1 AND p.live=1 AND p.status='active'").bind(input.cityId,input.zoneId).all<Row>();
- const date=input.scheduledStart.slice(0,10),result:BoardingDiscoveredHost[]=[];
+ const date=bookedDate,result:BoardingDiscoveredHost[]=[];
  for(const row of candidates.results){
   if(!hostMeetsRequirements({medicationSupport:Number(row.medication_support)===1,residentPets:String(row.resident_pets||""),oneFamilyOnly:Number(row.one_family_only)===1},requirements))continue;
   if(date<String(row.effective_from||"0000-00-00")||(row.effective_to&&date>String(row.effective_to)))continue;
