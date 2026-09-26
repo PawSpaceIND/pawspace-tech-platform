@@ -219,13 +219,16 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void; onStage?: (name: string) => void }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
   if (!apiKey) return fail("not_configured");
   const { modelRef } = aiModelRef(env, input.channel);
   if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
+  // One D1 read of ai_kill_switches, but a serial one: it, the quota reads and the reservation insert
+  // are three round trips in a row before the provider is even asked. Marked so the next cut is aimed.
+  input.onStage?.("governance");
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -239,6 +242,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
   }
+  input.onStage?.("reserve");
 
   const finishFailure = async (failure: AiFailureClass, status?: number) => {
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
@@ -282,10 +286,12 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       return await finishFailure(failure, response.status);
     }
 
+    input.onStage?.("providerHeaders");
+
     if (streaming) {
       // Same byte ceiling and the same failure classes as the buffered path; the only difference is
       // that each delta is handed to the caller as it lands instead of after the generation ends.
-      let streamed = "", pending = "", bytes = 0, stopReason: string | null = null, usageTokens: number | undefined;
+      let streamed = "", pending = "", bytes = 0, stopReason: string | null = null, usageTokens: number | undefined, firstDeltaSeen = false;
       try {
         const decoder = new TextDecoder();
         // An explicit reader rather than for-await: the Workers ReadableStream is not async iterable.
@@ -307,6 +313,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             try { event = JSON.parse(payload); } catch { continue; }
             if (event.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
               streamed += event.delta;
+              if (!firstDeltaSeen) { firstDeltaSeen = true; input.onStage?.("providerFirstDelta"); }
               input.onDelta?.(event.delta);
             } else if (event.type === "response.completed" && event.response) {
               if (typeof event.response.status === "string") stopReason = event.response.status;

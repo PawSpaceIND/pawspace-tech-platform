@@ -338,3 +338,36 @@ test("an open circuit still refuses before any reservation is written",async()=>
  assert.equal(blocked.allowed,false,"an open circuit must still stop the call");
  assert.equal(blocked.reason,"circuit_open");
 });
+
+test("the provider call reports its own stages, so a phone caller's wait has an owner",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"};
+ const events=[
+  'data: {"type":"response.output_text.delta","delta":"Yes. "}',
+  'data: {"type":"response.output_text.delta","delta":"Today works."}',
+  'data: {"type":"response.completed","response":{"status":"completed","usage":{"total_tokens":11}}}',
+  'data: [DONE]',
+ ].join("\n\n")+"\n\n";
+ const stub=stubFetch(()=>new Response(events,{status:200,headers:{"content-type":"text/event-stream"}}));
+ try{
+  const stages=[];
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"voice",intent:"service_info",maxTokens:160,onDelta:()=>{},onStage:name=>stages.push(name)});
+  assert.equal(result.connected,true);
+  // The whole point of the change: these four were previously inside one opaque "model" mark, so a
+  // second of silence could not be attributed to the kill-switch read, the quota round trip, the
+  // provider's own time to first byte, or its time to first token.
+  assert.deepEqual(stages,["governance","reserve","providerHeaders","providerFirstDelta"],
+   "each stage before and around the provider call must report once, in order");
+  assert.equal(stages.filter(name=>name==="providerFirstDelta").length,1,
+   "first-token must be marked once, not re-marked on every delta");
+ }finally{stub.restore();}
+});
+
+test("stage reporting is optional, so chat and WhatsApp callers are unaffected",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
+ const stub=stubFetch(()=>new Response(JSON.stringify({status:"completed",output:[{content:[{type:"output_text",text:"Hello."}]}]}),{status:200,headers:{"content-type":"application/json"}}));
+ try{
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"chat",intent:"service_info"});
+  assert.equal(result.connected,true,"omitting onStage must not change the turn");
+  assert.equal(result.text,"Hello.");
+ }finally{stub.restore();}
+});

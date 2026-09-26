@@ -15,8 +15,13 @@ export type AiConversationIntent="service_info"|"booking_create"|"booking_status
 /** Intent confidence is a deterministic keyword-match heuristic (sandbox), NOT a model probability.
  *  Every surface showing this number must label it as such. */
 export type AiIntentDecision={intent:AiConversationIntent;confidence:number;confidenceBasis:"keyword_heuristic_sandbox";signals:string[];policyRisk:boolean};
-/** `onDelta` is supplied only by the live voice turn, which cannot wait for a whole generation. */
-export type AiProviderInput={threadId:string;customerId:string;channel:AiConversationChannel;inputText:string;intent:AiIntentDecision;context:Record<string,unknown>;onDelta?:(delta:string)=>void};
+/**
+ * `onDelta` is supplied only by the live voice turn, which cannot wait for a whole generation.
+ * `onStage` is the same turn's stopwatch: the provider call used to be one opaque mark, so the
+ * stages inside it could not be attributed and roughly a second of a phone caller's silence had no
+ * owner. Durations only, no content.
+ */
+export type AiProviderInput={threadId:string;customerId:string;channel:AiConversationChannel;inputText:string;intent:AiIntentDecision;context:Record<string,unknown>;onDelta?:(delta:string)=>void;onStage?:(name:string)=>void};
 export type AiActionRequest={toolCode:AiToolCode;arguments:Record<string,unknown>};
 export type AiProviderResult={text:string;provider:string;modelRef:string|null;latencyMs:number;inputTokens?:number;outputTokens?:number;costMinor?:number;confidence?:number;unsupported?:boolean;failure?:string;groundingRefs?:string[];referencedCustomerIds?:string[];highImpactAction?:boolean;actionRequests?:AiActionRequest[]};
 export type AiResponseProvider={status:"connected"|"not_connected"|"degraded";provider:string;modelRef:string|null;deadlineMs?:number;generate(input:AiProviderInput):Promise<AiProviderResult>};

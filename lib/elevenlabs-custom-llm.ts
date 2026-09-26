@@ -139,7 +139,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  const intent=classifyAiIntent(inputText);
  const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
-  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true},...(onDelta?{onDelta}:{})});clock.mark("model");
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true},onStage:clock.mark,...(onDelta?{onDelta}:{})});clock.mark("model");
   const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
    const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
