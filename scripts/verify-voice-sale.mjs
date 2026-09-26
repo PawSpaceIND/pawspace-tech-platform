@@ -18,11 +18,14 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  const [call]=await rows('SELECT customer_id,mode,phone_last4 FROM voice_call_orders WHERE id=?',[callId]);
  if(!call||call.mode!=='uat'||call.phone_last4!==last4||!call.customer_id)throw Error('Voice call does not belong to confirmed UAT tester');
  const threadId='THREAD-VOICE-'+callId;
+ const handoffs=await rows("SELECT status,reason,created_at FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active')",[threadId,call.customer_id]);
+ console.log('VOICE_HANDOFF_STATE='+JSON.stringify({aiPaused:handoffs.length>0,handoffs}));
+ if(['probe-agent-socket','direct-grooming-call'].includes(env.VOICE_SALE_ACTION)&&handoffs.length)throw Error('Exact UAT voice context is paused for staff; no probe or dial allowed');
  const [pets,addresses,turns,offers]=await Promise.all([
  rows('SELECT name,species FROM canonical_pets WHERE customer_id=?',[call.customer_id]),
  rows('SELECT COUNT(*) count FROM customer_addresses WHERE customer_id=?',[call.customer_id]),
  rows('SELECT intent_code,policy_decision,outcome,handoff_reason,latency_ms FROM ai_conversation_turns WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 4',[threadId,call.customer_id]),
- rows('SELECT id,status,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 5',[threadId,call.customer_id]),
+ rows('SELECT id,status,summary,expires_at,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 5',[threadId,call.customer_id]),
  ]);
  const inbound=await rows("SELECT created_at,substr(json_extract(payload_json,'$.text'),1,180) input_text FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 12",[threadId]);
  const reservations=await rows("SELECT status,created_at,updated_at,turn_id FROM ai_turn_reservations WHERE thread_id=? ORDER BY created_at DESC LIMIT 5",[threadId]);
@@ -40,7 +43,8 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
    console.log('VOICE_AGENT_VERSION='+JSON.stringify({requestedVersion:version||'current',status:ar.status,versionId:a.version_id,branchId:a.branch_id,model:llm.model_id,url:llm.url,apiType:llm.api_type,keys:Object.keys(llm),credentialConfigured:Boolean(llm.api_key)}));
   }
  }
- const report={destinationLast4:last4,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
+ const report={destinationLast4:last4,aiPaused:handoffs.length>0,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
+ report.pendingOffers=offers.filter(o=>o.status==='pending').map(o=>({id:o.id,summary:o.summary,expiresAt:o.expires_at}));
  if(!bookingId)return report;
  const offer=offers.find(o=>o.status==='completed'&&JSON.parse(o.result_json||'{}').bookingId===bookingId);
  if(!offer)throw Error('Booking is not a completed offer from this UAT voice thread');
