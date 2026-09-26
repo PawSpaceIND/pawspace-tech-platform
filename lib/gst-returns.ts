@@ -148,7 +148,7 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
   canonicalTaxableValue:round2(canonicalTaxable),canonicalOutputTax:round2(canonicalTax),
   serviceVerticalTax:serviceTax,serviceVerticalGross:serviceGross,serviceVerticalInvoices:serviceCount,totalOutputTax:round2(canonicalTax+serviceTax),
   serviceSectionTaxableValue:svc.lineDetailTaxableValue,serviceSectionTax:svc.lineDetailTax,serviceExemptValue:svc.exemptValue,serviceSupplies:svc.byTreatment,notYetClassified:svc.notYetClassified,
-  sacCodes:[...sacCodes].map(([sac,source])=>({sac,source})),ledgerCheck:svc.ledgerCheck,
+  sacCodes:[...sacCodes].map(([sac,source])=>({sac,source})),ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
   taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,
   reconciliation:{note:svc.taxNotInLineDetail>0||svc.notYetClassified.count>0?"Service supplies completed under the owner's model are in b2cs, hsn and nil. Service invoices with no payout record or completed before 26 Sept 2026, and the verticals the owner has not classified yet (relocation, vet, food), have no line-level rate, place of supply or SAC, so their tax is counted in totalOutputTax but NOT in the GSTR-1 sections. A legacy carve row's provider-supply GST goes to s52 GST TCS / GSTR-8.":serviceCount>0?"Every service supply this period is in the GSTR-1 sections.":"No service supplies this period.",serviceVerticalTaxExcludedFromSections:svc.taxNotInLineDetail,providerSupplyGstToGstr8:svc.providerSupplyGstOnBehalf,sacDefaultsUsed:[...sacCodes.values()].includes("default")}};
  return persist(db,entityId,regId,"GSTR-1",period,payload,summary,actor,reason);
@@ -186,7 +186,7 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
   itc_elg:{itc_avl:[{ty:"OTH",iamt:eligibleItc,camt:0,samt:0,csamt:0}],itc_net:{iamt:eligibleItc,camt:0,samt:0,csamt:0}},
   intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}}};
  const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:osup,serviceTaxByComponent:serviceByComponent,
-  serviceTaxableValue:serviceTaxable,serviceExemptValue:svc.exemptValue,serviceSupplies:svc.byTreatment,notYetClassified:svc.notYetClassified,ledgerCheck:svc.ledgerCheck,
+  serviceTaxableValue:serviceTaxable,serviceExemptValue:svc.exemptValue,serviceSupplies:svc.byTreatment,notYetClassified:svc.notYetClassified,ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
   taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
  return persist(db,entityId,regId,"GSTR-3B",period,payload,summary,actor,reason);
 }

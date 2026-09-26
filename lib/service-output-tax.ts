@@ -28,8 +28,14 @@ import{chunkedIn,idChunks}from"./d1-chunked-in";
  *
  * Ownership: every line belongs to one legal entity and GST registration. A booking with a service invoice follows the
  * invoice's assignment; anything else is assigned as a supply (service_supply_ownership). Scoped returns refuse while any line
- * of the month is unassigned, and so does the monthly close (audit G22). Cold-DB safe: a missing source table or an older
- * table shape is skipped, never a 500. Import-safe for `node --experimental-strip-types` (no TS parameter properties).
+ * of an OPEN month is unassigned, and so does the monthly close (audit G22). A closed month never gains a line: a supply first
+ * recorded after its month was locked (a manual funeral order dated into it, a completion adopted late) is filed in the month
+ * it was recorded, as the journal posts corrections in the next open period. A line left unassigned in a month closed before
+ * this register existed cannot be assigned any more; it is disclosed (unassignedInClosedMonths), never a permanent refusal.
+ * A booking Finance also invoiced through the canonical path (finance_invoices, source_type 'booking') is disclosed as a
+ * possible double count for review, because that invoice's tax is already in finance_tax_ledger.
+ * Cold-DB safe: a missing source table or an older table shape is skipped, never a 500. Import-safe for
+ * `node --experimental-strip-types` (no TS parameter properties).
  */
 
 type Db=D1Database;
@@ -59,7 +65,21 @@ export type ServiceSupplyLine={
  lineDetail:boolean;costed:boolean;supplyAt:number;period:string;orderValue:number;taxableValue:number;gst:number;exemptValue:number;ratePercent:number;
  gstMethod:string|null;providerSupplyGstOnBehalf:number;invoiceTax:number;placeOfSupply:string|null;ownership:ServiceInvoiceScope|null;
  journal:{sourceType:string;sourceId:string}|null;label:string;
+ /** the line's month is closed and locked (finance_close_periods): it can no longer be assigned. */
+ periodClosed:boolean;
+ /** a canonical finance_invoices id for the same booking: its tax is also in finance_tax_ledger (possible double count). */
+ canonicalInvoiceId:string|null;
 };
+type Locks=Map<string,number>;
+/* Closed months and when each was locked; a lock with no time is treated as locked for ever (nothing rolls past it). */
+async function lockedPeriods(db:Db):Promise<Locks>{
+ if(!hasAll(await columnsOf(db,"finance_close_periods"),["period_code","status","locked_at"]))return new Map();
+ return new Map((await db.prepare("SELECT period_code,locked_at FROM finance_close_periods WHERE status='locked'").all<Row>()).results.map(r=>[text(r.period_code),num(r.locked_at)>0?num(r.locked_at):Number.POSITIVE_INFINITY]));
+}
+/* A supply first recorded after its month was locked is filed in the month it was recorded, so a closed month's figures never
+ * change and never need an assignment it can no longer take (audit G22). Anything recorded before the lock stays put. */
+const filedAt=(naturalAt:number,recordedAt:number,locks:Locks)=>{const lockedAt=locks.get(istDate(naturalAt).slice(0,7));return lockedAt!==undefined&&recordedAt>lockedAt&&recordedAt<SUPPLY_END_OF_TIME?recordedAt:naturalAt;};
+const within=(at:number,startMs:number,endMs:number)=>at>=startMs&&at<endMs;
 const LABELS={
  commission:"Commission job: GST on PawSpace's commission",
  own_supply:"PawSpace's own supply: GST on the amount paid",
@@ -73,25 +93,28 @@ const LABELS={
  food:"Food: not classified yet (goods, rate set by HSN); tax as its own module computes it today",
 } as const;
 function line(partial:Partial<ServiceSupplyLine>&Pick<ServiceSupplyLine,"supplyKey"|"source"|"treatment"|"section"|"supplyAt"|"orderValue"|"label">):ServiceSupplyLine{
- return{assignKey:`SUPPLY:${partial.supplyKey}`,bookingId:null,serviceCode:"",lineDetail:false,costed:false,taxableValue:0,gst:0,exemptValue:0,ratePercent:0,gstMethod:null,providerSupplyGstOnBehalf:0,invoiceTax:0,placeOfSupply:null,ownership:null,journal:null,...partial,period:istDate(partial.supplyAt).slice(0,7)};
+ return{assignKey:`SUPPLY:${partial.supplyKey}`,bookingId:null,serviceCode:"",lineDetail:false,costed:false,taxableValue:0,gst:0,exemptValue:0,ratePercent:0,gstMethod:null,providerSupplyGstOnBehalf:0,invoiceTax:0,placeOfSupply:null,ownership:null,journal:null,periodClosed:false,canonicalInvoiceId:null,...partial,period:istDate(partial.supplyAt).slice(0,7)};
 }
 const round=(value:unknown)=>round2(num(value));
 
-/* 1. Payout rows under the owner's model: completed (final) or invoiced, filed in the month of whichever came first. */
-async function payoutLines(db:Db,startMs:number,endMs:number,hasInvoices:boolean):Promise<ServiceSupplyLine[]>{
+/* 1. Payout rows under the owner's model: completed (final) or invoiced, filed in the month of whichever came first (or, when
+ * that month was already locked when the row first became a supply, the month it did). A row completed and finalized before the
+ * window can be neither, so it is skipped before the per-row invoice lookups run. */
+async function payoutLines(db:Db,startMs:number,endMs:number,hasInvoices:boolean,locks:Locks):Promise<ServiceSupplyLine[]>{
  if(!hasAll(await columnsOf(db,"provider_payout_computations"),OWNER_MODEL_COLUMNS))return[];
  const invoice=(expr:string)=>hasInvoices?`(SELECT ${expr} FROM booking_invoices bi WHERE bi.booking_id=p.booking_id AND bi.status!='cancelled' AND bi.issued_at>0)`:"NULL";
  const invoiceOwner=hasInvoices?"(SELECT o.entity_id||char(31)||o.registration_id FROM booking_invoices bi JOIN service_invoice_ownership o ON o.invoice_id=bi.id WHERE bi.booking_id=p.booking_id AND bi.status!='cancelled' ORDER BY bi.issued_at LIMIT 1)":"NULL";
  const firstInvoice=hasInvoices?"(SELECT bi.id FROM booking_invoices bi WHERE bi.booking_id=p.booking_id AND bi.status!='cancelled' AND bi.issued_at>0 ORDER BY bi.issued_at LIMIT 1)":"NULL";
- const at=`MIN(COALESCE(x.first_invoice_at,${SUPPLY_END_OF_TIME}),CASE WHEN x.finalized_at>0 THEN x.computed_at ELSE ${SUPPLY_END_OF_TIME} END)`;
- const rows=(await db.prepare(`SELECT * FROM (SELECT p.booking_id,p.service_code,p.order_value,p.platform_fee,p.platform_gst,p.pawspace_gst_on_order,p.taxable_commission,p.supply_model,p.gst_exempt,p.gst_method,p.gst_rate,p.computed_at,p.finalized_at,${invoice("MIN(bi.issued_at)")} first_invoice_at,${invoice("COALESCE(SUM(bi.tax_amount),0)")} invoice_tax,${firstInvoice} invoice_id,${invoiceOwner} invoice_owner,s.entity_id supply_entity,s.registration_id supply_registration FROM provider_payout_computations p LEFT JOIN service_supply_ownership s ON s.supply_key='booking:'||p.booking_id WHERE p.supply_model IN ('commission','own_supply')) x WHERE ${at}>=? AND ${at}<?`).bind(startMs,endMs).all<Row>()).results;
- return rows.map(r=>{
+ const first=(expr:string)=>`MIN(COALESCE(x.first_invoice_at,${SUPPLY_END_OF_TIME}),CASE WHEN x.finalized_at>0 THEN ${expr} ELSE ${SUPPLY_END_OF_TIME} END)`,at=first("x.computed_at"),recorded=first("x.finalized_at");
+ const rows=(await db.prepare(`SELECT * FROM (SELECT p.booking_id,p.service_code,p.order_value,p.platform_fee,p.platform_gst,p.pawspace_gst_on_order,p.taxable_commission,p.supply_model,p.gst_exempt,p.gst_method,p.gst_rate,p.computed_at,p.finalized_at,${invoice("MIN(bi.issued_at)")} first_invoice_at,${invoice("COALESCE(SUM(bi.tax_amount),0)")} invoice_tax,${firstInvoice} invoice_id,${invoiceOwner} invoice_owner,s.entity_id supply_entity,s.registration_id supply_registration FROM provider_payout_computations p LEFT JOIN service_supply_ownership s ON s.supply_key='booking:'||p.booking_id WHERE p.supply_model IN ('commission','own_supply') AND NOT (COALESCE(p.finalized_at,0)>0 AND p.finalized_at<? AND p.computed_at<?)) x WHERE (${at}>=? AND ${at}<?) OR (${recorded}>=? AND ${recorded}<? AND ${at}<?)`).bind(startMs,startMs,startMs,endMs,startMs,endMs,startMs).all<Row>()).results;
+ return rows.flatMap(r=>{
   const bookingId=text(r.booking_id),exempt=num(r.gst_exempt)===1,own=text(r.supply_model)==="own_supply",order=round(r.order_value),fee=round(r.platform_fee),final=num(r.finalized_at)>0;
   const gst=exempt?0:own?round(r.pawspace_gst_on_order):round(r.platform_gst),taxable=exempt?0:own?round2(order-gst):r.taxable_commission==null?fee:round(r.taxable_commission);
   const[invoiceEntity,invoiceRegistration]=text(r.invoice_owner).split("\u001f"),invoiceId=text(r.invoice_id)||null;
-  const firstInvoiceAt=num(r.first_invoice_at)>0?num(r.first_invoice_at):SUPPLY_END_OF_TIME,completedAt=final?num(r.computed_at):SUPPLY_END_OF_TIME;
+  const firstInvoiceAt=num(r.first_invoice_at)>0?num(r.first_invoice_at):SUPPLY_END_OF_TIME,completedAt=final?num(r.computed_at):SUPPLY_END_OF_TIME,finalizedAt=final?num(r.finalized_at):SUPPLY_END_OF_TIME;
+  const supplyAt=filedAt(Math.min(firstInvoiceAt,completedAt),Math.min(firstInvoiceAt,finalizedAt),locks);if(!within(supplyAt,startMs,endMs))return[];
   const treatment:SupplyTreatment=exempt?"exempt":own?"own_supply":"commission";
-  return line({supplyKey:`booking:${bookingId}`,assignKey:invoiceId??`SUPPLY:booking:${bookingId}`,source:"payout_computation",bookingId,serviceCode:text(r.service_code),treatment,section:exempt?"exempt":"taxable",lineDetail:true,costed:true,supplyAt:Math.min(firstInvoiceAt,completedAt),orderValue:order,taxableValue:taxable,gst,exemptValue:exempt?(own?order:fee):0,ratePercent:exempt?0:num(r.gst_rate),gstMethod:text(r.gst_method)||null,invoiceTax:round(r.invoice_tax),ownership:owner(invoiceEntity,invoiceRegistration)??owner(r.supply_entity,r.supply_registration),journal:final?{sourceType:"service_completion",sourceId:bookingId}:null,label:LABELS[treatment]});
+  return[line({supplyKey:`booking:${bookingId}`,assignKey:invoiceId??`SUPPLY:booking:${bookingId}`,source:"payout_computation",bookingId,serviceCode:text(r.service_code),treatment,section:exempt?"exempt":"taxable",lineDetail:true,costed:true,supplyAt,orderValue:order,taxableValue:taxable,gst,exemptValue:exempt?(own?order:fee):0,ratePercent:exempt?0:num(r.gst_rate),gstMethod:text(r.gst_method)||null,invoiceTax:round(r.invoice_tax),ownership:owner(invoiceEntity,invoiceRegistration)??owner(r.supply_entity,r.supply_registration),journal:final?{sourceType:"service_completion",sourceId:bookingId}:null,label:LABELS[treatment]})];
  });
 }
 
@@ -108,15 +131,18 @@ async function invoiceLines(db:Db,startMs:number,endMs:number):Promise<ServiceSu
 
 /* 3. Funeral cases and manual funeral orders: exempt supplies (owner decision 4). A row that carries GST was closed before
  * the exemption; it is filed as it was posted so the liability is never understated. */
-async function funeralLines(db:Db,startMs:number,endMs:number):Promise<ServiceSupplyLine[]>{
+async function funeralLines(db:Db,startMs:number,endMs:number,locks:Locks):Promise<ServiceSupplyLine[]>{
  const out:ServiceSupplyLine[]=[];
  if(hasAll(await columnsOf(db,"funeral_settlements"),["case_id","gross_paid_value","vendor_cost","tax_amount","revenue_net","created_at"])){
   const rows=(await db.prepare("SELECT f.case_id,f.gross_paid_value,f.vendor_cost,f.tax_amount,f.revenue_net,f.created_at,s.entity_id,s.registration_id FROM funeral_settlements f LEFT JOIN service_supply_ownership s ON s.supply_key='funeral_case:'||f.case_id WHERE f.gross_paid_value IS NOT NULL AND f.created_at>=? AND f.created_at<?").bind(startMs,endMs).all<Row>()).results;
   for(const r of rows){const gross=round(r.gross_paid_value),tax=round(r.tax_amount),margin=round2(gross-num(r.vendor_cost));out.push(line({supplyKey:`funeral_case:${text(r.case_id)}`,source:"funeral_case",serviceCode:"funeral_memorial",treatment:tax>0?"legacy":"exempt",section:tax>0?"taxable":"exempt",lineDetail:!(tax>0),supplyAt:num(r.created_at),orderValue:gross,taxableValue:tax>0?round(r.revenue_net):0,gst:tax,exemptValue:tax>0?0:margin,ownership:owner(r.entity_id,r.registration_id),journal:{sourceType:"funeral_closure",sourceId:text(r.case_id)},label:tax>0?LABELS.funeralTaxed:LABELS.exempt}));}
  }
- if(hasAll(await columnsOf(db,"funeral_manual_orders"),["id","order_value","gst_amount","order_date"])){
-  const rows=(await db.prepare("SELECT m.id,m.order_value,m.gst_amount,m.order_date,s.entity_id,s.registration_id FROM funeral_manual_orders m LEFT JOIN service_supply_ownership s ON s.supply_key='funeral_order:'||m.id WHERE m.order_date>=? AND m.order_date<?").bind(istDate(startMs),istDate(endMs)).all<Row>()).results;
-  for(const r of rows){const value=round(r.order_value),tax=round(r.gst_amount);out.push(line({supplyKey:`funeral_order:${text(r.id)}`,source:"funeral_manual_order",serviceCode:"funeral_memorial",treatment:tax>0?"legacy":"exempt",section:tax>0?"taxable":"exempt",lineDetail:!(tax>0),supplyAt:Date.parse(`${text(r.order_date)}T12:00:00+05:30`),orderValue:value,taxableValue:tax>0?round2(value-tax):0,gst:tax,exemptValue:tax>0?0:value,ownership:owner(r.entity_id,r.registration_id),label:tax>0?LABELS.funeralTaxed:LABELS.exempt}));}
+ const manual=await columnsOf(db,"funeral_manual_orders");
+ if(hasAll(manual,["id","order_value","gst_amount","order_date"])){
+  // Finance types the order date, so an order can be recorded after its month closed: it is then filed in the month it was recorded.
+  const recorded=manual.has("created_at");
+  const rows=(await db.prepare(`SELECT m.id,m.order_value,m.gst_amount,m.order_date,${recorded?"m.created_at":"NULL created_at"},s.entity_id,s.registration_id FROM funeral_manual_orders m LEFT JOIN service_supply_ownership s ON s.supply_key='funeral_order:'||m.id WHERE (m.order_date>=? AND m.order_date<?)${recorded?" OR (m.created_at>=? AND m.created_at<? AND m.order_date<?)":""}`).bind(istDate(startMs),istDate(endMs),...recorded?[startMs,endMs,istDate(startMs)]:[]).all<Row>()).results;
+  for(const r of rows){const value=round(r.order_value),tax=round(r.gst_amount),ordered=Date.parse(`${text(r.order_date)}T12:00:00+05:30`),supplyAt=filedAt(ordered,num(r.created_at)||ordered,locks);if(!within(supplyAt,startMs,endMs))continue;out.push(line({supplyKey:`funeral_order:${text(r.id)}`,source:"funeral_manual_order",serviceCode:"funeral_memorial",treatment:tax>0?"legacy":"exempt",section:tax>0?"taxable":"exempt",lineDetail:!(tax>0),supplyAt,orderValue:value,taxableValue:tax>0?round2(value-tax):0,gst:tax,exemptValue:tax>0?0:value,ownership:owner(r.entity_id,r.registration_id),label:tax>0?LABELS.funeralTaxed:LABELS.exempt}));}
  }
  return out;
 }
@@ -133,9 +159,13 @@ async function unclassifiedLines(db:Db,startMs:number,endMs:number):Promise<Serv
   for(const r of rows){const tax=round2(num(r.tax_paise)/100);out.push(line({supplyKey:`vet:${text(r.appointment_id)}`,source:"vet",serviceCode:"vet_consult",treatment:"not_yet_classified",section:section(tax),supplyAt:num(r.created_at),orderValue:round2((num(r.provider_payout_paise)+num(r.platform_retained_paise))/100),taxableValue:round2(num(r.platform_retained_paise)/100),gst:tax,ownership:owner(r.entity_id,r.registration_id),label:LABELS.vet}));}
  }
  if(hasAll(await columnsOf(db,"food_orders"),["id","total_amount","status","created_at"])){
-  const ledger=hasAll(await columnsOf(db,"food_supplier_settlement_ledger"),["order_id","tax_amount"]);
-  const rows=(await db.prepare(`SELECT o.id,o.total_amount,o.created_at,${ledger?"l.tax_amount":"0"} tax_amount,s.entity_id,s.registration_id FROM food_orders o${ledger?" LEFT JOIN food_supplier_settlement_ledger l ON l.order_id=o.id":""} LEFT JOIN service_supply_ownership s ON s.supply_key='food_order:'||o.id WHERE o.status='delivered' AND o.created_at>=? AND o.created_at<?`).bind(startMs,endMs).all<Row>()).results;
-  for(const r of rows){const total=round(r.total_amount),tax=round(r.tax_amount);out.push(line({supplyKey:`food_order:${text(r.id)}`,source:"food_order",serviceCode:"food",treatment:"not_yet_classified",section:section(tax),supplyAt:num(r.created_at),orderValue:total,taxableValue:round2(total-tax),gst:tax,ownership:owner(r.entity_id,r.registration_id),label:LABELS.food}));}
+  // Goods are supplied when delivered: the delivery handover time (else the order time), so an order placed before a month
+  // closed and delivered after it never lands in the closed month. A subscription renewal's delivery order is billed by its
+  // food_subscription_invoices row below; counting the order as well would report the same supply twice.
+  const ledger=hasAll(await columnsOf(db,"food_supplier_settlement_ledger"),["order_id","tax_amount"]),handover=hasAll(await columnsOf(db,"food_delivery_handover_events"),["order_id","confirmed_at"]),renewals=hasAll(await columnsOf(db,"food_subscription_renewals"),["delivery_order_id"]);
+  const at=handover?"COALESCE((SELECT h.confirmed_at FROM food_delivery_handover_events h WHERE h.order_id=o.id),o.created_at)":"o.created_at";
+  const rows=(await db.prepare(`SELECT o.id,o.total_amount,${at} supply_at,${ledger?"l.tax_amount":"0"} tax_amount,s.entity_id,s.registration_id FROM food_orders o${ledger?" LEFT JOIN food_supplier_settlement_ledger l ON l.order_id=o.id":""} LEFT JOIN service_supply_ownership s ON s.supply_key='food_order:'||o.id WHERE o.status='delivered' AND ${at}>=? AND ${at}<?${renewals?" AND NOT EXISTS (SELECT 1 FROM food_subscription_renewals r WHERE r.delivery_order_id=o.id)":""}`).bind(startMs,endMs).all<Row>()).results;
+  for(const r of rows){const total=round(r.total_amount),tax=round(r.tax_amount);out.push(line({supplyKey:`food_order:${text(r.id)}`,source:"food_order",serviceCode:"food",treatment:"not_yet_classified",section:section(tax),supplyAt:num(r.supply_at),orderValue:total,taxableValue:round2(total-tax),gst:tax,ownership:owner(r.entity_id,r.registration_id),label:LABELS.food}));}
  }
  if(hasAll(await columnsOf(db,"food_subscription_invoices"),["id","gross_amount","tax_amount","status","issued_at"])){
   const rows=(await db.prepare("SELECT f.id,f.gross_amount,f.tax_amount,f.issued_at,s.entity_id,s.registration_id FROM food_subscription_invoices f LEFT JOIN service_supply_ownership s ON s.supply_key='food_invoice:'||f.id WHERE f.status!='cancelled' AND f.issued_at>=? AND f.issued_at<?").bind(startMs,endMs).all<Row>()).results;
@@ -156,12 +186,26 @@ async function attachBookingDetails(db:Db,lines:ServiceSupplyLine[]){
  for(const l of lines){const b=l.bookingId?bookings.get(l.bookingId):undefined;if(!b)continue;if(!l.serviceCode)l.serviceCode=text(b.service_code);l.placeOfSupply=profiles.get(text(b.customer_id))??CITY_STATE_CODE[text(b.city_id).toLowerCase()]??null;}
 }
 
-/** Every service supply filed in the [startMs,endMs) window (epoch ms; the returns use IST months), all entities. */
-export async function serviceSupplyRegister(db:Db,startMs:number,endMs:number):Promise<ServiceSupplyLine[]>{
+/* A booking Finance also invoiced through the canonical path (finance_invoices, source_type 'booking'): that invoice's tax is
+ * already in finance_tax_ledger, which the returns add to this register, so the booking may be counted twice. Marked so the
+ * returns disclose it for review; which document is filed is the supplier-of-record decision (owner decision 9). */
+async function markCanonicalInvoices(db:Db,lines:ServiceSupplyLine[]){
+ if(!hasAll(await columnsOf(db,"finance_invoices"),["id","source_type","source_id","status"]))return;
+ const ids=[...new Set(lines.map(l=>l.bookingId).filter((id):id is string=>Boolean(id)))];if(!ids.length)return;
+ const found=new Map<string,string>();
+ for(const r of await chunkedIn(ids,async(chunk,placeholders)=>(await db.prepare(`SELECT source_id,MIN(id) id FROM finance_invoices WHERE source_type='booking' AND status!='cancelled' AND source_id IN (${placeholders}) GROUP BY source_id`).bind(...chunk).all<Row>()).results))found.set(text(r.source_id),text(r.id));
+ for(const l of lines)if(l.bookingId&&found.has(l.bookingId))l.canonicalInvoiceId=found.get(l.bookingId)??null;
+}
+
+/** Every service supply filed in the [startMs,endMs) window (epoch ms; the returns use IST months), all entities. `keep`
+ * narrows the lines before the per-booking lookups (place of supply, canonical invoices) run. */
+export async function serviceSupplyRegister(db:Db,startMs:number,endMs:number,keep?:(l:ServiceSupplyLine)=>boolean):Promise<ServiceSupplyLine[]>{
  await ensureServiceInvoiceOwnershipTables(db);
- const hasInvoices=await tableExists(db,"booking_invoices");
- const lines=[...await payoutLines(db,startMs,endMs,hasInvoices),...hasInvoices?await invoiceLines(db,startMs,endMs):[],...await funeralLines(db,startMs,endMs),...await unclassifiedLines(db,startMs,endMs)];
- await attachBookingDetails(db,lines);
+ const hasInvoices=await tableExists(db,"booking_invoices"),locks=await lockedPeriods(db);
+ const all=[...await payoutLines(db,startMs,endMs,hasInvoices,locks),...hasInvoices?await invoiceLines(db,startMs,endMs):[],...await funeralLines(db,startMs,endMs,locks),...await unclassifiedLines(db,startMs,endMs)];
+ for(const l of all)l.periodClosed=locks.has(l.period);
+ const lines=keep?all.filter(keep):all;
+ await attachBookingDetails(db,lines);await markCanonicalInvoices(db,lines);
  return lines.sort((a,b)=>a.supplyAt-b.supplyAt||a.supplyKey.localeCompare(b.supplyKey));
 }
 
@@ -187,17 +231,22 @@ export type ServiceOutputTaxSplit={
  lineDetailTaxableValue:number;lineDetailTax:number;taxNotInLineDetail:number;
  byTreatment:Record<SupplyTreatment,{count:number;orderValue:number;taxableValue:number;gst:number;exemptValue:number}>;
  notYetClassified:{count:number;orderValue:number;gst:number;verticals:Array<{source:string;label:string;count:number;orderValue:number;taxableValue:number;gst:number}>};
- /** lines of the window with no legal entity yet (all entities; a scoped call refuses instead). */
+ /** lines of an open month with no legal entity yet (all entities; a scoped call refuses instead). */
  unassignedCount:number;
+ /** lines left unassigned in a month that is already closed (closed before the register listed them): they can no longer be
+  * assigned, so no entity's return carries them. Disclosed for the CA, never a permanent refusal (audit G22). */
+ unassignedInClosedMonths:{count:number;orderValue:number;gst:number;supplies:string[]};
+ /** bookings also on a canonical finance_invoices invoice, whose tax is in finance_tax_ledger too: possible double count. */
+ alsoOnCanonicalInvoice:{count:number;gst:number;bookings:Array<{bookingId:string;invoiceId:string;gst:number}>};
  ledgerCheck:Awaited<ReturnType<typeof ledgerGstForSupplies>>;
  lines:ServiceSupplyLine[];
 };
 
 /** PawSpace's own output GST and taxable value for the [startMs,endMs) window, from the supply register. With a scope, only
- * that entity's registration, and every line of the window must be assigned first. */
+ * that entity's registration, and every line of an open month must be assigned first. */
 export async function serviceVerticalOutputTax(db:Db,startMs:number,endMs:number,scope?:ServiceInvoiceScope):Promise<ServiceOutputTaxSplit>{
- const all=await serviceSupplyRegister(db,startMs,endMs),unassignedCount=all.filter(l=>!l.ownership).length;
- if(scope&&unassignedCount>0)throw new ServiceInvoiceOwnershipRequired(unassignedCount);
+ const all=await serviceSupplyRegister(db,startMs,endMs),unassigned=all.filter(l=>!l.ownership),blocking=unassigned.filter(l=>!l.periodClosed),stranded=unassigned.filter(l=>l.periodClosed);
+ if(scope&&blocking.length>0)throw new ServiceInvoiceOwnershipRequired(blocking.length);
  const lines=scope?all.filter(l=>l.ownership?.entityId===scope.entityId&&l.ownership.registrationId===scope.registrationId):all;
  const sum=(list:ServiceSupplyLine[],pick:(l:ServiceSupplyLine)=>number)=>round2(list.reduce((a,l)=>a+pick(l),0));
  const byTreatment={} as ServiceOutputTaxSplit["byTreatment"];
@@ -210,7 +259,9 @@ export async function serviceVerticalOutputTax(db:Db,startMs:number,endMs:number
   providerSupplyGstOnBehalf:sum(lines,l=>l.providerSupplyGstOnBehalf),costedCount:lines.filter(l=>l.costed).length,uncostedTax:sum(invoiceOnly,l=>l.gst),
   exemptValue:sum(lines,l=>l.exemptValue),lineDetailTaxableValue:sum(detail,l=>l.taxableValue),lineDetailTax:sum(detail,l=>l.gst),taxNotInLineDetail:round2(sum(lines,l=>l.gst)-sum(detail,l=>l.gst)),
   byTreatment,notYetClassified:{count:unclassified.length,orderValue:sum(unclassified,l=>l.orderValue),gst:sum(unclassified,l=>l.gst),verticals:[...verticals.values()]},
-  unassignedCount:scope?0:unassignedCount,ledgerCheck:await ledgerGstForSupplies(db,lines),lines};
+  unassignedCount:scope?0:blocking.length,unassignedInClosedMonths:{count:stranded.length,orderValue:sum(stranded,l=>l.orderValue),gst:sum(stranded,l=>l.gst),supplies:stranded.slice(0,50).map(l=>l.supplyKey)},
+  alsoOnCanonicalInvoice:{count:lines.filter(l=>l.canonicalInvoiceId).length,gst:sum(lines.filter(l=>l.canonicalInvoiceId),l=>l.gst),bookings:lines.filter(l=>l.canonicalInvoiceId).slice(0,50).map(l=>({bookingId:l.bookingId??l.supplyKey,invoiceId:l.canonicalInvoiceId??"",gst:l.gst}))},
+  ledgerCheck:await ledgerGstForSupplies(db,lines),lines};
 }
 
 /** CGST/SGST (supplier's own state) or IGST (another state) for one taxable line. The halves always add back to the GST. */
@@ -226,7 +277,13 @@ export function supplySac(l:Pick<ServiceSupplyLine,"treatment"|"serviceCode">,cl
 }
 
 /** Filed supplies of the month that are not assigned to a legal entity and GST registration yet. */
-export async function unassignedServiceSupplies(db:Db,startMs:number,endMs:number){return(await serviceSupplyRegister(db,startMs,endMs)).filter(l=>!l.ownership);}
+export async function unassignedServiceSupplies(db:Db,startMs:number,endMs:number){return serviceSupplyRegister(db,startMs,endMs,l=>!l.ownership);}
+
+/* Ownership assignments are audited beside the other GST decisions (the reason is also kept on each ownership row). */
+async function auditOwnership(db:Db,actor:string,entityId:string,action:string,after:unknown,reason:string){
+ if(!await tableExists(db,"gst_accounting_audit_events"))return;
+ await db.prepare("INSERT INTO gst_accounting_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,NULL,?,?,?,?)").bind(`ga_audit_${crypto.randomUUID().slice(0,16)}`,"service_supply_ownership",entityId,action,JSON.stringify(after),actor,reason,Date.now()).run();
+}
 
 /** Assign one filed supply that has no service invoice (a completed booking, funeral case, ...) to its legal entity and GST
  * registration: an active registration of an active entity, a reason, permanent, and never into a closed month. */
@@ -235,13 +292,14 @@ export async function assignServiceSupplyOwnership(db:Db,input:ServiceInvoiceSco
  const key=text(input.supplyKey),reason=text(input.reason);
  if(!key||!input.entityId||!input.registrationId||reason.length<8)throw governedJsonError({error:"Supply, entity, registration and a clear ownership reason are required"},400);
  await assertOwnershipRegistration(db,input);
- const found=(await serviceSupplyRegister(db,0,SUPPLY_END_OF_TIME)).find(l=>l.supplyKey===key);
+ const[found]=await serviceSupplyRegister(db,0,SUPPLY_END_OF_TIME,l=>l.supplyKey===key);
  if(!found)throw governedJsonError({error:"A completed service supply is required"},409);
  if(found.assignKey!==`SUPPLY:${key}`)throw governedJsonError({error:"This supply has a service invoice; assign the invoice instead"},409);
  await assertOwnershipPeriodOpen(db,found.period);
- await db.prepare("INSERT OR IGNORE INTO service_supply_ownership (supply_key,entity_id,registration_id,assigned_by,reason,assigned_at) VALUES (?,?,?,?,?,?)").bind(key,input.entityId,input.registrationId,actor,reason,Date.now()).run();
+ const inserted=await db.prepare("INSERT OR IGNORE INTO service_supply_ownership (supply_key,entity_id,registration_id,assigned_by,reason,assigned_at) VALUES (?,?,?,?,?,?)").bind(key,input.entityId,input.registrationId,actor,reason,Date.now()).run();
  const stored=await db.prepare("SELECT * FROM service_supply_ownership WHERE supply_key=?").bind(key).first<Row>();
  if(stored?.entity_id!==input.entityId||stored?.registration_id!==input.registrationId)throw governedJsonError({error:"This supply already belongs to a different entity or registration; ownership cannot be overwritten"},409);
+ if(Number(inserted.meta?.changes)>0)await auditOwnership(db,actor,key,"assigned",{supplyKey:key,period:found.period,entityId:input.entityId,registrationId:input.registrationId,gst:found.gst},reason);
  return stored;
 }
 
@@ -255,11 +313,13 @@ export async function assignPeriodServiceOwnership(db:Db,input:ServiceInvoiceSco
  const{startMs,endMs}=istMonthWindow(period),pending=await unassignedServiceSupplies(db,startMs,endMs),now=Date.now();
  const statements=pending.map(l=>l.assignKey.startsWith("SUPPLY:")?db.prepare("INSERT OR IGNORE INTO service_supply_ownership (supply_key,entity_id,registration_id,assigned_by,reason,assigned_at) VALUES (?,?,?,?,?,?)").bind(l.supplyKey,input.entityId,input.registrationId,actor,reason,now):db.prepare("INSERT OR IGNORE INTO service_invoice_ownership (invoice_id,entity_id,registration_id,assigned_by,reason,assigned_at) VALUES (?,?,?,?,?,?)").bind(l.assignKey,input.entityId,input.registrationId,actor,reason,now));
  for(const part of idChunks(statements,50))await db.batch(part);
+ if(pending.length)await auditOwnership(db,actor,`period:${period}`,"period_assigned",{periodCode:period,entityId:input.entityId,registrationId:input.registrationId,assigned:pending.length,gst:round2(pending.reduce((a,l)=>a+l.gst,0)),supplies:pending.slice(0,200).map(l=>l.supplyKey)},reason);
  return{periodCode:period,entityId:input.entityId,registrationId:input.registrationId,assigned:pending.length,supplies:pending.map(l=>l.supplyKey)};
 }
 
-/** Unassigned supplies with no service invoice, shaped like serviceInvoiceOwnershipSnapshot rows so the ownership screen
- * lists them beside unassigned invoices (their id is "SUPPLY:<key>"). */
+/** Unassigned supplies with no service invoice in an open month, shaped like serviceInvoiceOwnershipSnapshot rows so the
+ * ownership screen lists them beside unassigned invoices (their id is "SUPPLY:<key>"). */
 export async function serviceSupplyOwnershipSnapshot(db:Db){
- return(await serviceSupplyRegister(db,0,SUPPLY_END_OF_TIME)).filter(l=>!l.ownership&&l.assignKey.startsWith("SUPPLY:")).slice(-100).reverse().map(l=>({id:l.assignKey,booking_id:l.bookingId??l.supplyKey,invoice_number:`No invoice (${l.period})`,gross_amount:l.orderValue,tax_amount:l.gst,issued_at:l.supplyAt,entity_id:null,registration_id:null,label:l.label}));
+ // A line in a month that is already closed cannot be assigned any more, so it is not offered here (it is disclosed in the returns).
+ return(await serviceSupplyRegister(db,0,SUPPLY_END_OF_TIME,l=>!l.ownership&&!l.periodClosed&&l.assignKey.startsWith("SUPPLY:"))).slice(-100).reverse().map(l=>({id:l.assignKey,booking_id:l.bookingId??l.supplyKey,invoice_number:`No invoice (${l.period})`,gross_amount:l.orderValue,tax_amount:l.gst,issued_at:l.supplyAt,entity_id:null,registration_id:null,label:l.label}));
 }

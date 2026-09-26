@@ -5,8 +5,9 @@
  * withheld from GST-registered providers). Nothing ever debited them, so both payables only grew and could not be matched
  * with the returns. recordTaxPayment is the "return filed / tax paid" step: Finance (finance.manage, checked by the route)
  * records the challan, the payable is debited against 1010-Bank in one balanced journal, and the payment is audited. It is
- * refused for more than the books owe for that month. A TCS payment is also the GSTR-8 deposit (tcs_deposits), which must
- * equal the TCS computed for the month.
+ * refused for more than the books owe for that month, and for a date in the future. A TCS payment is also the GSTR-8 deposit
+ * (tcs_deposits), which must equal the TCS computed for the month; when that deposit is already on file (recorded on the TCS
+ * screen), the payment only brings it into the ledger and can never exceed it. Every check runs before anything is posted.
  *
  * taxPayableReconciliation is the read-only view for one month: each account's opening, accrued, paid and closing balance
  * next to the service GST the supply register files (and the latest GSTR-3B / statutory package), and next to
@@ -48,13 +49,16 @@ export async function recordTaxPayment(db:Db,input:{taxKind:string;periodCode:st
  if(!/^\d{4}-\d{2}$/.test(period))throw governedJsonError({error:"The month the tax is for must be YYYY-MM"},400);
  if(!(amount>0))throw governedJsonError({error:"The amount paid must be more than zero"},400);
  if(challan.length<4)throw governedJsonError({error:"The challan reference (CPIN / CIN) is required"},400);
- if(!isDate(paidOn)||paidOn<`${period}-01`)throw governedJsonError({error:"A real payment date on or after the start of that month is required"},400);
+ if(!isDate(paidOn)||paidOn<`${period}-01`||paidOn>new Date(Date.now()+330*60_000).toISOString().slice(0,10))throw governedJsonError({error:"A real payment date is required: on or after the start of that month, and not in the future"},400);
  if(reason.length<8)throw governedJsonError({error:"A clear reason of at least 8 characters is required"},400);
  const account=TAX_PAYABLE_ACCOUNTS[kind],prior=await db.prepare("SELECT * FROM statutory_tax_payments WHERE tax_kind=? AND challan_reference=?").bind(kind,challan).first<Row>();
  if(prior){if(text(prior.period_code)===period&&round2(num(prior.amount))===amount)return{...prior,duplicatePrevented:true};throw governedJsonError({error:`Challan ${challan} is already recorded for ${text(prior.period_code)} (${num(prior.amount)}); a challan is recorded once`},409);}
  const owed=await outstanding(db,account,period);
  if(amount>owed+0.01)throw governedJsonError({error:`${KIND_LABEL[kind]} payable up to ${period} is ${owed}; a payment of ${amount} is more than the books owe`},409);
- if(kind==="tcs"){const computed=await db.prepare("SELECT COALESCE(SUM(tcs_total),0) total FROM tcs_collections WHERE period=?").bind(period).first<Row>(),due=round2(num(computed?.total)),deposited=await db.prepare("SELECT amount FROM tcs_deposits WHERE period=?").bind(period).first<Row>();if(!deposited&&Math.abs(due-amount)>0.01)throw governedJsonError({error:`The TCS deposit for ${period} must equal the TCS computed for GSTR-8 (${due}); compute the month's TCS first`},409);}
+ // TCS: every check runs BEFORE the journal is posted, so a refused payment never leaves a debit or a payment row behind.
+ const onFile=kind==="tcs"?await db.prepare("SELECT amount,challan_reference FROM tcs_deposits WHERE period=?").bind(period).first<Row>():null;
+ if(kind==="tcs"&&!onFile){const computed=await db.prepare("SELECT COALESCE(SUM(tcs_total),0) total FROM tcs_collections WHERE period=?").bind(period).first<Row>(),due=round2(num(computed?.total));if(Math.abs(due-amount)>0.01)throw governedJsonError({error:`The TCS deposit for ${period} must equal the TCS computed for GSTR-8 (${due}); compute the month's TCS first`},409);}
+ if(onFile){const recorded=await db.prepare("SELECT COALESCE(SUM(amount),0) amount FROM statutory_tax_payments WHERE tax_kind='tcs' AND period_code=?").bind(period).first<Row>(),deposit=round2(num(onFile.amount)),already=round2(num(recorded?.amount)),left=round2(Math.max(0,deposit-already));if(amount>left+0.01)throw governedJsonError({error:`The TCS deposit on file for ${period} is ${deposit} (challan ${text(onFile.challan_reference)}) and ${already} of it is already recorded against the bank; a payment of ${amount} is more than the ${left} left`},409);}
  const id=`TAXPAY-${crypto.randomUUID().slice(0,12).toUpperCase()}`,now=Date.now();
  const journal=await postJournal(db,{groupKey:`TAX-PAYMENT-${kind.toUpperCase()}-${challan}`,entryDate:paidOn,periodCode:periodOf(paidOn),sourceType:`${kind}_payment`,sourceId:period,narration:`${KIND_LABEL[kind]} for ${period} paid, challan ${challan}`,metadata:{settlementId:challan,transactionAt:now,verificationStatus:"recorded"},lines:[{accountCode:account,debit:amount},{accountCode:ACCT.BANK,credit:amount}]})
   .catch((error:unknown)=>{const message=error instanceof Error?error.message:String(error);if(/period_locked/.test(message))throw governedJsonError({error:`The payment date falls in a closed month (${periodOf(paidOn)}); record it with a date in an open month`},409);throw error;});
@@ -62,7 +66,7 @@ export async function recordTaxPayment(db:Db,input:{taxKind:string;periodCode:st
   db.prepare("INSERT INTO statutory_tax_payments (id,tax_kind,period_code,amount,challan_reference,paid_on,return_reference,reason,journal_group,recorded_by,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(id,kind,period,amount,challan,paidOn,returnReference,reason,journal.journalGroup,actor,now),
   db.prepare("INSERT INTO gst_accounting_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`ga_audit_${crypto.randomUUID().slice(0,16)}`,"tax_payment",id,`${kind}_paid`,JSON.stringify({outstanding:owed}),JSON.stringify({taxKind:kind,periodCode:period,amount,challanReference:challan,paidOn,returnReference,journalGroup:journal.journalGroup,outstandingAfter:round2(owed-amount)}),actor,reason,now),
  ]);
- const deposit=kind==="tcs"?await recordTcsDeposit(db,{period,challanReference:challan,amount,actorId:actor}):null;
+ const deposit=kind!=="tcs"?null:onFile?{period,amount:round2(num(onFile.amount)),challanReference:text(onFile.challan_reference),duplicatePrevented:true}:await recordTcsDeposit(db,{period,challanReference:challan,amount,actorId:actor});
  return{id,taxKind:kind,periodCode:period,amount,challanReference:challan,paidOn,returnReference,account,journalGroup:journal.journalGroup,outstandingBefore:owed,outstandingAfter:round2(owed-amount),tcsDeposit:deposit,duplicatePrevented:false};
 }
 
