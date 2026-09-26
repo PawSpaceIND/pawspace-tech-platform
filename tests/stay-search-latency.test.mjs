@@ -134,12 +134,13 @@ test("the set-based host search returns exactly what the per-host search returne
   assert.ok(compared >= 48);
 });
 
-// The sitters customers were shown before this change, captured on the same roster in the same order.
+// The sitters customers were shown before this change, captured with the pre-change code on the same roster
+// (including the zone sitters in scripts/uat-staging-provider-capacity.sql) in the same order.
 const SITTERS_BEFORE = {
   "visit 11": ["sit_sana", "uatcap_sit_cm", "sit_neha"],
-  "visit 19": ["uatcap_sit_cm"],
+  "visit 19": ["uatcap_sit_cm", "uatcap_sit_east_1", "uatcap_sit_east_2"],
   overnight: ["sit_sana", "sit_neha", "uatcap_sit_cm"],
-  "visit 8am": ["uatcap_sit_cm"],
+  "visit 8am": ["uatcap_sit_cm", "uatcap_sit_east_1", "uatcap_sit_east_2"],
 };
 const SITTER_WINDOWS = () => ({ "visit 11": [h.ist(4, 11), h.ist(4, 12), "visit"], "visit 19": [h.ist(4, 19), h.ist(4, 20), "visit"], overnight: [h.ist(4, 20), h.ist(5, 8), "overnight"], "visit 8am": [h.ist(4, 8), h.ist(4, 9), "visit"] });
 
