@@ -213,7 +213,8 @@ test("concurrent quote-table upgrades recheck schema after a duplicate-column ra
   const sitting = await import("../lib/sitting-governance.ts");
   await sitting.ensureSittingGovernanceTables(sittingDb);
   sittingSqlite.exec("ALTER TABLE sitting_commercial_quotes DROP COLUMN city_id; ALTER TABLE sitting_commercial_quotes DROP COLUMN zone_id;");
-  await Promise.all([sitting.ensureSittingGovernanceTables(sittingDb), sitting.ensureSittingGovernanceTables(sittingDb)]);
+  // Sitting set-up also runs once per isolate: two fresh isolates meet the drifted table at once.
+  await Promise.all([sitting.ensureSittingGovernanceTables(makeD1(sittingSqlite)), sitting.ensureSittingGovernanceTables(makeD1(sittingSqlite))]);
   assert.deepEqual(sittingSqlite.prepare("PRAGMA table_info(sitting_commercial_quotes)").all().filter(row => ["city_id", "zone_id"].includes(row.name)).map(row => row.name).sort(), ["city_id", "zone_id"]);
 });
 

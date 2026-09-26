@@ -208,3 +208,7 @@ export const taxiRideBookingRequest = (world, body) => json(world, "/api/taxi-ri
 /** The care-plan save at the payment gate: the customer's stay read, then the governed save (lib/boarding-customer-care.ts). */
 export const boardingStayReadRequest = (world, bookingId) => new Request(`${ORIGIN}/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(bookingId)}`, { headers: { cookie: world.cookie, "cf-ray": ray() } });
 export const boardingStayRequest = (world, body) => json(world, "/api/boarding-stays", body);
+/** Pet Sitting's price, booking and care-plan save (lib/sitting-commercial-client.ts, sitting-booking-client.ts, sitting-customer-view.ts). */
+export const sittingQuoteRequest = (world, body) => json(world, "/api/sitting-commercial", { packageCode: "sitting-visit-60", petCount: 1, cityId: "blr", zoneId: "blr-east", paymentMode: "prepaid", ...body });
+export const sittingBookingRequest = (world, body) => json(world, "/api/sitting-bookings", body);
+export const sittingLifecycleRequest = (world, body) => json(world, "/api/sitting-lifecycle", body);

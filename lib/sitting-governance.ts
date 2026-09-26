@@ -12,14 +12,20 @@ const packages=[
  {code:"sitting-overnight",name:"Overnight Pet Sitting",mode:"overnight",basePrice:799,extraPetPrice:399,maxPets:4},
 ] as const;
 
+/** Reads the quote table's columns once, then adds only the missing ones, in order (same ALTERs as before). */
+async function ensureQuoteColumns(db:D1Database,wanted:Array<readonly[string,string]>){
+ const columns=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>(),present=new Set(columns.results.map(row=>String(row.name)));
+ for(const[column,definition]of wanted)if(!present.has(column))await ensureQuoteColumn(db,column,definition);
+}
 async function ensureQuoteColumn(db:D1Database,column:string,definition:string){
- const columns=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>();
- if(columns.results.some(row=>String(row.name)===column))return;
  try{await db.prepare(`ALTER TABLE sitting_commercial_quotes ADD COLUMN ${column} ${definition}`).run();}
  catch(error){const after=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>();if(!after.results.some(row=>String(row.name)===column))throw error;}
 }
 
-export async function ensureSittingGovernanceTables(db:D1Database){
+// Once per isolate and database (every Sitting quote and booking ran ~8 set-up calls).
+const ensureSittingGovernanceTablesReady=new WeakSet<object>();
+export async function ensureSittingGovernanceTables(db:D1Database){if(ensureSittingGovernanceTablesReady.has(db as object))return;await ensureSittingGovernanceTablesUncached(db);ensureSittingGovernanceTablesReady.add(db as object);}
+async function ensureSittingGovernanceTablesUncached(db:D1Database){
  const now=Date.now();
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS sitting_commercial_packages (package_code TEXT PRIMARY KEY,name TEXT NOT NULL,mode TEXT NOT NULL,base_price_per_pet REAL NOT NULL,extra_pet_price REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',max_pets INTEGER NOT NULL DEFAULT 4,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -27,8 +33,7 @@ export async function ensureSittingGovernanceTables(db:D1Database){
   db.prepare("CREATE INDEX IF NOT EXISTS idx_sitting_quote_expiry ON sitting_commercial_quotes(status,expires_at)"),
   db.prepare("CREATE TABLE IF NOT EXISTS sitting_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
  ]);
- await ensureQuoteColumn(db,"city_id","TEXT NOT NULL DEFAULT 'blr'");
- await ensureQuoteColumn(db,"zone_id","TEXT NOT NULL DEFAULT 'blr-east'");
+ await ensureQuoteColumns(db,[["city_id","TEXT NOT NULL DEFAULT 'blr'"],["zone_id","TEXT NOT NULL DEFAULT 'blr-east'"],["priced_base_price_per_pet","REAL"],["priced_extra_pet_price","REAL"]]);
  // The unit price persisted beside the total must be the unit price that produced it. Measured before
  // these columns existed: an Overnight Sitting quote priced at 1200/night by Pricing Control was
  // governed into canonical_bookings.pricing_json as {basePricePerPet:799, billableUnits:2,
@@ -37,9 +42,7 @@ export async function ensureSittingGovernanceTables(db:D1Database){
  // package table could only ever return the stale catalogue figure. Nullable and additive: a quote that
  // was never repriced carries NULL and the governed read falls back to the package column, exactly as
  // before. [PTJA-W1-F15]
- await ensureQuoteColumn(db,"priced_base_price_per_pet","REAL");
- await ensureQuoteColumn(db,"priced_extra_pet_price","REAL");
- for(const item of packages)await db.prepare("INSERT OR IGNORE INTO sitting_commercial_packages (package_code,name,mode,base_price_per_pet,extra_pet_price,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.mode,item.basePrice,item.extraPetPrice,item.maxPets,now).run();
+ await db.batch(packages.map(item=>db.prepare("INSERT OR IGNORE INTO sitting_commercial_packages (package_code,name,mode,base_price_per_pet,extra_pet_price,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.mode,item.basePrice,item.extraPetPrice,item.maxPets,now)));
 }
 
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}

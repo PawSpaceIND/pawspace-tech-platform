@@ -5,7 +5,10 @@ type Row = Record<string, unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 
-export async function ensureProviderServicePricingTables(db:Db){
+// Once per isolate and database.
+const ensureProviderServicePricingTablesReady=new WeakSet<object>();
+export async function ensureProviderServicePricingTables(db:Db){if(ensureProviderServicePricingTablesReady.has(db as object))return;await ensureProviderServicePricingTablesUncached(db);ensureProviderServicePricingTablesReady.add(db as object);}
+async function ensureProviderServicePricingTablesUncached(db:Db){
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS provider_service_rates (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,rate REAL NOT NULL,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(provider_id,service_code,package_code,city_id,zone_id,version))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_service_rate_lookup ON provider_service_rates(provider_id,service_code,package_code,city_id,zone_id,status,effective_from,version)"),

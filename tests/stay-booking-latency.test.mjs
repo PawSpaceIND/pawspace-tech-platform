@@ -24,6 +24,9 @@ const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
 const canonical = await import("../app/api/canonical-bookings/route.ts");
 const stays = await import("../app/api/boarding-stays/route.ts");
+const sittingCommercial = await import("../app/api/sitting-commercial/route.ts");
+const sittingBookings = await import("../app/api/sitting-bookings/route.ts");
+const sittingLifecycle = await import("../app/api/sitting-lifecycle/route.ts");
 
 const world = (extra = 0) => h.stayWorld({ dbGlobal: "__STAY_BOOKING_DB__", envGlobal: "__STAY_BOOKING_ENV__", extra, ownRoster: true });
 const CAPTURE = Boolean(process.env.STAY_CAPTURE);
@@ -149,4 +152,35 @@ test("a warm Pet Sitting reserve stays inside its D1 budget and 20 round trips (
   assert.deepEqual(outcome(result), ["assigned", "stay_sit_third", false]);
   assert.ok(result.calls.length <= 35, `${result.calls.length} D1 calls (limit 35)`);
   assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call`);
+});
+
+test("a warm Pet Sitting price, booking and care-plan save stay inside their budgets, and the save replays on retry", async () => {
+  const w = await world();
+  const carePlan = { feeding: "Twice a day", vet: "Dr Rao, 9000000000", emergencyContact: "Asha, 9000000001", homeAccess: "Key with the guard" };
+  let timings;
+  for (const day of [3, 4]) {
+    const visit = { scheduledStart: h.ist(day, 11), scheduledEnd: h.ist(day, 12) };
+    w.latency.ms = day === 4 ? LATENCY_MS : 0;
+    const quote = await h.timed(w, h.sittingQuoteRequest(w, { providerId: "stay_sit_third", ...visit }), sittingCommercial.POST);
+    w.latency.ms = 0;
+    const reserve = await sittingReserve(w, `care-${day}`, visit.scheduledStart, visit.scheduledEnd, "visit", "stay_sit_third");
+    const q = quote.body.data, decision = reserve.body.data;
+    assert.deepEqual([quote.status, outcome(reserve)], [201, ["assigned", "stay_sit_third", false]]);
+    w.latency.ms = day === 4 ? LATENCY_MS : 0;
+    const booking = await h.timed(w, h.sittingBookingRequest(w, { idempotencyKey: `sitting:${q.quoteId}:${h.CUSTOMER}`, groupId: decision.groupId, scheduleGroupId: decision.groupId, sittingQuoteId: q.quoteId, customer, pets: [{ sourceId: h.PETS.dog, name: "Bruno", species: "dog", vaccinationStatus: "verified" }], cityId: "blr", zoneId: "blr-east", packageCode: q.packageCode, packageName: q.packageName, scheduledStart: q.scheduledStart, scheduledEnd: q.scheduledEnd, provider: decision.provider, totalAmount: q.totalAmount, amountDueNow: q.amountDueNow, payment: { method: "payment_link", mode: q.paymentMode, detail: "Awaiting verified Razorpay payment" } }), sittingBookings.POST);
+    const bookingId = booking.body.data.bookingId, key = `initial-sitting-care:${bookingId}`;
+    const save = await h.timed(w, h.sittingLifecycleRequest(w, { action: "submit_care_plan", bookingId, carePlan, idempotencyKey: key }), sittingLifecycle.POST);
+    w.latency.ms = 0;
+    assert.deepEqual([booking.status, booking.body.data.duplicatePrevented, save.status, save.body.data.status, save.body.data.bookingId], [201, false, 200, "care_plan_ready", bookingId]);
+    const retry = await h.timed(w, h.sittingLifecycleRequest(w, { action: "submit_care_plan", bookingId, carePlan, idempotencyKey: key }), sittingLifecycle.POST);
+    assert.deepEqual([retry.status, retry.body.data.status, retry.body.data.duplicatePrevented], [200, "care_plan_ready", true], "a retry replays the saved plan");
+    timings = { quote, booking, save };
+  }
+  // Before: the price 19 calls (4.5 s at 250 ms), the booking 24 (5.9 s), the save 17 (4.3 s).
+  for (const [label, budget, trips] of [["quote", 9, 8], ["booking", 15, 14], ["save", 13, 13]]) {
+    const result = timings[label];
+    assert.ok(result.calls.length <= budget, `${label}: ${result.calls.length} D1 calls (limit ${budget})\n${result.calls.map((call) => call.sql.slice(0, 100)).join("\n")}`);
+    assert.ok(result.elapsedMs < trips * LATENCY_MS, `${label} took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (limit ${trips} round trips)`);
+    assert.ok(!result.calls.some((call) => /^\s*(CREATE|ALTER|PRAGMA)\b/i.test(call.sql) || /^BATCH CREATE/.test(call.sql)), `${label}: no schema work once warm`);
+  }
 });
