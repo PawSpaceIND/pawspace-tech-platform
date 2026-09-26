@@ -15,16 +15,17 @@ type Row=Record<string,unknown>;
  */
 export type BalanceWindow={payable:boolean;dueAt:number|null;kind:"stay"|"taxi"|"other"};
 
-async function optionalFirst(db:Db,sql:string,bookingId:string){
- return db.prepare(sql).bind(bookingId).first<Row>().catch(()=>null);
-}
+const WINDOW_TABLES=["stay_payment_schedules","taxi_payment_schedules","taxi_trip_payment_events"];
 
+/** Fails closed: a missing table means "no such schedule", but any query error propagates rather than
+ *  falling through to a payable balance. */
 export async function outstandingBalanceWindow(db:Db,bookingId:string):Promise<BalanceWindow>{
- const stay=await optionalFirst(db,"SELECT balance_due_at FROM stay_payment_schedules WHERE booking_id=?",bookingId);
+ const present=new Set(((await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${WINDOW_TABLES.map(()=>"?").join(",")})`).bind(...WINDOW_TABLES).all<Row>()).results||[]).map(row=>String(row.name)));
+ const stay=present.has("stay_payment_schedules")?await db.prepare("SELECT * FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>():null;
  if(stay){const dueAt=Number(stay.balance_due_at);return{payable:true,dueAt:Number.isFinite(dueAt)&&dueAt>0?dueAt:null,kind:"stay"};}
- const taxi=await optionalFirst(db,"SELECT status FROM taxi_payment_schedules WHERE booking_id=?",bookingId);
+ const taxi=present.has("taxi_payment_schedules")?await db.prepare("SELECT booking_id FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>():null;
  if(taxi){
-  const due=await optionalFirst(db,"SELECT id FROM taxi_trip_payment_events WHERE booking_id=? AND status='due' LIMIT 1",bookingId);
+  const due=present.has("taxi_trip_payment_events")?await db.prepare("SELECT id FROM taxi_trip_payment_events WHERE booking_id=? AND status='due' LIMIT 1").bind(bookingId).first<Row>():null;
   return{payable:Boolean(due),dueAt:null,kind:"taxi"};
  }
  return{payable:true,dueAt:null,kind:"other"};

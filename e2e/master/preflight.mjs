@@ -49,16 +49,16 @@ try {
   check("Preflight browser section", false, String(e).slice(0, 500));
 } finally { await browser.close(); }
 
-// Staging D1 evidence (read-only) for the webhook inbox defect found locally.
-const triggers = await d1("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='gateway_webhook_events'");
-check("D1: gateway_webhook_events triggers", Array.isArray(triggers), JSON.stringify(triggers));
-const inbox = await d1("SELECT processing_status, COUNT(*) AS n, MAX(received_at) AS last FROM gateway_webhook_events GROUP BY processing_status");
-check("D1: webhook inbox by status", Array.isArray(inbox), JSON.stringify(inbox));
-const recent = await d1("SELECT event_type, processing_status, failure_reason, received_at FROM gateway_webhook_events ORDER BY received_at DESC LIMIT 15");
-check("D1: latest webhook events", Array.isArray(recent), JSON.stringify(recent));
-const pge = await d1("SELECT event_type, processing_status, json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority') AS authority, COUNT(*) AS n FROM payment_gateway_events GROUP BY 1,2,3 ORDER BY n DESC LIMIT 20");
-check("D1: payment gateway events by authority", Array.isArray(pge), JSON.stringify(pge));
+// Staging D1 evidence (read-only) for the webhook inbox. Without Cloudflare credentials (a local run) d1() returns
+// {skipped}, which is reported but does not fail preflight; a query error or an empty required result does.
+const d1Check = (name, rows, needRows = false) => check(name, Boolean(rows?.skipped) || (Array.isArray(rows) && (!needRows || rows.length > 0)), JSON.stringify(rows));
+d1Check("D1: gateway_webhook_events triggers", await d1("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='gateway_webhook_events'"), true);
+d1Check("D1: webhook inbox by status", await d1("SELECT processing_status, COUNT(*) AS n, MAX(received_at) AS last FROM gateway_webhook_events GROUP BY processing_status"));
+d1Check("D1: latest webhook events", await d1("SELECT event_type, processing_status, failure_reason, received_at FROM gateway_webhook_events ORDER BY received_at DESC LIMIT 15"));
+d1Check("D1: payment gateway events by authority", await d1("SELECT event_type, processing_status, json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority') AS authority, COUNT(*) AS n FROM payment_gateway_events GROUP BY 1,2,3 ORDER BY n DESC LIMIT 20"));
 
 writeJson("preflight.json", report);
 const failed = report.checks.filter(c => !c.ok).length;
 console.log(`\nPreflight: ${report.checks.length - failed}/${report.checks.length} passed`);
+// A failed preflight fails the run (the runner counts a non-zero exit), so a broken staging is never reported green.
+process.exitCode = failed ? 1 : 0;

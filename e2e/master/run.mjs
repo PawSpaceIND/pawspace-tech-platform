@@ -13,7 +13,7 @@ console.log(`Master E2E suites: ${suites.join(", ")}`);
 let failures = 0;
 for (const suite of suites) {
   const file = suite === "preflight" ? join(here, "preflight.mjs") : join(here, "suites", `${suite}.mjs`);
-  if (!existsSync(file)) { console.log(`::warning::unknown suite ${suite}`); continue; }
+  if (!existsSync(file)) { console.log(`::error::unknown suite ${suite}`); failures += 1; continue; }
   console.log(`\n===== ${suite} =====`);
   const started = Date.now();
   const r = spawnSync(process.execPath, [file], { stdio: "inherit", env: process.env, timeout: 40 * 60_000 });

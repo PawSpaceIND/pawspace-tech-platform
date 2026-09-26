@@ -51,3 +51,11 @@ test("an operator-written description is shown as written", async () => {
   const trim = (await catalogue()).find(item => item.code === "dog-trim");
   assert.equal(trim.description, "Breed-specific haircut with nail clipping and ear cleaning.");
 });
+
+test("an operator description written on a multi-pet bundle row still reaches the package", async () => {
+  sqlite.prepare("UPDATE service_packages SET description=? WHERE package_code='cat-routine__2_pets'").run("Nails, ears, eyes and a full brush-out for calm cats.");
+  const routine = (await catalogue()).find(item => item.code === "cat-routine");
+  assert.equal(routine.description, "Nails, ears, eyes and a full brush-out for calm cats.");
+  sqlite.prepare("UPDATE service_packages SET description=? WHERE package_code='cat-routine'").run("Single-cat routine grooming at home.");
+  assert.equal((await catalogue()).find(item => item.code === "cat-routine").description, "Single-cat routine grooming at home.", "the single-pet row wins");
+});

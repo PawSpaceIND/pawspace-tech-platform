@@ -30,8 +30,8 @@ try {
       const modelAnswered = s.status === 200 && s.providerConnected === true && s.outcome === "reply_ready";
       record({ suite: SUITE, journey: "PawSpace AI public chat (API)", combo: q.slice(0, 70), result: modelAnswered ? "PASS" : (s.status === 200 && s.provider === "canonical_service_directory" ? "PARTIAL" : "FAIL"), detail: JSON.stringify(s), evidence: [] });
     }
-    const open = out.public.slice(1);
-    if (open.length && open.every(s => s.providerConnected !== true)) finding({ suite: SUITE, severity: "P1", area: "AI", persona: "Public visitor", flow: "PawSpace AI public chat", title: "Staging PawSpace AI does not reach the model provider: open questions get the fallback reply", steps: "POST /api/ai-web-chat {mode:'public', query} with two open pet-care questions", expected: "providerConnected=true, outcome reply_ready, a model-written answer", actual: JSON.stringify(open.map(s => ({ provider: s.provider, outcome: s.outcome, handoffReason: s.handoffReason }))), evidence: [] });
+    const open = out.public.slice(1), missed = open.filter(s => s.providerConnected !== true);
+    if (missed.length) finding({ suite: SUITE, severity: missed.length === open.length ? "P1" : "P2", area: "AI", persona: "Public visitor", flow: "PawSpace AI public chat", title: `${missed.length} of ${open.length} open questions did not reach the model provider on staging`, steps: "POST /api/ai-web-chat {mode:'public', query} with two open pet-care questions", expected: "providerConnected=true, outcome reply_ready, a model-written answer", actual: JSON.stringify(missed.map(s => ({ q: s.q.slice(0, 60), provider: s.provider, outcome: s.outcome, handoffReason: s.handoffReason }))), evidence: [] });
 
     // Same questions through the screen a visitor uses.
     await pub.page.goto(`${BASE}/v2/chat`, { waitUntil: "domcontentloaded" });
