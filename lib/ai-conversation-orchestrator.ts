@@ -39,7 +39,13 @@ const intentRules:Array<{intent:AiConversationIntent;signals:string[];risk?:bool
 
 export function classifyAiIntent(input:string):AiIntentDecision{const text=input.trim().toLowerCase();if(!text)return{intent:"unknown",confidence:0,confidenceBasis:"keyword_heuristic_sandbox",signals:[],policyRisk:false};for(const rule of intentRules){const matched=rule.signals.filter(signal=>text.includes(signal));if(matched.length){const confidence=Math.min(0.98,0.82+Math.min(3,matched.length)*0.05);return{intent:rule.intent,confidence,confidenceBasis:"keyword_heuristic_sandbox",signals:matched,policyRisk:Boolean(rule.risk)};}}const forbidden=(forbiddenAutonomousActions as readonly string[]).filter(action=>text.includes(action.replaceAll("_"," ")));return{intent:"unknown",confidence:forbidden.length?0.4:0.25,confidenceBasis:"keyword_heuristic_sandbox",signals:forbidden,policyRisk:forbidden.length>0};}
 
-export async function ensureAiConversationOrchestrator(db:D1Database){await ensureConversationGovernance(db);await db.batch([
+const orchestratorSchemaReady=new WeakMap<D1Database,Promise<void>>();
+export async function ensureAiConversationOrchestrator(db:D1Database){
+ let ready=orchestratorSchemaReady.get(db);
+ if(!ready){ready=ensureAiConversationOrchestratorOnce(db).catch(error=>{orchestratorSchemaReady.delete(db);throw error;});orchestratorSchemaReady.set(db,ready);}
+ await ready;
+}
+async function ensureAiConversationOrchestratorOnce(db:D1Database){await ensureConversationGovernance(db);await db.batch([
  // provider_status is stored because the provider NAME cannot answer "was it connected?". A degraded
  // provider still calls itself "anthropic", so a snapshot deriving connectivity from the name reported
  // a degraded provider as connected - which is the reverse of what an operator needs to see.
@@ -65,8 +71,13 @@ async function authorizeContext(db:D1Database,actor:AuthenticatedActor,customerI
 async function minimumContext(db:D1Database,input:{customerId:string;threadId:string;bookingId?:string|null;ticketId?:string|null;fastVoice?:boolean}){
  if(input.fastVoice){
   const [canonical,crm,petsResult,bookingsResult]=await Promise.all([
-   db.prepare("SELECT id,name,city_id FROM canonical_customers WHERE id=? AND merged_into IS NULL LIMIT 1").bind(input.customerId).first<Row>().catch(()=>null),
-   db.prepare("SELECT id,name,area FROM crm_contacts WHERE id=? AND stage IS NOT 'Merged' LIMIT 1").bind(input.customerId).first<Row>().catch(()=>null),
+   db.prepare("SELECT id,name,city_id FROM canonical_customers WHERE id=? AND merged_into IS NULL LIMIT 1").bind(input.customerId).first<Row>().catch((error:unknown)=>{
+    // Older customer schemas lack this optional merge column. The merge writer also marks the
+    // duplicate's primary phone MERGED. Only this schema mismatch may use that equivalent guard.
+    if(!/no such column: merged_into/i.test(String((error as Error)?.message)))throw error;
+    return db.prepare("SELECT id,name,city_id FROM canonical_customers WHERE id=? AND primary_phone IS NOT 'MERGED' LIMIT 1").bind(input.customerId).first<Row>();
+   }),
+   db.prepare("SELECT id,name,area FROM crm_contacts WHERE id=? AND stage IS NOT 'Merged' LIMIT 1").bind(input.customerId).first<Row>().catch((error:unknown)=>{if(/no such table: crm_contacts/i.test(String((error as Error)?.message)))return null;throw error;}),
    db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at LIMIT 5").bind(input.customerId).all<Row>().catch(()=>({results:[]})),
    db.prepare("SELECT id,service_code,package_name,status,scheduled_start,scheduled_end FROM canonical_bookings WHERE customer_id=? ORDER BY scheduled_start DESC LIMIT 3").bind(input.customerId).all<Row>().catch(()=>({results:[]})),
   ]);

@@ -6,6 +6,10 @@ on:
         description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
+      uat_voice_call_id:
+        description: 'Exact UAT call context for confirm=resume-uat-voice (no dial)'
+        required: false
+        default: ''
       probe_input:
         description: 'Synthetic text for no-calls custom LLM probe'
         required: false
@@ -201,7 +205,7 @@ jobs:
             const rawOtlp=JSON.stringify(otlp);
             const callId=(rawOtlp.match(/VCALL-[A-Z0-9-]+/)||[])[0]||'';
             const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
-            const compact=JSON.stringify(scrub(otlp));
+            const compact=JSON.stringify(scrub(otlp)).replace(/\+?\d{10,15}/g,'[redacted-number]');
             const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
             console.log('GROOMING_OTLP_SIGNALS='+JSON.stringify(hits));
             const llmSecret=String(process.env.ELEVENLABS_LLM_SECRET||'').trim();
@@ -213,7 +217,7 @@ jobs:
               const probe=await fetch('https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses',{
                 method:'POST',
                 headers:{'content-type':'application/json',authorization:'Bearer '+llmSecret},
-                body:JSON.stringify({input:String(process.env.PROBE_INPUT||'I need grooming today for my dog.'),elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
+                body:JSON.stringify({input:String(process.env.PROBE_INPUT||'').trim().startsWith('[')?JSON.parse(process.env.PROBE_INPUT):String(process.env.PROBE_INPUT||'I need grooming today for my dog.'),elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
                 signal:AbortSignal.timeout(30000)
               });
               const headersMs=Date.now()-started;
@@ -820,3 +824,21 @@ jobs:
             softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null
           }));
           NODE
+
+  resume-uat-voice:
+    if: ${{ inputs.confirm == 'resume-uat-voice' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Resume only the confirmed UAT low-confidence handoff without dialing
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+        run: node scripts/resume-voice-uat.mjs
