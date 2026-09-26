@@ -113,12 +113,12 @@ test("Taxi booking persists canonical route coordinates instead of client coordi
 });
 
 test("customer Taxi live map switches from pickup to dropoff by lifecycle state",()=>{
- const route=read("app/api/customer-live-tracking/route.ts");
- assert.match(route,/async function taxiDestination/);
- assert.match(route,/\["in_progress","arrived_dropoff","dropoff_confirmed"\]/);
- assert.match(route,/row\.destination_latitude/);
- assert.match(route,/row\.origin_latitude/);
- assert.match(route,/phase:inRide\?"dropoff":"pickup"/);
+ const route=read("app/api/customer-live-tracking/route.ts"),journey=read("lib/live-journey-destination.ts");
+ assert.match(route,/resolveLiveJourneyDestination/);
+ assert.match(journey,/\["in_progress","arrived_dropoff","dropoff_confirmed"\]/);
+ assert.match(journey,/row\.destination_latitude/);
+ assert.match(journey,/row\.origin_latitude/);
+ assert.match(journey,/phase:inRide\?"dropoff":"pickup"/);
 });
 
 test("customer Taxi route line runs from privacy-rounded GPS to the verified marker coordinates",async t=>{
