@@ -11,7 +11,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { d1 } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__V2_MULTIPET_DB__", "__V2_MULTIPET_ENV__");
-const { quoteGroomingBookingWithLiveMultiPet } = await import("../lib/live-grooming-governance.ts");
+const { quoteGroomingBookingWithLiveMultiPet, governGroomingBookingWithLiveMultiPet } = await import("../lib/live-grooming-governance.ts");
 const { ensurePricingControlRuntime } = await import("../lib/pricing-control-runtime.ts");
 const client = await import("../lib/v2/grooming-checkout-client.ts");
 
@@ -92,6 +92,19 @@ test("V2 multi-pet bookings send the governed base package code with every pet a
   assert.equal(body.packageCode, "dog-basic");
   assert.equal(body.pets.length, 2);
   assert.equal(body.totalAmount, 3034); assert.equal(body.amountDueNow, 3034);
+});
+
+test("the exact multi-pet request V2 builds is accepted by the real governed booking path", async t => {
+  const calls = network(t);
+  await client.createV2GroomingBooking(checkoutInput({ pets: 2, price: 3034 }));
+  const body = canonicalBody(calls), { db } = await world();
+  // Same weekday rule the browser saw: V2's quote and the governance must agree on this exact body.
+  const governed = await governGroomingBookingWithLiveMultiPet(db, {
+    packageCode: body.packageCode, pets: body.pets, paymentMode: body.payment.mode, cityId: "blr", zoneId: "blr-east",
+    scheduledStart: nextWednesdayStart(), submittedTotal: body.totalAmount, submittedAmountDueNow: body.amountDueNow,
+  });
+  assert.equal(governed.petCount, 2);
+  assert.equal(governed.totalAmount, 3034);
 });
 
 test("V2 refuses a young package for a pet without a date of birth before reserving a groomer", async t => {
