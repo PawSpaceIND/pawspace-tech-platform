@@ -151,7 +151,10 @@ export async function runWhatsAppChatbotFollowUpSweep(db:D1Database,input:{asOf?
   if(!customerId){skipped++;continue;}
   // Claimed first: a customer answering at this moment wins, and is not reminded of a question they just answered.
   if(!(await claimBotSession(db,ref,action.next,version,asOf))){skipped++;continue;}
-  const queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:action.reply.text,interactive:action.reply.choices.length?whatsAppChoicesContract(action.reply):null,idempotencyKey:`whatsapp-chatbot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`,createdBy:"whatsapp-chatbot-follow-up",now:asOf});
+  // A queue error puts the session back as it was, so the next sweep tries again.
+  let queued:Awaited<ReturnType<typeof queueWhatsAppUatOutbound>>;
+  try{queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:action.reply.text,interactive:action.reply.choices.length?whatsAppChoicesContract(action.reply):null,idempotencyKey:`whatsapp-chatbot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`,createdBy:"whatsapp-chatbot-follow-up",now:asOf});}
+  catch{await claimBotSession(db,ref,state,(version??0)+1,Number(row.updated_at)).catch(()=>undefined);skipped++;continue;}
   if(action.kind==="escalate"||!queued.queued){await handoff(db,{threadId,customerId,actorEmail:"whatsapp-chatbot-follow-up",reason:queued.queued?"bot_abandoned":"provider_error"});escalated++;continue;}
   if(action.kind==="takeover")takenOver++;else nudged++;
  }

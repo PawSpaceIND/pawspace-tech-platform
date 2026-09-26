@@ -335,6 +335,10 @@ test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpac
   const sweep = (asOf) => runWithWorkersDb(db, () => adapter.runWebChatBotFollowUpSweep(db, { asOf }));
   const now = Date.now(), min = 60_000;
   assert.equal((await sweep(now + 5 * min)).nudged, 0, "not yet stalled");
+  // A reminder that fails to post leaves the session as it was, so the next sweep sends it.
+  sqlite.exec("CREATE TRIGGER messages_offline BEFORE INSERT ON communication_messages BEGIN SELECT RAISE(ABORT, 'offline'); END");
+  assert.equal((await sweep(now + 11 * min)).nudged, 0);
+  sqlite.exec("DROP TRIGGER messages_offline");
   assert.equal((await sweep(now + 11 * min)).nudged, 1, "first reminder at 10 minutes");
   assert.equal((await sweep(now + 15 * min)).takenOver, 0, "the second waits another 10 minutes");
   assert.equal((await sweep(now + 22 * min)).takenOver, 1, "PawSpace AI takes over at 20 minutes");

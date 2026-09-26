@@ -272,11 +272,17 @@ export async function announcePaidAiBookings(db:D1Database,input:{threadId?:stri
   const claim=await db.prepare("INSERT OR IGNORE INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'ai_booking_paid','ai-sales-offer',?,?)").bind(`ai-booking-paid:${offerId}`,threadId,customerId,JSON.stringify({offerId,bookingId:text(row.booking_id)}),asOf).run();
   if(Number(claim.meta?.changes)!==1)continue;
   const message=`Payment received - your ${text(row.package_name)||"PawSpace"} booking is confirmed. Thank you! You can see it any time under Your bookings.`;
-  const inbound=await db.prepare("SELECT channel,provider FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();
-  if(text(inbound?.channel)==="whatsapp"){
-   const{queueWhatsAppUatOutbound,whatsappUatProviders}=await import("./whatsapp-uat-adapter");const provider=text(inbound?.provider) as (typeof whatsappUatProviders)[number];
-   if(whatsappUatProviders.includes(provider))await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:message,idempotencyKey:`ai-booking-paid:${offerId}`,createdBy:"ai-sales-offer",now:asOf});
-  }else await postBotMessage(db,{threadId,customerId,reply:{text:message,choices:[],inputHint:null},idempotencyKey:`ai-booking-paid:${offerId}`});
+  // A send that fails releases the claim, so the next chat read or sweep tries again.
+  const release=()=>db.prepare("DELETE FROM ai_web_chat_events WHERE id=?").bind(`ai-booking-paid:${offerId}`).run();
+  try{
+   const inbound=await db.prepare("SELECT channel,provider FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();
+   if(text(inbound?.channel)==="whatsapp"){
+    // The same transport rule as a live WhatsApp turn: an unknown provider is the sandbox simulator.
+    const{queueWhatsAppUatOutbound,whatsappUatProviders}=await import("./whatsapp-uat-adapter");const value=text(inbound?.provider),provider=(whatsappUatProviders as readonly string[]).includes(value)?value as (typeof whatsappUatProviders)[number]:"sandbox_simulator";
+    const queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:message,idempotencyKey:`ai-booking-paid:${offerId}`,createdBy:"ai-sales-offer",now:asOf});
+    if(!queued.queued){await release();continue;}
+   }else await postBotMessage(db,{threadId,customerId,reply:{text:message,choices:[],inputHint:null},idempotencyKey:`ai-booking-paid:${offerId}`});
+  }catch{await release().catch(()=>undefined);continue;}
   announced++;
  }
  return{announced};
@@ -384,7 +390,9 @@ export async function runWebChatBotFollowUpSweep(db:D1Database,input:{asOf?:numb
   if(!threadId||(await activeHandoff(db,threadId)).active){skipped++;continue;}
   // Claimed first: a customer answering at this moment wins, and is not reminded of a question they just answered.
   if(!(await claimBotSession(db,ref,action.next,version,asOf))){skipped++;continue;}
-  await postBotMessage(db,{threadId,customerId,reply:action.reply,idempotencyKey:`web-chat-bot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`});
+  // A message that fails to post puts the session back as it was, so the next sweep tries again.
+  try{await postBotMessage(db,{threadId,customerId,reply:action.reply,idempotencyKey:`web-chat-bot-${action.kind}:${threadId}:${state.flow}:${state.step}:${action.next.nudges??"done"}`});}
+  catch{await claimBotSession(db,ref,state,(version??0)+1,Number(row.updated_at)).catch(()=>undefined);skipped++;continue;}
   if(action.kind==="escalate"){await requestAiHumanHandoff(db,{actorEmail:"web-chat-bot",threadId,customerId,reason:"bot_abandoned",confidence:null});escalated++;}
   else if(action.kind==="takeover")takenOver++;else nudged++;
  }

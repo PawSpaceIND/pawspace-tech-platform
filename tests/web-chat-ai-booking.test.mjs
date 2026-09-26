@@ -83,6 +83,10 @@ test("web chat: a GROOM200 offer is read back with the server's discount, and 'y
   // Nothing is announced until the verified capture marks the payment captured; then exactly once.
   assert.deepEqual(await webChat.announcePaidAiBookings(w.db, { threadId: w.threadId }), { announced: 0 });
   w.sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE booking_id=?").run(booking.id);
+  // A send that fails is not counted as announced: the claim is released and the next read retries.
+  w.sqlite.exec("ALTER TABLE communication_messages RENAME TO communication_messages_offline");
+  assert.deepEqual(await webChat.announcePaidAiBookings(w.db, { threadId: w.threadId }), { announced: 0 });
+  w.sqlite.exec("ALTER TABLE communication_messages_offline RENAME TO communication_messages");
   assert.deepEqual(await webChat.announcePaidAiBookings(w.db, { threadId: w.threadId }), { announced: 1 });
   assert.deepEqual(await webChat.announcePaidAiBookings(w.db, {}), { announced: 0 }, "the sweep does not announce it again");
   const offerId = w.sqlite.prepare("SELECT id FROM voice_sales_offers WHERE thread_id=? AND status='completed'").get(w.threadId).id;
