@@ -183,9 +183,11 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   if (alreadyAccepted) return { duplicate: true as const, row: alreadyAccepted };
   const result = await db.prepare(`INSERT INTO gateway_webhook_events
     (id,provider,environment,event_id,raw_payload,payload_sha256,signature,processing_status,received_at)
-    VALUES (?,'razorpay',?,?,?,?,?,'RECEIVED',?) ON CONFLICT(provider,event_id) DO NOTHING`)
-    .bind(id, input.environment, eventId, input.rawBody, payloadHash, input.signature, now).run();
-  const inserted = Number(result.meta?.changes || 0) === 1;
+    VALUES (?,'razorpay',?,?,?,?,?,'RECEIVED',?) ON CONFLICT(provider,event_id) DO NOTHING RETURNING id`)
+    .bind(id, input.environment, eventId, input.rawBody, payloadHash, input.signature, now).all();
+  // RETURNING, not meta.changes: D1 also counts the gateway_inbound_queue row written by the
+  // gateway_webhook_to_universal_inbox trigger, so a fresh insert reports 2 changes.
+  const inserted = (result.results?.length || 0) === 1;
   const row = await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>();
   if (!row) throw new Error("Webhook inbox persistence failed");
   if (String(row.payload_sha256) !== payloadHash) throw new Error("Razorpay event id was replayed with a different payload");

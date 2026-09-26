@@ -1,4 +1,5 @@
 import{chunkedIn}from"./d1-chunked-in";
+import{boardingProviderExtras}from"./boarding-provider-projection";
 // Partner Job Feed: one unified, chronological feed of a provider's confirmed customer bookings
 // across ALL services, aggregated read-only from the real canonical tables. Founder requirement:
 // "once the booking is done the same info has to be updated in the partner app".
@@ -60,6 +61,11 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
   // Enrichments, each optional. Boarding stays carry the host-facing status + care plan state.
   const stays=await safeAll(db,"SELECT booking_id,id,status,check_in_at,check_out_at,care_plan_status,pet_count FROM boarding_stays WHERE host_provider_id=?",[id]);
   const stayByBooking=new Map<string,Row>();for(const stay of stays)stayByBooking.set(String(stay.booking_id),stay);
+  // Boarding extras (Pickup & drop, Three walks, ...) are not priced add-ons — canonical bookings refuse
+  // add-ons outside Grooming — so they live only in the customer's care plan. Read that one field, never
+  // the plan's contact details.
+  const careExtras=await safeAll(db,"SELECT c.stay_id,json_extract(c.plan_json,'$.specialInstructions') special_instructions FROM boarding_care_plan_snapshots c JOIN boarding_stays s ON s.id=c.stay_id WHERE s.host_provider_id=?",[id]);
+  const extrasByStay=new Map<string,string[]>();for(const row of careExtras)extrasByStay.set(String(row.stay_id),boardingProviderExtras(row.special_instructions));
 
   // Walking / taxi occurrence tables: earliest not-yet-finished slot per booking, where they exist.
   const walkRows=await safeAll(db,"SELECT booking_id,scheduled_start FROM walking_sessions WHERE provider_id=? AND status NOT IN ('completed','cancelled') ORDER BY scheduled_start ASC",[id]);
@@ -107,7 +113,7 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
       stayId:stay?String(stay.id):null,
       carePlanStatus,
       nextSlotStart:nextSlotByBooking.get(String(booking.id))||nextSlotByGroup.get(String(booking.schedule_group_id))||null,
-      addOns:pricingList(booking.pricing_json,"addOns"),
+      addOns:stay?extrasByStay.get(String(stay.id))??[]:pricingList(booking.pricing_json,"addOns"),
       safetyRequirements:pricingList(booking.pricing_json,"requirements"),
     };
 

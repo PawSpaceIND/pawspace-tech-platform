@@ -35,17 +35,65 @@ function projectEvent(row: Row) {
     createdAt: Number(row.created_at || 0),
   };
 }
-function projectCarePlan(care: Row | null | undefined) {
+// Emergency contact, vet and any home access stay with the customer until the host holds a paid, accepted stay.
+// Acceptance requires captured payment (lib/boarding-stay-lifecycle.ts) and is the only way a stay becomes
+// confirmed, then in_progress at check-in: the same rule as Pet Sitting (lib/sitting-provider-projection.ts).
+const CONTACT_RELEASE_STATUSES = new Set(["confirmed", "in_progress"]);
+const CONTACT_FIELDS = new Set(["emergencyContact", "vet", "homeAccess"]);
+function careText(value: unknown, max = 1000): string | null {
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  return s && s.length <= max ? s : null;
+}
+// Boarding extras are not priced add-ons (canonical bookings refuse add-ons outside Grooming): the customer's
+// picks are saved only as this labelled line of the care plan's specialInstructions, written by
+// boardingCareDraft in lib/boarding-customer-care.ts. Kept here rather than imported so this projection stays
+// dependency-free; tests/boarding-host-care-plan.test.mjs round-trips the two.
+const REQUESTED_EXTRAS_LABEL = "Requested extras (subject to host agreement):";
+function splitRequestedExtras(specialInstructions: unknown) {
+  const extras: string[] = [], rest: string[] = [];
+  for (const line of typeof specialInstructions === "string" ? specialInstructions.split(/\r?\n/) : []) {
+    const text = line.trim();
+    if (!text.startsWith(REQUESTED_EXTRAS_LABEL)) { rest.push(line); continue; }
+    for (const item of text.slice(REQUESTED_EXTRAS_LABEL.length).split(",").map(value => value.trim())) if (item && !extras.includes(item)) extras.push(item);
+  }
+  return { extras, rest: rest.join("\n").trim() };
+}
+/** The extras the customer requested at booking, as the host may see them at any status. */
+export function boardingProviderExtras(specialInstructions: unknown): string[] {
+  return splitRequestedExtras(specialInstructions).extras.map(item => safeString(item, 120)).filter((item): item is string => item !== null);
+}
+function projectCarePlan(care: Row | null | undefined, stayStatus: string) {
   if (!care) return null;
   const plan = (care.plan && typeof care.plan === "object" && !Array.isArray(care.plan) ? care.plan : {}) as Row;
-  const out: Row = {};
-  for (const key of ["feeding", "medication", "specialInstructions"] as const) {
-    const s = safeString(plan[key], 1000);
-    if (s !== null) out[key] = s;
+  const released = CONTACT_RELEASE_STATUSES.has(stayStatus);
+  const fields: Row = { ...plan, specialInstructions: splitRequestedExtras(plan.specialInstructions).rest };
+  const out: Row = {}, withheld: string[] = [];
+  for (const key of ["feeding", "medication", "specialInstructions", "emergencyContact", "vet", "homeAccess"] as const) {
+    const s = careText(fields[key]);
+    if (s === null) continue;
+    // Before acceptance the host reads the routine it is deciding on, never a contact or access detail;
+    // routine text that carries contact-shaped content waits for acceptance with the contact fields.
+    if (released || (!CONTACT_FIELDS.has(key) && safeString(s, 1000) !== null)) out[key] = s;
+    else withheld.push(key);
   }
   out.hasEmergencyContact = Boolean(String(plan.emergencyContact || "").trim());
   out.hasVet = Boolean(String(plan.vet || "").trim());
-  return { status: String(care.status || ""), plan: out, updatedAt: Number(care.updatedAt || care.updated_at || 0) };
+  return {
+    status: String(care.status || ""),
+    plan: out,
+    requestedExtras: boardingProviderExtras(plan.specialInstructions),
+    updatedAt: Number(care.updatedAt || care.updated_at || 0),
+    ...(withheld.length ? { withheldUntilAccepted: withheld } : {}),
+  };
+}
+function projectPet(value: unknown) {
+  const row = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Row;
+  return {
+    name: String(row.name || "").trim().slice(0, 80) || "Pet",
+    species: String(row.species || "").trim().slice(0, 40),
+    breed: row.breed != null && String(row.breed).trim() ? String(row.breed).trim().slice(0, 80) : null,
+  };
 }
 
 export function projectBoardingProviderStay(row: Row) {
@@ -73,7 +121,8 @@ export function projectBoardingProviderStay(row: Row) {
     extensionStatus: row.extension_status != null ? String(row.extension_status) : null,
     totalAmount: Number(row.total_amount || 0),
     amountDueNow: row.amount_due_now != null ? Number(row.amount_due_now) : null,
-    carePlan: projectCarePlan(row.carePlan as Row | null | undefined),
+    pets: Array.isArray(row.pets) ? (row.pets as unknown[]).map(projectPet) : [],
+    carePlan: projectCarePlan(row.carePlan as Row | null | undefined, String(row.status || "")),
     events: Array.isArray(row.events) ? (row.events as Row[]).map(projectEvent) : [],
     extension: row.extension
       ? {

@@ -36,9 +36,11 @@ function targetFor(eventType:string):PaymentState|null{
 }
 
 async function claimInbox(db:D1Database,row:Row,eventType:string){
-  const result=await db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSING',event_type=?,failure_reason=NULL,processed_at=NULL WHERE id=? AND processing_status IN ('RECEIVED','DEFERRED','FAILED')")
-    .bind(eventType,String(row.id)).run();
-  return Number(result.meta?.changes||0)===1;
+  // RETURNING, not meta.changes: D1 counts the rows the gateway_webhook_sync_universal_status trigger
+  // writes too, so a successful claim reports 2 changes and would be mistaken for a lost race.
+  const result=await db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSING',event_type=?,failure_reason=NULL,processed_at=NULL WHERE id=? AND processing_status IN ('RECEIVED','DEFERRED','FAILED') RETURNING id")
+    .bind(eventType,String(row.id)).all();
+  return (result.results?.length||0)===1;
 }
 async function markInbox(db:D1Database,row:Row,status:"PROCESSED"|"DEFERRED"|"REJECTED"|"FAILED",eventType?:string,reason?:string){
   const terminal=status!=="DEFERRED";

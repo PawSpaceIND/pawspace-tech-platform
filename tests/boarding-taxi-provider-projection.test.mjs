@@ -17,10 +17,12 @@ test("taxi-lifecycle imports provider projection", () => {
 });
 
 test("boarding projection strips emergency/vet free text and staff actor", () => {
+  // PARTNER-01: emergency contact and vet reach the host once it has accepted a paid stay (confirmed /
+  // in_progress, see tests/boarding-host-care-plan.test.mjs); a stay still awaiting acceptance keeps them back.
   const out = projectBoardingProviderStay({
     id: "S1",
     booking_id: "B1",
-    status: "in_progress",
+    status: "awaiting_host_acceptance",
     host_provider_id: "host_1",
     customer_id: "c1",
     city_id: "blr",
@@ -52,7 +54,9 @@ test("boarding projection strips emergency/vet free text and staff actor", () =>
   assert.equal(out.checkInStatus, "pending");
   assert.equal(out.updatedAt, 99);
   assert.equal(out.carePlan.plan.hasEmergencyContact, true);
+  assert.deepEqual(out.carePlan.withheldUntilAccepted, ["emergencyContact", "vet"]);
   assert.ok(!s.includes("9000000000"));
+  assert.ok(!s.includes("9888877777"));
   assert.ok(!s.includes("ops@pawspace.in"));
 });
 
