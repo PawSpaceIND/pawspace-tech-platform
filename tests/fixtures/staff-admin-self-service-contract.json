@@ -266,7 +266,7 @@
     "app/api/trust-safety/route.ts": "480266fe69a2a88e2edb1018570721a6c6fa85bd4ee0c40501669db51fb88ed9",
     "app/api/uat-customer-switch/route.ts": "3ccd22615e2553c2632320afe0f7d59e0ffc1d7e78c3a851529c14886f985740",
     "app/api/uat-provider-switch/route.ts": "c1ecc84c90b8a3585b9296e0c73067113e3b0bd0067f08d8da06b05962cf1bc8",
-    "app/api/uat-scheduling/route.ts": "d357f3d2264b64948ad9c615200c63beba445b47e3054d56348bb197d55ebee1",
+    "app/api/uat-scheduling/route.ts": "b08a4f2fb2ac065bd81f8ea57bdcf57f6ca40be09ca7e93f14f53f65fb82210b",
     "app/api/unified-cases/route.ts": "d15531b3b313e0ba2f8c19a03346c28ba2fc4885f9dfd6509e48d7cde9cc11a5",
     "app/api/unit-economics/route.ts": "7bd2530a041ff1c1c629a125e398d9e951a1456c2bf1e2c79619c0c019ffab4a",
     "app/api/v1/auth/mfa/enroll/route.ts": "e15faf2b95f84c9c7fa87d758d91ff66dbe4e7e3e9f9408613ab5e4bd5a0ed15",
