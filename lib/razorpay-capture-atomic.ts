@@ -103,7 +103,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   await ensureCaptureTimeline(db);
 
   const [intent, payment, current, staySchedule, taxiSchedule] = await Promise.all([
-    input.intentId ? db.prepare("SELECT id,booking_id,payment_id,state,version,amount_paise,currency,gateway_order_id,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
+    input.intentId ? db.prepare("SELECT id,booking_id,payment_id,state,version,amount_paise,currency,gateway_order_id,gateway_payment_id,commercial_snapshot_json FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
     db.prepare("SELECT id,booking_id,status,customer_id,amount,currency,method FROM booking_payments WHERE id=? AND booking_id=?").bind(input.paymentId, input.bookingId).first<Row>(),
     db.prepare("SELECT expected_amount,captured_amount,refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(input.paymentId).first<Row>(),
     db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(() => null),
@@ -170,6 +170,15 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   if (intent && text(intent.state) === "SETTLED") throw new Error("A settled payment intent cannot accept an unrecorded capture");
 
   const amount = input.amountPaise / 100;
+  /*
+   * An ADDITIONAL amount on a booking that is already paid (today: the difference a customer pays to
+   * move a Grooming booking to a dearer slot) is its own intent with its own order. Its capture adds to
+   * what this payment expects instead of replacing it: overwriting expected_amount with the difference
+   * made a later full refund read as a refund overage against the difference alone.
+   */
+  const intentSnapshot = (() => { try { return JSON.parse(text(intent?.commercial_snapshot_json) || "{}") as Record<string, unknown>; } catch { return {} as Record<string, unknown>; } })();
+  const additionalCapture = text(intentSnapshot.paymentStage) === "reschedule_difference";
+  const rescheduleRequestId = additionalCapture ? text(intentSnapshot.rescheduleRequestId) : "";
   const capturedCurrent = Number(current?.captured_amount || 0);
   const refundedCurrent = Number(current?.refunded_amount || 0);
   const capturedTotal = round2(capturedCurrent + amount);
@@ -179,7 +188,9 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   // booking price. A second, distinct capture beyond it (two checkout tabs paid) is still recorded, because
   // the money was taken, but reconciliation reports it as over_collected with its excess as the variance
   // (the post-commit saga then opens the Finance exception), instead of a matched collection with no variance.
-  const bookingValue = schedule ? scheduleTotal : round2(Number(payment.amount || 0));
+  // A reschedule difference is part of the booking's price from its capture on: booking_payments.amount only
+  // includes it once the move is applied (after this commit), so it must not read as an over-collection.
+  const bookingValue = schedule ? scheduleTotal : round2(Number(payment.amount || 0) + (additionalCapture ? amount : 0));
   const gateway = input.environment === "sandbox" ? "razorpay_sandbox" : "razorpay";
   const journalId = `JT-${crypto.randomUUID()}`;
   const journalEventId = `razorpay:capture:${captureKey(input)}`;
@@ -207,14 +218,18 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,failure_reason,detail_json,received_at,processed_at)
       VALUES (?,'razorpay',? ,?,'payment.captured',?,?,?,?,NULL,?,?,?,?,'processed',NULL,?,?,?)`)
       .bind(gatewayEventId, input.environment, input.eventId, input.bookingId, input.paymentId, input.gatewayOrderId || null, input.gatewayPaymentId || null, input.amountPaise, input.currency, signatureVerified, input.payloadHash, eventDetail, now, now),
-    db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(?,gateway_payment_id),updated_at=? WHERE booking_id=? AND payment_id=?").bind(input.gatewayPaymentId || null, now, input.bookingId, input.paymentId),
+    // The link keeps the FIRST captured payment. A later capture on the same booking (a split balance, a
+    // reschedule difference) used to overwrite it, so a refund went to the newest, smaller payment. Every
+    // capture stays recorded on its own payment_gateway_events row (and on its intent), which is what the
+    // refund sweep splits a refund across.
+    db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=? AND payment_id=?").bind(input.gatewayPaymentId || null, now, input.bookingId, input.paymentId),
     db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(COALESCE(detail_json,'{}'),'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?,'$.atomicCapture',1),updated_at=? WHERE id=? AND booking_id=?")
       .bind(gateway, input.gatewayPaymentId || null, input.gatewayOrderId || null, input.eventId, now, input.paymentId, input.bookingId),
     db.prepare(`INSERT INTO payment_reconciliation_records
       (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at)
       VALUES (?,?,?,?,?,0,?,?,'captured','partially_captured',0,?,?)
-      ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,currency=excluded.currency,gateway_status='captured',last_event_id=excluded.last_event_id,updated_at=excluded.updated_at`)
-      .bind(input.paymentId, input.bookingId, "razorpay", input.environment, amount, refundedCurrent, input.currency, input.eventId, now),
+      ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=CASE WHEN ?=1 THEN payment_reconciliation_records.expected_amount ELSE excluded.expected_amount END,currency=excluded.currency,gateway_status='captured',last_event_id=excluded.last_event_id,updated_at=excluded.updated_at`)
+      .bind(input.paymentId, input.bookingId, "razorpay", input.environment, additionalCapture ? 0 : amount, refundedCurrent, input.currency, input.eventId, now, additionalCapture ? 1 : 0),
     ...(input.intentId ? [db.prepare("UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)")
       .bind(input.gatewayPaymentId || null, now, input.intentId, input.gatewayPaymentId || null)] : []),
     db.prepare("INSERT INTO journal_transactions (id,source_type,source_id,source_event_id,currency,status,narration,created_at) VALUES (?,?,?, ?,?,'DRAFT',?,?) ON CONFLICT(source_event_id) DO NOTHING")
@@ -230,10 +245,12 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     // order.paid, or the webhook and the provider read, racing past the replay check) finds the other's
     // processed event for the same gateway payment and environment and adds nothing; two distinct captures
     // landing together are both counted. Reading the total first and writing it back lost one of them.
-    db.prepare(`UPDATE payment_reconciliation_records SET captured_amount=ROUND(captured_amount+?,2) WHERE payment_id=?
+    // An additional capture (a reschedule difference) also adds to what the payment expects, under the same
+    // once-per-capture guard, so a racing duplicate cannot count the difference twice.
+    db.prepare(`UPDATE payment_reconciliation_records SET captured_amount=ROUND(captured_amount+?,2),expected_amount=CASE WHEN ?=1 THEN ROUND(expected_amount+?,2) ELSE expected_amount END WHERE payment_id=?
       AND NOT EXISTS (SELECT 1 FROM payment_gateway_events WHERE provider='razorpay' AND environment=? AND payment_id=? AND id<>? AND processing_status='processed'
         AND event_type IN ${CAPTURE_TYPES} AND ((?<>'' AND gateway_payment_id=?) OR (?='' AND ?<>'' AND gateway_order_id=?)))`)
-      .bind(amount, input.paymentId, input.environment, input.paymentId, gatewayEventId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)),
+      .bind(amount, additionalCapture ? 1 : 0, amount, input.paymentId, input.environment, input.paymentId, gatewayEventId, text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayPaymentId), text(input.gatewayOrderId), text(input.gatewayOrderId)),
     db.prepare(`UPDATE payment_reconciliation_records SET
       reconciliation_status=CASE WHEN ?>0 AND captured_amount>?+0.009 THEN 'over_collected' WHEN ?=0 OR captured_amount+0.009>=? THEN 'matched' ELSE 'partially_captured' END,
       variance_amount=CASE WHEN ?>0 AND captured_amount>?+0.009 THEN ROUND(captured_amount-?,2) ELSE 0 END
@@ -243,6 +260,13 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       (id,aggregate_type,aggregate_id,event_type,dedupe_key,payload_json,status,attempts,next_attempt_at,created_at,updated_at)
       VALUES (?,?,?,'RAZORPAY_CAPTURE_POST_COMMIT',?,?,'PENDING',0,?,?,?)
       ON CONFLICT(dedupe_key) DO NOTHING`).bind(effectsOutboxId, input.intentId ? "payment_intent" : "booking_payment", input.intentId || input.paymentId, effectsDedupe, effectsPayload, now, now, now),
+    // The capture of a reschedule difference commits the instruction to move the booking in the SAME
+    // transaction, once per request, so the webhook, the customer's confirm and the probe sweep all lead
+    // to exactly one move (lib/grooming-reschedule-payment.ts).
+    ...(rescheduleRequestId ? [db.prepare(`INSERT INTO financial_outbox
+      (id,aggregate_type,aggregate_id,event_type,dedupe_key,payload_json,status,attempts,next_attempt_at,created_at,updated_at)
+      VALUES (?,'grooming_reschedule_request',?,'GROOMING_RESCHEDULE_APPLY',?,?,'PENDING',0,?,?,?)
+      ON CONFLICT(dedupe_key) DO NOTHING`).bind(`FO-RSA-${crypto.randomUUID()}`, rescheduleRequestId, `grooming-reschedule-apply:${rescheduleRequestId}`, JSON.stringify({ requestId: rescheduleRequestId, intentId: input.intentId, bookingId: input.bookingId, paymentId: input.paymentId, gatewayOrderId: input.gatewayOrderId || null, gatewayPaymentId: input.gatewayPaymentId || null, amountPaise: input.amountPaise }), now, now, now)] : []),
     ...(input.inboxId?[db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId)]:[]),
   ];
   const captureReference=input.gatewayPaymentId || `GW-${input.eventId}`;
@@ -294,6 +318,23 @@ async function recordOverCollection(db: Db, readDb: PrimaryReadDb, input: { book
   ]);
 }
 
+/**
+ * A captured reschedule difference moves its booking straight after the capture effects, whichever path
+ * committed it (signed webhook, customer confirm, provider probe). Loaded lazily so ordinary captures do
+ * not pull in scheduling. Never fails the capture: the apply outbox row stays due for the scheduled sweep.
+ */
+async function applyCapturedReschedule(db: Db, intentId: string) {
+  if (!intentId) return null;
+  const due = await db.prepare("SELECT id FROM financial_outbox WHERE event_type='GROOMING_RESCHEDULE_APPLY' AND json_extract(payload_json,'$.intentId')=? AND status IN ('PENDING','RETRY') LIMIT 1").bind(intentId).first<Row>().catch(() => null);
+  if (!due) return null;
+  try {
+    const { executeGroomingRescheduleApplyOutbox } = await import("./grooming-reschedule-payment");
+    return await executeGroomingRescheduleApplyOutbox(db, { outboxId: text(due.id), workerId: `capture-post-commit:${crypto.randomUUID()}` });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId: string; workerId: string; leaseMs?: number }) {
   await ensureFinancialRuntimeTables(db);
   // This worker immediately reads facts committed by commitRazorpayCaptureAtomic. D1 read replicas can
@@ -317,6 +358,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
         await ensureCaptureTimeline(db);
         await captureTimelineStatement(db, { environment: text(source.environment), paymentId: text(prior.paymentId),
           gatewayPaymentId: text(prior.gatewayPaymentId), gatewayOrderId: text(prior.gatewayOrderId), eventId: text(prior.eventId) }).run();
+        await applyCapturedReschedule(db, text(prior.intentId));
       } catch (error) {
         return { claimed: false as const, completed: false, status: "SUCCEEDED", reason: error instanceof Error ? error.message : "Capture timeline recovery pending" };
       }
@@ -400,6 +442,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
     }
     await db.prepare("UPDATE financial_outbox SET status='SUCCEEDED',last_error=NULL,lease_owner=NULL,lease_expires_at=NULL,response_json=?,updated_at=? WHERE id=? AND lease_owner=?")
       .bind(JSON.stringify({ completedAt: now, captureReference }), now, input.outboxId, input.workerId).run();
+    await applyCapturedReschedule(db, text(payload.intentId));
     return { claimed: true as const, completed: true as const, status: "SUCCEEDED" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

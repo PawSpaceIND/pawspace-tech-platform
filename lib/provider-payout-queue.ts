@@ -105,7 +105,15 @@ async function refundLedgerSelects(db:Db){
  for(const table of present){if(!shapes.has(table)){const names=new Set((await many(db,`PRAGMA table_info(${table})`)).map(row=>text(row.name)));shapes.set(table,names.has("booking_id")&&names.has("amount")?`(SELECT COALESCE(SUM(amount),0) FROM ${table} WHERE booking_id=?${names.has("status")?" AND lower(status) NOT IN ('rejected','failed','void','cancelled')":""})`:null);}const select=shapes.get(table);if(select)selects.push(select);}
  return selects;
 }
+/* A refund recorded BEFORE completion was already netted by completion: the payable was computed on the amount the customer
+ * finally paid (provider_payout_computations.refunded_before_completion). Only refunds beyond it scale the payable down, and
+ * they scale it against that same net amount - never the same refund twice. */
+async function refundedBeforeCompletion(db:Db,bookingId:string){const row=await db.prepare("SELECT refunded_before_completion FROM provider_payout_computations WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);return money(row?.refunded_before_completion);}
 export async function refundedForProviderPayout(db:Db,bookingId:string){
+ const prior=await refundedBeforeCompletion(db,bookingId);
+ return money(Math.max(0,await refundedInTotal(db,bookingId)-prior));
+}
+async function refundedInTotal(db:Db,bookingId:string){
  const selects=await refundLedgerSelects(db);
  const ledgers=selects.length?Number((await one(db,`SELECT ${selects.join("+")} amount`,selects.map(()=>bookingId)))?.amount||0):0;
  const notes=Number((await one(db,"SELECT COALESCE(SUM(a.amount+a.tax_amount),0) amount FROM finance_adjustment_documents a JOIN finance_invoices i ON i.id=a.invoice_id WHERE i.source_type='booking' AND i.source_id=? AND a.kind='credit_note' AND a.status='issued'",[bookingId]))?.amount||0);
@@ -187,7 +195,7 @@ export type ProviderPayoutAssessment={bookingId:string;providerId:string|null;se
 export async function assessProviderPayout(db:Db,input:{bookingId:string;payable:number;postedAt?:number;asOf?:number}):Promise<ProviderPayoutAssessment>{
  const asOf=input.asOf??Date.now(),bookingId=text(input.bookingId),payable=money(input.payable);
  const booking=await one(db,"SELECT id,status,service_code,total_amount,updated_at FROM canonical_bookings WHERE id=?",[bookingId]);
- const base={bookingId,providerId:null as string|null,serviceCode:text(booking?.service_code),orderAmount:money(booking?.total_amount)||payable,payable,refunded:0,grossAmount:payable,completedAt:null as number|null,holdDays:null as number|null,dueAt:null as number|null};
+ const base={bookingId,providerId:null as string|null,serviceCode:text(booking?.service_code),orderAmount:money(money(booking?.total_amount)-await refundedBeforeCompletion(db,bookingId))||payable,payable,refunded:0,grossAmount:payable,completedAt:null as number|null,holdDays:null as number|null,dueAt:null as number|null};
  if(!booking||text(booking.status)!=="completed")return{...base,block:"booking_not_completed",detail:booking?`Booking status is ${text(booking.status)||"unknown"}`:"Booking not found"};
  const payee=await payeeFor(db,booking);
  const completedAt=await completionEventAt(db,booking,Number(input.postedAt||0)),holdDays=await providerPayoutHoldDays(db,completedAt),dueAt=completedAt+holdDays*DAY_MS;

@@ -31,10 +31,19 @@
 1. Open Partner app with a **verified provider** session for the assigned groomer.
 2. Job appears under Jobs / Home.
 3. Accept → On the way → Arrived → Start service.
+   - **Only when the booked-time window is switched on** (`PAWSPACE_SERVICE_WINDOW_ENFORCEMENT=on`; always on in
+     production): Arrived and Start service are refused more than 60 minutes before or 2 hours after the booked
+     start, with a message giving the time in IST. To test straight after booking, sign in as Founder or Manager,
+     open **Control → Customer booking lifecycle → Open →** the booking, write a reason (at least 10 characters)
+     under **Authorise early/late start** and tap the button. Check the panel shows your sign-in email and the time, then
+     retry Arrived (with a fresh GPS fix) and Start service. After any reschedule (even back to the same time),
+     authorise it again.
 4. Add before + after proof (UAT media path is fine).
 5. Complete job.
 
-**Expected:** each step succeeds; completion blocked if proof missing; customer sees completed status.
+**Expected:** each step succeeds; completion blocked if proof missing; customer sees completed status. With the
+window switched on: Arrived is refused before the authorisation, the panel records who authorised it and when,
+and Arrived and Start service succeed after it.
 
 **PASS / FAIL:** _____
 

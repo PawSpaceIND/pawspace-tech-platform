@@ -12,7 +12,7 @@ test("all operational Indian city codes use IST and unknown cities fail closed",
 });
 
 test("Grooming reschedule keeps initial-booking buffer, roster, daily cap and provider guards", async () => {
-  const source = await read("app/api/grooming-booking-change/route.ts");
+  const source = (await read("app/api/grooming-booking-change/route.ts")) + (await read("lib/grooming-reschedule-move.ts"));
   assert.match(source, /listAuthoritativeAvailability\(db,providerId,localStart\.date\)/, "reschedule must use the governed published-roster authority");
   assert.match(source, /travel_buffer_minutes/, "reschedule must read the provider travel buffer");
   assert.match(source, /max_daily_jobs/, "reschedule must read the provider daily-job cap");

@@ -16,6 +16,11 @@ export interface MobileRazorpayCheckoutOptions {
    * The modal `handler` still wins whenever the modal can run (redirect stays false).
    */
   callbackUrl?: string;
+  /**
+   * Seconds after which Checkout closes itself. Used when the price is only held for a while (a
+   * rescheduled Grooming slot is held for 10 minutes), so the customer cannot pay after the hold lapses.
+   */
+  timeoutSeconds?: number;
 }
 export interface MobileRazorpaySuccessResult {
   success: true;
@@ -113,6 +118,9 @@ export async function openMobileRazorpayCheckout(options: MobileRazorpayCheckout
       (options.currency !== undefined && options.currency !== "INR")) {
     return failure("INVALID_PARAMETERS", "An order ID, positive integer paise amount and INR currency are required");
   }
+  if (options.timeoutSeconds !== undefined && (!Number.isSafeInteger(options.timeoutSeconds) || options.timeoutSeconds < 60 || options.timeoutSeconds > 900)) {
+    return failure("INVALID_PARAMETERS", "The checkout time limit must be between 60 and 900 seconds");
+  }
   if (typeof window === "undefined") return failure("NO_WINDOW_CONTEXT", "Payment checkout requires a browser or webview environment");
   const pageOrigin = String(window.location?.origin || "");
   if (options.callbackUrl !== undefined && !isValidCheckoutCallbackUrl(options.callbackUrl, /^https?:\/\//.test(pageOrigin) ? pageOrigin : undefined)) {
@@ -130,7 +138,8 @@ export async function openMobileRazorpayCheckout(options: MobileRazorpayCheckout
     currency: "INR", name: options.name || "PawSpace (Sandbox)", description: options.description || "PawSpace Service Booking",
     prefill: options.prefill || {}, notes: { ...options.notes, environment: "sandbox", platform: "pawspace_mobile" },
     theme: { color: options.themeColor || "#4b168c" },
-    ...(options.callbackUrl ? { callback_url: options.callbackUrl } : {}) };
+    ...(options.callbackUrl ? { callback_url: options.callbackUrl } : {}),
+    ...(options.timeoutSeconds !== undefined ? { timeout: options.timeoutSeconds } : {}) };
   try {
     if (win.RazorpayCheckout && typeof win.RazorpayCheckout.open === "function") {
       return await new Promise<MobileRazorpayResult>((resolve) => {

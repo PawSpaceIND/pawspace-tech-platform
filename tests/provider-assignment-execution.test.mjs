@@ -611,8 +611,8 @@ test("PRA-15 after a decline, the payout is computed for the replacement — nev
   assert.equal(payouts.length, 1, `exactly one payout for one job: ${JSON.stringify(payouts)}`);
   assert.equal(payouts[0].provider_id, settled, "the partner who took the job is the partner who gets paid");
   assert.notEqual(payouts[0].provider_id, COMMISSION_GROOMER, "the partner who declined must never be paid for it");
-  assert.equal(Math.round(Number(payouts[0].provider_net_payout)), Math.round(1899 * 0.7),
-    "a commission groomer keeps the full 70% share - the groomer class carries no provider GST deduction");
+  assert.equal(Math.round(Number(payouts[0].provider_net_payout)), 0,
+    "the replacement is a seeded full-time groomer: own supply, never a commission share (owner decision 7 / G3)");
   stage("Assignment to payout", "PASS", "one payout, to the replacement, at the groomer class's 70% share");
 });
 

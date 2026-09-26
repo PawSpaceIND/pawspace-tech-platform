@@ -1,5 +1,5 @@
-import{ensureUniversalLocationTables,startLocationSession}from"./universal-location-recovery";
-import{classifyGpsObservation,gpsIngestionKey,haversineDistanceMeters,implausibleGpsJump,type GpsTrustVerdict}from"./gps-telemetry-policy";
+import{ensureUniversalLocationTables,gpsBaselineResetAudit,gpsSpeedCheck,startLocationSession}from"./universal-location-recovery";
+import{classifyGpsObservation,gpsIngestionKey,haversineDistanceMeters,type GpsSpeedDecision,type GpsTrustVerdict}from"./gps-telemetry-policy";
 import{securityAuditStatement,type AuthenticatedActor}from"./server-auth";
 import type{RouteResult}from"./grooming-maps";
 
@@ -9,7 +9,7 @@ const eventId=()=>`LOC-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const etaId=()=>`ETA-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 export type GroomingTelemetryInput={bookingId:string;providerId:string;latitude:number;longitude:number;accuracyMeters:number;capturedAt:number;idempotencyKey?:string};
-export type PreparedGroomingTelemetry={sessionId:string;policyId:string;serverReceivedAt:number;capturedAt:number;accuracyMeters:number;verdict:GpsTrustVerdict;idempotencyKey:string};
+export type PreparedGroomingTelemetry={sessionId:string;policyId:string;serverReceivedAt:number;capturedAt:number;accuracyMeters:number;verdict:GpsTrustVerdict;idempotencyKey:string;baselineReset?:Extract<GpsSpeedDecision,{outcome:"baseline_reset"}>|null};
 
 export async function ensureGroomingGpsPipelineTables(db:Db){
  await ensureUniversalLocationTables(db);
@@ -27,10 +27,10 @@ export async function prepareGroomingTelemetry(db:Db,input:GroomingTelemetryInpu
  await ensureGroomingGpsPipelineTables(db);const session=await startLocationSession(db,{bookingId:input.bookingId,providerId:input.providerId,actor}),sessionId=String((session as Row).id||"");
  const row=await db.prepare("SELECT s.policy_version_id,p.eta_freshness_seconds,p.allowed_accuracy_meters,c.gps_ingestion_enabled FROM provider_location_sessions s JOIN booking_punctuality_policies p ON p.id=s.policy_version_id CROSS JOIN location_control_settings c WHERE s.id=? AND s.status='active' AND c.id='global'").bind(sessionId).first<Row>();if(!row)throw new Error("active_location_policy_not_found");
  const received=Date.now(),captured=Number(input.capturedAt),accuracy=Number(input.accuracyMeters),classified=classifyGpsObservation({latitude:Number(input.latitude),longitude:Number(input.longitude),accuracyMeters:accuracy,clientCapturedAt:captured,serverReceivedAt:received,freshnessSeconds:Number(row.eta_freshness_seconds||0),allowedAccuracyMeters:Number(row.allowed_accuracy_meters||0),gpsIngestionEnabled:Number(row.gps_ingestion_enabled)===1});
- let verdict=classified;
- if(classified.trustState==="accepted"){const previous=await db.prepare("SELECT latitude,longitude,accuracy_meters,client_captured_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? AND trust_state='accepted' ORDER BY client_captured_at DESC LIMIT 1").bind(input.bookingId,input.providerId).first<Row>();
-  if(previous&&implausibleGpsJump({latitude:Number(previous.latitude),longitude:Number(previous.longitude),capturedAt:Number(previous.client_captured_at),accuracyMeters:Number(previous.accuracy_meters)},{latitude:Number(input.latitude),longitude:Number(input.longitude),capturedAt:captured,accuracyMeters:accuracy}))verdict={...classified,trustState:"rejected",reason:"implausible_speed"};}
- return{sessionId,policyId:String(row.policy_version_id),serverReceivedAt:received,capturedAt:captured,accuracyMeters:accuracy,verdict,idempotencyKey:String(input.idempotencyKey||gpsIngestionKey(input))};
+ // M2 speed rule, windowed and self-healing (owner decision 26 Sept 2026): see gpsSpeedDecision.
+ const speed=classified.trustState==="accepted"?await gpsSpeedCheck(db,{bookingId:input.bookingId,providerId:input.providerId,latitude:Number(input.latitude),longitude:Number(input.longitude),accuracyMeters:accuracy,capturedAt:captured,serverReceivedAt:received,freshnessMs:Number(row.eta_freshness_seconds||0)*1000}):null;
+ const verdict:GpsTrustVerdict=speed?.outcome==="implausible"?{...classified,trustState:"rejected",reason:"implausible_speed"}:classified;
+ return{sessionId,policyId:String(row.policy_version_id),serverReceivedAt:received,capturedAt:captured,accuracyMeters:accuracy,verdict,idempotencyKey:String(input.idempotencyKey||gpsIngestionKey(input)),baselineReset:speed?.outcome==="baseline_reset"?speed:null};
 }
 
 async function pathMetrics(db:Db,input:GroomingTelemetryInput){
@@ -49,6 +49,7 @@ export async function commitGroomingTelemetry(db:Db,input:{telemetry:GroomingTel
   db.prepare("INSERT INTO grooming_location_ingestions (idempotency_key,booking_id,provider_id,event_id,eta_snapshot_id,trust_state,route_status,distance_from_previous_meters,cumulative_distance_meters,response_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(input.prepared.idempotencyKey,input.telemetry.bookingId,input.telemetry.providerId,event,etaSnapshotId,input.prepared.verdict.trustState,routeStatus,metrics.distanceFromPreviousMeters,metrics.cumulativeDistanceMeters,JSON.stringify(response),input.prepared.serverReceivedAt),
   securityAuditStatement(db,input.actor,"grooming.provider_location.update","booking",input.telemetry.bookingId,accepted?"completed":"rejected",{eventId:event,sessionId:input.prepared.sessionId,trustState:input.prepared.verdict.trustState,rejectionReason:input.prepared.verdict.reason,accuracyMeters:input.prepared.accuracyMeters,routeStatus,travelState:input.travelState,idempotencyKey:input.prepared.idempotencyKey,...metrics}),
  ];
+ if(accepted&&input.prepared.baselineReset)statements.push(gpsBaselineResetAudit(db,input.actor,{bookingId:input.telemetry.bookingId,providerId:input.telemetry.providerId,sessionId:input.prepared.sessionId,eventId:event,decision:input.prepared.baselineReset}));
  if(etaSnapshotId&&route)statements.splice(1,0,db.prepare("INSERT INTO route_eta_snapshots (id,booking_id,provider_id,origin_location_event_id,destination_snapshot_json,map_provider,provider_status,distance_meters,duration_seconds,predicted_arrival_at,routing_mode,calculated_at,stale_after,provider_reference,detail_json) VALUES (?,?,?,?,?,'google_routes',?,?,?,?,'traffic_aware',?,?,?,?)").bind(etaSnapshotId,input.telemetry.bookingId,input.telemetry.providerId,event,JSON.stringify({address:input.destinationAddress}),route.status,route.distanceMeters??null,route.durationSeconds??null,predictedArrivalAt,calculatedAt,calculatedAt+freshMs,null,JSON.stringify({error:route.error??null,polyline:route.polyline??null,forecast:true,guaranteedArrival:false,...metrics})));
  await db.batch(statements);return response;
 }
@@ -57,5 +58,12 @@ export async function latestTrustedGroomingObservation(db:Db,bookingId:string,pr
  await ensureGroomingGpsPipelineTables(db);const control=await db.prepare("SELECT gps_ingestion_enabled FROM location_control_settings WHERE id='global'").first<Row>();if(Number(control?.gps_ingestion_enabled)!==1)return{ok:false as const,reason:"gps_kill_switch_active"};
  const row=await db.prepare("SELECT e.*,p.eta_freshness_seconds,p.allowed_accuracy_meters FROM universal_provider_location_events e JOIN provider_location_sessions s ON s.id=e.session_id JOIN booking_punctuality_policies p ON p.id=s.policy_version_id WHERE e.booking_id=? AND e.provider_id=? AND s.status='active' AND e.trust_state='accepted' ORDER BY e.server_received_at DESC LIMIT 1").bind(bookingId,providerId).first<Row>();if(!row)return{ok:false as const,reason:"trusted_location_evidence_not_found"};
  const ageMs=Date.now()-Number(row.server_received_at),freshMs=Math.max(1,Number(row.eta_freshness_seconds||0))*1000,accuracy=Number(row.accuracy_meters),allowed=Number(row.allowed_accuracy_meters||0);if(ageMs<0||ageMs>freshMs)return{ok:false as const,reason:"trusted_location_evidence_stale"};if(!Number.isFinite(accuracy)||accuracy<0||!allowed||accuracy>allowed)return{ok:false as const,reason:"trusted_location_accuracy_outside_policy"};
- return{ok:true as const,evidence:{id:String(row.id),sessionId:String(row.session_id),latitude:Number(row.latitude),longitude:Number(row.longitude),accuracyMeters:accuracy,clientCapturedAt:Number(row.client_captured_at),serverReceivedAt:Number(row.server_received_at),ageMs,allowedAccuracyMeters:allowed}};
+ return{ok:true as const,evidence:{id:String(row.id),sessionId:String(row.session_id),latitude:Number(row.latitude),longitude:Number(row.longitude),accuracyMeters:accuracy,clientCapturedAt:Number(row.client_captured_at),serverReceivedAt:Number(row.server_received_at),ageMs,freshnessMs:freshMs,allowedAccuracyMeters:allowed}};
+}
+
+/** The newest fix of ANY trust state. When it was refused, the trusted evidence is older than what the phone last sent,
+ * and an arrival refusal must say why rather than quote the distance of a fix the partner has already moved on from. */
+export async function newestGroomingFix(db:Db,bookingId:string,providerId:string){
+ await ensureGroomingGpsPipelineTables(db);const row=await db.prepare("SELECT id,trust_state,rejection_reason,server_received_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? ORDER BY server_received_at DESC,rowid DESC LIMIT 1").bind(bookingId,providerId).first<Row>();
+ return row?{id:String(row.id),trustState:String(row.trust_state),reason:row.rejection_reason==null?null:String(row.rejection_reason),serverReceivedAt:Number(row.server_received_at)}:null;
 }
