@@ -280,16 +280,19 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
   return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const};
  }
  const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key});
+ /* A person's or a team's enquiry is queued before the customer is told so: a failed handoff surfaces as an
+  * error instead of a "the team will reply" message that no queue will ever see. */
+ const teamReason=turn.event.type==="completed"&&turn.event.followUp==="team"?turn.event.followUpReason??"bot_lead_qualified":null;
+ if(teamReason)await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:teamReason,confidence:null});
  await postBotMessage(db,{threadId:recorded.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
  if(turn.event.type==="human"){
   // A person asked for: the Inbox queue, with the whole bot conversation above it.
   await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.reason,confidence:null});
   return{duplicatePrevented:false,threadId:recorded.threadId,path:"human" as const};
  }
- if(turn.event.type==="completed"&&turn.event.followUp==="team"){
-  /* An existing booking, an active grooming subscription or a relocation: WATI assigns these to the team,
-   * so the enquiry goes to the team's queue (relocation to the relocation desk) with the whole flow above it. */
-  await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.followUpReason??"bot_lead_qualified",confidence:null});
+ /* An existing booking, an active grooming subscription or a relocation: WATI assigns these to the team,
+  * so the enquiry went to the team's queue above (relocation to the relocation desk), whole flow included. */
+ if(teamReason){
   return{duplicatePrevented:false,threadId:recorded.threadId,path:"completed" as const,handedOff:true};
  }
  if(turn.event.type==="completed"){

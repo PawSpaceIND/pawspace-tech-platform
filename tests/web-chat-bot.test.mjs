@@ -557,3 +557,12 @@ test("a visitor's relocation - including Pet Taxi 'Outstation from BLR' - become
   assert.equal(last.lead.routedTo, "cx-relocation");
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM lead_work_items").get().n), 1, "still one lead");
 });
+
+test("a stale saved conversation restarts the questions but keeps the visitor's lead", () => {
+  const stale = { version: 1, status: "collecting", flow: "pet_taxi", step: 4, answers: { name: "Ravi" }, leadId: "LEAD-KEEP", preferredFlow: "pet_taxi" };
+  const parsed = bot.parseBotState(JSON.stringify(stale));
+  assert.equal(parsed.status, "menu");
+  assert.equal(parsed.leadId, "LEAD-KEEP", "the lead is updated, not duplicated");
+  assert.equal(parsed.preferredFlow, "pet_taxi");
+  assert.deepEqual(parsed.answers, {});
+});

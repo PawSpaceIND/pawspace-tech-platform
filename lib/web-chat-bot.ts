@@ -277,8 +277,11 @@ const SHORT_YES=/^(yes|yeah|yep|ok|okay|sure|book|book now|start|continue|intere
 
 export function initialBotState():BotState{return{version:BOT_STATE_VERSION,status:"menu",flow:null,step:0,answers:{}};}
 export function parseBotState(value:unknown):BotState{
- try{const parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===BOT_STATE_VERSION&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
- return initialBotState();
+ let parsed:unknown=null;
+ try{parsed=typeof value==="string"?JSON.parse(value):value;if(parsed&&typeof parsed==="object"&&(parsed as BotState).version===BOT_STATE_VERSION&&["menu","collecting","done"].includes((parsed as BotState).status))return parsed as BotState;}catch{}
+ // An older shape restarts the questions, not the visitor: their lead and the lead's service stay theirs.
+ const old=parsed&&typeof parsed==="object"?parsed as Partial<BotState>:{};
+ return{...initialBotState(),...(typeof old.leadId==="string"&&old.leadId?{leadId:old.leadId}:{}),...(typeof old.preferredFlow==="string"&&old.preferredFlow?{preferredFlow:old.preferredFlow}:{})};
 }
 export function menuReply(text=GREETING):BotReply{return{text,choices:WEB_CHAT_MENU,inputHint:"Type a question or pick a service"};}
 export function flowByCode(code:string|null){return code===TEAM_FLOW.code?TEAM_FLOW:WEB_CHAT_FLOWS.find(flow=>flow.code===code)||null;}
