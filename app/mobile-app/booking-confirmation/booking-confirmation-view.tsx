@@ -29,16 +29,22 @@ function BookingConfirmationInner(props: Props) {
 
   useEffect(() => {
     if (!bookingId) return;
-    let active = true;
+    let active = true, next = 0;
     const abort = new AbortController();
     void loadCustomerConfirmationProjection(bookingId, abort.signal).then(value => {
       if (!active) return;
       setProjection(value); setProjectionError(""); setLoaded(true);
+      // Payment capture and booking/work-order writes can settle a few moments apart. Keep the success
+      // screen closed until one server projection contains the exact canonical slot, provider and payment.
+      // Read again only after this read has answered: a fixed 2.5 s timer cancelled every read that took
+      // longer (about 7 s on staging), so the page never loaded at all.
+      if (value && !value.ready) next = window.setTimeout(() => setRefresh(current => current + 1), 2500);
     }).catch(problem => {
       if (!active || abort.signal.aborted) return;
       setProjectionError(problem instanceof Error ? problem.message : "Unable to load your booking"); setLoaded(true);
+      next = window.setTimeout(() => setRefresh(current => current + 1), 5000);
     });
-    return () => { active = false; abort.abort(); };
+    return () => { active = false; window.clearTimeout(next); abort.abort(); };
   }, [bookingId, refresh]);
 
   useEffect(() => {
@@ -67,14 +73,6 @@ function BookingConfirmationInner(props: Props) {
     const timer = window.setInterval(() => { void controller.current?.resume(); }, 2500);
     return () => window.clearInterval(timer);
   }, [state.phase]);
-
-  // Payment capture and booking/work-order writes can settle a few moments apart. Keep the success
-  // screen closed until one server projection contains the exact canonical slot, provider and payment.
-  useEffect(() => {
-    if (!bookingId || projection?.ready) return;
-    const timer = window.setInterval(() => setRefresh(value => value + 1), 2500);
-    return () => window.clearInterval(timer);
-  }, [bookingId, projection?.ready]);
 
   const busy = ["starting", "checkout", "confirming"].includes(state.phase);
   const canResumeUnpaid = props.payment === "resume" && projection?.bookingStatus === "payment_pending" && ["created", "failed", "pending"].includes(projection.paymentStatus);
