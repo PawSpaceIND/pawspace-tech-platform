@@ -237,3 +237,47 @@ test("receiver outage leaves an existing receipt pending rather than manufacturi
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
   assert.equal(w.providerCalls(), 1);
 });
+
+// Post-merge audit: a durable inbox claim is not proof of completed payment processing.
+// This is an isolated in-memory crash/retry fixture, not a real gateway transaction.
+test("an interrupted PROCESSING webhook is not acknowledged as a completed duplicate", async t => {
+  const w = await setup(t);
+  const { acceptRazorpayWebhook } = await import("../lib/financial-lifecycle.ts");
+  const raw = w.payload("payment.captured"), eventId = "evt_interrupted_inbox";
+  const accepted = await acceptRazorpayWebhook(w.db, { rawBody: raw,
+    signature: sign(env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, raw),
+    webhookSecret: env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, eventId, environment: "sandbox" });
+  w.sqlite.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSING',event_type='payment.captured' WHERE id=?")
+    .run(String(accepted.row.id));
+  const retry = await w.deliver("payment.captured", eventId, raw);
+  assert.equal(retry.status, 503, "a claim without committed effects must keep gateway retry active");
+  assert.equal(retry.body.ok, false);
+  assert.equal(retry.body.status, "PROCESSING");
+  assert.equal(w.sqlite.prepare("SELECT state FROM payment_intents").get().state, "CREATED");
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
+  assert.equal(w.providerCalls(), 1, "retry must not create another customer charge");
+});
+
+test("interrupted inbox retries still reject signature and payload tampering without changing money", async t => {
+  const w = await setup(t);
+  const { acceptRazorpayWebhook } = await import("../lib/financial-lifecycle.ts");
+  const raw = w.payload("payment.captured"), eventId = "evt_interrupted_tamper";
+  const accepted = await acceptRazorpayWebhook(w.db, { rawBody: raw,
+    signature: sign(env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, raw),
+    webhookSecret: env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, eventId, environment: "sandbox" });
+  w.sqlite.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSING',event_type='payment.captured' WHERE id=?")
+    .run(String(accepted.row.id));
+  const before = w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all();
+  const invalid = await w.deliver("payment.captured", eventId, raw, "synthetic-wrong-signature");
+  assert.equal(invalid.status, 401);
+  const changed = JSON.parse(raw); changed.payload.payment.entity.amount = 1;
+  assert.equal((await w.deliver("payment.captured", eventId, JSON.stringify(changed))).status, 409);
+  const retry = await w.deliver("payment.captured", eventId, raw);
+  assert.equal(retry.status, 503); assert.equal(retry.body.code, "inbox_processing_incomplete");
+  assert.equal(retry.body.retryable, true);
+  assert.deepEqual(w.sqlite.prepare("SELECT * FROM gateway_webhook_events").all(), before);
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
+  assert.equal(w.providerCalls(), 1);
+});
