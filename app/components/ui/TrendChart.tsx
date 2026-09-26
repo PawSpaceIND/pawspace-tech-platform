@@ -1,4 +1,5 @@
 "use client";
+import css from "./visual-analytics.module.css";
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
 export interface ChartSeries {
@@ -25,7 +26,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
   const format = valueFormatter ?? ((value: number) => String(value));
   if (!data.length) return <p role="status" style={{ padding: 24, color: "var(--staff-muted, var(--paw-muted))" }}>No data for this chart.</p>;
   return (
-    <div style={{ width: "100%", minWidth: 0 }}>
+    <div className={css.trend} style={{ width: "100%", minWidth: 0 }}>
     <div style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         {type === "line" ? (
@@ -53,7 +54,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
         )}
       </ResponsiveContainer>
     </div>
-    <details style={{ marginTop: 10, fontSize: 12, overflowX: "auto" }}><summary style={{ cursor: "pointer" }}>View chart data</summary><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th scope="col">{xKey}</th>{series.map(s => <th scope="col" key={s.key}>{s.label ?? s.key}</th>)}</tr></thead><tbody>{data.map((row, index) => <tr key={index}><th scope="row">{String(row[xKey] ?? "—")}</th>{series.map(s => <td key={s.key} style={{ textAlign: "center", padding: 6 }}>{row[s.key] == null ? "Unavailable" : onSelect ? <button style={{ cursor: "pointer", color: "inherit", background: "transparent", border: "1px solid currentColor", borderRadius: 5, padding: "5px 8px" }} aria-label={`Explore ${s.label ?? s.key} bookings for ${String(row[xKey])}`} onClick={() => onSelect(row, s.key)}>{format(Number(row[s.key]))}</button> : format(Number(row[s.key]))}</td>)}</tr>)}</tbody></table></details>
+    <details className={css.chartTable} style={{ marginTop: 10, fontSize: 12, overflowX: "auto" }}><summary style={{ cursor: "pointer" }}>View chart data</summary><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr><th scope="col">{xKey}</th>{series.map(s => <th scope="col" key={s.key}>{s.label ?? s.key}</th>)}</tr></thead><tbody>{data.map((row, index) => <tr key={index}><th scope="row">{String(row[xKey] ?? "—")}</th>{series.map(s => <td key={s.key} style={{ textAlign: "center", padding: 6 }}>{row[s.key] == null ? "Unavailable" : onSelect ? <button style={{ cursor: "pointer", color: "inherit", background: "transparent", border: "1px solid currentColor", borderRadius: 5, padding: "5px 8px" }} aria-label={`Explore ${s.label ?? s.key} bookings for ${String(row[xKey])}`} onClick={() => onSelect(row, s.key)}>{format(Number(row[s.key]))}</button> : format(Number(row[s.key]))}</td>)}</tr>)}</tbody></table></details>
     </div>
   );
 }
