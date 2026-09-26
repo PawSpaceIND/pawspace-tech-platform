@@ -6,6 +6,10 @@ on:
         description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
+      expected_destination_last4:
+        description: 'Required for direct-grooming-call: last four digits confirmed by the tester'
+        required: false
+        default: ''
       specialist_use_case:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
@@ -319,6 +323,7 @@ jobs:
           node-version: '22.16.0'
       - name: Place grounded ElevenLabs Grooming call and inspect carrier
         env:
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -372,6 +377,8 @@ jobs:
           const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
           if(!access||!key||!phoneId||!agentId||!exKey||!exToken||!exSid||entries.length!==1)throw new Error('direct Grooming UAT prerequisites missing');
           const digits=entries[0].replace(/\D/g,''); const to=entries[0].startsWith('+')?entries[0]:(digits.length===10?`+91${digits}`:`+${digits}`); console.log('::add-mask::'+to);
+          const expectedLast4=String(process.env.EXPECTED_DESTINATION_LAST4||'').trim();
+          if(!/^\d{4}$/.test(expectedLast4)||to.replace(/\D/g,'').slice(-4)!==expectedLast4)throw new Error('Destination does not match the handset confirmed by the tester');
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)}); if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0]; if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
           const ledgerResp=await fetch(origin+'/api/voice-outbound?scope=ledger&limit=100',{headers:{cookie},signal:AbortSignal.timeout(30000)}); const ledgerBody=await ledgerResp.json().catch(()=>({})); if(!ledgerResp.ok)throw new Error('voice ledger failed: '+ledgerResp.status);
