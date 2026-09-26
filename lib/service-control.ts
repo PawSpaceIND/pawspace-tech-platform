@@ -16,7 +16,11 @@ type Stored={service_code:string;service_name:string;service_group:string;enable
 const schedulingMap:Record<string,PawSpaceServiceCode>={grooming:"grooming",dog_training:"dog_training",boarding:"boarding",pet_sitting:"pet_sitting",pet_taxi:"pet_taxi",dog_walking:"dog_walking",vet_consult:"vet_consult"};
 const commercialRequestPaths:Record<string,PawSpaceServiceCode>={"/api/training-commercial":"dog_training","/api/boarding-commercial":"boarding","/api/sitting-commercial":"pet_sitting","/api/taxi-commercial":"pet_taxi","/api/walking-commercial":"dog_walking","/api/food-commercial":"food"};
 export function isPawSpaceServiceCode(value:string):value is PawSpaceServiceCode{return pawspaceServices.some(service=>service.code===value)}
-export async function ensureServiceControlTables(db:D1Database){const now=Date.now();await db.batch([
+// Once per isolate (ready-set only; no shared in-flight promise): the gateway ran these two batches in front of
+// every POST that starts a service - Boarding, Sitting and Taxi reserves included. The seed is INSERT OR IGNORE.
+const serviceControlTablesReady=new WeakSet<object>();
+export async function ensureServiceControlTables(db:D1Database){if(serviceControlTablesReady.has(db))return;await ensureServiceControlTablesUncached(db);serviceControlTablesReady.add(db);}
+async function ensureServiceControlTablesUncached(db:D1Database){const now=Date.now();await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS service_controls (service_code TEXT PRIMARY KEY,service_name TEXT NOT NULL,service_group TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,disabled_reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS service_control_audit_events (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,from_enabled INTEGER NOT NULL,to_enabled INTEGER NOT NULL,reason TEXT NOT NULL,actor_email TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);await db.batch(pawspaceServices.map(service=>db.prepare("INSERT OR IGNORE INTO service_controls (service_code,service_name,service_group,enabled,disabled_reason,updated_by,updated_at) VALUES (?,?,?,1,NULL,'system',?)").bind(service.code,service.name,service.group,now)))}
@@ -34,4 +38,6 @@ async function newCustomerService(request:Request,db:D1Database):Promise<PawSpac
  if(url.pathname==="/api/relocation"&&String(body.action||"create")==="create")return"relocation";
  if(url.pathname==="/api/funeral-memorial"&&String(body.action||"create")==="create")return"funeral_memorial";
  return null}
-export async function blockDisabledServiceRequest(request:Request,db:D1Database):Promise<Response|null>{const code=await newCustomerService(request,db);if(!code)return null;const services=await listServiceControls(db),service=services.find(item=>item.code===code);if(!service||service.enabled)return null;return Response.json({error:"SERVICE_DISABLED",serviceCode:service.code,serviceName:service.name,message:`${service.name} is temporarily unavailable for new customer requests.`,reason:service.disabledReason},{status:503,headers:{"cache-control":"no-store"}})}
+const serviceGatedPaths=new Set([...Object.keys(commercialRequestPaths),"/api/uat-scheduling","/api/food-orders","/api/food-subscriptions","/api/relocation","/api/funeral-memorial"]);
+// For a POST that may start a service, the switches are read beside the "is this a new request?" check (one round trip, not two).
+export async function blockDisabledServiceRequest(request:Request,db:D1Database):Promise<Response|null>{const early=request.method.toUpperCase()==="POST"&&serviceGatedPaths.has(new URL(request.url).pathname)?listServiceControls(db):null;early?.catch(()=>undefined);const code=await newCustomerService(request,db);if(!code)return null;const services=await(early??listServiceControls(db)),service=services.find(item=>item.code===code);if(!service||service.enabled)return null;return Response.json({error:"SERVICE_DISABLED",serviceCode:service.code,serviceName:service.name,message:`${service.name} is temporarily unavailable for new customer requests.`,reason:service.disabledReason},{status:503,headers:{"cache-control":"no-store"}})}

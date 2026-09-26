@@ -148,6 +148,9 @@ export type BookingWindowInput={
   serviceCode:string;cityId?:string|null;scheduledStart:string;scheduledEnd:string;
   /** Every occurrence, when the caller has generated them. The LAST one must also sit inside the horizon. */
   occurrences?:Array<{start:string;end:string}>|null;
+  /** The policy this request already resolved for the same service and city (a reserve checks the window
+   *  twice); read here when absent. The checks themselves always run against the current clock. */
+  policy?:Awaited<ReturnType<typeof resolveBookingTimePolicy>>|null;
 };
 
 export type BookingWindowVerdict={
@@ -179,7 +182,7 @@ export async function assertBookingWindow(db:Db,input:BookingWindowInput):Promis
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)
     refuse("A valid scheduling window is required",{code:"invalid_window"});
 
-  const policy=await resolveBookingTimePolicy(db,{serviceCode,cityId:input.cityId});
+  const policy=input.policy??await resolveBookingTimePolicy(db,{serviceCode,cityId:input.cityId});
   const config=policy.config;
   const now=Date.now();
 
