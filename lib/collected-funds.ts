@@ -50,7 +50,10 @@ export async function collectedForBooking(db:Db,bookingId:string):Promise<number
  const paymentId=String(paymentIdentity?.id??"").trim();
  if(paymentId){
   const reconciliation=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
-  if(reconciliation&&Number.isFinite(Number(reconciliation.captured_amount)))return Math.max(0,round2(Number(reconciliation.captured_amount||0)));
+  // A difference paid for a reschedule that could not be applied is going back to the customer on its
+  // own refund case: it was never part of this booking's price, so it is not collected for it either.
+  const returnedDifference=await db.prepare("SELECT COALESCE(SUM(amount),0) amount FROM booking_refund_cases WHERE booking_id=? AND purpose='reschedule_difference' AND status IN ('requested','approved','processing','processed','completed')").bind(bookingId).first<Row>().catch(()=>null);
+  if(reconciliation&&Number.isFinite(Number(reconciliation.captured_amount)))return Math.max(0,round2(Number(reconciliation.captured_amount||0)-Number(returnedDifference?.amount||0)));
  }
 
  // A split booking's truth lives in its schedule: the first instalment always, plus the balance only
