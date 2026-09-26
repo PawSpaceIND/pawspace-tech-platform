@@ -6,18 +6,11 @@ import { computeTaxiRouteLeg } from "../lib/taxi-route-pricing.ts";
 const env={PAWSPACE_MAPS_ENV:"sandbox",GOOGLE_MAPS_SERVER_API_KEY_UAT:"fixture-key"};
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{"content-type":"application/json"}});
 
-test("Taxi UAT falls back deterministically when Google Routes is permission-blocked",async()=>{
- const route=await computeTaxiRouteLeg(env,"Indiranagar Bengaluru","Whitefield Bengaluru",async()=>json({error:{status:"PERMISSION_DENIED"}},403));
- assert.deepEqual(route,{distanceKm:10,durationMinutes:45,provider:"sandbox_route_fallback",providerReference:"google_routes_http_403"});
-});
-
-test("Taxi UAT falls back on provider 5xx but not customer-address 4xx",async()=>{
- const fallback=await computeTaxiRouteLeg(env,"Indiranagar Bengaluru","Whitefield Bengaluru",async()=>json({},503));
- assert.equal(fallback.provider,"sandbox_route_fallback");
- await assert.rejects(
-   ()=>computeTaxiRouteLeg(env,"Indiranagar Bengaluru","Whitefield Bengaluru",async()=>json({},400)),
-   error=>error instanceof Response&&error.status===409
- );
+test("Taxi refuses provider failures instead of pricing a synthetic route",async()=>{
+ for(const status of [401,403,429,500,503]){
+  await assert.rejects(()=>computeTaxiRouteLeg(env,"Indiranagar Bengaluru","Whitefield Bengaluru",async()=>json({},status)),error=>error instanceof Response&&error.status===503);
+ }
+ await assert.rejects(()=>computeTaxiRouteLeg(env,"Indiranagar Bengaluru","Whitefield Bengaluru",async()=>json({},400)),error=>error instanceof Response&&error.status===409);
 });
 
 test("Taxi keeps a usable Google route authoritative",async()=>{
@@ -39,4 +32,12 @@ test("Taxi commercial quote persists the actual route source",()=>{
  assert.match(route,/sandbox_route_fallback/);
  assert.match(route,/routeProvider=outbound\.provider/);
  assert.match(route,/productionMapsVerified:false/);
+});
+
+test('Taxi timeout refuses a quote instead of substituting distance',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const pending=computeTaxiRouteLeg(env,'Indiranagar Bengaluru','Whitefield Bengaluru',async(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')))));
+ const refused=assert.rejects(()=>pending,error=>error instanceof Response&&error.status===503);
+ t.mock.timers.tick(8000);
+ await refused;
 });

@@ -1,6 +1,14 @@
 export type AddressSuggestion={placeId:string;mainText:string;secondaryText:string;fullText:string};
 export type AutocompleteResult={status:"configured"|"configuration_required"|"provider_error";suggestions:AddressSuggestion[];error?:string};
-export type ResolvedAddress={status:"configured"|"configuration_required"|"provider_error";address?:string;latitude?:number;longitude?:number;error?:string};
+export type ResolvedAddress={status:"configured"|"configuration_required"|"provider_error";address?:string;pincode?:string;latitude?:number;longitude?:number;error?:string};
+
+type AddressComponent={types?:string[];longText?:string;long_name?:string};
+/** Postal codes are structured Google data, not guaranteed to appear in display labels. */
+export function postalCodeFromComponents(components:AddressComponent[]|undefined):string|undefined{
+  const value=components?.find(component=>component.types?.includes("postal_code"));
+  const code=value?.longText||value?.long_name;
+  return code&&/^[1-9]\d{5}$/.test(code)?code:undefined;
+}
 
 /** A Google lookup that accepts the connection and never answers must not hold a booking step open. */
 const MAPS_LOOKUP_TIMEOUT_MS=8_000;
@@ -54,10 +62,17 @@ export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:
   try{
     const url=new URL(`https://places.googleapis.com/v1/places/${encodeURIComponent(input.placeId)}`);
     if(input.sessionToken)url.searchParams.set("sessionToken",input.sessionToken);
-    const response=await fetch(url.toString(),{signal:AbortSignal.timeout(MAPS_LOOKUP_TIMEOUT_MS),headers:{"X-Goog-Api-Key":creds.key,"X-Goog-FieldMask":"formattedAddress,location"}});
-    const body=await response.json() as{formattedAddress?:string;location?:{latitude?:number;longitude?:number};error?:{message?:string}};
+    const response=await fetch(url.toString(),{signal:AbortSignal.timeout(MAPS_LOOKUP_TIMEOUT_MS),headers:{"X-Goog-Api-Key":creds.key,"X-Goog-FieldMask":"formattedAddress,location,addressComponents"}});
+    const body=await response.json() as{formattedAddress?:string;addressComponents?:AddressComponent[];location?:{latitude?:number;longitude?:number};error?:{message?:string}};
     if(!response.ok)return{status:"provider_error",error:body.error?.message||`Places API returned ${response.status}`};
-    return{status:"configured",address:body.formattedAddress,latitude:body.location?.latitude,longitude:body.location?.longitude};
+    const latitude=body.location?.latitude,longitude=body.location?.longitude;
+    let pincode=postalCodeFromComponents(body.addressComponents);
+    // Areas and roads can omit postal components. Resolve their Google coordinates, never guess a PIN.
+    if(!pincode&&typeof latitude==="number"&&typeof longitude==="number"&&validCoordinates(latitude,longitude)){
+      const reverse=await reverseGeocode({latitude,longitude});
+      if(reverse.status==="configured")pincode=reverse.pincode;
+    }
+    return{status:"configured",address:body.formattedAddress,pincode,latitude,longitude};
   }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to resolve place details"};}
 }
 
@@ -93,8 +108,8 @@ export async function reverseGeocode(input:{latitude:number;longitude:number}):P
     url.searchParams.set("latlng",`${input.latitude},${input.longitude}`);
     url.searchParams.set("key",creds.key);
     const response=await fetch(url.toString(),{signal:AbortSignal.timeout(MAPS_LOOKUP_TIMEOUT_MS)});
-    const body=await response.json() as{results?:Array<{formatted_address?:string}>;status?:string;error_message?:string};
+    const body=await response.json() as{results?:Array<{formatted_address?:string;address_components?:AddressComponent[]}>;status?:string;error_message?:string};
     if(!response.ok||body.status!=="OK"||!body.results?.length)return{status:"provider_error",error:body.error_message||body.status||"No address found for this location"};
-    return{status:"configured",address:body.results[0].formatted_address,latitude:input.latitude,longitude:input.longitude};
+    return{status:"configured",address:body.results[0].formatted_address,pincode:postalCodeFromComponents(body.results[0].address_components),latitude:input.latitude,longitude:input.longitude};
   }catch(error){return{status:"provider_error",error:error instanceof Error?error.message:"Unable to reverse-geocode this location"};}
 }
