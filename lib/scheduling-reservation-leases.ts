@@ -6,6 +6,10 @@ type Row=Record<string,unknown>;
 export const SCHEDULING_RESERVATION_LEASE_MS=5*60_000;
 export const SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE="status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight'";
 export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`;
+// Overnight Pet Sitting is at the customer's home, so it holds its sitter exclusively like an appointment slot. The
+// predicate above must stay identical to the unique index already deployed (the reserve upsert names it), so overlap
+// checks that decide whether a provider is free add overnight Sitting with this predicate.
+export const SCHEDULING_RESERVATION_OVERNIGHT_SITTING_PREDICATE="status!='cancelled' AND service_code='pet_sitting' AND care_mode='overnight'";
 const leaseTablesEnsured=new WeakSet<Db>();
 const leaseTablesEnsuring=new WeakMap<Db,Promise<boolean>>();
 const cleanupRunning=new WeakMap<Db,Promise<{groups:number;reservations:number}>>();

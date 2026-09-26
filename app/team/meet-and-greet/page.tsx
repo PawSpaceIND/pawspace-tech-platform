@@ -17,6 +17,7 @@ type MeetGreet = {
   priceWaivedReason: string | null;
   status: "requested" | "confirmed" | "completed" | "cancelled" | "no_show";
   notes: string | null;
+  bookingId?: string | null;
   createdAt: number;
 };
 
@@ -89,6 +90,7 @@ export default function MeetAndGreetPage() {
           <td><div className={styles.stack}>
             <b>{item.customerId} → {item.hostProviderId}</b>
             <small>{item.id}</small>
+            {item.bookingId ? <small>Booking {item.bookingId}</small> : null}
             <small>raised {when(item.createdAt)}</small>
           </div></td>
           <td><div className={styles.stack}>

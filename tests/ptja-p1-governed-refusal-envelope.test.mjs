@@ -33,7 +33,7 @@ const DDL = [
   "CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)",
 ];
-const START = "2026-11-04T04:30:00.000Z", END = "2026-11-04T06:30:00.000Z";
+const START = "2026-11-04T04:30:00.000Z", END = "2026-11-04T05:30:00.000Z"; // a Sitting Home Visit is 60 minutes (SIT-04)
 const CUSTOMER = "CUS-REFENV-1", PROVIDER = "PRV-REFENV-1";
 
 async function refuse({ url = "http://localhost/api/canonical-bookings", serviceCode = "pet_sitting", start = START, end = END, withQuote = true, totalOverride = null } = {}) {
