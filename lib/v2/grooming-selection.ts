@@ -1,7 +1,7 @@
 import type { V2GroomingPackage } from './grooming-client';
 import { youngGroomingEligibility } from '../grooming-package-eligibility';
 
-type Pet = { species: string; ageYears?: number | null; name?: string; profile?: { dateOfBirth?: string; ageBand?: string } | null };
+type Pet = { species: string; ageYears?: number | null; name?: string; profile?: { dateOfBirth?: string; ageBand?: string; weightBand?: string; aggression?: string } | null };
 
 function validBirthDate(pet: Pet, serviceDate?: string): string | null {
   const value = pet.profile?.dateOfBirth;
@@ -34,6 +34,18 @@ export function v2GroomingSelectionIssue(pets: Pet[], audience?: V2GroomingPacka
     return 'Young-pet and adult care need separate appointments with the appropriate package.';
   if (audience && pets.some(pet => audienceOf(pet) !== audience))
     return 'The published package must match the selected pets and their age category.';
+  return null;
+}
+
+/** Owner decision (QA M10): same price, but 30 extra minutes for a giant dog or an aggressive temperament. */
+export const EXTRA_CARE_MINUTES = 30;
+const EXTRA_CARE_WEIGHTS = new Set(['45–60 kg', '60+ kg']), EXTRA_CARE_TEMPERAMENTS = new Set(['Aggressive during bath', 'Very aggressive']);
+export function v2ExtraCareReason(pets: Array<{ name?: string; profile?: { weightBand?: string; aggression?: string } | null }>): string | null {
+  for (const pet of pets) {
+    const weight = pet.profile?.weightBand ?? '', temperament = pet.profile?.aggression ?? '';
+    if (EXTRA_CARE_WEIGHTS.has(weight) || EXTRA_CARE_TEMPERAMENTS.has(temperament))
+      return `${pet.name || 'Your pet'} gets ${EXTRA_CARE_MINUTES} extra minutes (${[EXTRA_CARE_WEIGHTS.has(weight) ? weight : '', EXTRA_CARE_TEMPERAMENTS.has(temperament) ? temperament.toLowerCase() : ''].filter(Boolean).join(', ')}) at no extra cost, and your groomer is told.`;
+  }
   return null;
 }
 

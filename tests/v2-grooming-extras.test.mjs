@@ -64,3 +64,20 @@ test("without extras the booking is unchanged", async t => {
   assert.equal(body.totalAmount, 1899);
   assert.deepEqual(body.pricing, { discount: 0, addOns: [], requirements: [] });
 });
+
+// Owner decision (QA M10): same price, 30 extra minutes for a giant dog or an aggressive temperament.
+const selection = await import("../lib/v2/grooming-selection.ts");
+test("giant or aggressive pets get 30 extra minutes at the same price; others do not", () => {
+  assert.match(selection.v2ExtraCareReason([{ name: "Tyson", profile: { weightBand: "45–60 kg", aggression: "Aggressive during bath" } }]), /Tyson gets 30 extra minutes \(45–60 kg, aggressive during bath\)/);
+  assert.match(selection.v2ExtraCareReason([{ name: "Rex", profile: { weightBand: "20–45 kg", aggression: "Very aggressive" } }]), /Rex gets 30 extra minutes/);
+  assert.equal(selection.v2ExtraCareReason([{ name: "Bruno", profile: { weightBand: "3–20 kg", aggression: "Friendly" } }]), null);
+});
+test("a booking with the extra-care slot reserves the longer window at the package price", async t => {
+  const calls = network(t);
+  const base = input();
+  const longer = { ...base.bundle, slotMinutes: 150, blockingMinutes: 180 };
+  await client.createV2GroomingBooking({ ...base, bundle: longer, pkg: { ...base.pkg, bundles: [longer] }, scheduledEnd: `${future}T08:00:00.000Z` });
+  const reserve = calls.find(call => call.url === "/api/uat-scheduling").body;
+  assert.equal(Date.parse(reserve.scheduledEnd) - Date.parse(reserve.scheduledStart), 150 * 60_000);
+  assert.equal(calls.find(call => call.url === "/api/canonical-bookings").body.totalAmount, 1899);
+});

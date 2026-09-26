@@ -30,7 +30,7 @@ import { useQueryParameter } from "../../../lib/use-query-parameter";
 import V2GroomingPaymentPanel from "./payment-panel";
 import ContactForm from "../../contact/contact-form";
 import { serviceAddressConflict } from "../../../lib/service-address-consistency";
-import { v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } from "../../../lib/v2/grooming-selection";
+import { EXTRA_CARE_MINUTES, v2ExtraCareReason, v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } from "../../../lib/v2/grooming-selection";
 import styles from "./grooming.module.css";
 import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
@@ -121,7 +121,10 @@ export default function V2GroomingPage() {
     [catalogue, audience, selectedPets.length],
   );
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
-  const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  const packageBundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  // Same package and price with a longer slot, so availability, the quote window, the groomer check and checkout agree.
+  const extraCare = v2ExtraCareReason(selectedPets);
+  const bundle = packageBundle && extraCare ? { ...packageBundle, slotMinutes: packageBundle.slotMinutes + EXTRA_CARE_MINUTES, blockingMinutes: packageBundle.blockingMinutes + EXTRA_CARE_MINUTES } : packageBundle;
   const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
   // Disabled checkout buttons point at the step that explains why.
   const blockingIssue = mixedAudience ? { id: "v2-selection-issue", step: "01" } : youngIssue ? { id: "v2-young-issue", step: "02" } : null;
@@ -323,6 +326,7 @@ export default function V2GroomingPage() {
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
             {youngIssue && <p id="v2-young-issue" className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
+            {extraCare && <p className={styles.helper} role="note">{extraCare}</p>}
             {availableAddOns.length > 0 && <div className={styles.helper} aria-label="Extras and care notes">
               <b>Extras</b>{availableAddOns.map(item => <label key={item.label} style={{ display: "block" }}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> {item.label} · {money(item.price)}</label>)}
               <label style={{ display: "block", marginTop: 8 }}>How is your pet with grooming?<select style={{ display: "block", width: "100%", maxWidth: "100%" }} value={comfort} onChange={event => setComfort(event.target.value as typeof comfort)}><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
