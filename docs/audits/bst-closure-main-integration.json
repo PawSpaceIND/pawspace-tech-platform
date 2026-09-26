@@ -1,0 +1,60 @@
+{
+  "main": "1c04f5a0fdc4a144b8cddcfa4ff2864a8884892e",
+  "reason": "Merge already approved Grooming/Training code with the BST candidate; resolve only overlapping expected source fingerprints against merged code.",
+  "conflicts": [
+    {
+      "field": "tests/fixtures/customer-partner-theme-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/inbox-workspace-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/partner-services-presentation-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/staff-admin-self-service-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/staff-crm-control-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/staff-operations-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/staff-team-completion-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/ui-display-truth-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    },
+    {
+      "field": "tests/fixtures/ui-mainline-integration-contract.json.protected.app/api/canonical-bookings/route.ts",
+      "ours": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+      "main": "ce8afe30e9b94e1021f7085a62b5892ab57869901f24b61ce4389630302f3012",
+      "merged": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc"
+    }
+  ]
+}

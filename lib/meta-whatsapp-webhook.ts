@@ -66,7 +66,16 @@ async function routeInboundAutomation(db:D1Database,input:{eventId:string;thread
    }
    return{...ai,routingMode:routing.mode,aiEligible:true,humanOwned:false,automationReason:ai.status==="ai_draft_ready"?"governed_ai_draft_ready":"governed_ai_pending"};
   }
-  const chatbot=await runWhatsAppChatbotTurn(db,{threadId:input.threadId,inputMessageId:input.messageId,actorEmail:automationAuditActor});const handedOff=chatbot.routingMode==="human_only";const turn=(chatbot.turn??null)as Row|null;const outputMessageId=text(turn?.output_message_id);if(!handedOff&&outputMessageId)await armWhatsAppNoResponseSequence(db,{threadId:input.threadId,customerId:input.customerId,anchorMessageId:outputMessageId,routingMode:"chatbot_only"}).catch(()=>undefined);return{status:handedOff?"human_handoff":"chatbot_routed",routingMode:chatbot.routingMode,aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:handedOff,automationReason:handedOff?"chatbot_handoff":"chatbot_only",chatbotDuplicatePrevented:Boolean(chatbot.duplicatePrevented),recoveryArmed:Boolean(outputMessageId&&!handedOff)};
+  const chatbot=await runWhatsAppChatbotTurn(db,{threadId:input.threadId,inputMessageId:input.messageId,actorEmail:automationAuditActor});
+  // Bot first, AI when needed: a question the flows do not cover is answered by the governed AI while the
+  // bot keeps the thread. If the AI hands off, the conversation becomes human-owned exactly as in AI mode.
+  if("aiRequested"in chatbot&&chatbot.aiRequested){
+   const ai=await runGovernedMetaWhatsAppAiTurn(db,{eventId:input.eventId,threadId:input.threadId,customerId:input.customerId,inputMessageId:input.messageId});
+   if(ai.status==="human_handoff"){await setWhatsAppConversationMode(db,{threadId:input.threadId,mode:"human_only",actorEmail:automationAuditActor,reason:"Governed Meta WhatsApp AI handed off from chatbot"});return{...ai,routingMode:"human_only",aiEligible:false,humanOwned:true,automationReason:"chatbot_ai_handoff"};}
+   return{...ai,routingMode:"chatbot_only",aiEligible:true,humanOwned:false,automationReason:"chatbot_ai_answer"};
+  }
+  const handedOff=chatbot.routingMode==="human_only";const turn=(chatbot.turn??null)as Row|null;const outputMessageId=text(turn?.output_message_id);/* A failed arm must not fail the customer's turn, but it is reported as not armed - never claimed. */
+  const recoveryArmed=!handedOff&&Boolean(outputMessageId)?await armWhatsAppNoResponseSequence(db,{threadId:input.threadId,customerId:input.customerId,anchorMessageId:outputMessageId,routingMode:"chatbot_only"}).then(()=>true,(error:unknown)=>{console.error("whatsapp_recovery_arm_failed",{threadId:input.threadId,reason:error instanceof Error?error.message:String(error)});return false;}):false;return{status:handedOff?"human_handoff":"chatbot_routed",routingMode:chatbot.routingMode,aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:handedOff,automationReason:handedOff?"chatbot_handoff":"chatbot_only",chatbotDuplicatePrevented:Boolean(chatbot.duplicatePrevented),recoveryArmed};
  }catch{await failClosedAutomation(db,input);return{status:"human_handoff",routingMode:"human_only",aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:true,automationReason:"automation_dispatch_failed"};}
 }
 

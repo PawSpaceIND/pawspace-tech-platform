@@ -17,7 +17,7 @@ test("every transactional customer service enters a payment step except Relocati
  };
  for(const key of ["grooming","training","walking","food"])assert.match(files[key],/BookingPaymentPage/,`${key} must render the shared payment page`);
  assert.match(files.stay,/StayCarePaymentGate/,"stay care persistence must complete before payment");
- assert.match(await read("app/mobile-app/stay-care-payment-gate.tsx"),/if \(ready\) return <BookingPaymentPage/,"successful care save enters the same shared checkout");
+ assert.match(await read("app/mobile-app/stay-care-payment-gate.tsx"),/if \(ready\) return <>[\s\S]*?<BookingPaymentPage/,"successful care save enters the same shared checkout");
  assert.match(files.taxi,/new CustomerCheckoutController\(/,"Taxi enters the shared verified checkout controller");
  assert.match(files.taxi,/controller\.start\(/,"Taxi starts checkout through the shared controller");
  assert.doesNotMatch(files.taxi,/openMobileRazorpayCheckout|\/api\/payment-order/,"Taxi must not bypass the shared checkout locks and recovery contract");

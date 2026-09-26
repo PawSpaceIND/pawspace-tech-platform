@@ -38,6 +38,7 @@ export type MeetGreetCreateInput = {
   hostProviderId: string;
   format: MeetGreetFormat;
   preferredAt: number;
+  idempotencyKey?: string;
   intendedStayStart?: string;
   intendedStayEnd?: string;
   intendedStayDays?: number;
@@ -156,6 +157,13 @@ export async function createMeetGreetRequest(db: Db, input: MeetGreetCreateInput
 
   if (!(await hostEligible(db, hostProviderId))) throw new Error("Host is not a boarding host or pet-sitting provider");
 
+  const key=String(input.idempotencyKey||'').trim();
+  if(key.length>160)throw new Error('Meeting request key is too long');
+  const digest=key?Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([customerId,key]))))).map(x=>x.toString(16).padStart(2,'0')).join(''):null;
+  const id=digest?`MGR-${digest.slice(0,32).toUpperCase()}`:`MGR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+  const notes=input.notes==null?null:String(input.notes).slice(0,2000)||null;
+  const existing=key?await db.prepare('SELECT * FROM meet_greet_requests WHERE id=?').bind(id).first<Row>():null;
+  if(existing){const previous=rowToRequest(existing);if(previous.customerId!==customerId||previous.hostProviderId!==hostProviderId||previous.format!==input.format||previous.preferredAt!==preferredAt||previous.intendedStayStart!==stayStart||previous.intendedStayEnd!==stayEnd||previous.intendedStayDays!==intendedStayDays||previous.notes!==notes)throw new Error('Meeting request key was already used for different details');return previous;}
   const open = await db
     .prepare("SELECT id FROM meet_greet_requests WHERE customer_id=? AND host_provider_id=? AND status IN ('requested','confirmed') LIMIT 1")
     .bind(customerId, hostProviderId)
@@ -163,22 +171,20 @@ export async function createMeetGreetRequest(db: Db, input: MeetGreetCreateInput
   if (open) throw new Error("An open meet & greet already exists with this host");
 
   const price = meetGreetPrice(input.format, intendedStayDays);
-  const id = `MGR-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
-  const notes = input.notes == null ? null : String(input.notes).slice(0, 2000) || null;
 
   try {
-    await db
+    const create=db
       .prepare(
         "INSERT INTO meet_greet_requests (id,customer_id,host_provider_id,format,intended_stay_start,intended_stay_end,intended_stay_days,preferred_at,price_charged,price_waived_reason,status,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,'requested',?,?,?)"
       )
-      .bind(id, customerId, hostProviderId, input.format, stayStart, stayEnd, intendedStayDays, preferredAt, price.amount, price.reason, notes, now, now)
-      .run();
+      .bind(id, customerId, hostProviderId, input.format, stayStart, stayEnd, intendedStayDays, preferredAt, price.amount, price.reason, notes, now, now);
+    const event=db.prepare("INSERT INTO meet_greet_events (id,request_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(`MGE-${crypto.randomUUID().slice(0,12).toUpperCase()}`,id,"requested",actorId,JSON.stringify({format:input.format,intendedStayDays,priceCharged:price.amount,priceWaivedReason:price.reason}),now);
+    await db.batch([create,event]);
   } catch (error) {
     if (error instanceof Error && /UNIQUE/i.test(error.message)) throw new Error("An open meet & greet already exists with this host");
     throw error;
   }
 
-  await recordMeetGreetEvent(db, id, "requested", actorId, { format: input.format, intendedStayDays, priceCharged: price.amount, priceWaivedReason: price.reason });
   const row = await db.prepare("SELECT * FROM meet_greet_requests WHERE id=?").bind(id).first<Row>();
   return rowToRequest(row!);
 }

@@ -1,3 +1,6 @@
+import{approvedServiceLeadTemplate,leadBotState,registerServiceLeadTemplates}from"./whatsapp-service-templates";
+import{saveBotSession}from"./web-chat-bot-store";
+import{setWhatsAppConversationMode}from"./whatsapp-conversation-control";
 import{ensureCustomerAccountTables}from"./customer-account";
 import{ensureCustomer360Tables}from"./customer-360";
 import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,type WhatsAppUatProvider}from"./whatsapp-uat-adapter";
@@ -125,9 +128,17 @@ export async function startWhatsAppAiLead(db:D1Database,input:WhatsAppAiLeadInpu
  ]);
  const threadId=await leadThread(db,{leadId,customerId,assignedTo:input.assignedTo});
  const provider=input.provider??"sandbox_simulator",firstName=text(contact.name).split(/\s+/)[0]||"there",service=text(contact.opportunity)||"your pet-care requirement";
- const queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:`Hi ${firstName}, thanks for contacting PawSpace about ${service}. Reply here to continue with our booking assistant, or type STOP to opt out.`,idempotencyKey:`whatsapp-ai-lead:${leadId}:first-response:v1`,createdBy:input.actorId,templateKey:WHATSAPP_AI_LEAD_TEMPLATE,language:"en"});
+ /* The template for the service the lead asked about, as WATI does it, once that template is approved;
+  * otherwise the generic first-response template. */
+ await registerServiceLeadTemplates(db);
+ const serviceTemplate=await approvedServiceLeadTemplate(db,contact.opportunity),templateKey=serviceTemplate?.templateKey||WHATSAPP_AI_LEAD_TEMPLATE;
+ const queued=await queueWhatsAppUatOutbound(db,{provider,threadId,customerId,text:serviceTemplate?serviceTemplate.text:`Hi ${firstName}, thanks for contacting PawSpace about ${service}. Reply here to continue with our booking assistant, or type STOP to opt out.`,idempotencyKey:`whatsapp-ai-lead:${leadId}:first-response:v1`,createdBy:input.actorId,templateKey,language:"en"});
  if(!queued.queued)return stop(db,triggerId,"setup_required",text(queued.reason)||"whatsapp_setup_required",{threadId,provider});
+ /* The customer's reply goes to the guided bot, starting with the service they enquired about - the
+  * conversation no longer waits in human-only mode for someone to pick it up. */
+ await setWhatsAppConversationMode(db,{threadId,mode:"chatbot_only",actorEmail:input.actorId,reason:`Lead template sent; guided bot for ${service}`});
+ await saveBotSession(db,`whatsapp:${threadId}`,leadBotState(contact.opportunity));
  await db.prepare("UPDATE whatsapp_ai_lead_triggers SET customer_id=?,thread_id=?,message_id=?,status='queued',reason=NULL,detail_json=?,updated_at=? WHERE id=?")
-  .bind(customerId,threadId,queued.messageId,JSON.stringify({provider,externalDelivery:false,marketing:false,templateKey:WHATSAPP_AI_LEAD_TEMPLATE}),Date.now(),triggerId).run();
+  .bind(customerId,threadId,queued.messageId,JSON.stringify({provider,externalDelivery:false,marketing:false,templateKey,routingMode:"chatbot_only"}),Date.now(),triggerId).run();
  return triggerResult(db,triggerId,false);
 }
