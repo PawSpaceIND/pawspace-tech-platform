@@ -306,8 +306,9 @@ async function v2Reserve(page: Page, label: string) {
   return body.data.bookingId;
 }
 async function payOnPage(page: Page, contactPhone: string, bookingId: string, label: string) {
-  const pay = page.getByRole("button", { name: /^Pay securely/ });
-  if (!(await visible(pay, 30_000))) { await shot(page, `${label}-no-pay-button`); throw fail(`${label}: no "Pay securely" button (${(await mainText(page)).slice(0, 200)})`); }
+  // A first payment reads "Pay securely · ₹…"; a split's outstanding balance reads "Pay balance · ₹…" (#1098).
+  const pay = page.getByRole("button", { name: /^Pay (securely|balance)/ });
+  if (!(await visible(pay, 30_000))) { await shot(page, `${label}-no-pay-button`); throw fail(`${label}: no "Pay securely" or "Pay balance" button (${(await mainText(page)).slice(0, 200)})`); }
   const payLabel = (await pay.first().innerText()).trim();
   await shot(page, `${label}-payment-page`);
   await pay.first().click();
@@ -823,19 +824,29 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await g.getByLabel("Your message").fill("What dog training packages do you offer in Bengaluru and what do they cost?");
       const response = g.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
       await sendChat(g, "ai-guest");
-      const r = await response; await settle(g, 4000); await shot(g, "ai-guest-chat");
+      const r = await response;
+      await g.getByRole("status", { name: "PawSpace is typing" }).waitFor({ state: "hidden", timeout: 75_000 }).catch(() => {});
+      await settle(g, 1500); await shot(g, "ai-guest-chat");
       const convo = (await g.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(g))).replace(/\n+/g, " | ");
       return `${r?.status()} · ${convo.slice(-700)}`;
     });
-    await step("AI", "V2 chat (signed-in customer with a confirmed Meet & Greet): my next session", async () => {
-      await a.page.goto("/v2/chat"); await settle(a.page, 2500);
-      const mine = a.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
-      await a.page.getByLabel("Your message").fill("When is my Meet & Greet and who is my trainer?");
-      const response = a.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
-      await sendChat(a.page, "ai-customer");
-      const r = await response; await settle(a.page, 4000); await shot(a.page, "ai-customer-chat");
-      const convo = (await a.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(a.page))).replace(/\n+/g, " | ");
-      return `${r?.status()} · ${convo.slice(-700)}`;
+    await step("AI", "V2 chat (signed-in customer with a confirmed programme): my next session", async () => {
+      // Ask as the customer whose Starter programme is paid and confirmed; without one there is nothing to ask about.
+      const who = b && state.starter?.bookingId ? b : state.meet?.bookingId ? a : null;
+      if (!who) throw blocked("No confirmed Training booking to ask about");
+      await who.page.goto("/v2/chat"); await settle(who.page, 2500);
+      const mine = who.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
+      await who.page.getByLabel("Your message").fill("When is my next training session and who is my trainer?");
+      const response = who.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
+      await sendChat(who.page, "ai-customer");
+      const r = await response;
+      // Wait for the reply itself, not just the request: the typing indicator goes away when the answer is shown.
+      await who.page.getByRole("status", { name: "PawSpace is typing" }).waitFor({ state: "hidden", timeout: 75_000 }).catch(() => {});
+      await settle(who.page, 1500); await shot(who.page, "ai-customer-chat");
+      const convo = (await who.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(who.page))).replace(/\n+/g, " | ");
+      const answer = convo.split("When is my next training session and who is my trainer?").pop() ?? "";
+      if (!/PawSpace Training Team|trainer|session|Sept|Oct|\d{1,2}:\d{2}/i.test(answer)) throw fail(`No answer about the booking (${r?.status()}): ${convo.slice(-500)}`);
+      return `${r?.status()} · ${answer.slice(0, 600)}`;
     });
     await step("AI", "AI configuration readiness (founder)", async () => {
       await staffLogin(staff, "founder@pawspace.in");
