@@ -489,7 +489,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
     });
     await step("Customer app", "Coupon UATCARE100 on the Training review step (fresh page)", async () => {
       await a.page.goto("/mobile-app?service=dog_training"); await settle(a.page, 3000);
-      await a.page.getByRole("button", { name: /^(Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(a.page, 2500);
+      await a.page.getByRole("button", { name: /^(See training options|Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(a.page, 2500);
       await a.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(a.page, 2000);
       await a.page.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(a.page, 1200);
       await a.page.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(a.page, 3000);
@@ -665,7 +665,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         await reqs.getByRole("button", { name: /Recall/ }).click().catch(() => {});
         await c.page.getByLabel("Home routine, behaviour and trainer notes").fill("Walks 7am/7pm, pulls on leash, reactive to scooters").catch(() => {});
         await shot(c.page, "app-stage1");
-        await c.page.getByRole("button", { name: /^(Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(c.page, 2500);
+        await c.page.getByRole("button", { name: /^(See training options|Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(c.page, 2500);
         await shot(c.page, "app-stage2");
         await c.page.getByRole("button", { name: /Basic Obedience Plan/ }).first().click().catch(() => {});
         await c.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(c.page, 2500);
