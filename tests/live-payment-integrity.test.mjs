@@ -37,10 +37,11 @@ function paymentsDb({ amount, amountDueNow, status = "created" }) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PAY001_DB__ = db;
-  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL)");
+  // The entry point refuses ended bookings (booking_not_payable), so it reads the booking's status like the real table has it.
+  sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed')");
   sqlite.exec("CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL)");
   installFinancialLifecycleSchema(sqlite);
-  sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?)").run("BK-1", "CUS-1");
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,status) VALUES (?,?,'payment_pending')").run("BK-1", "CUS-1");
   sqlite.prepare("INSERT INTO booking_payments VALUES (?,?,?,?,?,?,?)").run("PAY-1", "BK-1", "CUS-1", amount, amountDueNow, "INR", status);
   return { sqlite, db };
 }

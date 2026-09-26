@@ -176,6 +176,12 @@ function PartnerMobileAppContent() {
   const [uatCode, setUatCode] = useState("");
   const [switching, setSwitching] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  // The empty list before the first /api/partner-jobs answer is not "No assigned jobs · 0 · 0": the staging
+  // E2E run 36243387701 screenshotted exactly that for a trainer whose paid booking was still loading.
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  // Jobs requests still running. The 30 s refresh skips while one is, so a response slower than 30 s is
+  // shown instead of being discarded by the next tick, and slow requests do not pile up on the server.
+  const jobsInFlight = useRef(0);
   // Non-grooming work from the unified feed: active (needs action / today / upcoming), completed, with Operations (offer expired or moved on) and past.
   const [otherJobs,setOtherJobs]=useState<FeedJob[]>([]),[otherCompleted,setOtherCompleted]=useState<FeedJob[]>([]),[otherOps,setOtherOps]=useState<FeedJob[]>([]),[otherPast,setOtherPast]=useState<FeedJob[]>([]),[feedError,setFeedError]=useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -206,6 +212,7 @@ function PartnerMobileAppContent() {
     sessionVersion.current += 1;
     setIdentity(null);
     setJobs([]);
+    setJobsLoaded(false);
     setSessionNotice("Your session ended, most likely because you signed in on another device. Verify your phone number again to continue.");
     setSessionState("unauthenticated");
   };
@@ -248,6 +255,7 @@ function PartnerMobileAppContent() {
     if (!identity?.subjectId) return;
     let cancelled = false;
     const version = sessionVersion.current;
+    jobsInFlight.current += 1;
     fetch(`/api/partner-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) { if (!cancelled && version === sessionVersion.current) handleUnauthorized(); return null; }
@@ -258,14 +266,16 @@ function PartnerMobileAppContent() {
       .then((next) => {
         if (next === null || cancelled || version !== sessionVersion.current) return;
         setJobs(next);
+        setJobsLoaded(true);
         setSelectedId(current=>selectPartnerWorkOrder(next,current,requestedBookingId));
         setError("");
       })
-      .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
+      .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); })
+      .finally(() => { jobsInFlight.current -= 1; });
     return () => { cancelled = true; };
   }, [identity?.subjectId, refreshKey, paymentPollKey, requestedBookingId]);
 
-  useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
+  useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>{if(jobsInFlight.current>0)return;setRefreshKey(value=>value+1);},30000);return()=>clearInterval(timer);},[identity?.subjectId]);
   // Another partner's work must never show, so the lists are cleared when the signed-in partner changes;
   // a periodic refresh keeps what is on screen until it has something newer (a failed refresh keeps it).
   useEffect(()=>{queueMicrotask(()=>{setOtherJobs([]);setOtherCompleted([]);setOtherOps([]);setOtherPast([]);setFeedError("");});},[identity?.subjectId]);
@@ -538,7 +548,7 @@ function PartnerMobileAppContent() {
   // Every piece of per-account state is dropped when the session changes hands, so the next partner
   // never sees the previous one's jobs, earnings, payment request or media before their own loads.
   const resetAccountState = () => {
-    setIdentity(null); setJobs([]); setSelectedId(""); setTab("home"); setOperationResult(null); setOperationBusy(false);
+    setIdentity(null); setJobs([]); setJobsLoaded(false); setSelectedId(""); setTab("home"); setOperationResult(null); setOperationBusy(false);
     setPaymentRequest(null); setPaymentPollKey(0); setEarnings(null); setMediaMessage(""); setMediaAssets([]); setMediaAssetsError(""); setMediaPollKey(0);
     setBusy(false); setRefreshKey(0); lifecycleLock.current = false;
     // The workspace state that arrives with the earnings payload belongs to the same account and is
@@ -633,7 +643,7 @@ function PartnerMobileAppContent() {
                 {nextAction && <button disabled={busy||pendingStatus||(nextAction==="start_service"&&!checklistComplete("before",selectedChecks))||((nextAction==="complete"||nextAction==="add_proof")&&!checklistComplete("after",selectedChecks))} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, "jobs")}>{isTraining ? "Open training session" : canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : otherJobs[0] ? (() => { const next = otherJobs[0], copy = feedOfferCopy(next), target = partnerJobWorkspaceHref(next, { v2: inV2Partner }); return <>
+            </> : !jobsLoaded ? <><h2>Loading your jobs…</h2><p>{error?"Retrying automatically.":"Your assigned work appears here as soon as it loads."}</p></> : otherJobs[0] ? (() => { const next = otherJobs[0], copy = feedOfferCopy(next), target = partnerJobWorkspaceHref(next, { v2: inV2Partner }); return <>
               <h2>{next.packageName}</h2>
               <p>{label(next.serviceCode)} · {next.customerFirstName} · {next.petCount} pet{next.petCount === 1 ? "" : "s"}</p>
               <div className={styles.heroMeta}><span>◷ {when(next.scheduledStart)}</span><span>{copy.label}</span></div>
@@ -643,8 +653,8 @@ function PartnerMobileAppContent() {
 
           <div className={styles.stats}>
             {/* Active = grooming work orders still open + Sitting/Boarding/Taxi jobs the feed files as active. Expired or reassigned offers and past jobs never count. */}
-            <article><span>{activeJobs.length+otherJobs.length}</span><small>active jobs</small></article>
-            <article><span>{completedJobs.length+otherCompleted.length}</span><small>completed</small></article>
+            <article><span>{jobsLoaded?activeJobs.length+otherJobs.length:"…"}</span><small>active jobs</small></article>
+            <article><span>{jobsLoaded?completedJobs.length+otherCompleted.length:"…"}</span><small>completed</small></article>
             <article role="button" tabIndex={0} aria-label="Open GPS and navigation" onClick={() => setTab("tracking")} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setTab("tracking"); } }}><span>GPS</span><small>{canTrack || otherAccepted.length ? "open GPS" : "after you accept"}</small></article>
           </div>
 
@@ -663,7 +673,7 @@ function PartnerMobileAppContent() {
 
         {(tab === "jobs" || (tab === "home" && dutyJob)) && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>{tab==="home"?"Your active job":"My jobs"}</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
-          {jobs.length === 0 && !error && <div className={styles.empty}>{otherJobs.length || otherOps.length || otherPast.length || otherCompleted.length ? "No grooming work orders. Your Sitting, Boarding and Taxi jobs are listed below; each opens in its own workspace to accept, check in and complete." : "No canonical jobs assigned to this provider yet."}</div>}
+          {jobs.length === 0 && !error && <div className={styles.empty}>{!jobsLoaded ? "Loading your jobs…" : otherJobs.length || otherOps.length || otherPast.length || otherCompleted.length ? "No grooming work orders. Your Sitting, Boarding and Taxi jobs are listed below; each opens in its own workspace to accept, check in and complete." : "No canonical jobs assigned to this provider yet."}</div>}
           {tab === "jobs" && otherJobSections}
           {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.workOrderId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
           {selected && <section className={styles.detailCard}>

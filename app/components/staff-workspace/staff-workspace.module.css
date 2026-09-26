@@ -12,6 +12,8 @@
 .frame :where(button:not(:disabled),summary) { cursor:pointer; }
 .frame :where(button:disabled) { cursor:not-allowed; }
 .content { min-width:0; background:var(--staff-bg); }
+.signInNotice { margin:16px; padding:12px 16px; border:1px solid #d9a441; border-radius:10px; background:#fff7e6; color:#5c3d00; font-size:.9375rem; line-height:1.5; }
+.signInNotice a { font-weight:700; color:inherit; text-decoration:underline; white-space:nowrap; }
 .content:focus { outline:none; }
 .sidebar { position:sticky; top:0; height:100dvh; overflow-y:auto; padding:24px 18px; background:var(--staff-nav); color:#f5fbf7; display:flex; flex-direction:column; gap:16px; }
 .brand { display:block; padding:14px 18px; border-radius:14px; background:#fff; }

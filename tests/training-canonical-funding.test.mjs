@@ -6,10 +6,11 @@ const {mutateTrainingSession}=await import('../lib/training-session-lifecycle.ts
 const {trainingBookingPaymentState}=await import('../lib/training-payment-eligibility.ts');
 const {trainingQuotePaymentState}=await import('../lib/training-commercial-governance.ts');
 const {ensurePaymentReconciliationTables}=await import('../lib/grooming-payment-reconciliation.ts');
-const {commitRazorpayCaptureAtomic}=await import('../lib/razorpay-capture-atomic.ts');
+const {commitRazorpayCaptureAtomic,executeRazorpayCapturePostCommit}=await import('../lib/razorpay-capture-atomic.ts');
 const {ensureTrainingFinanceTables,listTrainerEarnings,refreshTrainingFinanceReadModel}=await import('../lib/training-finance.ts');
 const {ensureProviderCapacityTables}=await import('../lib/provider-capacity-governance.ts');
 const jobs=await import('../app/api/partner-jobs/route.ts');
+const trainingSessions=await import('../app/api/training-sessions/route.ts');
 async function world(options={}){
  const w=freshWorld(options.env);seedBooking(w,{id:'FUND',group:'FUND-G',sessions:2,total:1000,dueNow:500,...options});
  const p=await materializeTrainingBooking(w.db,{bookingId:'FUND',actorId:'qa'});
@@ -56,3 +57,22 @@ test('real wallet redemption plus real capture module funds Training once across
  await capture(w,450);const state=await read(w);assert.equal(state.creditPaid,550);assert.equal(state.cashPaid,450);assert.equal(state.amountPaid,1000);assert.equal(state.status,'FULLY_PAID');assert.equal((await providerRead(w))[0].payment.amountDueNow,0);assert.equal((await accept(w)).status,'accepted');
 });
 test('restored PawPoints no longer count as funding',async()=>{const w=await world();credits(w,{points:2000});w.sqlite.prepare("INSERT INTO paw_points_ledger VALUES (?,'cancellation_restore','FUND',2000)").run(CUSTOMER);assert.equal((await read(w)).creditPaid,0);await assert.rejects(accept(w),e=>e instanceof Response&&e.status===409);});
+/*
+ * Staging E2E 36243387701: the partner app showed "No assigned jobs" for a trainer whose split booking had its
+ * deposit captured. That booking is listed (the home was only still loading); what /api/partner-jobs must NOT
+ * list is an unpaid one, whose Accept the lifecycle refuses with 409 training_payment_required. Same rule as
+ * lib/partner-job-feed.ts and lib/provider-workspace.ts (06d044c), which never reached this route.
+ */
+test('a split Training booking reaches the trainer only once its deposit is captured, and the trainer can then accept it',async()=>{
+ const w=await world({status:'payment_pending'});
+ w.sqlite.prepare("UPDATE training_commercial_quotes SET payment_mode='split' WHERE id=?").run(w.quoteId);w.sqlite.prepare("UPDATE booking_payments SET mode='split' WHERE booking_id='FUND'").run();
+ assert.deepEqual(await providerRead(w),[],'an unpaid (payment_pending) Training booking is not offered to the trainer');
+ // A fresh provider session per call: providerRead issues one too, and a new session supersedes the last.
+ const post=async key=>routeCall(trainingSessions.POST,'POST','/api/training-sessions',{cookie:await sessionCookie(w.db,'provider',TRAINER),body:{sessionId:w.sessions[0].id,action:'accept',idempotencyKey:key}});
+ const refused=await post('split-accept-unpaid');assert.equal(refused.status,409,'this is why it is not offered');
+ const committed=await capture(w,500);const effects=await executeRazorpayCapturePostCommit(w.db,{outboxId:committed.effectsOutboxId,workerId:'qa-split-deposit'});assert.equal(effects.completed,true,JSON.stringify(effects));
+ assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='FUND'").get().status,'confirmed','the captured deposit confirms the split booking');
+ const listed=await providerRead(w);
+ assert.deepEqual(listed.map(job=>[job.trainingSessionId,job.status,job.payment.status,job.payment.mode,job.payment.amountDueNow]),[[w.sessions[0].id,'scheduled','partially_paid','split',0],[w.sessions[1].id,'locked','partially_paid','split',0]]);
+ const accepted=await post('split-accept-deposit');assert.equal(accepted.status,200,JSON.stringify(accepted.body));assert.equal(accepted.body.data.status,'accepted');
+});

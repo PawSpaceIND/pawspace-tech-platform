@@ -1,4 +1,4 @@
-import { trainingBookingPaymentState } from "../../../lib/training-payment-eligibility";
+import { trainingBookingPaymentStates } from "../../../lib/training-payment-eligibility";
 import { authError, database, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { listTrainerSessions } from "../../../lib/training-session-lifecycle";
 import { projectTrainerSession } from "../../../lib/training-provider-projection";
@@ -34,16 +34,23 @@ export async function GET(request: Request) {
     if (services.has("dog_training")) {
       const sessions = await listTrainerSessions(db, providerId);
       await ensureTrainingCommercialTables(db);
-      const commercialByBooking = new Map<string, Row>();
+      // Every booking's commercial row and funding state in a fixed number of reads. Three queries per
+      // booking made this list outlast the partner app's waits on staging (E2E 36243387701, ~0.3 s a call).
+      const bookingIds = [...new Set(sessions.map(raw => String((raw as Row).booking_id || "")))];
+      const [commercialRows, fundingByBooking] = await Promise.all([
+        bookingIds.length ? db.prepare("SELECT b.id booking_id,b.total_amount,b.currency,b.city_id,b.zone_id,b.status booking_status,p.method,p.mode,p.status payment_status,p.amount_due_now,q.payment_mode,q.amount_due_now quote_due_now FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN training_booking_quote_links l ON l.booking_id=b.id LEFT JOIN training_commercial_quotes q ON q.id=l.quote_id WHERE b.id IN (SELECT value FROM json_each(?)) AND b.service_code='dog_training'").bind(JSON.stringify(bookingIds)).all<Row>() : Promise.resolve({ results: [] as Row[] }),
+        trainingBookingPaymentStates(db, bookingIds),
+      ]);
+      const commercialByBooking = new Map(commercialRows.results.map(row => [String(row.booking_id), row]));
       for (const raw of sessions) {
         const session = projectTrainerSession({ ...raw, customer_name: maskName(String((raw as Row).customer_name || "Customer")) });
-        let commercial = commercialByBooking.get(session.booking_id);
-        if (!commercial) {
-          commercial = await db.prepare("SELECT b.total_amount,b.currency,b.city_id,b.zone_id,b.status booking_status,p.method,p.mode,p.status payment_status,p.amount_due_now,q.payment_mode,q.amount_due_now quote_due_now FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN training_booking_quote_links l ON l.booking_id=b.id LEFT JOIN training_commercial_quotes q ON q.id=l.quote_id WHERE b.id=? AND b.service_code='dog_training'").bind(session.booking_id).first<Row>() ?? {};
-          const funding = await trainingBookingPaymentState(db, session.booking_id);
-          commercial = {...commercial, funding_status:funding.status, amount_paid:funding.amountPaid};
-          commercialByBooking.set(session.booking_id, commercial);
-        }
+        const funding = fundingByBooking.get(session.booking_id);
+        const commercial: Row = { ...commercialByBooking.get(session.booking_id), funding_status: funding?.status, amount_paid: funding?.amountPaid };
+        // An unpaid Training booking is not a job yet: the Training lifecycle refuses accept (409
+        // training_payment_required) until the customer pays, so it must not become the partner app's next
+        // assignment. The same rule as lib/partner-job-feed.ts and lib/provider-workspace.ts. A split booking
+        // whose deposit is captured is 'confirmed' and stays listed.
+        if (String(commercial.booking_status) === "payment_pending") continue;
         const totalAmount = Number(commercial.total_amount || 0);
         const inactive = ["cancelled", "refunded", "failed", "expired"].includes(String(commercial.booking_status));
         const refunded = ["refunded", "partially_refunded"].includes(String(commercial.payment_status));

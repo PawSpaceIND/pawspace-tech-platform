@@ -23,5 +23,9 @@ export type CanonicalLifecycleResult={bookingId:string;customerId:string;petIds:
 export async function createCanonicalLifecycle(input:CanonicalLifecycleInput){
   // Booking creation may establish a payment-pending hold, but it never manufactures a capture.
   // Razorpay/provider evidence is the only authority that can advance a prepaid booking to confirmed.
-  return apiSend<CanonicalLifecycleResult>("/api/canonical-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)},"The shared booking record could not be created");
+  // A Training create is a fixed chain of 55-74 sequential D1 round trips, 14-19 s at the ~0.26 s per round
+  // trip staging showed from CI, so the shared 20 s abort cut it off while the server could still commit it.
+  // Training waits 90 s: the create replays on idempotencyKey/scheduleGroupId and the schedule hold lasts
+  // 5 minutes. Every other service keeps the 20 s default.
+  return apiSend<CanonicalLifecycleResult>("/api/canonical-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)},"The shared booking record could not be created",input.serviceCode==="dog_training"?{timeoutMs:90_000}:{});
 }

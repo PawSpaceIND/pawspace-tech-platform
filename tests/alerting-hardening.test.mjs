@@ -107,7 +107,7 @@ test("inventory: every background job is wired into the scheduled worker; none a
   const workerSource = fs.readFileSync("worker/index.ts", "utf8");
   assert.match(workerSource, /async scheduled\(/);
   assert.match(workerSource, /runBackgroundScheduler\(env\.DB/);
-  const jobNames = ["staffAlerts", "callbacks", "leadReopening", "legacyLeadSla", "opsEscalation", "commandReports", "customerReminders", "petBirthdayRewards", "vaccinationReminders", "pawPointsEarn", "serviceReviews", "revenueRecognition", "riskAnomaly", "customerTargeting", "haptikOutbound", "appToRevenueFunnel", "dailyIncentiveAccrual", "statutoryReminders", "opsWorkQueue", "foodBatchExpiry", "overdueStayBalances"];
+  const jobNames = ["staffAlerts", "callbacks", "leadReopening", "legacyLeadSla", "opsEscalation", "commandReports", "customerReminders", "petBirthdayRewards", "vaccinationReminders", "pawPointsEarn", "serviceReviews", "revenueRecognition", "riskAnomaly", "customerTargeting", "haptikOutbound", "appToRevenueFunnel", "dailyIncentiveAccrual", "statutoryReminders", "opsWorkQueue", "foodBatchExpiry", "overdueStayBalances", "trainingUnpaidExpiry"];
   for (const name of jobNames) assert.ok(scheduler.includes(`"${name}"`), `job ${name} is named in the scheduler result`);
   // Every exported run*Sweep in lib/ must be reachable from the scheduler (directly or transitively).
   const sweepExports = [];

@@ -16,6 +16,15 @@ export type ResolvedServiceCoverage = {
   zone: ResolvedServiceZone;
 };
 
+/**
+ * The server's answer that PawSpace does not serve a PIN: no zone for it (404), a city that is not open (409)
+ * or a zone that is not available. A network, server or parse failure stays a plain Error, so a caller can
+ * tell "not served" from "could not check". The message is the same either way.
+ */
+export class ServiceCoverageRefusal extends Error {
+  constructor(message: string) { super(message); this.name = "ServiceCoverageRefusal"; }
+}
+
 export function cityIdFromZoneId(zoneId: string): string {
   const cityId = zoneId.trim().split("-")[0]?.toLowerCase() || "";
   if (!/^[a-z0-9]{2,16}$/.test(cityId)) throw new Error("Service zone is missing a valid city identifier.");
@@ -37,7 +46,9 @@ export async function resolveServiceCoverage(pincodeInput: string, signal?: Abor
   const assignment = body.data?.assignment;
   const zone = body.data?.zone;
   if (!response.ok || !assignment?.zoneId || !zone?.serviceAvailable) {
-    throw new Error(body.error || `PIN code ${pincode} is outside the currently enabled service area.`);
+    const message = body.error || `PIN code ${pincode} is outside the currently enabled service area.`;
+    const refused = response.status === 404 || response.status === 409 || (response.ok && Boolean(assignment?.zoneId) && zone?.serviceAvailable === false);
+    throw refused ? new ServiceCoverageRefusal(message) : new Error(message);
   }
   const cityId = String(assignment.cityId || cityIdFromZoneId(assignment.zoneId)).trim().toLowerCase();
   const resolvedZoneId = zone.zoneId || assignment.zoneId;

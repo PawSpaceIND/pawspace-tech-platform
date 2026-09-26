@@ -28,6 +28,9 @@ const defaults=[
 // 26 Sep 2026): existing packages take the 60% default, the same as a new database.
 async function ensurePackageExtraPetColumn(db:D1Database){const present=async()=>(await db.prepare("PRAGMA table_info(training_commercial_packages)").all<Row>()).results.some(row=>String(row.name)==="extra_pet_percent");if(await present())return;try{await db.prepare("ALTER TABLE training_commercial_packages ADD COLUMN extra_pet_percent REAL NOT NULL DEFAULT 60").run();}catch(error){if(!await present())throw error;}}
 async function ensureQuoteCouponColumn(db:D1Database){const present=async()=>(await db.prepare("PRAGMA table_info(training_commercial_quotes)").all<Row>()).results.some(row=>String(row.name)==="coupon_quote_id");if(await present())return;try{await db.prepare("ALTER TABLE training_commercial_quotes ADD COLUMN coupon_quote_id TEXT").run();}catch(error){if(!await present())throw error;}}
+// An added column never disappears, so both PRAGMA checks run once per D1 binding in this isolate. Nothing
+// else here is memoized: the seeds and the founder-seed repairs below still run on every call.
+const trainingCommercialColumnsEnsured=new WeakSet<D1Database>();
 
 export async function ensureTrainingCommercialTables(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS training_commercial_packages (package_code TEXT PRIMARY KEY,name TEXT NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,base_price REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',meet_and_greet INTEGER NOT NULL DEFAULT 0,max_pets INTEGER NOT NULL DEFAULT 4,direct_minutes_per_pet INTEGER NOT NULL DEFAULT 45,coaching_minutes_per_pet INTEGER NOT NULL DEFAULT 15,split_due_percent REAL NOT NULL DEFAULT 50,extra_pet_percent REAL NOT NULL DEFAULT 60,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -37,7 +40,10 @@ export async function ensureTrainingCommercialTables(db:D1Database){await db.bat
  db.prepare("CREATE TABLE IF NOT EXISTS training_coupon_rules (code TEXT PRIMARY KEY,discount_type TEXT NOT NULL,value REAL NOT NULL,max_discount REAL,status TEXT NOT NULL DEFAULT 'active',effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_balance_payment_events (id TEXT PRIMARY KEY,quote_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL UNIQUE,bound_payment_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
-]);await ensureQuoteCouponColumn(db);await ensurePackageExtraPetColumn(db);const now=Date.now();for(const item of defaults)await db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now).run();
+]);if(!trainingCommercialColumnsEnsured.has(db)){await ensureQuoteCouponColumn(db);await ensurePackageExtraPetColumn(db);trainingCommercialColumnsEnsured.add(db);}const now=Date.now();
+ // One round trip for the eight founder seeds (same statements, same order) instead of eight. They stay out
+ // of the CREATE batch so a seed problem can never roll back the schema.
+ await db.batch(defaults.map(item=>db.prepare("INSERT OR IGNORE INTO training_commercial_packages (package_code,name,sessions,validity_days,base_price,currency,meet_and_greet,max_pets,direct_minutes_per_pet,coaching_minutes_per_pet,split_due_percent,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,?,?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.sessions,item.validityDays,item.price,item.meet,item.maxPets,item.direct,item.coaching,item.split,now)));
  // Repair the original founder Meet & Greet seed (30+15=45m), which violates the scheduler's
  // governed 60-minute minimum for dog_training. Expire still-open quotes before bumping the package
  // version so a pre-repair quote can never be booked against different duration semantics.
@@ -45,14 +51,14 @@ export async function ensureTrainingCommercialTables(db:D1Database){await db.bat
  // never bookable. Founder decision 26 Sep 2026: 120 days. Same repair discipline as below: only the
  // untouched founder seed moves, open quotes expire first, and the version bump keeps booked programmes on
  // the terms they were quoted.
- const pro=await db.prepare("SELECT validity_days,version,updated_by FROM training_commercial_packages WHERE package_code='training-16-pro'").first<Row>();
+ // Both repair rows come back in one read.
+ const repairs=(await db.prepare("SELECT package_code,validity_days,version,updated_by,direct_minutes_per_pet,coaching_minutes_per_pet FROM training_commercial_packages WHERE package_code IN ('training-16-pro','trainer-meet-greet')").all<Row>()).results,pro=repairs.find(row=>String(row.package_code)==="training-16-pro"),meet=repairs.find(row=>String(row.package_code)==="trainer-meet-greet");
  if(pro&&String(pro.updated_by)==="founder_seed"&&Number(pro.validity_days)===93){
   await db.batch([
    db.prepare("UPDATE training_commercial_quotes SET status='expired' WHERE package_code='training-16-pro' AND status='open' AND package_version=?").bind(Number(pro.version)),
    db.prepare("UPDATE training_commercial_packages SET validity_days=120,version=version+1,updated_at=? WHERE package_code='training-16-pro' AND updated_by='founder_seed' AND validity_days=93 AND version=?").bind(now,Number(pro.version)),
   ]);
  }
- const meet=await db.prepare("SELECT direct_minutes_per_pet,coaching_minutes_per_pet,updated_by FROM training_commercial_packages WHERE package_code='trainer-meet-greet'").first<Row>();
  if(meet&&String(meet.updated_by)==="founder_seed"&&Number(meet.direct_minutes_per_pet)+Number(meet.coaching_minutes_per_pet)<60){
   await db.batch([
    db.prepare("UPDATE training_commercial_quotes SET status='expired' WHERE package_code='trainer-meet-greet' AND status='open'"),
