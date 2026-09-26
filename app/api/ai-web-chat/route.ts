@@ -5,8 +5,9 @@ import{flowByCode,initialBotState,menuReply,partialSummary,runBotTurn}from"../..
 import{advanceBotSession}from"../../../lib/web-chat-bot-store";
 import{POST as submitPublicContact}from"../public-contact/route";
 import{withinPublicRateLimit}from"../../../lib/public-abuse-gate";
-import{requestAiHumanHandoff}from"../../../lib/ai-human-handoff";
+import{requestAiHumanHandoff,routeLeadToTeamQueue}from"../../../lib/ai-human-handoff";
 import{isCustomerCallbackRequest,requestGovernedCustomerCallback}from"../../../lib/ai-first-control-plane";
+import{activeCrossSell}from"../../../lib/ai-sales-offers";
 
 type Body={bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -90,7 +91,8 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
  }
  if(!String(body.message||"").trim()&&!String(body.choiceId||"").trim())return json({error:"Message is required"},400);
  // "Start over" resets the flow, not the visitor: the lead created for their number stays theirs.
- const turn=await advanceBotSession(db,ref,previous=>{const result=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false});return previous.leadId&&!result.state.leadId?{...result,state:{...result.state,leadId:previous.leadId}}:result;});
+ const crossSell=await activeCrossSell(db,{channel:"website"});
+ const turn=await advanceBotSession(db,ref,previous=>{const result=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false,crossSell});return previous.leadId&&!result.state.leadId?{...result,state:{...result.state,leadId:previous.leadId}}:result;});
  if(!turn.display)return json({error:"Message is required"},400);
  let ai:unknown=null,lead:unknown=null;
  if(turn.event.type==="ai"){
@@ -100,7 +102,11 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
  const state=turn.state;
  if(turn.event.type==="completed"){
   // The lead usually exists already (created when the number was given); the answers complete it.
-  lead=state.leadId?await completeWebChatBotLead(db,{leadId:state.leadId,service:turn.event.service,summary:turn.event.summary,whatsappConsent:/^yes/i.test(turn.event.answers.whatsapp||"")}):await submitBotLead(request,sessionKey,{service:turn.event.service,answers:turn.event.answers,summary:turn.event.summary});
+  /* WATI hands some enquiries to a team (relocation to the relocation desk, an existing booking or
+   * subscription to sales); those leads go to that team's queue rather than the WhatsApp sales AI. */
+  const teamReason=turn.event.followUp==="team"?turn.event.followUpReason??"bot_lead_qualified":null;
+  if(state.leadId)lead=await completeWebChatBotLead(db,{leadId:state.leadId,service:turn.event.service,summary:turn.event.summary,whatsappConsent:/^yes/i.test(turn.event.answers.whatsapp||""),teamReason});
+  else{const submitted=await submitBotLead(request,sessionKey,{service:turn.event.service,answers:turn.event.answers,summary:turn.event.summary});lead=submitted.captured&&submitted.leadId&&teamReason?{...submitted,routedTo:await routeLeadToTeamQueue(db,{leadId:String(submitted.leadId),reason:teamReason})}:submitted;}
  }else if(state.status==="collecting"&&state.answers.phone&&state.answers.name&&!state.leadId){
   /* The visitor's number is known: the lead is created now, as WATI has it from the first message, so a
    * visitor who stops half way is still followed up by the lead's own response clock. */
