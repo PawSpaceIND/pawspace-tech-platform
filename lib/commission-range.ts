@@ -31,6 +31,10 @@ export function isProviderEngagement(value:unknown):value is ProviderEngagement{
 /** Commission for a groomer keeps the groomer defaults (cash allowed); every other commission service is the standard model. A funeral service is always the exempt model. */
 export function engagementModelFor(engagement:ProviderEngagement,serviceCode:string){const code=String(serviceCode||"").trim().toLowerCase();if(engagement==="full_time")return"direct_employee" as const;if(engagement==="funeral_vendor"||FUNERAL_CODES.has(code))return"funeral_exempt" as const;return GROOMING_SERVICE_CODES.has(code)?"commission_groomer" as const:"commission_standard" as const;}
 export function engagementOfModel(model:string):ProviderEngagement|null{if(model==="direct_employee")return"full_time";if(model==="funeral_exempt")return"funeral_vendor";if(RANGE_GOVERNED_MODELS.has(model))return"commission";return null;}
+/** A provider's engagement from the models of their terms: full-time if any is own supply, else commission if any is a commission model (a commission provider's funeral service is still exempt), else funeral vendor. */
+export function engagementOfModels(models:ReadonlyArray<string>):ProviderEngagement|null{if(models.includes("direct_employee"))return"full_time";if(models.some(model=>RANGE_GOVERNED_MODELS.has(model)))return"commission";if(models.includes("funeral_exempt"))return"funeral_vendor";return null;}
+/** Funeral and memorial are GST exempt whoever supplies them (owner decision 4). */
+export function isFuneralService(serviceCode:unknown){return FUNERAL_CODES.has(String(serviceCode??"").trim().toLowerCase());}
 /** PawSpace's commission % -> the provider's share as a stored fraction (30 -> 0.7). */
 export function providerShareFromCommission(pawspaceCommissionPercent:number){return round2(100-Number(pawspaceCommissionPercent))/100;}
 /** A stored provider share fraction -> PawSpace's commission % (0.7 -> 30). */
@@ -48,13 +52,14 @@ export type CommissionPreview={paidAmount:number;providerGets:number;pawspaceKee
 /**
  * The worked example staff see before saving: what the provider gets, what PawSpace keeps and the GST it pays,
  * on a booking of `paidAmount` (Rs 1,000 by default), under the one GST setting. Same arithmetic as
- * splitServiceOrder in lib/provider-commercial-terms.ts.
+ * splitServiceOrder in lib/provider-commercial-terms.ts. Give `serviceCode` so a funeral or memorial service shows
+ * no GST whoever supplies it, exactly as the engine computes it.
  */
-export function commissionPreview(input:{engagement:ProviderEngagement;pawspaceCommissionPercent?:number|null;gstPolicy?:GstPolicy|null;paidAmount?:number}):CommissionPreview{
- const paid=round2(Number(input.paidAmount??1000)),policy=input.gstPolicy??DEFAULT_GST_POLICY,booking=`On a ${rupeesText(paid)} booking`;
- if(input.engagement==="full_time"){const gst=gstOn(paid,policy);return{paidAmount:paid,providerGets:0,pawspaceKeeps:paid,gst,pawspaceAfterGst:round2(paid-gst),sentence:`${booking}: PawSpace keeps ${rupeesText(paid)} and pays ${rupeesText(gst)} GST. The provider is paid a monthly fee through Contractor pay, not a share.`};}
+export function commissionPreview(input:{engagement:ProviderEngagement;pawspaceCommissionPercent?:number|null;gstPolicy?:GstPolicy|null;paidAmount?:number;serviceCode?:string|null}):CommissionPreview{
+ const paid=round2(Number(input.paidAmount??1000)),policy=input.gstPolicy??DEFAULT_GST_POLICY,booking=`On a ${rupeesText(paid)} booking`,exempt=isFuneralService(input.serviceCode);
+ if(input.engagement==="full_time"){const gst=exempt?0:gstOn(paid,policy);return{paidAmount:paid,providerGets:0,pawspaceKeeps:paid,gst,pawspaceAfterGst:round2(paid-gst),sentence:`${booking}: PawSpace keeps ${rupeesText(paid)} and pays ${exempt?"no GST (funeral and memorial are GST exempt)":`${rupeesText(gst)} GST`}. The provider is paid a monthly fee through Contractor pay, not a share.`};}
  const percent=Number(input.pawspaceCommissionPercent??PAWSPACE_COMMISSION_DEFAULT_PERCENT),providerGets=round2(paid*providerShareFromCommission(percent)),pawspaceKeeps=round2(paid-providerGets);
- if(input.engagement==="funeral_vendor")return{paidAmount:paid,providerGets,pawspaceKeeps,gst:0,pawspaceAfterGst:pawspaceKeeps,sentence:`${booking}: provider gets ${rupeesText(providerGets)}, PawSpace keeps ${rupeesText(pawspaceKeeps)} and pays no GST (funeral and memorial are GST exempt)`};
+ if(input.engagement==="funeral_vendor"||exempt)return{paidAmount:paid,providerGets,pawspaceKeeps,gst:0,pawspaceAfterGst:pawspaceKeeps,sentence:`${booking}: provider gets ${rupeesText(providerGets)}, PawSpace keeps ${rupeesText(pawspaceKeeps)} and pays no GST (funeral and memorial are GST exempt)`};
  const gst=gstOn(pawspaceKeeps,policy);
  return{paidAmount:paid,providerGets,pawspaceKeeps,gst,pawspaceAfterGst:round2(pawspaceKeeps-gst),sentence:`${booking}: provider gets ${rupeesText(providerGets)}, PawSpace keeps ${rupeesText(pawspaceKeeps)} and pays ${rupeesText(gst)} GST`};
 }

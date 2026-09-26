@@ -14,7 +14,7 @@ export type TermsRow = { serviceCode: string; pawspaceCommissionPercent: string 
 export type TermsProposal = { providerId: string; applicationId?: string; engagement: ProviderEngagement; services: TermsRow[]; effectiveFrom: string; reason: string };
 export type TermsRequest = { url: string; body: Record<string, unknown> };
 type TermSummary = { termId: string; serviceCode: string; status: string; engagement: ProviderEngagement | null; pawspaceCommissionPercent: number | null; effectiveFrom: string; createdBy: string; approvedBy: string | null };
-type TermsView = { providerId: string; engagement: ProviderEngagement; services: { serviceCode: string; active: TermSummary | null; draft: TermSummary | null; serviceDefault: TermSummary | null }[]; awaitingApproval: TermSummary[]; proposedBy: string[]; gstPolicy?: GstPolicy; legacyCommission?: { reason: string; legacyProviderSharePercent: unknown } | null };
+type TermsView = { providerId: string; engagement: ProviderEngagement; services: { serviceCode: string; active: TermSummary | null; scheduled?: TermSummary[]; draft: TermSummary | null; serviceDefault: TermSummary | null }[]; awaitingApproval: TermSummary[]; proposedBy: string[]; gstPolicy?: GstPolicy; legacyCommission?: { reason: string; legacyProviderSharePercent: unknown } | null };
 
 const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 16, marginBottom: 14 } as const;
 const muted = { color: "var(--staff-muted)" } as const;
@@ -29,11 +29,15 @@ export function providerTermsSaveRequest(context: TermsContext, proposal: TermsP
     ? { url: "/api/provider-onboarding", body: { action: "save_commercial_terms", applicationId: proposal.applicationId, ...common } }
     : { url: "/api/partner-finance", body: { action: "save_provider_commercial_terms", providerId: proposal.providerId, ...common } };
 }
-/** Activation always needs Finance and a different person from the one who proposed the terms. */
-export function providerTermsActivateRequest(context: TermsContext, providerId: string, approvalReference: string): TermsRequest {
+/**
+ * Activation always needs Finance and a different person from the one who proposed the terms. `termIds` are the drafts
+ * the approver was shown: if the proposal changed since, the server activates nothing and asks them to review it again.
+ */
+export function providerTermsActivateRequest(context: TermsContext, providerId: string, approvalReference: string, termIds?: string[]): TermsRequest {
+  const reviewed = termIds ? { termIds } : {};
   return context === "onboarding"
-    ? { url: "/api/provider-commercial-terms", body: { action: "activate_provider_terms", providerId, approvalReference } }
-    : { url: "/api/partner-finance", body: { action: "activate_provider_commercial_terms", providerId, approvalReference } };
+    ? { url: "/api/provider-commercial-terms", body: { action: "activate_provider_terms", providerId, approvalReference, ...reviewed } }
+    : { url: "/api/partner-finance", body: { action: "activate_provider_commercial_terms", providerId, approvalReference, ...reviewed } };
 }
 /** Sends one request. A refusal (outside 10-40%, the proposer approving their own terms) comes back in plain words. */
 export async function sendTermsRequest(fetcher: typeof fetch, request: TermsRequest): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -51,14 +55,14 @@ function rowsFor(view: TermsView, offered: string[]): TermsRow[] {
   const codes = [...new Set([...offered, ...view.services.map(service => service.serviceCode)])];
   return codes.map(code => {
     const service = view.services.find(item => item.serviceCode === code);
-    const percent = service?.draft?.pawspaceCommissionPercent ?? service?.active?.pawspaceCommissionPercent ?? service?.serviceDefault?.pawspaceCommissionPercent ?? PAWSPACE_COMMISSION_DEFAULT_PERCENT;
+    const percent = service?.draft?.pawspaceCommissionPercent ?? service?.scheduled?.at(-1)?.pawspaceCommissionPercent ?? service?.active?.pawspaceCommissionPercent ?? service?.serviceDefault?.pawspaceCommissionPercent ?? PAWSPACE_COMMISSION_DEFAULT_PERCENT;
     return { serviceCode: code, pawspaceCommissionPercent: String(percent) };
   });
 }
 function rowPreview(engagement: ProviderEngagement, row: TermsRow, gstPolicy: GstPolicy) {
   const model = engagementModelFor(engagement, row.serviceCode), percent = row.pawspaceCommissionPercent.trim() === "" ? PAWSPACE_COMMISSION_DEFAULT_PERCENT : Number(row.pawspaceCommissionPercent);
   if (model !== "direct_employee" && !Number.isFinite(percent)) return "";
-  return commissionPreview({ engagement: model === "funeral_exempt" ? "funeral_vendor" : engagement, pawspaceCommissionPercent: percent, gstPolicy }).sentence;
+  return commissionPreview({ engagement: model === "funeral_exempt" ? "funeral_vendor" : engagement, pawspaceCommissionPercent: percent, gstPolicy, serviceCode: row.serviceCode }).sentence;
 }
 
 type Props = { context: TermsContext; providerId?: string; applicationId?: string; services?: string[]; onChanged?: () => void };
@@ -91,23 +95,25 @@ export default function ProviderCommercialTermsPanel({ context, providerId: fixe
     const timer = setTimeout(() => { void fetchTermsView(fixedProviderId).then(loaded => { if (active) apply(loaded, known); }).catch(() => { if (active) setNote("This provider's terms could not be loaded"); }); }, 0);
     return () => { active = false; clearTimeout(timer); };
   }, [fixedProviderId, offeredKey, apply]);
-  async function run(request: TermsRequest, done: (data: unknown) => string) {
+  async function run(request: TermsRequest, done: (data: unknown) => string, reloadOnRefusal = false) {
     setBusy(true); setError(""); setMessage("");
     try {
       const result = await sendTermsRequest(fetch, request);
-      if (!result.ok) { setError(result.error ?? "The commercial terms could not be saved"); return; }
+      // A refused approval (for example, the proposal changed) reloads what is waiting, so the approver sees the new proposal.
+      if (!result.ok) { setError(result.error ?? "The commercial terms could not be saved"); if (reloadOnRefusal && providerId) apply(await fetchTermsView(providerId), offered ?? []); return; }
       setMessage(done(result.data)); await load(providerId); onChanged?.();
     } catch (failure) { setError(failure instanceof Error ? failure.message : "The commercial terms could not be saved"); } finally { setBusy(false); }
   }
   const save = () => run(providerTermsSaveRequest(context, { providerId, applicationId, engagement, services: rows, effectiveFrom, reason }), () => { setReason(""); return "Saved for approval. A different person must now approve these terms with an approval reference before they apply."; });
-  const activate = () => run(providerTermsActivateRequest(context, providerId, approvalReference), () => { setApprovalReference(""); return "Approved. These terms now apply to this provider's bookings from their effective date."; });
+  const activate = () => run(providerTermsActivateRequest(context, providerId, approvalReference, (view?.awaitingApproval ?? []).map(term => term.termId)), () => { setApprovalReference(""); return "Approved. These terms now apply to this provider's bookings from their effective date."; }, true);
   const addService = () => { const code = newService.trim().toLowerCase().replaceAll(" ", "_"); if (code && !rows.some(row => row.serviceCode === code)) setRows([...rows, { serviceCode: code, pawspaceCommissionPercent: String(PAWSPACE_COMMISSION_DEFAULT_PERCENT) }]); setNewService(""); };
   const setPercent = (code: string, value: string) => setRows(rows.map(row => row.serviceCode === code ? { ...row, pawspaceCommissionPercent: value } : row));
   const problems = providerTermsProblems({ engagement, services: rows });
   const canSave = !busy && Boolean(context === "onboarding" ? applicationId : providerId) && problems.length === 0 && reason.trim().length >= 8;
   const example = commissionPreview({ engagement, pawspaceCommissionPercent: PAWSPACE_COMMISSION_DEFAULT_PERCENT, gstPolicy }).sentence;
   const waiting = view?.awaitingApproval ?? [];
-  const inForce = (view?.services ?? []).filter(service => service.active);
+  const inForce = (view?.services ?? []).filter(service => service.active || service.scheduled?.length);
+  const termText = (term: TermSummary) => term.pawspaceCommissionPercent == null ? "full-time" : `PawSpace ${term.pawspaceCommissionPercent}%`;
   return <section style={box} aria-label="Provider commercial terms">
     <h2 style={{ margin: "0 0 6px", fontSize: 18 }}>Provider commercial terms</h2>
     <p style={{ margin: "0 0 6px", ...muted }}>PawSpace&apos;s commission is {PAWSPACE_COMMISSION_MIN_PERCENT}% to {PAWSPACE_COMMISSION_MAX_PERCENT}% of the amount the customer paid, {PAWSPACE_COMMISSION_DEFAULT_PERCENT}% unless you change it. The provider gets the rest. One person proposes the terms and a different person approves them.</p>
@@ -136,11 +142,11 @@ export default function ProviderCommercialTermsPanel({ context, providerId: fixe
       {waiting.length === 0 ? <p style={{ margin: "6px 0", ...muted }}>{view ? "Nothing is waiting for approval for this provider." : "Load a provider to see terms waiting for approval."}</p> : <ul style={{ margin: "6px 0", paddingLeft: 20 }}>{waiting.map(term => <li key={term.termId}>{serviceLabel(term.serviceCode)}: {term.pawspaceCommissionPercent == null ? "full-time, no share" : `PawSpace ${term.pawspaceCommissionPercent}%`} from {term.effectiveFrom}, proposed by {term.createdBy}</li>)}</ul>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
         <label>Approval reference<br /><input value={approvalReference} onChange={event => setApprovalReference(event.target.value)} placeholder="e.g. FIN-APR-0142" /></label>
-        <button type="button" disabled={busy || !providerId || approvalReference.trim().length < 4} onClick={() => void activate()}>Approve and activate</button>
+        <button type="button" disabled={busy || !providerId || waiting.length === 0 || approvalReference.trim().length < 4} onClick={() => void activate()}>Approve and activate</button>
       </div>
-      <small style={{ display: "block", marginTop: 6, ...muted }}>The person who proposed the terms cannot approve them. Approving needs Finance access.</small>
+      <small style={{ display: "block", marginTop: 6, ...muted }}>You approve exactly the terms listed above. The person who proposed them cannot approve them. Approving needs Finance access.</small>
     </div>
-    {inForce.length > 0 && <p style={{ margin: "10px 0 0" }}><b>In force:</b> {inForce.map(service => `${serviceLabel(service.serviceCode)} ${service.active?.pawspaceCommissionPercent == null ? "full-time" : `PawSpace ${service.active.pawspaceCommissionPercent}%`} (approved by ${service.active?.approvedBy ?? "unknown"})`).join(" · ")}</p>}
+    {inForce.length > 0 && <p style={{ margin: "10px 0 0" }}><b>In force:</b> {inForce.map(service => [service.active ? `${serviceLabel(service.serviceCode)} ${termText(service.active)} (approved by ${service.active.approvedBy ?? "unknown"})` : `${serviceLabel(service.serviceCode)} ${service.serviceDefault ? `service default (${termText(service.serviceDefault)})` : "not set"} until then`, ...(service.scheduled ?? []).map(term => `from ${term.effectiveFrom} ${termText(term)}`)].join(", ")).join(" · ")}</p>}
     {view?.legacyCommission && <p style={{ margin: "10px 0 0" }}>Older commission setting not carried over: {view.legacyCommission.reason}</p>}
     {note && <p style={{ margin: "10px 0 0", ...muted }}>{note}</p>}
     {error && <p role="alert" style={{ margin: "10px 0 0", color: "var(--staff-danger)" }}>{error}</p>}
