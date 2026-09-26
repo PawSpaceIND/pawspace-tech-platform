@@ -19,7 +19,8 @@ test("shared inbox uses the governed WhatsApp conversation-control API", () => {
 test("shared inbox exposes Human, certified Chatbot and AI modes behind governed routing", () => {
   assert.match(page, />Human only<\/Button>/);
   assert.match(page, />Chatbot only<\/Button>/);
-  assert.match(page, /Chatbot mode unlocks only after deterministic flow-engine certification/);
+  assert.match(page, /mode:\s*"chatbot_only"/);
+  assert.doesNotMatch(page, /Chatbot mode unlocks only after deterministic flow-engine certification/);
   assert.match(page, />AI Assistant<\/Button>/);
   assert.match(control, /chatbotReady:true/);
   assert.match(route, /mode==="chatbot_only"\?"whatsapp\.routing\.chatbot_open":"whatsapp\.routing\.mode"/);
