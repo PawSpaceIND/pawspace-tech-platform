@@ -19,8 +19,10 @@ test('area without postal components reverse-geocodes its verified coordinates',
  assert.equal(result.pincode,'560038');assert.equal(result.latitude,point.latitude);assert.equal(calls.length,2);
 });
 test('failed reverse lookup never invents a postal code or changes the selected place',async t=>{
- stub(t,async url=>new URL(url).hostname==='places.googleapis.com'?Response.json({formattedAddress:'Unknown road',location:point}):Response.json({status:'ZERO_RESULTS',results:[]}));
+ const hosts=[];
+ stub(t,async url=>{const host=new URL(url).hostname;hosts.push(host);return host==='places.googleapis.com'?Response.json({formattedAddress:'Unknown road',location:point}):Response.json({status:'ZERO_RESULTS',results:[]});});
  const result=await resolvePlaceToAddress({placeId:'demo-road'});
+ assert.equal(hosts.length,2);assert.notEqual(hosts[1],'places.googleapis.com');
  assert.equal(result.pincode,undefined);assert.equal(result.address,'Unknown road');
 });
 test('GPS reverse lookup returns structured postal code even when display label omits it',async t=>{
