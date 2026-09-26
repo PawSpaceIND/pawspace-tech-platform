@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { DEFAULT_EXTRA_PET_PERCENT, trainingPriceForPets } from "../../lib/training-pricing";
+import { recommendTrainingPlan, TRAINING_CORE_PACKAGE_CODE, TRAINING_FALLBACK_GOALS } from "../../lib/training-goals";
 import { isVaccinatedStatus } from "../../lib/pet-vaccination-status";
 import { useCallback, useEffect, useRef, useState } from "react";
 import baseStyles from "./training.module.css";
@@ -43,31 +44,20 @@ type Plan = {
   level: string;
   idealFor: string;
   outcomes: string[];
-  recommended?: boolean;
 };
-const fallbackGoals = [
-  "Toilet routine",
-  "Biting & chewing",
-  "Leash walking",
-  "Recall",
-  "Basic obedience",
-  "Socialisation",
-  "Excess barking",
-  "Separation anxiety",
-];
 const petDetail = (pet: CustomerPet) =>
   [pet.profile?.breed || pet.breed, pet.ageYears != null ? `${pet.ageYears} years` : pet.profile?.ageBand, pet.weightKg != null ? `${pet.weightKg} kg` : pet.profile?.weightBand].filter(Boolean).join(" · ") ||
   "Profiles, health notes and service history included";
 const planMarketing = [
   { packageCode:"training-2-starter",name:"Starter Plan",detail:"Professional guidance and a clear starting structure for dogs of any age.",bonus:false,level:"Assessment start",idealFor:"Parents who need a professional plan before committing long-term",outcomes:["Behaviour assessment","Home routine","Action plan"] },
   { packageCode:"training-4-puppy",name:"Puppy Training Plan",detail:"Early habits, confidence, socialisation and essential puppy foundations.",bonus:false,level:"Puppy foundation",idealFor:"Puppies up to 8 months building their first routines",outcomes:["Toilet routine","Biting control","Social confidence"] },
-  { packageCode:"training-8-basic",name:"Basic Obedience Plan",detail:"Obedience, impulse control, home manners and communication.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:["Sit, stay and recall","Impulse control","Home manners"],recommended:true },
+  { packageCode:"training-8-basic",name:"Basic Obedience Plan",detail:"Obedience, impulse control, home manners and communication.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:["Sit, stay and recall","Impulse control","Home manners"] },
   { packageCode:"training-8-leash",name:"Leash Obedience Plan · 8",detail:"Pulling, reactivity, heel positioning and real-world walking control.",bonus:true,level:"Leash focus",idealFor:"Dogs who pull, lunge or lose focus outdoors",outcomes:["Loose-leash walk","Heel position","Calm passing"] },
   { packageCode:"training-12-leash",name:"Leash Obedience Plan · 12",detail:"Extended leash, recall and distraction-control programme.",bonus:true,level:"Leash intensive",idealFor:"Persistent pulling or reactivity needing more practice",outcomes:["Leash control","Outdoor recall","Distraction work"] },
   { packageCode:"training-12-advanced",name:"Advanced Obedience Plan",detail:"Reliable commands, impulse control and real-world manners.",bonus:true,level:"Advanced",idealFor:"Dogs ready to work reliably around real-world distractions",outcomes:["Distance commands","Advanced recall","Public manners"] },
   { packageCode:"training-16-pro",name:"Pro Training Plan",detail:"High-level obedience, heel work, distance control and complex behaviour.",bonus:true,level:"Professional",idealFor:"Families seeking the most complete obedience programme",outcomes:["Off-leash control","Complex behaviour","Handler mastery"] },
 ] as const;
-const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,extraPetPercent:DEFAULT_EXTRA_PET_PERCENT,detail:"Loading Training plans.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[],recommended:true};
+const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,extraPetPercent:DEFAULT_EXTRA_PET_PERCENT,detail:"Loading Training plans.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[]};
 const money = (n: number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -111,7 +101,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const resolveLocation=useCallback((value:StayLocation|null)=>setLocation(value),[]);
   const [coverage,setCoverage]=useState<ResolvedServiceCoverage|null>(null);
   const [stage, setStage] = useState(1),
-    [goals, setGoals] = useState(fallbackGoals),
+    [goals, setGoals] = useState<string[]>([...TRAINING_FALLBACK_GOALS]),
     [selectedGoals, setSelectedGoals] = useState([
       "Basic obedience",
       "Leash walking",
@@ -125,6 +115,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [petsError, setPetsError] = useState(""),
     [showPetManager, setShowPetManager] = useState(false),
     [plan, setPlan] = useState(emptyPlan),
+    [appliedRecommendation, setAppliedRecommendation] = useState(""),
     [frequency, setFrequency] = useState("Tue & Sat"),
     [time, setTime] = useState("3:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
@@ -164,7 +155,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       })
       .catch(() => undefined);
   }, []);
-  useEffect(()=>{let active=true;void loadTrainingPackages().then(result=>{if(!active)return;const next=buildPlans(result.packages);setPlans(next);setMeetPackage(result.packages.find(item=>item.package_code==="trainer-meet-greet")||null);setPlan(current=>next.find(item=>item.packageCode===current.packageCode)||next.find(item=>item.recommended)||next[0]||emptyPlan);}).catch(problem=>{if(active)setScheduleError(problem instanceof Error?problem.message:"Unable to load Training catalogue");});return()=>{active=false;};},[]);
+  useEffect(()=>{let active=true;void loadTrainingPackages().then(result=>{if(!active)return;const next=buildPlans(result.packages);setPlans(next);setMeetPackage(result.packages.find(item=>item.package_code==="trainer-meet-greet")||null);setPlan(current=>next.find(item=>item.packageCode===current.packageCode)||next.find(item=>item.packageCode===TRAINING_CORE_PACKAGE_CODE)||next[0]||emptyPlan);}).catch(problem=>{if(active)setScheduleError(problem instanceof Error?problem.message:"Unable to load Training catalogue");});return()=>{active=false;};},[]);
 
   const startOptions=nextTrainingStarts(frequency,time);
   const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);
@@ -175,7 +166,6 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const dogCount=Math.max(1,selectedPets.length),priceFor=(item:Plan)=>trainingPriceForPets(item.price,dogCount,item.extraPetPercent),planPrice=priceFor(plan);
   const discount=checkoutQuote?.discount??0;
   const payableNow=checkoutQuote?.amountDueNow??0;
-  const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;if(pincode.length!==6){queueMicrotask(()=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");}});return()=>{active=false;};}void resolveServiceCoverage(pincode).then(resolved=>{if(!active)return;setCoverage(resolved);return loadTrainingTrainers({cityId:resolved.cityId,zoneId:resolved.zoneId,at:selectedStartIso});}).then(result=>{if(!active||!result)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");setScheduleError("");}).catch(problem=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to resolve Training coverage");}});return()=>{active=false;};},[pincode,selectedStartIso]);
   useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split",withCoupon=mode==="prepaid"&&Boolean(couponCode);queueMicrotask(()=>{if(active)setCheckoutQuote(null);});
@@ -195,6 +185,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     );
   const dogs = pets.filter((p) => p.species === "dog");
   const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
+  // The plan the selected goals point to (lib/training-goals.ts). Null until the catalogue loads.
+  const recommendation = recommendTrainingPlan({ goals: selectedGoals, packageCodes: plans.map((item) => item.packageCode), dogs: selectedPetObjs });
+  const recommendedPlan = plans.find((item) => item.packageCode === recommendation?.packageCode) || null;
   const petKey = [...selectedPets].sort().join(",");
   const meetLinked = Boolean(meetBookingId) && meetPetKey === petKey;
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
@@ -234,6 +227,17 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       if (!selectedGoals.some((goal) => goal.toLowerCase() === value.toLowerCase())) setSelectedGoals((current) => [...current, value]);
       setCustomGoal("");
       setAddingGoal(false);
+    },
+    // Every stage-1 control that opens the training options calls this. A goal match pre-selects its plan, as the
+    // Taxi flow does with its recommended vehicle, but only when it differs from the one last applied: a customer who
+    // comes back without changing the result keeps their own pick. A catalogue default never replaces a pick, and
+    // browser back/forward (useFlowHistory) sets the stage without coming through here.
+    showTrainingOptions = () => {
+      if (recommendation?.basis === "goals" && recommendedPlan && recommendedPlan.packageCode !== appliedRecommendation) {
+        setPlan(recommendedPlan);
+        setAppliedRecommendation(recommendedPlan.packageCode);
+      }
+      setStage(2);
     },
     confirmMeetFirst = async () => {
       if(actionLock.current)return;
@@ -380,13 +384,13 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
           <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
           {selectedPetObjs.some(pet => !isVaccinatedStatus(pet.vaccinationStatus)) && <p className={styles.durationRule} role="note">Vaccinations for {selectedPetObjs.filter(pet => !isVaccinatedStatus(pet.vaccinationStatus)).map(pet => pet.name).join(", ")} must be verified before the first programme session. You can still book, and a Meet &amp; Greet needs no proof.</p>}
-          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See training options"}</button>
+          <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={showTrainingOptions}>{selectedPets.length === 0 ? "Select a dog to continue" : "See training options"}</button>
         </section>
       )}
       {stage === 2 && (
         <section>
           <div className={styles.head}><h3>{primaryPet?.name ? `${primaryPet.name}'s training options` : "Your dog's training options"}</h3><small>Package · 2 of 5</small></div>
-          <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>Basic Obedience Plan</h4><p>Best match for the goals you selected: {selectedGoals.slice(0, 2).join(" + ")}.</p></div><b>{recommendedPlan.sessionLabel}</b></article>
+          {recommendation && recommendedPlan && <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>{recommendedPlan.name}</h4><p>{recommendation.basis === "goals" ? `Best match for ${recommendation.matchedGoals.join(" + ")}: ${recommendedPlan.detail}${recommendation.puppyPlanAgeExcluded ? " The Puppy Training Plan is for puppies up to 8 months." : ""}` : `Our core programme for ${recommendedPlan.idealFor.charAt(0).toLowerCase()}${recommendedPlan.idealFor.slice(1)}.`}</p></div><b>{recommendedPlan.sessionLabel}</b></article>}
           <div className={styles.goalSummary}><b>Selected requirements</b>{selectedGoals.map((goal) => <span key={goal}><i>✓</i> {goal}</span>)}</div>
           <section className={styles.meetTrainer}>
             <div className={styles.meetPitch}><span>MEET A TRAINER FIRST</span><h4>Prefer to meet a trainer before choosing a programme?</h4><p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p></div>
@@ -403,12 +407,12 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <div className={styles.planListHead}><b>All training programmes</b><span>{plans.length} options · select to compare</span></div>
           <div className={planStyles.grid} data-testid="training-plan-grid">
             {plans.map((item) => (
-              <article key={item.name} className={`${planStyles.card} ${plan.name === item.name ? planStyles.selected : ""}`} onClick={() => setPlan(item)} onKeyDown={(event) => {if (event.key === "Enter" || event.key === " ") {event.preventDefault();setPlan(item);}}} role="button" tabIndex={0} aria-pressed={plan.name === item.name} aria-label={`${plan.name === item.name ? "Selected" : "Select"} ${item.name}, ${item.sessionLabel}, ${item.validity}, ${money(priceFor(item))}`}>
-                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.recommended ? "BEST MATCH" : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(priceFor(item))}{dogCount>1&&<small> for {dogCount} dogs</small>}</strong></header>
+              <article key={item.name} className={`${planStyles.card} ${plan.name === item.name ? planStyles.selected : ""}`} onClick={() => setPlan(item)} onKeyDown={(event) => {if (event.key === "Enter" || event.key === " ") {event.preventDefault();setPlan(item);}}} role="button" tabIndex={0} aria-pressed={plan.name === item.name} aria-label={`${plan.name === item.name ? "Selected" : "Select"} ${item.name}${recommendation?.basis === "goals" && item.packageCode === recommendation.packageCode ? ", best match for your goals" : ""}, ${item.sessionLabel}, ${item.validity}, ${money(priceFor(item))}`}>
+                <header className={planStyles.header}><div><span className={planStyles.badge}>{item.packageCode === recommendation?.packageCode ? (recommendation.basis === "goals" ? "BEST MATCH" : "RECOMMENDED") : item.bonus ? "GROOMING BONUS" : item.level.toUpperCase()}</span><h4>{item.name}</h4></div><strong className={planStyles.price}>{money(priceFor(item))}{dogCount>1&&<small> for {dogCount} dogs</small>}</strong></header>
                 <p className={planStyles.description}>{item.detail}</p>
                 <div className={planStyles.metrics}><span><b>{item.sessionLabel}</b><small>at home</small></span><span><b>{item.validity}</b><small>validity</small></span><span><b>{item.directMinutes+item.coachingMinutes} minutes</b><small>per pet session</small></span><span><b>Video + homework</b><small>after every session</small></span></div>
                 <small className={planStyles.includes}>Includes trainer notes, parent practice tasks, milestone tracking, two-session feedback and replacement protection.</small>
-                {plan.name === item.name ? <div className={planStyles.expanded}><p><b>Best for:</b> {item.idealFor}</p><div className={planStyles.outcomes}>{item.outcomes.map((outcome) => <em key={outcome}>✓ {outcome}</em>)}</div>{item.bonus && <small>GIFT · 1 complimentary Bath & Basic grooming</small>}</div> : null}
+                {plan.name === item.name ? <div className={planStyles.expanded}><p><b>Best for:</b> {item.idealFor}</p>{recommendation?.basis === "goals" && item.packageCode === recommendation.packageCode && <p><b>Matches your goals:</b> {recommendation.matchedGoals.join(", ")}</p>}<div className={planStyles.outcomes}>{item.outcomes.map((outcome) => <em key={outcome}>✓ {outcome}</em>)}</div>{item.bonus && <small>GIFT · 1 complimentary Bath & Basic grooming</small>}</div> : null}
                 <span className={planStyles.action}><i>{plan.name === item.name ? "✓" : ""}</i>{plan.name === item.name ? "Selected programme" : "Select this programme"}</span>
               </article>
             ))}
