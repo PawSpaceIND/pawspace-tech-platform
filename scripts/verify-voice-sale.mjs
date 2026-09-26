@@ -21,6 +21,14 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  rows('SELECT intent_code,policy_decision,outcome,handoff_reason,latency_ms FROM ai_conversation_turns WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 4',[threadId,call.customer_id]),
  rows('SELECT id,status,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 5',[threadId,call.customer_id]),
  ]);
+ const inbound=await rows("SELECT created_at,CASE WHEN lower(payload_json) LIKE '%bruno%' THEN 1 ELSE 0 END mentions_bruno FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 5",[threadId]);
+ const reservations=await rows("SELECT status,created_at,updated_at,turn_id FROM ai_turn_reservations WHERE thread_id=? ORDER BY created_at DESC LIMIT 5",[threadId]);
+ const telemetry=await request(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/observability/telemetry/query`,{method:'POST',headers,body:JSON.stringify({queryId:'voice-uat-diagnostics',dry:true,view:'events',limit:40,timeframe:{from:Date.now()-15*60000,to:Date.now()},parameters:{filterCombination:'and',filters:[{key:'$workers.scriptName',operation:'eq',type:'string',value:'pawspace-staging'}],needle:{value:'/api/elevenlabs/v1/responses',isRegex:false,matchCase:false}}}),signal:AbortSignal.timeout(30000)});
+ const tb=await telemetry.json();
+ // Keep timings/status only. Never log request headers, body, IP or arbitrary messages.
+ const allowed=new Set(['timestamp','outcome','wallTimeMs','cpuTimeMs','scriptName','status','colo','type','name','id','requestId','level','path']);
+ function safe(value){if(Array.isArray(value))return value.map(safe);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).flatMap(([k,v])=>v&&typeof v==='object'?[[k,safe(v)]]:allowed.has(k)?[[k,v]]:[]));return undefined;}
+ console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations}));
  const report={destinationLast4:last4,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
  if(!bookingId)return report;
  const offer=offers.find(o=>o.status==='completed'&&JSON.parse(o.result_json||'{}').bookingId===bookingId);
