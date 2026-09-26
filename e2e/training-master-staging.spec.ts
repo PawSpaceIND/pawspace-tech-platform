@@ -852,14 +852,19 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         const opened = Date.now();
         await t.getByRole("button", { name: /Earnings/ }).first().click();
         // "Loading Training earnings…" stays up until /api/training-provider-earnings answers (about 60 D1 round trips).
-        const ready = await visible(t.getByText("CANONICAL TRAINING PAYOUT LEDGER").or(t.getByRole("heading", { name: "Training earnings are unavailable" })), 120_000);
-        const earningsState = ready ? `earnings answered in ${Date.now() - opened} ms` : `"Loading Training earnings…" still shown after ${Date.now() - opened} ms`;
+        const unavailable = t.getByRole("heading", { name: "Training earnings are unavailable" });
+        const ready = await visible(t.getByText("CANONICAL TRAINING PAYOUT LEDGER").or(unavailable), 120_000);
+        const elapsed = Date.now() - opened;
         await shot(t, "trainer-earnings");
-        const workspace = (await mainText(t)).match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}|TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || (await mainText(t)).slice(0, 300);
+        const shown = await mainText(t);
+        const latency = CLIENT_TIMEOUT.test(shown) ? ": a client-side timeout on staging (latency), not a refusal" : "";
+        if (!ready) throw fail(`"Loading Training earnings…" still shown after ${elapsed} ms${latency} · page: ${shown.slice(0, 300)}`);
+        if (await unavailable.first().isVisible().catch(() => false)) throw fail(`Training earnings are unavailable after ${elapsed} ms${latency} · page: ${shown.slice(0, 300)}`);
+        const workspace = shown.match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}|TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || shown.slice(0, 300);
         await t.goto("/partner-app"); await settle(t, 2500);
         const tab = t.getByRole("button", { name: /Earnings/ }).first(); if (await tab.count()) { await tab.click(); await settle(t, 2500); }
         await shot(t, "partner-app-earnings");
-        return `workspace (${earningsState}): ${workspace.slice(0, 250)} || partner app: ${(await mainText(t)).slice(0, 300)}`;
+        return `workspace (earnings answered in ${elapsed} ms): ${workspace.slice(0, 250)} || partner app: ${(await mainText(t)).slice(0, 300)}`;
       });
     }
 
