@@ -839,7 +839,7 @@
     "lib/service-policy-governance.ts": "04d317299467dfd812e5db39a1452755f48c8d3c63fd8c618f6e942b928c2855",
     "lib/service-recovery-audio-bot.ts": "b2cdc5404d68249e9338a88fef33ded9d4a81ba795282a2cdfe6abc96047ddf7",
     "lib/service-review-governance.ts": "d0d8b721cf8be2bf81a32e58532e59217fdbfb2f38bbdd92e099ca204594327e",
-    "lib/service-zone-client.ts": "84f09a7e2bf94652556b602649439178eb9a9a02ec6bd6bee1c6525e14b1eb80",
+    "lib/service-zone-client.ts": "4c1148b9fb0e45cdd3e9bdd3d45b5872a0c6f3afe633e7a5a93cc2ec20e0b279",
     "lib/service-zones.ts": "725598aef02dfd79fee7389ce45ae7d2bfa0e6b9cdf1a5700569104fb8a913de",
     "lib/services/ai-crm-entity-extractor.ts": "bb53fc45c4b677a261afae2bddf182d14d829bac761dfab7aeda853a6e785d87",
     "lib/services/ai-outreach-generator.ts": "9610d38259352bd8871d09ac2ab83c6c067e2b2455e565495cbbf65b5c5116f5",
