@@ -1524,7 +1524,7 @@
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
     "package-lock.json": "0529313ccf934b3072bc4ca32f39d1dbdd3067e76d897d79e95fe28bd15db4d1",
     "package.json": "3db8cb6b5ac8c52a9d974406331c8a0e5235b3aaeed2280bb01bae26f70af362",
-    "app/team/customer-experience/whatsapp-inbox.module.css": "914af35725d143fb5c7c0d55631c451d3603df5f48903b561101ae583362f53d",
+    "app/team/customer-experience/whatsapp-inbox.module.css": "efc40bda57eb29b54f1a62b32e86b105131f3a63fb1c9cfb51250d6f04aa8bba",
     "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
   }
 }
