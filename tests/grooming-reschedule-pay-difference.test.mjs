@@ -21,7 +21,7 @@ const istDay = iso => new Date(Date.parse(iso) + IST_MS).getUTCDay();
 const istDate = iso => new Date(Date.parse(iso) + IST_MS).toISOString().slice(0, 10);
 const CHANGE_ROUTE = "../../app/api/grooming-booking-change/route.ts";
 const WEBHOOK_SECRET = "reschedule_webhook_secret";
-const KEY_ID = "rzp_test_Reschedule01";
+const KEY_ID = "rzp_test_resch";
 const KEY_SECRET = "reschedule_key_secret";
 
 /** Pricing Control for dog-basic: the base price plus percent rules keyed on IST weekdays. */

@@ -39,7 +39,7 @@ function stubRazorpayRefunds(t) {
 
 async function paidBooking(t, id) {
   const ctx = await setupJourney(); t.after(ctx.close);
-  Object.assign(globalThis.__GROOM_GOLDEN_ENV__, { RAZORPAY_WEBHOOK_SECRET_SANDBOX: WEBHOOK_SECRET, RAZORPAY_KEY_ID_SANDBOX: "rzp_test_MultiCapture", RAZORPAY_KEY_SECRET_SANDBOX: "multi_capture_key_secret" });
+  Object.assign(globalThis.__GROOM_GOLDEN_ENV__, { RAZORPAY_WEBHOOK_SECRET_SANDBOX: WEBHOOK_SECRET, RAZORPAY_KEY_ID_SANDBOX: "rzp_test_multi", RAZORPAY_KEY_SECRET_SANDBOX: "multi_capture_key_secret" });
   const start = new Date(Date.now() + 3 * 86_400_000); start.setUTCHours(3, 30, 0, 0);
   const config = { customerId: `CUST-MC-${id}`, customerName: "Mira", phone: "+919900000616", petSourceId: `PET-MC-${id}`, petName: "Milo", cityId: "blr", zoneId: "blr-east", pincode: "560038", latitude: 12.9716, longitude: 77.5946, preferredProviderId: "groom_arun", groupId: `GROOM-MC-${id}`, start: start.toISOString(), stopAfterCapture: true };
   const journey = await runCompletedJourney(ctx, config);
