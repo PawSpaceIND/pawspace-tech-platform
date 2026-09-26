@@ -25,7 +25,8 @@ export function finding(row) { appendFileSync(join(OUT, "findings.jsonl"), redac
 /** HEADED=1 opens a visible Chromium window (e.g. on a Mac to watch the run); SLOWMO=<ms> slows each action. */
 export async function launch({ slowMo = 0 } = {}) {
   const headed = process.env.HEADED === "1";
-  return chromium.launch({ headless: !headed, slowMo: Number(process.env.SLOWMO || 0) || slowMo || (headed ? 250 : 0) });
+  const executablePath = process.env.PW_CHROMIUM_EXECUTABLE_PATH || undefined; // local containers with a preinstalled Chromium
+  return chromium.launch({ headless: !headed, executablePath, slowMo: Number(process.env.SLOWMO || 0) || slowMo || (headed ? 250 : 0) });
 }
 
 /** One recorded journey: numbered screenshots, optional video, API failures, console and page errors. */
@@ -82,11 +83,27 @@ export async function staffSession(context, email) {
   if (r.status !== 200) throw new Error(`staff sign-in ${email} refused: HTTP ${r.status} ${redact(r.body)}`);
   return r;
 }
-/** Fixed synthetic customer (no OTP) through /api/uat-customer-switch — persona "customer-a" | "customer-b". */
+/**
+ * Customer session for persona "customer-a" | "customer-b".
+ * MASTER_CUSTOMER_MODE=otp (set by the staging workflow): signs in a run-scoped customer through the real sandbox
+ * customer OTP API, so a master run never shares a login with human testers (a new sign-in supersedes every other
+ * session of the same customer). Otherwise: the fixed synthetic persona via /api/uat-customer-switch (no OTP).
+ */
+export const runPhone = (slot) => `97${String(process.env.GITHUB_RUN_ID || process.env.MASTER_RUN_ID || "0000000").slice(-7).padStart(7, "0")}${slot}`;
 export async function customerSession(context, persona = "customer-a") {
+  if (process.env.MASTER_CUSTOMER_MODE === "otp") return otpCustomerSession(context, runPhone(persona === "customer-b" ? 2 : 1), `Master E2E ${persona === "customer-b" ? "B" : "A"}`);
   const r = await post(context, "/api/uat-customer-switch", { code: CODE, persona });
   if (r.status !== 200) throw new Error(`test customer ${persona} refused: HTTP ${r.status} ${redact(r.body)}`);
   return r.body?.data;
+}
+/** Real sandbox customer OTP (request → on-screen/sandbox code → verify). */
+export async function otpCustomerSession(context, phone, name = "Master E2E") {
+  const r1 = await post(context, "/api/customer-otp", { action: "request", phone });
+  const challengeId = r1.body?.data?.challengeId, code = r1.body?.data?.sandboxCode;
+  if (r1.status !== 200 || !challengeId || !code) throw new Error(`customer OTP request refused: HTTP ${r1.status} ${redact(r1.body)}`);
+  const r2 = await post(context, "/api/customer-otp", { action: "verify", challengeId, code, name });
+  if (r2.status !== 200) throw new Error(`customer OTP verify refused: HTTP ${r2.status} ${redact(r2.body)}`);
+  return { ...r2.body?.data, phone };
 }
 /** Any live provider without OTP through /api/uat-provider-switch. */
 export async function providerSession(context, providerId) {

@@ -35,6 +35,8 @@ jobs:
       NODE_ENV: test
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: "false"
+      # Run-scoped OTP customers: never share (and never supersede) a human tester's persona session.
+      MASTER_CUSTOMER_MODE: otp
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
