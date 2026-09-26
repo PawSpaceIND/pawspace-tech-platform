@@ -156,6 +156,8 @@ test("a WhatsApp customer who stops mid-flow is reminded at 10 minutes, PawSpace
  const offScript=await inbound(sqlite,db,"stall-2","which is best for a shih tzu?");
  const answered=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:offScript,actorEmail:"whatsapp-chatbot"});
  assert.equal(answered.aiRequested,true,"after the takeover an answer that is not an option goes to the AI");
- await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"human_only",actorEmail:staffActor.email,reason:"Team took over"});
- assert.equal((await sweep(now+4*60*min)).escalated,0,"a conversation a person owns is never followed up by the bot");
+ assert.equal((await sweep(now+60*min)).escalated,0,"a person only after two more hours");
+ assert.equal((await sweep(now+3*60*min)).escalated,1,"then a person follows up");
+ assert.equal(sqlite.prepare("SELECT reason FROM ai_handoffs WHERE thread_id='THREAD-BOT' ORDER BY created_at DESC LIMIT 1").get()?.reason,"bot_abandoned");
+ assert.equal((await sweep(now+5*60*min)).escalated,0,"a conversation a person owns is never followed up by the bot again");
 });

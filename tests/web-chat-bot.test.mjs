@@ -342,7 +342,7 @@ test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpac
   assert.equal((await sweep(now + 11 * min)).nudged, 1, "first reminder at 10 minutes");
   assert.equal((await sweep(now + 15 * min)).takenOver, 0, "the second waits another 10 minutes");
   assert.equal((await sweep(now + 22 * min)).takenOver, 1, "PawSpace AI takes over at 20 minutes");
-  const texts = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-remind:%' OR idempotency_key LIKE 'web-chat-bot-takeover:%' ORDER BY created_at").all().map((row) => JSON.parse(row.payload_json).text);
+  const texts = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-remind:%' OR idempotency_key LIKE 'web-chat-bot-takeover:%' ORDER BY created_at, idempotency_key").all().map((row) => JSON.parse(row.payload_json).text);
   assert.match(texts[0], /Still there\? .*active grooming subscription/);
   assert.match(texts[1], /PawSpace AI here\. Pick an option, or just tell me in your own words/);
   const session = JSON.parse(sqlite.prepare("SELECT state_json FROM web_chat_bot_sessions WHERE session_ref='customer:CUS-STALL'").get().state_json);
