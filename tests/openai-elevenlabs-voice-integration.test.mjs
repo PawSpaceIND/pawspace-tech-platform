@@ -136,6 +136,14 @@ test("ElevenLabs custom LLM extracts the latest user input and streams Responses
  assert.match(sse,/data: \[DONE\]/);
 });
 
+test("ElevenLabs outbound voice calls use a dedicated deterministic AI-owned thread id",async()=>{
+ const mod=await import("../lib/elevenlabs-custom-llm.ts");
+ assert.equal(mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"),"THREAD-VOICE-VCALL-C2A93B2F-269");
+ assert.equal(mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"),mod.voiceThreadIdForCall("VCALL-C2A93B2F-269"));
+ assert.notEqual(mod.voiceThreadIdForCall("VCALL-A"),mod.voiceThreadIdForCall("VCALL-B"));
+ assert.throws(()=>mod.voiceThreadIdForCall("   "));
+});
+
 test("ElevenLabs custom LLM bearer auth fails closed",async()=>{
  const mod=await import("../lib/elevenlabs-custom-llm.ts");
  const make=(auth)=>new Request("https://example.test",{headers:auth?{authorization:auth}:{}});
@@ -168,4 +176,191 @@ test("ElevenLabs Exotel outbound adapter is selected only when explicitly config
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_voice_call_id,"VCALL-1");
   assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,"CUS-1");
  }finally{stub.restore();}
+});
+
+test("ElevenLabs Exotel outbound adapter recovers one stale phone-number id without weakening call guards",async()=>{
+ const mod=await import("../lib/voice-telephony-provider.ts");
+ const env={PAWSPACE_VOICE_RUNTIME:"elevenlabs",ELEVENLABS_API_KEY:"el-test",ELEVENLABS_AGENT_ID:"agent-1",ELEVENLABS_AGENT_PHONE_NUMBER_ID:"phone-stale",ELEVENLABS_API_BASE:"https://api.in.residency.elevenlabs.io",EXOTEL_CALLER_ID:"09513886363"};
+ const provider=mod.selectTelephonyProvider(env);
+ const stub=stubFetch((url,init)=>{
+  if(url.endsWith("/v1/convai/phone-numbers?provider=exotel"))return jsonResponse({phone_numbers:[{provider:"exotel",phone_number:"+919513886363",phone_number_id:"phone-current"}]});
+  if(url.endsWith("/v1/convai/exotel/outbound-call")){
+   const body=JSON.parse(init.body);
+   if(body.agent_phone_number_id==="phone-stale")return jsonResponse({detail:{code:"document_not_found"}},404);
+   assert.equal(body.agent_phone_number_id,"phone-current");
+   return jsonResponse({success:true,conversation_id:"conv-current",callSid:"call-current"});
+  }
+  throw new Error("unexpected URL "+url);
+ });
+ try{
+  const result=await provider.createCall({callRef:"VCALL-STALE",toNumber:"+919999999999",statusCallbackUrl:"https://example.test/cb",recordingAllowed:false,customerId:"CUS-1",useCase:"grooming_sales"});
+  assert.equal(result.accepted,true);
+  assert.equal(result.providerCallId,"call-current");
+  assert.equal(stub.calls.filter(x=>x.url.endsWith("/v1/convai/exotel/outbound-call")).length,2);
+  assert.equal(stub.calls.filter(x=>x.url.includes("/v1/convai/phone-numbers?provider=exotel")).length,1);
+ }finally{stub.restore();}
+});
+
+
+// A grounded voice turn may answer with prose or with a governed action envelope. Streaming the
+// envelope straight to TTS would have the agent read JSON down the phone, so the gate has to decide
+// from the first characters and never from the whole generation.
+test("speech gate releases prose as it streams and never speaks a governed action envelope",async()=>{
+ const {speechGate}=await import("../lib/elevenlabs-custom-llm.ts");
+
+ const spoken=[];
+ const prose=speechGate(text=>spoken.push(text));
+ prose.push("Sure. ");prose.push("Which pet needs grooming?");
+ assert.deepEqual(spoken,["Sure. ","Which pet needs grooming?"],"prose must be released delta by delta, not buffered");
+ assert.equal(prose.unspoken,false);
+
+ const leaked=[];
+ const envelope=speechGate(text=>leaked.push(text));
+ for(const delta of ['{"repl','y":"Booked.","act','ions":[{"toolCode":"booking.create","arguments":{}}]}'])envelope.push(delta);
+ assert.deepEqual(leaked,[],"an action envelope must never reach the caller");
+ assert.equal(envelope.unspoken,true,"the turn must fall back to sending the parsed reply");
+
+ // A fenced envelope is the same hazard wearing a different hat.
+ const fenced=[];const fencedGate=speechGate(text=>fenced.push(text));
+ fencedGate.push("```json\n{\"reply\":\"Done.\"}");
+ assert.deepEqual(fenced,[]);
+ assert.equal(fencedGate.unspoken,true);
+
+ // Leading whitespace must not force a premature decision before the first real character.
+ const delayed=[];const delayedGate=speechGate(text=>delayed.push(text));
+ delayedGate.push("  ");
+ assert.deepEqual(delayed,[],"nothing is decided while only whitespace has arrived");
+ delayedGate.push("\n  Hello there.");
+ assert.equal(delayed.join(""),"  \n  Hello there.","buffered whitespace is released with the first prose");
+ assert.equal(delayedGate.unspoken,false);
+});
+
+test("streamed provider deltas reach the caller and still return the full accounted draft",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"};
+ const events=[
+  'data: {"type":"response.output_text.delta","delta":"Sure. "}',
+  'data: {"type":"response.output_text.delta","delta":"Which package?"}',
+  'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":9,"output_tokens":5,"total_tokens":14}}}',
+  'data: [DONE]',
+ ].join("\n\n")+"\n\n";
+ let sentBody=null;
+ const stub=stubFetch((url,init)=>{
+  sentBody=JSON.parse(String(init?.body||"{}"));
+  return new Response(events,{status:200,headers:{"content-type":"text/event-stream"}});
+ });
+ try{
+  const seen=[];
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"voice",intent:"service_info",maxTokens:160,onDelta:d=>seen.push(d)});
+  assert.equal(sentBody.stream,true,"supplying a delta sink must request a streamed provider response");
+  assert.deepEqual(seen,["Sure. ","Which package?"],"each delta must be handed over as it arrives");
+  assert.equal(result.connected,true);
+  assert.equal(result.text,"Sure. Which package?","the accumulated text must still be returned for storage and envelope parsing");
+  assert.equal(result.usageTokens,14,"streamed turns must stay accounted");
+ }finally{stub.restore();}
+});
+
+test("a provider response without a delta sink stays blocking, so chat and WhatsApp are unchanged",async()=>{
+ globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
+ let sentBody=null;
+ const stub=stubFetch((url,init)=>{
+  sentBody=JSON.parse(String(init?.body||"{}"));
+  return jsonResponse({id:"resp_2",status:"completed",output:[{type:"message",content:[{type:"output_text",text:"Blocking reply"}]}],usage:{total_tokens:7}});
+ });
+ try{
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"chat",intent:"service_info"});
+  assert.equal(sentBody.stream,undefined,"no delta sink means no streaming request");
+  assert.equal(result.text,"Blocking reply");
+ }finally{stub.restore();}
+});
+
+// Retiring abandoned reservations is housekeeping; it was a full-table write on the path of every
+// request, and on a phone turn the caller waits through it in silence. It must not run per turn, and
+// the protections around it must not have been removed to achieve that.
+test("reservation preflight sweeps stale rows at most once per TTL, and keeps circuit and quota checks",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db}=freshCountingD1();
+ const prepared=[];
+ const recording={...db,prepare:sql=>{prepared.push(String(sql));return db.prepare(sql);}};
+ const env={};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+
+ const first=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(first.allowed,true,"a healthy first turn must be allowed");
+ const sweepSql=/UPDATE ai_provider_runtime_requests SET status='abandoned'/;
+ assert.ok(prepared.some(sql=>sweepSql.test(sql)),"the sweep must still happen on the first turn in an isolate");
+
+ prepared.length=0;
+ const second=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(second.allowed,true);
+ assert.ok(!prepared.some(sql=>sweepSql.test(sql)),"the sweep must NOT run again inside the reservation TTL");
+
+ // The protections are the reason this function exists; cutting the sweep must not have cut them.
+ assert.ok(prepared.some(sql=>/SELECT open_until FROM ai_provider_runtime_circuit/.test(sql)),"circuit breaker must still be read before every call");
+ assert.ok(prepared.some(sql=>/INSERT INTO ai_provider_runtime_requests/.test(sql)),"the reservation must still be recorded");
+ assert.ok(prepared.some(sql=>/SELECT COUNT\(\*\) count FROM ai_provider_runtime_requests/.test(sql)),"per-minute rate limit must still be read");
+ assert.ok(prepared.some(sql=>/COALESCE\(SUM\(reserved_tokens\),0\)/.test(sql)),"daily token and cost quota must still be read");
+});
+
+// Moving the quota reads ahead of the reservation insert changes what the counts contain, so the
+// limit has to count this turn explicitly or it would quietly allow one request more than configured.
+test("reservation preflight enforces the same limit after the reads moved ahead of the insert",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db}=freshCountingD1();
+ const prepared=[];
+ const recording={...db,prepare:sql=>{prepared.push(String(sql));return db.prepare(sql);}};
+ const env={PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE:"1"};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+
+ const first=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(first.allowed,true,"the first turn is inside a limit of one per minute");
+
+ prepared.length=0;
+ const second=await control.reserveAiProviderRequest(recording,env,input);
+ assert.equal(second.allowed,false,"the second turn must be refused by the per-minute limit");
+ assert.equal(second.reason,"quota_exceeded");
+ // The old order inserted a row and then marked it blocked; a refusal should cost no write at all.
+ assert.ok(!prepared.some(sql=>/INSERT INTO ai_provider_runtime_requests/.test(sql)),"a refused turn must not write a reservation");
+ assert.ok(!prepared.some(sql=>/status='blocked'/.test(sql)),"a refused turn must not need a compensating update");
+});
+
+test("an open circuit still refuses before any reservation is written",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const control=await import("../lib/ai-provider-runtime-control.ts");
+ const {db,sqlite}=freshCountingD1();
+ const env={};
+ const input={provider:"openai",modelRef:"gpt-5.6-luna",channel:"voice",intent:"service_info",systemPrompt:"s",userPrompt:"u",maxOutputTokens:160};
+ await control.reserveAiProviderRequest(db,env,input);
+ sqlite.prepare("INSERT INTO ai_provider_runtime_circuit (provider,model_ref,consecutive_failures,open_until,updated_at) VALUES (?,?,?,?,?)")
+  .run("openai","gpt-5.6-luna",5,Date.now()+60_000,Date.now());
+ const blocked=await control.reserveAiProviderRequest(db,env,input);
+ assert.equal(blocked.allowed,false,"an open circuit must still stop the call");
+ assert.equal(blocked.reason,"circuit_open");
+});
+
+test("timing separates governance and reservation without bypassing either control",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const {db,sqlite}=freshCountingD1();
+ sqlite.exec("CREATE TABLE ai_kill_switches (scope_type TEXT,scope_key TEXT,reason TEXT,disabled INTEGER)");
+ const previousDb=globalThis.__AI_DB__,previousEnv=globalThis.__PAWSPACE_TEST_ENV__;
+ globalThis.__AI_DB__=db;
+ globalThis.__PAWSPACE_TEST_ENV__={DB:db,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-key",PAWSPACE_DEPLOYMENT_ENV:"production",PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE:"1"};
+ const marks=[];
+ const stub=stubFetch(()=>jsonResponse({status:"completed",output_text:"Hello"}));
+ const input={systemPrompt:"system",userPrompt:"hello",channel:"voice",onTiming:stage=>{marks.push(stage);}};
+ try{
+  assert.equal((await adapter.requestAiDraft(input)).connected,true);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"quota_exceeded");
+  assert.equal(stub.calls.length,1);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  sqlite.exec("INSERT INTO ai_kill_switches VALUES ('global','all','test',1)");
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"governance_blocked");
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted"]);
+  assert.equal((await adapter.requestAiDraft({...input,onTiming:()=>{throw new Error('diagnostic failure');}})).failure,"governance_blocked");
+  assert.equal(stub.calls.length,1);
+ }finally{stub.restore();globalThis.__AI_DB__=previousDb;globalThis.__PAWSPACE_TEST_ENV__=previousEnv;sqlite.close();}
 });
