@@ -1,1 +1,0 @@
-{  "t": "2026-09-26T07:29:39.947Z",  "suite": "05-payment-canary",  "bookingId": "PS-UAT-MUI2KA3V-A130",  "service": "boarding",  "packageCode": "boarding-4h",  "providerId": "host_maya_rohan",  "customer": "CUS-OTP-BB4C1B0DDA2117CB5CE1D88C",  "scheduledStart": "2027-02-08T03:30:00.000Z",  "total": 499,  "dueNow": 499,  "paid": false,  "paymentMode": "prepaid" }
