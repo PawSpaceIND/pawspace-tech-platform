@@ -29,6 +29,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/admin/sales-targets")return "settings.manage";
   if(url.pathname==="/api/customer-billing"||url.pathname==="/api/customer-notifications"||url.pathname==="/api/order-notifications")return "scheduling.book";
 
+  if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname))return ["GET","POST"].includes(method)?"scheduling.book":"settings.manage";
   if(url.pathname==="/api/customer-offers")return "scheduling.book";
   if(url.pathname==="/api/pawspace-wallet"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="credit"?"finance.manage":"scheduling.book";}
   if(url.pathname==="/api/paw-points"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["grant_goodwill","grant_winback"].includes(String(body.action))?"marketing.manage":"scheduling.book";}

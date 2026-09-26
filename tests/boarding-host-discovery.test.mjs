@@ -59,10 +59,10 @@ test("Boarding customer host cards do not fabricate marketplace proof",()=>{
   assert.doesNotMatch(flow,/pet-guest-room\.webp/);
   assert.match(flow,/Selected-window capacity checked/);
   assert.match(flow,/guest-pet spots available/);
-  assert.match(flow,/Host media and customer reviews are not connected in Boarding UAT/);
-  assert.match(flow,/Live masked chat is not connected yet/);
-  assert.match(flow,/does not fabricate reviews, response times, media, amenities or day-by-day availability/);
-  assert.match(flow,/Production OTP is not connected/);
+  assert.match(flow,/CaregiverPublicProfile/);
+  assert.match(flow,/Private chat is linked to the confirmed stay/);
+  const profile=read("app/mobile-app/caregiver-public-profile.tsx");assert.match(profile,/provider-public-profile/);assert.match(profile,/current.verified&&/);assert.match(profile,/No published profile photograph/);assert.doesNotMatch(profile,/reviews.map|rating.toFixed/);
+  assert.match(profile,/private customer feedback are not published here/);
 });
 
 test("Boarding customer search does not pretend an unimplemented area or production availability feed",()=>{
@@ -71,7 +71,7 @@ test("Boarding customer search does not pretend an unimplemented area or product
   assert.match(read("app/mobile-app/stay-address.tsx"),/validateSavedStayAddress\(saved, controller.signal\)/);
   assert.match(flow,/serviceLocation\.assignment\.zoneId/);
   assert.match(flow,/selected-window availability verified in UAT/);
-  assert.match(flow,/Host profile \+ leave blocks \+ accepted stay locks \+ pending Boarding scheduler reservations/);
+  assert.match(flow,/Host capacity is rechecked when requested/);
   assert.match(api,/liveAvailability:false/);
 });
 

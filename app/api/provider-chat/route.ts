@@ -10,18 +10,21 @@ function sameOrigin(request: Request) { const origin = request.headers.get("orig
 export async function GET(request: Request) {
   try {
     const actor = await resolveActor(request); requirePermission(actor, "communications.message");
-    const url = new URL(request.url), providerId = text(url.searchParams.get("providerId")), threadId = text(url.searchParams.get("threadId"));
-    if (!providerId || !threadId) return json({ error: "Provider and thread are required" }, 400);
+    const url = new URL(request.url), providerId = text(url.searchParams.get("providerId")), bookingId=text(url.searchParams.get("bookingId"));let threadId=text(url.searchParams.get("threadId"));
+    if (!providerId || (!threadId&&!bookingId)) return json({ error: "Provider and booked conversation are required" }, 400);
     const db = await database(); await requireProviderOwnership(db, actor, providerId);
     await ensureTrustSafetyTables(db);
+    if(!threadId){const owned=await db.prepare("SELECT id FROM canonical_bookings WHERE id=? AND provider_id=?").bind(bookingId,providerId).first<Row>();if(!owned)return json({error:"Provider is not assigned to this booking"},403);const row=await db.prepare("SELECT id FROM communication_threads WHERE booking_id=? AND status='open' AND COALESCE(lead_id,'')='' AND COALESCE(ticket_id,'')='' ORDER BY updated_at DESC,id DESC LIMIT 1").bind(bookingId).first<Row>();if(!row)return json({error:"Booked conversation not found"},404);threadId=String(row.id);}
     const thread = await db.prepare("SELECT customer_id,booking_id,status FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
+    if(bookingId&&thread&&text(thread.booking_id)!==bookingId)return json({error:"Booking and conversation do not match"},404);
     if (!thread || text(thread.status) !== "open" || !text(thread.booking_id)) return json({ error: "Open booked conversation not found" }, 404);
     let assignment = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(error => { if (/no such table: provider_work_orders/i.test(error instanceof Error ? error.message : String(error))) return null; throw error; });
     if (!assignment) assignment = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=? LIMIT 1").bind(text(thread.booking_id)).first<Row>().catch(() => null);
+    const canonical=await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(text(thread.booking_id)).first<Row>();if(!canonical||text(canonical.provider_id)!==providerId)return json({error:"Provider is no longer assigned to this booking"},403);
     if (!assignment || text(assignment.provider_id) !== providerId) return json({ error: "Provider is not assigned to this conversation" }, 403);
     const trust = await db.prepare("SELECT status FROM provider_trust_state WHERE provider_id=?").bind(providerId).first<Row>();
     if (trust && ["suspended", "banned_permanent"].includes(text(trust.status))) return json({ error: "Provider messaging is suspended by Trust & Safety" }, 403);
-    const messages = await db.prepare("SELECT id,direction,channel,payload_json,status,created_at FROM communication_messages WHERE thread_id=? AND channel IN ('chat','whatsapp') AND status IN ('received','sent','delivered','read') ORDER BY created_at ASC,id ASC LIMIT 250").bind(threadId).all<Row>();
+    const messages = await db.prepare("SELECT id,direction,channel,payload_json,status,created_at FROM communication_messages WHERE thread_id=? AND (?='' OR (channel='chat' AND template_key IN ('customer_caregiver_chat','provider_in_app_chat'))) AND channel IN ('chat','whatsapp') AND status IN ('received','sent','delivered','read') ORDER BY created_at ASC,id ASC LIMIT 250").bind(threadId,bookingId).all<Row>();
     const data = messages.results.map(row => {
       let stored: Row = {};
       try { const parsed: unknown = JSON.parse(text(row.payload_json) || "{}"); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed as Row; } catch {}

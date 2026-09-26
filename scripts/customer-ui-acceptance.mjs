@@ -294,7 +294,7 @@ async function stayJourney(page, sitting) {
   await page.getByRole("button", { name: "Review protected booking" }).click();
   await expectVisible(page, "Review and confirm");
   await page.waitForTimeout(900);
-  const final = page.getByRole("button", { name: /create canonical stay|request final partner approval/i });
+  const final = page.getByRole("button", { name: /(create stay request|request sitter) & review payment/i });
   await final.waitFor({ state: "visible", timeout: TIMEOUT });
   if (await final.isDisabled()) fail(`${name} final action stayed disabled after quote and address resolution`);
   const attempts = await blockNextMutation(page, final, /POST \/api\/(uat-scheduling|sitting-payment-sandbox|canonical-bookings)/);
