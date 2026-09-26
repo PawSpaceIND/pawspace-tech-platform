@@ -200,7 +200,7 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   // Switch through the real preference controls before checking illustrated assets.
   await page.getByRole("button", { name: "Change PawSpace appearance" }).click();
   const appearance = page.getByRole("dialog", { name: "Make PawSpace yours." });
-  await appearance.getByRole("radio", { name: /^Illustrated mascots/ }).check();
+  await appearance.getByRole("radio", { name: /^(Fun · )?Illustrated mascots/ }).check();
   await appearance.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "cartoon");
   const measurements = [];

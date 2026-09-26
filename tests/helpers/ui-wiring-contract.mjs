@@ -24,3 +24,17 @@ export function uiWiringContract(source, filename = 'page.tsx') {
  const canonical = JSON.stringify({functions: functions.sort(), declarations: declarations.sort(), props: props.sort(), conditions: conditions.sort()});
  return {sha256: createHash('sha256').update(canonical).digest('hex'), functions: functions.length, declarations: declarations.length, interactionProps: props.length, conditions: conditions.length};
 }
+
+/** Data-flow fingerprint for approved navigation-only changes. All handlers and guards remain included. */
+export function uiDataFlowContract(source, filename = 'page.tsx') {
+ const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+ const navigation = [];
+ function visit(node) {
+  if (ts.isJsxAttribute(node) && node.name.text === 'href') navigation.push([node.getStart(file), node.end]);
+  ts.forEachChild(node, visit);
+ }
+ visit(file);
+ let normalized = source;
+ for (const [start,end] of navigation.sort((a,b)=>b[0]-a[0])) normalized = normalized.slice(0,start) + normalized.slice(end);
+ return uiWiringContract(normalized, filename);
+}

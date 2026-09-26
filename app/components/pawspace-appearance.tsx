@@ -47,11 +47,11 @@ export default function PawSpaceAppearance() {
     <button className="paw-appearance-trigger" aria-label="Change PawSpace appearance" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">◐</span><span>Appearance</span></button>
     <dialog ref={dialog} className="paw-appearance-dialog" aria-labelledby="paw-appearance-title">
       <div className="paw-appearance-head"><img src="/assets/pawspace-icon.jpeg" alt="PawSpace"/><button aria-label="Close appearance settings" onClick={() => dialog.current?.close()}>×</button></div>
-      <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>Pick Emerald kit or official Brand book colours. Same booking and payments either way.</p>
+      <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>Choose Professional or Fun, then Emerald + Gold or Brand book colours. Both styles work with both palettes. Booking and payments stay the same.</p>
       <fieldset><legend>Visual style</legend>{["cartoon", "professional"].map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
         setVisualStyle(style); document.documentElement.dataset.pawStyle = style;
         try { localStorage.setItem("pawspace.visual-style", style); } catch { /* Session-only choice. */ }
-      }}/><span><b>{style === "cartoon" ? "Illustrated mascots" : "Professional"}</b><small>{style === "cartoon" ? "Cute breed art on every service · default" : "Compact icons only"}</small></span></label>)}</fieldset>
+      }}/><span><b>{style === "cartoon" ? "Fun · Illustrated mascots" : "Professional"}</b><small>{style === "cartoon" ? "Friendly pet illustrations · compact service grid" : "Clean layout · compact line icons · no decorative scenes"}</small></span></label>)}</fieldset>
       <fieldset><legend>Brand colour</legend>{themes.map(option => <label key={option.id} className="paw-theme-choice"><input type="radio" name="paw-theme" value={option.id} checked={theme === option.id} onChange={() => choose(option.id)}/><span><b>{option.label}</b><small>{option.tagline}</small></span><span className="paw-swatches" aria-hidden="true">{option.swatches.map(colour => <i key={colour} style={{background:colour}}/>)}</span></label>)}</fieldset>
       <fieldset><legend>Display</legend><div className="paw-mode-choices">{(["light", "dark", "system"] as const).map(value => <label key={value}><input type="radio" name="paw-mode" checked={mode===value} onChange={() => choose(theme,value)}/>{value}</label>)}</div></fieldset>
       <button className="paw-appearance-done" onClick={() => dialog.current?.close()}>Done</button>
