@@ -33,3 +33,19 @@
 .page.page .packageCard h3 { font-size:17px; margin:6px 0; }.page.page .packageCard p { font-size:13px; line-height:1.4; margin:5px 0; }
 .page.page .summary { border-radius:var(--ds-radius-lg,18px); padding:18px; }
 @media(max-width:640px) { .page.page .hero { margin:12px auto; }.page.page .hero h1 { font-size:23px; }.page.page .layout { display:flex; flex-direction:column; padding-inline:12px; }.page.page .petGrid { grid-template-columns:1fr; gap:8px; }.page.page .packageGrid { gap:8px; }.page.page .summary { position:static; width:auto; }.page.page .progress { display:none; } }
+
+/* Checkout and doorstep recovery render their own root <main>, never inside .page, so the pairings above cannot reach them.
+   Same palette and pairings, scoped to that root. Presentation only: the panel, its reads and payment actions are unchanged. */
+.checkoutPage { composes:palette from "../../components/brand/brand-surface.module.css"; }
+.checkoutPage.checkoutPage { background:radial-gradient(circle at 15% 0%,var(--brand-raised) 0,transparent 28%),radial-gradient(circle at 90% 20%,var(--brand-raised) 0,transparent 30%),var(--brand-bg); color:var(--brand-text); }
+.checkoutPage .checkoutCard { background:var(--brand-surface); border-color:var(--brand-line); box-shadow:var(--brand-shadow); }
+.checkoutPage .checkoutCard>p,.checkoutPage .checkoutFacts span,.checkoutPage .checkoutCard .safe p,.checkoutPage .confirmedBox small,.checkoutPage .recoveryForm p,.checkoutPage .checkoutActions p,.checkoutPage .receiptNote { color:var(--brand-muted); }
+.checkoutPage .eyebrow { color:var(--brand-muted); background:var(--brand-raised); border:1px solid var(--brand-line); }
+.checkoutPage .checkoutFacts div,.checkoutPage .checkoutCard .safe,.checkoutPage .confirmedBox { background:var(--brand-raised); border:1px solid var(--brand-line); }
+.checkoutPage .checkoutCard .safe b { color:var(--brand-text); }
+.checkoutPage .checkoutCard .safe>span { color:var(--brand-warning); }
+.checkoutPage .confirmedBox>span,.checkoutPage .doneLink { background:var(--brand-primary); color:var(--brand-on-primary); }
+.checkoutPage .statusButton { border:1px solid var(--brand-line); background:var(--brand-surface); color:var(--brand-text); }
+.checkoutPage .continue { background:var(--brand-gold); color:var(--brand-on-gold); }
+.checkoutPage .checkoutCard .inlineError { background:var(--brand-danger-bg); color:var(--brand-danger); border:1px solid var(--brand-line); }
+.checkoutPage .recoveryForm input { border-color:var(--brand-line); background:var(--brand-surface); color:var(--brand-text); }

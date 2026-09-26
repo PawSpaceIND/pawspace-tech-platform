@@ -17,16 +17,32 @@ async function choose(page: Page, appearance: Appearance) {
     localStorage.setItem("pawspace.visual-style", a.style);
     localStorage.setItem("pawspace.customer.appearance", a.mode);
   }, appearance);
+  // Vite dev (plugin-rsc) removes the server-rendered client-component stylesheet links on hydration and re-injects the
+  // same CSS as <style> tags moments later. Record those links so visit() can wait for the swap instead of reading styles
+  // from an unstyled frame.
+  await page.addInitScript(() => {
+    const hrefs: string[] = (window as unknown as { __v2ClientCss: string[] }).__v2ClientCss = [];
+    new MutationObserver(records => { for (const record of records) for (const node of record.addedNodes)
+      if (node instanceof HTMLLinkElement && node.rel === "stylesheet" && node.dataset.precedence?.startsWith("vite-rsc/client-reference")) hrefs.push(new URL(node.href).pathname);
+    }).observe(document, { childList: true, subtree: true });
+  });
 }
 async function visit(page: Page, route: string, appearance: Appearance) {
   await page.goto(route, { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-pawspace-v2]")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-paw-theme", appearance.theme);
   await expect(page.locator("html")).toHaveAttribute("data-paw-mode", appearance.mode);
+  await page.waitForFunction(() => {
+    const dev = document.querySelector('script[src^="/@id/"]'), hrefs = (window as unknown as { __v2ClientCss?: string[] }).__v2ClientCss ?? [];
+    const injected = Array.from(document.querySelectorAll("style[data-vite-dev-id]"), style => style.getAttribute("data-vite-dev-id") ?? "");
+    return !dev || (!document.querySelector('link[rel="stylesheet"][data-precedence^="vite-rsc/client-reference"]') && hrefs.every(href => injected.some(id => id.endsWith(href))));
+  }, null, { timeout: 15_000 });
   await page.evaluate(() => document.fonts.ready);
   const consent = page.getByRole("button", { name: "Essential only", exact: true });
   if (await consent.isVisible().catch(() => false)) await consent.click();
-  await page.evaluate(() => window.scrollTo(0, 0));
+  // The consent banner sits at the end of the page, so clicking it scrolls there first. globals.css makes the root
+  // scroll smooth; an instant reset keeps geometry from being read mid-animation.
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
 }
 test.beforeEach(() => test.skip(!local, "UI fixtures and quote requests run only in the isolated local sandbox."));
 test.use({ video: "off" });
@@ -230,4 +246,51 @@ test('Reduced motion disables the official-logo entrance without delaying servic
  const a={theme:'emerald',style:'professional',mode:'light'} as const;await choose(page,a);await visit(page,'/v2',a);
  const logo=page.locator('img[src="/assets/pawspace-official-lockup.png"]').first();await expect(logo).toHaveCSS('animation-name','none');
  await expect(page.locator('a[data-home-care-tile="grooming"]')).toBeVisible();
+});
+
+// UI fixture only: the booking read is fulfilled locally; no booking, order, doorstep or payment request is sent.
+const checkoutReadiness = { bookingId: 'B-UI', customerId: 'C-UI', locationReady: false, bookingStatus: 'payment_pending', paymentStatus: 'created',
+  confirmation: { ready: false, bookingId: 'B-UI', serviceCode: 'grooming', packageName: 'Bath & Basic', bookingStatus: 'payment_pending', paymentId: 'P-UI',
+    paymentMode: 'prepaid', paymentStatus: 'created', transactionId: null, amountDueNow: 1899, totalAmount: 1899, currency: 'INR', providerId: 'PRV-UI',
+    providerName: 'UI Fixture Groomer', providerModel: 'full_time', workOrderStatus: 'payment_pending', scheduledStart: '2026-10-01T04:30:00.000Z',
+    scheduledEnd: '2026-10-01T06:30:00.000Z', updatedAt: 1, pets: [{ id: 'PET-UI', name: 'Bruno', species: 'dog', breed: 'Indie' }] } };
+for (const theme of ['emerald','signature'] as const) for (const mode of ['light','dark'] as const) test(`Grooming checkout follows the selected palette: ${theme}/${mode}`, async ({page}) => {
+  const appearance: Appearance = {theme, mode, style: 'professional'};
+  await page.route('**/api/v2/grooming-checkout?*', r => r.fulfill({json: {data: checkoutReadiness}}));
+  const writes: string[] = []; page.on('request', r => { if (r.method() !== 'GET') writes.push(r.url()); });
+  await choose(page, appearance); await visit(page, '/v2/grooming?bookingId=B-UI', appearance);
+  const card = page.getByRole('region', {name: 'Grooming checkout'});
+  await expect(card.getByText('UI Fixture Groomer')).toBeVisible(); await expect(card.getByLabel('PIN code')).toBeVisible();
+  const colors = await card.evaluate(e => {
+    const color = (el: Element | null) => getComputedStyle(el!).color, bg = (el: Element | null) => getComputedStyle(el!).backgroundColor;
+    const q = (selector: string) => e.querySelector(selector), fact = q('[class*="checkoutFacts"] div');
+    return { main: bg(e.closest('main')), canvas: bg(document.querySelector('[data-pawspace-v2]')), pairs: [
+      [color(q('h1')), bg(e)], [color(q(':scope > p')), bg(e)], [color(fact!.querySelector('span')), bg(fact)], [color(fact!.querySelector('b')), bg(fact)],
+      [color(q('[class*="safe"] p')), bg(q('[class*="safe"]'))], [color(q('form label')), bg(e)], [color(q('form input')), bg(q('form input'))],
+      [color(q('[class*="statusButton"]')), bg(q('[class*="statusButton"]'))], [color(q('[class*="doneLink"]')), bg(q('[class*="doneLink"]'))],
+      [color(q('[class*="receiptNote"]')), bg(e)]] };
+  });
+  expect(colors.main).toBe(colors.canvas);
+  for (const [text, background] of colors.pairs) expect(contrast(text, background)).toBeGreaterThanOrEqual(4.5);
+  expect(writes).toEqual([]);
+});
+
+test('Funeral care Back returns to the request list without reopening the case', async ({page}) => {
+  // UI fixture only: the account and request reads are fulfilled locally; no support request is created or changed.
+  const a: Appearance = {theme: 'emerald', style: 'professional', mode: 'light'};
+  const item = {id: 'FUNERAL-UI-1', customer_id: 'C-UI', pet_name: 'Bruno', pet_species: 'dog', pickup_address: 'Fixture street, Bengaluru', service_type: 'cremation',
+    memorial_option: 'none', urgency: 'urgent', status: 'requested', support_status: 'none', certificate_status: 'not_issued', created_at: 1, updated_at: 1, payment: null, milestones: [], media: []};
+  await page.route('**/api/customer-account', r => r.fulfill({json: {data: {customerId: 'C-UI', name: 'UI Fixture', primaryPhone: '9000000902', addresses: [], bookings: [], pets: []}}}));
+  const caseReads: string[] = [];
+  await page.route('**/api/funeral-memorial?*', r => { const url = new URL(r.request().url()), caseId = url.searchParams.get('caseId');
+    if (caseId) caseReads.push(caseId); return r.fulfill({json: {data: caseId ? item : [item], readiness: {}, templates: {}}}); });
+  const writes: string[] = []; page.on('request', r => { if (r.method() !== 'GET') writes.push(r.url()); });
+  await choose(page, a); await visit(page, '/v2/funeral-memorial', a);
+  await page.getByRole('button', {name: /FUNERAL-UI-1/}).click();
+  await expect(page.getByRole('heading', {name: 'Support request FUNERAL-UI-1'})).toBeVisible();
+  const refreshed = page.waitForResponse(r => r.url().includes('/api/funeral-memorial?scope=customer'));
+  await page.getByRole('button', {name: 'Back to requests'}).click(); await refreshed; await page.waitForTimeout(500);
+  await expect(page.getByRole('heading', {name: 'Create a sensitive support request'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Support request FUNERAL-UI-1'})).toHaveCount(0);
+  expect(caseReads).toEqual(['FUNERAL-UI-1']); expect(writes).toEqual([]);
 });

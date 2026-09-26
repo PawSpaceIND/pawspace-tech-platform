@@ -15,6 +15,9 @@ on:
       - 'e2e/v2-grooming.spec.ts'
       - 'e2e/v2-ui-theme-closure.spec.ts'
       - 'app/components/pawspace-appearance.tsx'
+      # Shared pages rendered by the V2 routes that the theme spec checks directly (Walking summary, Funeral care).
+      - 'app/walking/**'
+      - 'app/funeral-memorial/page.tsx'
       - 'playwright.v2.config.ts'
       - '.github/workflows/v2-grooming.yml'
   workflow_dispatch:
