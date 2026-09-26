@@ -1,5 +1,6 @@
 import{ensureBoardingStayLifecycleTables}from"./boarding-stay-lifecycle";
 import{collectedForBooking}from"./collected-funds";
+import{providerPayoutHoldDays}from"./provider-payout-hold";
 
 type Row=Record<string,unknown>;
 export type BoardingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"reconcile";
@@ -131,9 +132,9 @@ export async function mutateBoardingFinance(db:D1Database,input:BoardingFinanceI
   const payable=await db.prepare("SELECT COALESCE(SUM(credit-debit),0) amount,MAX(created_at) resolved_at FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? AND account_code='2110-Provider Payable' AND posted=1").bind(input.bookingId).first<Row>().catch(()=>null);
   const payoutAmount=Math.round(Number(payable?.amount||0)*100)/100;
   if(!payout||!Number.isFinite(payoutAmount)||payoutAmount<0)throw new Response("Canonical Boarding completion finance must be resolved before host settlement",{status:409});
-  const completedAt=Number(payable?.resolved_at||payout.computed_at||now),eligibleAt=completedAt+5*24*60*60*1000;
+  const completedAt=Number(payable?.resolved_at||payout.computed_at||now),holdDays=await providerPayoutHoldDays(db,completedAt),eligibleAt=completedAt+holdDays*24*60*60*1000;
   await db.prepare("INSERT INTO boarding_host_settlement_ledger (booking_id,stay_id,provider_id,gross_booking_value,currency,base_payout,add_on_payout,travel_allowance,incentives,penalties,cash_adjustment,payout_amount,payout_rule_status,tax_status,approval_status,payout_status,eligible_at,approved_by,payout_reference,created_at,updated_at) VALUES (?,?,?,?,'INR',?,0,0,0,0,0,?,'rule_applied','resolved','awaiting_finance_approval','not_instructed',?,NULL,NULL,?,?) ON CONFLICT(booking_id) DO UPDATE SET stay_id=excluded.stay_id,provider_id=excluded.provider_id,gross_booking_value=excluded.gross_booking_value,base_payout=excluded.base_payout,add_on_payout=0,travel_allowance=0,incentives=0,penalties=0,cash_adjustment=0,payout_amount=excluded.payout_amount,payout_rule_status='rule_applied',tax_status='resolved',approval_status=CASE WHEN boarding_host_settlement_ledger.approval_status IN ('approved','paid') THEN boarding_host_settlement_ledger.approval_status ELSE 'awaiting_finance_approval' END,payout_status=CASE WHEN boarding_host_settlement_ledger.payout_status!='not_instructed' THEN boarding_host_settlement_ledger.payout_status ELSE 'not_instructed' END,eligible_at=excluded.eligible_at,updated_at=excluded.updated_at").bind(input.bookingId,stay.stay_id,stay.host_provider_id,stay.total_amount,Number(payout.provider_net_payout),payoutAmount,eligibleAt,now,now).run();
-  return remember(db,input,{bookingId:input.bookingId,status:"settlement_prepared",grossBookingValue:Number(stay.total_amount),basePayout:Number(payout.provider_net_payout),payoutAmount,payoutRule:"rule_applied",tax:"resolved",approvalStatus:"awaiting_finance_approval",payoutStatus:"not_instructed",eligibleAt,payoutSlaDays:5,source:"canonical_service_completion"});
+  return remember(db,input,{bookingId:input.bookingId,status:"settlement_prepared",grossBookingValue:Number(stay.total_amount),basePayout:Number(payout.provider_net_payout),payoutAmount,payoutRule:"rule_applied",tax:"resolved",approvalStatus:"awaiting_finance_approval",payoutStatus:"not_instructed",eligibleAt,payoutSlaDays:holdDays,source:"canonical_service_completion"});
  }
 
  if(input.action==="reconcile"){

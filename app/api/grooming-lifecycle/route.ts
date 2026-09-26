@@ -5,6 +5,7 @@ import{governedJsonError}from"../../../lib/governed-http-error";
 import{projectProviderLifecycleBundle}from"../../../lib/grooming-provider-projection";
 import{tryQualifyLinkedReferral}from"../../../lib/referral-booking-governance";
 import{resolveServiceCompletionFinance}from"../../../lib/service-completion-finance";
+import{providerPayoutDueAt}from"../../../lib/provider-payout-hold";
 import{assertCollectionRecordedForCompletion,authoriseCompletionWithoutCollection,ensureServiceCashCollectionTables,recordCashCollection,recordedCashCollection,collectionOverride}from"../../../lib/service-cash-collection";
 import{resolveBookingDoorstep}from"../../../lib/booking-doorstep";
 import{CommercialTermConfigurationRequired}from"../../../lib/provider-commercial-terms";
@@ -112,7 +113,7 @@ export async function POST(request:Request){try{const input=await request.json()
     // Called for its REFUSAL, not its value: this is the fast path that tells a provider to record the
     // payment before any lease is taken or any finance is resolved. The reading the settlement is
     // actually written from is taken again under the lease below.
-    await assertCollectionRecordedForCompletion(db,{bookingId:input.bookingId,providerId});const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>(),usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(input.bookingId).first<Row>(),invoiceId=`INV-${crypto.randomUUID().slice(0,8).toUpperCase()}`,invoiceNumber=`PS-${new Date(now).getUTCFullYear()}-${String(now).slice(-8)}`,eligibleAfter=now+24*60*60*1000,sessionsToConsume=usage&&String(usage.status)==="reserved"?Number(usage.sessions_reserved||0):0,lease=await acquireProviderLifecycleLease(db,{bookingId:input.bookingId,serviceCode:"grooming",providerId,from:"in_progress",path:["completed"],actorId:actor,legacySeedStatus:"in_progress",detail:{action:"complete",checklist:input.checklist??[]}});/* The gate is re-read UNDER THE LEASE, and this second reading is the one the settlement is written
+    await assertCollectionRecordedForCompletion(db,{bookingId:input.bookingId,providerId});const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>(),usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(input.bookingId).first<Row>(),invoiceId=`INV-${crypto.randomUUID().slice(0,8).toUpperCase()}`,invoiceNumber=`PS-${new Date(now).getUTCFullYear()}-${String(now).slice(-8)}`,eligibleAfter=await providerPayoutDueAt(db,now),sessionsToConsume=usage&&String(usage.status)==="reserved"?Number(usage.sessions_reserved||0):0,lease=await acquireProviderLifecycleLease(db,{bookingId:input.bookingId,serviceCode:"grooming",providerId,from:"in_progress",path:["completed"],actorId:actor,legacySeedStatus:"in_progress",detail:{action:"complete",checklist:input.checklist??[]}});/* The gate is re-read UNDER THE LEASE, and this second reading is the one the settlement is written
     * from. The first reading happens before any lease is taken so the provider gets a fast, friendly
     * refusal; but between that read and the settlement row there was a window in which the recorded
     * collection could be corrected downward, leaving a stale "paid in full" to release a payout that the
