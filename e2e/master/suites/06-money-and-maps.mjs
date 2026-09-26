@@ -93,7 +93,7 @@ try {
       payment: { method: "upi", mode: "split_50_50", status: "created", detail: "Awaiting verified Razorpay payment" }, pricing: { discount: 0, boardingQuoteId: quote.quoteId },
     }, { timeout: 150_000 });
     const createMs = Date.now() - createdAt;
-    if (createMs > 15_000) finding({ suite: SUITE, severity: "P2", area: "Booking performance", persona: "Customer", flow: "Boarding confirm (POST /api/canonical-bookings)", title: `Creating the Boarding booking took ${Math.round(createMs / 1000)} s on staging`, steps: "Confirm a 5-night split Boarding stay after the reservation", expected: "< 5 s", actual: `${createMs} ms, HTTP ${created.status}`, evidence: [] });
+    if (createMs > 15_000) finding({ suite: SUITE, severity: "P2", area: "Booking performance", persona: "Customer", flow: "Boarding confirm (POST /api/canonical-bookings)", title: `Creating the Boarding booking took ${Math.round(createMs / 1000)} s on staging`, steps: "Confirm a 5-night split Boarding stay after the reservation", expected: "under 5 s (this finding is filed above 15 s)", actual: `${createMs} ms, HTTP ${created.status}`, evidence: [] });
     const bookingId = created.body?.data?.bookingId;
     step("split booking created", Boolean(bookingId), `HTTP ${created.status} ${bookingId || JSON.stringify(created.body).slice(0, 200)}`);
     if (bookingId) {

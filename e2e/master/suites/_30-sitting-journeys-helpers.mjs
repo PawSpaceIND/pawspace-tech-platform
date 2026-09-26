@@ -167,7 +167,7 @@ export async function chooseSitter(flow, { prefer, avoid = [], retries = 3 } = {
   // The price label settles once the quote for this sitter arrives.
   for (let i = 0; i < 30 && /Calculating/.test(await cards.nth(pick).locator("strong").last().innerText().catch(() => "")); i++) await page.waitForTimeout(700);
   out.chosenPriceLabel = flat(await cards.nth(pick).locator("strong").last().innerText().catch(() => ""));
-  const next = page.getByRole("button", { name: /^Continue with |Choose an available caregiver/ });
+  const next = page.getByRole("button", { name: /^(?:Continue with |Choose an available caregiver)/ });
   out.continueText = flat(await next.innerText().catch(() => ""));
   return out;
 }

@@ -703,7 +703,7 @@ async function staffJourney() {
     const s1 = created.S1 || rows[0];
     await page.goto(`${BASE}/booking-command-center?bookingId=${encodeURIComponent(s1.bookingId)}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await page.getByText("Loading connected booking records…").waitFor({ state: "detached", timeout: 60_000 }).catch(() => {});
-    await page.getByRole("button", { name: new RegExp(H.flat(s1.bookingId).replace(/[-]/g, "\\-")) }).first().waitFor({ timeout: 30_000 }).catch(() => {});
+    await page.getByRole("button", { name: new RegExp(H.flat(s1.bookingId).replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")) }).first().waitFor({ timeout: 30_000 }).catch(() => {});
     await settle(page, 1500);
     const bccText = H.flat(await page.locator("main").innerText().catch(() => ""));
     const shotBcc = await flow.shot("bcc-s1");
