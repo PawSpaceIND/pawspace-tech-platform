@@ -26,6 +26,15 @@ export interface ScheduleRequest {
   customRules?: CustomScheduleRule[];
   preferredProviderMode?: "strict"|"preference"|"disabled";
   rankingWeights?: {qualityWeight:number;fullTimeBonus:number;preferredProviderBonus:number;repeatProviderBonus:number;distanceWeight:number;residualCapacityWeight:number;workloadPenalty:number};
+  /**
+   * Appointment mode only. Off (the default), one overlapping booking inside the travel buffer excludes a
+   * provider and provider.capacity is ignored. On, provider.capacity bounds how many buffer-overlapping
+   * appointments the provider may hold, and an existing booking with exactly the same window still excludes
+   * (uq_scheduling_reservations_active_provider_window would refuse the write). Capacity 1 is identical to off.
+   * Boarding and overnight Pet Sitting are unaffected. Callers set it only on a declared UAT scheduling runtime
+   * (app/api/uat-scheduling/route.ts).
+   */
+  parallelAppointments?: boolean;
 }
 
 export interface ScheduleOccurrence { start: string; end: string; occurrenceNumber: number; }
@@ -74,6 +83,9 @@ const dateKey = (value:string,cityId:string) => localDate(value,cityId).toISOStr
 const minutesOfDay = (value:string,cityId:string) => { const d=localDate(value,cityId); return d.getUTCHours()*60+d.getUTCMinutes(); };
 const overlaps = (aStart:number,aEnd:number,bStart:number,bEnd:number) => aStart < bEnd && bStart < aEnd;
 const windowCovers=(window:string,start:number,end:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]);const to=Number(match[3])*60+Number(match[4]);return start>=from&&end<=to;};
+
+/** How many buffer-overlapping appointments a provider may hold: 1 unless parallelAppointments is declared, never below 1. */
+export const parallelAppointmentCapacity=(provider:Pick<Provider,"capacity">,input:Pick<ScheduleRequest,"parallelAppointments">)=>input.parallelAppointments?Math.max(1,Math.floor(Number(provider.capacity??1))||1):1;
 
 export function haversineDistanceKm(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
   const valid=(lat:number,lng:number)=>Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;
@@ -143,10 +155,17 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
       }
     }
     // Boarding shares the host's home up to capacity. Every other job, overnight Pet Sitting included (it is at the
-    // customer's home), needs the provider to itself for its window plus the travel buffer.
+    // customer's home), needs the provider to itself for its window plus the travel buffer - unless the caller
+    // declared parallelAppointments, which lets an appointment (never an overnight) share up to provider.capacity.
     const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
-    const conflict=input.serviceCode!=="boarding"&&existing.some(b=>overlaps(new Date(occurrence.start).getTime()-buffer,new Date(occurrence.end).getTime()+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime()));
-    if(conflict){eligible=false;reasons.push("Existing booking conflicts with travel/service buffer");}
+    if(input.serviceCode!=="boarding"){
+      const startMs=new Date(occurrence.start).getTime(),endMs=new Date(occurrence.end).getTime(),parallelCapacity=overnight?1:parallelAppointmentCapacity(provider,input);
+      const overlapping=existing.filter(b=>overlaps(startMs-buffer,endMs+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())),concurrent=overlapping.length;
+      const duplicate=parallelCapacity>1&&existing.some(b=>new Date(b.scheduledStart).getTime()===startMs&&new Date(b.scheduledEnd).getTime()===endMs);
+      // Only sessions of the same service may share: any other job (a boarding stay, a grooming visit) still needs the provider to itself.
+      const otherService=parallelCapacity>1&&overlapping.some(b=>b.serviceCode!==input.serviceCode);
+      if(duplicate||otherService||concurrent>=parallelCapacity){eligible=false;reasons.push(duplicate?"Existing booking already holds this exact window":otherService?"Existing booking of another service conflicts with travel/service buffer":parallelCapacity>1?`Parallel appointment capacity ${parallelCapacity} reached`:"Existing booking conflicts with travel/service buffer");}
+    }
     if(overnight){
       const used=existing.filter(b=>overlaps(new Date(occurrence.start).getTime(),new Date(occurrence.end).getTime(),new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())).reduce((sum,b)=>sum+(b.capacityUnits??b.petIds.length),0);
       workload=Math.max(workload,used);residualCapacity=Math.max(0,(provider.capacity??1)-used-input.petIds.length);

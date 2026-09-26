@@ -351,7 +351,7 @@ test("signed-in customer acceptance follows current service progression and paym
   const source = read("../scripts/customer-ui-acceptance-v2.mjs");
   assert.doesNotMatch(source, /Who needs grooming\?/);
   assert.match(source, /Training assessment progression/);
-  assert.match(source, /Book a Meet & Greet/);
+  assert.match(source, /See training options/);
   assert.match(source, /Training programme progression/);
   assert.match(source, /async function resolveStayLocation\(page,available,name\)/);
   assert.match(source, /address resolution did not become usable/);

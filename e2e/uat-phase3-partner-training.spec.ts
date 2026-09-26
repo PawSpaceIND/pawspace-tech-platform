@@ -63,7 +63,7 @@ test("training pet cards and requirement chips fit mobile; saved address replace
  const notes=await page.getByLabel("Home routine, behaviour and trainer notes").boundingBox(),health=await page.getByLabel("Health and safety").boundingBox();
  expect(notes&&health&&health.y>=notes.y+notes.height).toBeTruthy();
  await page.screenshot({path:info.outputPath("training-details.png"),fullPage:true});
- await page.getByRole("button",{name:"Book a Meet & Greet",exact:true}).click();
+ await page.getByRole("button",{name:"See training options",exact:true}).click();
  await expect(page.getByText(/42 UAT Road/)).toBeVisible();await expect(page.getByRole("button",{name:"Change Address"})).toBeEnabled();
  await expect(page.getByLabel("PIN code",{exact:true})).toHaveCount(0);await expect(page.getByText("We’ll check trainer availability in your area before confirming.")).toBeVisible();
  expect(errors).toEqual([]);

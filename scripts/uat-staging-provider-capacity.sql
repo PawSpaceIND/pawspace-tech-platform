@@ -98,12 +98,31 @@ INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model
 -- ---------------------------------------------------------------------------------------------------
 -- Dog training (radius-gated, recurring): one full-time trainer per zone plus a city-wide team.
 -- ---------------------------------------------------------------------------------------------------
-INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,1,45,12,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_ft','blr','PawSpace Training Team (UAT)','full_time','["dog_training"]','["blr-east","blr-south","blr-north","blr-west","blr-central"]',1,4.9,95,25,45,200,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_east','blr','Arjun T. (UAT East)','full_time','["dog_training"]','["blr-east"]',1,4.9,95,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_south','blr','Kavya R. (UAT South)','full_time','["dog_training"]','["blr-south"]',1,4.9,95,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_north','blr','Nikhil B. (UAT North)','full_time','["dog_training"]','["blr-north"]',1,4.8,93,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_west','blr','Anitha G. (UAT West)','full_time','["dog_training"]','["blr-west"]',1,4.8,93,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
 INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('uatcap_train_central','blr','Rohan D. (UAT Central)','full_time','["dog_training"]','["blr-central"]',1,4.9,94,1,45,8,3,'active',1,'2026-01-01',NULL,'founder_seed',1789300000000);
+-- STAGING ONLY: the city-wide Training team is the trainer testers can always book (owner request
+-- 2026-09-26: "during testing no trainer availability shouldn't come, keep this open").
+--
+-- Why: appointment scheduling held one job per trainer per travel-buffer window, and every tester's
+-- Training booking stayed on the calendar, so an 8-session programme (a tester on /v2/training, East
+-- Bengaluru, from 12 Oct 2026 10:00 IST every 4 days) clashed somewhere on one of its dates with every
+-- trainer and was shown "No available trainer has been confirmed in East Bengaluru for this programme".
+-- On a runtime that declares PAWSPACE_SCHEDULING_ENV=uat (staging does; production never does, and
+-- deploy-production.yml refuses it) app/api/uat-scheduling lets a Training provider hold overlapping
+-- sessions up to its capacity, never two with the identical window. capacity 25 / max_daily_jobs 200
+-- makes this team trainer effectively always free for testers. The zone trainers above stay at capacity
+-- 1, so staging still exercises the one-trainer-one-session path. On any runtime without the declaration
+-- capacity is ignored for appointments, so these numbers change nothing there.
+--
+-- The INSERT above covers a fresh database; this UPDATE repairs the row an earlier seed already loaded
+-- (INSERT OR IGNORE leaves it at capacity 1). It only raises, only touches the seed's own row
+-- (updated_by='founder_seed'), so a trainer profile Ops has edited is never overruled, and it matches
+-- nothing once applied, so re-running it on every staging deploy is a no-op.
+UPDATE provider_capacity_profiles SET capacity=max(capacity,25),max_daily_jobs=max(max_daily_jobs,200),version=version+1,updated_at=1789300000000 WHERE id='uatcap_train_ft' AND updated_by='founder_seed' AND (capacity<25 OR max_daily_jobs<200);
 
 -- ---------------------------------------------------------------------------------------------------
 -- Boarding / Pet sitting / Dog walking / Pet taxi: not radius-gated, city-wide.
