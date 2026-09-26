@@ -82,6 +82,18 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
     say("## 1. The reported case on /v2/training");
     say("");
     say("Basic Obedience Plan · 1 dog · first session 12 Oct 2026, 10:00 IST · every 4 days");
+    // Every quote, roster and availability call the page makes, with its outcome and duration, so a
+    // "No available trainer" can be told apart from a call that ran out of time.
+    const calls: string[] = [];
+    const watched = /\/api\/(training-commercial|training-trainers|uat-scheduling)\b/;
+    const started = new WeakMap<object, number>();
+    page.on("request", request => { if (watched.test(request.url())) started.set(request, Date.now()); });
+    const logCall = (request: { url(): string; method(): string }, outcome: string) => {
+      const began = started.get(request);
+      calls.push(`${request.method()} ${new URL(request.url()).pathname} → ${outcome}${began ? ` in ${((Date.now() - began) / 1000).toFixed(1)} s` : ""}`);
+    };
+    page.on("requestfinished", async request => { if (watched.test(request.url())) logCall(request, `HTTP ${(await request.response())?.status() ?? "?"}`); });
+    page.on("requestfailed", request => { if (watched.test(request.url())) logCall(request, `failed (${request.failure()?.errorText || "aborted"})`); });
     await page.goto("/v2/training"); await settle(page, 2500);
     const dogs = page.getByRole("group", { name: /Dogs/ });
     const bruno = dogs.getByRole("button", { name: /^Bruno/ }).first();
@@ -93,19 +105,36 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
     await page.getByLabel("First session time (IST)").fill("10:00");
     // The page re-checks availability after every change; only the preview for the final selection counts.
     const reportedStart = Date.parse("2026-10-12T10:00:00+05:30");
-    const finalPreview = page.waitForResponse(response => {
+    const previewFor = () => page.waitForResponse(response => {
       if (!response.url().includes("/api/uat-scheduling") || response.request().method() !== "POST") return false;
       try { const sent = JSON.parse(response.request().postData() || "{}"); return sent.action === "preview" && Date.parse(sent.scheduledStart) === reportedStart && Number(sent.cadenceDays) === 4 && Number(sent.occurrences) === 8; } catch { return false; }
-    }, { timeout: 150_000 });
+    }, { timeout: 150_000 }).then(response => response.status()).catch(() => 0);
+    const finalPreview = previewFor();
     await page.getByLabel("First session date").fill("2026-10-12");
-    const previewStatus = await finalPreview.then(response => response.status()).catch(() => 0);
+    let previewStatus = await finalPreview;
     const section = page.locator("section").filter({ hasText: "3. Available trainer" }).first();
-    let onScreen: string[] = [], screenText = "";
-    const until = Date.now() + 30_000;
-    while (Date.now() < until) {
-      screenText = (await section.innerText().catch(() => "")).replace(/\n+/g, " · ");
-      if (!/Checking availability/i.test(screenText)) { onScreen = (await section.getByRole("button").filter({ hasText: /★/ }).allInnerTexts()).map(text => text.split("\n")[0].trim()); break; }
-      await page.waitForTimeout(800);
+    async function readTrainers() {
+      let text = "";
+      const until = Date.now() + 30_000;
+      while (Date.now() < until) {
+        text = (await section.innerText().catch(() => "")).replace(/\n+/g, " · ");
+        if (!/Checking availability/i.test(text)) return { names: (await section.getByRole("button").filter({ hasText: /★/ }).allInnerTexts()).map(item => item.split("\n")[0].trim()), text };
+        await page.waitForTimeout(800);
+      }
+      return { names: [] as string[], text };
+    }
+    let { names: onScreen, text: screenText } = await readTrainers();
+    const topAlert = async () => (await page.locator("main > p[role='alert']").first().innerText().catch(() => "")).trim();
+    const firstAlert = await topAlert();
+    let retry = "";
+    if (!onScreen.length) {
+      // A tester's next move: tap "Refresh trainer availability" once.
+      await page.screenshot({ path: `${SHOTS}/00-v2-training-first-attempt.jpg`, type: "jpeg", quality: 70 }).catch(() => {});
+      const again = previewFor();
+      await section.getByRole("button", { name: "Refresh trainer availability" }).click().catch(() => {});
+      previewStatus = await again;
+      ({ names: onScreen, text: screenText } = await readTrainers());
+      retry = `First attempt: no trainer${firstAlert ? ` and the page said "${firstAlert}"` : ""}. After one "Refresh trainer availability": ${onScreen.length ? onScreen.join(", ") : "still no trainer"}${await topAlert() ? ` (page said "${await topAlert()}")` : ""}.`;
     }
     if (!onScreen.length) screenText = `${screenText} || page: ${(await page.locator("main").first().innerText().catch(() => "")).replace(/\n+/g, " · ").slice(0, 600)}`;
     if (onScreen.length) {
@@ -120,8 +149,12 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
     say("");
     say(onScreen.length ? `**Result: ${onScreen.length} trainer(s) offered: ${onScreen.join(", ")}.** "Reserve trainer & continue to payment" is ${reserveEnabled ? "enabled" : "disabled"} with ${onScreen.find(name => name.startsWith(TEAM)) || "the first trainer"} selected (availability preview HTTP ${previewStatus}).` : `**Result: no trainer offered** (availability preview HTTP ${previewStatus}). Screen: ${screenText.slice(0, 900)}`);
     say("");
+    if (retry) { say(retry); say(""); }
     if (calendar.length) { say("Calendar shown:"); for (const item of calendar) say(`- ${item}`); say(""); }
-    say("Screenshots: shots/01-v2-training-reported-case.jpg, shots/02-v2-training-reported-case-full.jpg");
+    say("Calls the page made (quote, roster, availability):");
+    for (const call of calls) say(`- ${call}`);
+    say("");
+    say(`Screenshots: ${retry ? "shots/00-v2-training-first-attempt.jpg, " : ""}shots/01-v2-training-reported-case.jpg, shots/02-v2-training-reported-case-full.jpg`);
     say("");
     flush();
 
