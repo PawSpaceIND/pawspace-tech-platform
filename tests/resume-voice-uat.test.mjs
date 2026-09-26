@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-async function run({status='queued',reason='low_confidence',mode='uat',last4='7878'}={}){
+async function run({status='queued',reason='low_confidence',mode='uat',last4='7878',productionCall=true}={}){
  const priorFetch=globalThis.fetch,priorEnv={...process.env},priorLog=console.log,calls=[];
  Object.assign(process.env,{PAWSPACE_VOICE_UAT_ALLOWLIST:'+919999997878',EXPECTED_DESTINATION_LAST4:'7878',UAT_VOICE_CALL_ID:'VCALL-TEST',PAWSPACE_UAT_ACCESS_CODE:'test-only'});
  let resumed=false;
@@ -8,7 +8,7 @@ async function run({status='queued',reason='low_confidence',mode='uat',last4='78
  globalThis.fetch=async(url,options={})=>{
   calls.push({url:String(url),options});const path=new URL(url).pathname;
   if(path==='/api/staging-login')return new Response('{}',{headers:{'set-cookie':'pawspace_uat=test-only; Secure'}});
-  if(path==='/api/voice-outbound')return Response.json({data:[{callId:'VCALL-TEST',mode,productionCall:false,phoneLast4:last4}]});
+  if(path==='/api/voice-outbound')return Response.json({data:[{callId:'VCALL-TEST',mode,productionCall,phoneLast4:last4}]});
   if(path!=='/api/ai-human-handoff')throw new Error('unexpected network target');
   if(new URL(url).searchParams.get('mode')==='queue')return Response.json({data:{queue:[{threadId:'THREAD-VOICE-VCALL-TEST',customerId:'CUS-TEST'}]}});
   if(options.method==='POST'){const body=JSON.parse(options.body);if(body.action==='resume_ai')resumed=true;return Response.json({data:{}});}
