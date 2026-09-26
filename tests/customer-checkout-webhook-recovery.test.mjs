@@ -281,3 +281,60 @@ test("interrupted inbox retries still reject signature and payload tampering wit
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
   assert.equal(w.providerCalls(), 1);
 });
+
+// Review follow-up: simulate only the final replica read; all writes still execute real SQL.
+// This is a deterministic local read-consistency test, not proof of a deployed D1 replica.
+test("completed duplicate confirmation uses primary truth rather than a lagging inbox read", async t => {
+  const w = await setup(t);
+  assert.equal((await w.deliver("payment.captured", "evt_primary_replay")).status, 200);
+  const primaryPrepare = w.db.prepare.bind(w.db), sessions = [];
+  w.db.withSession = constraint => { sessions.push(constraint); return { prepare: primaryPrepare }; };
+  let staleReads = 0;
+  w.db.prepare = sql => sql === "SELECT processing_status FROM gateway_webhook_events WHERE id=?"
+    ? { bind: () => ({ first: async () => { staleReads++; return { processing_status: "PROCESSING" }; } }) }
+    : primaryPrepare(sql);
+  const replay = await w.deliver("payment.captured", "evt_primary_replay");
+  assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.equal(replay.body.ok, true); assert.equal(replay.body.status, "PROCESSED");
+  assert.ok(sessions.includes("first-primary")); assert.equal(staleReads, 0);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE status='POSTED'").get().n, 1);
+  assert.equal(w.providerCalls(), 1);
+});
+
+test("primary inbox read failure cannot fall back to an apparently completed replica", async t => {
+  const w = await setup(t);
+  assert.equal((await w.deliver("payment.captured", "evt_primary_unavailable")).status, 200);
+  const primaryPrepare = w.db.prepare.bind(w.db);
+  w.db.withSession = constraint => {
+    assert.equal(constraint, "first-primary");
+    return { prepare: sql => sql === "SELECT processing_status FROM gateway_webhook_events WHERE id=?"
+      ? { bind: () => ({ first: async () => { throw new Error("Synthetic primary status read unavailable"); } }) }
+      : primaryPrepare(sql) };
+  };
+  const replay = await w.deliver("payment.captured", "evt_primary_unavailable");
+  assert.equal(replay.status, 500); assert.notEqual(replay.body.ok, true);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE status='POSTED'").get().n, 1);
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "captured");
+  assert.equal(w.providerCalls(), 1);
+});
+
+test("a stale completed replica cannot override a still-processing primary inbox", async t => {
+  const w = await setup(t);
+  const { acceptRazorpayWebhook } = await import("../lib/financial-lifecycle.ts");
+  const raw = w.payload("payment.captured"), eventId = "evt_primary_incomplete";
+  const accepted = await acceptRazorpayWebhook(w.db, { rawBody: raw,
+    signature: sign(env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, raw),
+    webhookSecret: env.RAZORPAY_WEBHOOK_SECRET_SANDBOX, eventId, environment: "sandbox" });
+  w.sqlite.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSING',event_type='payment.captured' WHERE id=?").run(String(accepted.row.id));
+  const primaryPrepare = w.db.prepare.bind(w.db);
+  w.db.withSession = constraint => { assert.equal(constraint, "first-primary"); return { prepare: primaryPrepare }; };
+  w.db.prepare = sql => sql === "SELECT processing_status FROM gateway_webhook_events WHERE id=?"
+    ? { bind: () => ({ first: async () => ({ processing_status: "PROCESSED" }) }) }
+    : primaryPrepare(sql);
+  const replay = await w.deliver("payment.captured", eventId, raw);
+  assert.equal(replay.status, 503); assert.equal(replay.body.status, "PROCESSING");
+  assert.equal(replay.body.ok, false); assert.equal(replay.body.retryable, true);
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
+  assert.equal(w.providerCalls(), 1);
+});

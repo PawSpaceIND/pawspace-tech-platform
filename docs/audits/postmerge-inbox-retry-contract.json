@@ -6,55 +6,65 @@
       "manifest": "tests/fixtures/staff-operations-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/partner-services-presentation-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/staff-crm-control-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/staff-team-completion-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/inbox-workspace-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/ui-display-truth-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     },
     {
       "manifest": "tests/fixtures/customer-partner-theme-contract.json",
       "field": "protected.app/api/razorpay-webhook/route.ts",
       "before": "60ac6903522f17e4d485829d7627f0a77de4d112c79dc40e528240970936d1cc",
-      "after": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
+      "after": "fce258720c4490984af853df0585f68d11d0cfe3552cca3bc2dd811c3341f328",
+      "reviewBefore": "ebe44a03a9419d15cfdc1e02050746224053eb92e736febfac0ff755492526c3"
     }
-  ]
+  ],
+  "reviewFollowup": "Use first-primary for the acknowledgement status re-read, matching existing atomic capture verification. Deterministic stale-read and primary-read-error tests exercise the boundary; no security/payment assertions were removed."
 }

@@ -24,3 +24,7 @@ This repair keeps retry signalling truthful; it does not prove or perform recove
 The queued exact-main staging deployment remains pinned to the approved merged SHA. It is not silently replaced with this unreviewed candidate. The shared staging queue is not bypassed, and other active acceptance runs are not interrupted.
 
 A prior completed master workflow contained preflight evidence only. Another completed Training report contains both successful and failed/blocked steps. Green workflow status is not accepted as full booking, balance, provider, completion or accounts/GST evidence. Both reports relate to the previously deployed build, not a certified deployment of PR #1090.
+
+## Review follow-up — authoritative status read
+
+PR comment 4110532075 identified the ordinary database binding in the final acknowledgement read. Two added executable stale-read/error tests failed before correction. The read now uses the existing `first-primary` session convention when available; a primary read error cannot fall back to a seemingly complete replica. A third test ensures that a truly incomplete primary remains retryable even if the ordinary read appears complete. The tests use controlled local read views and real SQLite writes, not live replica/gateway evidence. Final full-suite verification is rerun on the revised exact head. No historical inbox record, charge, journal or claim is changed.
