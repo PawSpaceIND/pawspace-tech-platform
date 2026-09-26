@@ -28,6 +28,17 @@ test('B01: final Boarding governance rejects an otherwise valid host that cannot
  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM boarding_booking_quote_links').get().n,0);
  const valid=await governance.governBoardingBooking(db,{...booking,providerId:'host_priya_dev'});assert.equal(valid.totalAmount,quote.totalAmount);
 });
+test('B03: an early-morning IST check-in keeps its booked date for host effective dates',async t=>{
+ const {db,sqlite}=await world(t);
+ // 01:00 IST on the booked day is 19:30 UTC on the previous day; the host's effective dates must be read on the booked day.
+ const day=new Date(Date.now()+20*86400000+330*60000).toISOString().slice(0,10),next=new Date(Date.parse(`${day}T00:00:00Z`)+86400000).toISOString().slice(0,10);
+ const window={scheduledStart:`${day}T01:00:00+05:30`,scheduledEnd:`${day}T05:00:00+05:30`},query={cityId:'blr',zoneId:'blr-east',...window,petCount:1,species:['dog']};
+ await discoverBoardingHosts(db,query);
+ sqlite.prepare("UPDATE provider_capacity_profiles SET effective_from=? WHERE id='host_priya_dev'").run(day);
+ assert.ok((await discoverBoardingHosts(db,query)).some(h=>h.providerId==='host_priya_dev'),'a host effective from the booked IST day is offered for that day');
+ sqlite.prepare("UPDATE provider_capacity_profiles SET effective_from=? WHERE id='host_priya_dev'").run(next);
+ assert.equal((await discoverBoardingHosts(db,query)).some(h=>h.providerId==='host_priya_dev'),false,'a host that starts the day after is still excluded');
+});
 test('B03: equivalent UTC and IST windows discover the same host capacity',async t=>{
  const {db}=await world(t),q=input();const utc=await discoverBoardingHosts(db,q);
  const ist=value=>new Date(Date.parse(value)+330*60000).toISOString().replace('Z','+05:30');

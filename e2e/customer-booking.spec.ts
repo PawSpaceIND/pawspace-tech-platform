@@ -342,6 +342,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
  const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:00 pm":"6:00 pm");await expect(review).toContainText("4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
+ // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
  await expect(page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true})).toBeDisabled();
  await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});

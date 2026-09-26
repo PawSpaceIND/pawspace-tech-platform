@@ -524,7 +524,7 @@
     "lib/boarding-finance-governance.ts": "ca8a03a1e787d316c62d170782cd081c23b2c29cd482afa2d6492b35d75b7b75",
     "lib/boarding-governance.ts": "9e9e49b162275532519dcb5594f2162cbf44661bc3f4ef4f155430d92c204d4b",
     "lib/boarding-host-capability.ts": "989db444b937ee4d511e2236bdc87df7236acefd59b6e2ba58d5d40cda882883",
-    "lib/boarding-host-discovery.ts": "008e2094d0e6ea0cdf9a878cf4214336afaba685e2aeaa06942285781212e95e",
+    "lib/boarding-host-discovery.ts": "e3131981f1d9363642b2b9cdf54cb8ac94f91a4b29f344e996e92aea70e7c893",
     "lib/boarding-invoice.ts": "0b4f7d824b922b5219fb474846984cfe75af742158c21930af88a4f2db57e083",
     "lib/boarding-ops-client.ts": "33d5621e1ce4f2305a8579e61448ffab26d87ecb7d16a1a7019c906c7ff1000c",
     "lib/boarding-ops-governance.ts": "089050b2505e1512684c67596bf1bb30c7e0fd00e3f49465164be66426edb432",

@@ -11,3 +11,5 @@ export async function loadVerifiedBookingReference(bookingId:string,service:Reco
  if(!bookingId.trim()||bookingId.length>160||/[\u0000-\u001f]/.test(bookingId))throw new Error('Open a valid booking reference from your Activity.');
  return validateRecoveredBooking(await loadCustomerConfirmationProjection(bookingId,signal),bookingId,service);
 }
+/** The same page without the saved booking reference, so a customer can start a separate booking. */
+export function withoutBookingReference(href:string){const url=new URL(href);url.searchParams.delete('bookingId');return url.pathname+url.search+url.hash;}
