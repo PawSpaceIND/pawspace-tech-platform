@@ -6,6 +6,10 @@ on:
         description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
+      probe_input:
+        description: 'Synthetic text for no-calls custom LLM probe'
+        required: false
+        default: 'I need grooming today for my dog.'
       expected_destination_last4:
         description: 'Required for direct-grooming-call: last four digits confirmed by the tester'
         required: false
@@ -161,6 +165,7 @@ jobs:
 
       - name: Inspect latest Grooming specialist conversation without dialing
         env:
+          PROBE_INPUT: ${{ inputs.probe_input }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
@@ -208,7 +213,7 @@ jobs:
               const probe=await fetch('https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses',{
                 method:'POST',
                 headers:{'content-type':'application/json',authorization:'Bearer '+llmSecret},
-                body:JSON.stringify({input:'I need grooming today for my dog.',elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
+                body:JSON.stringify({input:String(process.env.PROBE_INPUT||'I need grooming today for my dog.'),elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
                 signal:AbortSignal.timeout(30000)
               });
               const headersMs=Date.now()-started;
