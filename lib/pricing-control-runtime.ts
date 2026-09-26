@@ -1,4 +1,5 @@
 import{groomingCommercialPackages}from"./grooming-commercial-catalogue";
+import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 
 type CanonicalPricingSeed={
@@ -77,15 +78,21 @@ export async function seedCanonicalPricingPackages(db:Db){
   if(Number(row?.n||0)!==seeds.length){const now=Date.now();await db.batch(seeds.map(item=>db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now)));}
   // Rows seeded before the bundle fix keep the short slot (INSERT OR IGNORE). Repair only rows whose duration
   // fields are still exactly as seeded, so a duration staff chose is never overwritten; each repair is audited.
-  for(const repair of bundleRepairs){
+  // Cold-isolate cost: these ~50 guarded repairs ran one after another on the first priced request of every
+  // isolate (about 12 s at staging's ~250 ms per D1 call, three times over on a Boarding search). One read
+  // now finds the rows still exactly as seeded; only those run the same guarded UPDATE and audit as before,
+  // side by side (each repair touches its own row). A row staff changed is skipped either way.
+  const repairIds=[...new Set([...bundleRepairs,...descriptionRepairs].map(item=>item.id))];
+  const current=new Map((await chunkedIn(repairIds,async(chunk,placeholders)=>(await db.prepare(`SELECT id,slot_minutes,blocking_minutes,description FROM service_packages WHERE id IN (${placeholders})`).bind(...chunk).all<Record<string,unknown>>()).results)).map(item=>[String(item.id),item]));
+  await Promise.all(bundleRepairs.filter(repair=>{const item=current.get(repair.id);return item&&Number(item.slot_minutes)===repair.from&&Number(item.blocking_minutes)===repair.from+30;}).map(async repair=>{
     const changed=await db.prepare("UPDATE service_packages SET slot_minutes=?,blocking_minutes=?,version=version+1,updated_at=? WHERE id=? AND slot_minutes=? AND blocking_minutes=? RETURNING id").bind(repair.to,repair.to+30,Date.now(),repair.id,repair.from,repair.from+30).first<Record<string,unknown>>();
     if(changed)await db.prepare("INSERT INTO pricing_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`price_audit_${crypto.randomUUID().slice(0,12)}`,"package",repair.id,"seed_repair",JSON.stringify({slot_minutes:repair.from,blocking_minutes:repair.from+30}),JSON.stringify({slot_minutes:repair.to,blocking_minutes:repair.to+30}),"system",`A multi-pet bundle must not be shorter than one pet (${repair.to} min)`,Date.now()).run();
-  }
+  }));
   // Replace the seeded internal text only where it is still exactly as seeded; staff-written copy stays.
-  for(const repair of descriptionRepairs){
+  await Promise.all(descriptionRepairs.filter(repair=>current.get(repair.id)?.description===repair.from).map(async repair=>{
     const changed=await db.prepare("UPDATE service_packages SET description=?,version=version+1,updated_at=? WHERE id=? AND description=? RETURNING id").bind(repair.to,Date.now(),repair.id,repair.from).first<Record<string,unknown>>();
     if(changed)await db.prepare("INSERT INTO pricing_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`price_audit_${crypto.randomUUID().slice(0,12)}`,"package",repair.id,"seed_repair",JSON.stringify({description:repair.from}),JSON.stringify({description:repair.to}),"system","Customer-facing package description",Date.now()).run();
-  }
+  }));
   pricingPackagesSeeded.add(db);
 }
 

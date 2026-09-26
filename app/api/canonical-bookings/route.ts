@@ -20,6 +20,7 @@ import {BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHI
 import {prepareCouponBooking,type CouponBookingPreparation} from "../../../lib/coupon-governance";
 import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../lib/provider-capacity-governance";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
+import {inRequestD1Metrics} from "../../../lib/request-d1-metrics";
 import {postCollectionEvent} from "../../../lib/collection-ledger";
 import {cityBookingVerdict} from "../../../lib/city-status-authority";
 import{ensureVetHealthcareTables,VET_SAC_CODE,VET_TAX_PAISE,VET_VISIT_FEE_PAISE}from"../../../lib/vet-healthcare";
@@ -40,8 +41,13 @@ type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;vali
 const services=new Set(["grooming","dog_training","boarding","pet_sitting","vet_consult"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
+/** Isolates (D1 bindings) that have written a booking, so every one-time set-up on this path has run. */
+const canonicalBookingWarm=new WeakSet<object>();
+// The CRM table is created once per isolate (ready-set only); the projection itself runs on every booking.
+const crmContactsReady=new WeakSet<object>();
 async function projectCanonicalCustomerToCrm(db:D1Database,input:LifecycleInput,packageName:string,now:number){
-  await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, primary_phone TEXT NOT NULL, secondary_phone TEXT, email TEXT, area TEXT, pet_names TEXT, pet_summary TEXT, stage TEXT NOT NULL DEFAULT 'New lead', owner TEXT DEFAULT 'Unassigned', source TEXT DEFAULT 'Website', lifetime_value REAL DEFAULT 0, next_action TEXT, opportunity TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
+  if(!crmContactsReady.has(db))await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, primary_phone TEXT NOT NULL, secondary_phone TEXT, email TEXT, area TEXT, pet_names TEXT, pet_summary TEXT, stage TEXT NOT NULL DEFAULT 'New lead', owner TEXT DEFAULT 'Unassigned', source TEXT DEFAULT 'Website', lifetime_value REAL DEFAULT 0, next_action TEXT, opportunity TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
+  crmContactsReady.add(db);
   const petNames=input.pets.map(p=>p.name).join(", ")||"Pet";
   const petSummary=input.pets.map(p=>[p.breed,p.species].filter(Boolean).join(" · ")).filter(Boolean).join(", ")||"Canonical pet profile";
   await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'Active customer','Unassigned','canonical_booking',0,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=COALESCE(excluded.secondary_phone,crm_contacts.secondary_phone),email=COALESCE(excluded.email,crm_contacts.email),area=excluded.area,pet_names=excluded.pet_names,pet_summary=excluded.pet_summary,next_action=excluded.next_action,opportunity=excluded.opportunity,updated_at=excluded.updated_at")
@@ -210,7 +216,26 @@ async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
-export async function executeCanonicalBookingRequest(request:Request,actorOverride?:AuthenticatedActor){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=actorOverride??await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});const closedPrior=await findClosedCustomerBooking(db,replayInput);if(closedPrior)return json(closedBookingRequestRefusal(closedPrior),409);if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);
+export async function executeCanonicalBookingRequest(request:Request,actorOverride?:AuthenticatedActor){try{const db=await database();
+  /*
+   * Booking speed (staging: ~21 s for a Boarding booking at ~250 ms per D1 call). The lease pass no longer holds
+   * up the request: it runs beside identity and replay checks and has finished before the scheduling decision or
+   * a reservation is read. The closed-booking, foreign-replay, city, write-conflict, held-reservation and saved-pet
+   * reads below are ONE wave beside the ownership and replay checks instead of eight more round trips, and every
+   * answer is still given in the original order - a replay before the city matrix, the city matrix before the
+   * write-conflict check, and so on. Nothing is written until the same point as before.
+   */
+  // Side by side only once this isolate's one-time set-up is done (canonicalBookingWarm): a cold isolate's first
+  // booking keeps the original order, so no schema set-up ever runs beside another.
+  const warm=canonicalBookingWarm.has(db),runLeasePass=async()=>{await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);};
+  const leasePass=warm?runLeasePass():null;leasePass?.catch(()=>undefined);if(!warm)await runLeasePass();
+  const actor=actorOverride??await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};
+  // Warm: every read starts now and is awaited at its original point. Cold: each runs at that point, as before.
+  const read=<T,>(work:()=>Promise<T>):(()=>Promise<T>)=>{if(!warm)return work;const pending=work();pending.catch(()=>undefined);return()=>pending;};
+  const wave={closed:read(()=>findClosedCustomerBooking(db,replayInput)),foreign:read(()=>hasForeignReplayConflict(db,replayInput)),city:read(()=>cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"})),conflict:read(()=>hasReplayConflict(db,replayInput)),
+    held:read(()=>(leasePass??Promise.resolve()).then(()=>Promise.all([db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>(),db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>()]))),
+    pets:read(()=>db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at ASC,id ASC").bind(input.customer.id).all<Record<string,unknown>>())};
+  await requireCustomerOwnership(db,actor,input.customer.id);const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});const closedPrior=await wave.closed();if(closedPrior)return json(closedBookingRequestRefusal(closedPrior),409);if(await wave.foreign())return json({error:BOOKING_REPLAY_CONFLICT},409);
   /*
    * THE CITY MATRIX. [PTJA-W1-F38]
    *
@@ -223,8 +248,8 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
    * Draft and Closed take nothing; Paused takes nothing new while leaving every existing booking alone;
    * Pilot takes only the pincodes, services and channels somebody explicitly enabled.
    */
-  const cityVerdict=await cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"});
-  if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+  const cityVerdict=await wave.city();
+  if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await wave.conflict())return json({error:BOOKING_WRITE_CONFLICT},409);
   // Identity rules apply to NEW bookings only, and are checked here — after the replay path above, so
   // history stays replayable, and before governance, quote/referral consumption, reservation reads and
   // every write, so a bad new payload costs nothing.
@@ -275,7 +300,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
       if(paymentStatusRecorded!=="captured"&&!awaitingGateway)return json({error:"A Grooming subscription purchase needs a captured payment, or an online payment awaiting gateway verification"},409);
     }
   }
-  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);if(reservations.results.some(row=>String(row.service_code)!==input.serviceCode))return json({error:"The booking service does not match the scheduling reservation"},409);
+  const[assignment,reservations]=await wave.held();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);if(reservations.results.some(row=>String(row.service_code)!==input.serviceCode))return json({error:"The booking service does not match the scheduling reservation"},409);
   // The booking window must be the window that is actually held. dog_training, boarding and pet_sitting
   // each check this against their own first reservation; nothing checked it for anything else, so a
   // GROOMING booking could be confirmed and PAID for a day on which no capacity was reserved.
@@ -367,7 +392,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   // divergence risk between D1 and any other SQLite. created_at breaks by age, id (the primary key)
   // breaks every remaining tie, so the same rows always yield the same candidate order. The identity
   // and profile rules below still decide WHICH candidate wins; this only fixes the order they see.
-  const existingPets=await db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at ASC,id ASC").bind(input.customer.id).all<Record<string,unknown>>().catch(()=>null);
+  const existingPets=await wave.pets().catch(()=>null);
   if(!existingPets)return json({error:"Unable to read this customer's pets right now"},503);
   const petText=(value:unknown)=>petKey(value)?String(value).trim():null;
   // 'not_provided' is the column's own sentinel for "unknown", so it counts as blank on both sides.
@@ -548,7 +573,8 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
    * ledger failure is contained: the booking is already committed and the customer is not told their
    * confirmed booking failed because a journal line did not write.
    */
-  await projectCanonicalCustomerToCrm(db,input,governed.packageName,now).catch(error=>{console.warn("[crm-projection] canonical customer projection deferred",error instanceof Error?error.message:String(error));});
+  // The CRM projection never fails the booking, so it runs beside the quote consumption below instead of before it.
+  const crmProjection=projectCanonicalCustomerToCrm(db,input,governed.packageName,now).catch(error=>{console.warn("[crm-projection] canonical customer projection deferred",error instanceof Error?error.message:String(error));});
   if(String(paymentStatusPersisted)==="captured"){
     await postCollectionEvent(db,{
       event:String(input.payment.method).toLowerCase()==="cash"?"cash_collected_confirmed":"online_payment_captured",
@@ -558,7 +584,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
       entryDate:new Date().toISOString().slice(0,10),transactionAt:Date.now(),actorId:actor.email,
     }).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});
   }
-  if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
+  canonicalBookingWarm.add(db);try{if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);}finally{await crmProjection;}/* Lead attribution and the answer's read touch different rows, so they run together; an attribution failure still fails the request. */const attribution=attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId}),bundle=db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>().then(booking=>readBundle(db,booking!,false));bundle.catch(()=>undefined);await attribution;return json({data:await bundle},201);
 }catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
 
-export async function POST(request:Request){return executeCanonicalBookingRequest(request);}
+export async function POST(request:Request){return inRequestD1Metrics(request,()=>executeCanonicalBookingRequest(request));}

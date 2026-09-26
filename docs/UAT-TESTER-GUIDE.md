@@ -72,6 +72,12 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
   the phone number, so "switching from groomer to trainer" means signing out and signing in with a trainer's
   number. Note that `/partner-app` lists and works **grooming** work orders only; a trainer signs in and sees
   the shell, but training sessions are not yet worked from this app.
+- **Boarding, Sitting and Taxi partners for parallel testing**: every Bengaluru zone has seven UAT Boarding hosts
+  (homes of 8 pet units; host 7 takes one family at a time), eight UAT sitters and ten UAT Pet Taxi drivers, plus
+  a staging Taxi fleet of 12 Citroen eC3 and 6 XUV. A sitter or driver still takes one job at a time, so a slot
+  is only "full" once every one of them is booked. Their partner OTP numbers follow `900000<S><Z><NN>`: S is 3
+  host, 4 sitter, 5 driver; Z is the zone (1 East, 2 South, 3 North, 4 West, 5 Central); NN is 01-10. For
+  example `9000003101` is East host 1, `9000004203` South sitter 3, `9000005410` West driver 10.
 - **Switching provider without a phone number** (`/partner-app` → More → *Switch UAT provider*): staging-only.
   Pick any live provider in the seeded roster (groomer, trainer, host, sitter, walker, taxi) and enter the same
   UAT access code used at `/staging-login`; the app re-checks the session and opens as that provider.

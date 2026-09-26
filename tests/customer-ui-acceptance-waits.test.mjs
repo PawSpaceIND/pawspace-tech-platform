@@ -144,5 +144,5 @@ test("taxi acceptance synchronizes on the commercial quote response", () => {
 
 test("Pet Sitting provider discovery uses the same bounded 60-second preview budget as Training", () => {
   const client = fs.readFileSync(new URL("../lib/uat-scheduling-client.ts", import.meta.url), "utf8");
-  assert.match(client, /previewSitters\(input:UatScheduleRequest\).*previewUatProviders\(\{\.\.\.input,serviceCode:"pet_sitting"\},\{timeoutMs:60_000\}\)/);
+  assert.match(client, /previewSitters\(input:UatScheduleRequest,options:\{signal\?:AbortSignal\}=\{\}\).*previewUatProviders\(\{\.\.\.input,serviceCode:"pet_sitting"\},\{timeoutMs:60_000,signal:options\.signal\}\)/);
 });

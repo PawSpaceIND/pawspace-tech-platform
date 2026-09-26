@@ -135,6 +135,7 @@ jobs:
         env:
           PAWSPACE_UAT_PERSONAS: ${{ github.event.inputs.test_customer_personas }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_WORKER_PLACEMENT_REGION: ${{ vars.STAGING_WORKER_PLACEMENT_REGION }}
           STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
