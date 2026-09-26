@@ -48,3 +48,27 @@ test('concurrent handoff requests return the same canonical active handoff',asyn
  assert.equal(results[0].handoff.id,results[1].handoff.id);assert.equal(results.filter(r=>r.duplicatePrevented).length,1);
  assert.equal(w.state().handoffs.length,1);assert.equal(w.state().assignments.filter(a=>a.status==='active').length,1);
 });
+test('an attached lead is escalated in the same transaction as its handoff, so a failed escalation leaves nothing queued and a retry repairs both',async()=>{
+ const w=await world(),{ensureAiHumanHandoff}=await import('../lib/ai-human-handoff.ts'),{ensureConversationAccessTables}=await import('../lib/conversation-access.ts');
+ applyOwnedDdl(w.sqlite,'lib/lead-owner-identity.ts');await ensureAiHumanHandoff(w.db);await ensureConversationAccessTables(w.db);
+ w.sqlite.exec("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES ('LEAD-H','CRM-H','website','grooming','AI Orchestrator','AI Sales','active',1,1,1,1,1)");
+ w.sqlite.exec("INSERT INTO ai_lead_ownership (lead_id,contact_id,status,created_at,updated_at) VALUES ('LEAD-H','CRM-H','ai_owned',1,1)");
+ w.sqlite.exec("INSERT INTO crm_contacts (id,name,primary_phone,owner,created_at,updated_at) VALUES ('CRM-H','Handoff','9876500044','AI Orchestrator',1,1)");
+ w.sqlite.exec("UPDATE communication_threads SET lead_id='LEAD-H' WHERE id='THREAD-H'");
+ const lead=()=>({work:{...w.sqlite.prepare("SELECT owner,manager FROM lead_work_items WHERE id='LEAD-H'").get()},ownership:{...w.sqlite.prepare("SELECT status,human_owner,customer_requested_human FROM ai_lead_ownership WHERE lead_id='LEAD-H'").get()},contact:w.sqlite.prepare("SELECT owner FROM crm_contacts WHERE id='CRM-H'").get().owner,tasks:w.sqlite.prepare("SELECT id,owner FROM crm_tasks WHERE contact_id='CRM-H'").all().map(row=>({...row}))});
+ w.sqlite.exec("CREATE TRIGGER fail_lead BEFORE UPDATE ON lead_work_items BEGIN SELECT RAISE(ABORT,'injected lead failure'); END");
+ await assert.rejects(w.request,/injected lead failure/);
+ const failed=w.state();
+ assert.equal(failed.handoffs.length,0,'a handoff committed without its lead escalation would short-circuit every retry as a duplicate');
+ assert.equal(failed.events.length,0);assert.equal(failed.thread.assigned_to,'ai-orchestrator');assert.equal(failed.session,'ai_active');
+ assert.equal(lead().ownership.status,'ai_owned');assert.equal(lead().work.owner,'AI Orchestrator');assert.equal(lead().tasks.length,0);
+ await assertAiMayReply(w.db,'THREAD-H');
+ w.sqlite.exec('DROP TRIGGER fail_lead');
+ const created=await w.request();
+ assert.equal(created.duplicatePrevented,false);assert.equal(created.handoff.queue_code,'cx-ai-handoff');
+ assert.deepEqual(lead(),{work:{owner:'cx-ai-handoff',manager:'Human Sales Manager'},ownership:{status:'human_escalated',human_owner:'cx-ai-handoff',customer_requested_human:1},contact:'cx-ai-handoff',tasks:[{id:'AI-ESC-LEAD-H',owner:'cx-ai-handoff'}]});
+ const again=await w.request();
+ assert.equal(again.duplicatePrevented,true);assert.equal(again.handoff.id,created.handoff.id);
+ assert.deepEqual(Object.keys(again.handoff).sort(),Object.keys(w.state().handoffs[0]).sort(),'the duplicate answer is the ai_handoffs row, not the thread columns its lookup joined');
+ assert.equal(lead().tasks.length,1);
+});

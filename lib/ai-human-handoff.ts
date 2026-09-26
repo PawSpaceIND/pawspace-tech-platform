@@ -36,36 +36,46 @@ function assignmentStatements(db:D1Database,input:{threadId:string;assignedTo:st
 async function authorizeThread(db:D1Database,actor:AuthenticatedActor,threadId:string,customerId:string){const thread=await db.prepare("SELECT id,customer_id,status,booking_id,ticket_id,assigned_to,sla_due_at FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==customerId)throw new Response("Conversation thread/customer mismatch",{status:403});if(isStaff(actor)){if(!(await actorCanAccessConversation(db,actor,threadId)))throw new Response("Conversation access denied",{status:403});}else await requireCustomerOwnership(db,actor,customerId);return thread;}
 async function summary(db:D1Database,threadId:string,customerId:string,reason:AiHandoffReason,confidence?:number|null){const[messages,latestTurn]=await Promise.all([db.prepare("SELECT direction,channel,payload_json,created_at FROM communication_messages WHERE thread_id=? ORDER BY created_at DESC LIMIT 12").bind(threadId).all<Row>(),db.prepare("SELECT intent_code,intent_confidence,handoff_reason,context_id,policy_decision,outcome FROM ai_conversation_turns WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>().catch(()=>null)]);const transcript=messages.results.reverse().map(row=>{let payload:Record<string,unknown>={};try{payload=JSON.parse(text(row.payload_json)||"{}")as Record<string,unknown>}catch{}return{direction:text(row.direction),channel:text(row.channel),text:text(payload.text||payload.message||payload.body||payload.content).slice(0,500),createdAt:Number(row.created_at||0)}});return{threadId,customerId,reason,confidence:confidence??(latestTurn?Number(latestTurn.intent_confidence||0):null),latestIntent:latestTurn?text(latestTurn.intent_code):null,policyDecision:latestTurn?text(latestTurn.policy_decision):null,contextId:latestTurn?text(latestTurn.context_id):null,transcript};}
 
-async function markAttachedLeadHumanOwned(db:D1Database,input:{leadId?:string|null;reason:AiHandoffReason;queue:string;now:number}){
- const leadId=text(input.leadId);if(!leadId)return;
- await ensureConversationAccessTables(db);
- const lead=await db.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>().catch(()=>null);if(!lead)return;const contactId=text(lead.customer_id);
- await db.batch([
-  db.prepare("UPDATE ai_lead_ownership SET status='human_escalated',escalation_reason=?,human_owner=?,customer_requested_human=CASE WHEN ?='customer_requested_human' THEN 1 ELSE customer_requested_human END,updated_at=? WHERE lead_id=?").bind(input.reason,input.queue,input.reason,input.now,leadId),
-  db.prepare("UPDATE lead_work_items SET owner=?,manager='Human Sales Manager',next_action_at=?,updated_at=? WHERE id=?").bind(input.queue,input.now,input.now,leadId),
-  db.prepare("UPDATE crm_contacts SET owner=?,next_action=?,updated_at=? WHERE id=?").bind(input.queue,`AI escalation: ${input.reason}`,input.now,contactId),
-  db.prepare("INSERT OR IGNORE INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,'High','Open',?)").bind(`AI-ESC-${leadId}`,contactId,`AI escalation: ${input.reason}`,input.queue,input.now,input.now),
- ]);
+/** The CRM lead a thread is attached to, read after its escalation writes' tables are guaranteed to exist. */
+async function attachedLead(db:D1Database,leadId:string){await ensureConversationAccessTables(db);return db.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>().catch(()=>null);}
+/*
+ * The lead's half of an escalation. These writes used to run in their own batch AFTER the handoff had
+ * committed, so a failure there left the conversation queued for a human while its lead stayed AI-owned
+ * and the caller saw an error - and every retry then stopped at the queued handoff as a duplicate, so the
+ * lead was never repaired. They now join the handoff's own batch behind the same claim event: the
+ * conversation and its lead become human-owned together, or nothing changes and a retry does all of it.
+ */
+function leadOwnershipStatements(db:D1Database,input:{leadId:string;contactId:string;reason:AiHandoffReason;queue:string;now:number;eventId:string}){
+ const guard="EXISTS (SELECT 1 FROM ai_handoff_events WHERE id=?)";
+ return[
+  db.prepare(`UPDATE ai_lead_ownership SET status='human_escalated',escalation_reason=?,human_owner=?,customer_requested_human=CASE WHEN ?='customer_requested_human' THEN 1 ELSE customer_requested_human END,updated_at=? WHERE lead_id=? AND ${guard}`).bind(input.reason,input.queue,input.reason,input.now,input.leadId,input.eventId),
+  db.prepare(`UPDATE lead_work_items SET owner=?,manager='Human Sales Manager',next_action_at=?,updated_at=? WHERE id=? AND ${guard}`).bind(input.queue,input.now,input.now,input.leadId,input.eventId),
+  db.prepare(`UPDATE crm_contacts SET owner=?,next_action=?,updated_at=? WHERE id=? AND ${guard}`).bind(input.queue,`AI escalation: ${input.reason}`,input.now,input.contactId,input.eventId),
+  db.prepare(`INSERT OR IGNORE INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) SELECT ?,?,?,?,?,'High','Open',? WHERE ${guard}`).bind(`AI-ESC-${input.leadId}`,input.contactId,`AI escalation: ${input.reason}`,input.queue,input.now,input.now,input.eventId),
+ ];
 }
 
 export async function requestAiHumanHandoff(db:D1Database,input:{actorEmail:string;threadId:string;customerId:string;sessionId?:string|null;reason:AiHandoffReason;confidence?:number|null}){
  await ensureAiHumanHandoff(db);
  const current=await db.prepare("SELECT h.*,t.customer_id thread_customer_id,t.lead_id thread_lead_id FROM communication_threads t LEFT JOIN ai_handoffs h ON h.thread_id=t.id AND h.status IN ('queued','staff_active') WHERE t.id=? ORDER BY h.created_at DESC LIMIT 1").bind(input.threadId).first<Row>();
- if(!current||text(current.thread_customer_id)!==input.customerId)throw new Response("Conversation thread/customer mismatch",{status:403});
- if(text(current.id))return{handoff:current,duplicatePrevented:true,aiPaused:true};
- const routing=queueFor(input.reason),now=Date.now(),id=`AIHO-${crypto.randomUUID()}`,eventId=`AIHEVT-${crypto.randomUUID()}`;
- const[snapshot,sessionStatements]=await Promise.all([summary(db,input.threadId,input.customerId,input.reason,input.confidence),sessionUpdate(db,input.threadId,"human_handoff",now,eventId)]);
+ if(!current)throw new Response("Conversation thread/customer mismatch",{status:403});
+ // The thread's columns only ride along on the handoff lookup; the handoff returned is the ai_handoffs row alone.
+ const{thread_customer_id:threadCustomerId,thread_lead_id:threadLeadId,...active}=current;
+ if(text(threadCustomerId)!==input.customerId)throw new Response("Conversation thread/customer mismatch",{status:403});
+ if(text(active.id))return{handoff:active,duplicatePrevented:true,aiPaused:true};
+ const routing=queueFor(input.reason),now=Date.now(),id=`AIHO-${crypto.randomUUID()}`,eventId=`AIHEVT-${crypto.randomUUID()}`,leadId=text(threadLeadId);
+ const[snapshot,sessionStatements,lead]=await Promise.all([summary(db,input.threadId,input.customerId,input.reason,input.confidence),sessionUpdate(db,input.threadId,"human_handoff",now,eventId),leadId?attachedLead(db,leadId):null]);
  const statements=[
   db.prepare("INSERT INTO ai_handoffs (id,thread_id,customer_id,session_id,reason,confidence,queue_code,status,summary_json,requested_by,created_at) VALUES (?,?,?,?,?,?,?,'queued',?,?,?)").bind(id,input.threadId,input.customerId,input.sessionId||null,input.reason,input.confidence??null,routing.queue,JSON.stringify(snapshot),input.actorEmail,now),
   db.prepare("INSERT INTO ai_handoff_events (id,handoff_id,event_type,actor_email,detail_json,created_at) VALUES (?,?,'handoff_requested',?,?,?)").bind(eventId,id,input.actorEmail,JSON.stringify({reason:input.reason,queue:routing.queue,slaMinutes:routing.slaMinutes,confidence:input.confidence??null}),now),
   ...assignmentStatements(db,{threadId:input.threadId,assignedTo:routing.queue,actorEmail:input.actorEmail,reason:`ai:${input.reason}`,slaMinutes:routing.slaMinutes},now,eventId),
   ...sessionStatements,
+  ...(lead?leadOwnershipStatements(db,{leadId,contactId:text(lead.customer_id),reason:input.reason,queue:routing.queue,now,eventId}):[]),
  ];
  try{await db.batch(statements);}catch(error){
   if(/unique constraint/i.test(error instanceof Error?error.message:String(error))){const raced=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active')").bind(input.threadId,input.customerId).first<Row>();if(raced)return{handoff:raced,duplicatePrevented:true,aiPaused:true};}
   throw error;
  }
- await markAttachedLeadHumanOwned(db,{leadId:text(current.thread_lead_id)||null,reason:input.reason,queue:routing.queue,now});
  const handoff={id,thread_id:input.threadId,customer_id:input.customerId,session_id:input.sessionId||null,reason:input.reason,confidence:input.confidence??null,queue_code:routing.queue,status:"queued",summary_json:JSON.stringify(snapshot),requested_by:input.actorEmail,created_at:now,taken_over_by:null,resumed_by:null,taken_over_at:null,resumed_at:null};
  return{handoff,duplicatePrevented:false,aiPaused:true};
 }
