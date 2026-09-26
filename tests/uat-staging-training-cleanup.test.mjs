@@ -7,7 +7,7 @@ import {
   CANCELLABLE_STATUSES, CLEANUP_ACTION, CLEANUP_REASON, CleanupRefused, REPORT_ONLY_STATUSES, STAGING_HOST, STALE_AFTER_MS,
   assertStagingTarget, bookingIndex, classifySession, cleanupIdempotencyKey, redact, resolveRunMode, runCleanup,
   selectCandidates, selectStaleUnpaidBookings, trainerProviderIds, uatSessionCookie,
-} from "../scripts/uat-staging-training-cleanup.mjs";
+} from "../lib/uat-staging-training-cleanup.mjs";
 
 const STAGING = `https://${STAGING_HOST}`;
 const NOW = Date.parse("2026-09-26T06:00:00.000Z");
