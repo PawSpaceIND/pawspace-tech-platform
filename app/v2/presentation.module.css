@@ -56,10 +56,22 @@
   :global(body:has([data-pawspace-v2]) .ps-order-fab > button) { width: 44px !important; height: 44px !important; }
   :global(body:has([data-pawspace-v2]) .ps-order-fab [role="dialog"]) { max-height: 55dvh !important; }
 }
-/* The chat composer sits where the floating order-updates and appearance buttons float, and they covered
-   Send on phones (staging master run 36224833520). Chat has its own dock, so they are not shown there. */
-:global(body:has([data-pawspace-v2]):has([data-v2-chat]) .ps-order-fab),
-:global(body:has([data-pawspace-v2]):has([data-v2-chat]) .paw-appearance-trigger) { display: none !important; }
+/* On V2 chat the composer sits where the order-updates and appearance buttons float, and they covered
+   Send (staging master run 36224833520). There they float just above the composer, and the conversation
+   has room below its last message so that message can scroll clear of them. */
+@media (max-width: 820px) {
+  :global(body:has([data-pawspace-v2]):has([data-v2-chat]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has([data-v2-chat]) .ps-order-fab) {
+    bottom: calc(196px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  :global(body:has([data-pawspace-v2]) [data-v2-chat] [aria-live="polite"]) { padding-bottom: 72px; }
+}
+@media (max-width: 640px) {
+  :global(body:has([data-pawspace-v2]):has([data-v2-chat]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has([data-v2-chat]) .ps-order-fab) {
+    bottom: calc(164px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
 /* Shared OTP components expose a neutral hook; only V2 gives it this variant. */
 .canvas.canvas [data-paw-action="primary"] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;
