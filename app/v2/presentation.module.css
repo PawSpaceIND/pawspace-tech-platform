@@ -81,6 +81,33 @@
     bottom: calc(176px + env(safe-area-inset-bottom, 0px)) !important;
   }
 }
+/* On V2 payment pages the order-updates and appearance buttons covered payment copy, totals and Pay on phones
+   (staging master runs 36222620113 and 36224833520, run 36243387701 shots 008, 013, 021 and 022; launch finding
+   CUST-L-D12), and on desktop windows below about 1400px the labelled Appearance button reached the amounts and Pay.
+   Payment content keeps out of a lane on the right edge; on phones and tablets both buttons stack in that lane.
+   Hooks: the shared payment surface, the /v2/booking balance card, the Razorpay return page and Grooming checkout. */
+.canvas section[aria-label$=" payment"],
+.canvas section[aria-label="Payment status"] { max-width: min(600px, calc(100% - 56px)); }
+.canvas main[data-pawspace-mobile] { padding-right: 72px; }
+/* The return page's column is 520px wide, but review-overrides.css lifts that cap on customer routes up to 1100px wide,
+   and on 821-1100px windows the column then ran under the labelled Appearance button. */
+.canvas main[data-pawspace-mobile] > div { max-width: 520px; }
+@media (min-width: 821px) {
+  .canvas section[aria-label="Grooming checkout"] { max-width: min(760px, calc(100% - 260px)); }
+}
+@media (max-width: 820px) {
+  .canvas main:has(section[aria-label="Grooming checkout"]) { padding-right: 72px; }
+  /* "Programme price" is the V2 Training form's price card (the total and "Reserve trainer & continue to payment"),
+     which the buttons covered in staging run 36243387701 shot 004. It keeps to the lane like the payment surface. */
+  .canvas section[aria-label="Programme price"] { max-width: min(600px, calc(100% - 56px)); }
+  :global(body:has([data-pawspace-v2]):has(section[aria-label$=" payment"]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(section[aria-label="Payment status"]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(main[data-pawspace-mobile]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(section[aria-label="Grooming checkout"]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(section[aria-label="Programme price"]) .paw-appearance-trigger) {
+    right: 16px; bottom: calc(166px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
 /* Shared OTP components expose a neutral hook; only V2 gives it this variant. */
 .canvas.canvas [data-paw-action="primary"] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;

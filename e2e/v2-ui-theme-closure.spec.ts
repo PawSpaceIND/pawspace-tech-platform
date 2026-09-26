@@ -294,3 +294,89 @@ test('Funeral care Back returns to the request list without reopening the case',
   await expect(page.getByRole('heading', {name: 'Support request FUNERAL-UI-1'})).toHaveCount(0);
   expect(caseReads).toEqual(['FUNERAL-UI-1']); expect(writes).toEqual([]);
 });
+
+// Payment lane (app/v2/presentation.module.css). UI fixtures only: the booking reads are fulfilled locally, Pay is hit-tested
+// but never clicked, and no booking, order or payment request is sent.
+const laneWidths = [360, 390, 412, 600, 601, 620, 621, 720, 721, 760, 761, 820, 821, 980, 1024, 1084, 1280, 1440];
+const laneSweepWidths = [360, 412, 820, 821, 1280];
+const laneBooking = {ready: false, bookingId: 'B-UI', serviceCode: 'boarding', packageName: 'Luxury Stay', bookingStatus: 'payment_pending', paymentId: 'P-UI',
+  paymentMode: 'split_50_50', paymentStatus: 'created', transactionId: null, amountDueNow: 1750, totalAmount: 3500, currency: 'INR', providerId: 'PRV-UI',
+  providerName: 'UI Fixture Host', providerModel: 'full_time', workOrderStatus: 'payment_pending', scheduledStart: '2026-10-01T04:30:00.000Z',
+  scheduledEnd: '2026-10-03T04:30:00.000Z', updatedAt: 1, pets: [{id: 'PET-UI', name: 'Bruno', species: 'dog', breed: 'Indie'}]};
+const laneVariants = [
+  {name: 'shared payment surface', route: '/v2/booking?bookingId=B-UI', lane: 'section[aria-label$=" payment"]', pay: true, confirmation: laneBooking},
+  {name: 'balance status card', route: '/v2/booking?bookingId=B-UI', lane: 'section[aria-label="Payment status"]', pay: false, confirmation: {...laneBooking,
+    bookingStatus: 'confirmed', paymentStatus: 'captured', paymentStage: 'outstanding_balance', balancePayableNow: false, amountPaid: 1750}},
+  {name: 'Razorpay return page', route: '/v2/booking-confirmation?bookingId=B-UI&payment=failed&code=PAYMENT_FAILED', lane: 'main[data-pawspace-mobile] > div', pay: true, confirmation: laneBooking},
+  {name: 'Grooming checkout', route: '/v2/grooming?bookingId=B-UI', lane: 'section[aria-label="Grooming checkout"]', pay: true, confirmation: null},
+];
+type Box = {left: number; right: number; top: number; bottom: number};
+const gap = (a: Box, b: Box) => Math.max(a.left - b.right, b.left - a.right, a.top - b.bottom, b.top - a.bottom);
+for (const variant of laneVariants) test(`Payment lane: order updates and appearance never cover payment copy, totals or Pay: ${variant.name}`, async ({page}) => {
+  test.setTimeout(240_000);
+  const appearance: Appearance = {theme: 'signature', style: 'professional', mode: 'light'};
+  await page.route('**/api/identity-session', r => r.fulfill({json: {data: {subjectType: 'customer', subjectId: 'UI-ONLY-FIXTURE'}}}));
+  await page.route('**/api/order-notifications?*', r => r.fulfill({json: {data: {items: [], unread: 0, nextCursor: null}}}));
+  await page.route('**/api/customer-checkout', r => (r.request().postDataJSON() as {action?: string} | null)?.action === 'status'
+    ? r.fulfill({json: {data: {bookingId: 'B-UI', environment: 'sandbox', status: 'created', confirmation: variant.confirmation}}})
+    : r.fulfill({status: 409, json: {error: 'UI fixture: only the booking status is read.'}}));
+  await page.route('**/api/v2/grooming-checkout?*', r => r.fulfill({json: {data: {...checkoutReadiness, locationReady: true}}}));
+  const writes: string[] = []; page.on('request', r => { if (r.method() === 'GET') return; let action = '';
+    try { action = String((r.postDataJSON() as {action?: unknown} | null)?.action ?? ''); } catch { action = 'unreadable body'; }
+    writes.push(`${r.method()} ${new URL(r.url()).pathname} ${action}`); });
+  await choose(page, appearance); await visit(page, variant.route, appearance);
+  const lane = page.locator(variant.lane); await expect(lane).toBeVisible();
+  if (variant.pay) await expect(lane.getByRole('button', {name: /^Pay securely/})).toBeEnabled();
+  const appearanceButton = page.getByRole('button', {name: 'Change PawSpace appearance'}), updates = page.getByRole('button', {name: 'Order notifications', exact: true});
+  const height = page.viewportSize()!.height;
+  for (const width of laneWidths) {
+    const at = `${variant.name} at ${width}px`; await page.setViewportSize({width, height});
+    await expect(appearanceButton, at).toBeVisible(); await expect(updates, at).toBeVisible();
+    const g = await page.evaluate(selector => {
+      const box = (e: Element | null) => { const b = e!.getBoundingClientRect(); return {left: b.left, right: b.right, top: b.top, bottom: b.bottom}; };
+      return {lane: box(document.querySelector(selector)), appearance: box(document.querySelector('.paw-appearance-trigger')),
+        updates: box(document.querySelector('.ps-order-fab > button')), width: innerWidth, scrollWidth: document.documentElement.scrollWidth};
+    }, variant.lane);
+    expect.soft(g.lane.right + 8, `${at}: payment content keeps out of the buttons' lane`).toBeLessThanOrEqual(Math.min(g.appearance.left, g.updates.left));
+    expect.soft(gap(g.appearance, g.updates), `${at}: the two buttons do not touch`).toBeGreaterThanOrEqual(8);
+    if (width <= 820) {
+      expect.soft(g.appearance.bottom + 8, `${at}: Appearance stacks above order updates`).toBeLessThanOrEqual(g.updates.top);
+      expect.soft(g.appearance.right, `${at}: both buttons share the lane's right edge`).toBeCloseTo(g.updates.right, 0);
+    }
+    expect.soft(g.scrollWidth, `${at}: horizontal overflow`).toBeLessThanOrEqual(g.width + 1);
+    await updates.click(); await expect(page.getByRole('dialog', {name: 'PawSpace order notifications'}), at).toBeVisible();
+    await page.getByRole('button', {name: 'Close notifications'}).click(); await expect(page.getByRole('dialog', {name: 'PawSpace order notifications'}), at).toBeHidden();
+    await appearanceButton.click(); await expect(page.getByRole('dialog', {name: 'Make PawSpace yours.'}), at).toBeVisible();
+    await page.getByRole('button', {name: 'Close appearance settings'}).click(); await expect(page.getByRole('dialog', {name: 'Make PawSpace yours.'}), at).toBeHidden();
+    if (laneSweepWidths.includes(width)) expect.soft(await page.evaluate(sweepPaymentLane, variant.lane), `${at}, scrolled top to bottom`).toEqual([]);
+  }
+  // Refreshes may repeat the status read; nothing may start or confirm a payment. Grooming reads its checkout with GET only.
+  if (variant.confirmation) { expect(writes.length).toBeGreaterThan(0); expect(writes.filter(w => w !== 'POST /api/customer-checkout status')).toEqual([]); }
+  else expect(writes).toEqual([]);
+});
+// Runs in the page. Scrolls top to bottom in 48px instant steps. At each step no text, button or link in the payment content
+// comes within 4px of either button, and Pay is the element hit at its centre and 6px inside its right end whenever that
+// point is on screen (below the sticky V2 header).
+function sweepPaymentLane(selector: string) {
+  const lane = document.querySelector(selector)!, issues: string[] = [];
+  const utilities = ['.paw-appearance-trigger', '.ps-order-fab > button'].map(s => document.querySelector(s)!);
+  const pay = Array.from(lane.querySelectorAll('button')).find(b => /^Pay securely/.test(b.textContent!.trim()));
+  const targets = Array.from(lane.querySelectorAll('*')).filter(e => e.matches('button, a') || Array.from(e.childNodes).some(n => n.nodeType === Node.TEXT_NODE && n.textContent!.trim()));
+  const header = document.querySelector('nav[aria-label="PawSpace V2 primary navigation"]')?.closest('header'), end = document.documentElement.scrollHeight - innerHeight;
+  for (let y = 0; ; y = Math.min(y + 48, end)) {
+    scrollTo({top: y, left: 0, behavior: 'instant'});
+    for (const utility of utilities) { const u = utility.getBoundingClientRect();
+      for (const target of targets) { const t = target.getBoundingClientRect();
+        if (t.width && t.height && Math.max(t.left - u.right, u.left - t.right, t.top - u.bottom, u.top - t.bottom) < 4)
+          issues.push(`scrollY ${scrollY}: "${target.textContent!.trim().slice(0, 40)}" is within 4px of ${utility.getAttribute('aria-label')}`); } }
+    const top = header ? header.getBoundingClientRect().bottom : 0, b = pay?.getBoundingClientRect(), cy = b ? b.top + b.height / 2 : -1;
+    if (pay && b) for (const x of [b.left + b.width / 2, b.right - 6]) {
+      if (x < 0 || x >= innerWidth || cy < top || cy >= innerHeight) continue;
+      const hit = document.elementFromPoint(x, cy);
+      if (hit !== pay && !pay.contains(hit)) issues.push(`scrollY ${scrollY}: Pay at (${Math.round(x)}, ${Math.round(cy)}) is covered by ${hit?.outerHTML.slice(0, 80)}`);
+    }
+    if (y >= end) break;
+  }
+  scrollTo({top: 0, left: 0, behavior: 'instant'});
+  return issues;
+}
