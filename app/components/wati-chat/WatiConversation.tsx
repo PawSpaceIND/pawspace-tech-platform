@@ -5,6 +5,10 @@ import styles from "./wati-chat.module.css";
 export type WatiChoice={id:string;label:string};
 export type WatiMessage={id:string;side:"customer"|"pawspace"|"system";author?:string|null;text:string;at?:number|null;team?:boolean;choices?:WatiChoice[]};
 
+/* PawSpace's own pay link ("Pay securely here to confirm it: /v2/booking?bookingId=...") is the only text
+ * made clickable, and only on PawSpace's side, so no reply can put an arbitrary link in front of a customer. */
+const PAY_LINK=/(\/v2\/booking\?bookingId=[A-Za-z0-9_-]+)/;
+function withPayLink(text:string):ReactNode{const parts=text.split(PAY_LINK);return parts.length===1?text:parts.map((part,index)=>index%2?<a key={index} href={part}>Pay now</a>:part);}
 const time=(at?:number|null)=>at?new Date(at).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"";
 
 /**
@@ -33,7 +37,7 @@ export default function WatiConversation(props:{
     :<div key={message.id} className={`${styles.row} ${message.side==="customer"?styles.rowCustomer:styles.rowPawSpace}`}>
      <article className={`${styles.bubble} ${message.side==="customer"?styles.bubbleCustomer:styles.bubblePawSpace} ${message.team?styles.bubbleTeam:""}`}>
       {message.side==="pawspace"&&message.author&&<span className={styles.author}>{message.author}</span>}
-      <p>{message.text}</p>
+      <p>{message.side==="pawspace"?withPayLink(message.text):message.text}</p>
       {message.at?<span className={styles.meta}>{time(message.at)}{message.side==="customer"?" ✓✓":""}</span>:null}
      </article>
      {message===last&&message.choices?.length?<div className={styles.choices} role="group" aria-label="Choose an option">{message.choices.map(choice=><button key={choice.id} type="button" className={styles.choice} disabled={props.busy} onClick={()=>props.onChoice(choice)}>{choice.label}</button>)}</div>:null}
