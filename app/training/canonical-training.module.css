@@ -58,3 +58,7 @@
 
 /* Final mobile UAT polish: keep the checkout summary in normal flow so it cannot cover programme choices. */
 @media(max-width:720px){.shell.shell .stickyCard{position:static!important}}
+
+/* Audit: no checkout bar may cover dog/programme controls on desktop or mobile. */
+.shell.shell .stickyCard{position:static!important}
+.shell :is(button,input,select,a){scroll-margin-block:8rem 10rem}

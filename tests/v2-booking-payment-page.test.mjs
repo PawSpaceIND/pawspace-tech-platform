@@ -55,5 +55,8 @@ test("the V2 training recovery banner links to the owned booking & payment page 
   const source = fs.readFileSync(new URL("../app/training/page.tsx", import.meta.url), "utf8");
   assert.match(source, /useQueryParameter\("bookingId"\)/);
   assert.match(source, /routeScope==="v2"&&recoveryBookingId/, "the recovery banner is scoped to the V2 route");
-  assert.match(source, /\/v2\/booking\?bookingId=\$\{encodeURIComponent\(recoveryBookingId\)\}/);
+  // The link is built by bookingRecordHref, which sends the V2 route scope to /v2/booking (and legacy /training
+  // to its own mobile-app confirmation page).
+  assert.match(source, /href=\{bookingRecordHref\(recoveryBookingId\)\}/);
+  assert.match(source, /bookingRecordHref=\(bookingId:string\)=>routeScope==="v2"\?`\/v2\/booking\?bookingId=\$\{encodeURIComponent\(bookingId\)\}`/);
 });

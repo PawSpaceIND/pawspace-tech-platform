@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
-import { groomingBookingDates, groomingSlotAvailable } from "../../../lib/grooming-booking-calendar";
+import { groomingBookingDates, groomingSlotAvailable, groomingSlotWindow } from "../../../lib/grooming-booking-calendar";
 import {
   loadV2CustomerAccount,
   loadV2CustomerSession,
@@ -32,6 +32,8 @@ import ContactForm from "../../contact/contact-form";
 import { serviceAddressConflict } from "../../../lib/service-address-consistency";
 import { v2GroomingPetAudience, v2GroomingSelectionIssue } from "../../../lib/v2/grooming-selection";
 import styles from "./grooming.module.css";
+import {formatIndiaRange} from "../../../lib/india-time";
+import {serviceAddressText} from "../../../lib/service-address-text";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
@@ -47,6 +49,7 @@ export default function V2GroomingPage() {
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
+  const [savedAddressId, setSavedAddressId] = useState("");
   const [pincode, setPincode] = useState("");
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [coverageBusy, setCoverageBusy] = useState(false);
@@ -81,6 +84,8 @@ export default function V2GroomingPage() {
       if (!grooming?.enabled) throw new Error("Grooming is not accepting bookings in your area right now.");
       const nextAccount = await loadV2CustomerAccount();
       setAccount(nextAccount);
+      const saved=nextAccount.addresses.find(item=>item.isDefault)||nextAccount.addresses[0];
+      if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");setSavedAddressId(saved.id);}
       setCatalogue(nextCatalogue);
       if (nextAccount.pets[0]) setSelectedPetIds([nextAccount.pets[0].id]);
       const dates = groomingBookingDates(Date.now(), 14);
@@ -107,6 +112,7 @@ export default function V2GroomingPage() {
   );
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
   const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
   useEffect(() => {
@@ -297,9 +303,10 @@ export default function V2GroomingPage() {
 
           <section className={styles.step}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2>Where should we come?</h2></div></div>
+            {account.addresses.length>0&&<label>Saved service address<select value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
             <div className={styles.addressBox}>
-              <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
-              <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); invalidateDoorstep(); }} placeholder="560102" /></label>
+              <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
+              <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
               <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
             </div>
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
@@ -312,7 +319,7 @@ export default function V2GroomingPage() {
             <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
             <div className={styles.slotGrid}>{SLOT_LABELS.map((label, index) => {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
-              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
+              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
             <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
@@ -334,7 +341,7 @@ export default function V2GroomingPage() {
           <div className={styles.summaryRows}>
             <div><span>Package</span><b>{selectedPackage?.name || "—"}</b></div>
             <div><span>Doorstep</span><b>{coverage ? `${address.trim()}, ${coverage.pincode}` : "Verify address"}</b></div>
-            <div><span>When</span><b>{date ? `${date} · ${SLOT_LABELS[slotIndex]}` : "—"}</b></div>
+            <div><span>When</span><b>{summaryWhen}</b></div>
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>

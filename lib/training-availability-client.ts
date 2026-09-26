@@ -1,9 +1,10 @@
+import {trainingCalendarWindows} from "./training-calendar-policy";
 import type {TrainingQuote, TrainingTrainer} from "./training-commercial-client";
 import {previewUatProviders, type UatScheduleRequest} from "./uat-scheduling-client";
 
 export type TrainingScheduleSelection = {
   customerId: string; petIds: string[]; cityId: string; zoneId: string;
-  scheduledStart: string; quote: TrainingQuote;
+  scheduledStart: string; quote: TrainingQuote; cadenceDays?: number;
 };
 
 /** Preview and reserve describe exactly the same programme, not only session one. */
@@ -19,12 +20,13 @@ export function trainingScheduleRequest(input: TrainingScheduleSelection): UatSc
   if (!Number.isFinite(quote.expiresAt) || quote.expiresAt <= Date.now()) {
     throw new Error("Your Training quote expired. Refresh availability before continuing.");
   }
+  trainingCalendarWindows(input.scheduledStart, quote, input.cadenceDays ?? 7);
   return {
     clientRequestId: `training:${quote.quoteId}:${input.customerId}`,
     customerId: input.customerId, petIds: [...input.petIds], serviceCode: "dog_training",
     cityId: input.cityId, zoneId: input.zoneId, scheduledStart: input.scheduledStart,
     scheduledEnd: new Date(start + quote.minutesPerSession * 60_000).toISOString(),
-    occurrences: quote.meetAndGreet ? 1 : quote.sessions, cadenceDays: 7,
+    occurrences: quote.meetAndGreet ? 1 : quote.sessions, cadenceDays: input.cadenceDays ?? 7,
   };
 }
 
@@ -41,8 +43,8 @@ export async function loadAvailableTrainingTrainers(
       !sameInstant(preview.scheduledEnd, request.scheduledEnd) ||
       !Array.isArray(preview.occurrences) || preview.occurrences.length !== request.occurrences ||
       preview.occurrences.some((session, index) =>
-        !sameInstant(session.start, new Date(Date.parse(request.scheduledStart) + index * 7 * 86_400_000).toISOString()) ||
-        !sameInstant(session.end, new Date(Date.parse(request.scheduledEnd) + index * 7 * 86_400_000).toISOString()))) {
+        !sameInstant(session.start, new Date(Date.parse(request.scheduledStart) + index * (request.cadenceDays ?? 7) * 86_400_000).toISOString()) ||
+        !sameInstant(session.end, new Date(Date.parse(request.scheduledEnd) + index * (request.cadenceDays ?? 7) * 86_400_000).toISOString()))) {
     throw new Error("Training availability does not match this programme. Refresh availability.");
   }
   const byId = new Map(roster.map(provider => [provider.id, provider]));

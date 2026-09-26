@@ -17,7 +17,11 @@ test("AI conversation Gate 1 persists canonical session and turn records",()=>{
 test("AI conversation Gate 1 uses canonical conversation and minimum customer context",()=>{
  assert.match(orchestrator,/communication_messages/);
  assert.match(orchestrator,/communication_threads/);
- assert.match(orchestrator,/buildCustomer360/);
+ assert.match(orchestrator,/canonical_customers/);
+ assert.match(orchestrator,/canonical_pets/);
+ assert.match(orchestrator,/canonical_bookings/);
+ assert.match(orchestrator,/customer_experience_tickets/);
+ assert.doesNotMatch(orchestrator,/buildCustomer360/);
  assert.match(orchestrator,/requireCustomerOwnership/);
  assert.match(orchestrator,/createAiContext/);
 });

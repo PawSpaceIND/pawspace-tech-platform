@@ -163,6 +163,15 @@ test("concurrent deliveries reserve the key before any context, provider or hand
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs").get().n, 0);
 });
 
+test("a cold database without canonical_customers fails as a missing customer, not a raw SQL error", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("Grooming appointments are available.");
+  const messageId = await inboundMessage(sqlite, db, { threadId: "THREAD-1", customerId: "CUS-1", text: "what is the price of grooming", channel: "chat", idempotencyKey: "cold-canonical-customers" });
+  sqlite.exec("DROP TABLE canonical_customers");
+  const input = { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1", inputMessageId: messageId, idempotencyKey: "cold-canonical-customers", channel: "chat", provider: stub.provider };
+  await assert.rejects(orchestrator.orchestrateAiTurn(db, input), /Canonical customer context not found/);
+});
+
 test("a failed reservation is retryable instead of permanently locking the canonical message", async () => {
   const { sqlite, db } = await world();
   const stub = answered("Grooming appointments are available.");
