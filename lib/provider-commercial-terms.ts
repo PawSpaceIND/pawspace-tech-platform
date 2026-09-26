@@ -34,6 +34,13 @@
  * maker/checker governed (activation needs a second party). The engine only computes and records - real
  * disbursement stays in the governed sandbox settlement flow.
  *
+ * PawSpace's commission on a commission service is 10-40% of the amount paid, 30% by default (owner decision 8,
+ * lib/commission-range.ts). Saving or activating a service default or provider term outside that range is
+ * refused, and so is a per-order override. A per-order override is only a REQUEST until a second person, not
+ * the requester, approves it (setOrderCommercialOverride -> approveOrderCommercialOverride); only approved
+ * overrides are in order_commercial_overrides, the table the engine reads. Provider terms are set at
+ * onboarding and on Finance > Partners through lib/provider-commission-setup.ts, on this same save + activate path.
+ *
  * RETIRED: gst_mode "provider_gst_on_behalf" and "platform_retained" (the old 18/118 carve). Stored terms that
  * carry them still resolve, and behave exactly like "none"; provider_gst_deducted is always 0 on new rows.
  * A completed booking's row is final (see finalizedPayout): rows completed under the retired carve keep the
@@ -42,6 +49,8 @@
 
 import{gstBreakdown,type GstMethod,type GstPolicy}from"./gst-method";
 import{resolveGstPolicy}from"./gst-setting";
+import{GovernedRefusal}from"./governed-http-error";
+import{PAWSPACE_COMMISSION_DEFAULT_PERCENT,PAWSPACE_COMMISSION_MAX_PERCENT,PAWSPACE_COMMISSION_MIN_PERCENT,RANGE_GOVERNED_MODELS,commissionFromProviderShare,providerShareRangeProblem}from"./commission-range";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -49,6 +58,8 @@ const text=(v:unknown)=>String(v??"").trim();
 const num=(v:unknown)=>Number(v||0);
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+const refuse=(message:string,status=400)=>new GovernedRefusal(message,status);
+const actorKey=(v:unknown)=>text(v).toLowerCase();
 
 export type EngagementModel="commission_groomer"|"commission_standard"|"direct_employee"|"funeral_exempt";
 /** "none" is the only live treatment; the other two are the retired carve modes, still readable on old rows. */
@@ -80,6 +91,8 @@ const MODEL_DEFAULTS:Record<EngagementModel,{share:number;gstMode:GstMode;cash:b
 /* Columns filing, TCS and settlement need, added in place to tables created before they existed.
  * computed_at is the statutory period (TCS, TDS, settlement): completion pins it and it never moves after. */
 const PAYOUT_COMPUTATION_COLUMNS:ReadonlyArray<readonly[string,string]>=[["engagement_model","TEXT"],["supply_model","TEXT"],["gst_method","TEXT"],["gst_rate","REAL"],["gst_setting_id","TEXT"],["taxable_commission","REAL NOT NULL DEFAULT 0"],["own_supply_taxable_value","REAL NOT NULL DEFAULT 0"],["gst_exempt","INTEGER NOT NULL DEFAULT 0"],["provider_gst_registered","INTEGER"],["supplier_gstin","TEXT"],["tcs_base","REAL"],["tcs_withheld","REAL"],["tcs_rate_version","TEXT"],["finalized_at","INTEGER"],["recomputed_at","INTEGER"],["refunded_before_completion","REAL NOT NULL DEFAULT 0"]];
+/* Who approved an order override (the second person) and which request it came from. */
+const OVERRIDE_APPROVAL_COLUMNS:ReadonlyArray<readonly[string,string]>=[["approved_by","TEXT"],["request_id","TEXT"]];
 const payoutColumnsReady=new WeakSet<Db>();
 export async function ensureCommercialTermsTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_commercial_terms (id TEXT PRIMARY KEY,service_code TEXT NOT NULL,provider_id TEXT,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',engagement_model TEXT NOT NULL,provider_share_pct REAL NOT NULL,gst_mode TEXT NOT NULL,platform_gst_rate REAL NOT NULL DEFAULT 0.18,cash_allowed INTEGER NOT NULL DEFAULT 0,onboarding_fee REAL NOT NULL DEFAULT 0,renewal_fee REAL NOT NULL DEFAULT 0,renewal_months INTEGER NOT NULL DEFAULT 12,effective_from TEXT NOT NULL,reason TEXT NOT NULL,created_by TEXT NOT NULL,approved_by TEXT,approval_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -88,7 +101,10 @@ export async function ensureCommercialTermsTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,order_value REAL NOT NULL,provider_net_payout REAL NOT NULL,platform_fee REAL NOT NULL,platform_gst REAL NOT NULL,provider_gst_deducted REAL NOT NULL,pawspace_gst_on_order REAL NOT NULL,breakdown_json TEXT NOT NULL,term_id TEXT NOT NULL,computed_by TEXT NOT NULL,computed_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS provider_onboarding_fee_obligations (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,term_id TEXT NOT NULL,fee_type TEXT NOT NULL,amount REAL NOT NULL,due_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'due',environment TEXT NOT NULL DEFAULT 'sandbox',created_at INTEGER NOT NULL,UNIQUE(provider_id,fee_type,due_date))"),
  db.prepare("CREATE TABLE IF NOT EXISTS commercial_terms_audit (id TEXT PRIMARY KEY,term_id TEXT NOT NULL,action TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-]);if(payoutColumnsReady.has(db))return;const have=new Set((await db.prepare("PRAGMA table_info(provider_payout_computations)").all<Row>()).results.map(r=>text(r.name)));for(const[column,definition]of PAYOUT_COMPUTATION_COLUMNS)if(!have.has(column))await db.prepare(`ALTER TABLE provider_payout_computations ADD COLUMN ${column} ${definition}`).run().catch((error:unknown)=>{/* a concurrent request added it first */if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});payoutColumnsReady.add(db);}
+ // A per-order override waits here until a second person approves it; only then is it copied into order_commercial_overrides.
+ db.prepare("CREATE TABLE IF NOT EXISTS order_commercial_override_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_share_pct REAL,engagement_model TEXT,gst_mode TEXT,reason TEXT NOT NULL,requested_by TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'awaiting_approval',decided_by TEXT,decision_note TEXT,created_at INTEGER NOT NULL,decided_at INTEGER)"),
+ db.prepare("CREATE INDEX IF NOT EXISTS idx_order_override_requests ON order_commercial_override_requests(booking_id,status)"),
+]);if(payoutColumnsReady.has(db))return;const duplicateOk=(error:unknown)=>{/* a concurrent request added it first */if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;};const have=new Set((await db.prepare("PRAGMA table_info(provider_payout_computations)").all<Row>()).results.map(r=>text(r.name)));for(const[column,definition]of PAYOUT_COMPUTATION_COLUMNS)if(!have.has(column))await db.prepare(`ALTER TABLE provider_payout_computations ADD COLUMN ${column} ${definition}`).run().catch(duplicateOk);const overrideHave=new Set((await db.prepare("PRAGMA table_info(order_commercial_overrides)").all<Row>()).results.map(r=>text(r.name)));for(const[column,definition]of OVERRIDE_APPROVAL_COLUMNS)if(!overrideHave.has(column))await db.prepare(`ALTER TABLE order_commercial_overrides ADD COLUMN ${column} ${definition}`).run().catch(duplicateOk);payoutColumnsReady.add(db);}
 
 function validate(model:string,share:number,gstMode:string){
  if(!(model in MODEL_DEFAULTS))throw new Error("Unknown engagement model");
@@ -112,13 +128,15 @@ export function splitServiceOrder(input:{paidAmount:number;providerSharePct:numb
 /** Create (maker) a draft commercial term for a service (provider_id null = the service default) or a specific provider. */
 export async function saveCommercialTerm(db:Db,input:{serviceCode:string;providerId?:string|null;engagementModel:EngagementModel;providerSharePct?:number;gstMode?:GstMode;platformGstRate?:number;cashAllowed?:boolean;onboardingFee?:number;renewalFee?:number;renewalMonths?:number;effectiveFrom:string;reason:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(!text(input.serviceCode))throw new Error("Service code is required");
- if(!/^\d{4}-\d{2}-\d{2}$/.test(text(input.effectiveFrom)))throw new Error("A real effective-from date is required");
- if(text(input.reason).length<8)throw new Error("A clear reason is required");
- const d=MODEL_DEFAULTS[input.engagementModel];if(!d)throw new Error("Unknown engagement model");
+ if(!text(input.serviceCode))throw refuse("Service code is required");
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(text(input.effectiveFrom)))throw refuse("A real effective-from date is required");
+ if(text(input.reason).length<8)throw refuse("A clear reason is required");
+ const d=MODEL_DEFAULTS[input.engagementModel];if(!d)throw refuse("Unknown engagement model");
  const share=input.providerSharePct==null?d.share:Number(input.providerSharePct);
  const gstMode=input.gstMode||d.gstMode;
- validate(input.engagementModel,share,gstMode);
+ try{validate(input.engagementModel,share,gstMode);}catch(error){throw refuse(error instanceof Error?error.message:String(error));}
+ // Owner decision 8: PawSpace's commission on a commission service is 10-40% of the amount paid (service default or provider term alike).
+ const range=providerShareRangeProblem(input.engagementModel,share,text(input.serviceCode));if(range)throw refuse(range);
  const providerId=text(input.providerId)||null;
  const prior=await db.prepare("SELECT MAX(version) v FROM provider_commercial_terms WHERE service_code=? AND (provider_id IS ? OR provider_id=?)").bind(input.serviceCode,providerId,providerId).first<Row>();
  const version=num(prior?.v)+1,id=uid("PCT"),now=Date.now();
@@ -131,10 +149,12 @@ export async function saveCommercialTerm(db:Db,input:{serviceCode:string;provide
 /** Activate (checker) a drafted term. The activator must differ from the drafter. Supersedes the prior active term for the same scope. */
 export async function activateCommercialTerm(db:Db,input:{termId:string;approvalReference:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(text(input.approvalReference).length<4)throw new Error("An approval reference is required to activate commercial terms");
+ if(text(input.approvalReference).length<4)throw refuse("An approval reference is required to activate commercial terms");
  const term=await db.prepare("SELECT * FROM provider_commercial_terms WHERE id=?").bind(input.termId).first<Row>();
- if(!term||text(term.status)!=="draft")throw new Error("Only a draft commercial term can be activated");
- if(text(term.created_by)===text(input.actorId))throw new Error("Maker/checker: the drafter cannot activate their own commercial term");
+ if(!term||text(term.status)!=="draft")throw refuse("Only a draft commercial term can be activated",409);
+ if(actorKey(term.created_by)===actorKey(input.actorId))throw refuse("Maker/checker: the drafter cannot activate their own commercial term",409);
+ // A draft saved before the range existed cannot go live outside it: save a corrected draft instead.
+ const range=providerShareRangeProblem(text(term.engagement_model),num(term.provider_share_pct),text(term.service_code));if(range)throw refuse(`${range} Save a corrected draft; this one cannot be activated.`,409);
  const now=Date.now();
  await db.batch([
   db.prepare("UPDATE provider_commercial_terms SET status='superseded',updated_at=? WHERE service_code=? AND (provider_id IS ? OR provider_id=?) AND status='active'").bind(now,term.service_code,term.provider_id,term.provider_id),
@@ -153,20 +173,109 @@ export async function activateCommercialTerm(db:Db,input:{termId:string;approval
  return{termId:input.termId,status:"active"};
 }
 
-/** Order-wise override (change the split/model for one booking, reasoned + audited). */
+/** Why an order override cannot be used (range, model, state), or null. Checked when it is asked for and again when it is approved. */
+async function orderOverrideProblem(db:Db,input:{bookingId:string;providerSharePct:number|null;engagementModel:string|null;gstMode:string|null}){
+ if(input.providerSharePct==null&&!input.engagementModel&&!input.gstMode)return{message:"Say what the override changes: PawSpace's commission or the engagement model",status:400};
+ if(input.providerSharePct!=null&&!(input.providerSharePct>=0&&input.providerSharePct<=1))return{message:"Override share must be a fraction between 0 and 1",status:400};
+ if(input.engagementModel&&!(input.engagementModel in MODEL_DEFAULTS))return{message:"Unknown engagement model",status:400};
+ if(input.gstMode&&!["none","provider_gst_on_behalf","platform_retained"].includes(input.gstMode))return{message:"Unknown GST mode",status:400};
+ const booking=await db.prepare("SELECT id,service_code,provider_id,scheduled_start FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+ // The share applies to the override's own model, else to the model of the term the booking would use.
+ const term=booking?await resolveCommercialTerm(db,{serviceCode:text(booking.service_code),providerId:text(booking.provider_id),atDate:text(booking.scheduled_start).slice(0,10)||undefined}):null;
+ const model=input.engagementModel||text(term?.engagement_model)||"commission_standard";
+ if(model==="direct_employee"&&input.providerSharePct!=null&&input.providerSharePct!==0)return{message:"A full-time (own supply) booking has no provider share to override",status:400};
+ if(input.engagementModel&&RANGE_GOVERNED_MODELS.has(input.engagementModel)&&input.providerSharePct==null)return{message:"Give PawSpace's commission for this booking when switching it to commission",status:400};
+ if(input.providerSharePct!=null){const range=providerShareRangeProblem(model,input.providerSharePct,`booking ${input.bookingId}`);if(range)return{message:range,status:400};}
+ const posted=await db.prepare("SELECT finalized_at FROM provider_payout_computations WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+ if(num(posted?.finalized_at)>0)return{message:"This booking's payout was posted when the service was completed, so an override can no longer change it",status:409};
+ return null;
+}
+
+/**
+ * Ask for an order-wise override (change the split/model for one booking). Reasoned, range-checked and audited,
+ * but NOT applied: it waits for a second person (approveOrderCommercialOverride). A newer request for the same
+ * booking replaces one still waiting.
+ */
 export async function setOrderCommercialOverride(db:Db,input:{bookingId:string;providerSharePct?:number|null;engagementModel?:EngagementModel|null;gstMode?:GstMode|null;reason:string;actorId:string}){
  await ensureCommercialTermsTables(db);
- if(text(input.reason).length<8)throw new Error("A clear reason is required for an order-wise commercial override");
- if(input.providerSharePct!=null&&!(input.providerSharePct>=0&&input.providerSharePct<=1))throw new Error("Override share must be a fraction between 0 and 1");
- const now=Date.now();
- await db.prepare("INSERT INTO order_commercial_overrides (booking_id,provider_share_pct,engagement_model,gst_mode,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET provider_share_pct=excluded.provider_share_pct,engagement_model=excluded.engagement_model,gst_mode=excluded.gst_mode,reason=excluded.reason,actor_id=excluded.actor_id,created_at=excluded.created_at")
-  .bind(input.bookingId,input.providerSharePct??null,input.engagementModel??null,input.gstMode??null,text(input.reason),input.actorId,now).run();
- return{bookingId:input.bookingId,override:true};
+ const bookingId=text(input.bookingId),actorId=text(input.actorId),share=input.providerSharePct==null?null:Number(input.providerSharePct);
+ if(!bookingId)throw refuse("Booking ID is required");
+ if(!actorId)throw refuse("The person asking for the override is required");
+ if(text(input.reason).length<8)throw refuse("A clear reason is required for an order-wise commercial override");
+ const problem=await orderOverrideProblem(db,{bookingId,providerSharePct:share,engagementModel:text(input.engagementModel)||null,gstMode:text(input.gstMode)||null});if(problem)throw refuse(problem.message,problem.status);
+ const now=Date.now(),id=uid("OCO");
+ await db.batch([
+  db.prepare("UPDATE order_commercial_override_requests SET status='replaced',decided_by=?,decided_at=? WHERE booking_id=? AND status='awaiting_approval'").bind(actorId,now,bookingId),
+  db.prepare("INSERT INTO order_commercial_override_requests (id,booking_id,provider_share_pct,engagement_model,gst_mode,reason,requested_by,status,created_at) VALUES (?,?,?,?,?,?,?,'awaiting_approval',?)").bind(id,bookingId,share,text(input.engagementModel)||null,text(input.gstMode)||null,text(input.reason),actorId,now),
+  db.prepare("INSERT INTO commercial_terms_audit (id,term_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(uid("CTA"),id,"order_override_requested",actorId,JSON.stringify({bookingId,providerSharePct:share,pawspaceCommissionPercent:share==null?null:commissionFromProviderShare(share),engagementModel:text(input.engagementModel)||null,gstMode:text(input.gstMode)||null,reason:text(input.reason)}),now),
+ ]);
+ return{bookingId,requestId:id,status:"awaiting_approval" as const,override:false,providerSharePct:share,pawspaceCommissionPercent:share==null?null:commissionFromProviderShare(share),next:"A second person must approve this override before it changes the booking"};
+}
+
+async function pendingOverrideRequest(db:Db,input:{requestId?:string|null;bookingId?:string|null}){
+ await ensureCommercialTermsTables(db);
+ const request=text(input.requestId)?await db.prepare("SELECT * FROM order_commercial_override_requests WHERE id=?").bind(text(input.requestId)).first<Row>():await db.prepare("SELECT * FROM order_commercial_override_requests WHERE booking_id=? AND status='awaiting_approval' ORDER BY created_at DESC LIMIT 1").bind(text(input.bookingId)).first<Row>();
+ if(!request||text(request.status)!=="awaiting_approval")throw refuse("No order override is waiting for approval for this booking",404);
+ return request;
+}
+
+/** The second person approves an order override: only now does it change the booking's split. The requester cannot approve their own. */
+export async function approveOrderCommercialOverride(db:Db,input:{requestId?:string|null;bookingId?:string|null;actorId:string;note?:string|null}){
+ const request=await pendingOverrideRequest(db,input),actorId=text(input.actorId),bookingId=text(request.booking_id),share=request.provider_share_pct==null?null:num(request.provider_share_pct);
+ if(!actorId)throw refuse("The approver is required");
+ if(actorKey(request.requested_by)===actorKey(actorId))throw refuse("A second person must approve an order override: the person who asked for it cannot approve it",409);
+ const problem=await orderOverrideProblem(db,{bookingId,providerSharePct:share,engagementModel:text(request.engagement_model)||null,gstMode:text(request.gst_mode)||null});if(problem)throw refuse(problem.message,problem.status===400?409:problem.status);
+ const now=Date.now(),requestId=text(request.id);
+ // The override row is copied from the request only if THIS approval moved it out of awaiting_approval (a concurrent approval or rejection wins cleanly).
+ const results=await db.batch([
+  db.prepare("UPDATE order_commercial_override_requests SET status='approved',decided_by=?,decision_note=?,decided_at=? WHERE id=? AND status='awaiting_approval'").bind(actorId,text(input.note)||null,now,requestId),
+  db.prepare("INSERT INTO order_commercial_overrides (booking_id,provider_share_pct,engagement_model,gst_mode,reason,actor_id,approved_by,request_id,created_at) SELECT booking_id,provider_share_pct,engagement_model,gst_mode,reason,requested_by,decided_by,id,decided_at FROM order_commercial_override_requests WHERE id=? AND status='approved' AND decided_by=? AND decided_at=? ON CONFLICT(booking_id) DO UPDATE SET provider_share_pct=excluded.provider_share_pct,engagement_model=excluded.engagement_model,gst_mode=excluded.gst_mode,reason=excluded.reason,actor_id=excluded.actor_id,approved_by=excluded.approved_by,request_id=excluded.request_id,created_at=excluded.created_at").bind(requestId,actorId,now),
+  db.prepare("INSERT INTO commercial_terms_audit (id,term_id,action,actor_id,detail_json,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM order_commercial_override_requests WHERE id=? AND status='approved' AND decided_by=? AND decided_at=?)").bind(uid("CTA"),requestId,"order_override_approved",actorId,JSON.stringify({bookingId,requestedBy:text(request.requested_by),providerSharePct:share,note:text(input.note)||null}),now,requestId,actorId,now),
+ ]);
+ if(Number((results[0] as {meta?:{changes?:number}}|undefined)?.meta?.changes??1)===0)throw refuse("This override was approved or rejected by someone else first",409);
+ return{bookingId,requestId,status:"approved" as const,override:true,providerSharePct:share,pawspaceCommissionPercent:share==null?null:commissionFromProviderShare(share),reason:text(request.reason),requestedBy:text(request.requested_by),approvedBy:actorId};
+}
+
+/** Turn down (or withdraw) an order override that is waiting for approval. Nothing about the booking changes. */
+export async function rejectOrderCommercialOverride(db:Db,input:{requestId?:string|null;bookingId?:string|null;actorId:string;note?:string|null}){
+ const request=await pendingOverrideRequest(db,input),actorId=text(input.actorId),now=Date.now(),requestId=text(request.id);
+ if(!actorId)throw refuse("The person rejecting the override is required");
+ await db.batch([
+  db.prepare("UPDATE order_commercial_override_requests SET status='rejected',decided_by=?,decision_note=?,decided_at=? WHERE id=? AND status='awaiting_approval'").bind(actorId,text(input.note)||null,now,requestId),
+  db.prepare("INSERT INTO commercial_terms_audit (id,term_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(uid("CTA"),requestId,"order_override_rejected",actorId,JSON.stringify({bookingId:text(request.booking_id),note:text(input.note)||null}),now),
+ ]);
+ return{bookingId:text(request.booking_id),requestId,status:"rejected" as const,override:false};
+}
+
+/** Order overrides waiting for a second person, newest first (the Finance screen lists them). */
+export async function pendingOrderOverrideRequests(db:Db){await ensureCommercialTermsTables(db);return(await db.prepare("SELECT * FROM order_commercial_override_requests WHERE status='awaiting_approval' ORDER BY created_at DESC LIMIT 100").all<Row>()).results.map(r=>({...r,pawspace_commission_percent:r.provider_share_pct==null?null:commissionFromProviderShare(num(r.provider_share_pct))}));}
+
+/**
+ * The provider's share for one booking, from the same sources the payout engine uses: the active term (the
+ * provider's own, else the service default), an APPROVED order override, and the full-time rule (a full-time
+ * provider has no share). The older approval steps and the training milestone record read this, so nothing
+ * pays from the retired provider_compensation_profiles percentage. Null when no term is active.
+ */
+export async function providerShareForBooking(db:Db,input:{bookingId:string;serviceCode:string;providerId:string;atDate?:string|null}){
+ const providerId=text(input.providerId),serviceCode=text(input.serviceCode);let atDate=text(input.atDate).slice(0,10);
+ if(!atDate){const booking=await db.prepare("SELECT scheduled_start FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);atDate=text(booking?.scheduled_start).slice(0,10);}
+ // Read-only: a database where no term was ever recorded simply has no term (nothing is created here).
+ const term=await lookupCommercialTerm(db,{serviceCode,providerId,atDate:atDate||undefined}).catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
+ if(!term)return null;
+ const[override,capacity]=await Promise.all([db.prepare("SELECT provider_share_pct,engagement_model FROM order_commercial_overrides WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null),db.prepare("SELECT provider_model FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>().catch(()=>null)]);
+ const fullTime=text(capacity?.provider_model).toLowerCase()==="full_time",overridden=override?.provider_share_pct!=null||Boolean(text(override?.engagement_model));
+ const engagementModel=(fullTime?"direct_employee":text(override?.engagement_model)||text(term.engagement_model)) as EngagementModel;
+ const providerSharePct=engagementModel==="direct_employee"?0:override?.provider_share_pct!=null?num(override.provider_share_pct):num(term.provider_share_pct);
+ return{providerSharePct,engagementModel,termId:text(term.id),source:fullTime?"provider_full_time" as const:overridden?"order_override" as const:text(term.termSource)==="provider"?"provider" as const:"service_default" as const};
 }
 
 /** Resolve the active term for a (service, provider) at a date: provider-specific active wins over the service default. */
 export async function resolveCommercialTerm(db:Db,input:{serviceCode:string;providerId?:string|null;atDate?:string}){
  await ensureCommercialTermsTables(db);
+ return lookupCommercialTerm(db,input);
+}
+/** The resolution rule itself, without creating tables (a missing table throws; providerShareForBooking reads that as "no term"). */
+async function lookupCommercialTerm(db:Db,input:{serviceCode:string;providerId?:string|null;atDate?:string}){
  const atDate=text(input.atDate)||new Date().toISOString().slice(0,10);
  const providerId=text(input.providerId)||null;
  if(providerId){
@@ -244,5 +353,5 @@ export async function commercialTermsDirectory(db:Db){
   db.prepare("SELECT * FROM provider_payout_computations ORDER BY computed_at DESC LIMIT 100").all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT * FROM provider_onboarding_fee_obligations ORDER BY due_date DESC LIMIT 100").all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
- return{terms:terms.results,payouts:payouts.results,fees:fees.results,truth:{modelsSupported:["commission_groomer","commission_standard","direct_employee","funeral_exempt"],gstModeDefaultForOthers:"none",retiredGstModes:["provider_gst_on_behalf","platform_retained"],commissionSplitOnPaidAmount:true,platformGstOnCommissionOnly:true,ownSupplyGstOnPaidAmount:true,gstFromOneSetting:"lib/gst-setting.ts",fullTimeProvidersAreOwnSupply:true,funeralGstExempt:true,perOrderOverridable:true,liveMoney:false,productionReady:false}};
+ return{terms:terms.results,payouts:payouts.results,fees:fees.results,truth:{modelsSupported:["commission_groomer","commission_standard","direct_employee","funeral_exempt"],gstModeDefaultForOthers:"none",retiredGstModes:["provider_gst_on_behalf","platform_retained"],commissionSplitOnPaidAmount:true,platformGstOnCommissionOnly:true,ownSupplyGstOnPaidAmount:true,gstFromOneSetting:"lib/gst-setting.ts",fullTimeProvidersAreOwnSupply:true,funeralGstExempt:true,perOrderOverridable:true,perOrderOverrideNeedsSecondApprover:true,pawspaceCommissionRangePercent:[PAWSPACE_COMMISSION_MIN_PERCENT,PAWSPACE_COMMISSION_MAX_PERCENT],pawspaceCommissionDefaultPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT,liveMoney:false,productionReady:false}};
 }

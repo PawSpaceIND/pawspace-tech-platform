@@ -241,7 +241,7 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     for (let p = 1; p <= PROVIDERS; p++) {
       sqlite.prepare(`INSERT OR REPLACE INTO provider_compensation_profiles
         (provider_id,engagement_model,default_commission_mode,default_commission_value,status,updated_by,created_at,updated_at)
-        VALUES (?,'commission','percent',20,'active','e2e:ops',?,?)`).run(prov(p), NOW, NOW);
+        VALUES (?,'commission','percent',70,'active','e2e:ops',?,?)`).run(prov(p), NOW, NOW);
     }
     const synced = await m.syncCompletedCommissionOrders(db);
     if (!Number(synced)) throw new Error("syncCompletedCommissionOrders did no work - 0 orders synced");
@@ -253,12 +253,13 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
     if (agg.unconfigured) throw new Error(`${agg.unconfigured} commissions landed as configuration_required`);
     if (agg.priced !== agg.n) throw new Error(`${agg.n - agg.priced} of ${agg.n} commissions priced at zero`);
 
-    // 20 percent of the order, arithmetic checked against canonical_bookings rather than restated.
+    // The legacy value is the provider's share, carried over once into provider_commercial_terms. Owner decision 8 keeps
+    // PawSpace at 10-40%, so the fixture is 70 (PawSpace 30%); 20 would be refused. Checked against canonical_bookings.
     const drift = sqlite.prepare(`SELECT COUNT(*) n FROM provider_order_commissions c
       JOIN canonical_bookings b ON b.id=c.booking_id
-      WHERE ABS(c.commission_amount - b.total_amount*0.20) > 0.01`).get().n;
-    if (drift) throw new Error(`${drift} commission amounts disagree with 20 percent of the order`);
-    return `${synced} commissions synced, all priced, 0 arithmetic drift at 20 percent`;
+      WHERE ABS(c.commission_amount - b.total_amount*0.70) > 0.01`).get().n;
+    if (drift) throw new Error(`${drift} commission amounts disagree with 70 percent of the order`);
+    return `${synced} commissions synced, all priced, 0 arithmetic drift at 70 percent`;
   });
 
   await probe("provider-commission-governance", "commission dashboard", async () => {
