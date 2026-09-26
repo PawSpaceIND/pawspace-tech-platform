@@ -37,7 +37,7 @@ test("assisted order composes canonical scheduler and booking boundaries",()=>{
   assert.match(route,/serviceCode:"grooming"/);
   assert.match(route,/occurrences:1/);
   assert.match(route,/internalPost\(request,"\/api\/canonical-bookings"/);
-  assert.match(route,/provider,totalAmount:total,amountDueNow:0/);
+  assert.match(route,/provider,totalAmount:payable,amountDueNow:0/);
   assert.match(route,/UPDATE canonical_bookings SET channel='assisted_staff'/);
 });
 
@@ -73,4 +73,14 @@ test("CRM lead hands the same customer and pet identity into governed booking an
   assert.match(page,/customer:\{id:customer\.id,name:customer\.name,primaryPhone:customer\.primaryPhone/,"the selected CRM customer ID must be submitted unchanged");
   assert.match(route,/customer:input\.customer,pets:input\.pets/,"assisted orders must pass that identity unchanged to canonical booking");
   assert.match(canonicalBooking,/attributeBookingToOpenLead\(db,\{customerId:input\.customer\.id,bookingId\}\)/,"canonical booking must attribute the result back to the open CRM lead");
+});
+
+test("a staff-assisted order takes a governed coupon quoted by the server on the assisted_staff channel",()=>{
+  assert.match(client,/note\?:string\};couponCode\?:string\};/,"staff send a code, never a discount or total");
+  assert.match(route,/quoteCoupon\(db,\{code:couponCode,customerId:input\.customer\.id,serviceCode:"grooming",cityId:input\.cityId\|\|"blr",channel:"assisted_staff",packageCode:item\.code,orderValue:total,paymentMode:"after_service"/);
+  assert.ok(route.indexOf("quoteCoupon(db")<route.indexOf('internalPost(request,"/api/uat-scheduling"'),"an ineligible code is refused before anything is reserved");
+  assert.match(route,/payable=total-discount/);
+  assert.match(route,/couponQuoteId:coupon\.quoteId/,"the canonical booking re-checks and consumes the quote");
+  assert.match(page,/aria-label="Coupon code"/);
+  assert.match(page,/\$\{couponCode\.trim\(\)\?`-coupon-\$\{couponCode\.trim\(\)\}`:""\}/,"a coupon is part of the order's idempotency key, so adding one is never answered with an earlier order");
 });

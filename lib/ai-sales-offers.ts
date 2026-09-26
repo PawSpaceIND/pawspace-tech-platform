@@ -108,3 +108,6 @@ export function withoutApprovedDiscounts(reply:string,offers:ApprovedSalesOffer[
 
 /** Approved offers as price grounding: only the regular and offer prices, and only when the reply names the code. */
 export function offerGroundingRows(offers:ApprovedSalesOffer[]):Row[]{return offers.map(offer=>({name:offer.code,package_code:offer.package_code,regular_price:offer.regular_price,offer_price:offer.offer_price}));}
+
+/** Whether a campaign switched to live money may be quoted in this environment (Control > Coupons). */
+export async function couponsLiveApproved(){try{const{env}=await import("cloudflare:workers");return String((env as unknown as Row).PAWSPACE_COUPONS_LIVE_APPROVED||"").trim().toLowerCase()==="true";}catch{return false;}}

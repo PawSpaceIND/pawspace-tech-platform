@@ -431,9 +431,10 @@ test('a Pet Taxi final balance cannot be opened for payment before drop-off, and
 });
 test('the balance window fails closed: a schedule read error is not treated as a payable balance', async () => {
   const { outstandingBalanceWindow } = await import('../lib/payment-balance-window.ts');
-  const broken = { prepare: sql => ({ bind: () => ({
-    all: async () => ({ results: [{ name: 'taxi_payment_schedules' }, { name: 'taxi_trip_payment_events' }] }),
-    first: async () => { if (/taxi_trip_payment_events/.test(sql)) throw new Error('D1_ERROR: storage unavailable'); return { booking_id: 'B1' }; },
-  }) }) };
+  const tables = { results: [{ name: 'taxi_payment_schedules' }, { name: 'taxi_trip_payment_events' }] };
+  const broken = { prepare: sql => ({
+    all: async () => tables,
+    bind: () => ({ first: async () => { if (/taxi_trip_payment_events/.test(sql)) throw new Error('D1_ERROR: storage unavailable'); return { booking_id: 'B1' }; } }),
+  }) };
   await assert.rejects(outstandingBalanceWindow(broken, 'B1'), /storage unavailable/);
 });

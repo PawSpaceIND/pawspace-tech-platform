@@ -15,12 +15,10 @@ type Row=Record<string,unknown>;
  */
 export type BalanceWindow={payable:boolean;dueAt:number|null;kind:"stay"|"taxi"|"other"};
 
-const WINDOW_TABLES=["stay_payment_schedules","taxi_payment_schedules","taxi_trip_payment_events"];
-
 /** Fails closed: a missing table means "no such schedule", but any query error propagates rather than
  *  falling through to a payable balance. */
 export async function outstandingBalanceWindow(db:Db,bookingId:string):Promise<BalanceWindow>{
- const present=new Set(((await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${WINDOW_TABLES.map(()=>"?").join(",")})`).bind(...WINDOW_TABLES).all<Row>()).results||[]).map(row=>String(row.name)));
+ const present=new Set(((await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stay_payment_schedules','taxi_payment_schedules','taxi_trip_payment_events')").all<Row>()).results||[]).map(row=>String(row.name)));
  const stay=present.has("stay_payment_schedules")?await db.prepare("SELECT * FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>():null;
  if(stay){const dueAt=Number(stay.balance_due_at);return{payable:true,dueAt:Number.isFinite(dueAt)&&dueAt>0?dueAt:null,kind:"stay"};}
  const taxi=present.has("taxi_payment_schedules")?await db.prepare("SELECT booking_id FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>():null;
