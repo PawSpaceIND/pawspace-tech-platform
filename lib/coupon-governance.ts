@@ -33,7 +33,8 @@ export type CouponQuoteInput={code:string;customerId:string;serviceCode:CouponSe
 export const GROOMING_CROSS_SELL_COUPON="GROOM400";
 export const GROOMING_CLOSING_COUPON="GROOM200";
 /** Codes given out by the bot or the AI, not advertised to every customer in the offers list. */
-export const UNLISTED_COUPON_CODES:readonly string[]=[GROOMING_CROSS_SELL_COUPON,GROOMING_CLOSING_COUPON];
+/** The seeded sales campaigns by id: staff may rename a code, the campaign stays unlisted. */
+export const UNLISTED_COUPON_CAMPAIGN_IDS:readonly string[]=["sales-coupon-groom400","sales-coupon-groom200"];
 
 /** Single-pet regular packages whose closing price the business set (1149 / 1699 / 2199). */
 export const CLOSING_COUPON_PACKAGES=["dog-bath","dog-basic","dog-makeover","cat-basic","cat-makeover"] as const;

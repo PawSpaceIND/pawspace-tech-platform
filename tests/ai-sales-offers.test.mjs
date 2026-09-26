@@ -101,3 +101,11 @@ test("the web chat and WhatsApp prompts carry the coupon rules without overridin
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /authorized sales lever stated elsewhere/);
   assert.match(runtime.WEB_CHAT_SALES_DIRECTIVE, /approvedOffers/);
 });
+
+test("an approved '₹N off' only counts in the sentence that names its code", async () => {
+  const { db } = fresh();
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
+  assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts("Use GROOM200 for ₹200 off grooming. Your taxi also gets ₹200 off today.", offers), catalogue), false, "the taxi's ₹200 off is not hidden by the grooming code");
+  assert.equal(offersModule.offerClaimsApproved("With GROOM400 you get ₹400 off.\nAnd the sitting gets ₹400 off too.", offers), true, "a sentence without a code is left to the price check");
+});

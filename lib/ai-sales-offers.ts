@@ -80,6 +80,8 @@ const CODE_SHAPED=/(?<![-_/#])\b([A-Za-z]{2,12}\d{2,6})\b/g;
 const NOT_A_CODE=/^(?:rs|inr|upi)\d/i;
 const APPROVED_AMOUNT_OFF=/(?:₹|\brs\.?|\binr)\s*(\d[\d,]{0,8})\s*off\b/gi;
 
+/** Sentences, so a "₹N off" is tied to a code named in the same sentence, not anywhere in the reply. */
+const sentences=(value:string)=>value.split(/(?<=[.!?])\s+|\n+/);
 function namedCodes(reply:string,offers:ApprovedSalesOffer[]){const named=new Set<string>();for(const offer of offers)if(new RegExp(`\\b${offer.code}\\b`,"i").test(reply))named.add(offer.code.toUpperCase());return named;}
 
 /**
@@ -91,15 +93,17 @@ export function offerClaimsApproved(reply:string,offers:ApprovedSalesOffer[]){
  const value=reply.slice(0,8000),approved=new Set(offers.map(offer=>offer.code.toUpperCase()));
  for(const match of value.matchAll(CODE_MENTION))if(looksLikeCode(match[1])&&!approved.has(match[1].toUpperCase()))return false;
  for(const match of value.matchAll(CODE_SHAPED))if(!NOT_A_CODE.test(match[1])&&!approved.has(match[1].toUpperCase()))return false;
- const named=namedCodes(value,offers);
- if(named.size)for(const match of value.matchAll(APPROVED_AMOUNT_OFF)){const amount=Math.round(Number(match[1].replace(/,/g,"")));if(!offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===amount))return false;}
+ for(const sentence of sentences(value)){
+  const named=namedCodes(sentence,offers);
+  if(named.size)for(const match of sentence.matchAll(APPROVED_AMOUNT_OFF)){const amount=Math.round(Number(match[1].replace(/,/g,"")));if(!offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===amount))return false;}
+ }
  return true;
 }
 
 /** "₹400 off" next to its own approved code is a discount, not a price: it is removed before prices are checked. */
 export function withoutApprovedDiscounts(reply:string,offers:ApprovedSalesOffer[]){
- const value=reply.slice(0,8000),named=namedCodes(value,offers);if(!named.size)return value;
- return value.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);
+ return sentences(reply.slice(0,8000)).map(sentence=>{const named=namedCodes(sentence,offers);if(!named.size)return sentence;
+  return sentence.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);}).join("\n");
 }
 
 /** Approved offers as price grounding: only the regular and offer prices, and only when the reply names the code. */
