@@ -5,7 +5,7 @@
 //  C) One Pet Taxi ride reserved and its 50% booking fee paid.
 import {
   BASE, launch, newFlow, settle, api, customerSession, otpCustomerSession, runPhone, dismissCookies, d1, isoDay,
-  payRazorpayTestNetbanking, record, finding, saveBooking, writeJson, deployedSha,
+  payRazorpayTestNetbanking, record, finding, saveBooking, writeJson, recordWebhookCheck,
 } from "../lib.mjs";
 
 const SUITE = "06-money-and-maps";
@@ -189,15 +189,9 @@ try {
   // Webhook inbox evidence for everything this suite paid (read-only).
   out.inboxSince = await d1("SELECT event_type, processing_status, COUNT(*) AS n FROM gateway_webhook_events WHERE received_at > ? GROUP BY 1,2", [Date.now() - 60 * 60_000]);
   step("webhook inbox, last hour", true, out.inboxSince);
-  // PAY-01 residue vs regression: any webhook still unfinished, with when it arrived relative to the live deploy.
-  const deploy = await deployedSha();
-  const liveSince = Date.parse(deploy?.createdOn || "") || null;
-  const unfinished = await d1("SELECT event_type, processing_status, received_at FROM gateway_webhook_events WHERE processing_status IN ('RECEIVED','PROCESSING') AND received_at > ? ORDER BY received_at DESC LIMIT 20", [Date.now() - 6 * 60 * 60_000]);
-  out.unfinishedWebhooks = { liveSince: liveSince && new Date(liveSince).toISOString(), deployedSha: deploy?.sha || null, rows: Array.isArray(unfinished) ? unfinished.map(row => ({ ...row, receivedAt: new Date(Number(row.received_at)).toISOString(), afterDeploy: liveSince ? Number(row.received_at) > liveSince + 60_000 : null })) : unfinished };
-  const afterDeploy = Array.isArray(out.unfinishedWebhooks.rows) ? out.unfinishedWebhooks.rows.filter(row => row.afterDeploy) : [];
-  step("unfinished webhooks, last 6 h (deploy " + (out.unfinishedWebhooks.liveSince || "unknown") + ")", afterDeploy.length === 0, out.unfinishedWebhooks.rows);
-  if (Array.isArray(out.unfinishedWebhooks.rows) && liveSince) record({ suite: SUITE, journey: "Razorpay webhooks since the live deploy (PAY-01)", combo: `none left RECEIVED/PROCESSING after ${out.unfinishedWebhooks.liveSince}`, result: afterDeploy.length ? "FAIL" : "PASS", detail: JSON.stringify(out.unfinishedWebhooks.rows.map(row => ({ event: row.event_type, status: row.processing_status, at: row.receivedAt, afterDeploy: row.afterDeploy }))).slice(0, 600), evidence: [] });
-  if (afterDeploy.length) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Customer", flow: "Razorpay webhooks", title: `${afterDeploy.length} Razorpay webhook(s) received after the live deploy are still unfinished`, steps: "Read gateway_webhook_events in RECEIVED/PROCESSING since the active staging deployment", expected: "none", actual: JSON.stringify(afterDeploy).slice(0, 400), evidence: [] });
+  // PAY-01 regression watch: webhooks stuck since the live deploy (in-flight ones are given 2 minutes to settle).
+  out.unfinishedWebhooks = await recordWebhookCheck(SUITE);
+  step("webhooks stuck since the live deploy", !out.unfinishedWebhooks.stuckAfterDeploy?.length, out.unfinishedWebhooks.stuckAfterDeploy || out.unfinishedWebhooks.error);
 } catch (error) {
   step("suite aborted", false, String(error?.message || error).slice(0, 500));
 } finally {
