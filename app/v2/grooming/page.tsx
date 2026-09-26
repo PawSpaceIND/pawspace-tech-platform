@@ -124,7 +124,7 @@ export default function V2GroomingPage() {
   const packageBundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
   // Same package and price with a longer slot, so availability, the quote window, the groomer check and checkout agree.
   const extraCare = v2ExtraCareReason(selectedPets);
-  const bundle = packageBundle && extraCare ? { ...packageBundle, slotMinutes: packageBundle.slotMinutes + EXTRA_CARE_MINUTES, blockingMinutes: packageBundle.blockingMinutes + EXTRA_CARE_MINUTES } : packageBundle;
+  const bundle = useMemo(() => packageBundle && extraCare ? { ...packageBundle, slotMinutes: packageBundle.slotMinutes + EXTRA_CARE_MINUTES, blockingMinutes: packageBundle.blockingMinutes + EXTRA_CARE_MINUTES } : packageBundle, [packageBundle, extraCare]);
   const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
   // Disabled checkout buttons point at the step that explains why.
   const blockingIssue = mixedAudience ? { id: "v2-selection-issue", step: "01" } : youngIssue ? { id: "v2-young-issue", step: "02" } : null;
