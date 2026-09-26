@@ -1,5 +1,12 @@
 /** Provider-facing projection for Pet Taxi lifecycle lists (parity with walking-provider-projection). */
 type Row = Record<string, unknown>;
+// The offer view computed by lib/provider-offer-state.ts (state and times only). Inlined, not imported, so this projection stays dependency-free.
+const OFFER_STATES = new Set(["open", "expired", "withdrawn", "accepted", "awaiting_payment", "closed"]);
+function projectOfferView(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Row, state = String(row.state || ""), time = (item: unknown) => item != null && Number.isFinite(Number(item)) ? Number(item) : null;
+  return OFFER_STATES.has(state) ? { state, expiresAt: time(row.expiresAt), offeredAt: time(row.offeredAt) } : null;
+}
 
 const SAFE_EVENT_DETAIL_KEYS = new Set([
   "action", "providerId", "status", "from", "to", "reason", "code", "method",
@@ -78,5 +85,6 @@ export function projectTaxiProviderBooking(row: Row) {
     currency: String(row.currency || "INR"),
     events: Array.isArray(row.events) ? (row.events as Row[]).map(projectEvent) : [],
     recovery: projectRecovery(row.recovery as Row | null | undefined),
+    offer: projectOfferView(row.offer),
   };
 }

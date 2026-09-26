@@ -5,6 +5,8 @@ import{haversineDistanceKm}from"../backend/src/scheduling";
 import{resolveServiceCompletionFinance}from"./service-completion-finance";
 import{serviceExecutionNow}from"./service-execution-clock";
 import{resolveBookingDoorstep}from"./booking-doorstep";
+import{chunkedIn}from"./d1-chunked-in";
+import{acceptancePhase,loadAssignmentOffers,providerOfferView}from"./provider-offer-state";
 import{acquireProviderLifecycleLease,canonicalRecoveryPath,canonicalStateFromServiceStatus,ensureProviderLifecycleTables,finalizeProviderLifecycleLease,providerLifecycleAssertionStatement,releaseProviderLifecycleLease,runAtomicProviderLifecycleTransition}from"./provider-lifecycle";
 type Row=Record<string,unknown>;
 export type SittingAction="accept"|"decline"|"submit_care_plan"|"check_in"|"care_event"|"sitter_unavailable"|"no_show"|"check_out";
@@ -13,6 +15,8 @@ export type SittingMutation={bookingId:string;action:SittingAction;actorId:strin
 export const SITTING_CHECKIN_GEOFENCE_METERS=250;
 export async function ensureSittingLifecycleTables(db:D1Database){await ensureProviderLifecycleTables(db);await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS sitting_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),db.prepare("CREATE TABLE IF NOT EXISTS sitting_care_plan_snapshots (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,plan_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ready',updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),db.prepare("CREATE TABLE IF NOT EXISTS sitting_care_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),db.prepare("CREATE TABLE IF NOT EXISTS sitting_recovery_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,group_id TEXT NOT NULL,failed_provider_id TEXT NOT NULL,reason_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ops_escalation',replacement_provider_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',opened_at INTEGER NOT NULL,resolved_at INTEGER,updated_at INTEGER NOT NULL)"),db.prepare("CREATE TABLE IF NOT EXISTS sitting_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)")]);}
 function parse<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T}catch{return fallback}}
+/** Booked pets (name, species, breed) for many bookings in one read per chunk; a pet is shown only when the booking's own customer owns it. */
+async function bookingPets(db:D1Database,bookings:Row[]){const petIds=(row:Row)=>{const value=parse<unknown>(row.pet_ids_json,[]);return Array.isArray(value)?value.map(String):[];},ids=[...new Set(bookings.flatMap(petIds))],pets=new Map<string,Row>();try{for(const pet of await chunkedIn(ids,async(chunk,placeholders)=>(await db.prepare(`SELECT id,customer_id,name,species,breed FROM canonical_pets WHERE id IN (${placeholders})`).bind(...chunk).all<Row>()).results??[]))pets.set(String(pet.id),pet);}catch(error){if(!/no such table/i.test(String(error)))throw error;}return(row:Row)=>petIds(row).flatMap(petId=>{const pet=pets.get(petId);return pet&&String(pet.customer_id)===String(row.customer_id)?[{name:String(pet.name||"Pet"),species:String(pet.species||""),breed:pet.breed==null?null:String(pet.breed)}]:[];});}
 async function bookingRow(db:D1Database,bookingId:string){await ensureSittingLifecycleTables(db);return db.prepare("SELECT b.*,w.id work_order_id,w.status work_order_status,w.provider_id work_order_provider_id FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'").bind(bookingId).first<Row>();}
 export async function getSittingBooking(db:D1Database,bookingId:string){return bookingRow(db,bookingId);}
 export async function listSittingBookings(db:D1Database,input:{providerId?:string;customerId?:string;bookingId?:string}){
@@ -22,6 +26,8 @@ export async function listSittingBookings(db:D1Database,input:{providerId?:strin
  if(input.customerId){where.push("b.customer_id=?");binds.push(input.customerId)}
  if(input.bookingId){where.push("b.id=?");binds.push(input.bookingId)}
  const rows=await db.prepare(`SELECT b.*,w.id work_order_id,w.status work_order_status FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id WHERE ${where.join(" AND ")} ORDER BY b.created_at DESC`).bind(...binds).all<Row>();
+ // The offer the accept path checks, and the booked pets, for every row in one read each (not one per row).
+ const now=Date.now(),offers=await loadAssignmentOffers(db,rows.results.map(row=>row.schedule_group_id)),petsFor=await bookingPets(db,rows.results);
  const result=[];
  for(const row of rows.results){
   const care=await db.prepare("SELECT status,plan_json,updated_at FROM sitting_care_plan_snapshots WHERE booking_id=?").bind(row.id).first<Row>(),
@@ -36,7 +42,7 @@ export async function listSittingBookings(db:D1Database,input:{providerId?:strin
   const serviceLocation=activeLocation&&Number.isFinite(latitude)&&Number.isFinite(longitude)
    ?{addressText:String(activeLocation.address_text||""),latitude,longitude,source:String(activeLocation.source||"canonical_booking")}
    :null;
-  result.push({...row,carePlan:care?{status:String(care.status),plan:parse(care.plan_json,{}),updatedAt:Number(care.updated_at)}:null,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,serviceLocation,meetGreet:meetGreet??null});
+  result.push({...row,carePlan:care?{status:String(care.status),plan:parse(care.plan_json,{}),updatedAt:Number(care.updated_at)}:null,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,serviceLocation,meetGreet:meetGreet??null,pets:petsFor(row),offer:providerOfferView(offers.get(String(row.schedule_group_id||""))??null,{providerId:String(row.provider_id||""),phase:acceptancePhase(row.status),now})});
  }
  return result;
 }

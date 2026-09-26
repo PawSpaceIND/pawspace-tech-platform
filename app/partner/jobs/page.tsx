@@ -2,10 +2,12 @@
 import{useEffect,useState}from"react";
 import Link from"next/link";
 import{partnerJobWorkspaceHref}from"../../../lib/partner-job-workspace";
+import{acceptAvailable,describeProviderOffer}from"../../../lib/provider-offer-copy";
 
-type Job={bookingId:string;serviceCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;petCount:number;status:string;customerFirstName:string;group:string;needsActionReason:string|null;stayId:string|null;carePlanStatus:string|null;nextSlotStart:string|null;addOns:string[];safetyRequirements:string[]};
+type Job={bookingId:string;serviceCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;petCount:number;status:string;customerFirstName:string;group:string;needsActionReason:string|null;stayId:string|null;carePlanStatus:string|null;nextSlotStart:string|null;addOns:string[];safetyRequirements:string[];offer?:{state:string;expiresAt:number|null}|null};
 type Counts={needsAction:number;today:number;upcoming:number;completed:number;total:number};
-type Feed={providerId:string;needsAction:Job[];today:Job[];upcoming:Job[];completed:Job[];counts:Counts};
+type Feed={providerId:string;needsAction:Job[];today:Job[];upcoming:Job[];completed:Job[];needsOperations?:Job[];past?:Job[];counts:Counts};
+const nounFor=(service:string)=>service==="boarding"?"stay":service==="pet_taxi"?"trip":"booking";
 
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e",red:"#ff9a9a"};
 const when=(v:string)=>v?v.slice(0,16).replace("T"," "):"—";
@@ -53,7 +55,8 @@ export default function PartnerJobsPage(){
     {job.serviceCode==="grooming"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Add-ons:</b> {job.addOns.join(" · ")}</div>:null}
     {job.serviceCode==="boarding"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Requested extras:</b> {job.addOns.join(" · ")} <small>(subject to your agreement)</small></div>:null}
     {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
-    {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId?<div style={{display:"flex",gap:8}}>
+    {job.offer?<div style={{fontSize:13,color:job.offer.state==="expired"||job.offer.state==="withdrawn"?C.orange:C.dim}}><b style={{color:C.ink}}>{describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).label}</b> · {describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).detail}</div>:null}
+    {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId&&acceptAvailable(job.offer??{state:"open"},job.group==="past"?"past":undefined)?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
       <button disabled={busy} style={{...btn,background:"transparent",color:C.dim,border:`1px solid ${C.line}`}} onClick={()=>void stayAction(job.stayId as string,"decline")}>Decline</button>
     </div>:null}
@@ -81,6 +84,8 @@ export default function PartnerJobsPage(){
         {section("Today",feed.today,"No jobs today.")}
         {section("Upcoming",feed.upcoming,"Nothing scheduled yet.")}
         {section("Completed (last 14 days)",feed.completed,"No recently completed jobs.")}
+        {feed.needsOperations?.length?section("Needs Operations",feed.needsOperations,"",true):null}
+        {feed.past?.length?section("Past (not active)",feed.past,""):null}
         <footer style={{marginTop:26,color:C.dim,fontSize:12}}>You see only your own assigned jobs. Customer contact details are never shown here — calls and messages go through the PawSpace app. Sandbox / UAT — no live money.</footer>
       </>:null}
     </div>

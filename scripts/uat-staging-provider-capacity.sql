@@ -831,3 +831,37 @@ CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider
 UPDATE provider_unavailability
 SET status='cleared',ends_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),updated_at=strftime('%s','now')*1000
 WHERE status='active' AND (provider_id LIKE 'uatcap\_groom%' ESCAPE '\' OR provider_id IN ('groom_arun','groom_kiran','groom_sanjay'));
+
+-- ---------------------------------------------------------------------------------------------------
+-- 6. UAT ACCEPTANCE WINDOW FOR SEEDED SITTERS AND HOSTS (STAGING DATA ONLY).
+--
+--    Commission sitters and hosts receive a provider_assignment_offers row that expires
+--    acceptance_timeout_minutes after booking (lib/provider-capacity-governance.ts createAssignmentOffer:
+--    expires_at = now + timeout). The Sitting and Boarding lifecycles refuse an accept once expires_at has
+--    passed (sitting_offer_expired / "Host acceptance offer expired"), and nothing reopens the offer. With
+--    the 30-minute product window, a tester who books and opens the sitter or host app later can never
+--    accept. The PRODUCT RULE is unchanged in code (runtime defaults stay 30 minutes); only the seeded UAT
+--    sitter/host profiles on staging get a 24-hour (1440-minute) window so testers can accept a day later.
+--
+--    Seeded ids only: sit_*, host_* (runtime founder_seed roster) and uatcap_sit*, uatcap_host* (this file's
+--    city-wide profiles and any added later). Only rows the seeds own (updated_by='founder_seed') and only
+--    upward: a window a person lengthened through Control is kept, and one they set on a non-seed row is
+--    never touched. The runtime seeder's own repair only ever raises (seedProviderCapacityDefaults), so it
+--    does not cut 1440 back to 30. Idempotent: a second run matches no row.
+-- ---------------------------------------------------------------------------------------------------
+UPDATE provider_capacity_profiles
+SET acceptance_timeout_minutes=1440,version=version+1,updated_at=strftime('%s','now')*1000
+WHERE acceptance_timeout_minutes<1440
+  AND updated_by='founder_seed'
+  AND (id LIKE 'sit\_%' ESCAPE '\' OR id LIKE 'host\_%' ESCAPE '\' OR id LIKE 'uatcap\_sit%' ESCAPE '\' OR id LIKE 'uatcap\_host%' ESCAPE '\')
+  AND (services_json LIKE '%"pet_sitting"%' OR services_json LIKE '%"boarding"%');
+-- Offers already issued to those seeded sitters/hosts under the short window: a still-PENDING offer is given
+-- the same 24 hours, counted from when it was OFFERED (expires_at = offered_at + 24h, never earlier than it
+-- already was). An offer made more than a day ago therefore stays expired, and accepted, declined or
+-- cancelled offers are untouched. Only the seeded UAT provider ids above; no other provider's offer changes.
+CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL);
+UPDATE provider_assignment_offers
+SET expires_at=offered_at+1440*60000,updated_at=strftime('%s','now')*1000
+WHERE status='pending'
+  AND expires_at<offered_at+1440*60000
+  AND (provider_id LIKE 'sit\_%' ESCAPE '\' OR provider_id LIKE 'host\_%' ESCAPE '\' OR provider_id LIKE 'uatcap\_sit%' ESCAPE '\' OR provider_id LIKE 'uatcap\_host%' ESCAPE '\');

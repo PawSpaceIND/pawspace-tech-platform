@@ -1,5 +1,6 @@
 "use client";
 import {partnerJobWorkspaceHref} from "../../lib/partner-job-workspace";
+import {describeProviderOffer} from "../../lib/provider-offer-copy";
 import type {PartnerJob as FeedJob,PartnerJobFeed} from "../../lib/partner-job-feed";
 import {boundedFetch} from "../../lib/bounded-fetch";
 
@@ -135,6 +136,21 @@ const SETTLED_PAYMENT_STATUSES = ["captured", "refunded", "partially_refunded"];
 
 const whenMs = (value: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? when(new Date(Number(value)).toISOString()) : "";
 
+/**
+ * Sitting, Boarding and Taxi work runs in its own workspace (/sitter, /host, /driver); this app lists it
+ * with the offer state the lifecycle will judge (lib/provider-offer-state.ts via /api/partner-job-feed)
+ * and links to the step that is actually next. Nothing here offers an Accept on an expired offer.
+ */
+const offerNoun = (service: string) => service === "boarding" ? "stay" : service === "pet_taxi" ? "trip" : "booking";
+const feedOfferCopy = (job: FeedJob) => describeProviderOffer(job.offer, { noun: offerNoun(job.serviceCode), bucket: job.group === "past" ? "past" : undefined });
+function workspaceLinkLabel(job: FeedJob) {
+  if (job.group === "past" || job.group === "needs_operations") return `View ${label(job.serviceCode)} details`;
+  const state = job.offer?.state;
+  if (state === "open") return "Review & accept";
+  if (state === "accepted") return job.serviceCode === "pet_sitting" ? "Open job · navigation & GPS check-in" : job.serviceCode === "boarding" ? "Open stay · check-in & care" : job.serviceCode === "pet_taxi" ? "Open trip · pickup & route" : `Open ${label(job.serviceCode)} job`;
+  return `Open ${label(job.serviceCode)} job`;
+}
+
 export default function PartnerMobileApp() {
   return <Suspense fallback={null}><PartnerMobileAppContent /></Suspense>;
 }
@@ -160,7 +176,8 @@ function PartnerMobileAppContent() {
   const [uatCode, setUatCode] = useState("");
   const [switching, setSwitching] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [otherJobs,setOtherJobs]=useState<FeedJob[]>([]),[feedError,setFeedError]=useState("");
+  // Non-grooming work from the unified feed: active (needs action / today / upcoming), completed, with Operations (offer expired or moved on) and past.
+  const [otherJobs,setOtherJobs]=useState<FeedJob[]>([]),[otherCompleted,setOtherCompleted]=useState<FeedJob[]>([]),[otherOps,setOtherOps]=useState<FeedJob[]>([]),[otherPast,setOtherPast]=useState<FeedJob[]>([]),[feedError,setFeedError]=useState("");
   const [selectedId, setSelectedId] = useState("");
   // Live order impact: the retired /groomer prototype was the only surface that reached the governed
   // /api/booking-operations, but it sent hardcoded IDs. Here it runs against the REAL selected booking.
@@ -251,9 +268,10 @@ function PartnerMobileAppContent() {
   useEffect(()=>{if(!identity?.subjectId)return;const timer=setInterval(()=>setRefreshKey(value=>value+1),30000);return()=>clearInterval(timer);},[identity?.subjectId]);
   useEffect(()=>{
     const controller=new AbortController();
-    queueMicrotask(()=>{if(!controller.signal.aborted){setOtherJobs([]);setFeedError("");}});
+    queueMicrotask(()=>{if(!controller.signal.aborted){setOtherJobs([]);setOtherCompleted([]);setOtherOps([]);setOtherPast([]);setFeedError("");}});
     if(!identity?.subjectId)return()=>controller.abort();
-    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(!controller.signal.aborted)setOtherJobs([...feed.needsAction,...feed.today,...feed.upcoming,...feed.completed].filter(job=>!["grooming","dog_training"].includes(job.serviceCode)));}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
+    const others=(list:FeedJob[]|undefined)=>(list??[]).filter(job=>!["grooming","dog_training"].includes(job.serviceCode));
+    void fetch(`/api/partner-job-feed?providerId=${encodeURIComponent(identity.subjectId)}`,{cache:"no-store",signal:controller.signal}).then(async response=>{const body=await response.json() as {data?:PartnerJobFeed;error?:string};if(!response.ok||!body.data)throw new Error(body.error||"Unable to load all assigned work");return body.data;}).then(feed=>{if(controller.signal.aborted)return;setOtherJobs(others([...feed.needsAction,...feed.today,...feed.upcoming]));setOtherCompleted(others(feed.completed));setOtherOps(others(feed.needsOperations));setOtherPast(others(feed.past));}).catch(problem=>{if(!controller.signal.aborted)setFeedError(problem instanceof Error?problem.message:"Unable to load assigned work");});
     return()=>controller.abort();
   },[identity?.subjectId,refreshKey]);
   const dutyJob=jobs.filter(isGroomerOnDuty).sort((a,b)=>["in_service","arrived","on_the_way","assigned"].indexOf(a.status)-["in_service","arrived","on_the_way","assigned"].indexOf(b.status))[0]??null;
@@ -501,6 +519,14 @@ function PartnerMobileAppContent() {
   const earningsGross = Number(earnings?.grossOrderValue ?? earnings?.computed?.grossOrderValue ?? 0);
 
   const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.workOrderId); setTab(target); };
+  // One card per Sitting / Boarding / Taxi job: offer state in words, the window, and a link to the step that is next in its own workspace.
+  const otherJobCard = (job: FeedJob) => { const target = partnerJobWorkspaceHref(job,{v2:inV2Partner}), copy = feedOfferCopy(job); return <article key={job.bookingId} className={styles.notice} data-offer-state={job.offer?.state || "none"}><b>{job.packageName} · {label(job.serviceCode)}</b><p>{job.customerFirstName} · {when(job.scheduledStart)} → {when(job.scheduledEnd)} · {label(job.status)}</p>{job.offer && <p role="status"><strong>{copy.label}</strong> · {copy.detail}</p>}{target ? <Link href={target}>{workspaceLinkLabel(job)}</Link> : <p>Contact Operations to manage this assignment.</p>}</article>; };
+  const otherAccepted = otherJobs.filter(job => job.offer?.state === "accepted");
+  const otherJobSections = <>
+    {otherJobs.length > 0 && <section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(otherJobCard)}</section>}
+    {otherOps.length > 0 && <section aria-label="Needs Operations"><h3 className={styles.sectionTitle}>Needs Operations</h3><p className={styles.note}>These offers expired or moved on. PawSpace Operations is arranging cover; they are not counted as your active jobs.</p>{otherOps.map(otherJobCard)}</section>}
+    {otherPast.length > 0 && <details><summary className={styles.sectionTitle}>Past ({otherPast.length}) · not active</summary>{otherPast.map(otherJobCard)}</details>}
+  </>;
 
   // Both handlers only ask the server to change the session, then re-run the identity check above.
   // Nothing here decides locally that the partner is signed out or has become someone else. They
@@ -605,17 +631,23 @@ function PartnerMobileAppContent() {
                 {nextAction && <button disabled={busy||pendingStatus||(nextAction==="start_service"&&!checklistComplete("before",selectedChecks))||((nextAction==="complete"||nextAction==="add_proof")&&!checklistComplete("after",selectedChecks))} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
                 <button className={styles.secondary} onClick={() => openJob(selected, "jobs")}>{isTraining ? "Open training session" : canTrack ? "Open GPS" : "View job"}</button>
               </div>
-            </> : <><h2>{otherJobs.length?"Your assigned work":"No assigned jobs"}</h2><p>{otherJobs.length?"Open your service workspace below to continue.":"Your work will appear here after assignment."}</p></>}
+            </> : otherJobs[0] ? (() => { const next = otherJobs[0], copy = feedOfferCopy(next), target = partnerJobWorkspaceHref(next, { v2: inV2Partner }); return <>
+              <h2>{next.packageName}</h2>
+              <p>{label(next.serviceCode)} · {next.customerFirstName} · {next.petCount} pet{next.petCount === 1 ? "" : "s"}</p>
+              <div className={styles.heroMeta}><span>◷ {when(next.scheduledStart)}</span><span>{copy.label}</span></div>
+              {target && <div className={styles.primaryActions}><Link href={target}>{workspaceLinkLabel(next)}</Link></div>}
+            </>; })() : <><h2>No active assignments</h2><p>{otherOps.length || otherPast.length ? "Nothing is waiting on you. Jobs with Operations and past jobs are listed below." : "Your work will appear here after assignment."}</p></>}
           </section>
 
           <div className={styles.stats}>
-            <article><span>{activeJobs.length+otherJobs.filter(job=>!["completed","cancelled"].includes(job.status)).length}</span><small>active jobs</small></article>
-            <article><span>{completedJobs.length+otherJobs.filter(job=>job.status==="completed").length}</span><small>completed</small></article>
-            <article><span>GPS</span><small>tap to start</small></article>
+            {/* Active = grooming work orders still open + Sitting/Boarding/Taxi jobs the feed files as active. Expired or reassigned offers and past jobs never count. */}
+            <article><span>{activeJobs.length+otherJobs.length}</span><small>active jobs</small></article>
+            <article><span>{completedJobs.length+otherCompleted.length}</span><small>completed</small></article>
+            <article role="button" tabIndex={0} aria-label="Open GPS and navigation" onClick={() => setTab("tracking")} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setTab("tracking"); } }}><span>GPS</span><small>{canTrack || otherAccepted.length ? "open GPS" : "after you accept"}</small></article>
           </div>
 
           {feedError&&<p role="alert">{feedError}</p>}
-          {otherJobs.length>0&&<section aria-label="Other assigned services"><h3 className={styles.sectionTitle}>Your service workspaces</h3>{otherJobs.map(job=>{const target=partnerJobWorkspaceHref(job,{v2:inV2Partner});return <article key={job.bookingId}><h4>{job.packageName}</h4><p>{job.customerFirstName} · {label(job.status)}</p>{target?<Link href={target}>Open {label(job.serviceCode)} job</Link>:<p>Contact Operations to manage this assignment.</p>}</article>;})}</section>}
+          {otherJobSections}
           <h3 className={styles.sectionTitle}>Work from your phone</h3>
           <div className={styles.quickGrid}>
             <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
@@ -629,7 +661,8 @@ function PartnerMobileAppContent() {
 
         {(tab === "jobs" || (tab === "home" && dutyJob)) && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>{tab==="home"?"Your active job":"My jobs"}</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
-          {jobs.length === 0 && !error && <div className={styles.empty}>No canonical jobs assigned to this provider yet.</div>}
+          {jobs.length === 0 && !error && <div className={styles.empty}>{otherJobs.length || otherOps.length || otherPast.length || otherCompleted.length ? "No grooming work orders. Your Sitting, Boarding and Taxi jobs are listed below; each opens in its own workspace to accept, check in and complete." : "No canonical jobs assigned to this provider yet."}</div>}
+          {tab === "jobs" && otherJobSections}
           {tab!=="home"&&<div className={styles.jobList}>{jobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.workOrderId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>}
           {selected && <section className={styles.detailCard}>
             <div className={styles.detailHead}><div><small>BOOKING {selected.bookingId}</small><h2>{selected.packageName}</h2></div><span>{label(selected.status)}</span></div>
@@ -718,7 +751,12 @@ function PartnerMobileAppContent() {
         {tab === "tracking" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
           {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.workOrderId} className={selected?.workOrderId === job.workOrderId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.workOrderId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
-          {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
+          {/* Sitting, Boarding and Taxi GPS runs in each job's own workspace: navigation to the accepted address and the location-verified check-in / pickup. */}
+          {(otherAccepted.length > 0 || otherJobs.length > 0) && <section className={styles.notice} aria-label="GPS for Sitting, Boarding and Taxi jobs"><b>GPS for your {[...new Set(otherJobs.map(job => label(job.serviceCode)))].join(", ")} jobs</b>
+            {otherAccepted.length ? <><p>Open an accepted job for navigation to the service address and the location-verified check-in (within 250 m of the doorstep for Sitting).</p>{otherAccepted.map(job => { const target = partnerJobWorkspaceHref(job, { v2: inV2Partner }); return target ? <p key={job.bookingId}><Link href={target}>{job.packageName} · {when(job.scheduledStart)} — {workspaceLinkLabel(job)}</Link></p> : null; })}</> : <p>GPS, navigation and check-in open after you accept a job. Accept it first:</p>}
+            {otherJobs.filter(job => job.offer?.state === "open").map(job => { const target = partnerJobWorkspaceHref(job, { v2: inV2Partner }); return target ? <p key={job.bookingId}><Link href={target}>{job.packageName} · {feedOfferCopy(job).label} — Review &amp; accept</Link></p> : null; })}
+          </section>}
+          {!selected && !otherJobs.length && <div className={styles.empty}>No assigned job is available for tracking.{otherOps.length || otherPast.length ? " Jobs with Operations and past jobs have no GPS step." : ""}</div>}
           {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
           {selected && isTraining && <section className={styles.notice}><b>Training GPS uses the Training lifecycle</b><p>Open the Training job to accept the session and start the journey. Arrival geofence and session evidence are enforced by the Training session API; the Grooming route card is intentionally not used for trainers.</p><button onClick={() => setTab("jobs")}>Open training session</button></section>}
           {selected && !isTraining && canTrack && <><section className={styles.trackingSummary}><span>Tracking booking</span><h2>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.packageName}</h2><p>{selected.customer.name} · {selected.zoneId}</p></section><GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} managedTracking={Boolean(dutyJob?.bookingId===selected.bookingId)} /></>}
@@ -756,7 +794,7 @@ function PartnerMobileAppContent() {
           {!uatProviders && uatRosterError && <p role="status" className={styles.empty}>Switch UAT provider is unavailable right now: {uatRosterError}</p>}
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
             <b>Switch UAT provider</b>
-            <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Job lists and lifecycle actions in this app are grooming work orders; other verticals sign in but see their jobs elsewhere.</p>
+            <p>Staging only. Open this app as any live provider in the seeded roster - a groomer, a trainer, a host - with the UAT access code. Grooming work orders run inside this app. Sitting, Boarding and Taxi jobs are listed on Home, Jobs and GPS with their offer state, and each opens in its own workspace to accept, navigate, check in and complete.</p>
             <label>Provider<select value={uatProviderId} onChange={(event) => setUatProviderId(event.target.value)}>
               <option value="">Choose a provider…</option>
               {uatProviders.map((provider) => <option key={provider.id} value={provider.id} disabled={provider.id === identity?.subjectId}>{provider.name} · {provider.services.map((service) => label(service)).join(", ")}{provider.id === identity?.subjectId ? " (current)" : ""}</option>)}

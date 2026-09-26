@@ -1,5 +1,12 @@
 /** Provider-facing projection for Boarding stays (parity with sitting-provider-projection). */
 type Row = Record<string, unknown>;
+// The offer view computed by lib/provider-offer-state.ts (state and times only). Inlined, not imported, so this projection stays dependency-free.
+const OFFER_STATES = new Set(["open", "expired", "withdrawn", "accepted", "awaiting_payment", "closed"]);
+function projectOffer(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Row, state = String(row.state || ""), time = (item: unknown) => item != null && Number.isFinite(Number(item)) ? Number(item) : null;
+  return OFFER_STATES.has(state) ? { state, expiresAt: time(row.expiresAt), offeredAt: time(row.offeredAt) } : null;
+}
 
 const SAFE_EVENT_DETAIL_KEYS = new Set([
   "action", "providerId", "status", "from", "to", "reason", "code", "fields",
@@ -124,6 +131,7 @@ export function projectBoardingProviderStay(row: Row) {
     pets: Array.isArray(row.pets) ? (row.pets as unknown[]).map(projectPet) : [],
     carePlan: projectCarePlan(row.carePlan as Row | null | undefined, String(row.status || "")),
     events: Array.isArray(row.events) ? (row.events as Row[]).map(projectEvent) : [],
+    offer: projectOffer(row.offer),
     extension: row.extension
       ? {
           id: String((row.extension as Row).id || ""),
