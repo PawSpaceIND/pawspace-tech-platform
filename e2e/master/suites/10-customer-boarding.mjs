@@ -115,7 +115,10 @@ function d1Brief(db) {
 /** First start offset (days) inside the Boarding window where a governed host has room for every pet. */
 async function pickDates(context, zone, { prefer, spanDays, startTime, endTime, pets, species }) {
   const last = W_TO - spanDays;
-  for (let off = Math.max(W_FROM, prefer); off <= last; off++) {
+  const offsets = [];
+  for (let off = Math.max(W_FROM, prefer); off <= last; off++) offsets.push(off);
+  for (let off = W_FROM; off < Math.max(W_FROM, prefer) && off <= last; off++) offsets.push(off); // wrap to the window start
+  for (const off of offsets) {
     const start = isoDay(off), end = isoDay(off + spanDays);
     if (!zone) return { start, end, offset: off, probe: "no zone (unprobed)" };
     const s = new Date(`${start}T${startTime}:00+05:30`).toISOString(), e = new Date(`${end}T${endTime}:00+05:30`).toISOString();
@@ -195,6 +198,12 @@ async function chooseServiceAddress(flow) {
     break;
   }
   page.off("response", on401);
+  if (!attempt?.usable && /sign-in has expired/.test(attempt?.alert || "")) {
+    // Our session was superseded mid-resolve: re-issue it and take the Google path again.
+    await reauth(flow.context, "address resolve → 401");
+    await line1.fill(ADDRESS_QUERY);
+    if (await waitSettled() === "suggestions") { await robustClick(suggestions.first()); attempt = await readAttempt("google-suggestion"); }
+  }
   if (!attempt?.usable) {
     // Fallback: the typed path ("Verify service address") infers the Indiranagar PIN from the text.
     await line1.fill(`${ADDRESS_QUERY} 560038`);
@@ -245,6 +254,7 @@ async function runBoarding(flow, opts) {
   page.on("response", async (res) => {
     try {
       const url = res.url(), req = res.request();
+      if (res.status() === 401 && url.startsWith(BASE) && url.includes("/api/boarding-stays")) net.care401 = true;
       if (req.method() !== "POST" || !url.startsWith(BASE)) return;
       const path = new URL(url).pathname;
       if (path === "/api/boarding-commercial") { const b = await res.json().catch(() => null); if (b?.data?.quoteId) r.quotes.push({ http: res.status(), ...b.data }); }
@@ -349,6 +359,14 @@ async function runBoarding(flow, opts) {
   }
   r.quote = r.quotes.at(-1) || null; // the governed quote re-issued at confirmation (or the last review quote)
   r.quotesDuringConfirm = r.quotes.length - before;
+  // The care-instructions gate (before payment) retries on the SAME booking; re-issue the session if it was superseded.
+  const careRetry = page.getByRole("button", { name: "Retry saving care instructions" });
+  for (let i = 0; i < 2 && net.canonical?.bookingId && await careRetry.isVisible().catch(() => false); i++) {
+    r.careGateError = oneLine(await page.locator('section[aria-label="Save stay care before payment"] [role=alert]').first().innerText({ timeout: 1000 }).catch(() => ""), 200);
+    if (net.care401 || /sign-in has expired/.test(r.careGateError)) { net.care401 = false; await reauth(context, "care gate → 401"); }
+    await robustClick(careRetry);
+    await page.getByRole("button", { name: /Pay securely/ }).first().waitFor({ timeout: 20_000 }).catch(() => {});
+  }
   r.confirmAlert = oneLine(await page.locator("[class*=flow] p[role=alert]").first().innerText({ timeout: 1000 }).catch(() => ""), 300);
   r.bookingId = net.canonical?.bookingId || null;
   r.shots.push(await flow.shot("5-after-create"));
@@ -363,13 +381,13 @@ async function runBoarding(flow, opts) {
   if (!opts.pay) return r;
   // pay with Razorpay TEST
   const payBtn = page.getByRole("button", { name: /Pay securely/ }).first();
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     net.start = null;
     await robustClick(payBtn);
     const startDeadline = Date.now() + 25_000;
     while (Date.now() < startDeadline && !net.start) await page.waitForTimeout(300);
     await page.waitForTimeout(1500);
-    if (attempt === 1 && is401(net.start)) { await reauth(context, "checkout start → 401"); await page.getByRole("button", { name: /Pay securely/ }).first().waitFor({ timeout: 10_000 }).catch(() => {}); continue; }
+    if (attempt < 3 && is401(net.start)) { await reauth(context, "checkout start → 401"); await page.getByRole("button", { name: /Pay securely/ }).first().waitFor({ timeout: 10_000 }).catch(() => {}); continue; }
     break;
   }
   r.checkoutStart = net.start;
@@ -421,6 +439,12 @@ async function readBookingPage(flow, bookingId, label) {
   await page.goto(`${BASE}/v2/booking?bookingId=${encodeURIComponent(bookingId)}`, { waitUntil: "domcontentloaded" });
   await page.getByText("Loading your booking…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
   await settle(page, 1200);
+  if (await page.getByRole("button", { name: "Retry booking" }).isVisible().catch(() => false)) {
+    await reauth(flow.context, "/v2/booking load failed");
+    await page.getByRole("button", { name: "Retry booking" }).click().catch(() => {});
+    await page.getByText("Loading your booking…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+    await settle(page, 1200);
+  }
   const text = oneLine(await mainText(page), 1200);
   const shot = await flow.shot(label);
   return {

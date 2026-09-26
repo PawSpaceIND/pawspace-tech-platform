@@ -30,6 +30,8 @@ const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(BASE);
 const SUITE_STARTED = Date.now();
 const ONLY = String(process.env.MASTER_SIT_ONLY || "").split(",").map(s => s.trim()).filter(Boolean);
 const wanted = key => !ONLY.length || ONLY.some(prefix => key.startsWith(prefix));
+const REPRO = LOCAL ? "REPRODUCED-LOCALLY" : "CONFIRMED-ON-STAGING";
+const NOT_REPRO = LOCAL ? "NOT-REPRODUCED-LOCALLY" : "NOT-REPRODUCED-ON-STAGING";
 const REUSE = Object.fromEntries(String(process.env.MASTER_SIT_REUSE || "").split(",").map(s => s.trim().split("=")).filter(p => p.length === 2 && p[1]));
 
 const [W0, W1] = WINDOWS.sitting;
@@ -100,7 +102,7 @@ const quoteCalls = net => net.filter(n => n.path.startsWith("/api/sitting-commer
   return { t: n.t, status: n.status, req: r, quoteId: d.quoteId, packageCode: d.packageCode, units: d.billableUnits, base: d.basePricePerPet, extra: d.extraPetPrice, total: d.totalAmount, dueNow: d.amountDueNow, mode: d.paymentMode, petCount: d.petCount, error: b?.error };
 });
 const sessionLost = flow => flow.log.apiFailures.some(a => a.status === 401 && !a.url.includes("identity-session"));
-const EXPIRED = /sign-in has expired|sign_in_required|Sign in to plan care|Please sign in again/i;
+const EXPIRED = /sign-in has expired|sign_in_required|Sign in to plan care|Please sign in again|verified customer sign-in is required/i;
 /** customer-a is a shared synthetic identity: any other sign-in as customer-a supersedes this session (single active
  *  session per subject). When the page reports that, re-issue the session in the same browser context and continue. */
 async function reauthIfExpired(flow, texts, where) {
@@ -110,6 +112,12 @@ async function reauthIfExpired(flow, texts, where) {
   flow.note(`customer-a session superseded at ${where} — re-issuing (${flow.reauths})`);
   await customerSession(flow.context, "customer-a");
   return true;
+}
+
+/** Cheap pre-check before steps that remount the flow (mode switch, reload): re-issue customer-a if superseded. */
+async function ensureSession(flow) {
+  const r = await api(flow.context, "GET", "/api/customer-account");
+  if (r.status === 401) await reauthIfExpired(flow, ["sign_in_required"], "pre-check");
 }
 
 /** A textarea wrapped by its <label>. getByLabel(exact) cannot be used once it has a value: the accessible name of
@@ -186,20 +194,22 @@ function pickPets(specs) {
 
 // ---------------------------------------------------------------- page helpers
 async function openSitting(flow) {
-  const { page, context } = flow;
-  await page.goto(`${BASE}/v2/sitting`, { waitUntil: "domcontentloaded" });
-  await dismissCookies(page);
-  await page.getByText("Loading your PawSpace family…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  if (await page.getByText("Sign in to plan care.").isVisible().catch(() => false)) {
-    flow.note("signed out on /v2/sitting — re-issuing the customer-a session");
-    await customerSession(context, "customer-a");
-    await page.reload({ waitUntil: "domcontentloaded" });
+  const { page } = flow;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await page.goto(`${BASE}/v2/sitting`, { waitUntil: "domcontentloaded" });
+    await dismissCookies(page);
     await page.getByText("Loading your PawSpace family…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+    const signedOut = await page.getByText("Sign in to plan care.").isVisible().catch(() => false);
+    if (!signedOut) {
+      await page.getByLabel("Check-in date").waitFor({ timeout: 25_000 });
+      await page.getByText("Checking service area…").waitFor({ state: "detached", timeout: 30_000 }).catch(() => {});
+      await page.getByText("Loading your pets…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
+      await settle(page, 600);
+    }
+    // Pets / address load once on mount; a superseded session shows up as an alert (or the sign-in card) and needs a reload.
+    const texts = signedOut ? ["Sign in to plan care"] : await page.locator("[role=alert]").allInnerTexts().catch(() => []);
+    if (!(await reauthIfExpired(flow, texts, "/v2/sitting load"))) return;
   }
-  await page.getByLabel("Check-in date").waitFor({ timeout: 25_000 });
-  await page.getByText("Checking service area…").waitFor({ state: "detached", timeout: 30_000 }).catch(() => {});
-  await page.getByText("Loading your pets…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
-  await settle(page, 600);
 }
 
 /** If the saved address is not resolved/serviceable, pick the Indiranagar address through the AddressPicker (Google Places on staging). */
@@ -326,7 +336,13 @@ async function planToReview(flow, spec, observed) {
   observed.payChoice = flat(await page.locator("[class*=paymentChoice],[class*=fullPaymentNote]").first().innerText().catch(() => ""));
   observed.hints = (await page.locator("p[class*=hint]").allInnerTexts().catch(() => [])).map(flat);
   if (spec.agree !== false) await page.getByLabel(/I agree to care/).check();
-  const priced = await waitForPricedCta(page);
+  let priced = await waitForPricedCta(page);
+  for (let i = 0; i < 2 && /Price unavailable/.test(priced.text); i++) {
+    const alerts = await page.locator("[role=alert]").allInnerTexts().catch(() => []);
+    if (!(await reauthIfExpired(flow, alerts, "review price"))) break;
+    await page.getByRole("button", { name: "Retry price" }).click().catch(() => {});
+    priced = await waitForPricedCta(page);
+  }
   observed.reviewCta = priced.text;
   observed.reviewCtaEnabled = await priced.cta.isEnabled().catch(() => false);
   observed.evidence.push(await flow.shot("review"));
@@ -341,6 +357,7 @@ async function confirmBooking(flow, net, observed) {
   const paymentPage = page.locator("[aria-label='Pet Sitting payment']");
   for (let attempt = 1; attempt <= 4; attempt++) {
     observed.confirmAlerts = null;
+    const attemptMark = net.length;
     await cta.click();
     await page.getByText("Locking care capacity…").waitFor({ state: "detached", timeout: 60_000 }).catch(() => {});
     for (let i = 0; i < 40; i++) {
@@ -352,16 +369,25 @@ async function confirmBooking(flow, net, observed) {
     if (await paymentPage.isVisible().catch(() => false)) break;
     // The care-plan save gate (booking already created) has its own retry button; reserve/create errors leave the review CTA.
     const alerts = observed.confirmAlerts || [];
-    if (!(await reauthIfExpired(flow, alerts, "confirm"))) break;
+    // The review screen masks a 401 from the scheduler as "We could not reserve this slot…", so read the response too.
+    const expired401 = net.slice(attemptMark).find(n => n.status === 401 && /sign_in_required/.test(n.body));
+    if (expired401 && alerts.length && !alerts.some(a => EXPIRED.test(a))) {
+      const shot = await flow.shot("expired-session-shown-as-slot-error");
+      observed.evidence.push(shot);
+      fileFinding("expired-session-masked", { severity: "P2", area: "Pet Sitting review", flow: flow.name, title: "An expired sign-in during 'Pay & request final partner approval' is shown as 'We could not reserve this slot' (customer is told to pick another time)", steps: "Review a Sitting booking; the customer session is replaced (another sign-in as the same customer, single active session per customer); press Pay & request final partner approval", expected: "Ask the customer to sign in again and keep the chosen slot", actual: `${expired401.path.split("?")[0]} answered HTTP 401 sign_in_required; the review shows "${alerts.join(" / ")}"`, evidence: [shot] });
+    }
+    if (!(await reauthIfExpired(flow, expired401 ? [...alerts, "sign_in_required"] : alerts, "confirm"))) break;
     const retryCare = page.getByRole("button", { name: "Retry saving care instructions" });
     if (await retryCare.isVisible().catch(() => false)) { await retryCare.click(); await paymentPage.waitFor({ timeout: 30_000 }).catch(() => {}); if (await paymentPage.isVisible().catch(() => false)) break; }
     if (!(await cta.isVisible().catch(() => false))) break;
   }
   const after = net.slice(mark);
-  const bookingCall = after.find(n => n.path.startsWith("/api/sitting-bookings") && n.method === "POST");
+  const bookingPosts = after.filter(n => n.path.startsWith("/api/sitting-bookings") && n.method === "POST");
+  const bookingCall = bookingPosts.filter(n => n.status < 300).at(-1) || bookingPosts.at(-1);
+  observed.bookingPostStatuses = bookingPosts.map(n => n.status);
   observed.bookingCall = bookingCall ? { status: bookingCall.status, body: bookingCall.body.slice(0, 400) } : null;
   observed.reserveCalls = after.filter(n => n.path.startsWith("/api/uat-scheduling") && !/"preview"/.test(n.req)).map(n => ({ status: n.status, body: n.body.slice(0, 300) }));
-  observed.governedQuote = quoteCalls(after).at(-1) || null;
+  observed.governedQuote = quoteCalls(after).filter(q => q.status < 300).at(-1) || null;
   observed.meetGreetCalls = net.filter(n => n.path.startsWith("/api/meet-and-greet")).map(n => `${n.method} ${n.status}`);
   const bid = j(bookingCall?.body)?.data?.bookingId;
   observed.bookingId = bid || (flat(await page.locator("main").innerText().catch(() => "")).match(/PS-UAT-SIT-[A-Z0-9-]+/) || [null])[0];
@@ -427,6 +453,7 @@ async function payAndVerify(flow, observed, spec) {
   while (Date.now() < deadline) {
     await page.waitForTimeout(3000);
     if (await page.getByRole("heading", { name: "Your sitting booking" }).isVisible().catch(() => false)) ui = "sitting-panel";
+    else if (await page.getByRole("heading", { name: /booking is confirmed/i }).isVisible().catch(() => false)) ui = "confirmation-page (redirect return)";
     else if (/Status:\s*confirmed/i.test(await page.locator("main").innerText().catch(() => ""))) ui = "booking-page";
     const check = page.getByRole("button", { name: /Check payment status|Retry booking confirmation/ });
     if (!ui && await check.isVisible().catch(() => false) && await check.isEnabled().catch(() => false)) await check.click().catch(() => {});
@@ -567,7 +594,7 @@ async function runCombo(browser, spec, attempt = 1) {
     if (ruleMiss.length) fileFinding(`rule-mismatch-${spec.key}`, { severity: "P1", area: "Pet Sitting pricing", flow: spec.journey, title: `Sitting quote differs from the published pricing rule (${spec.key}: ${ruleMiss.map(c => c.label).join("; ")})`, steps: `/v2/sitting → ${spec.combo}`, expected: `${exp.packageCode} × ${exp.units} = ${inr(exp.total)}, due now ${inr(exp.dueNow)} (${exp.mode})`, actual: JSON.stringify(q), evidence: observed.evidence.filter(e => /review/.test(e)) });
     if (q.total != null && observed.status?.totalAmount != null && q.total !== observed.status.totalAmount) fileFinding(`server-total-differs-${spec.key}`, { severity: "P0", area: "Pet Sitting pricing", flow: spec.journey, title: `Booking total saved on the server differs from the price shown at review (${spec.key})`, steps: `/v2/sitting → ${spec.combo} → Pay & request final partner approval`, expected: `server total ${q.total}`, actual: `server total ${observed.status.totalAmount} for ${observed.bookingId}`, evidence: observed.evidence });
     const priceText = `quote ${q.packageCode} units=${q.units} base=${q.base} extra=${q.extra} total=${q.total} dueNow=${q.dueNow} mode=${q.mode} (expected ${exp.packageCode} ×${exp.units} = ${exp.total}, due ${exp.dueNow})`;
-    record({ suite: SUITE, journey: spec.journey, combo: spec.combo, result, detail: `booking ${observed.bookingId} with ${observed.sitter}; window ${spec.start} ${spec.startTime}→${spec.end} ${spec.endTime}; pets ${observed.pets.join("+")}; ${priceText}; bill: ${observed.bill}; CTA "${observed.reviewCta}"; sitter card price labels ${JSON.stringify([...new Set(observed.sitterPriceLabels)])}; checks: ${checks.map(c => `${c.ok ? "ok" : "MISMATCH"} ${c.label}`).join("; ")}; payment page shows booking ref: ${observed.paymentPageShowsBookingRef}; ${payDetail}`, evidence: observed.evidence });
+    record({ suite: SUITE, journey: spec.journey, combo: spec.combo, result, detail: `booking ${observed.bookingId} with ${observed.sitter}; window ${spec.start} ${spec.startTime}→${spec.end} ${spec.endTime}; pets ${observed.pets.join("+")}; ${priceText}; bill: ${observed.bill}; CTA "${observed.reviewCta}"; sitter card price labels ${JSON.stringify([...new Set(observed.sitterPriceLabels)])}; checks: ${checks.map(c => `${c.ok ? "ok" : "MISMATCH"} ${c.label}`).join("; ")}; reserve calls ${observed.reserveCalls.length} / booking POST statuses ${JSON.stringify(observed.bookingPostStatuses)}${flow.reauths ? ` (customer-a session re-issued ${flow.reauths}× after being superseded)` : ""}; payment page shows booking ref: ${observed.paymentPageShowsBookingRef} (PAY-04 ${observed.paymentPageShowsBookingRef === false ? REPRO : NOT_REPRO})${exp.splitEligible ? `; one-decimal rupees on review (BRD-05): ${/₹[\d,]+\.\d(?!\d)/.test(`${observed.payChoice} ${observed.reviewCta}`) ? REPRO : NOT_REPRO}` : ""}; ${payDetail}`, evidence: observed.evidence });
     summary.combos[spec.key] = { result, bookingId: observed.bookingId, quote: q, expected: exp, bill: observed.bill, cta: observed.reviewCta, sitters: observed.sitters, pay: observed.pay ? { outcome: observed.pay.outcome, ui: observed.pay.ui, status: observed.pay.status } : null, d1: observed.d1 || null, meetGreetCalls: observed.meetGreetCalls };
     // ---- product findings driven by what this combo showed
     const perVisitLabel = observed.sitterPriceLabels.find(l => /\/\s*night/i.test(l));
@@ -687,10 +714,12 @@ async function runModeSwitch(browser) {
     await page.getByRole("button", { name: /Medication/ }).click();
     await settle(page, 1000);
     const s1 = await state(); evidence.push(await flow.shot("sitting-edited"));
+    await ensureSession(flow);
     let mark = net.length;
     await page.locator("[class*=modeSwitch] button").filter({ hasText: "Home Boarding" }).click();
     await settle(page, 2500);
     const s2 = await state(); s2.calls = [...new Set(net.slice(mark).map(n => n.path.split("?")[0]))]; evidence.push(await flow.shot("switched-to-boarding"));
+    await ensureSession(flow);
     mark = net.length;
     await page.locator("[class*=modeSwitch] button").filter({ hasText: "Pet Sitting" }).click();
     await settle(page, 2500);
@@ -703,6 +732,7 @@ async function runModeSwitch(browser) {
     evidence.push(await flow.shot("sitting-stage2"));
     await page.getByRole("button", { name: "← Plan" }).click();
     await settle(page, 600);
+    await ensureSession(flow);
     await page.locator("[class*=modeSwitch] button").filter({ hasText: "Home Boarding" }).click();
     await settle(page, 2000);
     await page.getByRole("button", { name: /See available homes/ }).click().catch(() => {});
@@ -714,6 +744,7 @@ async function runModeSwitch(browser) {
     await page.getByRole("link", { name: "Pet Sitting", exact: true }).first().click();
     await settle(page, 2500);
     const s5 = await state(); evidence.push(await flow.shot("hero-tab-pet-sitting"));
+    await ensureSession(flow);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByText("Loading your PawSpace family…").waitFor({ state: "detached", timeout: 25_000 }).catch(() => {});
     await settle(page, 2500);
@@ -724,9 +755,14 @@ async function runModeSwitch(browser) {
     const preserved = JSON.stringify(s2.dates) === JSON.stringify(s1.dates) && JSON.stringify(s2.pets) === JSON.stringify(s1.pets);
     const heroTabWorks = /SITTING/.test(s5.eyebrow || "");
     const detail = `edited sitting plan ${JSON.stringify({ dates: s1.dates, pets: s1.pets, needs: s1.needs })}; → Boarding: eyebrow=${s2.eyebrow} stage=${s2.stage} cta="${s2.cta}" url=${s2.url} heroTab=${s2.heroTab} dates=${JSON.stringify(s2.dates)} pets=${JSON.stringify(s2.pets)} needs=${JSON.stringify(s2.needs)} calls=${JSON.stringify(s2.calls)}; → Sitting: eyebrow=${s3.eyebrow} cta="${s3.cta}" dates=${JSON.stringify(s3.dates)} calls=${JSON.stringify(s3.calls)}; plan edits ${preserved ? "PRESERVED" : "RESET to defaults"} on switch; sitter stage-2 cards ${JSON.stringify(sitterCards)} vs boarding stage-2 heading "${s4.heading}" cards ${JSON.stringify(s4.cards)}; hero "Pet Sitting" tab while in-flow Boarding → eyebrow=${s5.eyebrow} stage=${s5.stage} url=${s5.url}; reload → eyebrow=${s6.eyebrow} pressed=${JSON.stringify(s6.pressed)}`;
-    record({ suite: SUITE, journey, combo, result: toBoardingOk && backOk && noLeak ? (heroTabWorks ? "PASS" : "PARTIAL") : "FAIL", detail, evidence });
-    if (!heroTabWorks && /BOARDING/.test(s5.eyebrow || "")) fileFinding("hero-tab-noop", { severity: "P3", area: "V2 stay navigation", flow: journey, title: "After the in-flow switch to Home Boarding, the 'Pet Sitting' hero tab does nothing (URL stays /v2/sitting)", steps: "/v2/sitting → in-flow 'Home Boarding' → See available homes → click hero tab 'Pet Sitting'", expected: "Pet Sitting flow shown", actual: `URL ${s2.url} while Boarding is shown; after clicking the hero 'Pet Sitting' tab the page still shows ${s5.eyebrow} stage ${s5.stage}; only a reload restores Sitting (${s6.eyebrow})`, evidence: evidence.slice(-3) });
-    if (!preserved) summary.modeSwitchResets = { before: s1, after: s2 };
+    const verdictOk = toBoardingOk && backOk && noLeak;
+    const contention = !verdictOk && sessionLost(flow);
+    record({ suite: SUITE, journey, combo, result: verdictOk ? (heroTabWorks ? "PASS" : "PARTIAL") : contention ? "BLOCKED" : "FAIL", detail: `${contention ? "harness: customer-a session was superseded by another sign-in during the journey (401s in log); " : ""}${detail}`, evidence });
+    if (verdictOk && !heroTabWorks && /BOARDING/.test(s5.eyebrow || "")) fileFinding("hero-tab-noop", { severity: "P3", area: "V2 stay navigation", flow: journey, title: "After the in-flow switch to Home Boarding, the 'Pet Sitting' hero tab does nothing (URL stays /v2/sitting)", steps: "/v2/sitting → in-flow 'Home Boarding' → See available homes → click hero tab 'Pet Sitting'", expected: "Pet Sitting flow shown", actual: `URL ${s2.url} while Boarding is shown; after clicking the hero 'Pet Sitting' tab the page still shows ${s5.eyebrow} stage ${s5.stage}; only a reload restores Sitting (${s6.eyebrow})`, evidence: evidence.slice(-3) });
+    if (!preserved && toBoardingOk && s1.pets.length > 1) {
+      summary.modeSwitchResets = { before: s1, after: s2 };
+      fileFinding("mode-switch-discards-plan", { severity: "P3", area: "V2 stay planning", flow: journey, title: "Switching Pet Sitting ↔ Home Boarding discards the dates, pets and care needs already entered", steps: "/v2/sitting → set dates/times, select two pets and 'Medication' → in-flow 'Home Boarding' → back to 'Pet Sitting'", expected: "Shared plan inputs (dates, times, pets, needs) carry over; only caregiver and price reset", actual: `Before ${JSON.stringify({ dates: s1.dates, pets: s1.pets, needs: s1.needs })}; after switching ${JSON.stringify({ dates: s2.dates, pets: s2.pets, needs: s2.needs })} (StayFlow remounts per mode)`, evidence: evidence.slice(0, 3) });
+    }
   } catch (e) {
     evidence.push(await flow.shot("error").catch(() => null));
     record({ suite: SUITE, journey, combo, result: "BLOCKED", detail: `harness: ${String(e).slice(0, 400)}`, evidence: evidence.filter(Boolean) });
@@ -791,7 +827,7 @@ async function runBookingPages(browser) {
       let detail = `api booking=${st.bookingStatus} payment=${st.paymentStatus} mode=${st.paymentMode} total=${st.totalAmount} dueNow=${st.amountDueNow}; booking page: ${bookingText.slice(0, 320)}; Pay button on booking page: ${payButton || "none"}; Manage link ${manageHref}; manage (${m.url}) status "${m.status}", care plan home access persisted: ${careOk}, date-change form enabled: ${dateChangeEnabled}, cancellation form present: ${cancelForm > 0}`;
       if (split && confirmed) {
         const balanceOffered = Boolean(payButton);
-        detail += `; split balance offered immediately after the deposit: ${balanceOffered ? `YES "${payButton}" (PAY-03 CONFIRMED-ON-STAGING)` : "no (PAY-03 NOT-REPRODUCED-ON-STAGING)"}`;
+        detail += `; split balance offered immediately after the deposit: ${balanceOffered ? `YES "${payButton}" (PAY-03 ${REPRO})` : `no (PAY-03 ${NOT_REPRO})`}`;
         if (balanceOffered) fileFinding("split-balance-pay-now", { severity: "P2", area: "Payments / booking page", flow: journey, title: "After the 50% Sitting deposit is captured the booking page immediately offers 'Pay securely' for the balance (re-verifies PAY-03)", steps: `Pay the 50% deposit for ${b.bookingId} → /v2/booking?bookingId=${b.bookingId}`, expected: "Deposit shown as paid; balance shown as due 24 h before check-in, not as 'Due now'", actual: `${payButton}; page: ${bookingText.slice(0, 240)}`, evidence: evidence.slice(-2) });
       }
       const result = confirmed ? (careOk && cancelForm > 0 && dateChangeEnabled && m.status ? "PASS" : "PARTIAL") : (LOCAL ? "ENV-GATED" : "FAIL");
@@ -882,7 +918,7 @@ async function runUnpaidManage(browser) {
     evidence.push(await flow.shot("unpaid-booking-page"));
     const ok = st.paymentStatus !== "captured" && Boolean(payOnBooking);
     record({ suite: SUITE, journey, combo, result: ok ? "PASS" : "FAIL", detail: `api ${st.bookingStatus}/${st.paymentStatus} dueNow=${st.amountDueNow}; manage status "${m.status}", pay control on manage page: ${payOnManage > 0}, date-change: ${dateNote.slice(0, 160)}; V2 booking page offers "${payOnBooking}"; booking page: ${bookingText.slice(0, 240)}`, evidence });
-    if (payOnManage === 0 && payOnBooking) fileFinding("unpaid-manage-no-pay", { severity: "P2", area: "Pet Sitting manage", flow: journey, title: "Unpaid Sitting booking's manage page has no way to pay and does not say payment is pending in plain words", steps: `Create a Sitting booking, leave the Razorpay step → /v2/sitting/manage?bookingId=${b.bookingId}`, expected: "Clear 'payment pending' state with a Pay control (as on /v2/booking)", actual: `Manage shows status "${m.status}" and only care/cancel/date forms; the V2 booking page does offer "${payOnBooking}"`, evidence });
+    if (payOnManage === 0 && payOnBooking) fileFinding("unpaid-manage-no-pay", { severity: "P2", area: "Pet Sitting manage", flow: journey, title: "Unpaid Sitting booking's manage page offers no way to complete the payment", steps: `Create a Sitting booking, leave the Razorpay step → /v2/sitting/manage?bookingId=${b.bookingId}`, expected: "Clear 'payment pending' state with a Pay control (as on /v2/booking)", actual: `Manage shows status "${m.status}" and only care/cancel/date forms; the V2 booking page does offer "${payOnBooking}"`, evidence });
   }, { combo });
 }
 
