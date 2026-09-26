@@ -1,14 +1,16 @@
-import{aiHumanHandoffSnapshot,listAiHandoffQueue,manageAiHumanHandoff,type AiHandoffAction}from"../../../lib/ai-human-handoff";
+import{aiHumanHandoffSnapshot,listAiHandoffQueue,manageAiHumanHandoff,staffTakeOverConversation,type AiHandoffAction}from"../../../lib/ai-human-handoff";
 import{askWhatsAppMoveConsent}from"../../../lib/chat-human-reply";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 
-type Body={action?:AiHandoffAction;threadId?:string;customerId?:string;reason?:string};
+type Body={action?:AiHandoffAction;threadId?:string;customerId?:string;reason?:string;
+ /** Take over even when the AI has not escalated: staff stepping into a live web chat from the inbox. */
+ startIfIdle?:boolean};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI handoff write blocked",{status:403});}
 
 export async function GET(request:Request){try{const actor=await authorize(request,"communications.manage"),db=await database(),url=new URL(request.url),threadId=url.searchParams.get("threadId")||"",customerId=url.searchParams.get("customerId")||"";if(url.searchParams.get("mode")==="queue")return json({data:await listAiHandoffQueue(db,{actor,limit:Number(url.searchParams.get("limit")||50)})});if(!threadId||!customerId)return json({error:"Thread and customer are required"},400);return json({data:await aiHumanHandoffSnapshot(db,{actor,threadId,customerId})});}catch(error){if(error instanceof Response)return error;return authError(error,"Unable to load AI human handoff state");}}
 
-export async function POST(request:Request){try{sameOrigin(request);const actor=await authorize(request,"communications.manage"),db=await database(),body=await request.json()as Body;if(!body.threadId||!body.customerId||!body.action)return json({error:"Thread, customer and handoff action are required"},400);const data=await manageAiHumanHandoff(db,{actor,threadId:body.threadId,customerId:body.customerId,action:body.action,reason:body.reason});
+export async function POST(request:Request){try{sameOrigin(request);const actor=await authorize(request,"communications.manage"),db=await database(),body=await request.json()as Body;if(!body.threadId||!body.customerId||!body.action)return json({error:"Thread, customer and handoff action are required"},400);const data=body.action==="take_over"&&body.startIfIdle===true?await staffTakeOverConversation(db,{actor,threadId:body.threadId,customerId:body.customerId,reason:body.reason}):await manageAiHumanHandoff(db,{actor,threadId:body.threadId,customerId:body.customerId,action:body.action,reason:body.reason});
  /* Owner decision 2026-09-22 (decision 4 of 10): after a staff takeover on WEB CHAT, the customer is
   * asked IN THE THREAD whether to move to WhatsApp - and where no move is possible (no number, CRM
   * opt-out, WhatsApp not connected here) they are told, in that same thread, that a human will reply

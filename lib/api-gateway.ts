@@ -59,7 +59,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/communications"){if(method==="GET")return "communications.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.manage";}
   if(url.pathname==="/api/conversations"||url.pathname==="/api/ai-human-handoff")return "communications.manage";
   if(url.pathname==="/api/ai-web-chat"){
-    if(method==="GET")return null;
+    if(method==="GET")return url.searchParams.get("mode")==="thread"?"scheduling.book":null;
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
     return String(body.mode||"public")==="authenticated"?"scheduling.book":null;
   }

@@ -400,3 +400,68 @@ test("a provider HTTP failure persists degraded connectivity and routes the cust
  const snapshot=await orchestrator.aiConversationSnapshot(db,{actor:customerActor(sqlite,"CUS-1"),threadId:"THREAD-1",customerId:"CUS-1"});
  assert.equal(snapshot.providerStatus,"degraded");assert.equal(snapshot.providerConnected,false);assert.equal(handoffs(sqlite).length,1);
 });
+
+// ---------------------------------------------------------------------------
+// Web chat asks the model when the keyword classifier is unsure
+// ---------------------------------------------------------------------------
+test("an everyday web chat message reaches the connected model instead of a human", async () => {
+  for (const [index, text] of ["Hi", "Can I book grooming for Saturday?", "When is my next booking?", "My personal details changed"].entries()) {
+    const { sqlite, db } = await world();
+    const stub = answered("Happy to help with that.", { confidence: undefined });
+    const result = await turn(sqlite, db, { text, stub, key: `chat-model-first-${index}` });
+    assert.equal(stub.calls.length, 1, `"${text}" never reached the model`);
+    assert.notEqual(result.turn.outcome, "handoff", `"${text}" was handed to a human without the model being asked`);
+    assert.equal(result.turn.output, "Happy to help with that.");
+    assert.equal(handoffs(sqlite).length, 0, `"${text}" opened a handoff`);
+  }
+});
+
+test("web chat still hands off at once for an explicit request for a person, without calling the model", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("should not be used");
+  const result = await turn(sqlite, db, { text: "I want to talk to a human", stub, key: "chat-explicit-human" });
+  assert.equal(stub.calls.length, 0);
+  assert.equal(result.turn.outcome, "handoff");
+  assert.equal(result.turn.handoffReason, "customer_requested_human");
+});
+
+test("a model that states low confidence on web chat still routes to a human", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("maybe?", { confidence: 0.2 });
+  const result = await turn(sqlite, db, { text: "Hi", stub, key: "chat-low-stated-confidence" });
+  assert.equal(stub.calls.length, 1);
+  assert.equal(result.turn.outcome, "handoff");
+  assert.equal(result.turn.handoffReason, "low_confidence");
+});
+
+test("the model-first rule is web chat only: an unmatched WhatsApp message keeps its existing routing", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("should not be used");
+  const result = await turn(sqlite, db, { text: "Hi", stub, key: "whatsapp-unmatched", channel: "whatsapp" });
+  assert.equal(stub.calls.length, 0);
+  assert.equal(result.turn.outcome, "handoff");
+});
+
+test("intent signals match whole words, not fragments of other words", () => {
+  assert.equal(orchestrator.classifyAiIntent("My personal details changed").intent, "unknown");
+  assert.equal(orchestrator.classifyAiIntent("Is the vegetarian meal available").intent, "unknown");
+  assert.equal(orchestrator.classifyAiIntent("I need a person please").intent, "human_handoff");
+  assert.equal(orchestrator.classifyAiIntent("what's the eta?").intent, "booking_status");
+  assert.equal(orchestrator.classifyAiIntent("please call me").intent, "human_handoff");
+  assert.equal(orchestrator.classifyAiIntent("What grooming services do you offer?").intent, "service_info");
+  assert.equal(orchestrator.classifyAiIntent("Show me your packages and prices").intent, "service_info");
+});
+
+test("a sales reply may quote only prices that are in the server-owned catalogue", async () => {
+  const grounded = await import("../lib/ai-grounded-runtime-provider.ts");
+  const catalogue = { grooming: [{ package_code: "dog-trim", name: "Just Trim", base_price: 1599 }, { package_code: "dog-bath", name: "Essential Bath", base_price: 1349 }], petTaxi: [{ route_code: "short", name: "Short trip", amount: 499 }] };
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹1,599 and a short taxi is Rs. 499.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("Our Essential Bath costs 1349 rupees.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("A grooming session starts at 1349 rupees.", catalogue), true, "the service named is enough");
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹999 today only.", catalogue), false, "an invented price must not count as grounded");
+  assert.equal(grounded.pricesMatchCatalogue("Grooming for your dog is ₹499.", catalogue), false, "a taxi fare must not ground a grooming price");
+  assert.equal(grounded.pricesMatchCatalogue("We have great grooming packages.", catalogue), true, "no amount quoted, nothing to verify");
+  const started = Date.now();
+  grounded.pricesMatchCatalogue("1,".repeat(50_000) + "x", catalogue);
+  assert.ok(Date.now() - started < 500, "a hostile reply must not stall the price check");
+});
