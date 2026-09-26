@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { setupJourney } from "./helpers/grooming-journey-harness.mjs";
+import { setupJourney, routeCall } from "./helpers/grooming-journey-harness.mjs";
 import { seedOwnedPet } from "./helpers/saved-pet-fixture.mjs";
 
 const orchestrator = await import("../lib/ai-conversation-orchestrator.ts");
@@ -76,5 +76,14 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").get(customerId).n,3);
  const ucc=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='unified_cases'").get();if(ucc)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM unified_cases WHERE customer_id=?").get(customerId).n,0);
  const tasks=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crm_tasks'").get();if(tasks)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM crm_tasks").get().n,0);
- const payment=ctx.sqlite.prepare("SELECT status FROM booking_payments WHERE customer_id=?").get(customerId);assert.notEqual(payment.status,"captured");
+ const payment=ctx.sqlite.prepare("SELECT booking_id,amount,currency,status FROM booking_payments WHERE customer_id=?").get(customerId);assert.notEqual(payment.status,"captured");
+ const capture={action:"simulate_event",bookingId:payment.booking_id,eventType:"payment.captured",eventId:"evt_voice_sale_proof",gatewayPaymentId:"pay_voice_sale_proof",amount:payment.amount,currency:payment.currency};
+ const captured=await routeCall("../../app/api/grooming-payment-sandbox/route.ts","POST","/api/grooming-payment-sandbox",capture);
+ assert.equal(captured.status,201,JSON.stringify(captured.body));
+ assert.equal(captured.body.data.synthetic,true);
+ const replay=await routeCall("../../app/api/grooming-payment-sandbox/route.ts","POST","/api/grooming-payment-sandbox",capture);
+ assert.equal(replay.status,201);
+ assert.equal(ctx.sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id=?").get(payment.booking_id).status,"captured");
+ assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,1);
+
 });
