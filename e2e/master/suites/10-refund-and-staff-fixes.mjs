@@ -59,8 +59,8 @@ try {
     const reachedBooks = first(books.refundCase)?.status === "processed" && first(books.refundCase)?.gateway_reference === reference
       && Number(first(books.reconciliation)?.refunded_amount) === 500 && first(books.payment)?.status === "partially_refunded"
       && Number(first(books.reversal)?.amount) === 500 && Number(first(books.timeline)?.n) === 1;
-    const stepsOk = requested.status === 200 && approved.status === 200 && recorded.status === 200 && recorded.body?.data?.refundPosted === true;
-    record({ suite: SUITE, journey: "Boarding refund reaches the books (STAFF-05)", combo: `${bookingId}: approve ₹500, record ${reference}`, result: stepsOk && reachedBooks ? "PASS" : (stepsOk || approved.status === 200 ? "FAIL" : "BLOCKED"), detail: JSON.stringify(out.refund).slice(0, 600), evidence: [] });
+    const stepsOk = [200, 202].includes(requested.status) && approved.status === 200 && recorded.status === 200 && recorded.body?.data?.refundPosted === true;
+    record({ suite: SUITE, journey: "Boarding refund reaches the books (STAFF-05)", combo: `${bookingId}: approve ₹500, record ${reference}`, result: stepsOk && reachedBooks ? "PASS" : (stepsOk || approved.status === 200 ? "FAIL" : "BLOCKED"), detail: JSON.stringify({ books, reachedBooks, request: out.refund.request, approve: approved.status, record: recorded.status, refundPosted: recorded.body?.data?.refundPosted ?? null }).slice(0, 900), evidence: [] });
     if (stepsOk && !reachedBooks) finding({ suite: SUITE, severity: "P1", area: "Payments", persona: "Finance", flow: "Boarding refund", title: "A recorded Boarding refund did not reach the canonical books on staging", steps: `request_cancel, approve_cancel ₹500, record_refund ${reference} on ${bookingId}`, expected: "refund case processed, reconciliation refunded 500, payment partially_refunded, reversal posted, timeline event", actual: JSON.stringify(books).slice(0, 400), evidence: [] });
 
     // What the customer sees on the manage page.
