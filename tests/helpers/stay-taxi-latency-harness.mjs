@@ -205,3 +205,6 @@ export const boardingQuoteRequest = (world, body) => json(world, "/api/boarding-
 export const schedulingRequest = (world, body) => json(world, "/api/uat-scheduling", { customerId: CUSTOMER, cityId: "blr", zoneId: "blr-east", ...ADDRESS, ...body });
 export const canonicalBookingRequest = (world, body) => json(world, "/api/canonical-bookings", body);
 export const taxiRideBookingRequest = (world, body) => json(world, "/api/taxi-ride-bookings", body);
+/** The care-plan save at the payment gate: the customer's stay read, then the governed save (lib/boarding-customer-care.ts). */
+export const boardingStayReadRequest = (world, bookingId) => new Request(`${ORIGIN}/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(bookingId)}`, { headers: { cookie: world.cookie, "cf-ray": ray() } });
+export const boardingStayRequest = (world, body) => json(world, "/api/boarding-stays", body);

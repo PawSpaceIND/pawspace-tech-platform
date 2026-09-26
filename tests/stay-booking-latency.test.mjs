@@ -23,6 +23,7 @@ h.stubGeocoding();
 const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
 const canonical = await import("../app/api/canonical-bookings/route.ts");
+const stays = await import("../app/api/boarding-stays/route.ts");
 
 const world = (extra = 0) => h.stayWorld({ dbGlobal: "__STAY_BOOKING_DB__", envGlobal: "__STAY_BOOKING_ENV__", extra, ownRoster: true });
 const CAPTURE = Boolean(process.env.STAY_CAPTURE);
@@ -109,6 +110,32 @@ test("a warm Boarding reserve and booking stay inside their D1 budget and 20 rou
   assert.ok(!last.booking.calls.some((call) => /^\s*(CREATE|ALTER|PRAGMA)\b/i.test(call.sql) || /^BATCH CREATE/.test(call.sql)), "no schema work on a warm booking");
   assert.equal(last.reserve.calls.filter((call) => call.sql.startsWith("SELECT s.*,b.status binding_status")).length, 1, "one session lookup per reserve");
   assert.equal(last.booking.calls.filter((call) => call.sql.startsWith("SELECT s.*,b.status binding_status")).length, 1, "one session lookup per booking, gateway and route together");
+});
+
+test("the care-plan save at the payment gate stays inside its budget, and a retry with the same key replays it", async () => {
+  const w = await world();
+  let bookingId;
+  for (const day of [3, 4]) {
+    const { booking } = await boardingStay(w, `stay:care-${day}`, { scheduledStart: h.ist(day, 10), scheduledEnd: h.ist(day, 14) }, "stay_host_large");
+    bookingId = booking.body.data.bookingId ?? booking.body.data.id;
+    const read = await h.timed(w, h.boardingStayReadRequest(w, bookingId), stays.GET);
+    const stayId = read.body.data[0].id, key = `initial-boarding-care:${bookingId}`;
+    const carePlan = { feeding: "Twice a day", vet: "Dr Rao, 9000000000", emergencyContact: "Asha, 9000000001" };
+    w.latency.ms = day === 4 ? LATENCY_MS : 0;
+    const timedRead = await h.timed(w, h.boardingStayReadRequest(w, bookingId), stays.GET);
+    const save = await h.timed(w, h.boardingStayRequest(w, { stayId, action: "submit_care_plan", carePlan, idempotencyKey: key }), stays.POST);
+    w.latency.ms = 0;
+    assert.deepEqual([save.status, save.body.data.status, save.body.data.stayId, save.body.data.bookingId], [200, "care_plan_ready", stayId, bookingId]);
+    const retry = await h.timed(w, h.boardingStayRequest(w, { stayId, action: "submit_care_plan", carePlan, idempotencyKey: key }), stays.POST);
+    assert.deepEqual([retry.status, retry.body.data.status, retry.body.data.duplicatePrevented], [200, "care_plan_ready", true], "a retry replays the saved plan");
+    if (day !== 4) continue;
+    // Before: 23 calls for the read and 61 for the save (15.3 s at 250 ms - the staging abort at 15 s).
+    for (const [label, result, budget, trips] of [["stay read", timedRead, 8, 5], ["care save", save, 12, 12]]) {
+      assert.ok(result.calls.length <= budget, `${label}: ${result.calls.length} D1 calls (limit ${budget})\n${result.calls.map((call) => call.sql.slice(0, 100)).join("\n")}`);
+      assert.ok(result.elapsedMs < trips * LATENCY_MS, `${label} took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call (limit ${trips} round trips)`);
+      assert.ok(!result.calls.some((call) => /^\s*(CREATE|ALTER|PRAGMA)\b/i.test(call.sql) || /^BATCH CREATE/.test(call.sql)), `${label}: no schema work once warm`);
+    }
+  }
 });
 
 test("a warm Pet Sitting reserve stays inside its D1 budget and 20 round trips (5 s at 250 ms)", async () => {
