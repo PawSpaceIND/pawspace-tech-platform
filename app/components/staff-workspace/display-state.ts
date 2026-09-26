@@ -18,6 +18,8 @@ export type NavigationSnapshot<T> = {
   error: string;
   signInUrl: string;
   status: number;
+  /** The refusal's code, e.g. "staff_sign_in_required" when the browser holds only a customer or partner session. */
+  code?: string;
 };
 /** Old route/retry results are not evidence for the current menu. */
 export function currentNavigationSnapshot<T>(snapshot: NavigationSnapshot<T> | null, pathname: string, attempt: number): NavigationSnapshot<T> | null {

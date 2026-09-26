@@ -36,6 +36,10 @@ usable — and each gets only its own role's permissions, so signing in as the a
 you an associate's view.
 All demo rows are prefixed `UATD-` / `Demo ·` so they are obvious in every list.
 
+**Staff and customer sign-ins are separate.** Booking as a customer (phone OTP) does not sign you in as staff, and a staff
+sign-in is what Team pages use. If a Team page says you are signed in as a customer or partner, open `/staging-login` in
+the same browser and sign in with a staff identity above; your customer session keeps working for booking.
+
 **Customers do NOT log in here.** Open the app root on your phone, browse as a guest, and log in with any Indian-format mobile number when booking — the OTP is **shown on screen** (sandbox; no real SMS is sent). Every fresh number creates a fresh customer, which is the easiest way to test the new-customer welcome coupon.
 
 ## 2. Sandbox rules (not bugs)
