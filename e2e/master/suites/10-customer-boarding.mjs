@@ -1,7 +1,11 @@
-// Master suite 10 — V2 BOARDING customer journeys at /v2/boarding as synthetic customer "customer-a".
-// Every combination runs through the real V2 UI (AddressPicker → plan → host → care card → review → pay) and the
-// real Razorpay TEST checkout on staging. Server truth is read back through the customer's own API projection and
-// (on the runner) read-only staging D1. Locally the Razorpay order is refused with 503 → recorded as ENV-GATED.
+// Master suite 10 — V2 BOARDING customer journeys at /v2/boarding (main 0fab41a UI: compact restyle, "Create stay
+// request & review payment", separate caregiver-introduction requests).
+// Customer: customerSession("customer-a") — on staging (MASTER_CUSTOMER_MODE=otp) a brand-new run-scoped OTP customer with
+// no pets and no address, so the suite adds its Master pets through /v2/account PetManager and picks the service address
+// through the booking AddressPicker (first Google suggestion; "Verify service address" as fallback) on every journey.
+// Every combination runs through the real V2 UI (AddressPicker → plan → host → care card → review → pay) and the real
+// Razorpay TEST checkout on staging. Server truth is read back through the customer's own API projection and (on the
+// runner) read-only staging D1. Locally the Razorpay order is refused with 503 → recorded as ENV-GATED.
 import {
   BASE, launch, newFlow, settle, customerSession, dismissCookies, api, d1, payRazorpayTestNetbanking,
   record, finding, saveBooking, isoDay, WINDOWS, writeJson, redact,
@@ -10,14 +14,17 @@ import {
 const SUITE = "10-customer-boarding";
 const PERSONA = "customer-a";
 const STARTED = Date.now();
-const BUDGET_MS = 33 * 60_000; // runner hard limit is 40 min per suite
+const BUDGET_MS = 29 * 60_000; // keep the suite under ~30 min (runner hard limit is 40 min per suite)
 const [W_FROM, W_TO] = WINDOWS.boarding;
 const ADDRESS_QUERY = "100 Feet Road Indiranagar";
 const STAMP = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
-const summary = { suite: SUITE, base: BASE, startedAt: new Date(STARTED).toISOString(), journeys: [], bookings: {} };
+const summary = { suite: SUITE, base: BASE, customerMode: process.env.MASTER_CUSTOMER_MODE === "otp" ? "otp (run-scoped fresh customer)" : "persona", startedAt: new Date(STARTED).toISOString(), journeys: [], bookings: {} };
+const CUSTOMER = { id: null, phone: null };
+/** Known-defect re-verification wording: CONFIRMED-ON-STAGING / NOT-REPRODUCED-ON-STAGING on staging, …-LOCALLY elsewhere. */
+const ON_ENV = /pawspace-staging/.test(BASE) ? "ON-STAGING" : "LOCALLY";
 
-// Pets this suite owns on customer-a. MasterBuddy is a third vaccinated pet so the 3-pet combo never depends on
-// pets other testers created.
+// Pets this suite owns on the customer (added only when missing). MasterBuddy is a third vaccinated pet so the 3-pet combo
+// needs no pet created by anyone else (MasterPup is deliberately unvaccinated).
 const PETS = [
   { name: "MasterDog", species: "dog", breed: "Labrador Retriever", vaccinated: "yes", dose: "Rabies" },
   { name: "MasterCat", species: "cat", breed: "Persian", vaccinated: "yes", dose: "FVRCP" },
@@ -91,6 +98,8 @@ async function gotoSignedIn(flow, url, ready, tries = 3) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // server reads
+/** Read-only staging D1 SELECT that never throws (a Cloudflare API hiccup must not fail a journey). */
+const rd1 = (sql, params = []) => d1(sql, params).catch(e => ({ error: `d1 request failed: ${oneLine(String(e?.message || e), 200)}` }));
 async function checkoutStatus(context, bookingId) {
   const r = await capi(context, "POST", "/api/customer-checkout", { action: "status", bookingId });
   const d = r.body?.data || {};
@@ -102,16 +111,16 @@ async function boardingStay(context, bookingId) {
   return Array.isArray(r?.body?.data) ? r.body.data[0] || null : null;
 }
 async function d1Payment(bookingId) {
-  const payments = await d1("SELECT id,status,amount,amount_due_now,mode FROM booking_payments WHERE booking_id=?", [bookingId]);
-  if (!Array.isArray(payments)) return { skipped: payments?.skipped || payments?.error || "d1 unavailable" };
-  const events = await d1("SELECT event_type,processing_status,signature_verified,amount_subunits,json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority') AS authority,failure_reason FROM payment_gateway_events WHERE booking_id=? ORDER BY received_at", [bookingId]);
-  const booking = await d1("SELECT status,total_amount,package_code FROM canonical_bookings WHERE id=?", [bookingId]);
-  const schedule = await d1("SELECT status,total_amount,paid_now_amount,balance_amount,balance_due_at FROM stay_payment_schedules WHERE booking_id=?", [bookingId]);
-  const stay = await d1("SELECT status,billed_units,pet_count,care_plan_status FROM boarding_stays WHERE booking_id=?", [bookingId]);
+  const payments = await rd1("SELECT id,status,amount,amount_due_now,mode FROM booking_payments WHERE booking_id=?", [bookingId]);
+  if (!Array.isArray(payments)) return payments?.skipped ? { skipped: payments.skipped } : { error: oneLine(`${payments?.error || "d1 unavailable"} ${payments?.detail || ""}`, 300) };
+  const events = await rd1("SELECT event_type,processing_status,signature_verified,amount_subunits,json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.captureAuthority') AS authority,failure_reason FROM payment_gateway_events WHERE booking_id=? ORDER BY received_at", [bookingId]);
+  const booking = await rd1("SELECT status,total_amount,package_code FROM canonical_bookings WHERE id=?", [bookingId]);
+  const schedule = await rd1("SELECT status,total_amount,paid_now_amount,balance_amount,balance_due_at FROM stay_payment_schedules WHERE booking_id=?", [bookingId]);
+  const stay = await rd1("SELECT status,billed_units,pet_count,care_plan_status FROM boarding_stays WHERE booking_id=?", [bookingId]);
   return { payment: payments[0] || null, events: Array.isArray(events) ? events : events, booking: Array.isArray(booking) ? booking[0] || null : booking, schedule: Array.isArray(schedule) ? schedule[0] || null : schedule, stay: Array.isArray(stay) ? stay[0] || null : stay };
 }
 function d1Captured(db) {
-  if (!db || db.skipped) return null;
+  if (!db || db.skipped || db.error) return null;
   const events = Array.isArray(db.events) ? db.events : [];
   const processed = events.some(e => ["payment.captured", "order.paid", "payment_link.paid"].includes(e.event_type) && e.processing_status === "processed");
   return db.payment?.status === "captured" && processed;
@@ -119,6 +128,7 @@ function d1Captured(db) {
 function d1Brief(db) {
   if (!db) return "d1: n/a";
   if (db.skipped) return `d1: skipped (${db.skipped})`;
+  if (db.error) return `d1: read failed (${db.error})`;
   const ev = Array.isArray(db.events) ? db.events.map(e => `${e.event_type}/${e.processing_status}/sig${e.signature_verified}${e.authority ? "/" + e.authority : ""}${e.amount_subunits ? "/" + e.amount_subunits : ""}`).join(",") : JSON.stringify(db.events);
   return `d1: booking=${db.booking?.status} payment=${db.payment?.status} amount=${db.payment?.amount} dueNow=${db.payment?.amount_due_now} mode=${db.payment?.mode} events=[${ev}]${db.schedule ? ` schedule=${db.schedule.status} paidNow=${db.schedule.paid_now_amount} balance=${db.schedule.balance_amount}` : ""}${db.stay ? ` stay=${db.stay.status} units=${db.stay.billed_units}` : ""}`;
 }
@@ -257,6 +267,64 @@ async function selectPets(page, wanted) {
   return selected;
 }
 
+const CREATE_CTA = /^Create stay request & review payment|^Pay .*create canonical stay/;
+
+/** Published introduction fee rule: phone free; in-person ₹499, waived when the intended stay is 5+ days. */
+function introductionFee(format, start, end) { return format === "phone" || nightsBetween(start, end) >= 5 ? 0 : 499; }
+/** First listed host with room for every pet and no open introduction request from this customer (read-only GET). */
+async function pickIntroductionHost(context, hosts, opts) {
+  const fit = hosts.filter(h => h.providerId && !(Number(h.free) < opts.pets.length));
+  const checked = [];
+  for (const h of fit) {
+    const q = new URLSearchParams({ providerId: h.providerId, serviceCode: "boarding", start: opts.start, end: opts.end });
+    const r = await capi(context, "GET", `/api/customer-meet-and-greet?${q}`);
+    const open = (r.body?.data?.requests || []).find(x => ["requested", "confirmed"].includes(x.status));
+    checked.push(`${h.name}:${r.status}${open ? `/open ${open.id}` : ""}`);
+    if (r.status === 200 && !open) return { ...h, checked };
+  }
+  return fit[0] ? { ...fit[0], checked, allHaveOpenRequests: true } : { checked };
+}
+/** Separate caregiver introduction on the Care Card (StayMeetingRequest). meet: false | "call" | "visit". */
+async function requestIntroduction(flow, opts) {
+  const { page, context } = flow;
+  const sec = page.locator('section[aria-label="Separate caregiver introduction"]').first();
+  const out = { wanted: opts.meet || "none" };
+  if (!(await sec.waitFor({ timeout: 15_000 }).then(() => true).catch(() => false))) { out.error = "harness: introduction section not shown on the Care Card"; return out; }
+  await sec.getByText("Loading the existing meeting policy…").waitFor({ state: "detached", timeout: 20_000 }).catch(() => {});
+  const select = sec.getByLabel("Introduction format");
+  out.options = (await select.locator("option").allInnerTexts().catch(() => [])).map(t => oneLine(t, 120));
+  out.openElsewhere = oneLine(await sec.locator("p[role=status]").filter({ hasText: /already exists/ }).first().innerText({ timeout: 500 }).catch(() => ""), 300);
+  if (!opts.meet) return out;
+  const button = sec.getByRole("button", { name: "Request introduction" });
+  if (!(await button.isVisible().catch(() => false))) {
+    out.existing = (await sec.locator("article strong").allInnerTexts().catch(() => [])).map(t => oneLine(t, 120));
+    out.skipped = out.openElsewhere || out.existing.length ? "an open introduction request with this host already exists" : oneLine(await sec.locator("[role=alert]").first().innerText({ timeout: 500 }).catch(() => "") || "request form not shown", 200);
+    return out;
+  }
+  out.format = opts.meet === "call" ? "phone" : "house_visit";
+  await select.selectOption(out.format);
+  // phone (10 min): 11:00 IST the day before check-in · in-person (4 h, inside 09:00–19:00 IST): 10:00 IST two days before.
+  const at = Date.parse(`${opts.start}T${out.format === "phone" ? "11:00" : "10:00"}:00+05:30`) - (out.format === "phone" ? 1 : 2) * 86_400_000;
+  out.preferredAt = new Date(at + 5.5 * 3600_000).toISOString().slice(0, 16);
+  await sec.getByLabel("Preferred introduction (IST)").fill(out.preferredAt);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await sec.getByLabel(/Request this separate introduction/).check();
+    const resp = page.waitForResponse(res => res.url().startsWith(BASE) && res.url().includes("/api/customer-meet-and-greet") && res.request().method() === "POST", { timeout: 20_000 }).catch(() => null);
+    await robustClick(button);
+    const res = await resp;
+    const body = res ? await res.json().catch(() => null) : null;
+    Object.assign(out, { http: res?.status() ?? null, request: body?.data?.request || null, paymentStatus: body?.data?.paymentStatus || null, error: body?.error || null });
+    if (attempt === 1 && out.http === 401) { await reauth(context, "introduction request → 401"); continue; }
+    break;
+  }
+  await sec.locator("article").first().waitFor({ timeout: 8000 }).catch(() => {});
+  await settle(page, 400);
+  out.card = oneLine(await sec.locator("article").first().innerText({ timeout: 2000 }).catch(() => ""), 250);
+  out.alert = oneLine(await sec.locator("[role=alert]").first().innerText({ timeout: 500 }).catch(() => ""), 250);
+  out.expectedFee = introductionFee(out.format, opts.start, opts.end);
+  return out;
+}
+
 /**
  * Drive one Boarding combination through the V2 UI. opts:
  *  {start,end,startTime,endTime,pets:[],needs:[],extras:[],food,meet:false|"call"|"visit",split:true|false|undefined,
@@ -265,11 +333,12 @@ async function selectPets(page, wanted) {
 async function runBoarding(flow, opts) {
   const { page, context } = flow;
   const r = { opts: { ...opts }, shots: [], quotes: [], stage: "start" };
-  const net = { canonical: null, scheduling: null, start: null };
+  const net = { canonical: null, scheduling: null, start: null, hostIds: {}, hostList: [] };
   page.on("response", async (res) => {
     try {
       const url = res.url(), req = res.request();
       if (res.status() === 401 && url.startsWith(BASE) && url.includes("/api/boarding-stays")) net.care401 = true;
+      if (req.method() === "GET" && url.startsWith(BASE) && new URL(url).pathname === "/api/boarding-commercial") { const b = await res.json().catch(() => null); if (Array.isArray(b?.data?.hosts)) for (const h of b.data.hosts) net.hostIds[h.name] = h.providerId; }
       if (req.method() !== "POST" || !url.startsWith(BASE)) return;
       const path = new URL(url).pathname;
       if (path === "/api/boarding-commercial") { const b = await res.json().catch(() => null); if (b?.data?.quoteId) r.quotes.push({ http: res.status(), ...b.data }); }
@@ -310,24 +379,34 @@ async function runBoarding(flow, opts) {
   await settle(page, 1000);
   const cards = page.locator("[class*=caregivers] > button");
   r.hosts = (await cards.allInnerTexts().catch(() => [])).map(t => oneLine(t.split("\n").slice(0, 4).join(" | "), 140));
+  // the cards on screen are the hosts for the current window (earlier GETs were for the default dates/pet)
+  const cardTexts = await cards.allInnerTexts().catch(() => []);
+  const cardNames = await cards.locator("h4").allInnerTexts().catch(() => []);
+  net.hostList = cardNames.map((n, i) => ({ name: oneLine(n, 80), providerId: net.hostIds[oneLine(n, 80)] || null, free: Number((cardTexts[i] || "").match(/(\d+) guest-pet spots? available/)?.[1] ?? NaN) }));
   r.hostAlert = oneLine(await page.locator("[role=alert]").first().innerText({ timeout: 1500 }).catch(() => ""), 300);
   r.shots.push(await flow.shot("2-hosts"));
   const cont = page.getByRole("button", { name: /Continue with|Choose an available caregiver/ });
   r.stage = "hosts";
   if (!(await cont.isEnabled().catch(() => false))) return r;
-  r.host = oneLine((await cont.innerText()).replace("Continue with", ""), 60);
+  // Only one open introduction request is allowed per customer and host: for an introduction pick a host without one.
+  if (opts.meet) {
+    r.meetHost = await pickIntroductionHost(context, net.hostList || [], opts);
+    if (r.meetHost?.name) {
+      const card = cards.filter({ has: page.locator("h4", { hasText: new RegExp(`^${esc(r.meetHost.name)}$`) }) }).first();
+      if (await card.count()) { await robustClick(card); await settle(page, 500); }
+    }
+  }
+  r.host = oneLine(await page.locator("[class*=caregivers] > button[class*=selected] h4").first().innerText({ timeout: 2000 }).catch(() => ""), 80) || oneLine((await cont.innerText()).replace("Continue with", ""), 60);
+  r.hostProviderId = (net.hostList || []).find(h => h.name === r.host)?.providerId || null;
   await robustClick(cont);
   await settle(page, 500);
   // care card
   for (const [label, value] of Object.entries(CARE)) { const box = page.getByLabel(label, { exact: true }); if (await box.count()) await box.fill(value); }
   for (const extra of opts.extras || []) await page.getByRole("button", { name: new RegExp(`^[＋✓]\\s*${esc(extra)}$`) }).click();
   if (opts.food) await page.getByLabel("Food preference").selectOption({ label: opts.food });
-  const meetBox = page.locator("[class*=options] label").filter({ hasText: /host-home trial/ }).locator("input[type=checkbox]").first();
-  if (opts.meet === false) { if (await meetBox.isChecked().catch(() => false)) await meetBox.uncheck(); }
-  else if (opts.meet === "call") await page.getByRole("button", { name: /10-minute phone call/ }).click();
-  else if (opts.meet === "visit") await page.getByRole("button", { name: /3-hour host-home trial/ }).click();
+  r.intro = await requestIntroduction(flow, opts);
   await settle(page, 300);
-  r.shots.push(await flow.shot("3-care-card"));
+  r.shots.push(r.shotCare = await flow.shot("3-care-card"));
   await robustClick(page.getByRole("button", { name: "Review protected booking" }));
   await settle(page, 1000);
   r.stage = "review";
@@ -335,9 +414,9 @@ async function runBoarding(flow, opts) {
   r.splitOffered = await page.getByRole("button", { name: /Reserve with 50% now/ }).isVisible().catch(() => false);
   if (r.splitOffered && opts.split === false) await page.getByRole("button", { name: /Pay the full amount now/ }).click();
   if (r.splitOffered && opts.split === true) await page.getByRole("button", { name: /Reserve with 50% now/ }).click();
-  const payCta = page.getByRole("button", { name: /^Pay .*(create canonical stay|& )|Calculating price|Price unavailable|Locking care capacity/ }).last();
+  const payCta = page.getByRole("button", { name: /^Create stay request & review payment|^Pay .*create canonical stay|Calculating price|Price unavailable|Locking care capacity/ }).last();
   const ctaDeadline = Date.now() + 25_000;
-  while (Date.now() < ctaDeadline && !/^Pay /.test(await payCta.innerText().catch(() => ""))) await page.waitForTimeout(500);
+  while (Date.now() < ctaDeadline && !CREATE_CTA.test(await payCta.innerText().catch(() => ""))) await page.waitForTimeout(500);
   await settle(page, 600);
   r.review = oneLine(await page.locator("[aria-label='Review stay details']").innerText().catch(() => ""), 900);
   r.bill = oneLine(await page.locator("[class*=bill]").first().innerText().catch(() => ""), 400);
@@ -347,15 +426,15 @@ async function runBoarding(flow, opts) {
   const consent = page.getByLabel(/I agree to care/);
   await consent.check();
   r.payCta = oneLine(await payCta.innerText().catch(() => ""));
-  r.shots.push(await flow.shot("4-review"));
+  r.shots.push(r.shotReview = await flow.shot("4-review"));
   r.quote = r.quotes.at(-1) || null;
   if (!opts.create) return r;
-  if (!/^Pay /.test(r.payCta)) {
+  if (!CREATE_CTA.test(r.payCta)) {
     r.stage = "quote-unavailable";
     r.confirmAlert = oneLine(await page.locator("[role=alert]").first().innerText({ timeout: 1000 }).catch(() => ""), 300);
     return r;
   }
-  // create the canonical stay (the button is labelled "Pay … & create canonical stay")
+  // create the stay request; payment is collected on the next screen
   const before = r.quotes.length;
   for (let attempt = 1; attempt <= 2; attempt++) {
     net.scheduling = null; net.canonical = null;
@@ -387,11 +466,11 @@ async function runBoarding(flow, opts) {
   r.shots.push(await flow.shot("5-after-create"));
   r.stage = r.bookingId ? "created" : "confirm-blocked";
   if (!r.bookingId) return r;
-  flow.pendingHandoff = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: null, customer: PERSONA, scheduledStart: r.quote?.scheduledStart, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: false, paymentMode: r.quote?.paymentMode, pets: r.selectedPets, note: "saved by the journey error handler" };
+  flow.pendingHandoff = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: r.hostProviderId || null, customer: PERSONA, customerId: CUSTOMER.id, scheduledStart: r.quote?.scheduledStart, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: false, paymentMode: r.quote?.paymentMode, pets: r.selectedPets, note: "saved by the journey error handler" };
   // payment page
   const payPage = page.locator('section[aria-label="Boarding payment"]').first();
   r.paymentPage = oneLine(await payPage.innerText().catch(() => ""), 600);
-  r.paymentPageShowsRef = r.paymentPage.includes(r.bookingId);
+  r.paymentPageShowsRef = (await mainText(page)).includes(r.bookingId);
   r.paymentDueNowUi = money((r.paymentPage.match(/Due now\s*₹[\d,.]+/) || [""])[0]);
   r.afterCreate = await checkoutStatus(context, r.bookingId);
   if (!opts.pay) return r;
@@ -519,8 +598,10 @@ const zoneCtx = { zone: null };
 const PET_STATE = { ok: null, check: [] };
 const created = {};
 
-async function journey(name, combo, fn, { mobile = false, video = false, useBrowser = null } = {}) {
-  if (timeLeft() < 90_000) { record({ suite: SUITE, journey: name, combo, result: "SKIPPED", detail: "suite time budget exhausted", evidence: [] }); return null; }
+// Journeys that open a Razorpay TEST checkout need a few minutes (checkout + up to 90 s capture wait + read-backs).
+const PAYING_JOURNEYS = new Set(["combo-1-4h-daycare-dog", "combo-3-2n-dog-cat-all-extras", "combo-4-5n-split-deposit", "combo-5-6n-3pets-full", "showcase-pixel7-combo-3"]);
+async function journey(name, combo, fn, { mobile = false, video = false, useBrowser = null, needMs = PAYING_JOURNEYS.has(name) ? 240_000 : 90_000 } = {}) {
+  if (timeLeft() < needMs) { record({ suite: SUITE, journey: name, combo, result: "SKIPPED", detail: `suite time budget (~30 min) exhausted: ${Math.round(timeLeft() / 1000)} s left, journey needs ~${Math.round(needMs / 1000)} s`, evidence: [] }); return null; }
   const flow = await newFlow(useBrowser || browser, `${SUITE}/${name}`, { mobile, video });
   flow.saw401 = 0;
   flow.page.on("response", (res) => { const u = res.url(); if (res.status() === 401 && u.startsWith(BASE) && u.includes("/api/") && !u.includes("/api/identity-session")) flow.saw401 += 1; });
@@ -547,6 +628,7 @@ async function setupPets(flow) {
   const { page, context } = flow;
   const acct = await capi(context, "GET", "/api/customer-account");
   if (acct.status !== 200) throw new Error(`harness: GET /api/customer-account HTTP ${acct.status}`);
+  CUSTOMER.id = acct.body?.data?.customerId || null; CUSTOMER.phone = acct.body?.data?.primaryPhone || null;
   const zone = await capi(context, "GET", "/api/service-zone?pincode=560038");
   zoneCtx.zone = zone.body?.data?.assignment ? { cityId: zone.body.data.assignment.cityId, zoneId: zone.body.data.assignment.zoneId } : null;
   const existing = acct.body?.data?.pets || [];
@@ -604,9 +686,35 @@ async function setupPets(flow) {
   const check = PETS.map(p => { const e = after.find(x => x.name === p.name); return { name: p.name, present: Boolean(e), vaccinationStatus: e?.vaccinationStatus, expectVaccinated: p.vaccinated === "yes", ok: Boolean(e) && (p.vaccinated === "yes" ? ["verified", "vaccinated"].includes(e.vaccinationStatus) : !["verified", "vaccinated"].includes(e.vaccinationStatus)) }; });
   const ok = check.every(c => c.ok);
   PET_STATE.ok = ok; PET_STATE.check = check;
-  record({ suite: SUITE, journey: "setup-pets", combo: "customer-a MasterDog/MasterCat/MasterBuddy vaccinated + MasterPup unvaccinated", result: ok ? "PASS" : issues.length ? "FAIL" : "PARTIAL", detail: `added via /v2/account PetManager: [${added.join(", ") || "none — already present"}]; issues: [${issues.join("; ")}]; API after: ${check.map(c => `${c.name}=${c.present ? c.vaccinationStatus : "MISSING"}`).join(", ")}; zone probe ${JSON.stringify(zoneCtx.zone)}`, evidence: shots, data: { check } });
+  const selfDeclared = PETS.filter(p => p.vaccinated === "yes" && added.includes(p.name)).map(p => check.find(c => c.name === p.name)).filter(Boolean);
+  const brd07 = selfDeclared.length ? ` · BRD-07 ${selfDeclared.some(c => c.vaccinationStatus === "verified") ? "CONFIRMED" : "NOT-REPRODUCED"}-${ON_ENV}: self-declared "Vaccinated? Yes" stored as [${selfDeclared.map(c => `${c.name}=${c.vaccinationStatus}`).join(", ")}] with no document upload` : "";
+  record({ suite: SUITE, journey: "setup-pets", combo: "customer-a MasterDog/MasterCat/MasterBuddy vaccinated + MasterPup unvaccinated", result: ok ? "PASS" : issues.length ? "FAIL" : "PARTIAL", detail: `added via /v2/account PetManager: [${added.join(", ") || "none — already present"}]; issues: [${issues.join("; ")}]; API after: ${check.map(c => `${c.name}=${c.present ? c.vaccinationStatus : "MISSING"}`).join(", ")}; zone probe ${JSON.stringify(zoneCtx.zone)}${brd07}`, evidence: shots, data: { check } });
   if (issues.length) reportFinding({ severity: "P1", area: "Account / pets", flow: "/v2/account PetManager", title: "Adding a pet from V2 account failed", steps: "Account → Pets → + Add pet → fill profile → Add pet", expected: "Pet saved", actual: issues.join("; "), evidence: shots });
   return { result: ok ? "PASS" : "FAIL", check };
+}
+
+function introBrief(i) {
+  const policy = i.options?.length ? ` policy [${i.options.join(" | ")}]` : "";
+  if (i.request) return `introduction ${i.format} ${i.request.id} ${i.request.status} quoted fee ₹${i.request.priceCharged} (rule ₹${i.expectedFee}) at ${i.preferredAt} IST · HTTP ${i.http} ${i.paymentStatus || ""}${policy}`;
+  if (i.wanted === "none") return `introduction not requested${policy}${i.openElsewhere ? ` · "${i.openElsewhere}"` : ""}`;
+  return `introduction ${i.wanted} not created: ${i.skipped || i.error || i.alert || `HTTP ${i.http}`}${i.existing?.length ? ` [${i.existing.join("; ")}]` : ""}${policy}`;
+}
+/** Separate row for the caregiver introduction (phone / in-person) requested on the Care Card. */
+function introductionRecord(name, combo, opts, r, pc) {
+  const i = r.intro || {};
+  const evidence = [r.shotCare, r.shotReview].filter(Boolean);
+  const hostNote = r.meetHost ? ` · host choice ${r.meetHost.name || "-"} (open-request check: ${(r.meetHost.checked || []).join(", ") || "none"})` : "";
+  const inReview = i.request ? r.review?.includes(i.request.id) : null;
+  const feeOk = i.request ? Number(i.request.priceCharged) === i.expectedFee : null;
+  const excluded = i.request ? pc.priceOk : null; // stay total still equals the per-pet rule, i.e. the introduction fee is not added
+  let result;
+  if (i.request) result = feeOk && inReview && excluded !== false ? "PASS" : "FAIL";
+  else if (/^harness:/.test(i.error || "") || ["address", "plan", "hosts"].includes(r.stage)) result = "BLOCKED";
+  else if (i.skipped) result = r.meetHost?.allHaveOpenRequests ? "SKIPPED" : "BLOCKED";
+  else result = "FAIL";
+  record({ suite: SUITE, journey: `${name}-introduction`, combo: `${opts.meet === "call" ? "phone" : "in-person"} introduction · ${combo}`, result, detail: `${introBrief(i)}; shown on review=${inReview}; stay total excludes it=${excluded}; card "${i.card || ""}"${i.alert ? `; alert "${i.alert}"` : ""}${hostNote}`, evidence });
+  if (i.request && feeOk === false) reportFinding({ severity: "P2", area: "Caregiver introduction", flow: `/v2/boarding ${combo} care card`, title: "Introduction fee differs from the published policy", steps: `Care Card → ${i.format} introduction → Request introduction`, expected: `₹${i.expectedFee} (phone free; in-person ₹499, waived for 5+ day stays)`, actual: `${i.request.id} priceCharged ₹${i.request.priceCharged}`, evidence });
+  if (!i.request && i.http >= 400 && i.http !== 401 && !i.skipped) reportFinding({ severity: "P2", area: "Caregiver introduction", flow: `/v2/boarding ${combo} care card`, title: "Caregiver introduction request refused", steps: `Care Card → ${i.wanted} introduction at ${i.preferredAt} IST → consent → Request introduction`, expected: "Request recorded (HTTP 201)", actual: `HTTP ${i.http} ${i.error || ""}; UI "${i.alert || ""}"`, evidence });
 }
 
 /** Records a combination, saves the booking hand-off row and returns the run. */
@@ -619,11 +727,13 @@ async function comboJourney(flow, { name, combo, opts, requireCapture }) {
     `dates ${opts.start} ${opts.startTime} → ${opts.end} ${opts.endTime} (${r.durationSummary})`,
     `pets [${(r.selectedPets || []).join("+")}]`,
     `address ${r.address?.path}${r.address?.mapVerified ? " (Google map verified)" : ""} "${r.address?.caption || r.address?.alert || ""}"${r.address?.attempts?.length > 1 ? ` after ${JSON.stringify(r.address.attempts.slice(0, -1))}` : ""}${r.address?.suggestions ? ` suggestions=${JSON.stringify(r.address.suggestions.slice(0, 2))}` : ""}`,
-    `host ${r.host || "-"} of [${(r.hosts || []).map(h => h.split(" | ").slice(-1)[0]).join(", ")}]`,
+    `host ${r.host || "-"} of [${(r.net?.hostList || []).map(h => `${h.name}(${h.free} free)`).join(", ") || (r.hosts || []).length + " card(s)"}]`,
     pc.text,
     `CTA "${r.payCta || r.planCta}"`,
   ];
-  if (flow.context.__reauths) parts.push(`customer-a session re-issued ×${flow.context.__reauths} (superseded by a concurrent customer-a sign-in)`);
+  if (r.intro && (opts.meet || r.intro.options?.length)) parts.push(introBrief(r.intro));
+  if (flow.context.__reauths) parts.push(`customer session re-issued ×${flow.context.__reauths} (superseded by a concurrent sign-in of the same customer)`);
+  if (r.bookingId && r.paymentPage) parts.push(`booking reference on the payment step ${r.paymentPageShowsRef ? `shown (PAY-04 NOT-REPRODUCED-${ON_ENV})` : `missing (PAY-04 CONFIRMED-${ON_ENV})`}`);
   if (r.bookingId) parts.push(`booking ${r.bookingId} → after create: booking=${r.afterCreate?.bookingStatus} payment=${r.afterCreate?.paymentStatus} dueNow=${inr(r.afterCreate?.amountDueNow)}`);
   if (r.net?.scheduling && r.net.scheduling.http >= 400) parts.push(`uat-scheduling HTTP ${r.net.scheduling.http} ${r.net.scheduling.code || ""} ${r.net.scheduling.error || ""}`);
   if (r.hostAlert) parts.push(`host step alert "${r.hostAlert}"`);
@@ -660,6 +770,7 @@ async function comboJourney(flow, { name, combo, opts, requireCapture }) {
   } else result = "FAIL";
   if (r.razorpay && !r.razorpay.ok) parts.push("harness: Razorpay TEST netbanking success control was not reached");
   record({ suite: SUITE, journey: name, combo, result, detail: parts.join(" · "), evidence, data: { bookingId: r.bookingId, quote: r.quote, expected: r.expected, stage: r.stage, checkout: r.checkoutStart, capture: r.capture?.final, db } });
+  if (opts.meet) introductionRecord(name, combo, opts, r, pc);
 
   // product findings with evidence
   if (r.stage === "address" && r.address?.alert) reportFinding({ severity: "P1", area: "Maps / AddressPicker", flow: `/v2/boarding ${combo}`, title: "Booking AddressPicker could not verify a serviceable Indiranagar address", steps: `Change Address → type "${ADDRESS_QUERY}" → first Google suggestion, then "Verify service address"`, expected: "Serviceable zone resolved, 'Use this address' enabled", actual: `attempts ${JSON.stringify(r.address.attempts)}`, evidence });
@@ -669,16 +780,16 @@ async function comboJourney(flow, { name, combo, opts, requireCapture }) {
   if (r.quote && pc.priceOk && !pc.dueOk) reportFinding({ severity: "P0", area: "Boarding payment schedule", flow: `/v2/boarding ${combo}`, title: "Amount due now does not match the chosen payment option", steps: `Review, choose ${opts.split === true ? "Reserve with 50% now" : opts.split === false ? "Pay the full amount now" : "default"}`, expected: `due now ${inr(r.expected.dueNow)}`, actual: pc.text, evidence });
   if (r.splitOffered !== undefined && r.stage !== "plan" && r.stage !== "hosts" && r.splitOffered !== r.expected.splitOffered) reportFinding({ severity: "P1", area: "Boarding payment schedule", flow: `/v2/boarding ${combo}`, title: `50/50 split ${r.splitOffered ? "offered" : "not offered"} contrary to the >4-night rule`, steps: `Review ${r.expected.nights} night(s), ${r.expected.hours} h`, expected: `split offered=${r.expected.splitOffered}`, actual: `split offered=${r.splitOffered}; ${r.payChoice}`, evidence });
   if (r.checkoutStart?.orderId && r.quote && Number(r.checkoutStart.amountPaise) !== Math.round(Number(r.quote.amountDueNow) * 100)) reportFinding({ severity: "P0", area: "Payments", flow: `/v2/boarding ${combo}`, title: "Razorpay order amount differs from the amount due now", steps: "Pay & create canonical stay → Pay securely", expected: `${Math.round(Number(r.quote.amountDueNow) * 100)} paise (${inr(r.quote.amountDueNow)})`, actual: `order ${r.checkoutStart.orderId} amountPaise=${r.checkoutStart.amountPaise}`, evidence });
-  if (r.net?.scheduling?.code === "SERVICE_ADDRESS_UNVERIFIED") reportFinding({ severity: "P1", area: "Maps / Boarding", flow: `/v2/boarding ${combo}`, title: "Reserve refused SERVICE_ADDRESS_UNVERIFIED after the AddressPicker verified the address (MAP-01 — CONFIRMED-ON-STAGING if BASE is staging)", steps: `AddressPicker "${ADDRESS_QUERY}" → ${r.address?.path} → plan → review → Pay & create`, expected: "Canonical stay created", actual: `POST /api/uat-scheduling ${r.net.scheduling.http} ${r.net.scheduling.code}; UI: "${r.confirmAlert}"`, evidence });
+  if (r.net?.scheduling?.code === "SERVICE_ADDRESS_UNVERIFIED") reportFinding({ severity: "P1", area: "Maps / Boarding", flow: `/v2/boarding ${combo}`, title: `Reserve refused SERVICE_ADDRESS_UNVERIFIED after the AddressPicker verified the address (MAP-01 — CONFIRMED-${ON_ENV})`, steps: `AddressPicker "${ADDRESS_QUERY}" → ${r.address?.path} → plan → review → Pay & create`, expected: "Canonical stay created", actual: `POST /api/uat-scheduling ${r.net.scheduling.http} ${r.net.scheduling.code}; UI: "${r.confirmAlert}"`, evidence });
   if (r.bookingId && r.paymentPage && !r.paymentPageShowsRef) reportFinding({ severity: "P2", area: "Payment page", flow: `/v2/boarding ${combo} payment step`, once: true, title: "Payment step shows no booking reference while payment is pending (PAY-04 — re-verified)", steps: "Pay & create canonical stay → payment step", expected: `Booking reference ${r.bookingId} visible`, actual: `Payment step text: "${oneLine(r.paymentPage, 250)}"`, evidence });
   if (opts.pay && r.razorpay?.ok && !r.capture?.server) reportFinding({ severity: "P1", area: "Payments", flow: `/v2/boarding ${combo}`, title: "Razorpay TEST payment succeeded but PawSpace never projected the capture", steps: "Pay securely → Razorpay TEST Netbanking → Success", expected: "Booking payment captured within 90 s", actual: `${r.capture?.uiText || "no UI confirmation"}; status=${r.capture?.final?.status} payment=${r.capture?.final?.paymentStatus}; ${d1Brief(db)}`, evidence });
   if (r.capture?.server && !CONFIRMED.includes(String(r.capture.final?.bookingStatus))) reportFinding({ severity: "P1", area: "Booking lifecycle", flow: `/v2/boarding ${combo}`, title: "Captured Boarding payment did not confirm the booking", steps: "Pay with Razorpay TEST", expected: "bookingStatus confirmed", actual: `bookingStatus=${r.capture.final?.bookingStatus} paymentStatus=${r.capture.final?.paymentStatus}`, evidence });
   if (r.capture?.server && r.capture.final?.paymentMode === "prepaid" && r.bookingPage?.payButton) reportFinding({ severity: "P1", area: "Payment page", flow: `/v2/booking ${combo}`, title: "Fully paid booking still offers 'Pay securely'", steps: "Pay in full, open /v2/booking", expected: "No payment control", actual: r.bookingPage.text.slice(0, 300), evidence });
 
   if (r.bookingId) {
-    const row = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: null, providerName: r.capture?.final?.providerName || r.afterCreate?.providerName || r.host, customer: PERSONA, scheduledStart: r.quote?.scheduledStart || `${opts.start}T${opts.startTime}+05:30`, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: Boolean(r.capture?.server), paymentMode: r.quote?.paymentMode, pets: r.selectedPets, combo };
+    const row = { suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode, providerId: r.hostProviderId || null, providerName: r.capture?.final?.providerName || r.afterCreate?.providerName || r.host, customer: PERSONA, customerId: CUSTOMER.id, scheduledStart: r.quote?.scheduledStart || `${opts.start}T${opts.startTime}+05:30`, scheduledEnd: r.quote?.scheduledEnd, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paid: Boolean(r.capture?.server), paymentMode: r.quote?.paymentMode, pets: r.selectedPets, combo };
     const pid = await capi(flow.context, "GET", `/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(r.bookingId)}`);
-    row.providerId = pid?.body?.data?.[0]?.host_provider_id || null;
+    row.providerId = pid?.body?.data?.[0]?.host_provider_id || row.providerId;
     saveBooking(row);
     flow.pendingHandoff = null;
     created[name] = { ...row, result, run: r };
@@ -694,17 +805,17 @@ async function reconcilePayments() {
   for (const [name, b] of paidRuns) {
     const orderId = b.run.checkoutStart.orderId;
     const db = await d1Payment(b.bookingId);
-    if (db.skipped) { record({ suite: SUITE, journey: "payments-d1-webhook-reconciliation", combo: `${name} ${b.bookingId}`, result: "ENV-GATED", detail: `order ${orderId}; ${d1Brief(db)}`, evidence: [] }); continue; }
-    const inbox = await d1("SELECT event_type,processing_status,failure_reason,received_at,processed_at FROM gateway_webhook_events WHERE raw_payload LIKE ? ORDER BY received_at", [`%${orderId}%`]);
+    if (db.skipped || db.error) { record({ suite: SUITE, journey: "payments-d1-webhook-reconciliation", combo: `${name} ${b.bookingId}`, result: db.skipped ? "ENV-GATED" : "BLOCKED", detail: `${db.error ? "harness: " : ""}order ${orderId}; ${d1Brief(db)}`, evidence: [] }); continue; }
+    const inbox = await rd1("SELECT event_type,processing_status,failure_reason,received_at,processed_at FROM gateway_webhook_events WHERE raw_payload LIKE ? ORDER BY received_at", [`%${orderId}%`]);
     const events = Array.isArray(db.events) ? db.events : [];
     const signed = events.filter(e => Number(e.signature_verified) === 1 && e.processing_status === "processed" && ["payment.captured", "order.paid"].includes(e.event_type));
     const providerApi = events.filter(e => e.authority === "provider_api");
     const stuck = Array.isArray(inbox) ? inbox.filter(e => !["PROCESSED", "processed", "DUPLICATE", "duplicate"].includes(String(e.processing_status))) : [];
     const captured = db.payment?.status === "captured";
     const result = captured && signed.length ? "PASS" : captured ? "PARTIAL" : "FAIL";
-    const detail = `order ${orderId}; booking=${db.booking?.status} payment=${db.payment?.status}; signed webhook captures processed=${signed.length}; provider_api captures=${providerApi.length}; webhook inbox rows=${Array.isArray(inbox) ? inbox.map(e => `${e.event_type}/${e.processing_status}${e.failure_reason ? "/" + e.failure_reason : ""}`).join(",") || "none" : JSON.stringify(inbox)}; ${d1Brief(db)}${captured && !signed.length && stuck.length ? " · PAY-01 CONFIRMED-ON-STAGING" : captured && signed.length ? " · PAY-01 NOT-REPRODUCED-ON-STAGING" : ""}`;
+    const detail = `order ${orderId}; booking=${db.booking?.status} payment=${db.payment?.status}; signed webhook captures processed=${signed.length}; provider_api captures=${providerApi.length}; webhook inbox rows=${Array.isArray(inbox) ? inbox.map(e => `${e.event_type}/${e.processing_status}${e.failure_reason ? "/" + e.failure_reason : ""}`).join(",") || "none" : JSON.stringify(inbox)}; ${d1Brief(db)}${captured && !signed.length && stuck.length ? ` · PAY-01 CONFIRMED-${ON_ENV}` : captured && signed.length ? ` · PAY-01 NOT-REPRODUCED-${ON_ENV}` : ""}`;
     record({ suite: SUITE, journey: "payments-d1-webhook-reconciliation", combo: `${name} ${b.bookingId}`, result, detail, evidence: [] });
-    if (captured && !signed.length && stuck.length) reportFinding({ once: true, severity: "P1", area: "Payments", flow: "Razorpay webhook → PawSpace", title: "Razorpay TEST webhooks for captured Boarding payments are left unprocessed in the inbox (PAY-01 — CONFIRMED-ON-STAGING)", steps: "Pay a Boarding booking with Razorpay TEST; read gateway_webhook_events / payment_gateway_events", expected: "Signed payment.captured webhook processed", actual: detail, evidence: [] });
+    if (captured && !signed.length && stuck.length) reportFinding({ once: true, severity: "P1", area: "Payments", flow: "Razorpay webhook → PawSpace", title: `Razorpay TEST webhooks for captured Boarding payments are left unprocessed in the inbox (PAY-01 — CONFIRMED-${ON_ENV})`, steps: "Pay a Boarding booking with Razorpay TEST; read gateway_webhook_events / payment_gateway_events", expected: "Signed payment.captured webhook processed", actual: detail, evidence: [] });
     if (!captured && b.paid) reportFinding({ severity: "P0", area: "Payments", flow: `ledger ${name}`, title: "Customer projection said captured but booking_payments is not captured", steps: "Pay with Razorpay TEST; compare /api/customer-checkout status with D1", expected: "booking_payments.status=captured", actual: detail, evidence: [] });
   }
 }
@@ -779,10 +890,17 @@ async function main() {
 
   // (4) 5 nights split 50% — PAY the deposit, then check booking + manage pages
   const p4 = d("c4", 47, 5, "10:00", "10:00");
-  await journey("combo-4-5n-split-deposit", "5 nights · MasterDog · Reserve with 50% · pay deposit", async (flow) => {
+  await journey("combo-4-5n-split-deposit", "5 nights · MasterDog · Reserve with 50% · pay deposit · introduction waiver policy", async (flow) => {
     const out = await comboJourney(flow, { name: "combo-4-5n-split-deposit", combo: "5 nights split 50% deposit",
-      opts: { start: p4.start, end: p4.end, startTime: p4.startTime, endTime: p4.endTime, pets: ["MasterDog"], meet: "visit", split: true, create: true, pay: true } });
+      opts: { start: p4.start, end: p4.end, startTime: p4.startTime, endTime: p4.endTime, pets: ["MasterDog"], meet: false, split: true, create: true, pay: true } });
     const r = out?.r;
+    if (r?.intro?.options?.length) {
+      // read-only policy check: the in-person introduction is waived for an intended stay of 5+ days (no request is sent)
+      const inPerson = r.intro.options.find(o => /In-person/i.test(o)) || "";
+      const waived = /₹0\b/.test(inPerson) && /waiver/i.test(inPerson);
+      record({ suite: SUITE, journey: "combo-4-introduction-waiver-policy", combo: "5-night stay: in-person introduction fee waiver shown", result: waived ? "PASS" : "FAIL", detail: `Care Card policy options [${r.intro.options.join(" | ")}]; rule: in-person ₹499 waived for 5+ day stays`, evidence: [r.shotCare].filter(Boolean) });
+      if (!waived) reportFinding({ severity: "P3", area: "Caregiver introduction", flow: "/v2/boarding 5-night care card", title: "In-person introduction waiver not shown for a 5-night stay", steps: "Plan 5 nights → host → Care Card → Introduction format", expected: "In-person introduction · ₹0 · intended-stay waiver", actual: inPerson || "no in-person option", evidence: [r.shotCare].filter(Boolean) });
+    }
     if (!r?.bookingId) return out;
     const bp = r.bookingPage || await readBookingPage(flow, r.bookingId, "9-booking-page-split");
     const m = await readManagePage(flow, r.bookingId, "10-manage-split");
@@ -796,8 +914,8 @@ async function main() {
     let result;
     if (!r.capture?.server) result = r.stage === "checkout-refused" && r.envGated ? "ENV-GATED" : "BLOCKED";
     else result = !stillAsksDeposit && bookingShowsDepositPaid && manageShowsPayment ? "PASS" : "FAIL";
-    record({ suite: SUITE, journey: "combo-4-split-after-deposit", combo: "split: booking + manage pages after deposit", result, detail: `${detail}${r.capture?.server ? ` · PAY-03 ${stillAsksDeposit ? "CONFIRMED-ON-STAGING" : "NOT-REPRODUCED-ON-STAGING"}` : ""}`, evidence: [bp.shot, m.shot] });
-    if (r.capture?.server && stillAsksDeposit) reportFinding({ severity: "P1", area: "Payments", flow: "/v2/booking (split after deposit)", title: `Split Boarding booking still shows "Due now ${inr(bp.dueNow)} · Balance later ${inr(bp.balanceLater)} · Pay securely" after the 50% deposit was captured (PAY-03 — CONFIRMED-ON-STAGING)`, steps: "Book 5 nights, Reserve with 50%, pay deposit with Razorpay TEST, open /v2/booking", expected: `Deposit ${inr(deposit)} shown as paid, balance ${inr(total - deposit)} due 24 h before check-in`, actual: `Status ${bp.status}, Payment ${bp.payment}; Due now ${inr(bp.dueNow)} + Balance later ${inr(bp.balanceLater)} = ${inr(total)} (full price) with a Pay button`, evidence: [bp.shot] });
+    record({ suite: SUITE, journey: "combo-4-split-after-deposit", combo: "split: booking + manage pages after deposit", result, detail: `${detail}${r.capture?.server ? ` · PAY-03 ${stillAsksDeposit ? `CONFIRMED-${ON_ENV}` : `NOT-REPRODUCED-${ON_ENV}`}` : ""}`, evidence: [bp.shot, m.shot] });
+    if (r.capture?.server && stillAsksDeposit) reportFinding({ severity: "P1", area: "Payments", flow: "/v2/booking (split after deposit)", title: `Split Boarding booking still shows "Due now ${inr(bp.dueNow)} · Balance later ${inr(bp.balanceLater)} · Pay securely" after the 50% deposit was captured (PAY-03 — CONFIRMED-${ON_ENV})`, steps: "Book 5 nights, Reserve with 50%, pay deposit with Razorpay TEST, open /v2/booking", expected: `Deposit ${inr(deposit)} shown as paid, balance ${inr(total - deposit)} due 24 h before check-in`, actual: `Status ${bp.status}, Payment ${bp.payment}; Due now ${inr(bp.dueNow)} + Balance later ${inr(bp.balanceLater)} = ${inr(total)} (full price) with a Pay button`, evidence: [bp.shot] });
     if (r.capture?.server && !manageShowsPayment) reportFinding({ severity: "P2", area: "Boarding manage page", flow: "/v2/boarding/manage (split after deposit)", title: "Manage page shows no payment state (deposit paid / balance due) for a split Boarding booking", steps: "Pay the 50% deposit, open Manage", expected: "Deposit paid + balance due date", actual: `Status "${m.status}"; no deposit/balance wording`, evidence: [m.shot] });
     return out;
   });
@@ -805,7 +923,7 @@ async function main() {
   // (5) 6 nights, 3 pets, PAY FULL
   const p5 = d("c5", 53, 6, "11:00", "11:00");
   await journey("combo-5-6n-3pets-full", "6 nights · MasterDog+MasterCat+MasterBuddy · Pay the full amount · Three walks", (flow) => comboJourney(flow, { name: "combo-5-6n-3pets-full", combo: "6 nights 3 pets pay full",
-    opts: { start: p5.start, end: p5.end, startTime: p5.startTime, endTime: p5.endTime, pets: ["MasterDog", "MasterCat", "MasterBuddy"], extras: ["Three walks"], food: "Non-vegetarian fresh food", meet: "call", split: false, create: true, pay: true } }));
+    opts: { start: p5.start, end: p5.end, startTime: p5.startTime, endTime: p5.endTime, pets: ["MasterDog", "MasterCat", "MasterBuddy"], extras: ["Three walks"], food: "Non-vegetarian fresh food", meet: false, split: false, create: true, pay: true } }));
 
   // (6) unvaccinated pet → blocked (no booking may be created)
   const p6 = d("c6", 64, 2, "10:00", "10:00");
@@ -818,11 +936,11 @@ async function main() {
     const r = await runBoarding(flow, { start: p6.start, end: p6.end, startTime: p6.startTime, endTime: p6.endTime, pets: ["MasterDog", "MasterPup"], meet: false, create: true, pay: false });
     const blocked = !r.bookingId && /vaccination/i.test(r.confirmAlert || "");
     const earlyWarning = /vaccin/i.test(`${r.planHint} ${r.durationSummary} ${(r.hosts || []).join(" ")} ${r.review}`);
-    record({ suite: SUITE, journey: "combo-6-unvaccinated-blocked", combo: "unvaccinated pet", result: blocked ? "PASS" : r.bookingId ? "FAIL" : "BLOCKED", detail: `stage ${r.stage}; alert "${r.confirmAlert}"; canonical-bookings POST ${r.net.canonical ? `HTTP ${r.net.canonical.http} ${r.net.canonical.bookingId || ""}` : "not sent"}; warned before final click=${earlyWarning}; ${priceCheck(r).text}`, evidence: r.shots });
+    record({ suite: SUITE, journey: "combo-6-unvaccinated-blocked", combo: "unvaccinated pet", result: blocked ? "PASS" : r.bookingId ? "FAIL" : "BLOCKED", detail: `stage ${r.stage}; alert "${r.confirmAlert}"; canonical-bookings POST ${r.net.canonical ? `HTTP ${r.net.canonical.http} ${r.net.canonical.bookingId || ""}` : "not sent"}; warned before final click=${earlyWarning}${blocked ? ` (BRD-06 ${earlyWarning ? "NOT-REPRODUCED" : "CONFIRMED"}-${ON_ENV})` : ""}; ${priceCheck(r).text}`, evidence: r.shots });
     if (r.bookingId) {
-      reportFinding({ severity: "P0", area: "Boarding safety", flow: "/v2/boarding unvaccinated", title: "Boarding booking created for an unvaccinated pet", steps: "Select MasterDog + MasterPup (Vaccinated? No) → review → Pay & create", expected: "Blocked: verified vaccination required", actual: `Booking ${r.bookingId} created`, evidence: r.shots });
-      saveBooking({ suite: SUITE, bookingId: r.bookingId, service: "boarding", customer: PERSONA, paid: false, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paymentMode: r.quote?.paymentMode, combo: "unvaccinated (should not exist)" });
-    } else if (blocked && !earlyWarning) reportFinding({ severity: "P3", area: "Boarding UX", flow: "/v2/boarding unvaccinated", title: "Vaccination rule only enforced at the final Pay click (BRD-06 — re-verified)", steps: "Select an unvaccinated pet → hosts → care card → review → Pay", expected: "Warn when the pet is selected", actual: `No warning until "${r.confirmAlert}" at the last step`, evidence: r.shots });
+      reportFinding({ severity: "P0", area: "Boarding safety", flow: "/v2/boarding unvaccinated", title: "Boarding booking created for an unvaccinated pet", steps: "Select MasterDog + MasterPup (Vaccinated? No) → review → Create stay request & review payment", expected: "Blocked: verified vaccination required", actual: `Booking ${r.bookingId} created`, evidence: r.shots });
+      saveBooking({ suite: SUITE, bookingId: r.bookingId, service: "boarding", customer: PERSONA, customerId: CUSTOMER.id, paid: false, total: r.quote?.totalAmount, dueNow: r.quote?.amountDueNow, paymentMode: r.quote?.paymentMode, combo: "unvaccinated (should not exist)" });
+    } else if (blocked && !earlyWarning) reportFinding({ severity: "P3", area: "Boarding UX", flow: "/v2/boarding unvaccinated", title: `Vaccination rule only enforced at the final review click (BRD-06 — CONFIRMED-${ON_ENV})`, steps: "Select an unvaccinated pet → hosts → care card → review → Create stay request & review payment", expected: "Warn when the pet is selected", actual: `No warning until "${r.confirmAlert}" at the last step`, evidence: r.shots });
     return { result: blocked ? "PASS" : "FAIL" };
   });
 
@@ -874,7 +992,7 @@ async function main() {
     const stayAfterCare = await boardingStay(context, id);
     const careOk = String(stayAfterCare?.carePlan?.plan?.specialInstructions || "").includes(tag);
     shots.push(await flow.shot("2-care-plan-saved"));
-    record({ suite: SUITE, journey: "manage-care-plan-save", combo: `booking ${id}`, result: careOk ? "PASS" : "FAIL", detail: `UI "${careMsg}"; API care_plan_status=${stayAfterCare?.care_plan_status} contains tag=${careOk}`, evidence: shots.slice(-1) });
+    record({ suite: SUITE, journey: "manage-care-plan-save", combo: `booking ${id} (${target.combo}, paid=${target.paid})`, result: careOk ? "PASS" : "FAIL", detail: `UI "${careMsg}"; API care_plan_status=${stayAfterCare?.care_plan_status} contains tag=${careOk}`, evidence: shots.slice(-1) });
     if (!careOk) reportFinding({ severity: "P1", area: "Boarding manage page", flow: "/v2/boarding/manage care plan", title: "Care plan update not persisted", steps: "Manage → edit Special instructions → Save canonical care plan", expected: "Saved and returned by /api/boarding-stays", actual: `UI "${careMsg}"; API plan: ${oneLine(JSON.stringify(stayAfterCare?.carePlan?.plan || {}), 200)}`, evidence: shots.slice(-1) });
     // extension button state
     const ext = page.getByRole("button", { name: /Request extension|Checking capacity/ });
@@ -882,7 +1000,7 @@ async function main() {
     const status = String(stayAfterCare?.status || stayBefore?.status || "");
     const expectedEnabled = ["confirmed", "in_progress"].includes(status);
     const explains = /after (the )?host accept|once (the )?host|available after/i.test(await mainText(page));
-    record({ suite: SUITE, journey: "manage-extension-state", combo: `booking ${id}`, result: extEnabled === expectedEnabled ? "PASS" : "FAIL", detail: `stay status ${status}; "Request extension" enabled=${extEnabled} (expected ${expectedEnabled} — enabled only once the host accepted); disabled state explained=${explains}; extension_status=${stayAfterCare?.extension_status}`, evidence: [shots[0]] });
+    record({ suite: SUITE, journey: "manage-extension-state", combo: `booking ${id} (${target.combo}, paid=${target.paid})`, result: extEnabled === expectedEnabled ? "PASS" : "FAIL", detail: `stay status ${status}; "Request extension" enabled=${extEnabled} (expected ${expectedEnabled} — enabled only once the host accepted); disabled state explained=${explains}; extension_status=${stayAfterCare?.extension_status}`, evidence: [shots[0]] });
     if (extEnabled === false && !explains) reportFinding({ severity: "P3", area: "Boarding manage page", flow: "/v2/boarding/manage extension", title: "'Request extension' is disabled with no explanation until the host accepts (BRD-10 — re-verified)", steps: "Open Manage for a paid stay awaiting host acceptance", expected: "Say why extension is unavailable", actual: `Stay ${status}; disabled button, no explanatory text`, evidence: [shots[0]] });
     // date change request (+1 day on both ends, reason)
     const baseIn = new Date(stayAfterCare?.check_in_at || `${p3.start}T10:00:00+05:30`).getTime(), baseOut = new Date(stayAfterCare?.check_out_at || `${p3.end}T10:00:00+05:30`).getTime();
@@ -904,9 +1022,9 @@ async function main() {
     await settle(page, 800);
     const dcMsg = oneLine(await page.getByText(/Date-change request recorded|Unable to request date change/).first().innerText({ timeout: 3000 }).catch(() => ""), 200);
     shots.push(await flow.shot("3-date-change-requested"));
-    const dcDb = await d1("SELECT status,requested_start,requested_end,old_total,new_total,amount_delta FROM boarding_date_change_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1", [id]);
+    const dcDb = await rd1("SELECT status,requested_start,requested_end,old_total,new_total,amount_delta FROM boarding_date_change_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1", [id]);
     const dcOk = dc?.status() < 300 && /recorded/i.test(dcMsg);
-    record({ suite: SUITE, journey: "manage-date-change-request", combo: `booking ${id} → ${local(inAt)} / ${local(outAt)}`, result: dcOk ? "PASS" : "FAIL", detail: `POST /api/boarding-finance HTTP ${dc?.status()} ${oneLine(JSON.stringify(dcBody?.data || dcBody?.error || ""), 200)}; UI "${dcMsg}"; d1 ${oneLine(JSON.stringify(dcDb), 250)}`, evidence: shots.slice(-1) });
+    record({ suite: SUITE, journey: "manage-date-change-request", combo: `booking ${id} (${target.combo}, paid=${target.paid}) → ${local(inAt)} / ${local(outAt)}`, result: dcOk ? "PASS" : "FAIL", detail: `POST /api/boarding-finance HTTP ${dc?.status()} ${oneLine(JSON.stringify(dcBody?.data || dcBody?.error || ""), 200)}; UI "${dcMsg}"; d1 ${oneLine(JSON.stringify(dcDb), 250)}`, evidence: shots.slice(-1) });
     if (!dcOk) reportFinding({ severity: "P1", area: "Boarding manage page", flow: "/v2/boarding/manage date change", title: "Date-change request not recorded", steps: "Manage → Change stay dates (+1 day) → reason → Request date change", expected: "Request recorded (commercial quote required)", actual: `HTTP ${dc?.status()} ${oneLine(JSON.stringify(dcBody || ""), 250)}; UI "${dcMsg}"`, evidence: shots.slice(-1) });
     // Add Pet Taxi for this stay → hand-off to the taxi suite
     const taxiLink = page.getByRole("link", { name: /Add Pet Taxi for this stay/ });
@@ -916,7 +1034,7 @@ async function main() {
     await page.waitForURL(/\/v2\/taxi\?sourceBookingId=/, { timeout: 20_000 }).catch(() => {});
     const taxiReady = async () => {
       await page.getByText("Loading pets…").first().waitFor({ state: "detached", timeout: 20_000 }).catch(() => {});
-      await page.locator("[class*=petGrid] button[class*=selected]").first().waitFor({ timeout: 10_000 }).catch(() => {});
+      await page.locator("[class*=petGrid] button[aria-pressed=true]").first().waitFor({ timeout: 10_000 }).catch(() => {});
       await settle(page, 1000);
       return true;
     };
@@ -925,12 +1043,12 @@ async function main() {
     const taxiText = oneLine(await mainText(page), 400);
     shots.push(await flow.shot("4-add-pet-taxi"));
     const taxiOk = page.url().includes(`sourceBookingId=${encodeURIComponent(id)}`);
-    const taxiSelected = (await page.locator("[class*=petGrid] button[class*=selected] b").allInnerTexts().catch(() => [])).map(t => oneLine(t, 40));
+    const taxiSelected = (await page.locator("[class*=petGrid] button[aria-pressed=true] b").allInnerTexts().catch(() => [])).map(t => oneLine(t, 40));
     const stayPets = target.pets || [];
     const preselectOk = stayPets.length > 0 && stayPets.every(n => taxiSelected.includes(n)) && taxiSelected.every(n => stayPets.includes(n));
     if (taxiOk && taxiSelected.length && !preselectOk) reportFinding({ severity: "P3", area: "Pet Taxi (from Boarding)", flow: "/v2/boarding/manage → Add Pet Taxi for this stay", title: "Pet Taxi opened for a Boarding stay preselects the account's first pet instead of the pets on the stay", steps: `Manage booking ${id} (pets ${stayPets.join(" + ")}) → Add Pet Taxi for this stay`, expected: `${stayPets.join(" + ")} preselected`, actual: `Preselected: ${taxiSelected.join(" + ")} (taxi-flow.tsx selects rows[0] regardless of sourceBookingId)`, evidence: shots.slice(-1) });
     saveBooking({ ...target, run: undefined, result: undefined, suite: SUITE, purpose: "taxi-source", taxiSource: true, forSuite: "taxi", taxiEntry: `/v2/taxi?sourceBookingId=${id}` });
-    record({ suite: SUITE, journey: "manage-add-pet-taxi-handoff", combo: `booking ${id}`, result: taxiOk ? "PASS" : "FAIL", detail: `link href ${href}; landed ${page.url().replace(BASE, "")}; taxi preselected pets [${taxiSelected.join(", ")}] vs stay pets [${stayPets.join(", ")}]; page: "${taxiText.slice(0, 200)}"; handed to taxi suite via bookings.jsonl (purpose=taxi-source)`, evidence: shots.slice(-1) });
+    record({ suite: SUITE, journey: "manage-add-pet-taxi-handoff", combo: `booking ${id} (${target.combo}, paid=${target.paid})`, result: taxiOk ? "PASS" : "FAIL", detail: `link href ${href}; landed ${page.url().replace(BASE, "")}; taxi preselected pets [${taxiSelected.join(", ")}] vs stay pets [${stayPets.join(", ")}]; page: "${taxiText.slice(0, 200)}"; handed to taxi suite via bookings.jsonl (purpose=taxi-source)`, evidence: shots.slice(-1) });
     return { result: careOk && dcOk && taxiOk ? "PASS" : "PARTIAL" };
   });
 
@@ -956,7 +1074,7 @@ async function main() {
     await settle(page, 800);
     const msg = oneLine(await page.getByText(/Cancellation request recorded|Unable to request cancellation/).first().innerText({ timeout: 3000 }).catch(() => ""), 200);
     const shot = await flow.shot("2-cancellation-requested");
-    const cdb = await d1("SELECT status,reason,approved_refund_amount FROM boarding_cancellation_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1", [id]);
+    const cdb = await rd1("SELECT status,reason,approved_refund_amount FROM boarding_cancellation_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 1", [id]);
     const ok = res?.status() < 300 && /recorded/i.test(msg);
     record({ suite: SUITE, journey: "manage-cancellation-request", combo: `booking ${id} (paid=${target.paid})`, result: ok ? "PASS" : "FAIL", detail: `stay "${m.status}"; button enabled with empty reason=${enabledEmpty}; POST /api/boarding-finance HTTP ${res?.status()} ${oneLine(JSON.stringify(body?.data || body?.error || ""), 200)}; UI "${msg}"; d1 ${oneLine(JSON.stringify(cdb), 250)}`, evidence: [m.shot, shot] });
     if (ok) saveBooking({ ...target, run: undefined, result: undefined, suite: SUITE, cancelRequested: true, cancelReason: reason, cancelStatus: body?.data?.status || null });
@@ -976,7 +1094,8 @@ async function main() {
   } finally { await showBrowser?.close().catch(() => {}); }
 
   // Webhook delivery / ledger truth for every booking that reached Razorpay (read minutes after payment).
-  await reconcilePayments();
+  try { await reconcilePayments(); }
+  catch (e) { record({ suite: SUITE, journey: "payments-d1-webhook-reconciliation", combo: "all Razorpay TEST orders", result: "BLOCKED", detail: `harness: ${oneLine(String(e?.message || e), 300)}`, evidence: [] }); }
 
   summary.sessionReissues = SESSION_EVENTS;
   summary.finishedAt = new Date().toISOString();
