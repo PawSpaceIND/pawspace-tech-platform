@@ -675,7 +675,7 @@
     "app/team/ai/analytics/page.tsx": "5c5323e50546f97589356c19ee47fd60868390728e03e4d162e78b10f808976f",
     "app/team/ai/configuration/page.tsx": "21f0616f10e09d8c9165478fa4fab37df1d618948e599b70031f539334dde9ea",
     "app/team/ai/decision-commitments.tsx": "58419f2d46ef6133188d6557e5e24d8de649cb927309d5def9e6efcf0211180a",
-    "app/team/ai/founder-scenario-planner.tsx": "f491a0b0e3ae83cd34ce3e74dd58873456d492b8b996614efe30553c97382ec0",
+    "app/team/ai/founder-scenario-planner.tsx": "0daaa2bc12c9874499320651b7b9df061df7ca6d0a3be8bc345b550b9dfa19e8",
     "app/team/ai/handoff/page.tsx": "b3064aacd2099a3dce452dba96705c508f58e61a1d2c97f2b1d19416ecb522ba",
     "app/team/ai/page.tsx": "4fd1371a9e18eb2a8cbbba615a5b2ce2e367ba41a61ec783401b874c1982b1aa",
     "app/team/ai/rollout/page.tsx": "793b167a0a82a8ab884235e96cca8806ef404407949c962d7690b5adc476299d",

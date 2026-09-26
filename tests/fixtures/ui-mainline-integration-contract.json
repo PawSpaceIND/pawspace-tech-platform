@@ -2,7 +2,7 @@
   "ui": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
-    ".github/workflows/deploy-staging.yml": "87bb34a7ad551c9aaef0d5ceafb451d0cfdcf87b220e697aa933c167bd8eef46",
+    ".github/workflows/deploy-staging.yml": "1513a16d7e217617ab557ca3a1e685948958a3eb79ebaed1a73f335c270ec481",
     ".github/workflows/elevenlabs-provider-preflight.yml": "faf5456e92acd2fb255474981de62fdf166c7f68b62d502259bc84bde3425021",
     ".github/workflows/voice-uat-staging.yml": "1e02d3186125b727c8318be6d0a8831081d855f8b282e83b4a216e879f858539",
     ".gitleaksignore": "533e9eafcb5494f86679db424305186ad82841d1f56e2c2043f91df584308544",
@@ -1034,11 +1034,11 @@
     },
     "app/team/ai/founder-scenario-planner.tsx": {
       "upstreamHash": "7314dc87598dbb7e796828c41a84529828699233f1ec9dd5fa761ef0c0beb619",
-      "semantic": "ef3280f45b1f45cece4a41f159cc9709777c4b03f6c648d6c430ca21c87d9e9c"
+      "semantic": "e9127a71e990836854cb0c9a3e141d39d32d305fef231826cf38b8c745aba4e2"
     },
     "app/team/ai/page.tsx": {
       "upstreamHash": "5e8c65aa401cfa51f3ac6e4273b203f647a7c9a12494b479777f98a99ab4680f",
-      "semantic": "f87cca0f9eb59cb198e132bcbcce9f934b49911bb5837599cb69f18a80a1d5df"
+      "semantic": "c0cd9d0f3374e82e30bc59b1103c48b195aadbafda674c613283de502f9cc88c"
     }
   }
 }
