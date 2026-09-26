@@ -1,14 +1,26 @@
 {
   "base": "9c3b52fec8bdc564761f396c159bde2370bc98aa",
-  "pages": [
-    "app/crm/page.tsx",
-    "app/control/page.tsx",
-    "app/control/appearance/page.tsx",
-    "app/control/integrations/page.tsx",
-    "app/control/provider-onboarding/page.tsx",
-    "app/assisted-booking/page.tsx",
-    "app/system-integration/page.tsx"
-  ],
+  "css": {
+    "app/crm/crm.module.css": "d2755da8bf75b57225cc6fdc77d1dbcea20b0eb4317fda83b13d077fe9117cf5",
+    "app/control/control.module.css": "d4a9e1709ecebc581aec18f601d73763b4f136534b51448cd5a156838bbdfd14",
+    "app/assisted-booking/assisted.module.css": "7be1c6dbce84ebd8b05fe4691d5861c4e376fc164454e89ed7a6bb49af2bdf7c",
+    "app/system-integration/page.module.css": "c905bf140ffc0fdb6a2e5c32fa11950ae0b3f540a18a04813c7f8d8d91fe1913",
+    "app/crm/revenue-engine.module.css": "836f4e3882d66763ee4ae9d1381023f96ab025f99e07b24f3763de8864f6d728",
+    "app/control/launch-controls.module.css": "84276069bda7e3a3d7ac558dbade0c556df935929b06edf1583dab58dc9ab6a8",
+    "app/control/scheduling-control-panel.module.css": "2eeef06813e128a2e867f08b7280774f8f38963b2f4d6ebcfa3a452266331d68",
+    "app/control/booking-lifecycle-panel.module.css": "fdf6af7142a694c764802d1dd4665bf32613fb847107462473e70c9d734c2459",
+    "app/control/business-intelligence.module.css": "3f2e0ba93d28319919670ef5c8788a6bd4bfb089d1ecddde9b326eacd78abfbf",
+    "app/control/offers-control-panel.module.css": "de53f416d0429f7e4145f7f53f42ae5d3e8ac755329380b0396b277e48fef6d4",
+    "app/control/city-control-panel.module.css": "60e45c14660ede0cc6bac82c5468e2b20157f9a1e216c701f9376959f704ccfe",
+    "app/control/finance-control-panel.module.css": "0a6f66b4b038f72d68a522631a8ac096fe2be200edd9eab45439dbdcb1ff89f9",
+    "app/control/grooming-subscriptions.module.css": "cd64644ca0bbc0171cfdd995dbf90ffbb5a87d8e2fafe38bf79c9f47e4d921db",
+    "app/control/launch-readiness-panel.module.css": "2a5fdd6443078a7f5be0671d43043f900f5571f005df2834dc860de7c067ab29",
+    "app/control/marketing-control-panel.module.css": "b70be7eda9703cc5b740c5a86758814222ea44eb37c0368e65c3a22e6b91f8ca",
+    "app/control/platform-audit.module.css": "a81c8e8987d8a3637bd075fddd9869e09cd9f24482e0fa90e8bfe3bbc49594a8",
+    "app/control/pricing-control-panel.module.css": "2d5cfc5e47cefbf0dda21e95d1ab84c2920ebb617318af6f64faf93ef3433fae",
+    "app/control/service-control-panel.module.css": "06ed42fddeb0252f7aec668a17cd3bfcf9488770e7d02da89402626dfa3463ab",
+    "app/components/test-sync-panel.module.css": "f1d4e29691fbae3a5d140e8c7850f170bd056fc0491483c40fd66409783ee500"
+  },
   "files": {
     "app/crm/page.tsx": {
       "semantic": "e7da5d93c216ff8717a3664e27f314bfb96f3251c84d90e6ff7cf614550e65c2",
@@ -44,7 +56,7 @@
       "semantic": "3c3bcbe201f33e1a2c30dda3054fa2d7bb2978905bb5f27a8b0345a6e6851ad3",
       "sha256": "9e375adff5bff11e986ec482d12f7a1700c7c69f5c8146e87f3c7572682b682a",
       "mainRoots": 1,
-      "contextSemantic": "cc44b1031da0318cc16cc73765d8764d2b0ac1340d6bfbe36bc45e6964aec011"
+      "contextSemantic": "6e958cf1e051d49c2f61918d7f632dce73fb14eea12556f3f7c6074d3691ed7f"
     },
     "app/system-integration/page.tsx": {
       "semantic": "f3051c9609f1f8d22f4ceb1baffa5b36521dbb3b18c74dac03104e2d402679fc",
@@ -221,31 +233,19 @@
       "contextSemantic": "f75da76746797ac0d139f21c341ab81afb35e18cc220ecd1ac52f2127a2cfe04"
     }
   },
-  "css": {
-    "app/crm/crm.module.css": "d2755da8bf75b57225cc6fdc77d1dbcea20b0eb4317fda83b13d077fe9117cf5",
-    "app/control/control.module.css": "d4a9e1709ecebc581aec18f601d73763b4f136534b51448cd5a156838bbdfd14",
-    "app/assisted-booking/assisted.module.css": "7be1c6dbce84ebd8b05fe4691d5861c4e376fc164454e89ed7a6bb49af2bdf7c",
-    "app/system-integration/page.module.css": "c905bf140ffc0fdb6a2e5c32fa11950ae0b3f540a18a04813c7f8d8d91fe1913",
-    "app/crm/revenue-engine.module.css": "836f4e3882d66763ee4ae9d1381023f96ab025f99e07b24f3763de8864f6d728",
-    "app/control/launch-controls.module.css": "84276069bda7e3a3d7ac558dbade0c556df935929b06edf1583dab58dc9ab6a8",
-    "app/control/scheduling-control-panel.module.css": "2eeef06813e128a2e867f08b7280774f8f38963b2f4d6ebcfa3a452266331d68",
-    "app/control/booking-lifecycle-panel.module.css": "fdf6af7142a694c764802d1dd4665bf32613fb847107462473e70c9d734c2459",
-    "app/control/business-intelligence.module.css": "3f2e0ba93d28319919670ef5c8788a6bd4bfb089d1ecddde9b326eacd78abfbf",
-    "app/control/offers-control-panel.module.css": "de53f416d0429f7e4145f7f53f42ae5d3e8ac755329380b0396b277e48fef6d4",
-    "app/control/city-control-panel.module.css": "60e45c14660ede0cc6bac82c5468e2b20157f9a1e216c701f9376959f704ccfe",
-    "app/control/finance-control-panel.module.css": "0a6f66b4b038f72d68a522631a8ac096fe2be200edd9eab45439dbdcb1ff89f9",
-    "app/control/grooming-subscriptions.module.css": "cd64644ca0bbc0171cfdd995dbf90ffbb5a87d8e2fafe38bf79c9f47e4d921db",
-    "app/control/launch-readiness-panel.module.css": "2a5fdd6443078a7f5be0671d43043f900f5571f005df2834dc860de7c067ab29",
-    "app/control/marketing-control-panel.module.css": "b70be7eda9703cc5b740c5a86758814222ea44eb37c0368e65c3a22e6b91f8ca",
-    "app/control/platform-audit.module.css": "a81c8e8987d8a3637bd075fddd9869e09cd9f24482e0fa90e8bfe3bbc49594a8",
-    "app/control/pricing-control-panel.module.css": "2d5cfc5e47cefbf0dda21e95d1ab84c2920ebb617318af6f64faf93ef3433fae",
-    "app/control/service-control-panel.module.css": "06ed42fddeb0252f7aec668a17cd3bfcf9488770e7d02da89402626dfa3463ab",
-    "app/components/test-sync-panel.module.css": "f1d4e29691fbae3a5d140e8c7850f170bd056fc0491483c40fd66409783ee500"
-  },
   "layouts": {
     "app/crm/layout.tsx": "75c9c328798fd0cac848f7e5d0a4143f615c030d33e67a472df6f8814a15ff96",
     "app/control/layout.tsx": "d69268659fadc3d1b34efae888f3e6687e3f8d7abd256b0d78b8a90be3c213b9"
   },
+  "pages": [
+    "app/crm/page.tsx",
+    "app/control/page.tsx",
+    "app/control/appearance/page.tsx",
+    "app/control/integrations/page.tsx",
+    "app/control/provider-onboarding/page.tsx",
+    "app/assisted-booking/page.tsx",
+    "app/system-integration/page.tsx"
+  ],
   "protected": {
     "app/api/accounts-business-view/route.ts": "d826c238765c4492c24d12b3b7263ada15e224bd1a6fcd20c2342cf987edbdc8",
     "app/api/acquisition-funnel/route.ts": "5980b03300caa244377efe41720b67c61d70d059bc94289e750f8527cd65e73b",
@@ -281,7 +281,7 @@
     "app/api/booking-operations/route.ts": "fc44ae0f8b95f106b9398884063b35c89518c2b3d8b7eefa5854a6a63a485ab0",
     "app/api/booking-rating/route.ts": "45f6cc87dfc003e5f11bf8d48539e22712d38781a46604bb4b7143fbf38d6037",
     "app/api/bot-call-outcomes/route.ts": "6e1be882d673531c2f2b85d348b2b30778d8ae9b3f50257c65da3109b909aba9",
-    "app/api/canonical-bookings/route.ts": "4e0d7bb18bd4ef25f62d0e7c97ce7e35d726d4f4017194cb168785582c5a51f4",
+    "app/api/canonical-bookings/route.ts": "0a10ae56bd9ae4b2a743550b1c4922085038d8df104ebd48297cf1c4e6efbfcc",
     "app/api/cash-flow-statement/route.ts": "b6bf28dcf708e8fb365dccf621485d4b456346bd51251d143d6e6e7954127243",
     "app/api/catalogue/route.ts": "2494997db29bbca9faf856abb5264175ef4364b42e6a898ffbc964442dd83018",
     "app/api/chat-human-reply/route.ts": "1b20984ffd4edb0aeb6b446e9b27d2958f55b6b1503229d22d883a66aa663a85",
@@ -496,7 +496,7 @@
     "app/api/v1/auth/revoke-all-sessions/route.ts": "f6f43f32d749d29e87e53c334204013c5c856aefacabae5d550bc4e462b6067a",
     "app/api/v1/privacy/erasure-request/route.ts": "7ccc0b73f331e97c2b05986bf2dafee0bb1bad3c2acf03d4a75b56ac06606940",
     "app/api/v2/grooming-catalogue/route.ts": "dadd6efe92026c9159765b9c4a0bc3ca5a2961cdbe708c14d23398a2cf8c92ec",
-    "app/api/v2/grooming-checkout-return/route.ts": "704cb44b988223d9749c48712470efd2b8d1349e4eb2fdd88b22417e85460f97",
+    "app/api/v2/grooming-checkout-return/route.ts": "b277dd393c93f78c12f4f0e8dcd18bbb9852feffb5a52e9ffe09296144591757",
     "app/api/v2/grooming-checkout/route.ts": "055caffa29b05fac287e85d254b35ae5e40c1e12bf281ad2fe6369157659db63",
     "app/api/voice-outbound/route.ts": "400fe00b422ff6bb9fc99ff13ae49622c6ebd015fedc3fe238de1e6a872f76f3",
     "app/api/voice-provider-webhook/route.ts": "b5c799af633da1a456c0498f745194666c74305af644c5a3eb0198559e72c230",
@@ -521,6 +521,7 @@
     "app/api/whatsapp/meta-admin/route.ts": "a2a816f96abaf1e5131b9411e6500724f2d4cefe26cc00288cfd715dee5dc0d5",
     "app/api/whatsapp/meta-webhook/route.ts": "c802759377c4885fd9b97c1897ecf7eb12e528d848dc822e4ed39f2125d065b9",
     "app/api/whatsapp/templates/route.ts": "0f8f3b2b6d46c1103de7266ea9a02f54be90c2fb84b578eb5f90ae0d57eee30c",
+    "app/components/test-sync-panel.tsx": "b96342b0550be2df2cf4d5ca82a5231ddeee38b9f041c056d21545d24bf23ab1",
     "app/mobile-app/account-tools.module.css": "3e237753a70cd1fe38890f6931ac6567142b3e760244063e2d78ef03fd6d5561",
     "app/mobile-app/account-tools.tsx": "18b0518c3cf31d165edb02a71dc19eb762437c4cd9caea1218a94871e8059a0d",
     "app/mobile-app/address-picker.module.css": "c0452db579193cb06d3b39cdd49472cb8d3ab00cff2798cf42a81f6a0c8753a9",
@@ -628,7 +629,7 @@
     "app/v2/food/subscriptions/page.tsx": "1b56e871309c81b90f13cdb693ab675efece1ca251384a4e54fa3855b4aa72a6",
     "app/v2/grooming/grooming.module.css": "1c1bb729a34e622ebe29a07d891f949b8f616b9be05c45e3b9a969d5f50089a2",
     "app/v2/grooming/manage/page.tsx": "eed883ee9382a73409e5518e20e8a195bdb2fa2d2e90aa1d29d7285b61c3e96b",
-    "app/v2/grooming/page.tsx": "69f7de0a699d1f8389a02e980d345c0ae07527df516a8ec93801ac573de9ea77",
+    "app/v2/grooming/page.tsx": "6ee72266741b87571862c20c7b625d0d0c93895ee4a608d3f49d9f4c9be8fab6",
     "app/v2/grooming/payment-panel.tsx": "92c66479867107578b6ae6c4d0d40b48a38278b01d2c308951894030cb03c911",
     "app/v2/page.tsx": "5d23dc3f515072e35ce096cdddd732d6226d6d8bf0553ea53ac01c7feecade00",
     "app/v2/partner/page.tsx": "171afa0f4d1ea55a087e76190dd6aa1848e3f3265d96d43e9e492768d9505a98",
@@ -923,6 +924,7 @@
     "lib/intelligence/atlas-decision-quality.ts": "f5085d30a70594d697d4905a5feff5d710aaee5a2422973832eefa5bc892b568",
     "lib/intelligence/atlas-executive-governance.ts": "a8aed3463a35194025fab1f5e1803a6f607479f221476389d3a4cb41d921ed7f",
     "lib/intelligence/atlas-low-risk-executor.ts": "e3cd49e1e9ac0f87d3192d3e9523b74d4875f56a7cccde4c67f25716ccce1999",
+    "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5",
     "lib/intelligence/atlas-outcome-calibration.ts": "6a923a9e82cdd33e77f7019910f5dd69145ae6443fc2ac9aff5c7e0f3d755a04",
     "lib/intelligence/atlas-policy-compatibility.ts": "217942af4693fa38cca63d54213dc9467267da9b12c976a94567904052824897",
     "lib/intelligence/atlas-precedent-readiness.ts": "39a4eaef255fe460653a4ed521b0d30aba3bb15842ec718bb256fe99d39d1a7d",
@@ -1136,7 +1138,7 @@
     "lib/service-cash-collection.ts": "8ae5ffa159fd0b1965b5a093b9597bedfdb98260de56cd18290b23120b8fcbc6",
     "lib/service-completion-finance.ts": "79ee45c43d0581d87d34f45e5ed9a1608eca8ceb27a572113554e2a3a1d128af",
     "lib/service-control.ts": "97fcad17cff34b9cc812f30a51de58b3fb9c8b8f03fb17e366c23551fd565630",
-    "lib/service-discovery-address.ts": "c97fd45f3690b8afaf44443f5e8ab850c2b78c4661dcb0bb3c61b7140fb7d12f",
+    "lib/service-discovery-address.ts": "6b3f710ac59cd7f9e2b9b5fa9d2867800c4e69a8781d9afe021686fabb3bec28",
     "lib/service-execution-clock.ts": "e80544eb87f089066bbcb1e7ad17da0760a3a12f8b5db348a096662ddf445692",
     "lib/service-invoice-ownership.ts": "fc788d9a88f067d1f04500fcd8091913435fa5625addf0a66c058b301a5c5d14",
     "lib/service-media-security.ts": "f57d00bb81b6ff0bcad0252234f9cdf717f8ffccbd4f6117801937c75f734f9e",
@@ -1238,13 +1240,13 @@
     "lib/team-overview.ts": "3be8676f54cc985871f65cc6e8155900cc8d557da223ac6bd882aa4661971819",
     "lib/test-transaction.ts": "2652fd57a7bff6c155937a4635cb8357efd84c856fd8ce15ee607551ec9b6bbb",
     "lib/trainer-incentive-engine.ts": "832d24c389ae7768d780b1dd795d4bd2b2c496bb2faffc5620e935a62de011a2",
-    "lib/training-availability-client.ts": "f3139d3882fd1fc598df270a3f7bd72e8172682f1a0d386abd563bb2bfbef44a",
+    "lib/training-availability-client.ts": "4cf6b9e1dc8d7b71fb47db63faf2a59e43c74ee8a1d65d5ffe76ba8ad7bb50f2",
     "lib/training-booking-client.ts": "54625456189835d54df1cc668d3b94997183fbb6969223e8afbef258ac2b5608",
-    "lib/training-booking-guards.ts": "7b2b95011068d9ed695ad4f019dd326ca5ca872b0f04c311966aae3041122f7c",
+    "lib/training-booking-guards.ts": "491f8b59ce17af3e721076cea3c7d3dd4d7ecd1f1712053aa577b460cf3f0780",
     "lib/training-cancellation-client.ts": "bbc59d484a79ee76707c048bd3a99e9491a22b8300fc68f2e66d17b99f6959b8",
     "lib/training-cancellation.ts": "7867333dc2feb439eb05847babdc7b7ecf9c3473c97c8e4339778ef83a8c6512",
     "lib/training-commercial-client.ts": "1fad33797b4a7b5fcd2c4b064dab4713f5bbf73ab78b9bfc31e048f21c602b30",
-    "lib/training-commercial-governance.ts": "af4df675947e8db8d02365d2f2e53b1dd2053ea12370569aaf57937599eba911",
+    "lib/training-commercial-governance.ts": "aab9cf0bcda2aa529eb129cf2194d2e2ed0bafefc9f98817f223e58511f951bc",
     "lib/training-commission-payout.ts": "33c42ba3b5119d155b3118188db1836453dc2b8677d2c5b0ef7ccf2c25ac394f",
     "lib/training-confirmation-client.ts": "5c42880036ff091deada2b78d4e0aba76d3e841c32dcae8967b73566bbf1d1b1",
     "lib/training-evidence.ts": "8d3c67200a82eb498095b25cb9500fef0297492127db6c92154019f30651cc47",
@@ -1331,8 +1333,6 @@
     "lib/whatsapp-template-lifecycle.ts": "acf6f840a464c3d28f6fea0bb0faadc9a4931f8f5191682b076e37ab0b2711b9",
     "lib/whatsapp-uat-adapter.ts": "238607fbc0a950edd30213cff7d590dd4d052bd1ae8e2c15783992202c7ab69f",
     "lib/workforce-classification.ts": "a082977376abc4fb55dd1296bee852b444dd9f7654e50b53709300e10d66b8e4",
-    "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
-    "app/components/test-sync-panel.tsx": "b96342b0550be2df2cf4d5ca82a5231ddeee38b9f041c056d21545d24bf23ab1",
-    "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
+    "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2"
   }
 }
