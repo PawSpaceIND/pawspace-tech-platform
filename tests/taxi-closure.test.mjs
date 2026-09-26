@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { customerSessionCookie, freshSqlite, makeD1, nextKey, refusal, seedActiveCommercialTerm, seedCanonicalTrip, seedVehicle, taxiUrl } from "./helpers/taxi-harness.mjs";
+import { atPickupTime } from "./helpers/taxi-pickup-time.mjs";
 
 installWorkersHooks("__TAXI_CLOSE_DB__", "__TAXI_CLOSE_ENV__");
 
@@ -66,9 +67,9 @@ async function closureWorld(overrides = {}) {
   return { sqlite, db, trip };
 }
 
-const drive = (db, trip, action, extra = {}) => lifecycle.mutateTaxiBooking(db, {
+const drive = async (db, trip, action, extra = {}) => (action === "confirm_pickup" && await atPickupTime(db, trip.bookingId), lifecycle.mutateTaxiBooking(db, {
   bookingId: trip.bookingId, action, actorId: extra.actorId ?? trip.providerId, idempotencyKey: extra.key ?? nextKey(action), ...extra,
-});
+}));
 
 async function recordRouteSamples(db, trip, count = 2) {
   for (let index = 0; index < count; index += 1) {
