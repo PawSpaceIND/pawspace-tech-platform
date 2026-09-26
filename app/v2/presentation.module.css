@@ -8,6 +8,16 @@
   color: var(--brand-text);
 }
 .canvas :where(main) { box-sizing: border-box; }
+/* Native app only (html[data-pawspace-native], set by native-shell.tsx). The page runs edge to edge (viewport-fit=cover),
+   so content starts below the status bar and notch, and a status-bar backdrop keeps scrolled content from showing under it. */
+:global(html[data-pawspace-native]) .canvas {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+:global(html[data-pawspace-native]) .canvas::before {
+  content: ""; position: fixed; top: 0; left: 0; right: 0; z-index: 90;
+  height: env(safe-area-inset-top, 0px); background: var(--brand-bg); pointer-events: none;
+}
 .canvas.canvas [data-v2-action] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;
   font: 800 16px/1.35 "PawSpaceNunito", system-ui, sans-serif;

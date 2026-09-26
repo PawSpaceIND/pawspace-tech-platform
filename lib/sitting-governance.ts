@@ -1,6 +1,7 @@
 import{governedJsonError}from"./governed-http-error";
 import{splitPaymentPlan}from"./stay-split-payments";
 import{sameInstant}from"./booking-window-instant";
+import{HOME_VISIT_MINUTES}from"./stay-care-window";
 type Row=Record<string,unknown>;
 export type SittingMode="visit"|"overnight";
 export type SittingPaymentMode="prepaid"|"split_50_50";
@@ -42,7 +43,7 @@ export async function ensureSittingGovernanceTables(db:D1Database){
 }
 
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}
-function units(mode:SittingMode,start:string,end:string){const startMs=new Date(start).getTime(),endMs=new Date(end).getTime();if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw governedJsonError({error:"Sitting quote requires a valid future care window"},400);if(startMs<=Date.now())throw governedJsonError({error:"Sitting quote requires a future start"},400);const hours=(endMs-startMs)/3_600_000;if(mode==="visit"){if(hours>24)throw governedJsonError({error:"Home Visit quotes must cover a single service day"},409);return 1;}if(hours<=10)throw governedJsonError({error:"Overnight Sitting requires more than 10 hours"},409);return Math.max(1,Math.ceil(hours/24));}
+function units(mode:SittingMode,start:string,end:string){const startMs=new Date(start).getTime(),endMs=new Date(end).getTime();if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw governedJsonError({error:"Sitting quote requires a valid future care window"},400);if(startMs<=Date.now())throw governedJsonError({error:"Sitting quote requires a future start"},400);const hours=(endMs-startMs)/3_600_000;if(mode==="visit"){if(endMs-startMs>HOME_VISIT_MINUTES*60_000)throw governedJsonError({error:"A Home Visit is 60 minutes. Book more visits for longer care, or choose Overnight Pet Sitting."},409);return 1;}if(hours<=10)throw governedJsonError({error:"Overnight Sitting requires more than 10 hours"},409);return Math.max(1,Math.ceil(hours/24));}
 
 export async function listSittingPackages(db:D1Database,at=new Date().toISOString()){await ensureSittingGovernanceTables(db);const date=at.slice(0,10);const rows=await db.prepare("SELECT package_code,name,mode,base_price_per_pet,extra_pet_price,currency,max_pets,version FROM sitting_commercial_packages WHERE active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY base_price_per_pet").bind(date,date).all<Row>();return rows.results;}
 

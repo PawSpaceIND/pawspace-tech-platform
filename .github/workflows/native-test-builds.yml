@@ -16,7 +16,7 @@ concurrency:
   group: native-test-${{ github.ref }}
   cancel-in-progress: true
 env:
-  PAWSPACE_CUSTOMER_APP_URL: https://pawspace-staging.karthik-fce.workers.dev/mobile-app
+  PAWSPACE_CUSTOMER_APP_URL: https://pawspace-staging.karthik-fce.workers.dev/v2
   PAWSPACE_PARTNER_APP_URL: https://pawspace-staging.karthik-fce.workers.dev/partner-app
   PAWSPACE_PAYMENT_ENV: sandbox
   PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'

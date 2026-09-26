@@ -40,7 +40,8 @@ const SCHEDULING_DDL = [
 ];
 
 const CUSTOMER = "CUS-CITYZONE-1", PROVIDER = "PRV-CITYZONE-1";
-const START = "2026-11-04T09:00:00.000Z", END = "2026-11-04T11:00:00.000Z";
+// A Sitting Home Visit is one 60-minute window (SIT-04); the quote refuses a longer "visit".
+const START = "2026-11-04T09:00:00.000Z", END = "2026-11-04T10:00:00.000Z";
 /** What the reservation was actually made for. The booking is judged against exactly this. */
 const RESERVED_CITY = "blr", RESERVED_ZONE = "koramangala";
 const MISMATCH_MESSAGE = "The booking city/zone does not match the reserved provider's city and zone";

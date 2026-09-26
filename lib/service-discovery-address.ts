@@ -1,3 +1,4 @@
+import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 import{cityFulfilmentVerdict}from"./city-coverage-authority";
 import{geocodeAddress}from"./address-autocomplete";
 import{validateIndianPincode}from"./pincode-validation";
@@ -9,14 +10,21 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export const SERVICE_DISCOVERY_RADIUS_KM=16;
+/** UAT only: every seeded groomer serves the whole city, so the geofence must span it (Kengeri-Whitefield is ~30 km). */
+export const UAT_SERVICE_DISCOVERY_RADIUS_KM=45;
+async function uatSchedulingRuntime(){const{env}=await import("cloudflare:workers");return uatRosterSeedingEnabled(env as unknown as Record<string,unknown>);}
 export type GovernedServiceAddress={addressId:string;address:string;pincode:string;cityId:string;zoneId:string;latitude:number;longitude:number;serviceRadiusKm?:number};
 
 async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
-async function ensureAddressTables(db:Db){
+// Once per isolate: this probe and two DDL statements ran in front of every booking and availability check.
+async function ensureAddressTablesUncached(db:Db){
   if(!await tableExists(db,"customer_addresses"))await db.prepare("CREATE TABLE IF NOT EXISTS customer_addresses (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,label TEXT NOT NULL,line1 TEXT NOT NULL,line2 TEXT,area TEXT,city TEXT NOT NULL,postal_code TEXT,is_default INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE TABLE IF NOT EXISTS customer_service_address_geocodes (address_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pincode TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,resolved_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_service_geocodes_customer ON customer_service_address_geocodes(customer_id,updated_at DESC)").run();
 }
+// Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
+const addressTablesReady=new WeakSet<object>();
+async function ensureAddressTables(db:Db){if(addressTablesReady.has(db))return;await ensureAddressTablesUncached(db);addressTablesReady.add(db);}
 function comparableAddress(value:string){return value.split(",").map(part=>part.trim().toLowerCase().replace(/\s+/g," ")).filter(part=>part&&part!=="india").join(",");}
 function completeAddress(row:Row,pincode:string){return serviceAddressText({line1:String(row.line1||""),line2:String(row.line2||""),area:String(row.area||""),city:String(row.city||""),postalCode:pincode,country:"India"});}
 function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
@@ -43,7 +51,7 @@ async function ensureTestProviderHomeBases(db:Db){
  * Legacy executable suites can opt into one explicit server-owned sandbox fixture with
  * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture is impossible to activate unless the runtime
  * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
-export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number}) : Promise<GovernedServiceAddress>{
+export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number;/** false: resolve and geocode only; the customer did not ask to keep this address. */saveToAccount?:boolean}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
   let suppliedAddress=String(input.serviceAddress||"").trim();const suppliedPincode=String(input.servicePincode||"").trim();
   let row:Row|null=null;
@@ -60,10 +68,13 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const resolved=await resolveZoneByPincode(db,validated.pincode);if(!resolved||!resolved.zone.serviceAvailable)throw Response.json({error:"PawSpace is not currently serving this address",code:"service_zone_unavailable"},{status:409});
   const cityId=String(resolved.assignment.cityId||"").trim().toLowerCase();if(!cityId)throw new Response("The service address has no governed city",{status:409});
   const conflict=serviceAddressConflict([row.line1,row.line2,row.city].filter(Boolean).join(", "),String(resolved.assignment.city),validated.pincode);if(conflict)throw Response.json({error:conflict,code:"service_address_mismatch"},{status:400});
+  // The saved-address read does not depend on the coverage verdict, so both are in flight together; the
+  // verdict is still checked first, so a closed city refuses exactly as before.
+  const savedRead=suppliedAddress?db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? AND postal_code=? ORDER BY is_default DESC,updated_at DESC").bind(input.customerId,validated.pincode).all<Row>():null;savedRead?.catch(()=>undefined);
   const cityVerdict=await cityFulfilmentVerdict(db,cityId,validated.pincode);if(!cityVerdict.open)throw Response.json({error:"PawSpace is not currently serving this address",code:cityVerdict.reason,cityId:cityVerdict.cityCode},{status:409});
-  if(suppliedAddress){
+  if(suppliedAddress&&savedRead){
     suppliedAddress=serviceAddressText({line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode});
-    const saved=await db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? AND postal_code=? ORDER BY is_default DESC,updated_at DESC").bind(input.customerId,validated.pincode).all<Row>();
+    const saved=await savedRead;
     const existing=saved.results.find(item=>comparableAddress(completeAddress(item,validated.pincode))===comparableAddress(suppliedAddress));
     row=existing??{...row,id:addressId(input.customerId,validated.pincode,suppliedAddress),line1:suppliedAddress};
   }
@@ -75,13 +86,16 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
     const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     const now=Date.now(),id=String(row.id);
-    if(suppliedAddress&&!await db.prepare("SELECT id FROM customer_addresses WHERE id=? AND customer_id=?").bind(id,input.customerId).first()){
-      // A service search is not permission to replace the customer's preferred address.
-      await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id=?) THEN 0 ELSE 1 END,?,? ON CONFLICT(id) DO NOTHING").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,input.customerId,now,now).run();
-    }
     await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
     geo={latitude:Number(resolvedGeo.latitude),longitude:Number(resolvedGeo.longitude),address_text:resolvedGeo.address||address};
   }
-  const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?SERVICE_DISCOVERY_RADIUS_KM:undefined;
+  // Saving follows the customer's choice on every call, not only the first one that geocodes the doorstep.
+  {const id=String(row.id),now=Date.now();
+    if(suppliedAddress&&input.saveToAccount!==false&&!await db.prepare("SELECT id FROM customer_addresses WHERE id=? AND customer_id=?").bind(id,input.customerId).first()){
+      // A service search is not permission to replace the customer's preferred address.
+      await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id=?) THEN 0 ELSE 1 END,?,? ON CONFLICT(id) DO NOTHING").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,input.customerId,now,now).run();
+    }
+  }
+  const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?(await uatSchedulingRuntime()?UAT_SERVICE_DISCOVERY_RADIUS_KM:SERVICE_DISCOVERY_RADIUS_KM):undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};
 }

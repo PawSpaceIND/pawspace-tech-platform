@@ -44,7 +44,8 @@ const SCHEDULING_DDL = [
 ];
 
 const CUSTOMER = "CUS-PETID-1", PROVIDER = "PRV-PETID-1";
-const START = "2026-11-04T09:00:00.000Z", END = "2026-11-04T11:00:00.000Z";
+// A Sitting Home Visit is one 60-minute window (SIT-04); the quote refuses a longer "visit".
+const START = "2026-11-04T09:00:00.000Z", END = "2026-11-04T10:00:00.000Z";
 
 /** A fresh isolate: new sqlite, new D1 binding (the libs memoise DDL on the binding object). */
 function freshDb() {

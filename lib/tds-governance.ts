@@ -13,7 +13,9 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-export const TDS_RATES={salary192:null,commission194H:0.02,professional194J:0.10} as const;
+// 194C (payment to a contractor for work) is 1% where the payee is an individual or HUF, as a provider is, and 2%
+// for anyone else. Only a full-time contractor statement uses it, when Finance picks it on the CA's advice.
+export const TDS_RATES={salary192:null,commission194H:0.02,professional194J:0.10,contract194C:0.01,contract194COther:0.02} as const;
 export const TDS_THRESHOLDS_FY={commission194H:20_000,professional194J:50_000} as const;
 const round2=(value:number)=>Math.round(value*100)/100;
 
@@ -119,6 +121,12 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
  const fyStartMs=Date.UTC(monthNum>=4?year:year-1,3,1)-(330*60_000);
  const fyPayouts=await guardedAll(db,"provider_payout_computations","SELECT c.booking_id,c.provider_id,c.provider_net_payout,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[fyStartMs,endMs],input.period);
  const fySettlements=await guardedAll(db,"boarding_host_settlement_ledger","SELECT booking_id,provider_id,payout_amount,eligible_at FROM boarding_host_settlement_ledger WHERE payout_amount IS NOT NULL AND eligible_at>=? AND eligible_at<?",[fyStartMs,endMs],input.period);
+ // Full-time contractors (owner decision 7, lib/contractor-pay.ts): the TDS on an approved monthly statement is
+ // what was actually deducted from the fee and incentive, so it is recorded as it stands. Per-job payout
+ // computations dated inside a contractor's pay window are not payments to them and are left out.
+ const contractorStatements=await guardedAll(db,"contractor_monthly_statements","SELECT id,provider_id,tds_section,tds_rate_pct,tds_base,tds_amount FROM contractor_monthly_statements WHERE period_code=? AND status='approved' AND tds_amount>0",[input.period],input.period);
+ const contractorWindows=await guardedAll(db,"contractor_pay_profiles","SELECT provider_id,effective_from,effective_to FROM contractor_pay_profiles WHERE status='active'",[],input.period);
+ const onContractorPay=(providerId:string,at:number)=>{const day=new Date(at+330*60_000).toISOString().slice(0,10);return contractorWindows.some(w=>String(w.provider_id)===providerId&&String(w.effective_from)<=day&&(w.effective_to==null||String(w.effective_to)>=day));};
  await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  for(const row of payroll){
   const gross=Number(row.gross_earnings||0);if(gross<=0)continue;
@@ -167,6 +175,7 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
   const model=String(row.engagement_model).trim().toLowerCase();
   if(directModels.has(model))continue; // salaried delivery is taxed under s192, never provider TDS
   const providerId=String(row.provider_id);
+  if(onContractorPay(providerId,Number(row.computed_at||0)))continue; // paid by the monthly contractor statement instead
   const section=contractModels.has(model)||contractModels.has(await workforceKind(providerId))?"194J":"194H";
   accumulate(section,providerId,Number(row.provider_net_payout||0),Number(row.computed_at||0),String(row.booking_id));
  }
@@ -178,13 +187,14 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
   const threshold=entry.section==="194H"?TDS_THRESHOLDS_FY.commission194H:TDS_THRESHOLDS_FY.professional194J;
   const rate=entry.section==="194H"?TDS_RATES.commission194H:TDS_RATES.professional194J;
   if(entry.fyCumulative<threshold)continue; // FY aggregate threshold not crossed yet
-  const prior=fyMonths.length?await safeAll(db,`SELECT COALESCE(SUM(base_amount),0) prior_base FROM tds_deductions WHERE section=? AND deductee_id=? AND period IN (${fyMonths.map(()=>"?").join(",")})`,[entry.section,providerId,...fyMonths]):[{prior_base:0}];
+  const prior=fyMonths.length?await safeAll(db,`SELECT COALESCE(SUM(base_amount),0) prior_base FROM tds_deductions WHERE section=? AND deductee_id=? AND source_type<>'contractor_statement' AND period IN (${fyMonths.map(()=>"?").join(",")})`,[entry.section,providerId,...fyMonths]):[{prior_base:0}];
   const priorTaxedBase=Number(prior[0]?.prior_base||0);
   const base=round2(entry.fyCumulative-priorTaxedBase); // full untaxed cumulative at first crossing, month amount afterwards
   const tds=round2(base*rate);
   if(tds<=0)continue;
   rows.push({section:entry.section,deducteeType:"provider",deducteeId:providerId,deducteeName:providerId,base,rate:rate*100,tds,sourceType:"provider_payouts",sourceRef:entry.monthRefs.sort().join(",").slice(0,180)});
  }
+ for(const row of contractorStatements)rows.push({section:String(row.tds_section),deducteeType:"provider",deducteeId:String(row.provider_id),deducteeName:String(row.provider_id),base:round2(Number(row.tds_base||0)),rate:Number(row.tds_rate_pct||0),tds:round2(Number(row.tds_amount||0)),sourceType:"contractor_statement",sourceRef:String(row.id)});
 
  const statements=rows.map(row=>db.prepare("INSERT OR REPLACE INTO tds_deductions (id,period,section,deductee_type,deductee_id,deductee_name,pan_status,base_amount,rate_pct,tds_amount,source_type,source_ref,computed_at) VALUES (?,?,?,?,?,?,'pending_verification',?,?,?,?,?,?)")
   .bind(`TDS-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,row.section,row.deducteeType,row.deducteeId,row.deducteeName,row.base,row.rate,row.tds,row.sourceType,row.sourceRef,now));

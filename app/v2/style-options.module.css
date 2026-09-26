@@ -15,6 +15,9 @@
   :global(body:has([data-v2-home]) .ps-order-fab) { top:14px; right:62px !important; bottom:auto !important; }
   :global(body:has([data-v2-home]) .ps-order-fab [role="dialog"]) { top:52px; right:-46px !important; bottom:auto !important; max-height:65dvh !important; }
   .surface:has([data-v2-home]) { padding-bottom:0; }
+  /* Native app only (html[data-pawspace-native], set by native-shell.tsx): below the status bar, like the page itself. */
+  :global(html[data-pawspace-native] body:has([data-v2-home]) .paw-appearance-trigger),
+  :global(html[data-pawspace-native] body:has([data-v2-home]) .ps-order-fab) { top:calc(14px + env(safe-area-inset-top,0px)); }
 }
 @media(prefers-reduced-motion:reduce) {
   .surface img[src="/assets/pawspace-official-lockup.png"] { animation:none; }

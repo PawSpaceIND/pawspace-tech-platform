@@ -82,6 +82,24 @@ const inr=(value:unknown)=>`₹${Number(value).toLocaleString("en-IN")}`;
  */
 async function trainingCatalogueAnswer(db:D1Database){const packages=await listTrainingPackages(db).catch(()=>[] as Row[]);if(!packages.length)return null;const programme=packages.find(item=>!Number(item.meet_and_greet)),extra=Number(programme?.extra_pet_percent??DEFAULT_EXTRA_PET_PERCENT);const lines=packages.map(item=>Number(item.meet_and_greet)?`• ${text(item.name)}: one home visit to meet a trainer, ${inr(item.base_price)}, paid in full`:`• ${text(item.name)}: ${Number(item.sessions)} sessions within ${Number(item.validity_days)} days, ${inr(item.base_price)}`);return`PawSpace Dog Training plans (prices are for one dog; each extra dog adds ${extra}% of the plan price):\n${lines.join("\n")}\nProgrammes can be paid in full or 50% upfront. Open the Training section to choose a plan, a trainer and your dates.`;}
 
+const PUBLISHED_PRICE_QUESTION=/\b(price|prices|pricing|cost|costs|charge|charges|rate|rates|fee|fees|how much)\b|₹|\brs\.?\s*\d/i;
+/** Owner decision: the assistant may quote published prices as "from Rs X", never a final amount. */
+async function publishedPriceAnswer(db:D1Database,service:PublicServiceEntry){
+ // One table per service: a missing table for another vertical must not hide this service's prices.
+ const sql=({
+  grooming:"SELECT MIN(base_price) price FROM service_packages WHERE service_code='grooming' AND active=1 AND instr(package_code,'__')=0",
+  dog_training:"SELECT MIN(base_price) price FROM training_commercial_packages WHERE active=1",
+  boarding:"SELECT MIN(base_price_per_pet) price FROM boarding_commercial_packages WHERE active=1",
+  pet_sitting:"SELECT MIN(base_price_per_pet) price FROM sitting_commercial_packages WHERE active=1",
+  dog_walking:"SELECT MIN(amount_per_walk) price FROM walking_commercial_packages WHERE active=1",
+ } as Record<string,string>)[service.code];
+ if(!sql)return null;
+ const row=await db.prepare(sql).first<Record<string,unknown>>().catch(()=>null),price=Number(row?.price);
+ if(!Number.isFinite(price)||price<=0)return null;
+ const from=new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(price);
+ return`${service.name} starts from ${from} for one pet. The final price depends on the package, date and time, and is confirmed at checkout.`;
+}
+
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
  await ensureAiWebChatTables(db);
  const query=text(input.query).slice(0,4000);if(!query)throw new Response("Question is required",{status:400});
@@ -105,6 +123,12 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
   if(catalogueAnswer){
    await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_training_catalogue_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
    return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output:catalogueAnswer,provider:"canonical_training_catalogue",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
+  }
+  // Owner decision: other services quote their published "from" price, from the same tables the booking prices from.
+  const priceAnswer=matchedService.enabled&&matchedService.code!=="dog_training"&&PUBLISHED_PRICE_QUESTION.test(inspected.redacted)?await publishedPriceAnswer(db,matchedService).catch(()=>null):null;
+  if(priceAnswer){
+   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
+   return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output:priceAnswer,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
   }
   if(isBareServiceQuestion(matchedService,inspected.redacted))return directoryReply(matchedService);
   // No provider configured: the directory answers as it always did, without the reads a model call needs.
@@ -284,8 +308,9 @@ export type WebChatTranscriptMessage={id:string;role:"customer"|"ai"|"bot"|"team
  * customer, and only customer-visible chat messages come back - never notes, other channels or staff
  * identities beyond "PawSpace team".
  */
-export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number}){
- await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
+export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number;ownershipVerified?:boolean}){
+ // ownershipVerified: the same request has just proved this actor owns the customer (a bot turn or start).
+ await ensureAiWebChatTables(db);if(!input.ownershipVerified)await requireCustomerOwnership(db,input.actor,input.customerId);
  let threadId=text(input.threadId);
  if(threadId){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
  else threadId=await currentWebChatThread(db,input.customerId);
@@ -346,9 +371,12 @@ export async function announcePaidAiBookings(db:D1Database,input:{threadId?:stri
 
 async function postBotMessage(db:D1Database,input:{threadId:string;customerId:string;reply:BotReply;idempotencyKey:string}){
  const now=Date.now();
- await db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_bot',NULL,?,?,'web-chat-bot',?,?)")
-  .bind(`MSG-BOT-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_BOT_TEMPLATE_KEY,JSON.stringify({text:input.reply.text,choices:input.reply.choices,inputHint:input.reply.inputHint}),input.idempotencyKey,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,deterministicBot:true}),now,now).run();
- await db.prepare("UPDATE communication_threads SET updated_at=? WHERE id=?").bind(now,input.threadId).run();
+ // Message and thread touch go in one D1 round trip.
+ await db.batch([
+  db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_bot',NULL,?,?,'web-chat-bot',?,?)")
+  .bind(`MSG-BOT-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_BOT_TEMPLATE_KEY,JSON.stringify({text:input.reply.text,choices:input.reply.choices,inputHint:input.reply.inputHint}),input.idempotencyKey,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,deterministicBot:true}),now,now),
+  db.prepare("UPDATE communication_threads SET updated_at=? WHERE id=?").bind(now,input.threadId),
+ ]);
 }
 
 async function recordCustomerMessage(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string}){

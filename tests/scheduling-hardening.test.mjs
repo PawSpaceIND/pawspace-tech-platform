@@ -401,3 +401,94 @@ test("engine: an empty optional weekday list uses the default cadence",async()=>
  const explicit=await schedule(memoryRepo({providers,windows:["06:00-21:00"]}),{...req,weekdays:[]});
  assert.deepEqual(explicit.occurrences,implicit.occurrences);assert.equal(explicit.occurrences.length,2);
 });
+
+// ---- SIT-03: an overnight Pet Sitting is at the customer's home, so its sitter is exclusive ----------
+// The master E2E reserved sit_sana for an overnight on 11-12 Oct although sit_sana already held a paid
+// overnight on 10-15 Oct: overnight Sitting was only capacity-summed like Boarding.
+
+const sittingNight = (start, end, extra = {}) => ({ cityId: "blr", zoneId: "blr-east", serviceCode: "pet_sitting", careMode: "overnight", petIds: ["Bruno"], scheduledStart: start, scheduledEnd: end, ...extra });
+
+test("engine: an overnight Pet Sitting blocks its sitter for any overlapping Sitting job, while Boarding still shares capacity", async () => {
+  const sitters = [mkProvider("sa", 96, { services: ["pet_sitting"], capacity: 4 }), mkProvider("sn", 80, { services: ["pet_sitting"], capacity: 4 })];
+  const stay = booking("sa", "2026-10-10T04:30:00.000Z", "2026-10-15T04:30:00.000Z"); // 10:00 IST 10 Oct -> 10:00 IST 15 Oct
+  const overlap = await schedule(memoryRepo({ providers: sitters, bookings: [stay] }), sittingNight("2026-10-11T04:30:00.000Z", "2026-10-12T04:30:00.000Z"));
+  assert.equal(overlap.provider?.id, "sn", "a second overlapping overnight goes to another sitter");
+  assert.match(overlap.evaluations.find((e) => e.providerId === "sa").reasons.join(" "), /travel\/service buffer/);
+  const overVisit = await schedule(memoryRepo({ providers: sitters, bookings: [booking("sa", "2026-10-20T06:30:00.000Z", "2026-10-20T07:30:00.000Z")] }), sittingNight("2026-10-20T03:30:00.000Z", "2026-10-21T03:30:00.000Z"));
+  assert.equal(overVisit.provider?.id, "sn", "an overnight across the sitter's existing visit is refused for that sitter");
+  const visitInside = await schedule(memoryRepo({ providers: sitters, bookings: [stay] }), sittingNight("2026-10-12T06:30:00.000Z", "2026-10-12T07:30:00.000Z", { careMode: "visit" }));
+  assert.equal(visitInside.provider?.id, "sn", "a visit inside the sitter's overnight is refused for that sitter");
+  const next = await schedule(memoryRepo({ providers: sitters, bookings: [stay] }), sittingNight("2026-10-15T05:00:00.000Z", "2026-10-16T05:00:00.000Z"));
+  assert.equal(next.provider?.id, "sa", "a non-overlapping overnight after the 30-minute travel buffer keeps the same sitter");
+  const touching = await schedule(memoryRepo({ providers: sitters, bookings: [stay] }), sittingNight("2026-10-15T04:30:00.000Z", "2026-10-16T04:30:00.000Z"));
+  assert.equal(touching.provider?.id, "sn", "as for visits, the next home needs the travel buffer: an overnight starting as the last one ends goes elsewhere");
+  const hosts = [mkProvider("h1", 96, { services: ["boarding"], capacity: 4 })];
+  const boarding = await schedule(memoryRepo({ providers: hosts, bookings: [booking("h1", "2026-10-10T04:30:00.000Z", "2026-10-15T04:30:00.000Z")] }), sittingNight("2026-10-11T04:30:00.000Z", "2026-10-12T04:30:00.000Z", { serviceCode: "boarding", careMode: undefined }));
+  assert.equal(boarding.provider?.id, "h1", "Boarding at the host's home still takes a second overlapping stay within capacity 4");
+});
+
+const sittingReserve = (clientRequestId, start, end, extra = {}) => reserve({ clientRequestId, serviceCode: "pet_sitting", careMode: "overnight", preferredProviderId: "sit_sana", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), ...extra });
+const otherHousehold = { customerId: "cus_other", petIds: ["Bruno2"] };
+const activeFor = (providerId) => sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled'").get(providerId).c;
+
+test("route: another household cannot reserve an overnight sitter already holding an overlapping overnight, even in a race", async () => {
+  freshDb();
+  const first = await post(sittingReserve("sit-night-1", istInstant(12, 10), istInstant(17, 10)));
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.data.provider.id, "sit_sana");
+  const preview = await post(sittingReserve("sit-night-preview", istInstant(13, 10), istInstant(14, 10), { ...otherHousehold, action: "preview", preferredProviderId: undefined }));
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.ok(!preview.body.data.providers.some((provider) => provider.id === "sit_sana"), "the sitter preview no longer offers the busy sitter");
+  const second = await post(sittingReserve("sit-night-2", istInstant(13, 10), istInstant(14, 10), otherHousehold));
+  assert.equal(second.status, 409, JSON.stringify(second.body));
+  assert.equal(second.body.error, "SELECTED_SITTER_UNAVAILABLE");
+  // The engine cannot see the first stay (a competing transaction not yet visible): only the in-statement guard remains.
+  hideReservations = true;
+  const raced = await post(sittingReserve("sit-night-3", istInstant(13, 10), istInstant(14, 10), otherHousehold));
+  hideReservations = false;
+  assert.equal(raced.status, 409, JSON.stringify(raced.body));
+  assert.equal(raced.body.error, "SLOT_TAKEN");
+  assert.equal(activeFor("sit_sana"), 1, "sit_sana holds exactly one reservation for the overlapping nights");
+});
+
+test("route: an overnight Sitting and a visit never overlap for one sitter, in either order, and a later overnight still books", async () => {
+  freshDb();
+  const visit = (clientRequestId, start, extra = {}) => sittingReserve(clientRequestId, start, new Date(start.getTime() + 60 * 60_000), { careMode: "visit", ...extra });
+  assert.equal((await post(visit("sit-visit-1", istInstant(12, 12)))).status, 200);
+  const overVisit = await post(sittingReserve("sit-night-over-visit", istInstant(12, 9), istInstant(13, 9), otherHousehold));
+  assert.equal(overVisit.status, 409, JSON.stringify(overVisit.body));
+  assert.equal((await post(sittingReserve("sit-night-a", istInstant(15, 10), istInstant(17, 10)))).status, 200);
+  const visitInside = await post(visit("sit-visit-in-night", istInstant(16, 12), otherHousehold));
+  assert.equal(visitInside.status, 409, JSON.stringify(visitInside.body));
+  const later = await post(sittingReserve("sit-night-b", new Date(istInstant(17, 10).getTime() + 30 * 60_000), istInstant(18, 10), otherHousehold));
+  assert.equal(later.status, 200, JSON.stringify(later.body));
+  assert.equal(later.body.data.provider.id, "sit_sana");
+  assert.equal(activeFor("sit_sana"), 3);
+});
+
+test("route: a failed reassign does not restore an overnight Sitting over one that took its sitter meanwhile", async () => {
+  freshDb();
+  const created = await post(sittingReserve("sit-restore-1", istInstant(14, 10), istInstant(16, 10)));
+  assert.equal(created.body.data.provider.id, "sit_sana", JSON.stringify(created.body));
+  sqlite.prepare("UPDATE provider_capacity_profiles SET status='inactive' WHERE id IN ('sit_neha','sit_asha')").run();
+  // Another household's overnight that took sit_sana while the reassign had released the slot.
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES ('RES-OTHER-NIGHT','GRP-OTHER-NIGHT','sit_sana','pet_sitting','blr','blr-east','cus_other','[\"Bruno2\"]',?,?,1,1,'overnight','assigned','{}',?)")
+    .run(istInstant(15, 10).toISOString(), istInstant(17, 10).toISOString(), Date.now());
+  const result = await post({ action: "reassign", groupId: "sit-restore-1", reason: "Customer asked for another sitter" });
+  assert.equal(result.status, 409, JSON.stringify(result.body));
+  assert.equal(result.body.error, "SLOT_LOST_DURING_REASSIGN");
+  assert.equal(activeFor("sit_sana"), 1, "the restore did not put a second overlapping overnight back on sit_sana");
+});
+
+test("engine: a Pet Sitting visit reserves exactly its 60-minute slot (SIT-04)", async () => {
+  const sitters = [mkProvider("sa", 96, { services: ["pet_sitting"], capacity: 4 })];
+  const visit = (minutes) => sittingNight("2026-10-12T06:30:00.000Z", new Date(Date.parse("2026-10-12T06:30:00.000Z") + minutes * 60_000).toISOString(), { careMode: "visit" });
+  const hour = await schedule(memoryRepo({ providers: sitters }), visit(60));
+  assert.equal(hour.provider?.id, "sa");
+  assert.deepEqual(hour.occurrences.map((o) => [o.start, o.end]), [["2026-10-12T06:30:00.000Z", "2026-10-12T07:30:00.000Z"]], "the reservation covers exactly the 60-minute slot");
+  for (const minutes of [61, 4 * 60, 10 * 60]) {
+    await assert.rejects(schedule(memoryRepo({ providers: sitters }), visit(minutes)), (error) => error.statusCode === 422 && /A Home Visit is 60 minutes/.test(error.message), `${minutes}-minute visit`);
+  }
+  const overnight = await schedule(memoryRepo({ providers: sitters }), sittingNight("2026-10-12T06:30:00.000Z", "2026-10-13T06:30:00.000Z"));
+  assert.equal(overnight.provider?.id, "sa", "overnight Sitting keeps its own window rules");
+});

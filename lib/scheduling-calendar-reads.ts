@@ -13,7 +13,8 @@ export function schedulingDates(occurrences: Occurrence[], offsetMinutes: number
   return [...dates].sort();
 }
 
-/** Two request-local reads replace provider × session database round trips.
+/** Two request-local reads replace provider × session database round trips (calendar data only; provider
+ * loading is set-based in loadGovernedProviders).
  * Never reuse this snapshot across previews or reservations: a new request must see new leave/rosters.
  */
 export function schedulingCalendarReads(db: Db, cityId: string, occurrences: Occurrence[], offsetMinutes: number) {
@@ -22,18 +23,23 @@ export function schedulingCalendarReads(db: Db, cityId: string, occurrences: Occ
   const end = new Date(Math.max(...occurrences.map(item => Date.parse(item.end)))).toISOString();
   let roster: Promise<Row[]> | undefined;
   let leave: Promise<Row[]> | undefined;
+  const rosterRows = () => roster ??= db.prepare("SELECT * FROM scheduling_availability WHERE city_id=? AND date>=? AND date<=?")
+    .bind(cityId, dates[0], dates[dates.length - 1]).all<Row>().then(result => result.results);
+  const leaveRows = () => leave ??= db.prepare("SELECT u.provider_id,u.starts_at,u.ends_at FROM provider_unavailability u JOIN provider_capacity_profiles p ON p.id=u.provider_id WHERE p.city_id=? AND u.status='active' AND julianday(u.starts_at)<julianday(?) AND julianday(u.ends_at)>julianday(?)")
+    .bind(cityId, end, start).all<Row>().then(result => result.results);
   return {
+    /** Start both reads now, alongside provider loading, instead of one after the other during evaluation. */
+    prime() {
+      rosterRows().catch(() => undefined);
+      leaveRows().catch(() => undefined);
+    },
     async availability(providerId: string, date: string) {
-      roster ??= db.prepare("SELECT * FROM scheduling_availability WHERE city_id=? AND date>=? AND date<=?")
-        .bind(cityId, dates[0], dates[dates.length - 1]).all<Row>().then(result => result.results);
-      const rows = (await roster).filter(row => String(row.provider_id) === providerId && String(row.date) === date);
+      const rows = (await rosterRows()).filter(row => String(row.provider_id) === providerId && String(row.date) === date);
       const authored = rows.filter(row => ["partner_app", "operations", "roster"].includes(String(row.source)));
       return authored.length ? authored : rows;
     },
     async unavailable(providerId: string, scheduledStart: string, scheduledEnd: string) {
-      leave ??= db.prepare("SELECT u.provider_id,u.starts_at,u.ends_at FROM provider_unavailability u JOIN provider_capacity_profiles p ON p.id=u.provider_id WHERE p.city_id=? AND u.status='active' AND julianday(u.starts_at)<julianday(?) AND julianday(u.ends_at)>julianday(?)")
-        .bind(cityId, end, start).all<Row>().then(result => result.results);
-      return (await leave).some(row => String(row.provider_id) === providerId && Date.parse(String(row.starts_at)) < Date.parse(scheduledEnd) && Date.parse(String(row.ends_at)) > Date.parse(scheduledStart));
+      return (await leaveRows()).some(row => String(row.provider_id) === providerId && Date.parse(String(row.starts_at)) < Date.parse(scheduledEnd) && Date.parse(String(row.ends_at)) > Date.parse(scheduledStart));
     },
   };
 }

@@ -1,6 +1,10 @@
 {
   "base": "82d4158b339bedebd9485f8bc5324c54475f96de",
   "files": {
+    "app/team/finance/boarding/boarding-finance-workspace.tsx": {
+      "semantic": "5c5bf47763e32f9c4d4e6e9c2c86e2d610567a9ccf560886153dc4710d259b0e",
+      "mainRoots": 1
+    },
     "app/team/finance/cash-flow/page.tsx": {
       "semantic": "e0cb0c0245bdf0e4c6ce621a1d26014291c92900be1e709ca8514edf34f8eb6d",
       "mainRoots": 1
@@ -14,11 +18,11 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "ff9e5156a619b1ba70232c765fb2dbc53bb38da42f0e051b725e6f9d6a877469",
+      "semantic": "064a3d76c45040ca725f7e73f47dc5acebe5819368eaa0a3cf664d2fa15f6f72",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
-      "semantic": "5ef17517178921b8eec7eb69a48c3ac4970309360fb8cde2394ec4cc784dc79d",
+      "semantic": "e372b42d26e694deded4b96d2e2fdb24fd009f1c725968d69bca276c8f052ce2",
       "mainRoots": 1
     },
     "app/team/finance/relocation/page.tsx": {
@@ -26,7 +30,7 @@
       "mainRoots": 1
     },
     "app/team/finance/sitting/sitting-finance-workspace.tsx": {
-      "semantic": "cce87069a275b580c294efebd7b9646b13781bfda2bcb4a1b07efa4f1eecfd5a",
+      "semantic": "bfcce787ec049a852c8fc50016ace019caa507c318e2b5ce202c00a4f63a0b86",
       "mainRoots": 1
     },
     "app/team/finance/statutory/page.tsx": {
@@ -91,6 +95,7 @@
     }
   },
   "pages": [
+    "app/team/finance/boarding",
     "app/team/finance/cash-flow",
     "app/team/finance/food",
     "app/team/finance/funeral-memorial",

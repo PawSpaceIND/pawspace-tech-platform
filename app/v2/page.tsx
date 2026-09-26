@@ -46,7 +46,8 @@ const money = (value: number, currency = "INR") => new Intl.NumberFormat("en-IN"
 const dateLabel = (value: string) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Schedule pending";
-  return new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(parsed);
+  // Service times are Bengaluru times; a device in another time zone must not shift them.
+  return `${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(parsed)} IST`;
 };
 
 export default function PawSpaceV2() {
@@ -288,7 +289,12 @@ export default function PawSpaceV2() {
 
             <section className={styles.bookingCard} data-has-booking={Boolean(upcoming)}>
               <div className={styles.cardLabel}><span>◎</span> NEXT CARE</div>
-              {upcoming ? (
+              {loading ? (
+                <>
+                  <h3>Checking your bookings…</h3>
+                  <p>Your next visit will appear here in a moment.</p>
+                </>
+              ) : upcoming ? (
                 <>
                   <h3>{upcoming.packageName}</h3>
                   <p>{dateLabel(upcoming.scheduledStart)}</p>

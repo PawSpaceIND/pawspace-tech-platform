@@ -45,7 +45,11 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  // Ownership is settled once, before the request's own fields choose what happens next.
  await requireCustomerOwnership(db,actor,customerId);
  if(body.bot===true){
-  if(body.start===true)return json({data:{mode:"authenticated",bot:await startCustomerWebChatBot(db,{actor,customerId})}});
+  /* Every signed-in bot answer carries the conversation back, so the page shows the reply from this one
+   * request instead of reading the thread again (each extra request costs the customer seconds). */
+  // The turn itself is stored; if reading it back fails, the page reads the thread instead (transcript null).
+  const withTranscript=async()=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true}).catch((error:unknown)=>{console.error("ai-web-chat: reply transcript read failed",error instanceof Error?error.message:String(error));return null;});
+  if(body.start===true){const bot=await startCustomerWebChatBot(db,{actor,customerId});return json({data:{mode:"authenticated",bot,transcript:await withTranscript()}});}
   if(!(body.message||body.choiceId)||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
   const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey});
   await securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
@@ -55,9 +59,9 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
    const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:"Please call me back",idempotencyKey:`${body.idempotencyKey}:call`});
    if(!callback.matched)await requestAiHumanHandoff(db,{actorEmail:actor.email,threadId:result.threadId,customerId,reason:"customer_requested_human",confidence:null});
    await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,surface:"web_chat_bot"});
-   return json({data:{mode:"authenticated",...result,callback}},callback.matched?201:200);
+   return json({data:{mode:"authenticated",...result,callback,transcript:await withTranscript()}},callback.matched?201:200);
   }
-  return json({data:{mode:"authenticated",...result}});
+  return json({data:{mode:"authenticated",...result,transcript:await withTranscript()}});
  }
  if(!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay

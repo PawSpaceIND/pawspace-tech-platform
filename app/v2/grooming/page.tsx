@@ -32,10 +32,12 @@ import V2GroomingPaymentPanel from "./payment-panel";
 import V2GroomingCouponBox from "./coupon-box";
 import ContactForm from "../../contact/contact-form";
 import { serviceAddressConflict } from "../../../lib/service-address-consistency";
-import { v2GroomingPetAudience, v2GroomingSelectionIssue } from "../../../lib/v2/grooming-selection";
+import { EXTRA_CARE_MINUTES, v2ExtraCareReason, v2GroomingPetAudience, v2GroomingSelectionIssue, v2YoungPackageIssue } from "../../../lib/v2/grooming-selection";
 import styles from "./grooming.module.css";
 import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
+import PetManager from "../pet-form";
+import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
@@ -48,10 +50,18 @@ export default function V2GroomingPage() {
   const [loading, setLoading] = useState(true);
   const [fatal, setFatal] = useState("");
   const [selectedPetIds, setSelectedPetIds] = useState<string[]>([]);
+  // New customers used to reach a dead end here: pets could only be added in V2 Account.
+  const [addingPet, setAddingPet] = useState(false);
+  // Owner decision (H4): the in-app extras, in V2 before launch.
+  const [addOns, setAddOns] = useState<string[]>([]);
+  const [comfort, setComfort] = useState<"friendly" | "anxious" | "aggressive">("friendly");
+  const [specialInstructions, setSpecialInstructions] = useState("");
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
   const [selectedPackageCode, setSelectedPackageCode] = useState("");
   const [address, setAddress] = useState("");
   const [savedAddressId, setSavedAddressId] = useState("");
+  // A typed doorstep is kept in the account only when the customer asks; availability checks never save it.
+  const [saveAddress, setSaveAddress] = useState(false);
   const [pincode, setPincode] = useState("");
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [coverageBusy, setCoverageBusy] = useState(false);
@@ -108,15 +118,24 @@ export default function V2GroomingPage() {
     () => (account?.pets || []).filter(pet => selectedPetIds.includes(pet.id)),
     [account, selectedPetIds],
   );
-  const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0]) : null;
-  const selectionIssue = v2GroomingSelectionIssue(selectedPets);
+  const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0], date || undefined) : null;
+  const selectionIssue = v2GroomingSelectionIssue(selectedPets, undefined, date || undefined);
   const mixedAudience = Boolean(selectionIssue);
   const packages = useMemo(
     () => (catalogue?.packages || []).filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
     [catalogue, audience, selectedPets.length],
   );
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
-  const bundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  const packageBundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
+  // Same package and price with a longer slot, so availability, the quote window, the groomer check and checkout agree.
+  const extraCare = v2ExtraCareReason(selectedPets);
+  const bundle = useMemo(() => packageBundle && extraCare ? { ...packageBundle, slotMinutes: packageBundle.slotMinutes + EXTRA_CARE_MINUTES, blockingMinutes: packageBundle.blockingMinutes + EXTRA_CARE_MINUTES } : packageBundle, [packageBundle, extraCare]);
+  const youngIssue = selectedPackage?.audience === "young" && date && !mixedAudience ? v2YoungPackageIssue(selectedPets, date) : null;
+  // Disabled checkout buttons point at the step that explains why.
+  const blockingIssue = mixedAudience ? { id: "v2-selection-issue", step: "01" } : youngIssue ? { id: "v2-young-issue", step: "02" } : null;
+  const availableAddOns = groomingAddOnsForSpecies(String(selectedPets[0]?.species || "").toLowerCase());
+  const chosenAddOns = addOns.filter(label => availableAddOns.some(item => item.label === label));
+  const addOnTotal = chosenAddOns.reduce((sum, label) => sum + (availableAddOns.find(item => item.label === label)?.price ?? 0), 0);
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
 
@@ -172,7 +191,7 @@ export default function V2GroomingPage() {
   };
 
   const beginSecureCheckout = async () => {
-    if (checkoutLock.current || providerBusy || mixedAudience) return;
+    if (checkoutLock.current || providerBusy || mixedAudience || youngIssue) return;
     const provider = providers?.providers.find(item => item.id === selectedProviderId);
     if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
     checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
@@ -180,7 +199,8 @@ export default function V2GroomingPage() {
       await createV2GroomingBooking({
         account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
-        scheduledStart, scheduledEnd,
+        scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
+        addOns: addOns.filter(label => availableAddOns.some(item => item.label === label)), comfort, specialInstructions,
         coupon: coupon.quoteId ? { quoteId: coupon.quoteId, code: coupon.code, discount: coupon.discount } : undefined,
       }, current => {
         if (!mounted.current) return;
@@ -195,7 +215,7 @@ export default function V2GroomingPage() {
   };
 
   const checkLiveCare = async () => {
-    if (!account || !bundle || !coverage || !date || mixedAudience) return;
+    if (!account || !bundle || !coverage || !date || mixedAudience || youngIssue) return;
     const version = ++careVersion.current;
     setQuote(null); setCoupon({ discount: 0, code: "", quoteId: "" });
     setProviderBusy(true);
@@ -287,8 +307,14 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div>
+            <button type="button" className={styles.liveButton} aria-expanded={addingPet} onClick={() => setAddingPet(open => !open)}>{addingPet ? "Close pet form" : account.pets.length ? "＋ Add another pet" : "＋ Add your pet to start"}</button>
+            {addingPet && <PetManager customer={{ customerId: account.customerId, customerName: account.name, phone: account.primaryPhone }} onPetsChanged={pets => {
+              const known = new Set(account.pets.map(pet => pet.id)), added = pets.find(pet => !known.has(pet.id));
+              setAccount(current => current ? { ...current, pets } as CustomerAccountRecord : current);
+              if (added) { invalidateCare(); setSelectedPetIds([added.id]); setAddingPet(false); }
+            }} />}
             <p className={styles.helper}>{selectedPetIds.length}/4 pets selected. Multi-pet prices come from the governed catalogue. More than four opens a team enquiry.</p>
-            {mixedAudience && <p className={styles.inlineError} role="alert">{selectionIssue}</p>}
+            {mixedAudience && <p id="v2-selection-issue" className={styles.inlineError} role="alert">{selectionIssue}</p>}
           </section>
 
           <section className={styles.step}>
@@ -305,16 +331,24 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
+            {youngIssue && <p id="v2-young-issue" className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
+            {extraCare && <p className={styles.helper} role="note">{extraCare}</p>}
+            {availableAddOns.length > 0 && <div className={styles.helper} aria-label="Extras and care notes">
+              <b>Extras</b>{availableAddOns.map(item => <label key={item.label} style={{ display: "block" }}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> {item.label} · {money(item.price)}</label>)}
+              <label style={{ display: "block", marginTop: 8 }}>How is your pet with grooming?<select style={{ display: "block", width: "100%", maxWidth: "100%" }} value={comfort} onChange={event => setComfort(event.target.value as typeof comfort)}><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
+              <label style={{ display: "block", marginTop: 8 }}>Notes for your groomer (optional)<textarea maxLength={300} value={specialInstructions} onChange={event => setSpecialInstructions(event.target.value)} placeholder="e.g. Sensitive paws, please use the balcony tap" style={{ display: "block", width: "100%", maxWidth: "100%" }} /></label>
+            </div>}
           </section>
 
           <section className={styles.step}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2>Where should we come?</h2></div></div>
-            {account.addresses.length>0&&<label>Saved service address<select value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
+            {account.addresses.length>0&&<label>Saved service address<select style={{display:"block",width:"100%",maxWidth:"100%"}} value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
               <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
             </div>
+            {!savedAddressId && address.trim().length >= 8 && <label className={styles.helper}><input type="checkbox" checked={saveAddress} onChange={event => setSaveAddress(event.target.checked)} /> Save this address to my account</label>}
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
             {coverage && <p className={styles.helper}>Service area matched only. The complete doorstep must still be map-verified before payment.</p>}
             {coverageError && <p role="alert" className={styles.inlineError}>{coverageError}</p>}
@@ -327,7 +361,8 @@ export default function V2GroomingPage() {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
-            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || providerBusy} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
           </section>
 
@@ -350,11 +385,11 @@ export default function V2GroomingPage() {
             <div><span>When</span><b>{summaryWhen}</b></div>
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
-          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price) : bundle ? money(bundle.price) : "—"}</b><small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
+          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           {quote && account && coverage && bundle && <V2GroomingCouponBox key={`${quote.price}|${bundle.packageCode}|${scheduledStart}|${coverage.cityId}|${coverage.zoneId}`} orderValue={quote.price} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
-          {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
+          {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || couponNeedsReapply(coupon.code, coupon.quoteId)} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>

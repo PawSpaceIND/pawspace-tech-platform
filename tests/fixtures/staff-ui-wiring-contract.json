@@ -32,7 +32,7 @@
     ]
   },
   "app/booking-command-center/page.tsx": {
-    "logicHash": "f9d45dde7a814684d4b6e1925a44d8dcbc3ffd2eea02a9c3fa395d99ecfe01c5",
+    "logicHash": "fa28f5f0f74f659ec2ceac9b07caac3a9eb19a4e641e57056fb10175f5c15d50",
     "bindings": [
       "onChange={event => setActionReason(event.target.value)}",
       "onChange={event => setQuery(event.target.value)}",
