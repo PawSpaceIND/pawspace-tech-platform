@@ -199,7 +199,7 @@ test("the Driver and Host workspaces gate Accept on the offer too", () => {
 test("the Partner app counts only active work and gives non-grooming partners Jobs and GPS that lead somewhere", () => {
   const page = read("app/partner-app/page.tsx");
   assert.match(page, /setOtherJobs\(others\(\[\.\.\.feed\.needsAction,\.\.\.feed\.today,\.\.\.feed\.upcoming\]\)\)/, "active other-service jobs exclude Needs Operations and Past");
-  assert.match(page, /<span>\{jobsLoaded\?activeJobs\.length\+otherJobs\.length:"…"\}<\/span><small>active jobs<\/small>/);
+  assert.match(page, /<span>\{jobsLoaded\?activeJobs\.length\+otherJobs\.length:"…"\}<\/span><small>active jobs<\/small>/, "active work only, and … until the jobs load");
   assert.doesNotMatch(page, /otherJobs\.filter\(job=>!\["completed","cancelled"\]\.includes\(job\.status\)\)\.length/, "the old count treated every non-completed job as active");
   assert.match(page, /aria-label="Needs Operations"/);
   assert.match(page, /Past \(\{otherPast\.length\}\) · not active/);

@@ -85,7 +85,7 @@ async function seedProgrammes(world, count, sessions, options = {}) {
 
 /** The read listTrainerSessions made once per session before it was batched. */
 const perSessionEvents = (world, sessionId) =>
-  world.sqlite.prepare("SELECT event_type,actor_id,detail_json,created_at FROM training_session_events WHERE session_id=? ORDER BY created_at DESC LIMIT 20").all(sessionId).map((row) => ({ ...row }));
+  world.sqlite.prepare("SELECT event_type,actor_id,detail_json,created_at FROM training_session_events WHERE session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 20").all(sessionId).map((row) => ({ ...row }));
 
 test("GET /api/training-sessions costs the same D1 calls for 5 and 40 sessions and returns each session's newest 20 events", async () => {
   const world = freshWorld();

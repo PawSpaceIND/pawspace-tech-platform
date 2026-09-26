@@ -155,9 +155,9 @@ test("the review step's coupon chain: seeds in one call, and the governed Traini
   assert.deepEqual([quote.discount, quote.totalAmount, quote.amountDueNow, quote.couponCode, quote.couponQuoteId], [100, 11900, 11900, "UATCARE100", coupon.quoteId]);
 });
 
-test("ensureControlRuntimeTables runs once per binding (CREATE and the seeds in one batch) and never resets a stop", async () => {
+test("ensureControlRuntimeTables runs once per binding (one batch: CREATE + defaults) and never resets a stop", async () => {
   const harness = freshCountingD1();
-  // #1105 memoizes the switch table per D1 binding; #1112 sends the CREATE and the six defaults as ONE batch, then nothing.
+  // #1105 memoizes the switch table per D1 binding, and #1112 sends the CREATE and the six defaults as one batch; then nothing.
   await assertWithinBudget(harness, { max: 1, min: 1, label: "ensureControlRuntimeTables on a new database" }, () => controls.ensureControlRuntimeTables(harness.db));
   await assertWithinBudget(harness, { max: 0, min: 0, label: "ensureControlRuntimeTables again on the same binding" }, () => controls.ensureControlRuntimeTables(harness.db));
   const rows = () => harness.sqlite.prepare("SELECT code,enabled,reason,updated_by FROM control_runtime_switches ORDER BY code").all().map((row) => ({ ...row }));
