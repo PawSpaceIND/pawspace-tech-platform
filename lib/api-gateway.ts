@@ -93,6 +93,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/statutory-compliance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/pnl-reporting")return "finance.view";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/contractor-pay")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
   if(url.pathname==="/api/unit-economics")return "reports.view";
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";

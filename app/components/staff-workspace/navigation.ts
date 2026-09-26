@@ -30,6 +30,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
   { id: "finance", label: "Finance & compliance", links: [
     { label: "Finance workspace", href: "/team/finance", permission: "finance.view" },
     { label: "Cash flow", href: "/team/finance/cash-flow", permission: "finance.view" },
+    { label: "Contractor pay", href: "/team/finance/contractors", permission: "finance.view" },
     { label: "Compliance", href: "/team/finance-compliance", permission: "finance.view" },
   ] },
   { id: "growth", label: "Growth & communications", links: [
