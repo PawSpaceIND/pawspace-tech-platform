@@ -1458,7 +1458,7 @@
     "lib/use-flow-history.ts": "ed63ae7f000b567e26e8336d53aa77dc864126c63e82e32f2d8edde12a4320ad",
     "lib/use-query-parameter.ts": "176db504884053aa98646c8cdea22d151fcd0c20e34118c4c03ed4a0bcfac7d0",
     "lib/v2/customer-experience-client.ts": "aae0e9cd82cba674ecc2a593eb131c69c71d0864da65dac0b240d6c85e6e0f9a",
-    "lib/v2/grooming-checkout-client.ts": "cb92ce0efaf2ad65b1ac72b77fb6f8d1a37437ac30ea4bee8f0e4185243e6bd8",
+    "lib/v2/grooming-checkout-client.ts": "403a61f347d4620075aa031674ae4a32dacd2214aa2f72028c1ac1b739971c54",
     "lib/v2/grooming-checkout-readiness.ts": "6b9e6437f84c9ad3b1521c47754bfe1f7d0afd8d21d1346a9e486fe9cd8e2acb",
     "lib/v2/grooming-client.ts": "fae92eb2632fce3c69e7f957f5d413369b34d3b339fc5c97feee0ea607043eb3",
     "lib/v2/grooming-confirmation-contract.ts": "abaafc04e4da6c418f5a072b1d4fdf469bdf834c675af51711e7ccaef34fb4d8",
