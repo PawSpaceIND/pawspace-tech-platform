@@ -1,0 +1,474 @@
+{
+  "reason": "Functional introduction requests, own-booking caregiver chat and feedback replace previously disconnected displays. Only exact prior source hashes of changed files were updated; payment, ownership, capacity, pricing and no-fabrication assertions stay executable.",
+  "baseline": "bd89e0a2f93d373bcf09b3a60813f981a10cf95f",
+  "entries": [
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/host/page.tsx",
+      "old": "480dfede014dccd67d8736df07aca6d2aedbc5a2f24cfa29035abeaa5e00b80c",
+      "new": "b5bd086e71a6f9bc063322f9167efa8f60bb1ede4de26856f7a6c06c9dc5d33d"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.app/sitter/sitting-workspace.tsx",
+      "old": "8b63c71f22e487b83afdc0eeb8cd1d021d6e143ca6659574f0eed9301c082f4b",
+      "new": "1b2c4acf525531068255bb83c99ec83920ebdb1da6c31c4f1ad463e20f1b31f6"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/host/page.tsx",
+      "old": "480dfede014dccd67d8736df07aca6d2aedbc5a2f24cfa29035abeaa5e00b80c",
+      "new": "b5bd086e71a6f9bc063322f9167efa8f60bb1ede4de26856f7a6c06c9dc5d33d"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.app/sitter/sitting-workspace.tsx",
+      "old": "8b63c71f22e487b83afdc0eeb8cd1d021d6e143ca6659574f0eed9301c082f4b",
+      "new": "1b2c4acf525531068255bb83c99ec83920ebdb1da6c31c4f1ad463e20f1b31f6"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/host/page.tsx",
+      "old": "480dfede014dccd67d8736df07aca6d2aedbc5a2f24cfa29035abeaa5e00b80c",
+      "new": "b5bd086e71a6f9bc063322f9167efa8f60bb1ede4de26856f7a6c06c9dc5d33d"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.app/sitter/sitting-workspace.tsx",
+      "old": "8b63c71f22e487b83afdc0eeb8cd1d021d6e143ca6659574f0eed9301c082f4b",
+      "new": "1b2c4acf525531068255bb83c99ec83920ebdb1da6c31c4f1ad463e20f1b31f6"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/api/provider-chat/route.ts",
+      "old": "c67ebd1be4fd7bbff2098b8ac7b96a2db4162eabc142102ea0d8df7da005ffca",
+      "new": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/host/page.tsx",
+      "old": "480dfede014dccd67d8736df07aca6d2aedbc5a2f24cfa29035abeaa5e00b80c",
+      "new": "b5bd086e71a6f9bc063322f9167efa8f60bb1ede4de26856f7a6c06c9dc5d33d"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/boarding-customer-stay-panel.tsx",
+      "old": "dc711409517376a757ef20b2b9a0c05cb0a83d664be49de610d2ea998269aaad",
+      "new": "1b67430fc57a2ac5f0b3dfd9e790ed43fb3fa2be84ed812a14a1a57f67e89929"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/sitting-customer-panel.tsx",
+      "old": "9ea2750c7c0d7f2fd3d9b1b4db73a18a2b729fcc51565e514241297f31a6f9c4",
+      "new": "5124b105377ded8da572c1d5f34af39bb4ded26e4b8fd42c397364ef7378fe7a"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/mobile-app/stay-flow.tsx",
+      "old": "c68c45491208da83a6b276f706e0595979825118466fd6ec1956684cca150af4",
+      "new": "512fa48afcba1ebbb12898a1773bff32b27178cc604ff7bc36065bc3a53897a6"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.app/sitter/sitting-workspace.tsx",
+      "old": "8b63c71f22e487b83afdc0eeb8cd1d021d6e143ca6659574f0eed9301c082f4b",
+      "new": "1b2c4acf525531068255bb83c99ec83920ebdb1da6c31c4f1ad463e20f1b31f6"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/api-gateway.ts",
+      "old": "4a95b2d7f21cb0bfb4975055b77e73558223eea8be1e7af5934991ff7534b4ec",
+      "new": "e593cbc236841b7fc239a080ca608dd0aaae1d19bf4ce0b3b01346413bc67259"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/meet-and-greet.ts",
+      "old": "2a626c56de868545f14cc9804f5081a4f92cc7aff8f6ad4c751e7f2373c3abbc",
+      "new": "f08abc0cfd92e24072fe5ec938950977511c40609fdeb41e35d642207dfde59b"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/session-api-gateway.ts",
+      "old": "93fb2165ae266986d208c2f3772f926254fc7761c262ed3a1bd11522ac81f072",
+      "new": "8bd8dd80c77cc98646bee5881b5fc85dcc3cc78813d81d4383d0acd962ab35c4"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "field": "protected.lib/trust-safety-governance.ts",
+      "old": "ebec0f891cabfc608dcd109893e1bd2c6ec07c7156309b90076f38aa8e394659",
+      "new": "1d977692d3fd9ea1fabe02c3afb79bd62c92a26d22f94008adfc6d4835e7d18c"
+    }
+  ]
+}
