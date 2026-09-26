@@ -62,6 +62,19 @@ async function step(area: string, name: string, fn: () => Promise<string | void>
   flush();
   return status;
 }
+/** Click Send in the V2 chat; when it cannot be clicked, say why (disabled, covered, or not rendered) with a screenshot. */
+async function sendChat(page: Page, label: string) {
+  const send = page.getByRole("button", { name: "Send message" });
+  try { await send.click({ timeout: 20_000 }); return; } catch {
+    await shot(page, `${label}-send-blocked`);
+    const why = await send.evaluate((el) => {
+      const b = el as HTMLButtonElement, r = b.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return `disabled=${b.disabled} aria-disabled=${b.getAttribute("aria-disabled")} rect=${Math.round(r.top)},${Math.round(r.height)} covered-by=${top && top !== b && !b.contains(top) ? (top.tagName + "." + String(top.className).slice(0, 60) + " \"" + (top.textContent || "").trim().slice(0, 60) + "\"") : "none"}`;
+    }).catch(() => "Send button not rendered");
+    throw fail(`Send message could not be clicked (${why}); page: ${(await mainText(page)).replace(/\n+/g, " | ").slice(0, 300)}`);
+  }
+}
+
 async function shot(page: Page, name: string, fullPage = false) {
   shotNo += 1;
   const file = `${SHOTS}/${String(shotNo).padStart(3, "0")}-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.jpg`;
@@ -248,7 +261,7 @@ async function fundingState(page: Page, bookingId: string) {
 }
 
 // ---------------------------------------------------------------- V2 Training booking
-async function v2Choose(page: Page, input: { pkg: RegExp; dogs: string[]; mode?: "split" | "prepaid"; cadence?: string; time: string; trainers: RegExp[]; label: string }) {
+async function v2Choose(page: Page, input: { pkg: RegExp; dogs: string[]; mode?: "split" | "prepaid"; cadence?: string; time: string; trainers: RegExp[]; label: string; requireKnownTrainer?: boolean }) {
   await page.goto("/v2/training"); await settle(page, 2500);
   const group = page.getByRole("group", { name: /Dogs/ });
   await group.getByRole("button").first().waitFor({ timeout: 30_000 });
@@ -271,7 +284,8 @@ async function v2Choose(page: Page, input: { pkg: RegExp; dogs: string[]; mode?:
       if (/No available trainer/i.test(text)) break;
       if (await reserve.isEnabled().catch(() => false) && !/Checking availability/.test(text)) {
         const choices = trainerSection.getByRole("button").filter({ hasText: /★/ });
-        for (const preference of [...input.trainers, /./]) {
+        // A trainer without a UAT phone cannot sign in to run the lifecycle, so optionally try the next date instead.
+        for (const preference of input.requireKnownTrainer ? input.trainers : [...input.trainers, /./]) {
           const wanted = choices.filter({ hasText: preference });
           if (await wanted.count()) { await wanted.first().click(); await page.waitForTimeout(600); return { date, trainerText: (await wanted.first().innerText()).split("\n")[0].trim() }; }
         }
@@ -497,7 +511,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
     const b = B as Customer | null;
     if (b) {
       await step("Customer V2", "Reserve Starter Plan (2 sessions, 50% split)", async () => {
-        const picked = await v2Choose(b.page, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: "15:00", trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter" });
+        const picked = await v2Choose(b.page, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: "15:00", trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter", requireKnownTrainer: true });
         await shot(b.page, "starter-before-reserve");
         state.starter = { trainer: picked.trainerText, date: picked.date };
         state.starter.bookingId = await v2Reserve(b.page, "starter");
@@ -782,7 +796,12 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       if (!ids.length) throw blocked("No bookings created");
       const search = staff.getByPlaceholder("Search booking, customer, pet, phone or provider");
       const found: string[] = [], missing: string[] = [];
-      for (const id of ids) { await search.fill(id); await settle(staff, 1500); ((await staff.getByText(id).count()) ? found : missing).push(id); }
+      for (const id of ids) {
+        // Wait for this id's server search, not a fixed delay: the first search raced the heavy initial list load.
+        const searched = staff.waitForResponse(r => r.url().includes("/api/booking-command-center?") && decodeURIComponent(r.url()).includes(id), { timeout: 30_000 }).catch(() => null);
+        await search.fill(id); await searched; await settle(staff, 1000);
+        ((await staff.getByText(id).count()) ? found : missing).push(id);
+      }
       await shot(staff, "bcc");
       if (missing.length) throw fail(`not found: ${missing.join(", ")} (found ${found.join(", ")})`);
       return `found ${found.join(", ")}`;
@@ -802,7 +821,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await g.goto("/v2/chat"); await settle(g, 2500);
       await g.getByLabel("Your message").fill("What dog training packages do you offer in Bengaluru and what do they cost?");
       const response = g.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
-      await g.getByRole("button", { name: "Send message" }).click();
+      await sendChat(g, "ai-guest");
       const r = await response; await settle(g, 4000); await shot(g, "ai-guest-chat");
       const convo = (await g.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(g))).replace(/\n+/g, " | ");
       return `${r?.status()} · ${convo.slice(-700)}`;
@@ -812,7 +831,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       const mine = a.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
       await a.page.getByLabel("Your message").fill("When is my Meet & Greet and who is my trainer?");
       const response = a.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
-      await a.page.getByRole("button", { name: "Send message" }).click();
+      await sendChat(a.page, "ai-customer");
       const r = await response; await settle(a.page, 4000); await shot(a.page, "ai-customer-chat");
       const convo = (await a.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(a.page))).replace(/\n+/g, " | ");
       return `${r?.status()} · ${convo.slice(-700)}`;
