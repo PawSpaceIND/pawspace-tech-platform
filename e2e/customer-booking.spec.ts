@@ -361,6 +361,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
   const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T07:30:00.000Z`);
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
+  await expect(page.getByRole("region",{name:"Meet and Greet",exact:true})).toContainText(meeting.request.id);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("payment pending");
   const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
