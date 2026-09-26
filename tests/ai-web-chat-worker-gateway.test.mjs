@@ -204,7 +204,7 @@ test("a verified customer can run its own authenticated AI turn through the real
   assert.equal(count(sqlite, "communication_messages"), 2);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM communication_messages WHERE direction='outbound' AND template_key='web_app_chat_ai_reply'").get().count, 1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM ai_web_chat_events WHERE event_type='authenticated_turn'").get().count, 1);
-  assert.equal(sqlite.prepare("SELECT detail_json FROM ai_web_chat_events WHERE event_type='sales_service'").get().detail_json, JSON.stringify({ service: "grooming" }), "a Grooming question puts the chat in the Grooming sales flow");
+  assert.equal(sqlite.prepare("SELECT detail_json FROM ai_web_chat_events WHERE event_type='sales_service' AND thread_id IS NOT NULL").get()?.detail_json, JSON.stringify({ service: "grooming" }), "a Grooming question puts the chat in the Grooming sales flow");
   assert.equal(count(sqlite, "ai_handoffs"), 1, "without a live provider/rollout, the customer is safely handed to a human");
 });
 

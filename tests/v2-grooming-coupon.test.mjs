@@ -69,7 +69,7 @@ test("a coupon still waiting for its quote, or a server discount above the price
 test("the V2 page quotes coupons through its own box and blocks checkout while a code awaits its quote", async () => {
   const page = await readFile(new URL("../app/v2/grooming/page.tsx", import.meta.url), "utf8");
   const box = await readFile(new URL("../app/v2/grooming/coupon-box.tsx", import.meta.url), "utf8");
-  assert.match(page, /<V2GroomingCouponBox key=\{`\$\{quote\.price\}\|\$\{bundle\.packageCode\}\|\$\{scheduledStart\}/);
+  assert.match(page, /<V2GroomingCouponBox key=\{`\$\{quote\.price\}\|\$\{bundle\.packageCode\}\|\$\{scheduledStart\}\|\$\{coverage\.cityId\}\|\$\{coverage\.zoneId\}`\}/);
   assert.match(page, /couponNeedsReapply\(coupon\.code, coupon\.quoteId\)/);
   assert.match(box, /quoteGovernedCoupon\(\{ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue/);
   assert.doesNotMatch(page + box, /from ["'][^"']*mobile-app\//);

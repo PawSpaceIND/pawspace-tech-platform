@@ -156,12 +156,12 @@ export function chatSalesServiceNamed(message:string):VoiceSalesService|null{
  if(/\b(train\w*|obedience|puppy class\w*)\b/i.test(message))return"dog_training";
  return null;
 }
-/** The service this customer's chat is selling: the one named now, else the one named in the last two hours. */
-async function chatSalesService(db:D1Database,customerId:string,message:string):Promise<VoiceSalesService|undefined>{
+/** The service this chat thread is selling: the one named now, else the one named in it in the last two hours. */
+async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
  const named=chatSalesServiceNamed(message),now=Date.now();
- const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
+ const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
  let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training")remembered=service;}catch{}
- if(named&&named!==remembered)await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,?,'sales_service',?,?,?)").bind(crypto.randomUUID(),customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();
+ if(named&&named!==remembered)await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();
  return named??remembered;
 }
 
@@ -184,10 +184,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  /* The AI provider loads while the message is saved (#1093). A path that returns before using it (the
   * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
- const salesPromise=chatSalesService(db,input.customerId,input.text);salesPromise.catch(()=>{});
+ if(!prior)threadId=await openThread(db,input.customerId);
+ const salesPromise=chatSalesService(db,input.customerId,threadId,input.text);salesPromise.catch(()=>{});
  const providerPromise=salesPromise.then(salesService=>createGroundedAiRuntimeProvider(db,salesService?WEB_CHAT_SALES_ACTOR:input.actor,"chat",{salesService}));providerPromise.catch(()=>{});
  if(!prior){
-  threadId=await openThread(db,input.customerId);messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
+  messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
   const inspected=await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-authenticated:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"authenticated_ai_web_chat"}});inspectedDetected=inspected.detected;
   await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?, ?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
  }

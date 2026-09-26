@@ -82,4 +82,5 @@ test("a staff-assisted order takes a governed coupon quoted by the server on the
   assert.match(route,/payable=total-discount/);
   assert.match(route,/couponQuoteId:coupon\.quoteId/,"the canonical booking re-checks and consumes the quote");
   assert.match(page,/aria-label="Coupon code"/);
+  assert.match(page,/\$\{couponCode\.trim\(\)\?`-coupon-\$\{couponCode\.trim\(\)\}`:""\}/,"a coupon is part of the order's idempotency key, so adding one is never answered with an earlier order");
 });

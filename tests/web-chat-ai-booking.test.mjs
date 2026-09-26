@@ -18,7 +18,8 @@ const controlPlane = await import("../lib/ai-first-control-plane.ts");
 const webChat = await import("../lib/ai-web-chat-adapter.ts");
 
 const actor = { email: "web-chat-ai@system.pawspace", name: "PawSpace web chat AI", roleCode: "service_web_chat_ai", permissions: ["communications.manage", "customers.manage", "bookings.manage", "scheduling.book"], developmentPreview: false, identitySource: "workspace", principalType: "identity_subject", principalKey: "service:web-chat-ai" };
-const start = "2026-10-20T04:30:00.000Z", end = "2026-10-20T06:30:00.000Z";
+// A week from today (10:00-12:00 IST), so the suite never books in the past.
+const day = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), start = `${day}T04:30:00.000Z`, end = `${day}T06:30:00.000Z`;
 
 async function world(t) {
   const w = await setupJourney(); t.after(() => w.close());
