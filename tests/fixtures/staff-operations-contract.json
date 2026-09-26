@@ -420,7 +420,7 @@
     "app/team/operations/bookings/page.tsx": "7b9a1b46e8053b907197cc7eaa3c1f0e169e8587ebb5ce90c76b42b3916cd198",
     "app/team/operations/page.tsx": "6b2690bd925ef75ac59f59fe9002aa979f11a37a4432dcb56ed03e61654f9dd2",
     "app/v2/account/page.tsx": "00593e6197ab57eb0e38dad5867a5292f7fd407b3b03ffbcf54cacf933078a36",
-    "app/v2/activity/page.tsx": "abc758b04da6d5708a5e33fbefa7a439f87118dd05752efb4463d83d17412c14",
+    "app/v2/activity/page.tsx": "4c70fa7b27c5ddda9f3bc822e494924d73c0d2120b84acdd4594b08669607233",
     "app/v2/boarding/manage/page.tsx": "ef35b8ad9d9705edc1737f842fdf5767d1dca90937a5be510c62dad1c170cec2",
     "app/v2/boarding/page.tsx": "46dcb7e397a3e7b40b0690b47e52eb26d5b28b85ccc9495aa5b7e382c0aa52f0",
     "app/v2/booking-confirmation/page.tsx": "bd057c4c54433edb0fe7af9b16e6354ec0af256433ffd4fb5cfe7088ec7ec8c7",
