@@ -160,9 +160,11 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
     const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
     if(input.serviceCode!=="boarding"){
       const startMs=new Date(occurrence.start).getTime(),endMs=new Date(occurrence.end).getTime(),parallelCapacity=overnight?1:parallelAppointmentCapacity(provider,input);
-      const concurrent=existing.filter(b=>overlaps(startMs-buffer,endMs+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())).length;
+      const overlapping=existing.filter(b=>overlaps(startMs-buffer,endMs+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())),concurrent=overlapping.length;
       const duplicate=parallelCapacity>1&&existing.some(b=>new Date(b.scheduledStart).getTime()===startMs&&new Date(b.scheduledEnd).getTime()===endMs);
-      if(duplicate||concurrent>=parallelCapacity){eligible=false;reasons.push(duplicate?"Existing booking already holds this exact window":parallelCapacity>1?`Parallel appointment capacity ${parallelCapacity} reached`:"Existing booking conflicts with travel/service buffer");}
+      // Only sessions of the same service may share: any other job (a boarding stay, a grooming visit) still needs the provider to itself.
+      const otherService=parallelCapacity>1&&overlapping.some(b=>b.serviceCode!==input.serviceCode);
+      if(duplicate||otherService||concurrent>=parallelCapacity){eligible=false;reasons.push(duplicate?"Existing booking already holds this exact window":otherService?"Existing booking of another service conflicts with travel/service buffer":parallelCapacity>1?`Parallel appointment capacity ${parallelCapacity} reached`:"Existing booking conflicts with travel/service buffer");}
     }
     if(overnight){
       const used=existing.filter(b=>overlaps(new Date(occurrence.start).getTime(),new Date(occurrence.end).getTime(),new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime())).reduce((sum,b)=>sum+(b.capacityUnits??b.petIds.length),0);

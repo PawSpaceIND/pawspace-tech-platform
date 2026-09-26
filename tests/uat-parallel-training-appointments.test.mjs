@@ -35,8 +35,8 @@ const trainer = (id, extra = {}) => ({
   id, cityId: "blr", name: id, model: "full_time", services: ["dog_training"], zones: ["blr-east"], live: true,
   rating: 4.9, qualityScore: 95, capacity: 1, travelBufferMinutes: 45, maxDailyJobs: 8, ...extra,
 });
-const booking = (id, providerId, startMs, minutes = 60) => ({
-  id, providerId, status: "assigned", scheduledStart: iso(startMs), scheduledEnd: iso(startMs + minutes * MINUTE_MS), petIds: ["x"], capacityUnits: 1,
+const booking = (id, providerId, startMs, minutes = 60, serviceCode = "dog_training") => ({
+  id, providerId, serviceCode, status: "assigned", scheduledStart: iso(startMs), scheduledEnd: iso(startMs + minutes * MINUTE_MS), petIds: ["x"], capacityUnits: 1,
 });
 function memoryRepo({ providers, bookings = [] }) {
   return {
@@ -115,6 +115,18 @@ test("engine, flag on with capacity 25: overlap is allowed up to capacity, an id
   const daily = await schedule(memoryRepo({ providers: limited, bookings: sameDay }), training({ parallelAppointments: true }));
   assert.equal(daily.provider, null);
   assert.deepEqual(evaluation(daily, "team").reasons, ["Daily job limit 3 reached"], "parallel capacity never lifts the daily job limit");
+});
+
+test("engine, flag on: only sessions of the same service share; any other overlapping job still needs the provider to itself", async () => {
+  const providers = [trainer("team", { services: ["dog_training", "boarding"], capacity: 25, maxDailyJobs: 200 })];
+  const stay = booking("stay", "team", S - 12 * 60 * MINUTE_MS, 24 * 60, "boarding");
+  const hosting = await schedule(memoryRepo({ providers, bookings: [stay] }), training({ parallelAppointments: true }));
+  assert.equal(hosting.provider, null, "a trainer hosting a boarding stay is not offered a parallel Training session");
+  assert.deepEqual(evaluation(hosting, "team").reasons, ["Existing booking of another service conflicts with travel/service buffer"]);
+  const off = await schedule(memoryRepo({ providers, bookings: [stay] }), training());
+  assert.deepEqual(evaluation(off, "team").reasons, ["Existing booking conflicts with travel/service buffer"], "flag off keeps today's reason");
+  const sameService = await schedule(memoryRepo({ providers, bookings: [booking("t1", "team", S + 30 * MINUTE_MS)] }), training({ parallelAppointments: true }));
+  assert.equal(sameService.provider?.id, "team");
 });
 
 test("engine: an 8-session programme that clashes on some dates keeps the capacity-25 team trainer only when the flag is on", async () => {
@@ -257,6 +269,21 @@ test("route, declared UAT: an 8-session Training programme still offers and rese
   const third = await world.call("C", single);
   assert.equal(third.status, 200, JSON.stringify(third.body));
   assert.equal(world.held("CUST-PAR-C").length, 1, "the commit guard counts the same two overlapping holds and accepts the third");
+});
+
+test("route, declared UAT: a hold of another service on the team trainer still blocks the overlapping Training session", async (t) => {
+  const world = await stagingWorld(t, { uat: true });
+  // A boarding hold straddling B's first 10:00 IST session (the seeded trainer offers Training only, so this
+  // stands in for any other job a multi-service provider could hold).
+  world.sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,occurrence_number,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("R-OTHER", "G-OTHER", "uatcap_train_ft", "boarding", "blr", "blr-east", "CUST-OTHER", "[]", iso(FIRST - 2 * 60 * MINUTE_MS), iso(FIRST + 3 * 60 * MINUTE_MS), 1, "assigned", "{}", Date.now());
+  const preview = await world.call("B", { action: "preview" });
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.deepEqual(preview.body.data.providers, []);
+  const refused = await world.call("B");
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.ok(refused.body.evaluations[0].reasons.includes("Existing booking of another service conflicts with travel/service buffer"), JSON.stringify(refused.body.evaluations[0].reasons));
+  assert.equal(world.held("CUST-PAR-B").length, 0);
 });
 
 test("route, declared UAT: the identical window is still refused, because the same trainer can never hold it twice", async (t) => {
