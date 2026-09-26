@@ -51,7 +51,7 @@
       "conditions": 23
     },
     "app/v2/page.tsx": {
-      "sha256": "c5669784ab9bb08c21ac84e6cc43a77cf2794bcf20429248d83020c35109d9a8",
+      "sha256": "6806b9791861292da82db02fced8fe2cfb1653300c82d09357ef8032b2f73418",
       "functions": 24,
       "declarations": 34,
       "interactionProps": 30,
@@ -78,5 +78,32 @@
       "interactionProps": 42,
       "conditions": 12
     }
+  },
+  "compactDataFlow": {
+    "baseSha": "2cceca14eccc6fc0db432034662dbca7dc6e0f6a",
+    "files": {
+      "app/components/pawspace-appearance.tsx": {
+        "sha256": "fbcd9e47922e41dc8d2039ec75b24f6ff121183d2070d63d364d9c29c0703ddf",
+        "functions": 10,
+        "declarations": 13,
+        "interactionProps": 16,
+        "conditions": 4
+      },
+      "app/funeral-memorial/page.tsx": {
+        "sha256": "e2103f5429b7a7ebaa7068c4ae071acd7ef4ac7f84cdb54287b048c58f8094f1",
+        "functions": 32,
+        "declarations": 23,
+        "interactionProps": 35,
+        "conditions": 7
+      },
+      "app/v2/page.tsx": {
+        "sha256": "89572484d163437778411633c1a0df362c64cd378661404f280a9838d5f4f521",
+        "functions": 24,
+        "declarations": 34,
+        "interactionProps": 16,
+        "conditions": 8
+      }
+    },
+    "logoSha256": "88bc7b6f6634739e64da2931ab456f0d0c5c650da3a945ec84d274e60c199bd2"
   }
 }
