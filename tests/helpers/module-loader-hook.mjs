@@ -26,6 +26,7 @@ function transpileTsx(source, fileName) {
 const CSS_STUB =
   'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
 const NEXT_LINK_STUB_URL = new URL("./next-link-stub.mjs", import.meta.url).href;
+const RECHARTS_STUB_URL = new URL("./recharts-stub.mjs", import.meta.url).href;
 const NEXT_NAVIGATION_STUB_URL = new URL("./next-navigation-stub.mjs", import.meta.url).href;
 
 function splitSpecifierSuffix(specifier) {
@@ -45,6 +46,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "next/link" || specifier === "next/link.js") {
     return { url: NEXT_LINK_STUB_URL, shortCircuit: true };
+  }
+  if (specifier === "recharts") {
+    return { url: RECHARTS_STUB_URL, shortCircuit: true };
   }
   if (specifier === "next/navigation" || specifier === "next/navigation.js") {
     return { url: NEXT_NAVIGATION_STUB_URL, shortCircuit: true };

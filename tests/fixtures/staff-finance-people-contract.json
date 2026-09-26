@@ -18,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "064a3d76c45040ca725f7e73f47dc5acebe5819368eaa0a3cf664d2fa15f6f72",
+      "semantic": "1819327d89bf717007e2fdf53c7e97d456a52c7abd13cc721ffa3fb93460988f",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
@@ -82,7 +82,7 @@
       "mainRoots": 1
     },
     "app/team/people/reports/page.tsx": {
-      "semantic": "49ea33875f144496b53e050fc504ba4ee1df7d206bb9ff3884597f144cf1144a",
+      "semantic": "f7d31377b99cf8d3cdca0d551caa637eaca93234ed73c906a7dbbfd858a4e177",
       "mainRoots": 3
     },
     "app/team/people/service-incentives/page.tsx": {
