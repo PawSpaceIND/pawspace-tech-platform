@@ -14,3 +14,9 @@ export function conversationEvidence(detail, carrier, expectedAgentId) {
     : 'conversation_verified';
   return {passed: reason === 'conversation_verified', terminal, reason, turns: transcript.length, userTurn: userIndex >= 0, agentReplyAfterUser: replied};
 }
+
+// Progress keeps the stream active but cannot prove that the agent answered the caller.
+export function isSubstantiveVoiceReply(reply){
+ const text=String(reply||'').replace(/^(?:(?:I'm checking the details|One moment while I check that for you|Just a moment|Please wait)[. …]*\s*)+/i,'').trim();
+ return Boolean(text)&&!/^(one moment|just a moment|let me check|please wait)/i.test(text);
+}

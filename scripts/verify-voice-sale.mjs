@@ -11,7 +11,10 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  const headers={authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'};
  const meta=await request(base,{headers,signal:AbortSignal.timeout(30000)});const mb=await meta.json();
  if(!meta.ok||!mb.success||mb.result?.name!=='pawspace-staging')throw Error('Isolated staging database not verified');
- async function rows(sql,params=[]){const r=await request(base+'/query',{method:'POST',headers,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok||!b.success||b.result?.some(x=>!x.success))throw Error('Staging evidence query failed');return b.result.flatMap(x=>x.results||[]);}
+ const workerInfo=await request(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/services/pawspace-staging`,{headers,signal:AbortSignal.timeout(30000)});
+ const wb=await workerInfo.json();console.log('VOICE_WORKER_PLACEMENT='+JSON.stringify({status:workerInfo.status,placement:wb.result?.default_environment?.script?.placement??null}));
+ let loggedD1=false;
+ async function rows(sql,params=[]){const r=await request(base+'/query',{method:'POST',headers,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok||!b.success||b.result?.some(x=>!x.success))throw Error('Staging evidence query failed');if(!loggedD1){loggedD1=true;console.log('VOICE_D1_LOCATION='+JSON.stringify({metadata:b.result[0]?.meta,databaseKeys:Object.keys(mb.result),locationHint:mb.result.primary_location_hint}));}return b.result.flatMap(x=>x.results||[]);}
  const [call]=await rows('SELECT customer_id,mode,phone_last4 FROM voice_call_orders WHERE id=?',[callId]);
  if(!call||call.mode!=='uat'||call.phone_last4!==last4||!call.customer_id)throw Error('Voice call does not belong to confirmed UAT tester');
  const threadId='THREAD-VOICE-'+callId;
@@ -21,6 +24,22 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  rows('SELECT intent_code,policy_decision,outcome,handoff_reason,latency_ms FROM ai_conversation_turns WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 4',[threadId,call.customer_id]),
  rows('SELECT id,status,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 5',[threadId,call.customer_id]),
  ]);
+ const inbound=await rows("SELECT created_at,substr(json_extract(payload_json,'$.text'),1,180) input_text FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 12",[threadId]);
+ const reservations=await rows("SELECT status,created_at,updated_at,turn_id FROM ai_turn_reservations WHERE thread_id=? ORDER BY created_at DESC LIMIT 5",[threadId]);
+ const runtimeRequests=await rows("SELECT status,failure_class,created_at,updated_at FROM ai_provider_runtime_requests WHERE channel='voice' ORDER BY created_at DESC LIMIT 12");
+ const toolReads=await rows("SELECT tool_code,status,created_at,completed_at FROM ai_tool_execution_requests WHERE thread_id=? ORDER BY created_at DESC LIMIT 16",[threadId]);
+ const telemetry=await request(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/observability/telemetry/query`,{method:'POST',headers,body:JSON.stringify({queryId:'voice-uat-diagnostics',dry:true,view:'events',limit:40,timeframe:{from:Date.now()-15*60000,to:Date.now()},parameters:{filterCombination:'and',filters:[{key:'$workers.scriptName',operation:'eq',type:'string',value:'pawspace-staging'}],needle:{value:'/api/elevenlabs/v1/responses',isRegex:false,matchCase:false}}}),signal:AbortSignal.timeout(30000)});
+ const tb=await telemetry.json();
+ // Keep timings/status only. Never log request headers, body, IP or arbitrary messages.
+ const allowed=new Set(['timestamp','outcome','wallTimeMs','cpuTimeMs','scriptName','status','colo','type','name','id','requestId','level','path']);
+ function safe(value){if(Array.isArray(value))return value.map(safe);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).flatMap(([k,v])=>v&&typeof v==='object'?[[k,safe(v)]]:allowed.has(k)?[[k,v]]:[]));return undefined;}
+ console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations,runtimeRequests,toolReads}));
+ if(env.ELEVENLABS_API_KEY&&env.GROOMING_AGENT_ID){
+  for(const version of ['',String(env.VOICE_AGENT_VERSION_ID||'')].filter((v,i)=>i===0||v)){
+   const ar=await request('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID)+(version?'?version_id='+version:''),{headers:{'xi-api-key':env.ELEVENLABS_API_KEY},signal:AbortSignal.timeout(30000)});const a=await ar.json();const llm=a.conversation_config?.agent?.prompt?.custom_llm||{};
+   console.log('VOICE_AGENT_VERSION='+JSON.stringify({requestedVersion:version||'current',status:ar.status,versionId:a.version_id,branchId:a.branch_id,model:llm.model_id,url:llm.url,apiType:llm.api_type,keys:Object.keys(llm),credentialConfigured:Boolean(llm.api_key)}));
+  }
+ }
  const report={destinationLast4:last4,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
  if(!bookingId)return report;
  const offer=offers.find(o=>o.status==='completed'&&JSON.parse(o.result_json||'{}').bookingId===bookingId);

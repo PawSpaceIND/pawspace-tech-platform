@@ -418,3 +418,12 @@ test("real execution: an unseen build var cannot ride in either", () => {
   assert.ok(!("SOME_FUTURE_DEV_VAR" in result.config.vars),
     `staging declares its vars; it does not inherit them: ${JSON.stringify(result.config.vars)}`);
 });
+
+
+test("staging placement uses the measured database region only when explicitly configured",()=>{
+ assert.deepEqual(runStageConfig(GOOD).config.placement,{mode:"smart"});
+ const placed=runStageConfig({...GOOD,STAGING_WORKER_PLACEMENT_REGION:"aws:ap-southeast-1"});
+ assert.equal(placed.code,0);assert.deepEqual(placed.config.placement,{region:"aws:ap-southeast-1"});
+ assert.equal(placed.config.name,"pawspace-staging");assert.equal(placed.config.d1_databases[0].database_id,GOOD.STAGING_D1_ID);
+ assert.notEqual(runStageConfig({...GOOD,STAGING_WORKER_PLACEMENT_REGION:"https://unknown.example"}).code,0);
+});
