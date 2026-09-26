@@ -39,10 +39,11 @@ function makeD1(sqlite) {
 const freshDb = () => makeD1(new DatabaseSync(":memory:"));
 
 /** The same two moments, spelled the two ways the platform actually produces. */
-const UTC_START = "2026-11-04T04:30:00.000Z", UTC_END = "2026-11-04T06:30:00.000Z";
-const IST_START = "2026-11-04T10:00:00+05:30", IST_END = "2026-11-04T12:00:00+05:30";
+/** One hour: a Sitting Home Visit is one 60-minute window (SIT-04); Boarding's 4-hour package also takes it. */
+const UTC_START = "2026-11-04T04:30:00.000Z", UTC_END = "2026-11-04T05:30:00.000Z";
+const IST_START = "2026-11-04T10:00:00+05:30", IST_END = "2026-11-04T11:00:00+05:30";
 /** A genuinely different moment, spelled the same way as IST_START. The non-vacuity control. */
-const OTHER_START = "2026-11-04T11:00:00+05:30", OTHER_END = "2026-11-04T13:00:00+05:30";
+const OTHER_START = "2026-11-04T11:00:00+05:30", OTHER_END = "2026-11-04T12:00:00+05:30";
 
 /** Runs a governance call and reports what it refused with, without letting a crash read as a pass. */
 async function refusal(run) {

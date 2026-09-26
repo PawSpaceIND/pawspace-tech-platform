@@ -17,7 +17,7 @@ import BoardingCustomerStayPanel from "./boarding-customer-stay-panel";
 import BoardingCustomerStayStatus from "./boarding-customer-stay-status";
 import StayAddress from "./stay-address";
 import type { StayLocation } from "../../lib/stay-saved-address";
-import { stayCareWindow } from "../../lib/stay-care-window";
+import { stayCareWindow, homeVisitEnd } from "../../lib/stay-care-window";
 import { createSittingQuote, type SittingQuote } from "../../lib/sitting-commercial-client";
 import { createCanonicalSittingBooking } from "../../lib/sitting-booking-client";
 import StayCarePaymentGate from "./stay-care-payment-gate";
@@ -129,7 +129,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
     [startTime, setStartTime] = useState("09:00"),
-    [endTime, setEndTime] = useState("09:00"),
+    [endTimeInput, setEndTime] = useState("09:00"),
     [foodType, setFoodType] = useState(""),
     [sitters,setSitters] = useState<Caregiver[]>([]),
     [sitterWindowKey,setSitterWindowKey] = useState(""),
@@ -145,7 +145,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(false),
     [start, setStart] = useState(() => dateOffset(3)),
-    [end, setEnd] = useState(() => dateOffset(10)),
+    [endInput, setEnd] = useState(() => dateOffset(10)),
     [bookingId, setBookingId] = useState(""),
     [confirmedTotal, setConfirmedTotal] = useState<number | null>(null),
     [scheduling, setScheduling] = useState(false),
@@ -162,6 +162,10 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [view, setView] = useState<View>("stay"),
     [toast, setToast] = useState(""),
     [pendingPayment,setPendingPayment]=useState<{bookingId:string;serviceName:string;total:number;dueNow:number;mode:"prepaid"|"split_50_50"}|null>(null);
+  // SIT-04 (owner decision): a Pet Sitting Home Visit is one 60-minute visit from the chosen start; only Overnight has a check-out.
+  const [sittingCare, setSittingCare] = useState<"visit" | "overnight">("overnight");
+  const visitMode = mode === "sitting" && sittingCare === "visit", visitEnd = visitMode ? homeVisitEnd(start, startTime) : null;
+  const end = visitMode ? visitEnd?.date ?? start : endInput, endTime = visitMode ? visitEnd?.time ?? startTime : endTimeInput;
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -203,7 +207,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const selectedSitter = currentBoardingHost(sitters,caregiver.providerId,sitterWindowKey,boardingHostQueryKey);
   const showCaregiver = mode === "boarding" ? Boolean(selectedBoardingHost) : Boolean(selectedSitter);
   const nights = stayWindow.nights;
-  const datesValid = stayWindow.valid;
+  const overnightTooShort = mode === "sitting" && !visitMode && stayWindow.valid && !stayWindow.overnight;
+  const datesValid = stayWindow.valid && !overnightTooShort;
   const extraPets = Math.max(0, selectedPets.length - 1);
   const reviewKey=JSON.stringify([mode,boardingHostQueryKey,caregiver.providerId,splitPayment]);
   const activeQuote = mode === "boarding" ? (boardingQuotedKey===reviewKey?boardingQuote:null) : (sittingQuotedKey===reviewKey?sittingQuote:null);
@@ -379,7 +384,16 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </button>
           </div>
           <StayAddress customerId={customer.customerId} mode={mode} onResolved={setServiceLocation}/>
+          {mode === "sitting" && <div className={styles.modeSwitch} role="group" aria-label="Pet Sitting care">
+            <button type="button" aria-pressed={visitMode} className={visitMode ? styles.selected : ""} onClick={() => {setSittingCare("visit");resetStaySelection();}}><i>◷</i><b>Home Visit</b><span>One 60-minute visit</span></button>
+            <button type="button" aria-pressed={!visitMode} className={!visitMode ? styles.selected : ""} onClick={() => {setSittingCare("overnight");resetStaySelection();}}><i>☾</i><b>Overnight Pet Sitting</b><span>More than 10 hours, priced per night</span></button>
+          </div>}
           <div className={styles.datePair}>
+            {visitMode ? <fieldset className={styles.careDate}><legend>Home Visit</legend>
+              <label className={styles.field}>Visit date<input type="date" value={start} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
+              <label className={styles.field}>Visit start time<input type="time" value={startTime} onChange={e=>{setStartTime(e.target.value);resetStaySelection();}}/></label>
+              <p className={styles.hint}>{visitEnd ? `60 minutes, ending ${visitEnd.time} IST.` : "60 minutes from the start time."} Need more care that day? Book another visit after this one.</p>
+            </fieldset> : <>
             <fieldset className={styles.careDate}><legend>Check-in</legend>
               <label className={styles.field}>Check-in date<input type="date" value={start} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
               <label className={styles.field}>Check-in time<input type="time" value={startTime} onChange={e=>{setStartTime(e.target.value);resetStaySelection();}}/></label>
@@ -387,9 +401,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             <fieldset className={styles.careDate}><legend>Check-out</legend>
               <label className={styles.field}>Check-out date<input type="date" value={end} min={start} onChange={e=>{setEnd(e.target.value);resetStaySelection();}}/></label>
               <label className={styles.field}>Check-out time<input type="time" value={endTime} onChange={e=>{setEndTime(e.target.value);resetStaySelection();}}/></label>
-            </fieldset>
+            </fieldset></>}
           </div>
-          <p className={styles.durationSummary} role={datesValid?"status":"alert"}>{stayWindow.summary}</p>
+          <p className={styles.durationSummary} role={datesValid?"status":"alert"}>{overnightTooShort ? "Overnight Pet Sitting covers more than 10 hours. For shorter care, choose a 60-minute Home Visit." : stayWindow.summary}</p>
           <p className={styles.hint}>All care times are in India Standard Time (IST). Pricing updates for the full selected stay.</p>
           <div className={styles.sectionHead}>
             <b>Select pets</b>
@@ -599,7 +613,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               <b>
                 {mode === "boarding"
                   ? "Home Boarding"
-                  : careWindow === "24 hours" ? "Overnight Pet Sitting" : "Pet Sitting"}
+                  : careWindow === "24 hours" ? "Overnight Pet Sitting" : "Home Visit · 60 minutes"}
               </b>
             </span>
             <span>
@@ -632,7 +646,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               Booking updates<b>View recorded care and requests in Activity</b>
             </span>
           </article>
-          {mode==="sitting"&&sittingQuote?.mode==="visit"&&<p>Home Visit uses the current flat price for the selected visit, not an hourly multiplication. The selected care window and number of pets are included in this quote.</p>}
+          {mode==="sitting"&&sittingQuote?.mode==="visit"&&<p>A Home Visit is one 60-minute visit at the published price for your pets. Need more care that day? Book another visit after this one.</p>}
           <div className={styles.bill}>
             <span>
               {caregiver.name} · {stayWindow.duration}<b>{quoteMoney(base)}</b>

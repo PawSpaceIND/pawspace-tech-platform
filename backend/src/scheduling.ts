@@ -104,6 +104,8 @@ export function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
     const duration=(endMs-startMs)/msMinute;
     const required=input.serviceCode==="grooming"?(input.petIds.length>=4?240:input.petIds.length===3?150:120):input.serviceCode==="dog_training"?Math.max(60,input.petIds.length*60):rule.durationMinutes;
     if(duration<required)throw Object.assign(new Error(`${rule.label} requires at least ${required} minutes for ${input.petIds.length} pet${input.petIds.length===1?"":"s"}`),{statusCode:422});
+    // A Pet Sitting visit is exactly one 60-minute slot (owner decision): longer care is more visits or an overnight.
+    if(input.serviceCode==="pet_sitting"&&duration>rule.durationMinutes)throw Object.assign(new Error(`A Home Visit is ${rule.durationMinutes} minutes. Book more visits for longer care, or choose Overnight Pet Sitting.`),{statusCode:422});
   }
   if(recurring&&input.weekdays?.length){const wanted=new Set(input.weekdays);const result:ScheduleOccurrence[]=[];let offset=0;while(result.length<requested&&offset<180){const candidate=addDays(input.scheduledStart,offset);if(wanted.has(localDate(candidate,input.cityId).getUTCDay()))result.push({start:candidate,end:addDays(input.scheduledEnd,offset),occurrenceNumber:result.length+1});offset++;}if(result.length!==requested)throw Object.assign(new Error("Unable to generate the requested recurring calendar"),{statusCode:422});return result;}
   return Array.from({length:requested},(_,index)=>({start:addDays(input.scheduledStart,index*(input.cadenceDays??7)),end:addDays(input.scheduledEnd,index*(input.cadenceDays??7)),occurrenceNumber:index+1}));

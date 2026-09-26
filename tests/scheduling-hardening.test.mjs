@@ -479,3 +479,16 @@ test("route: a failed reassign does not restore an overnight Sitting over one th
   assert.equal(result.body.error, "SLOT_LOST_DURING_REASSIGN");
   assert.equal(activeFor("sit_sana"), 1, "the restore did not put a second overlapping overnight back on sit_sana");
 });
+
+test("engine: a Pet Sitting visit reserves exactly its 60-minute slot (SIT-04)", async () => {
+  const sitters = [mkProvider("sa", 96, { services: ["pet_sitting"], capacity: 4 })];
+  const visit = (minutes) => sittingNight("2026-10-12T06:30:00.000Z", new Date(Date.parse("2026-10-12T06:30:00.000Z") + minutes * 60_000).toISOString(), { careMode: "visit" });
+  const hour = await schedule(memoryRepo({ providers: sitters }), visit(60));
+  assert.equal(hour.provider?.id, "sa");
+  assert.deepEqual(hour.occurrences.map((o) => [o.start, o.end]), [["2026-10-12T06:30:00.000Z", "2026-10-12T07:30:00.000Z"]], "the reservation covers exactly the 60-minute slot");
+  for (const minutes of [61, 4 * 60, 10 * 60]) {
+    await assert.rejects(schedule(memoryRepo({ providers: sitters }), visit(minutes)), (error) => error.statusCode === 422 && /A Home Visit is 60 minutes/.test(error.message), `${minutes}-minute visit`);
+  }
+  const overnight = await schedule(memoryRepo({ providers: sitters }), sittingNight("2026-10-12T06:30:00.000Z", "2026-10-13T06:30:00.000Z"));
+  assert.equal(overnight.provider?.id, "sa", "overnight Sitting keeps its own window rules");
+});

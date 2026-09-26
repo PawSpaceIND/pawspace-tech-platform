@@ -301,15 +301,17 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await expect(page.locator("#grooming-address-line-1")).toHaveCount(0);
  await page.getByRole("button",{name:"Change Address",exact:true}).click();
  await expect(page.getByText("Buddy",{exact:true}).first()).toBeVisible();
- const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);await page.getByLabel("Check-in date",{exact:true}).fill(date);await page.getByLabel("Check-out date",{exact:true}).fill(date);
+ const offset=10+stayRunJitter+(test.info().project.name==="mobile-chromium"?2:0)+test.info().retry;const date=String(process.env.PW_UAT_SERVICE_DATE||"").trim()||new Date(Date.now()+offset*86400000).toISOString().slice(0,10);if(mode==="sitting")await page.getByRole("button",{name:/Home Visit/}).click();await page.getByLabel(mode==="sitting"?"Visit date":"Check-in date",{exact:true}).fill(date);if(mode==="boarding")await page.getByLabel("Check-out date",{exact:true}).fill(date);
+ // SIT-04: a Pet Sitting Home Visit is one 60-minute visit from the chosen start; Boarding keeps its 4-hour window here.
+ const windowMs=mode==="sitting"?3600000:4*3600000;
  await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText(mode==="boarding"?"Host location":"Your location",{exact:true})).toBeVisible();await page.getByRole("button",{name:"Use this address",exact:true}).click();
  let eveningProviders:Array<{name:string}>=[];
  for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
-  const preview=mode==="sitting"?page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000):null;
-  const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===4*3600000);
-  await page.getByLabel("Check-in time",{exact:true}).fill(time);await page.getByLabel("Check-out time",{exact:true}).fill(`${String(Number(time.slice(0,2))+4).padStart(2,"0")}:00`);
-  const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(4*3600000);
+  const preview=mode==="sitting"?page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===windowMs):null;
+  const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===windowMs);
+  if(mode==="sitting")await page.getByLabel("Visit start time",{exact:true}).fill(time);else{await page.getByLabel("Check-in time",{exact:true}).fill(time);await page.getByLabel("Check-out time",{exact:true}).fill(`${String(Number(time.slice(0,2))+4).padStart(2,"0")}:00`);}
+  const response=await quoted;expect(response.status(),await response.text()).toBe(201);const body=await response.json();expect(new Date(body.data.scheduledStart).toISOString()).toBe(expectedStart);expect(new Date(body.data.scheduledEnd).getTime()-new Date(body.data.scheduledStart).getTime()).toBe(windowMs);
   if(preview){const result=await preview;expect(result.status()).toBe(200);eveningProviders=(await result.json()).data.providers;}
  }
  await page.getByRole("button",{name:`See available ${mode==="boarding"?"homes":"sitters"}`,exact:true}).click();
@@ -319,8 +321,8 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   if(eveningProviders.length){for(const provider of eveningProviders)await expect(page.getByRole("heading",{name:provider.name,exact:true}).first()).toBeVisible();}
   else{await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();}
   await page.getByRole("button",{name:/← Plan/}).click();
-  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T11:30:00.000Z`);
-  await page.getByLabel("Check-in time",{exact:true}).fill("13:00");await page.getByLabel("Check-out time",{exact:true}).fill("17:00");
+  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T08:30:00.000Z`);
+  await page.getByLabel("Visit start time",{exact:true}).fill("13:00");
   const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
   await page.getByRole("button",{name:"See available sitters",exact:true}).click();
  }
@@ -340,7 +342,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await expect(intro).toContainText(meeting.request.id);await expect(intro).toContainText("not proof of payment or service completion");
  await intro.getByRole("button",{name:"Refresh introduction requests",exact:true}).click();await expect(intro).toContainText(meeting.request.id);
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
- const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:00 pm":"6:00 pm");await expect(review).toContainText("4 hours");
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:00 pm":"6:00 pm");await expect(review).toContainText(mode==="sitting"?"1 hour":"4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
@@ -378,7 +380,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
    const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
-   const originalStart=`${date}T07:30:00.000Z`,originalEnd=`${date}T11:30:00.000Z`;
+   const originalStart=`${date}T07:30:00.000Z`,originalEnd=`${date}T08:30:00.000Z`;
    const cancelRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_cancel",idempotencyKey:`sitting-cancel-${bookingId}`,reason:"Verify founder zero-fee cancellation boundary"}});expect(cancelRequest.status(),await cancelRequest.text()).toBe(200);const cancelData=await cancelRequest.json();expect(cancelData.data.status).toBe("policy_review_required");expect(cancelData.data.bookingPreserved).toBe(true);expect(cancelData.data.refundPolicy).toBe("configuration_required");
    const dateRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_date_change",idempotencyKey:`sitting-date-${bookingId}`,reason:"Verify founder zero-fee reschedule boundary",requestedStart:originalStart,requestedEnd:originalEnd}});expect(dateRequest.status(),await dateRequest.text()).toBe(200);const dateData=await dateRequest.json();expect(dateData.data.status).toBe("commercial_quote_required");expect(dateData.data.stayWindowUnchanged).toBe(true);
    const afterRequests=await page.context().request.get("/api/customer-account");expect(afterRequests.ok()).toBeTruthy();const afterRequestRows=(await afterRequests.json()).data.bookings.filter((row:{id:string})=>row.id===bookingId);expect(afterRequestRows).toHaveLength(1);expect(new Date(afterRequestRows[0].scheduledStart).toISOString()).toBe(originalStart);expect(new Date(afterRequestRows[0].scheduledEnd).toISOString()).toBe(originalEnd);expect(afterRequestRows[0].providerId).toBe(providerId);
