@@ -1,4 +1,6 @@
-import{postCollectionEvent}from"./collection-ledger";
+import{postCollectionEvent,prepareCollectionEventPosting}from"./collection-ledger";
+import{ensurePaymentReconciliationTables,processedRefundStatements}from"./grooming-payment-reconciliation";
+import{collectedForBooking}from"./collected-funds";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -59,4 +61,54 @@ export async function postBookingRefundCollectionReversal(db:Db,input:BookingRef
     actorId:"razorpay_webhook",
   });
   return{handled:true as const,refundCaseId:text(row.refund_case_id),posted};
+}
+
+/**
+ * A refund that Finance paid back outside the gateway webhook (Boarding records its refund reference by
+ * hand) commits the same facts a refund.processed webhook does, in one batch with the service's own ledger
+ * update: the canonical refund case is processed, the collection ledger reverses the collection under the
+ * refund reference, reconciliation and the booking payment follow, and the booking timeline records it.
+ * Keyed by the reference, so the gateway's own refund.processed for the same refund is later recognised
+ * as already counted instead of posting twice. Without this, an approved and recorded Boarding refund never
+ * reached the finance journal, payment reconciliation, the booking payment status, BCC or the customer.
+ */
+export async function recordStaffConfirmedRefund(db:Db,input:{refundCaseId:string;reference:string;actorId:string;statements?:D1PreparedStatement[]}){
+  const reference=text(input.reference);
+  if(!reference)throw new Error("A refund reference is required");
+  await ensurePaymentReconciliationTables(db);
+  const row=await db.prepare(`SELECT r.id,r.booking_id,r.payment_id,r.amount,r.status,r.gateway_reference,b.customer_id,b.city_id,b.service_code,
+      p.id canonical_payment_id,p.customer_id payment_customer_id,p.method payment_method,p.currency,p.amount payment_amount,
+      rec.captured_amount,rec.environment
+    FROM booking_refund_cases r
+    JOIN canonical_bookings b ON b.id=r.booking_id
+    LEFT JOIN booking_payments p ON p.booking_id=r.booking_id
+    LEFT JOIN payment_reconciliation_records rec ON rec.payment_id=p.id
+    WHERE r.id=?`).bind(input.refundCaseId).first<Row>();
+  if(!row)throw new Error("Canonical refund case not found");
+  if(["processed","completed"].includes(text(row.status))){
+    if(text(row.gateway_reference)===reference)return{duplicate:true as const,refundCaseId:text(row.id)};
+    throw new Error("This refund was already processed under another reference");
+  }
+  const paymentId=text(row.payment_id)||text(row.canonical_payment_id),bookingId=text(row.booking_id),amount=money(row.amount);
+  if(!paymentId)throw new Error("Refund recording requires the canonical payment");
+  if(amount<=0)throw new Error("Refund recording requires a positive refund amount");
+  const now=Date.now();
+  // A booking paid outside the gateway has no reconciliation row yet; its collected cash still bounds the refund.
+  const capturedCurrent=row.captured_amount==null?await collectedForBooking(db,bookingId):money(row.captured_amount);
+  const ledger=await prepareCollectionEventPosting(db,{
+    event:"refund_completed",bookingId,customerId:text(row.payment_customer_id)||text(row.customer_id)||null,
+    cityId:text(row.city_id)||null,serviceCode:text(row.service_code)||null,paymentId,refundReference:reference,amount,
+    paymentMethod:text(row.payment_method)||null,refundInstrument:text(row.payment_method).toLowerCase()==="cash"?"cash":"gateway",
+    entryDate:new Date(now).toISOString().slice(0,10),transactionAt:now,actorId:input.actorId,manualEntry:true,
+  });
+  if(!ledger.posted&&!ledger.duplicatePrevented)throw new Error("Refund ledger posting was not permitted by the collection policy");
+  await db.batch([
+    ...(input.statements??[]),
+    ...ledger.statements,
+    ...processedRefundStatements(db,{bookingId,paymentId,refundCaseId:text(row.id),gatewayRefundId:reference,eventId:`staff-refund:${reference}`,
+      provider:"razorpay",environment:text(row.environment)||"sandbox",expected:money(row.payment_amount),capturedCurrent,currency:text(row.currency)||"INR",now}),
+    db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'refund_processed','payment',?,?,?,?)")
+      .bind(`PAYREF-staff-${reference}`,bookingId,bookingId,input.actorId,JSON.stringify({gateway:"staff_recorded",gatewayRefundId:reference,amount,refundCaseId:text(row.id)}),now),
+  ]);
+  return{duplicate:false as const,refundCaseId:text(row.id),paymentId,amount,ledger:{posted:ledger.posted,groupKey:ledger.groupKey,verificationStatus:ledger.verificationStatus}};
 }
