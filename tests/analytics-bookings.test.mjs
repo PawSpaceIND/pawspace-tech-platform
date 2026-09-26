@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { registerHooks } from 'node:module';
-registerHooks({resolve(specifier, context, next) { try { return next(specifier, context); } catch(error) { if(specifier.startsWith('.') && !specifier.endsWith('.ts')) return next(specifier+'.ts', context); throw error; } }});
+import { installWorkersHooks } from './helpers/module-hooks.mjs';
+// The shared installer resolves extensionless lib imports on CI's pinned Node as well as on newer ones.
+installWorkersHooks('__ANALYTICS_BOOKINGS_DB__', '__ANALYTICS_BOOKINGS_ENV__');
 const { analyticsBookings, parseBookingSlice } = await import('../lib/analytics-bookings.ts');
 const params = (extra = {}) => parseBookingSlice(new URLSearchParams({from:'2026-09-01',to:'2026-09-02',...extra}));
 function fixture() {
