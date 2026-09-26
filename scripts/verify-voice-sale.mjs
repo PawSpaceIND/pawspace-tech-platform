@@ -21,14 +21,16 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  rows('SELECT intent_code,policy_decision,outcome,handoff_reason,latency_ms FROM ai_conversation_turns WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 4',[threadId,call.customer_id]),
  rows('SELECT id,status,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC LIMIT 5',[threadId,call.customer_id]),
  ]);
- const inbound=await rows("SELECT created_at,CASE WHEN lower(payload_json) LIKE '%bruno%' THEN 1 ELSE 0 END mentions_bruno FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 5",[threadId]);
+ const inbound=await rows("SELECT created_at,substr(json_extract(payload_json,'$.text'),1,180) input_text FROM communication_messages WHERE thread_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 12",[threadId]);
  const reservations=await rows("SELECT status,created_at,updated_at,turn_id FROM ai_turn_reservations WHERE thread_id=? ORDER BY created_at DESC LIMIT 5",[threadId]);
+ const runtimeRequests=await rows("SELECT status,failure_class,created_at,updated_at FROM ai_provider_runtime_requests WHERE channel='voice' ORDER BY created_at DESC LIMIT 12");
+ const toolReads=await rows("SELECT tool_code,status,created_at,completed_at FROM ai_tool_execution_requests WHERE thread_id=? ORDER BY created_at DESC LIMIT 16",[threadId]);
  const telemetry=await request(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/observability/telemetry/query`,{method:'POST',headers,body:JSON.stringify({queryId:'voice-uat-diagnostics',dry:true,view:'events',limit:40,timeframe:{from:Date.now()-15*60000,to:Date.now()},parameters:{filterCombination:'and',filters:[{key:'$workers.scriptName',operation:'eq',type:'string',value:'pawspace-staging'}],needle:{value:'/api/elevenlabs/v1/responses',isRegex:false,matchCase:false}}}),signal:AbortSignal.timeout(30000)});
  const tb=await telemetry.json();
  // Keep timings/status only. Never log request headers, body, IP or arbitrary messages.
  const allowed=new Set(['timestamp','outcome','wallTimeMs','cpuTimeMs','scriptName','status','colo','type','name','id','requestId','level','path']);
  function safe(value){if(Array.isArray(value))return value.map(safe);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).flatMap(([k,v])=>v&&typeof v==='object'?[[k,safe(v)]]:allowed.has(k)?[[k,v]]:[]));return undefined;}
- console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations}));
+ console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations,runtimeRequests,toolReads}));
  if(env.ELEVENLABS_API_KEY&&env.GROOMING_AGENT_ID){
   for(const version of ['', 'agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs']){
    const ar=await request('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID)+(version?'?version_id='+version:''),{headers:{'xi-api-key':env.ELEVENLABS_API_KEY},signal:AbortSignal.timeout(30000)});const a=await ar.json();const llm=a.conversation_config?.agent?.prompt?.custom_llm||{};
