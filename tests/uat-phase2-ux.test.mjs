@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 installWorkersHooks("__PHASE2_UX_DB__");
-const { stayCareWindow } = await import("../lib/stay-care-window.ts");
+const { stayCareWindow, homeVisitEnd, HOME_VISIT_MINUTES } = await import("../lib/stay-care-window.ts");
 const { defaultStayAddress, validateSavedStayAddress } = await import("../lib/stay-saved-address.ts");
 const { groomingSelectionForType, groomingPetIssue } = await import("../lib/grooming-pet-selection.ts");
 const React = await import("react");
@@ -27,8 +27,24 @@ test("duration derives the governed package at the four-hour and ten-hour bounda
   for (const [endTime,hours,code] of [["13:00",4,"boarding-4h"],["13:01",4+1/60,"boarding-10h"],["19:00",10,"boarding-10h"],["19:01",10+1/60,"boarding-24h"]]) {
     const window=stayCareWindow("2026-09-15","2026-09-15","09:00",endTime);
     assert.equal(window.hours,hours); assert.equal(window.boardingPackage,code);
-    assert.equal(window.sittingPackage,hours>10?"sitting-overnight":"sitting-visit-60");
+    assert.equal(window.sittingPackage,hours>10?"sitting-overnight":null,"SIT-04: longer than one 60-minute visit and not overnight is no Sitting package");
   }
+});
+test("a Pet Sitting Home Visit is one 60-minute window from the chosen start (SIT-04)", () => {
+  assert.equal(HOME_VISIT_MINUTES, 60);
+  const end = homeVisitEnd("2026-09-15", "13:00");
+  assert.deepEqual(end, { date: "2026-09-15", time: "14:00" });
+  const visit = stayCareWindow("2026-09-15", end.date, "13:00", end.time);
+  assert.equal(visit.hours, 1); assert.equal(visit.overnight, false); assert.equal(visit.sittingPackage, "sitting-visit-60");
+  assert.equal(visit.scheduledStart.toISOString(), "2026-09-15T07:30:00.000Z"); assert.equal(visit.scheduledEnd.toISOString(), "2026-09-15T08:30:00.000Z");
+  assert.deepEqual(homeVisitEnd("2026-09-15", "23:30"), { date: "2026-09-16", time: "00:30" }, "a late visit ends after midnight IST");
+  assert.equal(homeVisitEnd("2026-09-15", "24:00"), null);
+  assert.equal(stayCareWindow("2026-09-15", "2026-09-15", "13:00", "14:01").sittingPackage, null);
+});
+test("sitting: the plan offers a 60-minute Home Visit or Overnight Pet Sitting, Overnight first selected", () => {
+  const html=renderToStaticMarkup(React.createElement(StayFlow,{mode:"sitting",customer:{customerId:"test-customer",customerName:"Test",phone:"9000000000"}}));
+  assert.match(html,/<button type="button" aria-pressed="false"[^>]*><i>◷<\/i><b>Home Visit<\/b><span>One 60-minute visit<\/span><\/button>/);
+  assert.match(html,/<button type="button" aria-pressed="true"[^>]*><i>☾<\/i><b>Overnight Pet Sitting<\/b>/);
 });
 test("incomplete, impossible and non-positive windows cannot be quoted", () => {
   for(const args of [["2026-09-15","2026-09-15","10:00","10:00"],["2026-09-15","2026-09-15","10:00","09:00"],["2026-09-15","2026-09-14","10:00","11:00"],["2026-02-30","2026-03-01","10:00","11:00"],["","2026-09-15","10:00","11:00"],["2026-09-15","2026-09-16","24:00","11:00"]]) assert.equal(stayCareWindow(...args).valid,false);

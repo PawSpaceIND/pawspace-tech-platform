@@ -1,5 +1,5 @@
 import type {SittingCarePlan} from './sitting-lifecycle';
-export type SittingCustomerView={id:string;status:string;scheduledStart:string;scheduledEnd:string;totalAmount:number|null;carePlan:SittingCarePlan;carePlanStatus:string|null;events:Array<{id:string;type:string;at:number}>};
+export type SittingCustomerView={id:string;status:string;scheduledStart:string;scheduledEnd:string;totalAmount:number|null;carePlan:SittingCarePlan;carePlanStatus:string|null;events:Array<{id:string;type:string;at:number}>;meetGreet:{id:string;format:string;status:string;preferredAt:number;priceCharged:number;priceWaived:boolean}|null};
 const fields=['feeding','medication','emergencyContact','vet','homeAccess','specialInstructions'] as const;
 export function sittingCustomerView(rows:unknown,bookingId:string):SittingCustomerView{
  if(!Array.isArray(rows))throw new Error('Sitting booking response is incomplete.');
@@ -8,7 +8,8 @@ export function sittingCustomerView(rows:unknown,bookingId:string):SittingCustom
  const row=matches[0];if(typeof row.status!=='string'||!row.status.trim()||!Array.isArray(row.events))throw new Error('Sitting booking response is incomplete.');
  const plan:SittingCarePlan={};for(const field of fields)if(typeof row.carePlan?.plan?.[field]==='string')plan[field]=row.carePlan.plan[field];
  const events=row.events.map((event:Record<string,unknown>)=>{if(!event||typeof event.id!=='string'||typeof event.event_type!=='string'||(!Number.isFinite(Number(event.created_at))||Number(event.created_at)<=0))throw new Error('Sitting activity response is incomplete.');return{id:event.id,type:event.event_type,at:Number(event.created_at)};});
- return{id:row.id,status:row.status,scheduledStart:String(row.scheduled_start||''),scheduledEnd:String(row.scheduled_end||''),totalAmount:row.total_amount!=null&&Number.isFinite(Number(row.total_amount))?Number(row.total_amount):null,carePlan:plan,carePlanStatus:typeof row.carePlan?.status==='string'?row.carePlan.status:null,events};
+ const meet=row.meetGreet,meetGreet=meet&&typeof meet==='object'&&typeof meet.id==='string'&&typeof meet.status==='string'?{id:meet.id,format:String(meet.format),status:meet.status,preferredAt:Number(meet.preferred_at),priceCharged:Number(meet.price_charged||0),priceWaived:Boolean(meet.price_waived_reason)}:null;
+ return{id:row.id,status:row.status,scheduledStart:String(row.scheduled_start||''),scheduledEnd:String(row.scheduled_end||''),totalAmount:row.total_amount!=null&&Number.isFinite(Number(row.total_amount))?Number(row.total_amount):null,carePlan:plan,carePlanStatus:typeof row.carePlan?.status==='string'?row.carePlan.status:null,events,meetGreet};
 }
 async function request(url:string,body?:Record<string,unknown>):Promise<unknown>{
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);

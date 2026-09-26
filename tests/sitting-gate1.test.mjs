@@ -33,7 +33,7 @@ async function sittingWorld() {
 
 const quoteFor = (db, overrides = {}) => governance.createSittingQuote(db, {
   packageCode: "sitting-visit-60", petCount: 1, paymentMode: "prepaid",
-  cityId: "blr", zoneId: "blr-east", ...stayWindow(), ...overrides,
+  cityId: "blr", zoneId: "blr-east", ...stayWindow({ durationHours: 1 }), ...overrides,
 });
 
 function validBooking(quote, overrides = {}) {
@@ -72,6 +72,41 @@ test("Pet Sitting Gate 1 prices from the catalogue, charging a base plus each ex
   const stored = await db.prepare("SELECT total_amount,status FROM sitting_commercial_quotes WHERE id=?").bind(one.quoteId).first();
   assert.equal(Number(stored.total_amount), 399, "the price is persisted so the booking boundary can re-derive it");
   assert.equal(stored.status, "open");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("Pet Sitting Gate 1 prices a Home Visit only as one 60-minute visit; Overnight is unchanged (SIT-04)", async () => {
+  const { db } = await sittingWorld();
+  // Owner decision "60-min visits only". Before it, any window up to 24 hours was one Home Visit unit.
+  const at = (minutes) => { const { scheduledStart } = stayWindow(); return { scheduledStart, scheduledEnd: new Date(Date.parse(scheduledStart) + minutes * 60_000).toISOString() }; };
+  assert.equal((await quoteFor(db, { petCount: 1, ...at(60) })).totalAmount, 399, "a 60-minute visit for one pet");
+  assert.equal((await quoteFor(db, { petCount: 2, ...at(60) })).totalAmount, 548, "a 60-minute visit for two pets: 399 + 149");
+  for (const minutes of [61, 10 * 60, 23 * 60]) {
+    const refused = await refusal(quoteFor(db, at(minutes)));
+    assert.equal(refused?.status, 409, `a ${minutes}-minute visit window is refused`);
+    assert.equal(JSON.parse(refused.message).error, "A Home Visit is 60 minutes. Book more visits for longer care, or choose Overnight Pet Sitting.");
+  }
+  // A direct API caller picking the cheaper package for a longer window is refused the same way.
+  const route = await import("../app/api/sitting-commercial/route.ts");
+  const api = await route.POST(new Request(stayUrl("/api/sitting-commercial"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ packageCode: "sitting-visit-60", petCount: 1, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east", ...at(23 * 60) }),
+  }));
+  assert.equal(api.status, 409);
+  assert.match((await api.json()).error, /A Home Visit is 60 minutes/);
+  // Overnight keeps its rules: more than 10 hours, one night per started 24 hours.
+  const overnight = (minutes) => quoteFor(db, { packageCode: "sitting-overnight", ...at(minutes) });
+  const justOver = await overnight(10 * 60 + 1);
+  assert.equal(justOver.mode, "overnight");
+  assert.equal(justOver.billableUnits, 1);
+  assert.equal(justOver.totalAmount, 799);
+  assert.equal((await overnight(24 * 60)).billableUnits, 1, "24 hours is one night");
+  const two = await overnight(25 * 60);
+  assert.equal(two.billableUnits, 2, "25 hours is two nights");
+  assert.equal(two.totalAmount, 1598);
+  assert.match((await refusal(overnight(10 * 60)))?.message, /Overnight Sitting requires more than 10 hours/);
+  const visits = await db.prepare("SELECT COUNT(*) n FROM sitting_commercial_quotes WHERE package_code='sitting-visit-60'").all();
+  assert.equal(Number(visits.results[0].n), 2, "a refused visit window leaves no priced quote behind");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -218,7 +253,7 @@ test("Pet Sitting Gate 1 consumes a quote exactly once", async () => {
 test("Pet Sitting Gate 1 commercial route is same-origin and honest about UAT money", async () => {
   const { db } = await sittingWorld();
   const route = await import("../app/api/sitting-commercial/route.ts");
-  const body = { packageCode: "sitting-visit-60", petCount: 1, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east", ...stayWindow() };
+  const body = { packageCode: "sitting-visit-60", petCount: 1, paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east", ...stayWindow({ durationHours: 1 }) };
 
   const quoted = await route.POST(new Request(stayUrl("/api/sitting-commercial"), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),

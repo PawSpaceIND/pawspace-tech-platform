@@ -6,6 +6,7 @@ import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution"
 import{BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,closedBookingRequestRefusal,findClosedCustomerBooking,findCustomerReplay,hasForeignReplayConflict,hasReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer}from"../../../lib/booking-replay-governance";
 import{ensureGroomingMapTables}from"../../../lib/grooming-maps";
 import{validGpsCoordinates}from"../../../lib/gps-telemetry-policy";
+import{linkMeetGreetRequestToBooking}from"../../../lib/meet-and-greet";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -16,6 +17,7 @@ type Input={
  provider:{id:string;name:string;model:"full_time"|"commission"};
  totalAmount:number;amountDueNow:number;
  payment:{method:string;mode:string;detail:string};
+ meetGreetRequestId?:string;
 };
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
@@ -41,11 +43,14 @@ function governedDoorstepFromScheduling(assignment:Row,input:Input){
  if(address.length<8||!/^[1-9]\d{5}$/.test(pincode)||!validGpsCoordinates(latitude,longitude))throw new Response("Sitting scheduling address evidence is incomplete",{status:409});
  return{addressText:address.includes(pincode)?address:`${address}, ${pincode}`,latitude,longitude};
 }
+const istDate=(value:unknown)=>new Date(new Date(String(value)).getTime()+19_800_000).toISOString().slice(0,10);
+/** Links the Meet & Greet the customer requested for this sitter and stay. It never blocks or rolls back the booking: a refused link is logged on the booking for staff. */
+async function linkMeetGreet(db:D1Database,input:Input,booking:Row,actorId:string){const requestId=String(input.meetGreetRequestId||"").trim().slice(0,160);if(!requestId)return;try{await linkMeetGreetRequestToBooking(db,{requestId,bookingId:String(booking.id),customerId:String(booking.customer_id),hostProviderId:String(booking.provider_id),intendedStayStart:istDate(booking.scheduled_start),intendedStayEnd:istDate(booking.scheduled_end),actorId});}catch(error){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(`EVT-SIT-${crypto.randomUUID().slice(0,8).toUpperCase()}`,String(booking.id),"sitting_meet_greet_link_failed","meet_greet_request",requestId,actorId,JSON.stringify({reason:error instanceof Error?error.message:"Meet & Greet link failed"}),Date.now()).run().catch(()=>undefined);}}
 
 export async function POST(request:Request){try{
  sameOriginWrite(request);const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);
  const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);
- const replayInput={customerId:input.customer.id,serviceCode:"pet_sitting",idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});const closedPrior=await findClosedCustomerBooking(db,replayInput);if(closedPrior)return json(closedBookingRequestRefusal(closedPrior),409);if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+ const replayInput={customerId:input.customer.id,serviceCode:"pet_sitting",idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior){await linkMeetGreet(db,input,prior,actor.email);return json({data:await readBundle(db,prior,true)});}const closedPrior=await findClosedCustomerBooking(db,replayInput);if(closedPrior)return json(closedBookingRequestRefusal(closedPrior),409);if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Row>();
  if(!assignment||String(assignment.status)!=="assigned")return json({error:"Scheduling must be assigned before Sitting confirmation"},409);
  if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The sitter does not match the scheduling decision"},409);
@@ -72,5 +77,5 @@ export async function POST(request:Request){try{
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];
  if(governed.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:governed.totalAmount,scheduledStart:governed.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:governed.totalAmount,paidNowAmount:governed.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
- try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});const closedRace=await findClosedCustomerBooking(db,replayInput);if(closedRace)return json(closedBookingRequestRefusal(closedRace),409);if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"payment_pending",duplicatePrevented:false,liveMoney:false}},201);
+ try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced){await linkMeetGreet(db,input,raced,actor.email);return json({data:await readBundle(db,raced,true)});}const closedRace=await findClosedCustomerBooking(db,replayInput);if(closedRace)return json(closedBookingRequestRefusal(closedRace),409);if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};await linkMeetGreet(db,input,{id:bookingId,customer_id:input.customer.id,provider_id:input.provider.id,scheduled_start:canonicalStart,scheduled_end:canonicalEnd},actor.email);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"payment_pending",duplicatePrevented:false,liveMoney:false}},201);
 }catch(error){return failure(error);}}

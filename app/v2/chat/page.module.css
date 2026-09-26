@@ -11,3 +11,6 @@
 .page .watiIntro { margin:4px 0 8px !important; text-align:center; font-size:22px !important; color:var(--brand-text) !important; }
 .page .notice h1 { font-size:22px; margin:0 0 8px; }
 @media (max-width:640px) { .page .chatShell { height:calc(100dvh - 84px) !important; gap:8px; } .page .modeBar { padding:8px 10px 0 !important; } }
+/* Native app only (html[data-pawspace-native], set by native-shell.tsx): the canvas adds the status-bar inset above the pane, so its fixed height gives it back and the composer stays clear of the dock. */
+:global(html[data-pawspace-native]) .page .chatShell { height:calc(100vh - 110px - env(safe-area-inset-top,0px)) !important; }
+@media (max-width:640px) { :global(html[data-pawspace-native]) .page .chatShell { height:calc(100dvh - 84px - env(safe-area-inset-top,0px)) !important; } }

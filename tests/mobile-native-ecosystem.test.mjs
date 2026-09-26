@@ -272,3 +272,83 @@ test("native preparation requires partner URL for normalized targets and aliases
     assert.match(result.stderr, /Set PAWSPACE_PARTNER_APP_URL/);
   }
 });
+
+const STAGING = "https://pawspace-staging.karthik-fce.workers.dev";
+// Each case loads the config in a fresh process: the URL rule runs when the module is first evaluated.
+function loadNativeConfig(module, overrides) {
+  const env = { ...process.env };
+  for (const key of ["CAPACITOR_TARGET", "APP_TARGET", "PAWSPACE_CUSTOMER_APP_URL", "PAWSPACE_PARTNER_APP_URL"]) delete env[key];
+  const code = `const c=(await import(${JSON.stringify(`./${module}`)})).default;console.log(JSON.stringify({appId:c.appId,server:c.server}))`;
+  return spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", code], {
+    cwd: new URL("..", import.meta.url), env: { ...env, ...overrides }, encoding: "utf8",
+  });
+}
+
+test("native customer app loads the V2 customer experience at the HTTPS /v2 URL", () => {
+  const result = loadNativeConfig("capacitor.customer.config.ts", { PAWSPACE_CUSTOMER_APP_URL: `${STAGING}/v2` });
+  assert.equal(result.status, 0, result.stderr);
+  const { appId, server } = JSON.parse(result.stdout);
+  assert.equal(appId, "com.pawspace.customer");
+  assert.equal(server.url, `${STAGING}/v2`);
+  assert.equal(server.errorPath, "offline.html");
+  assert.equal(server.cleartext, false);
+
+  const unset = loadNativeConfig("capacitor.customer.config.ts", {});
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.equal(JSON.parse(unset.stdout).server.url, undefined, "without a URL the packaged shell stays local");
+});
+
+test("native customer config rejects /mobile-app and every non-canonical /v2 URL", () => {
+  for (const url of [
+    `${STAGING}/mobile-app`,
+    "http://pawspace-staging.karthik-fce.workers.dev/v2",
+    `${STAGING}/v2?preview=1`,
+    "https://user:secret@pawspace-staging.karthik-fce.workers.dev/v2",
+    `${STAGING}/v2#home`,
+    `${STAGING}/v2/grooming`,
+    `${STAGING}/`,
+  ]) {
+    const result = loadNativeConfig("capacitor.customer.config.ts", { PAWSPACE_CUSTOMER_APP_URL: url });
+    assert.equal(result.status, 1, url);
+    assert.match(result.stderr, /PAWSPACE_CUSTOMER_APP_URL must be an HTTPS \/v2 URL without credentials or query parameters\./, url);
+  }
+});
+
+test("partner target is unchanged and a partner build needs no customer URL", async () => {
+  const partner = loadNativeConfig("capacitor.partner.config.ts", { PAWSPACE_PARTNER_APP_URL: `${STAGING}/partner-app` });
+  assert.equal(partner.status, 0, partner.stderr);
+  assert.deepEqual(JSON.parse(partner.stdout), { appId: "com.pawspace.partner", server: { url: `${STAGING}/partner-app`, errorPath: "offline.html", androidScheme: "https", cleartext: false } });
+  const stale = loadNativeConfig("capacitor.partner.config.ts", { PAWSPACE_PARTNER_APP_URL: `${STAGING}/v2/partner` });
+  assert.equal(stale.status, 1);
+  assert.match(stale.stderr, /approved HTTPS \/partner-app URL/);
+  // capacitor.config.ts evaluates both targets; the empty customer URL the beta workflow gives partner builds is accepted.
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(new URL("../capacitor.config.ts", import.meta.url), "utf8"), /import customerConfig from "\.\/capacitor\.customer\.config";\nimport partnerConfig from "\.\/capacitor\.partner\.config";/);
+  const empty = loadNativeConfig("capacitor.customer.config.ts", { PAWSPACE_CUSTOMER_APP_URL: "" });
+  assert.equal(empty.status, 0, empty.stderr);
+});
+
+test("native preparation asks for the customer /v2 URL", () => {
+  for (const selection of [{}, { CAPACITOR_TARGET: "customer" }, { APP_TARGET: "CUSTOMER" }]) {
+    const env = { ...process.env };
+    for (const key of ["CAPACITOR_TARGET", "APP_TARGET", "PAWSPACE_CUSTOMER_APP_URL"]) delete env[key];
+    const result = spawnSync(process.execPath, ["scripts/prepare-partner-native.mjs"], {
+      cwd: new URL("..", import.meta.url), env: { ...env, ...selection }, encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Set PAWSPACE_CUSTOMER_APP_URL to the approved HTTPS \/v2 workspace/);
+  }
+});
+
+test("native build workflows point the customer app at /v2 and keep the partner app on /partner-app", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const testBuilds = read(".github/workflows/native-test-builds.yml");
+  assert.match(testBuilds, /^ {2}PAWSPACE_CUSTOMER_APP_URL: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev\/v2$/m);
+  assert.match(testBuilds, /^ {2}PAWSPACE_PARTNER_APP_URL: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev\/partner-app$/m);
+  assert.doesNotMatch(testBuilds, /\/mobile-app/);
+  // capacitor.config.ts evaluates both targets, so a partner beta build must not receive the customer URL.
+  const beta = read(".github/workflows/mobile-beta-distribution.yml");
+  assert.match(beta, /^ {2}PAWSPACE_CUSTOMER_APP_URL: \$\{\{ \(inputs\.target_app \|\| 'customer'\) == 'customer' && vars\.PAWSPACE_CUSTOMER_APP_URL \|\| '' \}\}$/m);
+  assert.match(beta, /^ {2}PAWSPACE_PARTNER_APP_URL: \$\{\{ vars\.PAWSPACE_PARTNER_APP_URL \}\}$/m);
+});
