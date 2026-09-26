@@ -72,7 +72,7 @@ test("candidates are de-duplicated and ordered by booking then sequence", () => 
   assert.equal(rows[0].bookingStatus, "unknown");
 });
 
-test("unpaid Training bookings older than 7 days are reported, newer ones are not", () => {
+test("unpaid Training bookings older than 7 days are counted as a health check (the scheduled expiry should leave none), newer ones are not", () => {
   const unpaid = selectStaleUnpaidBookings([
     { id: "P1", booking_id: "B1", booking_status: "payment_pending", created_at: NOW - 8 * DAY },
     { id: "P2", booking_id: "B2", booking_status: "payment_pending", created_at: NOW - 6 * DAY },
@@ -169,6 +169,9 @@ test("the default dry run only reads, lists the plan and never prints the code o
   assert.deepEqual(report.unpaid.map(row => row.bookingId), ["B8"]);
   const output = `${logs.join("\n")}\n${fs.readFileSync(reportPath, "utf8")}`;
   assert.match(output, /DRY RUN - nothing changed/);
+  // Unpaid bookings now expire on their own; the count is a health check, and the report says so.
+  assert.match(output, /Unpaid \(payment_pending\) Training bookings older than 7 days: 1 \(expected 0\)\. Left unchanged here - the scheduled unpaid-booking expiry cancels these automatically, without moving money, at 7 days after booking or at the first session's start, whichever is earlier\./);
+  assert.doesNotMatch(output, /no governed expire\/cancel-unpaid action/, "the report must not claim the expiry does not exist");
   assert.match(output, /session id\s+\| booking id\s+\| provider\s+\| scheduled start\s+\| old status\s+\| action\s+\| result/);
   assert.doesNotMatch(output, new RegExp(`${CODE}|${TOKEN}`));
   fs.rmSync(dir, { recursive: true, force: true });
