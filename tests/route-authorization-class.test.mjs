@@ -203,6 +203,10 @@ const DELIBERATELY_READABLE = new Map([
   // Cold-database branch only: guarding first would mean resolveActor -> ensureSecurityTables, and
   // the D7 read-side contract forbids a cold GET from creating any table. Content is asserted below.
   ["ops-work-queue.GET", "cold-DB zeroed snapshot; guarding first would violate the D7 read-side DDL contract"],
+  // Entered coverage when its customer branch gained an explicit ownership check. The bare GET is the
+  // public chat's service and price knowledge (the gateway returns no permission for it); ?mode=thread
+  // is the customer's own conversation and refuses anonymous callers (tests/web-chat-human-loop.test.mjs).
+  ["ai-web-chat.GET", "public service and price knowledge for the web chat; ?mode=thread is guarded"],
 ]);
 
 let anonymousSweep, lowPrivilegeSweep, probeRole;
@@ -360,7 +364,11 @@ const VALIDATES_BEFORE_AUTHORIZING = [
   "walking-lifecycle.POST",
   "walking-proof.GET",
   "walking-proof.POST",
-  "walking-recovery.POST"
+  "walking-recovery.POST",
+  // Not an ordering defect: the empty-body POST is the PUBLIC chat (mode defaults to "public", which the
+  // gateway leaves open to visitors), so the 400 is "message required", not work done before a guard.
+  // The authenticated branch checks customer ownership before it does anything.
+  "ai-web-chat.POST"
 ];
 
 test("no new route validates before it authorizes", async () => {

@@ -17,7 +17,7 @@ test('Four core inbox destinations use existing routes and keyboard-operable lin
  assert.equal((rail.match(/<Link /g)||[]).length,3);assert.match(rail,/<a href="#inbox-conversations"/);
  for(const path of ['/team/whatsapp/templates','/team/whatsapp/automation','/team/ai/handoff']){assert.ok(rail.includes('href="'+path+'"'));assert.ok(fs.existsSync('app'+path+'/page.tsx'));}
  assert.doesNotMatch(rail,/Booking Drafts|<div className=\{styles.navItem/);assert.match(s,/<strong>Conversation details<\/strong><span>Recorded fields<\/span>/);
- assert.match(s,/disabled title="Chatbot mode unlocks only after deterministic flow-engine certification"/);
+ assert.match(s,/onClick=\{\(\) => \{ void controlAct\("set_mode", \{ mode: "chatbot_only", reason: routingReason \}\); \}\}>Chatbot only<\/Button>/);
 });
 test('Executed Inbox & AI menu matches the existing communications permission',()=>{
  const inbox=p=>visibleStaffGroups(p).flatMap(g=>g.links).find(l=>l.href==='/team/customer-experience');
