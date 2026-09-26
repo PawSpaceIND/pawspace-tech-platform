@@ -135,7 +135,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   .then(()=>{},(error:unknown)=>{inboundFailure=error;});
  const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
  clock.mark("inboundWriteStarted");
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});clock.mark("provider");
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true,onTiming:clock.mark});clock.mark("provider");
  const intent=classifyAiIntent(inputText);
  const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){

@@ -63,8 +63,11 @@ test("a valid LLM bearer reaches canonical identity validation but cannot manufa
   const w = world(t);
   const r = await dispatch(w, request("/api/elevenlabs/v1/responses", JSON.stringify({ input: "grooming services" }),
     { authorization: `Bearer ${credentials.ELEVENLABS_LLM_SECRET}` }));
-  assert.equal(r.reachedRoute, true); assert.equal(r.response.status, 400);
-  assert.match(await r.response.text(), /voice identity is missing/);
+  assert.equal(r.reachedRoute, true); assert.equal(r.response.status, 200);
+  const failureSse=await r.response.text();
+  assert.match(failureSse, /response\.failed/);
+  assert.match(failureSse, /voice identity is missing/);
+  assert.doesNotMatch(failureSse, /response\.output_text\.delta|response\.completed/);
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages").get().n, 0);
 });
 test("authenticated initiation still rejects the wrong agent before customer or consent writes", async t => {
@@ -135,7 +138,10 @@ test("authenticated Responses route executes a real grounded turn and returns au
     applyOwnedDdl(w.sqlite, owner);
 
   await setAiRolloutStage(w.db, { stage: "staff_only", reason: "synthetic executed voice UAT", actorEmail: "test@pawspace.test" });
-  const mock = stubFetch(() => jsonResponse({ status: "completed", output_text: "I can explain PawSpace grooming services.", usage: { total_tokens: 20 } }));
+  const mock = stubFetch(() => new Response([
+    {type:"response.output_text.delta",delta:"I can explain PawSpace grooming services."},
+    {type:"response.completed",response:{status:"completed",usage:{total_tokens:20}}},
+  ].map(event=>`data: ${JSON.stringify(event)}\n\n`).join("")+"data: [DONE]\n\n",{headers:{"content-type":"text/event-stream"}}));
   t.after(() => mock.restore());
   const r = await dispatch(w, request("/api/elevenlabs/v1/responses", JSON.stringify({
     model: "pawspace-grounded-openai", input: "What grooming services do you offer?",
@@ -149,5 +155,8 @@ test("authenticated Responses route executes a real grounded turn and returns au
   assert.match(sse, /I can explain PawSpace grooming services/, JSON.stringify({providerCalls:mock.calls.length,turns:w.sqlite.prepare("SELECT intent_code,provider,outcome,handoff_reason,policy_decision FROM ai_conversation_turns").all()}));
   assert.equal(mock.calls.length, 1, "the real adapter must reach its mocked external provider");
   assert.equal(mock.calls[0].url, "https://api.openai.com/v1/responses");
-  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE channel='voice'").get().n, 1);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE template_key='elevenlabs_custom_llm_reply'").get().n, 1);
+  const completed=sse.split("\n").filter(line=>line.startsWith("data: {")).map(line=>JSON.parse(line.slice(6))).find(event=>event.type==="response.completed");
+  assert.equal(completed.response.pawspace_timing.path,"fast");
+  for(const stage of ["groundingStarted","groundingCompleted","governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"])assert.equal(typeof completed.response.pawspace_timing[stage],"number",stage);
 });

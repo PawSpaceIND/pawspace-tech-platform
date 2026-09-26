@@ -331,6 +331,7 @@ jobs:
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
         run: |
           node <<'NODE'
+          const {conversationEvidence}=await import('./scripts/voice-uat-evidence.mjs');
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
           const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||''), key=String(process.env.ELEVENLABS_API_KEY||'').trim(), configuredPhoneId=String(process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID||'').trim(), agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
           const callerDigits=String(process.env.EXOTEL_CALLER_ID||'').replace(/\D/g,'').replace(/^91/,'').replace(/^0/,'').slice(-10);
@@ -376,19 +377,24 @@ jobs:
           const ledgerResp=await fetch(origin+'/api/voice-outbound?scope=ledger&limit=100',{headers:{cookie},signal:AbortSignal.timeout(30000)}); const ledgerBody=await ledgerResp.json().catch(()=>({})); if(!ledgerResp.ok)throw new Error('voice ledger failed: '+ledgerResp.status);
           const rows=Array.isArray(ledgerBody?.data)?ledgerBody.data:[]; const context=rows.find(r=>r?.dialed&&r?.callId&&['booking_confirmation','grooming_sales','training_sales'].includes(String(r?.useCase||'')))||rows.find(r=>r?.dialed&&r?.callId);
           if(!context?.callId)throw new Error('no canonical UAT voice call context available'); const voiceCallId=String(context.callId); console.log('::add-mask::'+voiceCallId); console.log('PAWSPACE_CONTEXT_READY='+JSON.stringify({useCase:context.useCase,state:context.state,mode:context.mode,dialed:Boolean(context.dialed)}));
+          console.log('DIRECT_GROOMING_DIAL_READY='+JSON.stringify({destinationLast4:to.replace(/\D/g,'').slice(-4),requestedRingSeconds:60,observedRingBudgetSeconds:26,dialStartedAt:new Date().toISOString()}));
+          console.log('::warning::Answer immediately when the handset rings: prior unanswered calls ended at about 26 seconds despite the requested 60 seconds. Queue time is additional.');
           const before=Date.now();
           const callResp=await fetch('https://api.elevenlabs.io/v1/convai/exotel/outbound-call',{method:'POST',headers:{'content-type':'application/json','xi-api-key':key},body:JSON.stringify({agent_id:agentId,agent_phone_number_id:phoneId,to_number:to,conversation_initiation_client_data:{custom_llm_extra_body:{pawspace_voice_call_id:voiceCallId},dynamic_variables:{pawspace_voice_call_id:voiceCallId,pawspace_uat:'true'}},telephony_call_config:{ringing_timeout_secs:60}}),signal:AbortSignal.timeout(30000)});
-          const callBody=await callResp.json().catch(()=>({})); if(!callResp.ok||callBody?.success!==true||!callBody?.conversation_id){console.log('ELEVENLABS_CALL_ERROR='+JSON.stringify(callBody).slice(0,2200));throw new Error(`ElevenLabs outbound call refused: HTTP ${callResp.status}`);} const conversationId=String(callBody.conversation_id),callSid=String(callBody.callSid||callBody.call_sid||callBody.call_sid_exotel||''); console.log('::add-mask::'+conversationId); if(callSid)console.log('::add-mask::'+callSid); console.log('ELEVENLABS_CALL_ACCEPTED=yes');
+          const callBody=await callResp.json().catch(()=>({})); if(!callResp.ok||callBody?.success!==true||!callBody?.conversation_id){console.log('ELEVENLABS_CALL_ERROR='+JSON.stringify(callBody).slice(0,2200));throw new Error(`ElevenLabs outbound call refused: HTTP ${callResp.status}`);} const conversationId=String(callBody.conversation_id),callSid=String(callBody.callSid||callBody.call_sid||callBody.call_sid_exotel||''); console.log('::add-mask::'+conversationId); if(callSid)console.log('::add-mask::'+callSid); console.log('ELEVENLABS_CALL_ACCEPTED=yes'); console.log('DIRECT_GROOMING_CORRELATION='+JSON.stringify({destinationLast4:to.replace(/\D/g,'').slice(-4),callSidSuffix:callSid.slice(-8)||null}));
           let detail=null,carrier=null;
           for(let i=0;i<30;i++){
             await new Promise(r=>setTimeout(r,4000));
             const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)}); if(dr.ok)detail=await dr.json().catch(()=>({}));
             if(callSid){const cr=await fetch(`https://${exHost}/v1/Accounts/${encodeURIComponent(exSid)}/Calls/${encodeURIComponent(callSid)}.json`,{headers:{authorization:`Basic ${Buffer.from(`${exKey}:${exToken}`).toString('base64')}`},signal:AbortSignal.timeout(20000)}); if(cr.ok){const cb=await cr.json().catch(()=>({}));const row=(cb.Call||cb.call||cb);carrier={status:String(row.Status||row.status||''),currentStatus:String(row.CurrentStatus||row.current_status||''),duration:Number(row.Duration||row.duration||0),direction:String(row.Direction||row.direction||'')};}}
             const tr=Array.isArray(detail?.transcript)?detail.transcript:[]; console.log('DIRECT_GROOMING_POLL='+JSON.stringify({conversationStatus:detail?.status||null,turns:tr.length,hasAudio:Boolean(detail?.has_audio),hasUserAudio:Boolean(detail?.has_user_audio),hasResponseAudio:Boolean(detail?.has_response_audio),carrier}));
-            if(String(detail?.status)==='failed'||String(detail?.status)==='done'||tr.length>=2||detail?.has_response_audio)break;
+            if(conversationEvidence(detail,carrier,agentId).terminal)break;
           }
           if(!detail)throw new Error('ElevenLabs conversation was not readable'); const tr=Array.isArray(detail.transcript)?detail.transcript:[];
           console.log('DIRECT_GROOMING_RESULT='+JSON.stringify({status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,carrier,safeTranscript:tr.slice(0,8).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
+          const evidence=conversationEvidence(detail,carrier,agentId);
+          console.log('DIRECT_GROOMING_EVIDENCE='+JSON.stringify(evidence));
+          if(!evidence.passed)throw new Error('Live conversation not proven: '+evidence.reason);
           if(String(detail.agent_id)!==agentId)throw new Error('wrong ElevenLabs Grooming agent'); if(String(detail.status)==='failed')throw new Error('ElevenLabs Grooming conversation failed');
           NODE
 
