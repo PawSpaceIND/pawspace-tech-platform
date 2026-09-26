@@ -893,7 +893,7 @@
     "app/test-lab/test-lab.module.css": "2cbfafa66a9f508ff7cb550c2313fb57f8a833034725f14777de37ce8cf7675b",
     "app/trainer/earnings-load-state.tsx": "0af2a17be3a01cab9da2bf721463f078509cb7b054bf5a2fdc86418cd9d66ea8",
     "app/trainer/layout.tsx": "bf3bb5844317b9482e93f85cd901c89b76b905c2955c89fac35c165f41a8c8b0",
-    "app/trainer/page.tsx": "27a3d7ec1e6c312ba0a987482ddbbe3d5d86d843d08086ce8af0aa95630fe190",
+    "app/trainer/page.tsx": "b3ada37cbdcd13a8dc7e57e7d0ecf67c06f9d5ee627aa3f6ea90404117475fcf",
     "app/trainer/session-proof.module.css": "f92927c6b21a6bcdc62a9f440afacbb31f1e6fd74bd2d5705f32533f0a432de3",
     "app/trainer/session-proof.tsx": "975a61e0e97ee32618afedb5119d186a54511bf38f248156a342449c06f77627",
     "app/trainer/trainer-extra.module.css": "b0090f12912550ca10b69285df93f2747050d28c4af6b038af823cf2702f1e9e",

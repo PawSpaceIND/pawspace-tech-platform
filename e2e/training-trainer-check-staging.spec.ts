@@ -47,7 +47,7 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
   say("");
   say(`- Origin: ${BASE}`);
   say(`- Started: ${ist(Date.now())}`);
-  say("- Read-only: nothing is reserved, paid or changed. Times are IST.");
+  say("- Nothing is reserved or paid. The run signs up one sandbox-OTP customer with an address and a pet. Times are IST.");
   const context = await browser.newContext({ ...devices["Pixel 7"], baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata" });
   const page = await context.newPage();
   try {

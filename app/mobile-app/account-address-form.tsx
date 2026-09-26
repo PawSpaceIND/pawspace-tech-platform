@@ -40,8 +40,8 @@ export default function AccountAddressForm({busy,submitLabel="Save address",init
   try{fill=addressFromResolvedPlace(await resolveAddress(suggestion.placeId,sessionToken()),suggestion);}catch{fill=null;}
   if(request!==generation.current)return;
   session.current=createAddressSessionToken();
-  // A new choice replaces the address, its PIN and any earlier area; coverage refills the area when served.
-  const next=fill||addressFromSuggestionText(suggestion);setQuery("");setFields(current=>({...current,line1:next.line1,area:"",postalCode:next.postalCode}));
+  // A new choice replaces the address, its flat/landmark line, its PIN and any earlier area; coverage refills the area when served.
+  const next=fill||addressFromSuggestionText(suggestion);setQuery("");setFields(current=>({...current,line1:next.line1,line2:"",area:"",postalCode:next.postalCode}));
   if(!next.postalCode){setLookup("");setPinHint("Add the PIN code for this address");pinInput.current?.focus();return;}
   try{const served=await resolveServiceCoverage(next.postalCode);if(request!==generation.current)return;setCoverage(served);setFields(current=>({...current,area:served.area||current.area,city:served.city||current.city}));setCoverageNote({pincode:next.postalCode,text:`PawSpace serves ${served.zoneName} (${served.area||served.city}).`});}
   catch(problem){if(request===generation.current)setCoverageNote({pincode:next.postalCode,text:problem instanceof ServiceCoverageRefusal?NOT_SERVED:COVERAGE_UNCHECKED});}

@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Read-only Dog Training trainer-availability check against a deployed origin (staging by default).
+// Dog Training trainer-availability check against a deployed origin (staging by default). It reserves nothing.
 // It reserves nothing: one new sandbox-OTP customer, one on-screen check and availability previews.
 const baseURL = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 export default defineConfig({

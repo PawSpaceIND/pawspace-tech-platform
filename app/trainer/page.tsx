@@ -32,7 +32,8 @@ function TrainerPageContent(){
  const[tab,setTab]=useState<Tab>("today"),[providerId,setProviderId]=useState(""),[sessions,setSessions]=useState<TrainerSession[]>([]),[selectedId,setSelectedId]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(""),[toast,setToast]=useState(""),[evidence,setEvidence]=useState<TrainingEvidenceAsset[]>([]),[earnings,setEarnings]=useState<EarningsData|null>(null),[attendanceMode,setAttendanceMode]=useState<"parent"|"trainer_led">("parent"),[parentConfirmed,setParentConfirmed]=useState(false),[safeArea,setSafeArea]=useState(false),[homework,setHomework]=useState(""),[scores,setScores]=useState<Record<string,number>>({focus:7,recall:7,impulse:7,parent:7});
  const[evidenceError,setEvidenceError]=useState(""),[trainerName,setTrainerName]=useState("");
  const[earningsLoading,setEarningsLoading]=useState(false),[earningsError,setEarningsError]=useState("");
- const earningsRequest=useRef(0),evidenceRequest=useRef(0);
+ const earningsRequest=useRef(0),evidenceRequest=useRef(0),selectedRef=useRef("");
+ useEffect(()=>{selectedRef.current=selectedId;},[selectedId]);
  const selected=useMemo(()=>sessions.find(item=>item.id===selectedId)||null,[sessions,selectedId]);
  const programmes=useMemo(()=>{const map=new Map<string,TrainerSession>();for(const session of sessions)if(!map.has(session.programme_id))map.set(session.programme_id,session);return[...map.values()];},[sessions]);
  const earnedAmount=useMemo(()=>earnings?.earnings.filter(item=>item.status==="earned").reduce((sum,item)=>sum+Number(item.gross_earning||0),0)||0,[earnings]);
@@ -41,7 +42,8 @@ function TrainerPageContent(){
  // Only the newest evidence read may write, so a slow response for an earlier selection (or an older read of this one) cannot replace the photos now shown.
  async function showEvidence(sessionId:string){const current=newestRequest(evidenceRequest);try{const result=await loadTrainingEvidence(sessionId);if(current()){setEvidence(result.assets);setEvidenceError("");}}catch(problem){if(current()){setEvidence([]);setEvidenceError(problem instanceof Error?problem.message:"Unable to load session photos. Please retry.");}}}
  async function selectSession(session:TrainerSession){setSelectedId(session.id);applyEditor(editorFrom(session));await showEvidence(session.id);}
- async function refresh(id=providerId,preferredSessionId=selectedId){if(!id)return;const rows=await loadTrainerSessions(id);setSessions(rows);const next=rows.find(row=>row.id===preferredSessionId)||rows[0]||null;if(next){setSelectedId(next.id);applyEditor(editorFrom(next));await showEvidence(next.id);}else{setSelectedId("");setEvidence([]);}if(tab==="earnings")await loadEarnings(id);}
+ // The selection is read after the load, so a session picked while Refresh was in flight is kept rather than replaced by the one selected when it started.
+ async function refresh(id=providerId,preferredSessionId?:string){if(!id)return;const rows=await loadTrainerSessions(id);setSessions(rows);const wanted=preferredSessionId??selectedRef.current,next=rows.find(row=>row.id===wanted)||rows[0]||null;if(next){setSelectedId(next.id);applyEditor(editorFrom(next));await showEvidence(next.id);}else{setSelectedId("");setEvidence([]);}if(tab==="earnings")await loadEarnings(id);}
  async function loadEarnings(id=providerId){if(!id)return;const request=++earningsRequest.current;setEarningsLoading(true);setEarningsError("");setEarnings(null);try{const data=await providerEarnings(id);if(request===earningsRequest.current)setEarnings(data);}catch(problem){if(request===earningsRequest.current)setEarningsError(problem instanceof Error?problem.message:"Unable to load Training earnings");}finally{if(request===earningsRequest.current)setEarningsLoading(false);}}
  async function openTab(next:Tab){setTab(next);setError("");if(next==="earnings")await loadEarnings();}
  /*

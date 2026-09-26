@@ -7,7 +7,7 @@ on:
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
       suite:
-        description: 'training-deployed (capture + recovery), master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI), cleanup (founder-approved cancellation of stale UAT Training sessions on staging) or trainer-check (read-only: is a tester offered a trainer on /v2/training)'
+        description: 'training-deployed (capture + recovery), master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI), cleanup (founder-approved cancellation of stale UAT Training sessions on staging) or trainer-check (reserves nothing: is a tester offered a trainer on /v2/training)'
         required: false
         default: 'training-deployed'
         type: choice
@@ -63,7 +63,9 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           MASTER_OUT: test-results/training-master
         run: npx playwright test --config playwright.training-master.config.ts
-      - name: Check that a tester is offered a Dog Training trainer (read-only)
+      # Reserves nothing: no booking, hold or payment. Each run signs up one sandbox-OTP staging customer with an
+      # address and a pet, the minimum a Training availability preview needs.
+      - name: Check that a tester is offered a Dog Training trainer (reserves nothing)
         if: github.event.inputs.suite == 'trainer-check'
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
