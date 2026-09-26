@@ -94,7 +94,7 @@ async function world() {
   const cookie = await sessionCookie(db);
   const start = new Date(Date.now() + 72 * 60 * 60_000);
   start.setUTCHours(10, 0, 0, 0);
-  const end = new Date(start.getTime() + 2 * 60 * 60_000);
+  const end = new Date(start.getTime() + 60 * 60_000); // a Home Visit is one 60-minute window (SIT-04)
   return { sqlite, db, cookie, start: start.toISOString(), end: end.toISOString() };
 }
 

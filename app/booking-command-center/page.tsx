@@ -8,6 +8,7 @@ import styles from "./page.module.css";
 import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
 import {snapshotMetric} from "../components/staff-workspace/display-state";
 import ServiceProofReview from "./service-proof-review";
+import { awaitingPayment } from "../../lib/booking-payment-kpis";
 
 type Row = Record<string, unknown>;
 type Booking = Row & { pets: Row[]; lifecycle: Row[]; operations: Row[]; notifications: Row[]; rebooking: Row[]; refunds: Row[]; tickets: Row[]; adminActions: Row[] };
@@ -66,12 +67,12 @@ export default function BookingCommandCenter() {
     const haystack = `${booking.id} ${booking.customer_name} ${booking.primary_phone} ${booking.package_name} ${booking.provider_name} ${booking.zone_id} ${booking.service_code}`.toLowerCase();
     const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
     const risky = booking.operations.length > 0 || booking.tickets.some(ticket => isSupportCaseOpen(ticket.status)) || booking.rebooking.length > 0;
-    const matchesFilter = filter === "All bookings" || (filter === "Needs attention" && risky) || (filter === "Unassigned" && !booking.provider_id) || (filter === "Payment pending" && !["paid", "captured", "completed"].includes(String(booking.payment_status))) || pretty(booking.status) === filter;
+    const matchesFilter = filter === "All bookings" || (filter === "Needs attention" && risky) || (filter === "Unassigned" && !booking.provider_id) || (filter === "Payment pending" && awaitingPayment(booking)) || pretty(booking.status) === filter;
     return matchesQuery && matchesFilter;
   }), [bookings, filter, query]);
   const selected = bookings.find(booking => booking.id === selectedId) || visible[0];
   const risks = bookings.filter(booking => booking.operations.length || booking.tickets.some(ticket => isSupportCaseOpen(ticket.status)) || booking.rebooking.length).length;
-  const paymentPending = bookings.filter(booking => !["paid", "captured", "completed"].includes(String(booking.payment_status))).length;
+  const paymentPending = bookings.filter(awaitingPayment).length;
 
   async function adminAction(action: string) {
     if (!selected) return;
@@ -97,7 +98,7 @@ export default function BookingCommandCenter() {
         <article><span>Total bookings</span><b>{snapshotMetric(bookings.length, loading, error)}</b><small>{error ? "Snapshot unavailable" : loading ? "Loading snapshot" : "Latest loaded UAT records"}</small></article>
         <article><span>Needs attention</span><b className={!loading && !error && risks ? styles.red : ""}>{snapshotMetric(risks, loading, error)}</b><small>Delay, ticket or rebooking</small></article>
         <article><span>Payment pending</span><b>{snapshotMetric(paymentPending, loading, error)}</b><small>Includes pay-after service</small></article>
-        <article><span>Open revenue</span><b>{snapshotMetric(money(bookings.reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0)), loading, error)}</b><small>Due now across records</small></article>
+        <article><span>Open revenue</span><b>{snapshotMetric(money(bookings.filter(awaitingPayment).reduce((sum, booking) => sum + Number(booking.amount_due_now || 0), 0)), loading, error)}</b><small>Due now across records</small></article>
       </section>
 
       <section className={styles.controls}><label>⌕<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search booking, customer, pet, phone or provider" /></label><div>{["All bookings", "Needs attention", "Payment pending", "Confirmed", "Completed"].map(item => <button key={item} className={filter === item ? styles.filterActive : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></section>

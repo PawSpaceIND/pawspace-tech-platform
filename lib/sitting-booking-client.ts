@@ -6,6 +6,7 @@ export type SittingBookingInput={
  provider:{id:string;name:string;model:"full_time"|"commission"};
  totalAmount:number;amountDueNow:number;
  payment:{method:string;mode:"prepaid"|"split_50_50";detail:string};
+ meetGreetRequestId?:string;
 };
 export type SittingBookingResult={bookingId:string;customerId:string;petIds:string[];scheduleGroupId:string;workOrderId:string;paymentId:string;status:string;duplicatePrevented:boolean;liveMoney:false};
 

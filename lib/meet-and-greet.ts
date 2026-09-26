@@ -20,6 +20,7 @@ export type MeetGreetRequest = {
   priceWaivedReason: string | null;
   status: MeetGreetStatus;
   notes: string | null;
+  bookingId: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -75,7 +76,7 @@ export async function ensureMeetGreetTables(db: Db) {
   if (meetGreetTablesEnsured.has(db)) return;
   await db.batch([
     db.prepare(
-      "CREATE TABLE IF NOT EXISTS meet_greet_requests (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,host_provider_id TEXT NOT NULL,format TEXT NOT NULL,intended_stay_start TEXT,intended_stay_end TEXT,intended_stay_days INTEGER NOT NULL DEFAULT 0,preferred_at INTEGER NOT NULL,price_charged REAL NOT NULL DEFAULT 0,price_waived_reason TEXT,status TEXT NOT NULL DEFAULT 'requested',notes TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"
+      "CREATE TABLE IF NOT EXISTS meet_greet_requests (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,host_provider_id TEXT NOT NULL,format TEXT NOT NULL,intended_stay_start TEXT,intended_stay_end TEXT,intended_stay_days INTEGER NOT NULL DEFAULT 0,preferred_at INTEGER NOT NULL,price_charged REAL NOT NULL DEFAULT 0,price_waived_reason TEXT,status TEXT NOT NULL DEFAULT 'requested',notes TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,booking_id TEXT)"
     ),
     db.prepare(
       "CREATE TABLE IF NOT EXISTS meet_greet_events (id TEXT PRIMARY KEY,request_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"
@@ -85,6 +86,12 @@ export async function ensureMeetGreetTables(db: Db) {
       "CREATE UNIQUE INDEX IF NOT EXISTS meet_greet_open_pair ON meet_greet_requests(customer_id,host_provider_id) WHERE status IN ('requested','confirmed')"
     ),
   ]);
+  // booking_id links a request to the booking it was made for; tables created before it existed gain it here.
+  const columns = await db.prepare("PRAGMA table_info(meet_greet_requests)").all<Row>();
+  if (!columns.results.some((column) => String(column.name) === "booking_id")) {
+    await db.prepare("ALTER TABLE meet_greet_requests ADD COLUMN booking_id TEXT").run().catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+  }
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_meet_greet_booking ON meet_greet_requests(booking_id)").run();
   meetGreetTablesEnsured.add(db);
 }
 
@@ -118,6 +125,7 @@ function rowToRequest(row: Row): MeetGreetRequest {
     priceWaivedReason: row.price_waived_reason == null ? null : String(row.price_waived_reason),
     status: String(row.status) as MeetGreetStatus,
     notes: row.notes == null ? null : String(row.notes),
+    bookingId: row.booking_id == null ? null : String(row.booking_id),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -193,6 +201,22 @@ export async function getMeetGreetRequest(db: Db, requestId: string): Promise<Me
   await ensureMeetGreetTables(db);
   const row = await db.prepare("SELECT * FROM meet_greet_requests WHERE id=?").bind(requestId).first<Row>();
   return row ? rowToRequest(row) : null;
+}
+
+/** Links the customer's own open request to the booking it was made for (same host and intended stay dates).
+ *  Idempotent: repeating the link for the same booking returns the linked request and never adds a second event. */
+export async function linkMeetGreetRequestToBooking(db: Db, input: { requestId: string; bookingId: string; customerId: string; hostProviderId: string; intendedStayStart: string; intendedStayEnd: string; actorId: string }): Promise<MeetGreetRequest> {
+  await ensureMeetGreetTables(db);
+  const now = Date.now();
+  await db.batch([
+    db.prepare("UPDATE meet_greet_requests SET booking_id=?,updated_at=? WHERE id=? AND customer_id=? AND host_provider_id=? AND intended_stay_start=? AND intended_stay_end=? AND status IN ('requested','confirmed') AND booking_id IS NULL")
+      .bind(input.bookingId, now, input.requestId, input.customerId, input.hostProviderId, input.intendedStayStart, input.intendedStayEnd),
+    db.prepare("INSERT OR IGNORE INTO meet_greet_events (id,request_id,event_type,actor_id,detail_json,created_at) SELECT ?,id,'booking_linked',?,?,? FROM meet_greet_requests WHERE id=? AND booking_id=?")
+      .bind(`MGE-LINK-${input.requestId}`, input.actorId, JSON.stringify({ bookingId: input.bookingId }), now, input.requestId, input.bookingId),
+  ]);
+  const linked = await getMeetGreetRequest(db, input.requestId);
+  if (!linked || linked.bookingId !== input.bookingId || linked.customerId !== input.customerId) throw new Error("Meet & greet request is not open for this customer, host and stay dates");
+  return linked;
 }
 
 export async function listMeetGreetRequests(db: Db, filters: { customerId?: string; hostProviderId?: string; status?: MeetGreetStatus } = {}): Promise<MeetGreetRequest[]> {

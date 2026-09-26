@@ -50,13 +50,19 @@ export default function V2Chat(){
 
  /* My PawSpace reads the conversation back from the server, so replies from the PawSpace team appear here
   * and nothing is lost on reload. */
- const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(r.status===401){setIdentity("guest");return null;}if(!r.ok)return null;const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(payload?.data)setTranscript(payload.data);return payload?.data||null;},[]);
+ /* Every change to the shown conversation bumps this; a read that started before a newer change (a tap's
+  * reply, the customer's own message) is dropped instead of putting an older conversation back. */
+ const shownVersion=useRef(0);
+ const showTranscript=useCallback((next:Transcript|((current:Transcript|null)=>Transcript|null))=>{shownVersion.current+=1;setTranscript(next);},[]);
+ const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const startedAt=shownVersion.current;const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(r.status===401){setIdentity("guest");return null;}if(!r.ok)return null;const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(payload?.data&&shownVersion.current===startedAt)showTranscript(payload.data);return payload?.data||null;},[showTranscript]);
  const withTeam=Boolean(transcript?.handoff.active);
  useEffect(()=>{if(mode!=="authenticated"||identity!=="customer")return;let active=true;const controller=new AbortController();
-  const open=()=>{void loadTranscript(controller.signal).then(async data=>{if(active&&data&&!data.messages.length){await post({mode:"authenticated",bot:true,start:true}).catch(()=>null);if(active)await loadTranscript(controller.signal);}}).catch(()=>{});};open();
+  /* One request opens the chat: start is a no-op for a conversation that already exists, and it returns
+   * the conversation either way. */
+  const open=()=>{void post({mode:"authenticated",bot:true,start:true}).then(async payload=>{const data=(payload as {data?:{transcript?:Transcript|null}}|null)?.data?.transcript;if(!active)return;if(data)showTranscript(data);else await loadTranscript(controller.signal);}).catch(()=>{if(active)void loadTranscript(controller.signal).catch(()=>{});});};open();
   const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void loadTranscript(controller.signal).catch(()=>{});},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
   return()=>{active=false;controller.abort();clearInterval(timer);};
- },[mode,identity,withTeam,loadTranscript]);
+ },[mode,identity,withTeam,loadTranscript,showTranscript]);
 
  function choose(next:"public"|"authenticated"){setMode(next);setError("");setDraft("");pending.current=null;}
 
@@ -76,8 +82,10 @@ export default function V2Chat(){
     if(data?.lead?.captured)next.push({id:localId(),side:"system",text:"Your details were shared with the PawSpace team"});
     setPublicMessages(current=>[...current,...next]);setPublicHint(data?.bot?.inputHint||null);
    }else{
-    await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key});
-    await loadTranscript();
+    // The customer's message shows at once; the server's answer replaces the conversation with the stored one.
+    const sentAt=Date.now();showTranscript(current=>current?{...current,messages:[...current.messages,{id:`pending-${sentAt}`,role:"customer",text:shown,createdAt:sentAt} as Transcript["messages"][number]]}:current);
+    const payload=await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key}) as {data?:{transcript?:Transcript|null}}|null;
+    if(payload?.data?.transcript)showTranscript(payload.data.transcript);else await loadTranscript();
    }
    setDraft("");pending.current=null;
   }catch(cause){setError(cause instanceof Error?cause.message:"Chat is temporarily unavailable.");if(mode==="authenticated")void loadTranscript().catch(()=>{});}

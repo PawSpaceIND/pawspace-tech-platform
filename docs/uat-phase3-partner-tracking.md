@@ -18,7 +18,9 @@ Training uses separate pet cards and requirement chips, followed by participatio
 
 Set `PAWSPACE_PARTNER_APP_URL` to the approved HTTPS workspace URL ending in `/partner-app`, then run `npm run cap:sync:partner`. This packages a minimal local offline/error shell and loads the authenticated hosted application. It does not package a Next/server build directory as a static mobile app.
 
-The existing mobile beta workflow reads the `PAWSPACE_PARTNER_APP_URL` repository variable and runs the same preparation before native sync. Android uses JDK 21 for Capacitor 8. This PR does not dispatch a distribution run.
+The customer app loads the V2 customer experience: set `PAWSPACE_CUSTOMER_APP_URL` to the approved HTTPS workspace URL ending in `/v2` (not `/mobile-app`), then run `npm run cap:sync:customer`. `capacitor.customer.config.ts` rejects any other path. Installed builds keep the URL they were built with until they update, so `/mobile-app` stays available.
+
+The existing mobile beta workflow reads the `PAWSPACE_PARTNER_APP_URL` and `PAWSPACE_CUSTOMER_APP_URL` repository variables and runs the same preparation before native sync. Android uses JDK 21 for Capacitor 8. This PR does not dispatch a distribution run.
 
 Background geolocation is pinned to community plugin 1.2.26. Its npm peer permits Capacitor 8, but its Swift Package Manager manifest still requests the Capacitor 7 range. The preparation script verifies both versions and adjusts that installed manifest to the Capacitor 8 range before syncing. Review this workaround whenever upgrading either dependency. Customer sync also runs the compatibility preparation.
 

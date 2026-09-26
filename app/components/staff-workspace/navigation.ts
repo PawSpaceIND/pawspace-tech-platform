@@ -30,6 +30,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
   { id: "finance", label: "Finance & compliance", links: [
     { label: "Finance workspace", href: "/team/finance", permission: "finance.view" },
     { label: "Cash flow", href: "/team/finance/cash-flow", permission: "finance.view" },
+    { label: "Contractor pay", href: "/team/finance/contractors", permission: "finance.view" },
     { label: "Compliance", href: "/team/finance-compliance", permission: "finance.view" },
   ] },
   { id: "growth", label: "Growth & communications", links: [
@@ -49,7 +50,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "System integrations", href: "/control/integrations", permission: "settings.manage" },
     { label: "Lifecycle automation", href: "/team/lifecycle-reminders", permission: "settings.manage" },
     { label: "Subscription plans", href: "/team/subscription-plans", permission: "pricing.view" },
-    { label: "Catalogue & services", href: "/team/catalogue", permission: "pricing.manage" },
+    { label: "Pricing & packages", href: "/team/catalogue", permission: "pricing.manage" },
   ] },
 ];
 

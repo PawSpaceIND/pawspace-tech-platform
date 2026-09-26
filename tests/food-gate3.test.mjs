@@ -407,6 +407,9 @@ test("Fresh Food derives COGS and supplier payable from the actual received batc
   assert.ok(prepared.taxAmount > 0);
   assert.equal(prepared.supplierId, supplier.supplierId);
   assert.equal(prepared.supplyChainBatchId, received.batchId);
+  // Owner decision 6 (26 Sept 2026): the supplier becomes payable 7 days after completion, not straight away.
+  assert.ok(Number((await db.prepare("SELECT eligible_at FROM food_supplier_settlement_ledger WHERE order_id=?").bind(order.orderId).first()).eligible_at) - Date.now() > 6.9 * 86_400_000);
+  await db.prepare("UPDATE food_supplier_settlement_ledger SET eligible_at=? WHERE order_id=?").bind(Date.now() - 1, order.orderId).run();
   const approved = await money(db, order, "approve_supplier_settlement", {});
   assert.equal(approved.status, "approved");
   assert.equal(approved.settlement, "not_instructed", "Finance approval never pretends live supplier money moved");

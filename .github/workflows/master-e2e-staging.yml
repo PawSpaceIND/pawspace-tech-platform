@@ -13,7 +13,7 @@ on:
       suite:
         description: "preflight | all | a comma list of suite names (see e2e/master/suites/README.md)"
         required: true
-        default: "preflight,05-payment-canary,06-money-and-maps,07-ai-probe"
+        default: "preflight,05-payment-canary,06-money-and-maps,07-ai-probe,08-fix-verification,10-refund-and-staff-fixes"
 
 permissions:
   contents: read

@@ -1,6 +1,7 @@
 import type{Provider}from"../backend/src/domain";
 import{assertProviderAssignable,filterAssignableProviders}from"./provider-assignment-eligibility";
-import{currentHomeBase}from"./provider-home-base";
+import{currentHomeBase,ensureProviderHomeBaseTables}from"./provider-home-base";
+import{chunkedIn}from"./d1-chunked-in";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -81,7 +82,26 @@ function configuredNumber(value:unknown,fallback:number){if(value===null||value=
 function rowToProvider(row:Row):LocatedProvider{return{id:String(row.id),cityId:String(row.city_id),name:String(row.name),model:String(row.provider_model) as Provider["model"],services:parse<string[]>(row.services_json,[]),zones:parse<string[]>(row.zones_json,[]),live:Boolean(row.live)&&String(row.status)==="active",rating:configuredNumber(row.rating,0),qualityScore:configuredNumber(row.quality_score,0),capacity:configuredNumber(row.capacity,1),travelBufferMinutes:configuredNumber(row.travel_buffer_minutes,30),maxDailyJobs:configuredNumber(row.max_daily_jobs,6)};}
 async function attachHomeBase(db:Db,provider:LocatedProvider,at:number){const base=await currentHomeBase(db,provider.id,at);return base?{...provider,latitude:base.latitude,longitude:base.longitude}:provider;}
 
-export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}
+/**
+ * currentHomeBase for a whole shortlist in one read per chunk (chunkedIn keeps each under D1's bound-
+ * parameter cap). Same rows, same pick: the latest effective_from live at `at`; on an exact tie the most
+ * recently written row, which is the row currentHomeBase's per-provider index scan returns.
+ */
+/** Chunks partition providerIds, so each provider's rows arrive from one chunk in that chunk's SQL order. A stable sort by provider_id
+ * reapplies the ORDER BY across chunks without disturbing each provider's effective_from/rowid order. */
+const providerContiguous=(rows:Row[])=>[...rows].sort((a,b)=>{const x=String(a.provider_id),y=String(b.provider_id);return x<y?-1:x>y?1:0;});
+async function currentHomeBases(db:Db,providerIds:string[],at:number){await ensureProviderHomeBaseTables(db);const rows=providerContiguous(await chunkedIn(providerIds,async(chunk,placeholders)=>(await db.prepare(`SELECT provider_id,latitude,longitude FROM provider_home_base WHERE provider_id IN (${placeholders}) AND effective_from<=? AND (effective_until IS NULL OR effective_until>?) ORDER BY provider_id,effective_from DESC,rowid DESC`).bind(...chunk,at,at).all<Row>()).results)),bases=new Map<string,{latitude:number;longitude:number}>();for(const row of rows){const id=String(row.provider_id);if(!bases.has(id))bases.set(id,{latitude:Number(row.latitude),longitude:Number(row.longitude)});}return bases;}
+
+/**
+ * The governed candidate set: live, in-city profiles for the service and zone, with their current home
+ * base, minus anyone on leave at the appointment and anyone whose mandatory verification cannot be proved.
+ *
+ * Set-based: after the profile read, home bases, leave and verification are each ONE read for the whole
+ * shortlist, all in a single parallel wave. It used to be five per-provider waves, so every extra groomer
+ * in a zone added five D1 queries (east's 13 groomers made 111 per preview; bug B2). Result and order are
+ * unchanged; only onboarded providers still take the per-provider verification path.
+ */
+export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const matching=rows.results.map(row=>({provider:rowToProvider(row),profile:row})).filter(({provider})=>provider.services.includes(serviceCode)&&provider.zones.includes(zoneId));if(!matching.length)return[];const atMs=at.getTime(),nowIso=at.toISOString(),ids=matching.map(item=>item.provider.id);const[bases,onLeave,assignable]=await Promise.all([currentHomeBases(db,ids,atMs),chunkedIn(ids,async(chunk,placeholders)=>(await db.prepare(`SELECT DISTINCT provider_id FROM provider_unavailability WHERE provider_id IN (${placeholders}) AND status='active' AND starts_at<=? AND ends_at>?`).bind(...chunk,nowIso,nowIso).all<Row>()).results).then(found=>new Set(found.map(row=>String(row.provider_id)))),filterAssignableProviders(db,matching.map(item=>item.provider),atMs,new Map(matching.map(item=>[item.provider.id,item.profile]))).then(list=>new Set(list.map(provider=>provider.id)))]);return matching.filter(({provider})=>!onLeave.has(provider.id)&&assignable.has(provider.id)).map(({provider}):LocatedProvider=>{const base=bases.get(provider.id);return base?{...provider,latitude:base.latitude,longitude:base.longitude}:provider;});}
 
 export async function getGovernedProvider(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();if(!row)return null;return attachHomeBase(db,rowToProvider(row),Date.now());}
 export async function providerUnavailableForWindow(db:Db,input:{providerId:string;scheduledStart:string;scheduledEnd:string}){await ensureProviderCapacityTables(db);const blocked=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(input.providerId,input.scheduledEnd,input.scheduledStart).first<Row>();return Boolean(blocked);}

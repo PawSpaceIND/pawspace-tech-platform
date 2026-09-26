@@ -1,0 +1,121 @@
+name: V2 staging end-to-end
+
+# Manual only. Drives a real browser through the customer V2 grooming journey on the DEPLOYED staging origin:
+# sandbox phone OTP (the code staging shows on screen) -> add a pet inline when the account has none ->
+# Bath & Basic -> service area by PIN -> first available slot -> live price & groomers -> first groomer ->
+# Reserve & review payment -> (run_payment) Razorpay TEST checkout with the standard test card and the
+# test-bank Success page -> V2 booking confirmation shows "confirmed" -> Activity lists the booking.
+#
+# Every run creates one real staging booking for a fresh synthetic customer. With run_payment=false the
+# booking stays payment pending. Sandbox payments only: card details are entered only after PawSpace answers
+# with a sandbox order and a Razorpay test-mode key, and production origins are refused.
+#
+# The optional staff check (Booking Command Center search) runs only when the PAWSPACE_UAT_ACCESS_CODE secret
+# is configured. That project records no trace or video, and the code is never printed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Staging origin to test'
+        required: true
+        default: 'https://pawspace-staging.karthik-fce.workers.dev'
+        type: string
+      service_pincode:
+        description: 'Service PIN code for the doorstep check'
+        required: true
+        default: '560068'
+        type: string
+      run_payment:
+        description: 'Complete the Razorpay TEST checkout (card 4111 1111 1111 1111) and assert the confirmation'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  journey:
+    name: V2 customer journey on staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Shared with staging deploy and the other staging browser proofs; preserve running and queued work.
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      V2_STAGING_EVIDENCE_DIR: test-results/v2-staging-evidence
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate dispatch inputs
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          SERVICE_PINCODE: ${{ inputs.service_pincode }}
+        run: |
+          set -euo pipefail
+          case "$BASE_URL" in
+            https://*) ;;
+            *) echo "::error::base_url must be an https:// origin"; exit 1 ;;
+          esac
+          host="${BASE_URL#https://}"
+          host="${host%%/*}"
+          case "$host" in
+            pawspace.in|www.pawspace.in|app.pawspace.in|pawspace-tech-platform.*)
+              echo "::error::base_url $host is a production origin; this workflow runs against staging only"; exit 1 ;;
+          esac
+          case "$SERVICE_PINCODE" in
+            [1-9][0-9][0-9][0-9][0-9][0-9]) ;;
+            *) echo "::error::service_pincode must be a 6-digit Indian PIN code"; exit 1 ;;
+          esac
+          echo "Testing $BASE_URL with service PIN $SERVICE_PINCODE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the V2 staging journey
+        env:
+          PW_BASE_URL: ${{ inputs.base_url }}
+          PW_SERVICE_PINCODE: ${{ inputs.service_pincode }}
+          PW_RUN_PAYMENT: ${{ inputs.run_payment }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: npx playwright test --config=playwright.v2-staging.config.ts
+
+      - name: Print the step report
+        if: always()
+        run: |
+          report="$V2_STAGING_EVIDENCE_DIR/report.md"
+          echo "===== V2 STAGING END-TO-END REPORT ====="
+          if [ -f "$report" ]; then
+            cat "$report"
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "(no report file produced)"
+          fi
+
+      - name: Upload report, screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/v2-staging/
+            test-results/v2-staging-evidence/
+            test-results/v2-staging-report/
+          if-no-files-found: warn
+          retention-days: 14

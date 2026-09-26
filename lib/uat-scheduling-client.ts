@@ -15,7 +15,8 @@ export type ProviderPreview={occurrences?:Array<{start:string;end:string;occurre
 export type SitterPreview=ProviderPreview;
 export async function previewUatProviders(input:UatScheduleRequest,options:{timeoutMs?:number;signal?:AbortSignal}={}):Promise<ProviderPreview>{
  const controller=new AbortController();
- const timeout=Number.isFinite(options.timeoutMs)?Math.min(90_000,Math.max(1000,options.timeoutMs!)):15_000;
+ // Staging availability checks take 16-30 s per zone; 15 s cut every V2 grooming search off before it finished.
+ const timeout=Number.isFinite(options.timeoutMs)?Math.min(90_000,Math.max(1000,options.timeoutMs!)):60_000;
  const abort=()=>controller.abort();
  options.signal?.addEventListener("abort",abort,{once:true});
  if(options.signal?.aborted)controller.abort();

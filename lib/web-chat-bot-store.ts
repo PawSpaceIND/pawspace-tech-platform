@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{parseBotState,type BotState}from"./web-chat-bot";
 
 /**
@@ -12,11 +13,11 @@ type Row=Record<string,unknown>;
 /** Visitor sessions that have not moved for this long are removed; a visitor's lead lives on in the CRM. */
 export const PUBLIC_BOT_SESSION_TTL_MS=7*24*60*60_000;
 
-export async function ensureBotSessionTable(db:D1Database){
+export async function ensureBotSessionTable(db:D1Database){return ensureD1Once(db,"web_chat_bot_session_table",async()=>{
  await db.prepare("CREATE TABLE IF NOT EXISTS web_chat_bot_sessions (session_ref TEXT PRIMARY KEY,state_json TEXT NOT NULL,updated_at INTEGER NOT NULL,version INTEGER NOT NULL DEFAULT 0)").run();
  // Environments that created the table before it carried a version gain the column.
  await db.prepare("ALTER TABLE web_chat_bot_sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0").run().catch((error:unknown)=>{if(!/duplicate column name/i.test(String((error as Error)?.message)))throw error;});
-}
+});}
 export async function loadBotSessionVersion(db:D1Database,sessionRef:string){await ensureBotSessionTable(db);const row=await db.prepare("SELECT state_json,version FROM web_chat_bot_sessions WHERE session_ref=?").bind(sessionRef).first<Row>();return{state:parseBotState(row?.state_json),version:row?Number(row.version||0):null};}
 export async function loadBotSession(db:D1Database,sessionRef:string){return(await loadBotSessionVersion(db,sessionRef)).state;}
 /** Unconditional save, for writers that own the whole session (a fresh start). */

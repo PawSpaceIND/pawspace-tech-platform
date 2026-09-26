@@ -215,7 +215,7 @@ export default function AdminPage() {
               <div className={styles.crmTabs}><button className={crmTab === "profile" ? styles.activeCrmTab : ""} onClick={() => setCrmTab("profile")}>Profile</button><button className={crmTab === "activity" ? styles.activeCrmTab : ""} onClick={() => setCrmTab("activity")}>Activity</button><button className={crmTab === "wallet" ? styles.activeCrmTab : ""} onClick={() => setCrmTab("wallet")}>Wallet</button></div>
 
               {crmTab === "profile" && <div className={styles.crmProfile}>
-                <div className={styles.petProfile}><span>🐾</span><div><small>Registered pets</small><strong>{selectedCustomer.pets}</strong><p>{selectedCustomer.petMeta}</p></div><button onClick={() => notify("Pet profile opened")}>View</button></div>
+                <div className={styles.petProfile}><span>🐾</span><div><small>Pets named in CRM</small><strong>{selectedCustomer.pets}</strong><p>{selectedCustomer.petMeta}</p></div><button onClick={() => notify("Pet profile opened")}>View</button></div>
                 <dl><div><dt>Primary number</dt><dd>{selectedCustomer.primary}</dd></div><div><dt>Secondary number</dt><dd>{selectedCustomer.secondary}</dd></div><div><dt>Lead source</dt><dd>{selectedCustomer.source}</dd></div><div><dt>Lifetime value</dt><dd>{money(selectedCustomer.lifetime)}</dd></div></dl>
                 <div className={styles.opportunity}><span>Best next opportunity</span><strong>{selectedCustomer.opportunity}</strong><p>Suggested using pet age, booking history and subscription status.</p><button onClick={() => notify("Follow-up assigned and reminder scheduled")}>Assign follow-up</button></div>
               </div>}

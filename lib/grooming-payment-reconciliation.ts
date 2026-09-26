@@ -162,6 +162,27 @@ async function settleStayBalance(db:Db,input:{bookingId:string;eventId:string;pa
  return true;
 }
 
+/**
+ * The facts a processed refund commits: the case is processed, reconciliation's refunded total is derived
+ * from the processed cases (never added in JavaScript), the payment status follows it, and a refund above
+ * the money actually COLLECTED raises a refund_overage exception. The ceiling is captured_amount alone:
+ * expected_amount is the amount of the latest ORDER (one instalment of a split booking), so capping by it
+ * flagged every full refund of a fully paid split booking as an overage. Shared by the refund.processed
+ * webhook and a staff-recorded service refund, so both leave identical books. Callers batch these with
+ * their ledger posting.
+ */
+export function processedRefundStatements(db:Db,input:{bookingId:string;paymentId:string;refundCaseId:string;gatewayRefundId:string|null;eventId:string;provider:string;environment:string;expected:number;capturedCurrent:number;currency:string;now:number}){
+ const{bookingId,paymentId,now}=input;
+ return[
+  db.prepare("UPDATE booking_refund_cases SET status=CASE WHEN status='completed' THEN 'completed' ELSE 'processed' END,payment_id=COALESCE(payment_id,?),gateway_reference=?,updated_at=? WHERE id=?").bind(paymentId,input.gatewayRefundId,now,input.refundCaseId),
+  db.prepare("INSERT OR IGNORE INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,?,0,?,'not_started','pending',0,?,?)").bind(paymentId,bookingId,input.provider,input.environment,input.expected,input.capturedCurrent,input.currency,input.eventId,now),
+  db.prepare("UPDATE payment_reconciliation_records SET refunded_amount=(SELECT ROUND(COALESCE(SUM(amount),0),2) FROM booking_refund_cases WHERE booking_id=? AND payment_id=? AND status IN ('processed','completed')),last_event_id=?,updated_at=? WHERE payment_id=?").bind(bookingId,paymentId,input.eventId,now,paymentId),
+  db.prepare("UPDATE payment_reconciliation_records SET gateway_status=CASE WHEN refunded_amount>=expected_amount THEN 'refunded' ELSE 'partially_refunded' END,reconciliation_status=CASE WHEN ROUND(refunded_amount-captured_amount,2)>0.009 THEN 'refund_overage' ELSE 'matched' END,variance_amount=MAX(0,ROUND(refunded_amount-captured_amount,2)) WHERE payment_id=?").bind(paymentId),
+  db.prepare("UPDATE booking_payments SET status=(SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?),detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(paymentId,input.eventId,input.gatewayRefundId,now,paymentId),
+  db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) SELECT ?,booking_id,payment_id,?,'refund_overage','critical','open',json_object('expected',expected_amount,'captured',captured_amount,'refundCeiling',captured_amount,'refunded',refunded_amount),? FROM payment_reconciliation_records WHERE payment_id=? AND variance_amount>0.009").bind(`PAYEX-refund-${input.environment}-${input.gatewayRefundId??input.eventId}`,input.eventId,now,paymentId),
+ ];
+}
+
 async function addException(db:Db,input:{bookingId?:string;paymentId?:string;eventId?:string;type:string;severity?:"warning"|"critical";detail:unknown}){await db.prepare("INSERT INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES (?,?,?,?,?,?,'open',?,?)").bind(`PAYEX-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.bookingId??null,input.paymentId??null,input.eventId??null,input.type,input.severity??"critical",JSON.stringify(input.detail),Date.now()).run();}
 async function lifecycle(db:Db,bookingId:string,eventType:string,detail:unknown){const now=Date.now();await db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)").run();await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"payment",bookingId,"razorpay_webhook",JSON.stringify(detail),now).run();}
 
@@ -404,12 +425,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
        * before it - which is what makes the retry safe rather than skippable. */
       await db.batch([
         ...ledger.statements,
-        db.prepare("UPDATE booking_refund_cases SET status=CASE WHEN status='completed' THEN 'completed' ELSE 'processed' END,payment_id=COALESCE(payment_id,?),gateway_reference=?,updated_at=? WHERE id=?").bind(paymentId,event.gatewayRefundId??null,now,refund.id),
-        db.prepare("INSERT OR IGNORE INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,?,0,?,'not_started','pending',0,?,?)").bind(paymentId,bookingId,event.provider,event.environment,expected,capturedCurrent,currency,event.eventId,now),
-        db.prepare("UPDATE payment_reconciliation_records SET refunded_amount=(SELECT ROUND(COALESCE(SUM(amount),0),2) FROM booking_refund_cases WHERE booking_id=? AND payment_id=? AND status IN ('processed','completed')),last_event_id=?,updated_at=? WHERE payment_id=?").bind(bookingId,paymentId,event.eventId,now,paymentId),
-        db.prepare("UPDATE payment_reconciliation_records SET gateway_status=CASE WHEN refunded_amount>=expected_amount THEN 'refunded' ELSE 'partially_refunded' END,reconciliation_status=CASE WHEN ROUND(refunded_amount-MIN(expected_amount,captured_amount),2)>0.009 THEN 'refund_overage' ELSE 'matched' END,variance_amount=MAX(0,ROUND(refunded_amount-MIN(expected_amount,captured_amount),2)) WHERE payment_id=?").bind(paymentId),
-        db.prepare("UPDATE booking_payments SET status=(SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?),detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(paymentId,event.eventId,event.gatewayRefundId??null,now,paymentId),
-        db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) SELECT ?,booking_id,payment_id,?,'refund_overage','critical','open',json_object('expected',expected_amount,'captured',captured_amount,'refundCeiling',MIN(expected_amount,captured_amount),'refunded',refunded_amount),? FROM payment_reconciliation_records WHERE payment_id=? AND variance_amount>0.009").bind(`PAYEX-refund-${event.environment}-${event.gatewayRefundId??event.eventId}`,event.eventId,now,paymentId),
+        ...processedRefundStatements(db,{bookingId,paymentId,refundCaseId:String(refund.id),gatewayRefundId:event.gatewayRefundId??null,eventId:event.eventId,provider:event.provider,environment:event.environment,expected,capturedCurrent,currency,now}),
         ...(!priorRefundFact?[lifecycleStatement("refund_processed",{gateway:event.provider,eventId:event.eventId,gatewayRefundId:event.gatewayRefundId,amount})]:[]),
         finishStatement("processed"),
       ]);
