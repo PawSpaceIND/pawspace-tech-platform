@@ -11,6 +11,8 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  const headers={authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'};
  const meta=await request(base,{headers,signal:AbortSignal.timeout(30000)});const mb=await meta.json();
  if(!meta.ok||!mb.success||mb.result?.name!=='pawspace-staging')throw Error('Isolated staging database not verified');
+ const workerInfo=await request(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/services/pawspace-staging`,{headers,signal:AbortSignal.timeout(30000)});
+ const wb=await workerInfo.json();console.log('VOICE_WORKER_PLACEMENT='+JSON.stringify({status:workerInfo.status,placement:wb.result?.default_environment?.script?.placement??null}));
  let loggedD1=false;
  async function rows(sql,params=[]){const r=await request(base+'/query',{method:'POST',headers,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok||!b.success||b.result?.some(x=>!x.success))throw Error('Staging evidence query failed');if(!loggedD1){loggedD1=true;console.log('VOICE_D1_LOCATION='+JSON.stringify({metadata:b.result[0]?.meta,databaseKeys:Object.keys(mb.result),locationHint:mb.result.primary_location_hint}));}return b.result.flatMap(x=>x.results||[]);}
  const [call]=await rows('SELECT customer_id,mode,phone_last4 FROM voice_call_orders WHERE id=?',[callId]);
