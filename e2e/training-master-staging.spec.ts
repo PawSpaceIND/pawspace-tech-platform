@@ -1,15 +1,17 @@
 /*
  * Dog Training MASTER end-to-end acceptance against the deployed staging origin.
  *
- * One serial journey across every persona, run from GitHub Actions (the only place that can reach
- * staging and hold the UAT access code / Razorpay TEST keys). Every step is soft: it records
- * PASS / FAIL / BLOCKED / INFO with evidence and the run continues, so a single defect does not hide
- * the rest of the journey. Nothing here bypasses a control: customers and trainers use the sandbox
- * OTP shown on screen, staff use /staging-login with the UAT access code, payments go through the
- * real Razorpay TEST checkout with the documented test card, and maker/checker approvals are made by
- * a different person than the uploader.
+ * Run from GitHub Actions (the only place that can reach staging and hold the UAT access code; the
+ * staging worker holds the Razorpay TEST keys). Every step is soft: it records PASS / FAIL / BLOCKED /
+ * INFO with evidence and the run continues, so a single defect does not hide the rest of the journey.
+ * Nothing bypasses a control: customers and trainers use the sandbox OTP shown on screen, staff use
+ * /staging-login with the UAT access code, payments go through the real Razorpay TEST checkout with the
+ * documented test card, and maker/checker approvals are made by a different person than the uploader.
+ *
+ * Each paid journey uses its own new customer and browser context, so one checkout's saved state can
+ * never change what the next checkout shows.
  */
-import { test, devices, type BrowserContext, type Page, type Locator } from "@playwright/test";
+import { test, devices, type Browser, type BrowserContext, type Page, type Locator } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 
@@ -17,18 +19,22 @@ const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.wo
 const ACCESS_CODE = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
 const OUT = process.env.MASTER_OUT || "test-results/training-master";
 const SHOTS = `${OUT}/shots`;
-const PHONE = `8${String(Date.now()).slice(-9)}`;
+const RUN_BASE = Date.now();
+let phoneSeq = 0;
+const nextPhone = () => `8${String(RUN_BASE + (phoneSeq++) * 7919).slice(-9)}`;
 const EMAIL = "uat.training.master@example.com";
 const TRAINER_PHONES: Record<string, string> = {
   "PawSpace Training Team (UAT)": "9000000931", "Arjun T. (UAT East)": "9000000932", "Kavya R. (UAT South)": "9000000933",
   "Nikhil B. (UAT North)": "9000000934", "Anitha G. (UAT West)": "9000000935", "Rohan D. (UAT Central)": "9000000936",
 };
+const PHONE_DEVICE = devices["Pixel 7"];
 mkdirSync(SHOTS, { recursive: true });
 
 type Status = "PASS" | "FAIL" | "BLOCKED" | "INFO";
 type Row = { n: number; area: string; step: string; status: Status; detail: string; shots: string[] };
 const rows: Row[] = [];
 const apiErrors: string[] = [];
+const customers: string[] = [];
 let shotNo = 0;
 let pendingShots: string[] = [];
 class Outcome extends Error { constructor(public status: Status, message: string) { super(message); } }
@@ -36,12 +42,12 @@ const blocked = (m: string) => new Outcome("BLOCKED", m);
 const info = (m: string) => new Outcome("INFO", m);
 const fail = (m: string) => new Outcome("FAIL", m);
 function flush() {
-  const md = ["# PawSpace staging — Dog Training master E2E", "", `- Origin: ${BASE}`, `- Run: ${new Date().toISOString()}`, `- Customer phone: ${PHONE}`, "",
+  const md = ["# PawSpace staging — Dog Training master E2E", "", `- Origin: ${BASE}`, `- Run: ${new Date().toISOString()}`, `- Customers: ${customers.join(", ")}`, "",
     `| # | Area | Step | Result | Detail | Evidence |`, `|---|---|---|---|---|---|`,
-    ...rows.map(r => `| ${r.n} | ${r.area} | ${r.step} | ${r.status} | ${r.detail.replace(/\|/g, "/").replace(/\n/g, " ").slice(0, 600)} | ${r.shots.map(s => s.replace(`${OUT}/`, "")).join("<br>")} |`),
-    "", "## API errors observed (4xx/5xx)", "", ...apiErrors.slice(0, 200).map(e => `- ${e.replace(/\n/g, " ")}`)];
+    ...rows.map(r => `| ${r.n} | ${r.area} | ${r.step} | ${r.status} | ${r.detail.replace(/\|/g, "/").replace(/\n/g, " ").slice(0, 700)} | ${r.shots.map(s => s.replace(`${OUT}/`, "")).join("<br>")} |`),
+    "", "## API errors observed (4xx/5xx)", "", ...apiErrors.slice(0, 250).map(e => `- ${e.replace(/\n/g, " ")}`)];
   writeFileSync(`${OUT}/report.md`, md.join("\n") + "\n");
-  writeFileSync(`${OUT}/report.json`, JSON.stringify({ base: BASE, phone: PHONE, rows, apiErrors }, null, 1));
+  writeFileSync(`${OUT}/report.json`, JSON.stringify({ base: BASE, customers, rows, apiErrors }, null, 1));
 }
 async function step(area: string, name: string, fn: () => Promise<string | void>) {
   pendingShots = [];
@@ -97,12 +103,13 @@ function png(rgb: [number, number, number], size = 96) {
   const crc = (buffer: Buffer) => { let c = 0xffffffff; for (const byte of buffer) c = table[(c ^ byte) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
   const chunk = (type: string, data: Buffer) => { const length = Buffer.alloc(4); length.writeUInt32BE(data.length); const typed = Buffer.concat([Buffer.from(type), data]); const sum = Buffer.alloc(4); sum.writeUInt32BE(crc(typed)); return Buffer.concat([length, typed, sum]); };
   const header = Buffer.alloc(13); header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4); header[8] = 8; header[9] = 2;
-  const raw = Buffer.alloc((size * 3 + 1) * size);
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) { const o = y * (size * 3 + 1) + 1 + x * 3; raw[o] = (rgb[0] + x + Date.now()) & 255; raw[o + 1] = (rgb[1] + y) & 255; raw[o + 2] = rgb[2]; }
+  const raw = Buffer.alloc((size * 3 + 1) * size), seed = shotNo * 37 + size;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) { const o = y * (size * 3 + 1) + 1 + x * 3; raw[o] = (rgb[0] + x + seed) & 255; raw[o + 1] = (rgb[1] + y) & 255; raw[o + 2] = rgb[2]; }
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
 // ---------------------------------------------------------------- identity
+type Customer = { context: BrowserContext; page: Page; phone: string; name: string };
 async function customerLogin(page: Page, phone: string, name: string) {
   await page.goto("/mobile-app"); await settle(page);
   const account = page.locator("nav").getByRole("button", { name: /account/i }).last();
@@ -118,6 +125,28 @@ async function customerLogin(page: Page, phone: string, name: string) {
   await page.getByRole("button", { name: "Verify & continue" }).click();
   for (let i = 0; i < 40; i++) { if ((await page.evaluate(() => fetch("/api/identity-session", { credentials: "include" }).then(r => r.status))) === 200) return; await page.waitForTimeout(500); }
   throw fail("Customer identity session was not established after OTP verification");
+}
+/** A brand-new customer in its own browser context, with a Bengaluru (560038) address and dogs. */
+async function newCustomer(browser: Browser, name: string, pets: Array<{ name: string; species: string; breed: string; vaccinationStatus: string }>) {
+  const phone = nextPhone(); customers.push(`${name} ${phone}`);
+  const context = await browser.newContext({ ...PHONE_DEVICE, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata" });
+  const page = await context.newPage(); watchApi(page, `customer:${name}`); answerDialogs(page);
+  await customerLogin(page, phone, name);
+  const results: string[] = [];
+  const a = await api(page, "/api/customer-account", { method: "POST", body: { action: "upsert_address", idempotencyKey: `master-addr:${phone}`, address: { label: "Home", line1: "42 Indiranagar Double Road", area: "Indiranagar", city: "Bengaluru", postalCode: "560038", isDefault: true } } });
+  results.push(`address ${a.status}`);
+  for (const pet of pets) { const r = await api(page, "/api/customer-account", { method: "POST", body: { action: "upsert_pet", idempotencyKey: `master-pet:${phone}:${pet.name}`, pet } }); results.push(`${pet.name} ${r.status}`); }
+  if (results.some(r => !/ 20[01]$/.test(r))) throw fail(`account setup: ${results.join(", ")}`);
+  return { customer: { context, page, phone, name } as Customer, setup: results.join(", ") };
+}
+/** Same signed-in PawSpace session in a new context without any checkout.razorpay.com state. */
+async function cleanCheckoutContext(browser: Browser, from: Customer): Promise<Customer> {
+  const state = await from.context.storageState();
+  state.cookies = state.cookies.filter(cookie => !/razorpay/i.test(cookie.domain));
+  state.origins = state.origins.filter(origin => !/razorpay/i.test(origin.origin));
+  const context = await browser.newContext({ ...PHONE_DEVICE, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata", storageState: state });
+  const page = await context.newPage(); watchApi(page, `customer:${from.name}`); answerDialogs(page);
+  return { context, page, phone: from.phone, name: from.name };
 }
 async function partnerLogin(page: Page, phone: string) {
   await page.goto("/partner-app"); await settle(page);
@@ -152,23 +181,30 @@ async function staffLogin(page: Page, email: string) {
 }
 
 // ---------------------------------------------------------------- Razorpay TEST checkout
-async function payRazorpay(page: Page) {
+async function frameText(page: Page) {
+  for (const f of page.frames()) if (/razorpay/i.test(f.url())) { const t = await f.locator("body").innerText().catch(() => ""); if (t.trim()) return t.replace(/\s+/g, " ").slice(0, 600); }
+  return "(no Razorpay frame text)";
+}
+async function payRazorpay(page: Page, contactPhone: string) {
   const selector = "iframe.razorpay-checkout-frame, iframe[src*='razorpay']";
-  if (!(await visible(page.locator(selector), 45_000))) throw fail("Razorpay checkout did not open");
+  if (!(await visible(page.locator(selector), 45_000))) { await shot(page, "razorpay-not-open"); throw fail("Razorpay checkout did not open"); }
   const frame = page.frameLocator(selector).first();
+  await page.waitForTimeout(2500);
   const contact = frame.locator("#contact, input[name='contact'], input[type='tel']");
   if (await visible(contact, 8000)) {
-    await contact.first().fill(PHONE);
-    const email = frame.locator("#email, input[type='email']"); if (await visible(email)) await email.first().fill(EMAIL);
+    if (!(await contact.first().inputValue().catch(() => ""))) await contact.first().fill(contactPhone);
+    const email = frame.locator("#email, input[type='email']"); if (await visible(email) && !(await email.first().inputValue().catch(() => ""))) await email.first().fill(EMAIL);
     const next = frame.getByRole("button", { name: /continue|proceed|next/i }); if (await visible(next, 5000)) await next.first().click();
     await page.waitForTimeout(1500);
   }
-  for (const tile of [frame.locator("[data-value='card'],[data-method='card']"), frame.getByRole("button", { name: /^cards?(\s|$)/i }), frame.getByRole("button", { name: /credit|debit/i }), frame.getByText(/^cards?$/i)]) {
+  for (const tile of [frame.locator("[data-value='card'],[data-method='card']"), frame.getByRole("button", { name: /^cards?(\s|$)/i }), frame.getByRole("button", { name: /credit|debit/i }), frame.getByText(/^cards?$/i), frame.getByText(/^card$/i)]) {
     if (await visible(tile)) { await tile.first().click().catch(() => {}); break; }
   }
-  const addNew = frame.getByText(/add (a )?new card/i); if (await visible(addNew)) await addNew.first().click().catch(() => {});
+  for (const other of [frame.getByText(/add (a )?new card/i), frame.getByText(/use (a |another |different )?(new )?card/i), frame.getByText(/pay (using|with) (a )?new card/i)]) {
+    if (await visible(other, 1500)) { await other.first().click().catch(() => {}); break; }
+  }
   const number = frame.locator("#card_number,input[name='card[number]'],input[autocomplete='cc-number'],input[placeholder*='card number' i]");
-  if (!(await visible(number, 20_000))) throw fail("Razorpay card form did not appear");
+  if (!(await visible(number, 20_000))) { await shot(page, "razorpay-no-card-form"); throw fail(`Razorpay card form did not appear. Checkout showed: ${await frameText(page)}`); }
   await number.first().fill("4111111111111111");
   await frame.locator("#card_expiry,input[name='card[expiry]'],input[autocomplete='cc-exp'],input[placeholder*='MM' i]").first().fill("12/29");
   await frame.locator("#card_cvv,input[name='card[cvv]'],input[autocomplete='cc-csc'],input[placeholder*='CVV' i]").first().fill("123");
@@ -195,19 +231,24 @@ async function payRazorpay(page: Page) {
   };
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) { if (await pressSuccess()) return; if (await decline()) continue; await page.waitForTimeout(1200); }
+  await shot(page, "razorpay-no-success-control");
 }
 async function checkoutStatus(page: Page, bookingId: string) {
   const r = await api(page, "/api/customer-checkout", { method: "POST", body: { action: "status", bookingId } });
   return { http: r.status, status: String(r.body?.data?.status || r.body?.data?.paymentStatus || ""), data: r.body?.data };
 }
-async function waitCaptured(page: Page, bookingId: string, want = /captured|paid|settled/i, ms = 90_000) {
+async function waitCaptured(page: Page, bookingId: string, ms = 120_000) {
   const until = Date.now() + ms; let last = { http: 0, status: "", data: null as unknown };
-  while (Date.now() < until) { last = await checkoutStatus(page, bookingId); if (want.test(last.status)) return last; await page.waitForTimeout(4000); }
+  while (Date.now() < until) { last = await checkoutStatus(page, bookingId); if (/captured|paid|settled/i.test(last.status)) return last; await page.waitForTimeout(4000); }
   return last;
+}
+async function fundingState(page: Page, bookingId: string) {
+  const programme = await api(page, `/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`);
+  return String(programme.body?.data?.payment?.status || programme.body?.data?.paymentState?.status || "");
 }
 
 // ---------------------------------------------------------------- V2 Training booking
-async function v2Book(page: Page, input: { pkg: RegExp; dogs: string[]; mode?: "split" | "prepaid"; cadence?: string; time: string; trainers: RegExp[]; label: string }) {
+async function v2Choose(page: Page, input: { pkg: RegExp; dogs: string[]; mode?: "split" | "prepaid"; cadence?: string; time: string; trainers: RegExp[]; label: string }) {
   await page.goto("/v2/training"); await settle(page, 2500);
   const group = page.getByRole("group", { name: /Dogs/ });
   await group.getByRole("button").first().waitFor({ timeout: 30_000 });
@@ -241,22 +282,28 @@ async function v2Book(page: Page, input: { pkg: RegExp; dogs: string[]; mode?: "
   }
   throw fail(`No date in the next 18 days had a trainer available for ${input.label}`);
 }
-async function reserveAndPay(page: Page, label: string, onCreated: (bookingId: string) => void = () => {}) {
+async function v2Reserve(page: Page, label: string) {
   const created = page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 });
   await page.getByRole("button", { name: /Reserve trainer/ }).click();
   const response = await created; const body = await response.json().catch(() => null) as { data?: { bookingId?: string }; error?: string } | null;
   if (response.status() !== 201 || !body?.data?.bookingId) throw fail(`${label}: booking create ${response.status()} ${JSON.stringify(body).slice(0, 200)}`);
-  const bookingId = body.data.bookingId;
-  onCreated(bookingId);
   await page.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 });
+  return body.data.bookingId;
+}
+async function payOnPage(page: Page, contactPhone: string, bookingId: string, label: string) {
+  const pay = page.getByRole("button", { name: /^Pay securely/ });
+  if (!(await visible(pay, 30_000))) { await shot(page, `${label}-no-pay-button`); throw fail(`${label}: no "Pay securely" button (${(await mainText(page)).slice(0, 200)})`); }
+  const payLabel = (await pay.first().innerText()).trim();
   await shot(page, `${label}-payment-page`);
-  await page.getByRole("button", { name: /^Pay securely/ }).click();
-  await payRazorpay(page);
+  await pay.first().click();
+  await payRazorpay(page, contactPhone);
   const status = await waitCaptured(page, bookingId);
-  return { bookingId, status };
+  await settle(page, 2000); await shot(page, `${label}-after-razorpay`);
+  if (!/captured|paid|settled/i.test(status.status)) throw fail(`${label}: ${payLabel} → payment status after Razorpay "${status.status}" (http ${status.http})`);
+  return `${payLabel} → ${status.status}`;
 }
 async function confirmScreen(page: Page, heading: RegExp) {
-  const check = page.getByRole("button", { name: "Check payment status" }); if (await visible(check, 20_000)) await check.click().catch(() => {});
+  const check = page.getByRole("button", { name: "Check payment status" }); if (await visible(check, 15_000)) await check.click().catch(() => {});
   const refresh = page.getByRole("button", { name: "Refresh confirmation" });
   const until = Date.now() + 90_000;
   while (Date.now() < until) {
@@ -337,205 +384,172 @@ async function completeViaApi(page: Page, sessionId: string, homework: string) {
   return api(page, "/api/training-sessions", { method: "POST", body: { sessionId, action: "complete", report, idempotencyKey: `master-complete:${sessionId}:${Date.now()}` } });
 }
 
-// ================================================================= the journey
+// ================================================================= the journeys
 test("Dog Training master E2E on staging", async ({ browser }) => {
-  test.setTimeout(55 * 60_000);
+  test.setTimeout(80 * 60_000);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shared, schemaless journey state
   const state: Record<string, any> = {};
-  const phone = devices["Pixel 7"];
-  const customerContext = await browser.newContext({ ...phone, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata" });
-  const customer = await customerContext.newPage(); watchApi(customer, "customer"); answerDialogs(customer);
   const staffContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata" });
   const staff = await staffContext.newPage(); watchApi(staff, "staff"); answerDialogs(staff);
-  let trainerContext: BrowserContext | null = null, trainer: Page | null = null;
+  const open: BrowserContext[] = [staffContext];
+  let A: Customer | null = null, B: Customer | null = null, C: Customer | null = null;
+  let trainer: Page | null = null, trainerContext: BrowserContext | null = null;
   try {
-    // ---------------- Customer
-    const loggedIn = await step("Customer", "Sandbox OTP sign-in (new customer)", async () => { await customerLogin(customer, PHONE, "Uat Master Customer"); await shot(customer, "customer-signed-in"); return `phone ${PHONE}`; });
-    if (loggedIn !== "PASS") throw new Error("Customer sign-in failed; nothing further can run");
-    await step("Maps", "Google Places autocomplete + resolve on staging", async () => {
-      const search = await api(customer, `/api/address-autocomplete?mode=search&query=${encodeURIComponent("42 Indiranagar Double Road Bengaluru")}`);
+    // ================= Journey A: Meet & Greet (₹500 prepaid) + discovery, maps, pricing, coupons
+    await step("Customer", "Customer A: sandbox OTP sign-in + address (560038) + 3 dogs + 1 cat", async () => {
+      const made = await newCustomer(browser, "Master A", [{ name: "Bruno", species: "dog", breed: "Labrador Retriever", vaccinationStatus: "verified" }, { name: "Coco", species: "dog", breed: "Beagle", vaccinationStatus: "verified" }, { name: "Max", species: "dog", breed: "German Shepherd", vaccinationStatus: "pending" }, { name: "Whiskers", species: "cat", breed: "Persian", vaccinationStatus: "verified" }]);
+      A = made.customer; open.push(A.context);
+      await A.page.goto("/v2/account"); await settle(A.page, 2000); await shot(A.page, "customer-a-account");
+      return `${A.phone} · ${made.setup}`;
+    });
+    if (!A) throw new Error("Customer A could not be created; nothing further can run");
+    const a = A as Customer;
+    await step("Maps", "Google Places autocomplete, place resolve, reverse geocode", async () => {
+      const search = await api(a.page, `/api/address-autocomplete?mode=search&query=${encodeURIComponent("42 Indiranagar Double Road Bengaluru")}`);
       const data = search.body?.data; const first = data?.suggestions?.[0];
-      state.placesStatus = data?.status;
       if (data?.status !== "configured" || !first) throw fail(`search ${search.status} status=${data?.status} error=${data?.error || ""}`);
-      const resolved = await api(customer, `/api/address-autocomplete?mode=resolve&placeId=${encodeURIComponent(first.placeId)}`);
+      const resolved = await api(a.page, `/api/address-autocomplete?mode=resolve&placeId=${encodeURIComponent(first.placeId)}`);
       const r = resolved.body?.data; if (r?.status === "configured" && Number.isFinite(r.latitude)) state.doorGuess = { latitude: Number(r.latitude), longitude: Number(r.longitude) };
-      const reverse = await api(customer, "/api/address-autocomplete?mode=reverse&latitude=12.9352&longitude=77.6245");
-      return `${data.suggestions.length} suggestions; first="${first.fullText}"; resolve=${r?.status} ${r?.latitude},${r?.longitude}; reverse(Koramangala)=${reverse.body?.data?.status} "${reverse.body?.data?.address || reverse.body?.data?.error || ""}"`;
+      const reverse = await api(a.page, "/api/address-autocomplete?mode=reverse&latitude=12.9352&longitude=77.6245");
+      return `${data.suggestions.length} suggestion(s); first="${first.fullText}"; resolve=${r?.status} ${r?.latitude},${r?.longitude}; reverse(Koramangala)=${reverse.body?.data?.status} "${reverse.body?.data?.address || reverse.body?.data?.error || ""}"`;
     });
     await step("Maps", "Service zone by PIN (serviceable and not)", async () => {
       const out: string[] = [];
-      for (const pin of ["560038", "560068", "560001", "560102", "110001", "12345"]) { const z = await api(customer, `/api/service-zone?pincode=${pin}`); out.push(`${pin}=${z.status}:${z.body?.data?.zone?.zoneId || z.body?.error || ""}`); }
+      for (const pin of ["560038", "560068", "560001", "560102", "110001", "12345"]) { const z = await api(a.page, `/api/service-zone?pincode=${pin}`); out.push(`${pin}=${z.status}:${z.body?.data?.zone?.zoneId || z.body?.error || ""}`); }
       if (!out[0].includes("blr-east")) throw fail(out.join(" · "));
       return out.join(" · ");
     });
-    await step("Customer", "Save address (560038) + 3 dogs + 1 cat", async () => {
-      const results: string[] = [];
-      const a = await api(customer, "/api/customer-account", { method: "POST", body: { action: "upsert_address", idempotencyKey: `master-addr:${PHONE}`, address: { label: "Home", line1: "42 Indiranagar Double Road", area: "Indiranagar", city: "Bengaluru", postalCode: "560038", isDefault: true } } });
-      results.push(`address ${a.status}`);
-      for (const pet of [{ name: "Bruno", species: "dog", breed: "Labrador Retriever", vaccinationStatus: "verified" }, { name: "Coco", species: "dog", breed: "Beagle", vaccinationStatus: "verified" }, { name: "Max", species: "dog", breed: "German Shepherd", vaccinationStatus: "pending" }, { name: "Whiskers", species: "cat", breed: "Persian", vaccinationStatus: "verified" }]) {
-        const r = await api(customer, "/api/customer-account", { method: "POST", body: { action: "upsert_pet", idempotencyKey: `master-pet:${PHONE}:${pet.name}`, pet } }); results.push(`${pet.name} ${r.status}`);
-      }
-      await customer.goto("/v2/account"); await settle(customer, 2000); await shot(customer, "v2-account");
-      if (results.some(r => !/ 20[01]$/.test(r))) throw fail(results.join(", "));
-      return results.join(", ");
-    });
     await step("Pricing", "Catalogue + quote matrix (8 packages × prepaid/split × 1/4/5 dogs)", async () => {
-      const catalogue = await api(customer, "/api/training-commercial");
+      const catalogue = await api(a.page, "/api/training-commercial");
       const packages = (catalogue.body?.data?.packages || []) as Array<{ package_code: string; name: string; base_price: number }>;
       const start = new Date(Date.now() + 5 * 86_400_000); start.setUTCHours(5, 30, 0, 0);
       const cells: string[] = [];
       for (const p of packages) for (const mode of ["prepaid", "split"]) for (const petCount of [1, 4, 5]) {
-        const q = await api(customer, "/api/training-commercial", { method: "POST", body: { packageCode: p.package_code, petCount, scheduledStart: start.toISOString(), paymentMode: mode } });
+        const q = await api(a.page, "/api/training-commercial", { method: "POST", body: { packageCode: p.package_code, petCount, scheduledStart: start.toISOString(), paymentMode: mode } });
         cells.push(`${p.package_code}/${mode}/${petCount}: ${q.status === 201 ? `₹${q.body?.data?.totalAmount} due ₹${q.body?.data?.amountDueNow} ${q.body?.data?.minutesPerSession}m` : `${q.status} ${q.body?.error}`}`);
       }
-      state.packages = packages.map(p => `${p.name} ₹${p.base_price}`).join(", ");
-      return `${packages.length} packages: ${state.packages} || ${cells.join(" ; ")}`;
+      return `${packages.length} packages: ${packages.map(p => `${p.name} ₹${p.base_price}`).join(", ")} || ${cells.join(" ; ")}`;
     });
-    await step("Pricing", "Training coupon (UATCARE100 / WELCOME) on the quote", async () => {
+    await step("Pricing", "Training coupon (UATCARE100 / WELCOME) on the Training quote", async () => {
       const start = new Date(Date.now() + 5 * 86_400_000); start.setUTCHours(5, 30, 0, 0);
       const out: string[] = [];
-      for (const code of ["UATCARE100", "WELCOME"]) { const q = await api(customer, "/api/training-commercial", { method: "POST", body: { packageCode: "training-8-basic", petCount: 1, scheduledStart: start.toISOString(), paymentMode: "prepaid", couponCode: code } }); out.push(`${code}: ${q.status} ${q.status === 201 ? `discount ₹${q.body?.data?.discount}` : q.body?.error}`); }
+      for (const code of ["UATCARE100", "WELCOME"]) { const q = await api(a.page, "/api/training-commercial", { method: "POST", body: { packageCode: "training-8-basic", petCount: 1, scheduledStart: start.toISOString(), paymentMode: "prepaid", couponCode: code } }); out.push(`${code}: ${q.status} ${q.status === 201 ? `discount ₹${q.body?.data?.discount}` : q.body?.error}`); }
       if (out.every(o => o.includes(" 409 "))) throw fail(`No coupon is accepted by the Training quote: ${out.join(" · ")}`);
       return out.join(" · ");
     });
     await step("Customer V2", "Training page: dogs-only list, zone, catalogue", async () => {
-      await customer.goto("/v2/training"); await settle(customer, 3000);
-      const dogs = (await customer.getByRole("group", { name: /Dogs/ }).getByRole("button").allInnerTexts()).map(t => t.split("\n")[0]);
-      const zone = await customer.getByText(/Training zone/).first().innerText().catch(() => "");
-      await shot(customer, "v2-training-page"); await shot(customer, "v2-training-page-full", true);
+      await a.page.goto("/v2/training"); await settle(a.page, 3000);
+      const dogs = (await a.page.getByRole("group", { name: /Dogs/ }).getByRole("button").allInnerTexts()).map(t => t.split("\n")[0]);
+      const zone = await a.page.getByText(/Training zone/).first().innerText().catch(() => "");
+      await shot(a.page, "v2-training-page"); await shot(a.page, "v2-training-page-full", true);
       if (dogs.includes("Whiskers")) throw fail(`Cat listed for dog training: ${dogs.join(", ")}`);
       return `dogs=[${dogs.join(", ")}] · ${zone}`;
     });
-
-    // ---- Booking 1: Meet & Greet (prepaid, Razorpay)
-    await step("Payment", "Meet & Greet ₹500 → Razorpay TEST card → captured → confirmation", async () => {
-      const picked = await v2Book(customer, { pkg: /^Trainer Meet & Greet/, dogs: ["Bruno"], time: "11:00", trainers: [/PawSpace Training Team/], label: "meet" });
-      await shot(customer, "meet-before-reserve");
-      const { bookingId, status } = await reserveAndPay(customer, "meet", id => { state.meet = { bookingId: id, trainer: picked.trainerText, date: picked.date }; });
-      const confirmed = await confirmScreen(customer, /Trainer Meet & Greet confirmed/);
-      await shot(customer, "meet-after-payment");
-      if (!/captured|paid/i.test(status.status)) throw fail(`${bookingId}: payment status after Razorpay = "${status.status}" (http ${status.http})`);
-      if (!confirmed) throw fail(`${bookingId}: payment ${status.status} but confirmation screen did not appear`);
-      return `${bookingId} · ${picked.trainerText} · ${picked.date} · payment ${status.status}`;
+    await step("Customer V2", "Reserve Meet & Greet (1 dog, prepaid ₹500)", async () => {
+      const picked = await v2Choose(a.page, { pkg: /^Trainer Meet & Greet/, dogs: ["Bruno"], time: "11:00", trainers: [/PawSpace Training Team/], label: "meet" });
+      await shot(a.page, "meet-before-reserve");
+      state.meet = { trainer: picked.trainerText, date: picked.date };
+      state.meet.bookingId = await v2Reserve(a.page, "meet");
+      return `${state.meet.bookingId} · ${picked.trainerText} · ${picked.date}`;
     });
-
-    // ---- Booking 2: Starter Plan split 50% (Razorpay) — used for the trainer journey
-    await step("Payment", "Starter Plan split: ₹1,750 deposit → Razorpay → captured → programme confirmed", async () => {
-      const picked = await v2Book(customer, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: "15:00", trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter" });
-      await shot(customer, "starter-before-reserve");
-      const { bookingId, status } = await reserveAndPay(customer, "starter", id => { state.starter = { bookingId: id, trainer: picked.trainerText }; });
-      const confirmed = await confirmScreen(customer, /Training programme confirmed/);
-      await shot(customer, "starter-confirmed"); await shot(customer, "starter-confirmed-full", true);
-      const prog = await api(customer, `/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`);
-      state.starter.sessions = (prog.body?.data?.sessions || []).map((s: { id: string; sequence_no: number; status: string }) => ({ id: s.id, n: s.sequence_no, status: s.status }));
-      state.starter.providerId = prog.body?.data?.programme?.provider_id;
-      if (!/captured|paid/i.test(status.status)) throw fail(`${bookingId}: payment status "${status.status}"`);
-      if (!confirmed) throw fail(`${bookingId}: captured but confirmation did not render`);
-      return `${bookingId} · ${picked.trainerText} (${state.starter.providerId}) · sessions ${JSON.stringify(state.starter.sessions)}`;
+    await step("Payment", "Meet & Greet: pay ₹500 with Razorpay TEST card → captured", async () => {
+      if (!state.meet?.bookingId) throw blocked("Meet & Greet was not reserved");
+      return payOnPage(a.page, a.phone, state.meet.bookingId, "meet");
     });
-    await step("Customer V2", "Activity + booking page after deposit (balance CTA)", async () => {
-      await customer.goto("/v2/activity"); await settle(customer, 2500); await shot(customer, "v2-activity");
-      if (!state.starter?.bookingId) throw blocked("No Starter booking");
-      await customer.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(customer, 3000); await shot(customer, "v2-booking-after-deposit");
-      const text = await mainText(customer);
-      return text.slice(0, 500);
+    await step("Customer V2", "Meet & Greet confirmation screen", async () => {
+      if (!state.meet?.bookingId) throw blocked("Meet & Greet was not reserved");
+      const ok = await confirmScreen(a.page, /Trainer Meet & Greet confirmed/); await shot(a.page, "meet-confirmed");
+      if (!ok) throw fail(`${state.meet.bookingId}: confirmation did not render`);
+      return `${state.meet.bookingId} confirmed`;
     });
-
-    // ---- Mobile app 5-stage flow + coupon + split payment + dashboard
-    await step("Customer app", "Mobile 5-stage flow: goals → Basic Obedience → trainer → calendar → review", async () => {
-      await customer.goto("/mobile-app?service=dog_training"); await settle(customer, 3000);
-      const reqs = customer.getByRole("group", { name: "Training requirements" });
-      await reqs.getByRole("button", { name: /Recall/ }).click().catch(() => {});
-      await customer.getByLabel("Home routine, behaviour and trainer notes").fill("Walks 7am/7pm, pulls on leash, reactive to scooters").catch(() => {});
-      await shot(customer, "app-stage1");
-      await customer.getByRole("button", { name: "Book a Meet & Greet", exact: true }).first().click(); await settle(customer, 2500);
-      await shot(customer, "app-stage2");
-      await customer.getByRole("button", { name: /Basic Obedience Plan/ }).first().click().catch(() => {});
-      await customer.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(customer, 2500);
-      await customer.getByRole("button").filter({ hasText: /PawSpace Training Team/ }).first().click().catch(() => {}); await shot(customer, "app-stage3");
-      await customer.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(customer, 1200);
-      await customer.getByLabel("Repeat schedule").selectOption("Wed & Sun").catch(() => {});
-      await customer.getByRole("button", { name: /^9:00 AM/ }).click().catch(() => {}); await customer.waitForTimeout(600); await shot(customer, "app-stage4");
-      await customer.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(customer, 3000); await shot(customer, "app-stage5");
-      return (await mainText(customer)).match(/Review your programme.*?Cancellation/)?.[0]?.slice(0, 500) || "";
-    });
-    await step("Customer app", "Coupon UATCARE100 with 100% payment", async () => {
-      await customer.getByRole("button", { name: /Pay 100% upfront/ }).click(); await settle(customer, 2500);
-      const codes = customer.getByRole("button", { name: /available code/ }); if (await codes.count()) { await codes.click(); await settle(customer, 1000); }
-      const offer = customer.locator("button").filter({ hasText: /UATCARE100|WELCOME/ }).first();
+    await step("Customer app", "Coupon UATCARE100 on the Training review step (fresh page)", async () => {
+      await a.page.goto("/mobile-app?service=dog_training"); await settle(a.page, 3000);
+      await a.page.getByRole("button", { name: /^(Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(a.page, 2500);
+      await a.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(a.page, 2000);
+      await a.page.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(a.page, 1200);
+      await a.page.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(a.page, 3000);
+      await a.page.getByRole("button", { name: /Pay 100% upfront/ }).click(); await settle(a.page, 2500);
+      const codes = a.page.getByRole("button", { name: /available code/ }); if (await codes.count()) { await codes.click(); await settle(a.page, 1000); }
+      const offer = a.page.locator("button").filter({ hasText: /UATCARE100|WELCOME/ }).first();
       if (!(await offer.count())) throw info("No coupon offered for Dog Training");
-      await offer.click(); await settle(customer, 3500); await shot(customer, "app-coupon");
-      const payLabel = (await customer.getByRole("button", { name: /Pay ₹|Refreshing server quote/ }).first().innerText().catch(() => "")).trim();
-      const alerts = await customer.locator("[role=alert]").allInnerTexts();
-      if (/Refreshing/.test(payLabel) || alerts.some(a => /coupon/i.test(a))) throw fail(`Coupon shown as applied but Training quote refused it — pay button "${payLabel}", alert ${JSON.stringify(alerts)}`);
+      await offer.click(); await settle(a.page, 3500); await shot(a.page, "app-coupon"); await shot(a.page, "app-coupon-full", true);
+      const payLabel = (await a.page.getByRole("button", { name: /Pay ₹|Refreshing server quote/ }).first().innerText().catch(() => "")).trim();
+      const alerts = await a.page.locator("[role=alert]").allInnerTexts();
+      if (/Refreshing/.test(payLabel) || alerts.some(t => /coupon/i.test(t))) throw fail(`Coupon shown as applied but Training quote refused it — pay button "${payLabel}", alert ${JSON.stringify(alerts)}`);
       return `pay button "${payLabel}"`;
     });
-    await step("Payment", "Mobile app: Basic Obedience 50% (₹6,000) → Razorpay → captured → dashboard", async () => {
-      await customer.getByRole("button", { name: /Pay 50% upfront/ }).click(); await settle(customer, 3000);
-      const pay = customer.getByRole("button", { name: /Pay ₹[\d,]+ & request trainer approval/ });
-      await pay.waitFor({ timeout: 30_000 });
-      const created = customer.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 }).catch(() => null);
-      const alertsBefore = JSON.stringify(await customer.locator("[role=alert]").allInnerTexts());
-      const refused = (async () => { for (let i = 0; i < 240; i++) { await customer.waitForTimeout(500); const now = JSON.stringify(await customer.locator("[role=alert]").allInnerTexts().catch(() => [])); if (now !== alertsBefore && now !== "[]") return "alert" as const; } return null; })();
-      await pay.click();
-      const first = await Promise.race([created, refused]);
-      if (first === "alert" || first === null) { await shot(customer, "app-reserve-refused"); throw fail(`Reservation refused before booking: ${JSON.stringify(await customer.locator("[role=alert]").allInnerTexts())}`); }
-      const response = first; const body = await response.json().catch(() => null) as { data?: { bookingId?: string } } | null;
-      const bookingId = String(body?.data?.bookingId || ""); state.app = { bookingId };
-      if (!bookingId) throw fail(`booking create ${response.status()}`);
-      await customer.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 }); await shot(customer, "app-payment-page");
-      await customer.getByRole("button", { name: /^Pay securely/ }).click();
-      await payRazorpay(customer);
-      const status = await waitCaptured(customer, bookingId);
-      const dashboard = await visible(customer.getByText(/plan is ready/i), 60_000);
-      await shot(customer, "app-dashboard");
-      if (!/captured|paid/i.test(status.status)) throw fail(`${bookingId}: payment status "${status.status}"`);
-      if (!dashboard) throw fail(`${bookingId}: captured but the in-app programme dashboard did not appear`);
-      return `${bookingId} · payment ${status.status}`;
-    });
-    await step("Customer app", "Programme dashboard tabs + cancellation request", async () => {
-      if (!state.app?.bookingId) throw blocked("No app booking");
-      for (const tab of ["Homework", "Progress", "Plan"]) { const t = customer.getByRole("button", { name: tab, exact: true }); if (await t.count()) { await t.click(); await customer.waitForTimeout(600); await shot(customer, `app-dashboard-${tab.toLowerCase()}`); } }
-      queueAnswers(customer, "Plans changed — QA master cancellation request");
-      const cancel = customer.getByRole("button", { name: /Request programme cancellation/ });
-      if (!(await cancel.count())) throw fail("Cancellation button not shown on the dashboard");
-      const response = customer.waitForResponse(r => r.url().includes("/api/training-cancellation"), { timeout: 30_000 }).catch(() => null);
-      await cancel.click(); const r = await response; await settle(customer, 1500); await shot(customer, "app-cancel-requested");
-      const text = r ? await r.text().catch(() => "") : "";
-      state.app.cancel = text;
-      return `${r?.status()} ${text.slice(0, 250)}`;
-    });
 
-    // ---------------- Trainer journey on the Starter programme
+    // ================= Journey B: Starter split programme → deposit → trainer lifecycle → balance → completion
+    await step("Customer", "Customer B: sandbox OTP sign-in + address + dog", async () => {
+      const made = await newCustomer(browser, "Master B", [{ name: "Coco", species: "dog", breed: "Beagle", vaccinationStatus: "verified" }]);
+      B = made.customer; open.push(B.context); return `${B.phone} · ${made.setup}`;
+    });
+    const b = B as Customer | null;
+    if (b) {
+      await step("Customer V2", "Reserve Starter Plan (2 sessions, 50% split)", async () => {
+        const picked = await v2Choose(b.page, { pkg: /^Starter Plan/, dogs: ["Coco"], mode: "split", cadence: "7", time: "15:00", trainers: [/Arjun T\./, /Kavya R\.|Rohan D\.|Nikhil B\.|Anitha G\./, /PawSpace Training Team/], label: "starter" });
+        await shot(b.page, "starter-before-reserve");
+        state.starter = { trainer: picked.trainerText, date: picked.date };
+        state.starter.bookingId = await v2Reserve(b.page, "starter");
+        const prog = await api(b.page, `/api/training-programmes?bookingId=${encodeURIComponent(state.starter.bookingId)}`);
+        state.starter.sessions = (prog.body?.data?.sessions || []).map((s: { id: string; sequence_no: number; status: string }) => ({ id: s.id, n: s.sequence_no, status: s.status }));
+        state.starter.providerId = prog.body?.data?.programme?.provider_id;
+        return `${state.starter.bookingId} · ${picked.trainerText} (${state.starter.providerId}) · sessions ${JSON.stringify(state.starter.sessions)}`;
+      });
+      await step("Payment", "Starter deposit: pay ₹1,750 with Razorpay TEST card → captured", async () => {
+        if (!state.starter?.bookingId) throw blocked("Starter was not reserved");
+        const result = await payOnPage(b.page, b.phone, state.starter.bookingId, "starter-deposit");
+        state.starter.depositPaid = true;
+        return result;
+      });
+      await step("Customer V2", "Programme confirmation screen after deposit", async () => {
+        if (!state.starter?.depositPaid) throw blocked("Deposit not captured");
+        const ok = await confirmScreen(b.page, /Training programme confirmed/);
+        await shot(b.page, "starter-confirmed"); await shot(b.page, "starter-confirmed-full", true);
+        if (!ok) throw fail("Captured, but the programme confirmation did not render");
+        return (await mainText(b.page)).slice(0, 300);
+      });
+      await step("Customer V2", "Activity + booking page after deposit", async () => {
+        if (!state.starter?.bookingId) throw blocked("Starter was not reserved");
+        await b.page.goto("/v2/activity"); await settle(b.page, 2500); await shot(b.page, "v2-activity");
+        await b.page.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(b.page, 3000); await shot(b.page, "v2-booking-after-deposit");
+        return (await mainText(b.page)).slice(0, 500);
+      });
+    }
     const trainerPhone = TRAINER_PHONES[String(state.starter?.trainer || "").trim()] || "";
     const trainerReady = await step("Trainer", "Partner app sandbox OTP sign-in as the assigned trainer", async () => {
-      if (!state.starter?.bookingId) throw blocked("Starter booking was not created");
+      if (!state.starter?.depositPaid) throw blocked("Deposit not captured, so the trainer is correctly not allowed to start");
       if (!trainerPhone) throw blocked(`Assigned trainer "${state.starter?.trainer}" has no known UAT phone`);
-      trainerContext = await browser.newContext({ ...phone, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata", permissions: ["geolocation"], geolocation: state.doorGuess || { latitude: 12.9784, longitude: 77.6408 } });
+      trainerContext = await browser.newContext({ ...PHONE_DEVICE, baseURL: BASE, locale: "en-IN", timezoneId: "Asia/Kolkata", permissions: ["geolocation"], geolocation: state.doorGuess || { latitude: 12.9784, longitude: 77.6408 } });
+      open.push(trainerContext);
       trainer = await trainerContext.newPage(); watchApi(trainer, "trainer"); answerDialogs(trainer);
       const subject = await partnerLogin(trainer, trainerPhone); await settle(trainer, 2500); await shot(trainer, "partner-app-home");
       return `${trainerPhone} → ${subject} · ${(await mainText(trainer)).slice(0, 300)}`;
     });
     const s1 = state.starter?.sessions?.[0]?.id, s2 = state.starter?.sessions?.[1]?.id;
-    if (trainerReady === "PASS" && trainer) {
-      const t = trainer as Page;
-      await step("Trainer", "Session 1: accept → on the way (partner app)", async () => {
+    if (trainerReady === "PASS" && trainer && s1 && s2) {
+      const t = trainer as Page, tc = trainerContext as unknown as BrowserContext;
+      await step("Trainer", "Session 1: accept → on the way", async () => {
         await t.goto(`/trainer?bookingId=${encodeURIComponent(state.starter.bookingId)}&sessionId=${encodeURIComponent(s1)}`); await settle(t, 3000);
-        const a = await sessionAction(t, "Accept"); const b = await sessionAction(t, "On the way"); await shot(t, "trainer-s1-on-the-way");
-        if (a.status !== 200 || b.status !== 200) throw fail(`accept ${a.status} ${a.body} · on the way ${b.status} ${b.body}`);
+        const x = await sessionAction(t, "Accept"); const y = await sessionAction(t, "On the way"); await shot(t, "trainer-s1-on-the-way");
+        if (x.status !== 200 || y.status !== 200) throw fail(`accept ${x.status} ${x.body} · on the way ${y.status} ${y.body}`);
         return "accepted + on the way";
       });
       await step("Maps", "Session 1: arrival geofence (250 m) at the geocoded doorstep", async () => {
         const first = await sessionAction(t, "Arrived");
-        if (first.status === 200) { await shot(t, "trainer-s1-arrived"); state.door = state.doorGuess; return `arrived via UI using Google Places doorstep coordinates · ${first.body.slice(0, 120)}`; }
+        if (first.status === 200) { await shot(t, "trainer-s1-arrived"); state.door = state.doorGuess; return `arrived via the app using the Google Places doorstep · ${first.body.slice(0, 120)}`; }
         if (!/doorstep|geofence|location/i.test(first.body)) throw fail(`Arrived ${first.status} ${first.body}`);
         const door = await locateDoorstep(t, s1, state.doorGuess || { latitude: 12.9784, longitude: 77.6408 });
         state.door = door;
-        if (!door.arrivedByProbe) { await (trainerContext as BrowserContext).setGeolocation({ latitude: door.latitude, longitude: door.longitude, accuracy: 10 }); await t.reload(); await settle(t, 2500); const r = await sessionAction(t, "Arrived"); await shot(t, "trainer-s1-arrived"); if (r.status !== 200) throw fail(`Arrived ${r.status} ${r.body}`); return `first UI arrival refused (${first.body.slice(0, 110)}); doorstep located by 3 probes at ${door.latitude.toFixed(5)},${door.longitude.toFixed(5)}; UI arrival then ${r.status}`; }
-        return "arrived on first probe";
+        if (door.arrivedByProbe) return `first app arrival refused (${first.body.slice(0, 110)}); arrival accepted on a probe`;
+        await tc.setGeolocation({ latitude: door.latitude, longitude: door.longitude, accuracy: 10 }); await t.reload(); await settle(t, 2500);
+        const r = await sessionAction(t, "Arrived"); await shot(t, "trainer-s1-arrived");
+        if (r.status !== 200) throw fail(`Arrived ${r.status} ${r.body}`);
+        return `first app arrival refused (${first.body.slice(0, 110)}); server doorstep located at ${door.latitude.toFixed(5)},${door.longitude.toFixed(5)}; app arrival then 200`;
       });
       await step("Trainer", "Session 1: pre-check → start → photos → handover → report", async () => {
         await t.getByLabel("Parent/caretaker attendance confirmed").check().catch(() => {}); await t.getByLabel("Training area is safe").check().catch(() => {});
+        await shot(t, "trainer-s1-precheck");
         const start = await sessionAction(t, "Start session"); if (start.status !== 200) throw fail(`start ${start.status} ${start.body}`);
         const uploads = await uploadEvidence(t);
         await t.getByLabel("Minutes completed").fill("15").catch(() => {}); const handover = await sessionAction(t, "Record completed handover");
@@ -543,19 +557,20 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         const save = await sessionAction(t, "Save report"); await shot(t, "trainer-s1-in-session"); await shot(t, "trainer-s1-in-session-full", true);
         return `start 200 · ${uploads} · handover ${handover.status} · report ${save.status}`;
       });
-      await step("Staff", "Founder approves session 1 photos (maker/checker, Control)", async () => {
+      await step("Staff", "Founder approves session 1 photos in Control (maker/checker)", async () => {
         await staffLogin(staff, "founder@pawspace.in");
         const r = await approveProof(staff, state.starter.bookingId); if (r.approved < 2) throw fail(`approved ${r.approved}/2 (${r.notes})`); return `approved ${r.approved} photos`;
       });
-      await step("Trainer", "Session 1: Complete & consume one session (trainer UI)", async () => {
+      await step("Trainer", "Session 1: Complete & consume one session (trainer screen)", async () => {
         await t.reload(); await settle(t, 2500);
         const refresh = t.getByRole("button", { name: "Refresh photo approval" }); if (await refresh.count()) { await refresh.click(); await settle(t, 1500); }
-        const r = await sessionAction(t, "Complete & consume one session"); await shot(t, "trainer-s1-complete-ui");
+        const r = await sessionAction(t, "Complete & consume one session");
+        await t.evaluate(() => window.scrollTo(0, 0)); await shot(t, "trainer-s1-complete-ui");
         state.s1UiComplete = r;
         if (r.status !== 200) throw fail(`${r.status} ${r.body}`);
         return r.body.slice(0, 200);
       });
-      if ((state.s1UiComplete?.status ?? 0) !== 200) await step("Trainer", "Session 1: same completion with attendance confirmation (backend check)", async () => {
+      if ((state.s1UiComplete?.status ?? 0) !== 200) await step("Trainer", "Session 1: same completion with the pre-check confirmation included (server check)", async () => {
         const r = await completeViaApi(t, s1, "Practise sit-stay 3x daily for 5 minutes; loose-leash walk 10 minutes each evening.");
         if (r.status !== 200) throw fail(`${r.status} ${JSON.stringify(r.body).slice(0, 250)}`); return JSON.stringify(r.body?.data).slice(0, 250);
       });
@@ -573,32 +588,38 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         return out.join(" · ");
       });
       await step("Staff", "Founder approves session 2 photos", async () => { const r = await approveProof(staff, state.starter.bookingId); if (r.approved < 2) throw fail(`approved ${r.approved}/2`); return `approved ${r.approved}`; });
-      await step("Payment", "Final session blocked until balance is paid", async () => {
+      await step("Payment", "Final session is blocked until the balance is paid", async () => {
         const r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks.");
-        state.s2first = r.status;
-        if (r.status === 200) throw info("Final session completed without a balance payment gate");
+        if (r.status === 200) throw fail("Final session completed without the remaining balance");
+        if (r.status !== 409 || String(r.body?.code) !== "training_payment_required") throw fail(`expected 409 training_payment_required, got ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
         return `${r.status} ${String(r.body?.error || "").slice(0, 200)}`;
       });
-      await step("Payment", "Customer pays remaining ₹1,750 balance via Razorpay (V2 booking page)", async () => {
-        await customer.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(customer, 3000);
-        const pay = customer.getByRole("button", { name: /^Pay securely/ });
-        await shot(customer, "balance-before");
-        if (!(await visible(pay, 15_000))) throw fail(`No balance payment control on the booking page: ${(await mainText(customer)).slice(0, 300)}`);
-        const label = await pay.innerText(); await pay.click(); await payRazorpay(customer);
-        const status = await waitCaptured(customer, state.starter.bookingId, /captured|paid|settled|nothing_due/i);
-        await settle(customer, 2500); await shot(customer, "balance-after");
-        return `${label} → ${status.status}`;
+    }
+    if (b && state.starter?.depositPaid) {
+      await step("Payment", "Customer pays the remaining ₹1,750 balance with Razorpay (V2 booking page)", async () => {
+        const clean = await cleanCheckoutContext(browser, b); open.push(clean.context);
+        await clean.page.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(clean.page, 3000);
+        await shot(clean.page, "balance-before");
+        const result = await payOnPage(clean.page, b.phone, state.starter.bookingId, "starter-balance");
+        state.starter.balancePaid = true;
+        await clean.page.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(clean.page, 3000); await shot(clean.page, "balance-after");
+        return `${result} · booking page now: ${(await mainText(clean.page)).slice(0, 250)}`;
       });
+    }
+    if (trainerReady === "PASS" && trainer && s2) {
+      const t = trainer as Page;
       await step("Trainer", "Final session completion → programme completed + certificate", async () => {
+        if (!state.starter?.balancePaid) throw blocked("Balance not paid");
         let r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks.");
-        for (let i = 0; i < 4 && r.status === 409 && /payment/i.test(JSON.stringify(r.body)); i++) { await t.waitForTimeout(15_000); r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks."); }
+        for (let i = 0; i < 6 && r.status === 409 && /payment/i.test(JSON.stringify(r.body)); i++) { await t.waitForTimeout(15_000); r = await completeViaApi(t, s2, "Keep daily recall games; add distractions gradually over two weeks."); }
         await t.reload(); await settle(t, 2500); await shot(t, "trainer-programme-complete");
         if (r.status !== 200) throw fail(`${r.status} ${JSON.stringify(r.body).slice(0, 250)}`);
+        state.starter.completed = true;
         return JSON.stringify(r.body?.data).slice(0, 300);
       });
       await step("Trainer", "Earnings (trainer workspace + partner app)", async () => {
         await t.getByRole("button", { name: /Earnings/ }).first().click(); await settle(t, 2500); await shot(t, "trainer-earnings");
-        const workspace = (await mainText(t)).match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || "";
+        const workspace = (await mainText(t)).match(/CANONICAL TRAINING PAYOUT LEDGER.{0,300}|TRAINING PAYOUT LEDGER.{0,300}/)?.[0] || (await mainText(t)).slice(0, 300);
         await t.goto("/partner-app"); await settle(t, 2500);
         const tab = t.getByRole("button", { name: /Earnings/ }).first(); if (await tab.count()) { await tab.click(); await settle(t, 2500); }
         await shot(t, "partner-app-earnings");
@@ -606,56 +627,124 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       });
     }
 
-    // ---------------- Staff / finance / CRM / ops
+    // ================= Journey C: mobile app programme (50%) → dashboard → cancellation request
+    await step("Customer", "Customer C: sandbox OTP sign-in + address + dog", async () => {
+      const made = await newCustomer(browser, "Master C", [{ name: "Luna", species: "dog", breed: "Indie", vaccinationStatus: "verified" }]);
+      C = made.customer; open.push(C.context); return `${C.phone} · ${made.setup}`;
+    });
+    const c = C as Customer | null;
+    if (c) {
+      await step("Customer app", "Mobile 5-stage flow: goals → Basic Obedience → trainer → calendar → review", async () => {
+        await c.page.goto("/mobile-app?service=dog_training"); await settle(c.page, 3000);
+        const reqs = c.page.getByRole("group", { name: "Training requirements" });
+        await reqs.getByRole("button", { name: /Recall/ }).click().catch(() => {});
+        await c.page.getByLabel("Home routine, behaviour and trainer notes").fill("Walks 7am/7pm, pulls on leash, reactive to scooters").catch(() => {});
+        await shot(c.page, "app-stage1");
+        await c.page.getByRole("button", { name: /^(Book a Meet & Greet|Choose a programme)$/ }).first().click(); await settle(c.page, 2500);
+        await shot(c.page, "app-stage2");
+        await c.page.getByRole("button", { name: /Basic Obedience Plan/ }).first().click().catch(() => {});
+        await c.page.getByRole("button", { name: "Choose trainer", exact: true }).click(); await settle(c.page, 2500);
+        await c.page.getByRole("button").filter({ hasText: /PawSpace Training Team/ }).first().click().catch(() => {}); await shot(c.page, "app-stage3");
+        await c.page.getByRole("button", { name: "Build session calendar", exact: true }).click(); await settle(c.page, 1200);
+        await c.page.getByLabel("Repeat schedule").selectOption("Wed & Sun").catch(() => {});
+        await c.page.getByRole("button", { name: /^9:00 AM/ }).click().catch(() => {}); await c.page.waitForTimeout(600); await shot(c.page, "app-stage4");
+        await c.page.getByRole("button", { name: "Review & pay", exact: true }).click(); await settle(c.page, 3000); await shot(c.page, "app-stage5");
+        return (await mainText(c.page)).match(/Review your programme.*?Cancellation/)?.[0]?.slice(0, 500) || "";
+      });
+      await step("Customer app", "Reserve Basic Obedience with 50% split", async () => {
+        const pay = c.page.getByRole("button", { name: /Pay ₹[\d,]+ & request trainer approval/ });
+        if (!(await visible(pay, 45_000))) { await shot(c.page, "app-no-pay-button", true); throw fail(`Pay button not ready: "${(await c.page.getByRole("button", { name: /Pay ₹|Refreshing/ }).first().innerText().catch(() => "?")).trim()}" alerts ${JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts())}`); }
+        const alertsBefore = JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts());
+        const created = c.page.waitForResponse(r => r.url().includes("/api/canonical-bookings") && r.request().method() === "POST", { timeout: 120_000 }).catch(() => null);
+        const refused = (async () => { for (let i = 0; i < 240; i++) { await c.page.waitForTimeout(500); const now = JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts().catch(() => [])); if (now !== alertsBefore && now !== "[]") return "alert" as const; } return null; })();
+        await pay.click();
+        const first = await Promise.race([created, refused]);
+        if (first === "alert" || first === null) { await shot(c.page, "app-reserve-refused"); throw fail(`Reservation refused before booking: ${JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts())}`); }
+        const body = await first.json().catch(() => null) as { data?: { bookingId?: string } } | null;
+        state.app = { bookingId: String(body?.data?.bookingId || "") };
+        if (!state.app.bookingId) throw fail(`booking create ${first.status()}`);
+        await c.page.getByRole("button", { name: /^Pay securely/ }).waitFor({ timeout: 60_000 });
+        return state.app.bookingId;
+      });
+      await step("Payment", "Mobile app: pay ₹6,000 deposit with Razorpay TEST card → captured", async () => {
+        if (!state.app?.bookingId) throw blocked("App programme not reserved");
+        const result = await payOnPage(c.page, c.phone, state.app.bookingId, "app-deposit");
+        state.app.paid = true;
+        return result;
+      });
+      await step("Customer app", "In-app programme dashboard (plan / homework / progress)", async () => {
+        if (!state.app?.paid) throw blocked("App deposit not captured");
+        const ready = await visible(c.page.getByText(/plan is ready/i), 60_000);
+        await shot(c.page, "app-dashboard");
+        if (!ready) throw fail("Captured, but the in-app programme dashboard did not appear");
+        for (const tab of ["Homework", "Progress", "Plan"]) { const tb = c.page.getByRole("button", { name: tab, exact: true }); if (await tb.count()) { await tb.click(); await c.page.waitForTimeout(600); await shot(c.page, `app-dashboard-${tab.toLowerCase()}`); } }
+        return (await mainText(c.page)).slice(0, 300);
+      });
+      await step("Customer app", "Request programme cancellation / refund review", async () => {
+        if (!state.app?.paid) throw blocked("App deposit not captured");
+        queueAnswers(c.page, "Plans changed — QA master cancellation request");
+        const cancel = c.page.getByRole("button", { name: /Request programme cancellation/ });
+        if (!(await cancel.count())) throw fail("Cancellation button not shown on the dashboard");
+        const response = c.page.waitForResponse(r => r.url().includes("/api/training-cancellation"), { timeout: 30_000 }).catch(() => null);
+        await cancel.click(); const r = await response; await settle(c.page, 1500); await shot(c.page, "app-cancel-requested");
+        const text = r ? await r.text().catch(() => "") : "";
+        state.app.cancelRequested = r?.status() === 200;
+        if (r?.status() !== 200) throw fail(`${r?.status()} ${text.slice(0, 250)}`);
+        return `${r?.status()} ${text.slice(0, 250)}`;
+      });
+    }
+
+    // ================= Staff, finance, CRM, BCC, roles
     await step("Staff", "Training operations console", async () => {
       await staffLogin(staff, "founder@pawspace.in");
       await staff.goto("/team/operations/training"); await settle(staff, 3500); await shot(staff, "ops-console");
       return (await mainText(staff)).slice(0, 400);
     });
-    await step("Accounts", "Training finance: invoice for fully-paid programme", async () => {
+    await step("Accounts", "Training finance: invoice for the fully paid programme", async () => {
       await staff.goto("/team/finance/training"); await settle(staff, 3500); await shot(staff, "finance-training"); await shot(staff, "finance-training-full", true);
-      if (!state.starter?.bookingId) throw blocked("No Starter booking");
+      if (!state.starter?.completed) throw blocked("Starter programme not fully paid and completed");
       const row = staff.locator("tr").filter({ hasText: state.starter.bookingId });
-      const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ");
-      const button = row.getByRole("button", { name: "Issue UAT invoice" });
-      const enabled = await button.isEnabled().catch(() => false);
-      if (!enabled) throw fail(`Issue UAT invoice disabled — row: ${text}`);
+      if (!(await row.count())) throw blocked(`${state.starter.bookingId} is not listed in Training invoices (${await staff.locator("tr").count()} rows)`);
+      const text = (await row.first().innerText()).replace(/\s+/g, " ");
+      const button = row.first().getByRole("button", { name: "Issue UAT invoice" });
+      if (!(await button.isEnabled().catch(() => false))) throw fail(`Issue UAT invoice disabled — row: ${text}`);
       queueAnswers(staff, "QA master invoice issue");
       await button.click(); await settle(staff, 2500); await shot(staff, "finance-invoice-issued");
-      return (await staff.locator("tr").filter({ hasText: state.starter.bookingId }).innerText()).replace(/\s+/g, " ");
+      return (await staff.locator("tr").filter({ hasText: state.starter.bookingId }).first().innerText()).replace(/\s+/g, " ");
     });
     await step("Accounts", "Trainer payout statement → approve sandbox instruction", async () => {
+      if (!state.starter?.completed) throw blocked("No completed sessions to pay out");
       const provider = String(state.starter?.providerId || "");
       const row = staff.locator("tr").filter({ hasText: provider }).filter({ has: staff.getByRole("button", { name: /Approve sandbox instruction/ }) }).first();
       if (!provider || !(await row.count())) throw blocked(`No payout statement row for ${provider}`);
       const before = (await row.innerText()).replace(/\s+/g, " ");
       const button = row.getByRole("button", { name: /Approve sandbox instruction/ });
-      if (!(await button.isEnabled())) return `already approved/blocked: ${before}`;
+      if (!(await button.isEnabled())) return `not approvable now: ${before}`;
       queueAnswers(staff, "QA master payout approval");
       const response = staff.waitForResponse(r => r.url().includes("/api/training-finance") && r.request().method() === "POST", { timeout: 20_000 }).catch(() => null);
       await button.click(); const r = await response; await settle(staff, 2000); await shot(staff, "finance-payout");
       return `${before} → ${r?.status()} ${(r ? await r.text().catch(() => "") : "").slice(0, 200)}`;
     });
-    await step("Accounts", "Cancellation case for the app booking (policy, calculation, approval)", async () => {
-      if (!state.app?.bookingId) throw blocked("No app booking");
-      await staff.reload(); await settle(staff, 3000);
+    await step("Accounts", "Cancellation case for the mobile programme (policy, calculation, approval, sandbox refund)", async () => {
+      if (!state.app?.cancelRequested) throw blocked("No cancellation request");
+      await staff.goto("/team/finance/training"); await settle(staff, 3500);
       const row = staff.locator("tr").filter({ hasText: state.app.bookingId }).filter({ hasText: /chargeable/ });
-      const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ");
+      const text = (await row.first().innerText().catch(() => "")).replace(/\s+/g, " ");
       await shot(staff, "finance-cancellation");
       if (!text) throw fail("Cancellation case not visible in Training finance");
-      const approve = row.getByRole("button", { name: "Approve" });
+      const approve = row.first().getByRole("button", { name: "Approve" });
       if (!(await approve.isEnabled().catch(() => false))) return `case: ${text} (approval not available — policy/calculation state)`;
       queueAnswers(staff, "QA master cancellation approval");
       const response = staff.waitForResponse(r => r.url().includes("/api/training-cancellation") && r.request().method() === "POST", { timeout: 20_000 }).catch(() => null);
       await approve.click(); const r = await response; await settle(staff, 2500);
       const approved = r ? (await r.text().catch(() => "")).slice(0, 250) : "no request";
-      const refund = staff.locator("div").filter({ hasText: state.app.bookingId }).filter({ has: staff.getByRole("button", { name: "Process sandbox" }) }).last();
       const steps: string[] = [];
-      if (await refund.count()) {
+      const refundRow = () => staff.locator("div").filter({ hasText: state.app.bookingId }).filter({ has: staff.getByRole("button", { name: "Process sandbox" }) }).last();
+      if (await refundRow().count()) {
         queueAnswers(staff, "QA sandbox refund processing");
-        await refund.getByRole("button", { name: "Process sandbox" }).click().catch(() => {}); await settle(staff, 2000); steps.push("processing");
+        await refundRow().getByRole("button", { name: "Process sandbox" }).click().catch(() => {}); await settle(staff, 2000); steps.push("processing");
         queueAnswers(staff, `rfnd_QA${Date.now()}`, "QA sandbox refund completed");
-        await staff.locator("div").filter({ hasText: state.app.bookingId }).filter({ has: staff.getByRole("button", { name: "Complete sandbox" }) }).last().getByRole("button", { name: "Complete sandbox" }).click().catch(() => {}); await settle(staff, 2000); steps.push("completed");
+        await refundRow().getByRole("button", { name: "Complete sandbox" }).click().catch(() => {}); await settle(staff, 2000); steps.push("completed");
         const credit = staff.getByRole("button", { name: "Issue UAT credit note" }).first();
         if (await credit.isEnabled().catch(() => false)) { queueAnswers(staff, "QA credit note"); await credit.click(); await settle(staff, 2000); steps.push("credit note"); }
       }
@@ -666,7 +755,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       await staff.goto("/crm"); await settle(staff, 3500);
       await staff.getByRole("button", { name: /Add lead/ }).click(); await staff.waitForTimeout(800);
       await staff.getByLabel("Customer name").fill("Master Training Lead");
-      await staff.getByLabel("Primary mobile").fill(`9${String(Date.now()).slice(-9)}`);
+      await staff.getByLabel("Primary mobile").fill(nextPhone().replace(/^8/, "9"));
       await staff.getByLabel("Pet name").fill("Simba");
       await staff.getByLabel("Interested service").selectOption({ label: "Dog Training" }).catch(() => {});
       await staff.getByLabel(/Consent evidence/).fill("Recorded call — QA master consent");
@@ -677,51 +766,62 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       if (r?.status() !== 201) throw fail(`lead create ${r?.status()}`);
       return (await r.text().catch(() => "")).slice(0, 200);
     });
-    await step("Ops", "Booking Command Center lists the Training bookings", async () => {
-      await staff.goto("/booking-command-center"); await settle(staff, 4000); await shot(staff, "bcc");
-      const text = await mainText(staff); const found = [state.meet?.bookingId, state.starter?.bookingId, state.app?.bookingId].filter(Boolean).filter(id => text.includes(id));
-      return `found ${found.length}: ${found.join(", ")}`;
+    await step("Ops", "Booking Command Center finds each Training booking", async () => {
+      await staff.goto("/booking-command-center"); await settle(staff, 4000);
+      const ids = [state.meet?.bookingId, state.starter?.bookingId, state.app?.bookingId].filter(Boolean) as string[];
+      if (!ids.length) throw blocked("No bookings created");
+      const search = staff.getByPlaceholder("Search booking, customer, pet, phone or provider");
+      const found: string[] = [], missing: string[] = [];
+      for (const id of ids) { await search.fill(id); await settle(staff, 1500); ((await staff.getByText(id).count()) ? found : missing).push(id); }
+      await shot(staff, "bcc");
+      if (missing.length) throw fail(`not found: ${missing.join(", ")} (found ${found.join(", ")})`);
+      return `found ${found.join(", ")}`;
     });
-    await step("Roles", "Manager / Finance access to Training ops + finance", async () => {
+    await step("Roles", "Manager / Finance access to Training ops, finance, CRM, BCC", async () => {
       const out: string[] = [];
-      for (const email of ["jyoti.manager39@tkpetcare.in", "anjali.finance33@tkpetcare.in"]) {
-        await staffLogin(staff, email);
-        for (const path of ["/api/training-ops", "/api/training-finance", "/api/crm", "/api/booking-command-center"]) { const r = await api(staff, path); out.push(`${email.split(".")[1]} ${path} ${r.status}${r.status >= 400 ? ` ${String(r.body?.error || "").slice(0, 60)}` : ""}`); }
+      for (const email of ["jyoti.manager39@tkpetcare.in", "uat.demo.manager@tkpetcare.in", "anjali.finance33@tkpetcare.in"]) {
+        try { await staffLogin(staff, email); } catch (error) { out.push(`${email} sign-in failed ${error instanceof Error ? error.message : ""}`); continue; }
+        for (const path of ["/api/training-ops", "/api/training-finance", "/api/crm", "/api/booking-command-center"]) { const r = await api(staff, path); out.push(`${email.split("@")[0]} ${path} ${r.status}${r.status >= 400 ? ` ${String(r.body?.error || "").slice(0, 70)}` : ""}`); }
       }
       return out.join(" · ");
     });
 
-    // ---------------- AI
-    await step("AI", "V2 chat (guest): training packages question", async () => {
-      const guest = await browser.newContext({ ...phone, baseURL: BASE }); const g = await guest.newPage(); watchApi(g, "guest");
+    // ================= AI
+    await step("AI", "V2 chat (guest): training packages and prices", async () => {
+      const guest = await browser.newContext({ ...PHONE_DEVICE, baseURL: BASE }); open.push(guest); const g = await guest.newPage(); watchApi(g, "guest");
       await g.goto("/v2/chat"); await settle(g, 2500);
       await g.getByLabel("Your message").fill("What dog training packages do you offer in Bengaluru and what do they cost?");
       const response = g.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
       await g.getByRole("button", { name: "Send message" }).click();
       const r = await response; await settle(g, 4000); await shot(g, "ai-guest-chat");
       const convo = (await g.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(g))).replace(/\n+/g, " | ");
-      await guest.close();
-      return `${r?.status()} · ${convo.slice(-600)}`;
+      return `${r?.status()} · ${convo.slice(-700)}`;
     });
-    await step("AI", "V2 chat (signed-in customer): my training programme", async () => {
-      await customer.goto("/v2/chat"); await settle(customer, 2500);
-      const mine = customer.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
-      await customer.getByLabel("Your message").fill("When is my next dog training session and who is my trainer?");
-      const response = customer.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
-      await customer.getByRole("button", { name: "Send message" }).click();
-      const r = await response; await settle(customer, 4000); await shot(customer, "ai-customer-chat");
-      const convo = (await customer.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(customer))).replace(/\n+/g, " | ");
-      return `${r?.status()} · ${convo.slice(-600)}`;
+    await step("AI", "V2 chat (signed-in customer with a confirmed Meet & Greet): my next session", async () => {
+      await a.page.goto("/v2/chat"); await settle(a.page, 2500);
+      const mine = a.page.getByRole("button", { name: "My PawSpace" }); if (await mine.count()) await mine.click();
+      await a.page.getByLabel("Your message").fill("When is my Meet & Greet and who is my trainer?");
+      const response = a.page.waitForResponse(r => r.url().includes("/api/ai-web-chat") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
+      await a.page.getByRole("button", { name: "Send message" }).click();
+      const r = await response; await settle(a.page, 4000); await shot(a.page, "ai-customer-chat");
+      const convo = (await a.page.getByRole("region", { name: "Conversation" }).innerText().catch(() => mainText(a.page))).replace(/\n+/g, " | ");
+      return `${r?.status()} · ${convo.slice(-700)}`;
     });
     await step("AI", "AI configuration readiness (founder)", async () => {
       await staffLogin(staff, "founder@pawspace.in");
       await staff.goto("/team/ai/configuration"); await settle(staff, 3500); await shot(staff, "ai-configuration");
       return (await mainText(staff)).slice(0, 600);
     });
+    if (state.meet?.bookingId) await step("Payment", "Payment state recorded against the bookings", async () => {
+      const out: string[] = [];
+      if (state.meet?.bookingId) out.push(`meet ${state.meet.bookingId}: ${(await checkoutStatus(a.page, state.meet.bookingId)).status}`);
+      if (b && state.starter?.bookingId) out.push(`starter ${state.starter.bookingId}: ${(await checkoutStatus(b.page, state.starter.bookingId)).status} / funding ${await fundingState(b.page, state.starter.bookingId) || "n/a"}`);
+      if (c && state.app?.bookingId) out.push(`app ${state.app.bookingId}: ${(await checkoutStatus(c.page, state.app.bookingId)).status}`);
+      return out.join(" · ");
+    });
   } finally {
     flush();
-    await customerContext.close().catch(() => {}); await staffContext.close().catch(() => {});
-    if (trainerContext) await (trainerContext as BrowserContext).close().catch(() => {});
+    for (const context of open) await context.close().catch(() => {});
     console.log(`[master] summary: ${rows.filter(r => r.status === "PASS").length} pass · ${rows.filter(r => r.status === "FAIL").length} fail · ${rows.filter(r => r.status === "BLOCKED").length} blocked · ${rows.filter(r => r.status === "INFO").length} info`);
   }
 });
