@@ -22,8 +22,10 @@ export function writeJson(name, value) { writeFileSync(join(OUT, name), redact(v
 export function record(row) { appendFileSync(join(OUT, "results.jsonl"), redact({ t: new Date().toISOString(), ...row }).replace(/\n/g, " ") + "\n"); }
 export function finding(row) { appendFileSync(join(OUT, "findings.jsonl"), redact({ t: new Date().toISOString(), ...row }).replace(/\n/g, " ") + "\n"); }
 
+/** HEADED=1 opens a visible Chromium window (e.g. on a Mac to watch the run); SLOWMO=<ms> slows each action. */
 export async function launch({ slowMo = 0 } = {}) {
-  return chromium.launch({ headless: true, slowMo });
+  const headed = process.env.HEADED === "1";
+  return chromium.launch({ headless: !headed, slowMo: Number(process.env.SLOWMO || 0) || slowMo || (headed ? 250 : 0) });
 }
 
 /** One recorded journey: numbered screenshots, optional video, API failures, console and page errors. */
