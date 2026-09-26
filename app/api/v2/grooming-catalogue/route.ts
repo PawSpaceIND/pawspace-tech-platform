@@ -51,13 +51,19 @@ const commercialIncludes = new Map(groomingCommercialPackages.map(item => [item.
  * Seeded rows carry an internal note ("Canonical Grooming price for …") as their description. Customers see
  * what the package includes from the approved commercial catalogue instead; an operator-written description wins.
  */
-function operatorDescription(stored: unknown) {
+function operatorDescription(stored: unknown, code: string) {
   const text = String(stored || "").trim();
-  return text && !/^canonical\b/i.test(text) ? text : null;
+  return text && !/^canonical\b/i.test(text) && !seededDescription(code, text) ? text : null;
+}
+
+/** Pricing Control seeds rows with this same catalogue copy ("For 2 pets, each groomed in full. Includes …"); it is not operator-written. */
+function seededDescription(code: string, text: string) {
+  const included = commercialIncludes.get(code);
+  return Boolean(included?.length) && text.replace(/^For \d+ pets, each groomed in full\.\s*/, "") === `Includes ${included!.join(", ")}.`;
 }
 
 function customerDescription(code: string, stored: unknown) {
-  const written = operatorDescription(stored);
+  const written = operatorDescription(stored, code);
   if (written) return written;
   const included = commercialIncludes.get(code);
   return included?.length ? `Includes ${included.join(", ")}.` : "Professional doorstep grooming by PawSpace.";
@@ -109,7 +115,7 @@ export async function GET() {
         bundles: [],
       };
       // Any bundle row may carry the operator's description; the single-pet row's wins when both do.
-      const written = operatorDescription(row.description);
+      const written = operatorDescription(row.description, code);
       if (written && (count === 1 || !singleWritten.has(code))) {
         current.description = written;
         if (count === 1) singleWritten.add(code);

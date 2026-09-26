@@ -1,7 +1,7 @@
 import{ensureProviderCommissionTables}from"./provider-commission-governance";
+import{providerPayoutDueAt,providerPayoutHoldDays}from"./provider-payout-hold";
 
 type Row=Record<string,unknown>;
-const FIVE_DAYS=5*24*60*60*1000;
 const money=(value:number)=>Math.round(value*100)/100;
 
 function commissionAmount(orderAmount:number,mode:string,value:number){
@@ -41,12 +41,17 @@ export async function syncTrainingCommissionPayoutMilestones(db:D1Database,asOf=
   /*
    * Ordered by WHEN each session was completed, not by its number in the plan. A milestone is
    * reached at the Nth completion, and `reachedAt` below indexes straight into this list to start
-   * the five-day hold from it. Ordering by sequence_no made those two different things whenever a
+   * the payout hold (lib/provider-payout-hold.ts, 7 days) from it. Ordering by sequence_no made those two different things whenever a
    * programme ran out of order - a rescheduled session 3 finished after 4 and 5 - and it picked an
    * EARLIER completion, so the hold was already expired on the day the milestone was actually
-   * reached and the commission became approvable immediately. The five-day window is the whole
+   * reached and the commission became approvable immediately. The hold window is the whole
    * point of the rule: it is the time in which a customer complaint can still stop the money.
    * [D31-T4]
+   *
+   * These milestones are a progress record only; approving one never creates a payout record. The
+   * trainer is paid once, through the provider payout queue (lib/provider-payout-queue.ts), 7 days
+   * after the PROGRAMME is completed, because that is when training's completion finance credits the
+   * trainer's 2110-Provider Payable in the journal; there is no per-milestone payable to pay from.
    */
   const completed=await db.prepare("SELECT sequence_no,COALESCE(completed_at,updated_at) completed_at FROM training_sessions WHERE programme_id=? AND status='completed' ORDER BY COALESCE(completed_at,updated_at),sequence_no").bind(String(p.programme_id)).all<Row>();
   const count=completed.results.length,halfThreshold=Math.ceil(totalSessions/2);
@@ -57,9 +62,9 @@ export async function syncTrainingCommissionPayoutMilestones(db:D1Database,asOf=
    if(count<milestone.threshold)continue;
    const reachedAt=Number(completed.results[milestone.threshold-1]?.completed_at||0);
    if(!Number.isFinite(reachedAt)||reachedAt<=0)continue;
-   const dueAt=reachedAt+FIVE_DAYS,status=asOf>=dueAt?"ready_for_finance_approval":"waiting_5_days";
+   const dueAt=await providerPayoutDueAt(db,reachedAt),status=asOf>=dueAt?"ready_for_finance_approval":"waiting_payout_hold";
    const id=`TCM-${String(p.booking_id)}-${milestone.code}`;
-   await db.prepare("INSERT INTO training_commission_payout_milestones (id,booking_id,programme_id,provider_id,milestone_code,threshold_sessions,total_sessions,commission_mode,commission_value,package_commission_amount,payout_amount,reached_at,due_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(booking_id,milestone_code) DO UPDATE SET status=CASE WHEN training_commission_payout_milestones.status='instruction_ready_sandbox' THEN training_commission_payout_milestones.status ELSE excluded.status END,updated_at=excluded.updated_at").bind(id,String(p.booking_id),String(p.programme_id),String(p.provider_id),milestone.code,milestone.threshold,totalSessions,mode,value,packageCommission,milestone.amount,reachedAt,dueAt,status,asOf,asOf).run();
+   await db.prepare("INSERT INTO training_commission_payout_milestones (id,booking_id,programme_id,provider_id,milestone_code,threshold_sessions,total_sessions,commission_mode,commission_value,package_commission_amount,payout_amount,reached_at,due_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(booking_id,milestone_code) DO UPDATE SET status=CASE WHEN training_commission_payout_milestones.status='instruction_ready_sandbox' THEN training_commission_payout_milestones.status ELSE excluded.status END,due_at=CASE WHEN training_commission_payout_milestones.status='instruction_ready_sandbox' THEN training_commission_payout_milestones.due_at ELSE excluded.due_at END,updated_at=excluded.updated_at").bind(id,String(p.booking_id),String(p.programme_id),String(p.provider_id),milestone.code,milestone.threshold,totalSessions,mode,value,packageCommission,milestone.amount,reachedAt,dueAt,status,asOf,asOf).run();
    synced++;
   }
  }
@@ -74,7 +79,7 @@ export async function approveTrainingCommissionMilestone(db:D1Database,input:{bo
  if(prior)return{...prior,duplicatePrevented:true,livePayout:false};
  const row=await db.prepare("SELECT * FROM training_commission_payout_milestones WHERE booking_id=? AND milestone_code=?").bind(input.bookingId,input.milestoneCode).first<Row>();
  if(!row)throw new Response("Training commission milestone is not reached",{status:404});
- if(now<Number(row.due_at))throw new Response("Training commission payout is not eligible until five days after the milestone is reached",{status:409});
+ if(now<Number(row.due_at))throw new Response(`Training commission payout is not eligible until ${await providerPayoutHoldDays(db,Number(row.reached_at))} days after the milestone is reached`,{status:409});
  if(String(row.status)!=="ready_for_finance_approval")throw new Response("Training commission milestone is not ready for approval",{status:409});
  const changed=await db.prepare("UPDATE training_commission_payout_milestones SET status='instruction_ready_sandbox',approval_idempotency_key=?,approved_by=?,approved_at=?,updated_at=? WHERE booking_id=? AND milestone_code=? AND status='ready_for_finance_approval' AND due_at<=?").bind(input.idempotencyKey,input.actorId,now,now,input.bookingId,input.milestoneCode,now).run();
  if(Number(changed.meta?.changes||0)!==1)throw new Response("Training commission milestone approval lost its eligibility race",{status:409});

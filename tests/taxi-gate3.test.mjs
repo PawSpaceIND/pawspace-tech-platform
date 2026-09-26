@@ -75,7 +75,7 @@ async function financeWorld({ bookingStatus = "confirmed", tripStatus = "schedul
   return { sqlite, db, ...seeded };
 }
 
-function seedCanonicalCompletionFinance(sqlite, world, { providerNetPayout = 314.30, providerPayable = 310.00, resolvedAt = Date.now() - 6 * 24 * 60 * 60 * 1000 } = {}) {
+function seedCanonicalCompletionFinance(sqlite, world, { providerNetPayout = 314.30, providerPayable = 310.00, resolvedAt = Date.now() - 8 * 24 * 60 * 60 * 1000 } = {}) {
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_payout_computations (booking_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,provider_net_payout REAL NOT NULL,computed_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS finance_journal_entries (id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,account_code TEXT NOT NULL,debit REAL NOT NULL DEFAULT 0,credit REAL NOT NULL DEFAULT 0,posted INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT OR REPLACE INTO provider_payout_computations (booking_id,provider_id,service_code,provider_net_payout,computed_at) VALUES (?,?,?,?,?)").run(world.bookingId, world.providerId, "pet_taxi", providerNetPayout, resolvedAt);
@@ -306,11 +306,11 @@ test("Gate 3: settlement waits for completed payment and projects canonical comp
   assert.equal(prepared.tax, "resolved");
   assert.equal(prepared.approvalStatus, "awaiting_finance_approval");
   assert.equal(prepared.payoutStatus, "not_instructed");
-  assert.equal(prepared.payoutSlaDays, 5);
+  assert.equal(prepared.payoutSlaDays, 7);
   const ledger = world.sqlite.prepare("SELECT * FROM taxi_driver_settlement_ledger WHERE booking_id=?").get(world.bookingId);
   assert.equal(Number(ledger.payout_amount), canonical.providerPayable);
   assert.equal(Number(ledger.base_payout), canonical.providerNetPayout);
-  assert.equal(Number(ledger.eligible_at), canonical.resolvedAt + 5 * 24 * 60 * 60 * 1000);
+  assert.equal(Number(ledger.eligible_at), canonical.resolvedAt + 7 * 24 * 60 * 60 * 1000);
   assert.deepEqual({ rule: ledger.payout_rule_status, tax: ledger.tax_status, approval: ledger.approval_status, payout: ledger.payout_status }, { rule: "rule_applied", tax: "resolved", approval: "awaiting_finance_approval", payout: "not_instructed" });
 
   const replay = await act(world.db, world.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, key, reason: "trip completed and paid" });
@@ -322,7 +322,7 @@ test("Gate 3: settlement waits for completed payment and projects canonical comp
   await act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "prepare_settlement", { actorId: FINANCE_CHECKER, reason: "prepare early" });
   const tooEarly = await refusal(act(tooEarlyWorld.db, tooEarlyWorld.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" }));
   assert.equal(tooEarly?.status, 409);
-  assert.match(tooEarly.message, /5-day payout policy/i);
+  assert.match(tooEarly.message, /7-day payout policy/i);
 
   const approved = await act(world.db, world.bookingId, "approve_settlement", { actorId: FINANCE_CHECKER, reason: "finance reviewed canonical driver payable" });
   assert.equal(approved.status, "approved");

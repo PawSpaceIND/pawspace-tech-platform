@@ -1,3 +1,4 @@
+import{invoiceTotal}from"../../../lib/invoice-total";
 import {bookingPaymentBalances} from "../../../lib/booking-payment-balances";
 import {ensureCustomerAccountTables} from "../../../lib/customer-account";
 import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
@@ -54,7 +55,9 @@ export async function GET(request:Request){
       JOIN canonical_customers c ON c.id=b.customer_id
       JOIN booking_payments p ON p.booking_id=b.id
       WHERE w.provider_id=? AND w.service_code='grooming'
-      ORDER BY b.scheduled_start ASC LIMIT 100`).bind(providerId).all<Row>();
+      ORDER BY CASE WHEN b.status IN ('completed','cancelled','canceled','refunded','closed') THEN 1 ELSE 0 END,
+        CASE WHEN b.status IN ('completed','cancelled','canceled','refunded','closed') THEN NULL ELSE b.scheduled_start END ASC,
+        b.scheduled_start DESC LIMIT 100`).bind(providerId).all<Row>(); // open jobs soonest first, then recent history; old jobs never crowd out new ones
     const balances=await bookingPaymentBalances(readDb,rows.results.map(row=>String(row.booking_id)),{includePaymentMetadata:true});
     const jobs=[];
     for(const row of rows.results){
@@ -64,7 +67,7 @@ export async function GET(request:Request){
         readDb.prepare("SELECT id,name,species,breed,vaccination_status,profile_json FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
         readDb.prepare("SELECT event_type,entity_type,actor_id,detail_json,occurred_at FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC LIMIT 50").bind(row.booking_id).all<Row>(),
         readDb.prepare("SELECT before_photo_ref,after_photo_ref,checklist_json,completion_notes,updated_at FROM grooming_service_proof WHERE booking_id=?").bind(row.booking_id).first<Row>(),
-        readDb.prepare("SELECT invoice_number,status,net_amount,issued_at FROM booking_invoices WHERE booking_id=?").bind(row.booking_id).first<Row>(),
+        readDb.prepare("SELECT invoice_number,status,gross_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id=?").bind(row.booking_id).first<Row>(),
       ]);
       const pricing=parseJson<Record<string,unknown>>(row.pricing_json,{});
       const addOns=Array.isArray(pricing.addOns)?pricing.addOns.filter((item):item is string=>typeof item==="string"):[];
@@ -80,7 +83,7 @@ export async function GET(request:Request){
         addOns,
         safetyRequirements,
         proof:proof?{beforePhotoRef:proof.before_photo_ref?String(proof.before_photo_ref):null,afterPhotoRef:proof.after_photo_ref?String(proof.after_photo_ref):null,checklist:parseJson<string[]>(proof.checklist_json,[]),completionNotes:proof.completion_notes?String(proof.completion_notes):null,updatedAt:Number(proof.updated_at||0)}:null,
-        invoice:invoice?{invoiceNumber:String(invoice.invoice_number),status:String(invoice.status),netAmount:Number(invoice.net_amount||0),issuedAt:Number(invoice.issued_at||0)}:null,
+        invoice:invoice?{invoiceNumber:String(invoice.invoice_number),status:String(invoice.status),netAmount:Number(invoice.net_amount||0),totalAmount:invoiceTotal(invoice),issuedAt:Number(invoice.issued_at||0)}:null,
         events:events.results.map(projectProviderLifecycleEvent),
       });
     }

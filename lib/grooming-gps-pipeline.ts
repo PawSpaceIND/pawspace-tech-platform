@@ -1,5 +1,5 @@
 import{ensureUniversalLocationTables,startLocationSession}from"./universal-location-recovery";
-import{classifyGpsObservation,gpsIngestionKey,haversineDistanceMeters,type GpsTrustVerdict}from"./gps-telemetry-policy";
+import{classifyGpsObservation,gpsIngestionKey,haversineDistanceMeters,implausibleGpsJump,type GpsTrustVerdict}from"./gps-telemetry-policy";
 import{securityAuditStatement,type AuthenticatedActor}from"./server-auth";
 import type{RouteResult}from"./grooming-maps";
 
@@ -26,7 +26,10 @@ export async function existingGroomingTelemetry(db:Db,idempotencyKey:string){awa
 export async function prepareGroomingTelemetry(db:Db,input:GroomingTelemetryInput,actor:string):Promise<PreparedGroomingTelemetry>{
  await ensureGroomingGpsPipelineTables(db);const session=await startLocationSession(db,{bookingId:input.bookingId,providerId:input.providerId,actor}),sessionId=String((session as Row).id||"");
  const row=await db.prepare("SELECT s.policy_version_id,p.eta_freshness_seconds,p.allowed_accuracy_meters,c.gps_ingestion_enabled FROM provider_location_sessions s JOIN booking_punctuality_policies p ON p.id=s.policy_version_id CROSS JOIN location_control_settings c WHERE s.id=? AND s.status='active' AND c.id='global'").bind(sessionId).first<Row>();if(!row)throw new Error("active_location_policy_not_found");
- const received=Date.now(),captured=Number(input.capturedAt),accuracy=Number(input.accuracyMeters),verdict=classifyGpsObservation({latitude:Number(input.latitude),longitude:Number(input.longitude),accuracyMeters:accuracy,clientCapturedAt:captured,serverReceivedAt:received,freshnessSeconds:Number(row.eta_freshness_seconds||0),allowedAccuracyMeters:Number(row.allowed_accuracy_meters||0),gpsIngestionEnabled:Number(row.gps_ingestion_enabled)===1});
+ const received=Date.now(),captured=Number(input.capturedAt),accuracy=Number(input.accuracyMeters),classified=classifyGpsObservation({latitude:Number(input.latitude),longitude:Number(input.longitude),accuracyMeters:accuracy,clientCapturedAt:captured,serverReceivedAt:received,freshnessSeconds:Number(row.eta_freshness_seconds||0),allowedAccuracyMeters:Number(row.allowed_accuracy_meters||0),gpsIngestionEnabled:Number(row.gps_ingestion_enabled)===1});
+ let verdict=classified;
+ if(classified.trustState==="accepted"){const previous=await db.prepare("SELECT latitude,longitude,accuracy_meters,client_captured_at FROM universal_provider_location_events WHERE booking_id=? AND provider_id=? AND trust_state='accepted' ORDER BY client_captured_at DESC LIMIT 1").bind(input.bookingId,input.providerId).first<Row>();
+  if(previous&&implausibleGpsJump({latitude:Number(previous.latitude),longitude:Number(previous.longitude),capturedAt:Number(previous.client_captured_at),accuracyMeters:Number(previous.accuracy_meters)},{latitude:Number(input.latitude),longitude:Number(input.longitude),capturedAt:captured,accuracyMeters:accuracy}))verdict={...classified,trustState:"rejected",reason:"implausible_speed"};}
  return{sessionId,policyId:String(row.policy_version_id),serverReceivedAt:received,capturedAt:captured,accuracyMeters:accuracy,verdict,idempotencyKey:String(input.idempotencyKey||gpsIngestionKey(input))};
 }
 

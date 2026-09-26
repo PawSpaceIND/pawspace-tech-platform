@@ -89,7 +89,12 @@ export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-central":{zoneId:"blr-central",zoneName:"Central Bengaluru",description:"CBD, Shivajinagar, Ulsoor",color:"#E91E63",serviceAvailable:true},
 };
 
-export async function ensureServiceZonesTables(db:Db){await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)")]);const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});}
+// Once per isolate: resolveZoneByPincode runs on every address resolution, so this DDL batch plus a
+// PRAGMA probe used to cost two D1 round trips on every booking and availability check.
+async function ensureServiceZonesTablesUncached(db:Db){await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)")]);const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});}
+// Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
+const serviceZonesTablesReady=new WeakSet<object>();
+export async function ensureServiceZonesTables(db:Db){if(serviceZonesTablesReady.has(db))return;await ensureServiceZonesTablesUncached(db);serviceZonesTablesReady.add(db);}
 
 export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:ServiceZone;assignment:ZoneAssignment}|null>{
   await ensureServiceZonesTables(db);

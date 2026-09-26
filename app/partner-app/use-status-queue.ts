@@ -35,5 +35,7 @@ export function useStatusQueue(provider:string|undefined,onSynced:()=>void) {
   useEffect(()=>{const epoch=++generation.current;queueMicrotask(()=>{if(epoch===generation.current){setPending([]);setError("");void flush();}});const offline=()=>setConnection("Offline");const timer=setInterval(()=>void flush(),15000);window.addEventListener("online",flush);window.addEventListener("offline",offline);return()=>{generation.current=epoch+1;clearInterval(timer);window.removeEventListener("online",flush);window.removeEventListener("offline",offline);};},[flush]);
   const queue=async(input:Omit<QueuedStatus,"id"|"createdAt"|"providerId">)=>{if(!provider)throw new Error("Sign in before updating a job");await withStatusQueueLock(provider,"storage",()=>enqueueStatus({...input,providerId:provider}));setPending(readStatusQueue(provider));await flush();};
   const retry=async()=>{if(!provider)return;try{await withStatusQueueLock(provider,"storage",()=>{const items=readStatusQueue(provider).map(item=>({...item,error:undefined}));saveStatusQueue(provider,items);});setError("");await flush();}catch(problem){setError(problem instanceof Error?problem.message:"Unable to retry saved updates");}};
-  return{connection,setConnection,pending,error,queue,retry};
+  // A refusal from the server (e.g. outside the arrival geofence) is not a sync delay: let the partner clear it.
+  const dismiss=async(id:string)=>{if(!provider)return;await withStatusQueueLock(provider,"storage",()=>{const items=readStatusQueue(provider).filter(item=>item.id!==id);saveStatusQueue(provider,items);setPending(items);});};
+  return{connection,setConnection,pending,error,queue,retry,dismiss};
 }

@@ -25,7 +25,7 @@ export default function StagingLoginPage(){
     try{const r=await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:code.trim(),email:useEmail.trim()})});
       const j=await r.json() as{error?:string;email?:string;role?:string};
       if(!r.ok)throw new Error(j.error||"Sign-in failed");
-      if(j.role==="finance")window.location.assign("/mfa?next=%2Fteam%2Ffinance");else if(j.role==="admin")window.location.assign("/mfa?next=%2Fcontrol");else window.location.assign("/me");
+      if(j.role==="finance")window.location.assign("/mfa?next=%2Fteam%2Ffinance");else if(j.role==="admin")window.location.assign("/mfa?next=%2Fcontrol");else if(j.role==="manager")window.location.assign("/booking-command-center");else window.location.assign("/me");
     }catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
   async function logout(){setBusy(true);try{await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"logout"})});setSignedIn(null);setMsg("Signed out.");}finally{setBusy(false);}}

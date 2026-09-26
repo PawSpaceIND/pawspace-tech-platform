@@ -13,7 +13,7 @@ import {runCommunicationOutboxDispatcher} from "../lib/communication-outbox-disp
 import {runServiceRecoveryAudioBotSweep} from "../lib/service-recovery-audio-bot";
 import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {runWhatsAppOutboxDispatcher,syncSubmittedMetaTemplateStatuses} from "../lib/whatsapp-production-runtime";
-import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
+import {cleanupExpiredReservationLeases,releaseAbandonedUatCheckouts} from "../lib/scheduling-reservation-leases";
 import {runRazorpayCaptureOutboxSweep} from "../lib/razorpay-capture-atomic";
 import {runRazorpayCaptureReconciliationSweep} from "../lib/razorpay-capture-reconciliation";
 import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
@@ -39,6 +39,8 @@ import{runAtlasDailyAnalysis}from"../lib/intelligence/atlas-data";
 import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
 import{handleEdgeHealth}from"../lib/edge-health";
+import{runProviderPayoutQueueSweep}from"../lib/provider-payout-queue";
+import{createRequestD1Metrics,runWithRequestD1Metrics,withRequestD1MetricsEnv}from"../lib/request-d1-metrics";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
@@ -87,7 +89,15 @@ function observeApiResponse(request:Request,response:Response){
 }
 
 const worker = {
+  // Scheduling requests run inside a per-request D1 accounting scope (lib/request-d1-metrics.ts): the
+  // route reports it as Server-Timing plus one scheduling_preview_timing log line (bug B2). Only DB is
+  // wrapped, and only for this path; every other request is untouched. handle() is called directly, never
+  // back through fetch: Sentry.withSentry wraps fetch and would instrument the counted env a second time.
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(request.method==="POST"&&new URL(request.url).pathname==="/api/uat-scheduling")return runWithRequestD1Metrics(createRequestD1Metrics(request,true,promise=>ctx.waitUntil(promise)),()=>worker.handle(request,withRequestD1MetricsEnv(env),ctx));
+    return worker.handle(request,env,ctx);
+  },
+  async handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try{
 
@@ -134,9 +144,11 @@ const worker = {
       // Provider webhooks are authenticated inside their route by HMAC/challenge verification, not by
       // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
       const eliteRequest=isMetaWebhook?request.clone():null;
-      if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
+      const leaseCleanup=request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings")?cleanupExpiredReservationLeases(env.DB):null;leaseCleanup?.catch(()=>undefined);
       const inspectionRequest=requestForAuthorization(request,env as unknown as Record<string,unknown>);
-      const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
+      // Lease cleanup and the session lookup are independent, so they run together. Both settle before any
+      // answer is given: an expired session is still never refused before its server-owned lease is considered.
+      const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB).finally(()=>leaseCleanup);
       if(sessionAccess instanceof Response)return secureApiResponse(sessionAccess);
       const providerEmail=isMetaWebhook?"meta-webhook@provider":isEmailWebhook?"email-webhook@provider":"dialler-webhook@provider";
       const access=isProviderWebhook
@@ -205,8 +217,9 @@ const worker = {
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat]=await Promise.allSettled([
-        cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,providerPayoutQueue]=await Promise.allSettled([
+        // UAT only (PAWSPACE_SCHEDULING_ENV=uat): also free groomers held by V2 checkouts abandoned unpaid for 30 min.
+        cleanupExpiredReservationLeases(env.DB,controller.scheduledTime).then(async result=>({...result,uatAbandoned:await releaseAbandonedUatCheckouts(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime)})),
         gatewayInboundTask,
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -227,9 +240,12 @@ const worker = {
         atlasDailyTask,
         dpdpRetentionTask,
         sweepPartnerHeartbeats(env.DB,controller.scheduledTime),
+        // Provider payouts: queue each booking once, 7 days after completion; Finance releases with one click.
+        runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
       ]);
       const errors:string[]=[];
       if(partnerHeartbeat.status==="rejected")errors.push(`partner heartbeat: ${String(partnerHeartbeat.reason)}`);
+      if(providerPayoutQueue.status==="rejected")errors.push(`finance provider payout queue: ${providerPayoutQueue.reason instanceof Error?providerPayoutQueue.reason.message:String(providerPayoutQueue.reason)}`);else if(providerPayoutQueue.value.errors.length)errors.push(`finance provider payout queue: ${providerPayoutQueue.value.errors.length} booking(s) failed: ${providerPayoutQueue.value.errors.slice(0,3).join("; ")}`);
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
       if(gatewayInbound.status==="rejected")errors.push(`gateway inbound retry: ${gatewayInbound.reason instanceof Error?gatewayInbound.reason.message:String(gatewayInbound.reason)}`);else if(gatewayInbound.value.deadLettered||gatewayInbound.value.purge.deadLettered)errors.push(`gateway inbound retry: ${gatewayInbound.value.deadLettered+gatewayInbound.value.purge.deadLettered} event(s) dead-lettered`);
       if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);
@@ -265,7 +281,8 @@ worker.fetch=async(request:Request,env:Env,ctx:ExecutionContext):Promise<Respons
   installD1RequestTiming(env.DB);
   const started=Date.now();
   const{result:response,timings}=await withD1RequestTiming(()=>untimedFetch(request,env,ctx));
-  if(response.status===101||(response as Response&{webSocket?:unknown}).webSocket)return response;
+  // A route that reports its own Server-Timing (uat-scheduling, lib/request-d1-metrics) keeps it.
+  if(response.status===101||(response as Response&{webSocket?:unknown}).webSocket||response.headers.has("server-timing"))return response;
   try{const headers=new Headers(response.headers);headers.set("Server-Timing",d1ServerTiming(timings,Date.now()-started));return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}
   catch{return response;}
 };

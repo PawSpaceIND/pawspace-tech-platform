@@ -1,5 +1,6 @@
 import{ensureSittingLifecycleTables}from"./sitting-lifecycle";
 import{collectedForBooking}from"./collected-funds";
+import{providerPayoutHoldDays}from"./provider-payout-hold";
 
 type Row=Record<string,unknown>;
 export type SittingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"approve_settlement"|"reconcile";
@@ -100,16 +101,16 @@ export async function mutateSittingFinance(db:D1Database,input:SittingFinanceInp
   const payable=await db.prepare("SELECT COALESCE(SUM(credit-debit),0) amount,MAX(created_at) resolved_at FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? AND account_code='2110-Provider Payable' AND posted=1").bind(input.bookingId).first<Row>().catch(()=>null);
   const payoutAmount=Math.round(Number(payable?.amount||0)*100)/100;
   if(!payout||!Number.isFinite(payoutAmount)||payoutAmount<0)throw new Response("Canonical Sitting completion finance must be resolved before sitter settlement",{status:409});
-  const completedAt=Number(payable?.resolved_at||payout.computed_at||now),eligibleAt=completedAt+5*24*60*60*1000;
+  const completedAt=Number(payable?.resolved_at||payout.computed_at||now),holdDays=await providerPayoutHoldDays(db,completedAt),eligibleAt=completedAt+holdDays*24*60*60*1000;
   await db.prepare("INSERT INTO sitting_sitter_settlement_ledger (booking_id,provider_id,gross_booking_value,currency,base_payout,travel_allowance,incentives,penalties,cash_adjustment,payout_amount,payout_rule_status,tax_status,approval_status,payout_status,eligible_at,approved_by,payout_reference,created_at,updated_at) VALUES (?,?,?,'INR',?,0,0,0,0,?,'rule_applied','resolved','awaiting_finance_approval','not_instructed',?,NULL,NULL,?,?) ON CONFLICT(booking_id) DO UPDATE SET provider_id=excluded.provider_id,gross_booking_value=excluded.gross_booking_value,base_payout=excluded.base_payout,travel_allowance=0,incentives=0,penalties=0,cash_adjustment=0,payout_amount=excluded.payout_amount,payout_rule_status='rule_applied',tax_status='resolved',approval_status=CASE WHEN sitting_sitter_settlement_ledger.approval_status IN ('approved','paid') THEN sitting_sitter_settlement_ledger.approval_status ELSE 'awaiting_finance_approval' END,payout_status=CASE WHEN sitting_sitter_settlement_ledger.payout_status!='not_instructed' THEN sitting_sitter_settlement_ledger.payout_status ELSE 'not_instructed' END,eligible_at=excluded.eligible_at,updated_at=excluded.updated_at").bind(input.bookingId,booking.provider_id,booking.total_amount,Number(payout.provider_net_payout),payoutAmount,eligibleAt,now,now).run();
-  return remember(db,input,{bookingId:input.bookingId,status:"settlement_prepared",basePayout:Number(payout.provider_net_payout),payoutAmount,payoutRule:"rule_applied",tax:"resolved",approvalStatus:"awaiting_finance_approval",payoutStatus:"not_instructed",eligibleAt,payoutSlaDays:5,source:"canonical_service_completion"});
+  return remember(db,input,{bookingId:input.bookingId,status:"settlement_prepared",basePayout:Number(payout.provider_net_payout),payoutAmount,payoutRule:"rule_applied",tax:"resolved",approvalStatus:"awaiting_finance_approval",payoutStatus:"not_instructed",eligibleAt,payoutSlaDays:holdDays,source:"canonical_service_completion"});
  }
  if(input.action==="approve_settlement"){
   if(status!=="completed")throw new Response("Sitter settlement can be approved only after canonical checkout",{status:409});
   const reason=why(input),settlement=await db.prepare("SELECT * FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(!settlement)throw new Response("Prepare the canonical Sitting settlement before approval",{status:409});
   if(String(settlement.payout_rule_status)!=="rule_applied"||String(settlement.tax_status)!=="resolved"||!Number.isFinite(Number(settlement.payout_amount)))throw new Response("Sitting settlement is not backed by resolved canonical completion finance",{status:409});
-  if(Number(settlement.eligible_at)>now)throw new Response("Sitting settlement is not yet eligible under the 5-day payout policy",{status:409});
+  if(Number(settlement.eligible_at)>now)throw new Response(`Sitting settlement is not yet eligible under the ${await providerPayoutHoldDays(db)}-day payout policy`,{status:409});
   if(String(settlement.approval_status)==="approved")return remember(db,input,{bookingId:input.bookingId,status:"approved",approvedBy:settlement.approved_by,payoutStatus:String(settlement.payout_status),duplicateApproval:true});
   const claim=await db.prepare("UPDATE sitting_sitter_settlement_ledger SET approval_status='approved',approved_by=?,updated_at=? WHERE booking_id=? AND approval_status='awaiting_finance_approval' AND payout_rule_status='rule_applied' AND tax_status='resolved' AND eligible_at<=?").bind(input.actorId,now,input.bookingId,now).run();
   if(Number(claim?.meta?.changes||0)!==1)throw new Response("Sitting settlement approval state changed; refresh before retrying",{status:409});
