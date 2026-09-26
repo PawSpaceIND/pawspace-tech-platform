@@ -47,7 +47,8 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  if(body.bot===true){
   /* Every signed-in bot answer carries the conversation back, so the page shows the reply from this one
    * request instead of reading the thread again (each extra request costs the customer seconds). */
-  const withTranscript=async()=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true}).catch(()=>null);
+  // The turn itself is stored; if reading it back fails, the page reads the thread instead (transcript null).
+  const withTranscript=async()=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true}).catch((error:unknown)=>{console.error("ai-web-chat: reply transcript read failed",error instanceof Error?error.message:String(error));return null;});
   if(body.start===true){const bot=await startCustomerWebChatBot(db,{actor,customerId});return json({data:{mode:"authenticated",bot,transcript:await withTranscript()}});}
   if(!(body.message||body.choiceId)||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
   const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey});
