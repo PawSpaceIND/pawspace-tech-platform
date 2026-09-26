@@ -60,10 +60,35 @@ const PROFILE = "INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,na
 const HOST = "INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,?,?,?,'[\"dog\",\"cat\"]',8,?,1,'none',1,'verified','verified',1,1,'founder_seed',1)";
 
 /**
+ * A Boarding and Pet Sitting roster the test owns, so a later edit to the staging seed cannot move an
+ * expectation: every seeded blr host and sitter is taken off the live roster and these join blr-east with
+ * the capacities, family rules, ratings and travel buffers set here. Hosts: [id, maxGuestPets, oneFamily,
+ * rating]; sitters: [id, capacity, travelBufferMinutes, rating]. Everyone lives in Indiranagar.
+ */
+export const OWN_ROSTER = {
+  hosts: [["stay_host_one_family", 2, 1, 4.9], ["stay_host_small", 2, 1, 4.8], ["stay_host_large", 4, 0, 4.7], ["stay_host_mid", 3, 0, 4.6]],
+  sitters: [["stay_sit_top", 1, 30, 4.9], ["stay_sit_second", 1, 30, 4.8], ["stay_sit_third", 2, 30, 4.7], ["stay_sit_fourth", 1, 45, 4.6]],
+};
+const GUEST_HOST = "INSERT OR REPLACE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,'blr','blr-east','Indiranagar','[\"dog\",\"cat\"]',?,?,1,'none',1,'verified','verified',1,1,'founder_seed',1)";
+const HOME = "INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) VALUES (?,?,'Test base: Indiranagar, Bengaluru 560038',12.9784,77.6408,0,NULL,'stay latency test roster','founder_seed',1)";
+function ownStayRoster(sqlite) {
+  sqlite.exec("UPDATE provider_capacity_profiles SET live=0 WHERE city_id='blr' AND (services_json LIKE '%\"boarding\"%' OR services_json LIKE '%\"pet_sitting\"%')");
+  for (const [id, guests, oneFamily, rating] of OWN_ROSTER.hosts) {
+    sqlite.prepare(PROFILE).run(id, "blr", `Test host ${id}`, "commission", '["boarding"]', '["blr-east"]', rating, 90, guests, 0, 12);
+    sqlite.prepare(GUEST_HOST).run(id, guests, oneFamily);
+    sqlite.prepare(HOME).run(`PHB-${id}`, id);
+  }
+  for (const [id, capacity, buffer, rating] of OWN_ROSTER.sitters) {
+    sqlite.prepare(PROFILE).run(id, "blr", `Test sitter ${id}`, "commission", '["pet_sitting"]', '["blr-east"]', rating, 90, capacity, buffer, 6);
+    sqlite.prepare(HOME).run(`PHB-${id}`, id);
+  }
+}
+
+/**
  * Staging as it is: runtime tables first, then the deploy's roster seed, then (optionally) extra
  * providers in blr-east so a test can show the query count does not grow with the roster.
  */
-export async function stayWorld({ dbGlobal, envGlobal, extra = 0, seedFile = process.env.STAY_LATENCY_SEED || "scripts/uat-staging-provider-capacity.sql" } = {}) {
+export async function stayWorld({ dbGlobal, envGlobal, extra = 0, ownRoster = false, seedFile = process.env.STAY_LATENCY_SEED || "scripts/uat-staging-provider-capacity.sql" } = {}) {
   const { ensureSecurityTables } = await import("../../lib/server-auth.ts");
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
@@ -83,6 +108,7 @@ export async function stayWorld({ dbGlobal, envGlobal, extra = 0, seedFile = pro
   const seedPath = seedFile.startsWith("/") ? seedFile : new URL(seedFile, REPO);
   const roster = fs.readFileSync(seedPath, "utf8").split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
   for (const statement of roster.split(/;\s*\n/).map((item) => item.trim()).filter(Boolean)) sqlite.exec(`${statement};`);
+  if (ownRoster) ownStayRoster(sqlite);
   for (let index = 0; index < extra; index++) {
     sqlite.prepare(PROFILE).run(`extra_host_${index}`, "blr", `Extra host ${index}`, "commission", '["boarding"]', '["blr-east"]', 4.0, 60, 8, 0, 12);
     sqlite.prepare(HOST).run(`extra_host_${index}`, "blr", "blr-east", "Extra area", 0);

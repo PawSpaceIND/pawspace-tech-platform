@@ -9,6 +9,9 @@
  * 20 round trips (5 s at 250 ms), and the SAME outcomes as before the change for the same sequence of
  * customer actions - captured on the previous code: which host or sitter is assigned, replays, capacity,
  * SIT-03 overnight exclusivity with the travel buffer, the vaccination refusal and the persisted roster.
+ * The hosts and sitters are the test's own (h.OWN_ROSTER), so a later staging seed edit cannot move an
+ * expectation. STAY_CAPTURE=1 prints every observed outcome instead of asserting it: that is how the
+ * expectations below were taken, by running this file against the code before the change.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,10 +24,23 @@ const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
 const canonical = await import("../app/api/canonical-bookings/route.ts");
 
-const world = (extra = 0) => h.stayWorld({ dbGlobal: "__STAY_BOOKING_DB__", envGlobal: "__STAY_BOOKING_ENV__", extra });
+const world = (extra = 0) => h.stayWorld({ dbGlobal: "__STAY_BOOKING_DB__", envGlobal: "__STAY_BOOKING_ENV__", extra, ownRoster: true });
+const CAPTURE = Boolean(process.env.STAY_CAPTURE);
+const same = (actual, expected, label) => CAPTURE ? console.log(`CAPTURE ${label} ${JSON.stringify(actual)}`) : assert.deepEqual(actual, expected, label);
 const customer = { id: h.CUSTOMER, name: "Stay Latency", primaryPhone: "9000099001" };
 const outcome = (r) => r.status === 200 ? [r.body.data.status, r.body.data.provider?.id, r.body.data.duplicatePrevented ?? false] : [r.status, r.body?.error ?? r.body];
 const ROUND_TRIPS = 20, LATENCY_MS = 40;
+// Captured by running this file with STAY_CAPTURE=1 against the code before the change, on h.OWN_ROSTER.
+// Each one-family home drops out once it holds a family; the larger homes lose one place per stay.
+const BOARDING_ROUNDS = [
+  ["stay_host_one_family", ["stay_host_one_family:2", "stay_host_small:2", "stay_host_large:4", "stay_host_mid:3"]],
+  ["stay_host_small", ["stay_host_small:2", "stay_host_large:4", "stay_host_mid:3"]],
+  ["stay_host_large", ["stay_host_large:4", "stay_host_mid:3"]],
+];
+const BOARDING_AFTER = ["stay_host_large:3", "stay_host_mid:3"];
+const BOARDING_ROSTER = Array(3).fill('["00:00-23:59"]');
+const SITTERS_BEFORE = ["stay_sit_third", "stay_sit_fourth", "stay_sit_second"];
+const SITTERS_AFTER = ["stay_sit_fourth", "stay_sit_second", "stay_sit_top"];
 
 async function boardingStay(w, group, stay, host, { latency = 0 } = {}) {
   const quote = await h.timed(w, h.boardingQuoteRequest(w, { packageCode: "boarding-4h", petCount: 1, ...stay, providerId: host }), boarding.POST);
@@ -42,37 +58,38 @@ const sittingReserve = (w, label, scheduledStart, scheduledEnd, careMode, prefer
 test("Boarding: hosts are assigned, replayed and booked exactly as before, and a busy home stops being offered", async () => {
   const w = await world();
   const stay = { scheduledStart: h.ist(3, 10), scheduledEnd: h.ist(3, 14) };
-  const expected = [["host_maya_rohan", ["host_maya_rohan:2", "host_sana:2", "host_priya_dev:4", "host_arjun_tara:3"]], ["host_sana", ["host_sana:2", "host_priya_dev:4", "host_arjun_tara:3"]], ["host_priya_dev", ["host_priya_dev:4", "host_arjun_tara:3"]]];
-  for (const [round, [host, offered]] of expected.entries()) {
+  for (const [round, [host, offered]] of BOARDING_ROUNDS.entries()) {
     const search = await h.timed(w, h.boardingSearchRequest(w, { ...stay, petCount: 1, species: ["dog"] }), boarding.GET);
-    assert.deepEqual(search.body.data.hosts.map((x) => `${x.providerId}:${x.availableGuestPets}`), offered, `round ${round} search`);
+    same(search.body.data.hosts.map((x) => `${x.providerId}:${x.availableGuestPets}`), offered, `round ${round} search`);
     const group = `stay:round-${round}`, { reserve, booking, body } = await boardingStay(w, group, stay, host);
-    assert.deepEqual(outcome(reserve), ["assigned", host, false], `round ${round} reserve`);
-    assert.deepEqual(outcome(await h.timed(w, h.schedulingRequest(w, { clientRequestId: group, petIds: [h.PETS.dog], serviceCode: "boarding", careMode: "visit", preferredProviderId: host, ...stay }), scheduling.POST)), ["assigned", host, true], `round ${round} replay`);
-    assert.deepEqual([booking.status, booking.body.data.status, booking.body.data.duplicatePrevented], [201, "payment_pending", false], `round ${round} booking`);
+    same(outcome(reserve), ["assigned", host, false], `round ${round} reserve`);
+    same(outcome(await h.timed(w, h.schedulingRequest(w, { clientRequestId: group, petIds: [h.PETS.dog], serviceCode: "boarding", careMode: "visit", preferredProviderId: host, ...stay }), scheduling.POST)), ["assigned", host, true], `round ${round} replay`);
+    same([booking?.status, booking?.body.data.status, booking?.body.data.duplicatePrevented], [201, "payment_pending", false], `round ${round} booking`);
     const replay = await h.timed(w, h.canonicalBookingRequest(w, body), canonical.POST);
-    assert.deepEqual([replay.status, replay.body.data.duplicatePrevented], [200, true], `round ${round} booking replay`);
+    same([replay.status, replay.body.data?.duplicatePrevented], [200, true], `round ${round} booking replay`);
   }
+  const last = await h.timed(w, h.boardingSearchRequest(w, { ...stay, petCount: 1, species: ["dog"] }), boarding.GET);
+  same(last.body.data.hosts.map((x) => `${x.providerId}:${x.availableGuestPets}`), BOARDING_AFTER, "search after the three stays");
   w.sqlite.prepare("UPDATE canonical_pets SET vaccination_status='pending' WHERE id=?").run(h.PETS.cat);
-  const unvaccinated = await h.timed(w, h.schedulingRequest(w, { clientRequestId: "stay:unvax", petIds: [h.PETS.cat], serviceCode: "boarding", careMode: "visit", preferredProviderId: "host_sana", scheduledStart: h.ist(6, 10), scheduledEnd: h.ist(6, 14) }), scheduling.POST);
-  assert.deepEqual(outcome(unvaccinated), [409, "Boarding requires verified vaccination for every selected pet"]);
+  const unvaccinated = await h.timed(w, h.schedulingRequest(w, { clientRequestId: "stay:unvax", petIds: [h.PETS.cat], serviceCode: "boarding", careMode: "visit", preferredProviderId: "stay_host_large", scheduledStart: h.ist(6, 10), scheduledEnd: h.ist(6, 14) }), scheduling.POST);
+  same(outcome(unvaccinated), [409, "Boarding requires verified vaccination for every selected pet"], "unvaccinated");
   // The reserve path still publishes the synthetic UAT roster rows it always wrote.
-  const roster = w.sqlite.prepare("SELECT provider_id,windows_json FROM scheduling_availability WHERE source='uat_roster' AND provider_id='host_maya_rohan' ORDER BY date").all();
-  assert.ok(roster.length >= 2 && roster.every((row) => row.windows_json === '["00:00-23:59"]'), JSON.stringify(roster));
+  const roster = w.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE source='uat_roster' AND provider_id=? ORDER BY date").all(BOARDING_ROUNDS[0][0]);
+  same(roster.map((row) => row.windows_json), BOARDING_ROSTER, "persisted UAT roster");
 });
 
 test("Pet Sitting: SIT-03 overnight exclusivity and the travel buffer refuse and assign exactly as before", async () => {
   const w = await world();
   const preview = await h.timed(w, h.schedulingRequest(w, { action: "preview", clientRequestId: "preview:x", petIds: [h.PETS.dog], serviceCode: "pet_sitting", careMode: "overnight", scheduledStart: h.ist(6, 20), scheduledEnd: h.ist(7, 8) }), scheduling.POST);
-  const sitter = preview.body.data.providers[0].id;
-  assert.equal(sitter, "sit_sana");
+  same(preview.body.data.providers.map((provider) => provider.id), SITTERS_BEFORE, "overnight shortlist");
+  const sitter = SITTERS_BEFORE[0] ?? preview.body.data.providers[0].id;
   const refused = [409, "SELECTED_SITTER_UNAVAILABLE"];
-  assert.deepEqual(outcome(await sittingReserve(w, "overnight", h.ist(6, 20), h.ist(7, 8), "overnight", sitter)), ["assigned", sitter, false]);
-  assert.deepEqual(outcome(await sittingReserve(w, "during", h.ist(6, 22), h.ist(6, 23), "visit", sitter)), refused, "no visit inside the overnight");
-  assert.deepEqual(outcome(await sittingReserve(w, "buffer", h.ist(7, 8, 10), h.ist(7, 9, 10), "visit", sitter)), refused, "no visit inside the travel buffer");
-  assert.deepEqual(outcome(await sittingReserve(w, "after", h.ist(7, 11), h.ist(7, 12), "visit", sitter)), ["assigned", sitter, false]);
+  same(outcome(await sittingReserve(w, "overnight", h.ist(6, 20), h.ist(7, 8), "overnight", sitter)), ["assigned", sitter, false], "overnight");
+  same(outcome(await sittingReserve(w, "during", h.ist(6, 22), h.ist(6, 23), "visit", sitter)), refused, "no visit inside the overnight");
+  same(outcome(await sittingReserve(w, "buffer", h.ist(7, 8, 10), h.ist(7, 9, 10), "visit", sitter)), refused, "no visit inside the travel buffer");
+  same(outcome(await sittingReserve(w, "after", h.ist(7, 11), h.ist(7, 12), "visit", sitter)), ["assigned", sitter, false], "visit after the buffer");
   const after = await h.timed(w, h.schedulingRequest(w, { action: "preview", clientRequestId: "preview:y", petIds: [h.PETS.dog], serviceCode: "pet_sitting", careMode: "overnight", scheduledStart: h.ist(6, 20), scheduledEnd: h.ist(7, 8) }), scheduling.POST);
-  assert.deepEqual(after.body.data.providers.map((provider) => provider.id), ["sit_neha", "uatcap_sit_cm", "sit_asha"], "the booked sitter is no longer offered");
+  same(after.body.data.providers.map((provider) => provider.id), SITTERS_AFTER, "the booked sitter is no longer offered");
 });
 
 test("a warm Boarding reserve and booking stay inside their D1 budget and 20 round trips each (5 s at 250 ms)", async () => {
@@ -81,7 +98,7 @@ test("a warm Boarding reserve and booking stay inside their D1 budget and 20 rou
   let last;
   for (const [index, day] of days.entries()) {
     const stay = { scheduledStart: h.ist(day, 10), scheduledEnd: h.ist(day, 14) };
-    last = await boardingStay(w, `stay:budget-${day}`, stay, "host_priya_dev", { latency: index === days.length - 1 ? LATENCY_MS : 0 });
+    last = await boardingStay(w, `stay:budget-${day}`, stay, "stay_host_large", { latency: index === days.length - 1 ? LATENCY_MS : 0 });
   }
   assert.equal(last.reserve.status, 200, JSON.stringify(last.reserve.body));
   assert.equal(last.booking.status, 201, JSON.stringify(last.booking.body));
@@ -99,10 +116,10 @@ test("a warm Pet Sitting reserve stays inside its D1 budget and 20 round trips (
   let result;
   for (const [index, day] of [3, 4, 5].entries()) {
     w.latency.ms = index === 2 ? LATENCY_MS : 0;
-    result = await sittingReserve(w, `budget-${day}`, h.ist(day, 11), h.ist(day, 12), "visit", "sit_sana");
+    result = await sittingReserve(w, `budget-${day}`, h.ist(day, 11), h.ist(day, 12), "visit", "stay_sit_third");
     w.latency.ms = 0;
   }
-  assert.deepEqual(outcome(result), ["assigned", "sit_sana", false]);
+  assert.deepEqual(outcome(result), ["assigned", "stay_sit_third", false]);
   assert.ok(result.calls.length <= 35, `${result.calls.length} D1 calls (limit 35)`);
   assert.ok(result.elapsedMs < ROUND_TRIPS * LATENCY_MS, `took ${Math.round(result.elapsedMs)} ms at ${LATENCY_MS} ms per call`);
 });
