@@ -37,3 +37,9 @@ test('current explicit booking confirmation retains intent only after a booking 
  assert.equal(classifyVoiceFollowup('No, do not book it',context).intent,'unknown');
  assert.equal(classifyVoiceFollowup('12 Test Street, Bengaluru 560038',[...history,{role:'assistant',content:'What is your address and pincode?'}]).intent,'service_info');
 });
+
+test('short yes cannot authorize a negated or cancellation question',()=>{
+ for(const question of ['Would you like me not to book?','Shall I cancel this booking?','Shall I wait before booking?']){
+  assert.equal(classifyVoiceFollowup('Yes, proceed',[...history,{role:'assistant',content:question}]).intent,'unknown');
+ }
+});
