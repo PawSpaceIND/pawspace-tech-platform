@@ -56,7 +56,8 @@ export async function createV2GroomingBooking(
 ): Promise<V2GroomingBooking> {
   // An in-flight booking uses the confirmed snapshot, never mutable form references.
   const input = structuredClone(submitted);
-  const selectionIssue = v2GroomingSelectionIssue(input.selectedPets, input.pkg.audience);
+  const serviceDate = v2GroomingServiceDate(input.scheduledStart);
+  const selectionIssue = v2GroomingSelectionIssue(input.selectedPets, input.pkg.audience, serviceDate);
   if (selectionIssue) throw new Error(selectionIssue);
   const addressIssue = serviceAddressConflict(input.address, input.cityName || (input.cityId === "blr" ? "Bengaluru" : input.cityId), input.pincode);
   if (addressIssue) throw new Error(addressIssue);
@@ -73,9 +74,9 @@ export async function createV2GroomingBooking(
   const start = Date.parse(input.scheduledStart), end = Date.parse(input.scheduledEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start <= Date.now() || end <= start ||
       end - start !== input.bundle.slotMinutes * 60_000) throw new Error("Refresh the exact grooming time before booking.");
-  if (input.pkg.audience === "young") {
-    const youngIssue = v2YoungPackageIssue(input.selectedPets, v2GroomingServiceDate(input.scheduledStart));
-    if (youngIssue) throw new Error(youngIssue);
+  if (input.pkg.audience === "young" && serviceDate) {
+    const youngIssue = v2YoungPackageIssue(input.selectedPets, serviceDate);
+    if (youngIssue) throw new Error(youngIssue.message);
   }
   const idempotencyKey = await v2GroomingIdempotencyKey(input);
   const decision = await reserveUatSchedule({

@@ -100,9 +100,9 @@ test("V2 refuses a young package for a pet without a date of birth before reserv
   assert.equal(calls.length, 0);
 });
 
-test("V2 refuses a young package when the date of birth is over six months before the service date", async t => {
+test("V2 refuses a young package for a pet whose date of birth is over six months before the service date", async t => {
   const calls = network(t);
-  await assert.rejects(client.createV2GroomingBooking(checkoutInput({ pkg: "young-basic", audience: "young", price: 919, profile: { ageBand: "6–12 months", dateOfBirth: bornDaysBefore(200) } })), /up to 6 months/);
+  await assert.rejects(client.createV2GroomingBooking(checkoutInput({ pkg: "young-basic", audience: "young", price: 919, profile: { ageBand: "6–12 months", dateOfBirth: bornDaysBefore(200) } })), /age category/);
   assert.equal(calls.length, 0);
 });
 
@@ -110,4 +110,24 @@ test("V2 books a young package when the date of birth is within six months of th
   const calls = network(t);
   await client.createV2GroomingBooking(checkoutInput({ pkg: "young-basic", audience: "young", price: 919, profile: { ageBand: "< 6 months", dateOfBirth: bornDaysBefore(90) } }));
   assert.equal(canonicalBody(calls).packageCode, "young-basic");
+});
+
+// Saved ageYears is fixed when the pet is saved; a date of birth decides the category on the service date.
+const selection = await import("../lib/v2/grooming-selection.ts");
+test("a puppy that has outgrown six months by the service date is offered adult packages, not a dead end", () => {
+  const outgrown = { name: "Milo", species: "dog", ageYears: 0.2, profile: { ageBand: "< 6 months", dateOfBirth: bornDaysBefore(210) } };
+  assert.equal(selection.v2GroomingPetAudience(outgrown, future), "dog");
+  assert.equal(selection.v2GroomingSelectionIssue([outgrown], "dog", future), null);
+  assert.match(selection.v2GroomingSelectionIssue([outgrown], "young", future), /age category/);
+});
+test("a puppy within six months by date of birth stays young even with an adult-looking saved age", () => {
+  const puppy = { name: "Tiny", species: "dog", ageYears: 0.9, profile: { dateOfBirth: bornDaysBefore(100) } };
+  assert.equal(selection.v2GroomingPetAudience(puppy, future), "young");
+  assert.equal(selection.v2YoungPackageIssue([puppy], future), null);
+});
+test("the young-package issue names the profile change that would help", () => {
+  assert.equal(selection.v2YoungPackageIssue([{ name: "Tiny", species: "dog", ageYears: 0.25, profile: { ageBand: "< 6 months" } }], future).fix, "add_date_of_birth");
+  const futureBirth = new Date(Date.parse(`${future}T00:00:00Z`) + 10 * 86400000).toISOString().slice(0, 10);
+  assert.equal(selection.v2YoungPackageIssue([{ name: "Tiny", species: "dog", ageYears: 0.25, profile: { dateOfBirth: futureBirth } }], future).fix, "update_date_of_birth");
+  assert.equal(selection.v2YoungPackageIssue([{ name: "Milo", species: "dog", ageYears: 0.2, profile: { dateOfBirth: bornDaysBefore(210) } }], future).fix, null);
 });

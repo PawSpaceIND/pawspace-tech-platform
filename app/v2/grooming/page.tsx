@@ -103,8 +103,8 @@ export default function V2GroomingPage() {
     () => (account?.pets || []).filter(pet => selectedPetIds.includes(pet.id)),
     [account, selectedPetIds],
   );
-  const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0]) : null;
-  const selectionIssue = v2GroomingSelectionIssue(selectedPets);
+  const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0], date || undefined) : null;
+  const selectionIssue = v2GroomingSelectionIssue(selectedPets, undefined, date || undefined);
   const mixedAudience = Boolean(selectionIssue);
   const packages = useMemo(
     () => (catalogue?.packages || []).filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
@@ -300,7 +300,7 @@ export default function V2GroomingPage() {
                 </button>;
               })}
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
-            {youngIssue && <p className={styles.inlineError} role="alert">{youngIssue} <a href="/v2/account">Add a date of birth in your account</a>.</p>}
+            {youngIssue && <p className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
           </section>
 
           <section className={styles.step}>
