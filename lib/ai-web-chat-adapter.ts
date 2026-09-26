@@ -138,11 +138,14 @@ type WebChatOptions={
 };
 
 export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string},options:WebChatOptions={}){
- await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
+ await ensureAiWebChatTables(db);
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
  const aiKey=`ai:${input.idempotencyKey}`;
- const prior=await db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+ // Ownership and the retry lookup are independent reads; a failed ownership check still rejects before any write.
+ const[,prior]=await Promise.all([requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
+ // The provider only resolves runtime configuration, so it is prepared while the thread and message are written.
+ const providerPromise=createGroundedAiRuntimeProvider(db,input.actor,"chat");providerPromise.catch(()=>{});
  let threadId:string,messageId:string,inspectedDetected=false;
  if(prior){
   /* A retry of a message that was already saved - most often because the browser gave up waiting.
@@ -167,7 +170,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   * will answer here, instead of a red "AI replies are paused" error on every message they send. */
  if(options.acceptWhileWithTeam&&(await activeHandoff(db,threadId)).active)return withTeam();
  let result:Awaited<ReturnType<typeof orchestrateAiTurn>>;
- try{result=await orchestrateAiTurn(db,{actor:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider:await createGroundedAiRuntimeProvider(db,input.actor,"chat")});}
+ try{result=await orchestrateAiTurn(db,{actor:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider:await providerPromise});}
  catch(error){
   // A takeover that landed between the check above and the orchestrator's own check.
   if(options.acceptWhileWithTeam&&error instanceof Response&&error.status===409&&(await activeHandoff(db,threadId)).active)return withTeam();
