@@ -1,9 +1,12 @@
 // Preflight: prove the runner can reach staging, Razorpay and Google through the app, and read staging D1.
-import { BASE, launch, staffSession, customerSession, d1, writeJson, hasAccessCode, redact } from "./lib.mjs";
+import { BASE, launch, staffSession, customerSession, d1, writeJson, hasAccessCode, redact, deployedSha } from "./lib.mjs";
 
 const report = { base: BASE, at: new Date().toISOString(), checks: [] };
 const check = (name, ok, detail) => { report.checks.push({ name, ok, detail }); console.log(`${ok ? "PASS" : "FAIL"}  ${name} — ${redact(typeof detail === "string" ? detail : JSON.stringify(detail)).slice(0, 400)}`); };
 
+const deployed = await deployedSha();
+report.deployed = deployed;
+check("Deployed staging commit identified", Boolean(deployed.sha), JSON.stringify(deployed));
 check("UAT access code present", hasAccessCode(), hasAccessCode() ? "length >= 32" : "PAWSPACE_UAT_ACCESS_CODE missing/short");
 check("Cloudflare D1 read credentials present", Boolean(process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID && process.env.STAGING_D1_ID), "token/account/db id");
 

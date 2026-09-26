@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const fileSuite = existsSync(join(here, "SUITE")) ? readFileSync(join(here, "SUITE"), "utf8").trim() : "preflight";
 const requested = String(process.env.MASTER_SUITE || fileSuite || "preflight").trim();
-const available = readdirSync(join(here, "suites")).filter(f => f.endsWith(".mjs")).map(f => f.replace(/\.mjs$/, "")).sort();
+const available = readdirSync(join(here, "suites")).filter(f => f.endsWith(".mjs") && !f.startsWith("_")).map(f => f.replace(/\.mjs$/, "")).sort();
 const suites = requested === "all" ? ["preflight", ...available] : requested.split(",").map(s => s.trim()).filter(Boolean);
 console.log(`Master E2E suites: ${suites.join(", ")}`);
 let failures = 0;

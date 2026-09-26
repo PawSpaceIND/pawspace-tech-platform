@@ -171,3 +171,35 @@ export function readJsonl(name) {
   if (!existsSync(p)) return [];
   return readFileSync(p, "utf8").trim().split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
+
+/** Booking hand-off between suites (customer suites create, partner/staff/ledger suites consume). */
+export function saveBooking(row) { appendFileSync(join(OUT, "bookings.jsonl"), redact({ t: new Date().toISOString(), ...row }).replace(/\n/g, " ") + "\n"); }
+export function readBookings(filter = () => true) { return readJsonl("bookings.jsonl").filter(filter); }
+
+/** JSON API call inside a signed-in browser context (same cookies as the page). */
+export async function api(context, method, path, data) {
+  const opts = { headers: { origin: BASE, "content-type": "application/json" }, timeout: 30_000 };
+  if (data !== undefined) opts.data = data;
+  const res = await context.request.fetch(BASE + path, { method, ...opts });
+  let body = null; const text = await res.text().catch(() => "");
+  try { body = JSON.parse(text); } catch { body = text.slice(0, 500); }
+  return { status: res.status(), body };
+}
+
+/** Per-suite date windows (days from today, IST) so suites never compete for the same provider capacity. */
+export const WINDOWS = { boarding: [40, 70], sitting: [71, 95], taxi: [96, 110], services: [111, 130], partnerNearTerm: [1, 4] };
+
+/** The commit the live staging version was deployed from (read-only Cloudflare API; deploy message "staging <sha>"). */
+export async function deployedSha(script = "pawspace-staging") {
+  const acct = process.env.CLOUDFLARE_ACCOUNT_ID, token = process.env.CLOUDFLARE_API_TOKEN;
+  if (!acct || !token) return { skipped: "no Cloudflare credentials" };
+  const cf = async path => { const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}${path}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) }); const b = await r.json().catch(() => ({})); if (!r.ok || b.success !== true) throw new Error(`Cloudflare ${path.split("/").slice(0, 4).join("/")} HTTP ${r.status}`); return b.result; };
+  try {
+    const deployments = await cf(`/workers/scripts/${script}/deployments`);
+    const active = deployments?.deployments?.[0];
+    const versionId = active?.versions?.[0]?.version_id;
+    const version = versionId ? await cf(`/workers/scripts/${script}/versions/${versionId}`) : null;
+    const message = String(version?.metadata?.annotations?.["workers/message"] || version?.annotations?.["workers/message"] || "");
+    return { versionId, createdOn: active?.created_on, message, sha: (message.match(/[0-9a-f]{40}/) || [])[0] || null };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
