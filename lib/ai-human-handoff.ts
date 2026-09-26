@@ -10,7 +10,13 @@ const text=(value:unknown)=>String(value??"").trim();
 function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.manage")||actor.permissions.includes("customers.manage");}
 function queueFor(reason:AiHandoffReason){if(reason==="high_value_enterprise_objection")return{queue:"sales-hot",slaMinutes:5};if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
 
-export async function ensureAiHumanHandoff(db:D1Database){await ensureConversationGovernance(db);await db.batch([
+const handoffSchemaReady=new WeakMap<D1Database,Promise<void>>();
+export async function ensureAiHumanHandoff(db:D1Database){
+ let ready=handoffSchemaReady.get(db);
+ if(!ready){ready=ensureAiHumanHandoffOnce(db).catch(error=>{handoffSchemaReady.delete(db);throw error;});handoffSchemaReady.set(db,ready);}
+ await ready;
+}
+async function ensureAiHumanHandoffOnce(db:D1Database){await ensureConversationGovernance(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_handoffs (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,session_id TEXT,reason TEXT NOT NULL,confidence REAL,queue_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',summary_json TEXT NOT NULL,requested_by TEXT NOT NULL,taken_over_by TEXT,resumed_by TEXT,created_at INTEGER NOT NULL,taken_over_at INTEGER,resumed_at INTEGER)"),
  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS ai_handoff_active_thread_idx ON ai_handoffs(thread_id) WHERE status IN ('queued','staff_active')"),
  db.prepare("CREATE INDEX IF NOT EXISTS ai_handoff_queue_idx ON ai_handoffs(status,queue_code,created_at)"),

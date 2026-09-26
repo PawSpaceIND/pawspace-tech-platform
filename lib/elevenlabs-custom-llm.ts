@@ -1,6 +1,8 @@
 import{ensureCommunicationTables}from"./communication-engine";
-import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn}from"./ai-conversation-orchestrator";
-import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
+import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn,minimumContext}from"./ai-conversation-orchestrator";
+import{createGroundedAiRuntimeProvider,requiresImmediateHumanHandoff}from"./ai-grounded-runtime-provider";
+import{assertAiMayReply}from"./ai-human-handoff";
+import{detectPromptInjection}from"./ai-evaluation-security";
 import type{AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;type Env=Record<string,unknown>;
@@ -35,6 +37,37 @@ export function extractElevenLabsResponsesInput(body:Row){
  const messages=Array.isArray(body.messages)?body.messages as unknown[]:[];
  for(let i=messages.length-1;i>=0;i--){const item=messages[i];if(!item||typeof item!=="object")continue;const row=item as Row;if(text(row.role).toLowerCase()!=="user")continue;const content=stringContent(row.content);if(content)return content;}
  return"";
+}
+
+export type VoiceHistoryMessage={role:"user"|"assistant";content:string};
+// Only conversational turns from this authenticated request; never accept supplied system prompts.
+export function extractElevenLabsHistory(body:Row):VoiceHistoryMessage[]{
+ const rows=Array.isArray(body.input)?body.input:Array.isArray(body.messages)?body.messages:[];
+ const history:VoiceHistoryMessage[]=[];
+ for(const item of rows.slice(-12)){
+  if(!item||typeof item!=="object")continue;
+  const row=item as Row,role=text(row.role).toLowerCase(),content=stringContent(row.content??row.input).slice(0,1000);
+  if(content&&(role==="user"||role==="assistant"))history.push({role,content});
+ }
+ return history;
+}
+export function classifyVoiceFollowup(input:string,history:VoiceHistoryMessage[]){
+ const current=classifyAiIntent(input);
+ if(current.intent!=="unknown"||current.policyRisk||requiresImmediateHumanHandoff(input)||detectPromptInjection(input).blocked)return current;
+ // Carry intent only for bounded slot answers/backchannels in an established grooming discussion.
+ // Do not infer authorization from an earlier "yes" or let history override a current risky intent.
+ const previous=[...history];
+ if(previous.at(-1)?.role==="user"&&previous.at(-1)?.content===input)previous.pop();
+ const lastQuestion=[...previous].reverse().find(m=>m.role==="assistant")?.content||"";
+ const priorIntent=[...previous].reverse().filter(m=>m.role==="user").map(m=>classifyAiIntent(m.content)).find(i=>i.intent!=="unknown");
+ if(!priorIntent||!["booking_create","service_info"].includes(priorIntent.intent)||priorIntent.policyRisk)return current;
+ const normalized=input.toLowerCase().replace(/[.,!?-]/g," ").replace(/\s+/g," ").trim();
+ const backchannel=/^(?:(?:hello|hi|okay|ok|sure|thank you|thanks|oh|damn|something|are you there|can you hear me)\s*)+$/.test(normalized);
+ const dateAnswer=input.length<=120&&/\b(date|time|when)\b/i.test(lastQuestion)&&/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)\b/i.test(input)&&/^(?:i |want |would |like |prefer |for |at |on |please|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|am|pm|a m|p m|[0-9:.,!?\s])+$/i.test(input);
+ const confirmation=isExplicitCustomerActionConfirmation(input)&&!/\b(no|not|never|cancel|stop|wait|hold|don[’']t|without)\b/i.test(lastQuestion)&&/\b(confirm|proceed|go ahead|shall i|would you like me to)\b/i.test(lastQuestion)&&/\b(book|booking|reserve|slot|checkout)\b/i.test(lastQuestion);
+ const addressAnswer=input.length<=240&&/\b(address|pincode|pin code)\b/i.test(lastQuestion)&&/\b[1-9][0-9]{5}\b/.test(input);
+ if(!backchannel&&!dateAnswer&&!confirmation&&!addressAnswer)return current;
+ return{...priorIntent,...(confirmation?{intent:"booking_create" as const}:{}),signals:[...priorIntent.signals,"voice_conversation_followup"]};
 }
 
 function extra(body:Row){return((body.elevenlabs_extra_body||body.metadata||{})as Row);}
@@ -134,22 +167,36 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run()
   .then(()=>{},(error:unknown)=>{inboundFailure=error;});
  const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
+ const persistReply=async(output:string,providerRef:string,modelRef:string|null)=>{
+  const replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
+  await Promise.all([
+   settleInbound(),
+   db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
+    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm"}),providerRef,modelRef,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run(),
+  ]);clock.mark("replyWrite");return replyId;
+ };
  clock.mark("inboundWriteStarted");
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true});clock.mark("provider");
- const intent=classifyAiIntent(inputText);
- const fastEligible=!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
+ try{await assertAiMayReply(db,ctx.threadId);}catch(error){
+  if(!(error instanceof Response)||error.status!==409){await settleInbound();throw error;}
+  // A governed staff pause is a conversation state, not an LLM transport failure. Explain it
+  // without generating, resuming AI, or claiming that a live telephone transfer has occurred.
+  const output="This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.";
+  const replyId=await persistReply(output,"human_handoff",null);
+  return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"human_handoff",timings:clock.marks,modelRef:null,providerRef:"human_handoff",upstreamMs:null as number|null};
+ }
+ clock.mark("handoffChecked");
+ let actionProvider;
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{fastVoice:true,onTiming:clock.mark});clock.mark("provider");
+ const conversationHistory=extractElevenLabsHistory(body);
+ const intent=classifyVoiceFollowup(inputText,conversationHistory);
+ const fastEligible=!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
-  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{voiceFastPath:true},onStage:clock.mark,...(onDelta?{onDelta}:{})});clock.mark("model");
+  const canonical=await minimumContext(db,{customerId:ctx.customerId,threadId:ctx.threadId,fastVoice:true});clock.mark("canonicalContext");
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{...canonical,voiceFastPath:true,conversationHistory,asOf:now},...(onDelta?{onDelta}:{})});clock.mark("model");
   const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
+  if(confirmedAction)actionProvider={...provider,async generate(){return generated;}};
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
-   const output=text(generated.text),replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
-   // Both writes are settled here, after the reply has already been streamed to the caller. They are
-   // still guaranteed before the turn resolves; they just no longer sit between question and audio.
-   await Promise.all([
-    settleInbound(),
-    db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
-     .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm_fast"}),generated.provider,generated.modelRef||null,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run(),
-   ]);clock.mark("replyWrite");
+   const output=text(generated.text),replyId=await persistReply(output,generated.provider,generated.modelRef||null);
    // `latencyMs` brackets only the provider round trip, so the "model" stage minus this is the runtime
    // control cost (reservation sweep, circuit read, its own schema guard) that precedes every call.
    // The resolved model ref is reported because the reasoning-effort shortcut applies to exactly one
@@ -159,7 +206,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  }
  // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
  await settleInbound();
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});clock.mark("orchestrator");
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
  return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks,modelRef:provider.modelRef??null,providerRef:provider.provider??null,upstreamMs:null as number|null};

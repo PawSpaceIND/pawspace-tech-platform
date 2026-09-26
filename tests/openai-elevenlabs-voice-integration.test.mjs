@@ -339,7 +339,35 @@ test("an open circuit still refuses before any reservation is written",async()=>
  assert.equal(blocked.reason,"circuit_open");
 });
 
-test("the provider call reports its own stages, so a phone caller's wait has an owner",async()=>{
+test("timing separates governance and reservation without bypassing either control",async()=>{
+ const {freshCountingD1}=await import("./helpers/d1-harness.mjs");
+ const {db,sqlite}=freshCountingD1();
+ sqlite.exec("CREATE TABLE ai_kill_switches (scope_type TEXT,scope_key TEXT,reason TEXT,disabled INTEGER)");
+ const previousDb=globalThis.__AI_DB__,previousEnv=globalThis.__PAWSPACE_TEST_ENV__;
+ globalThis.__AI_DB__=db;
+ globalThis.__PAWSPACE_TEST_ENV__={DB:db,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-key",PAWSPACE_DEPLOYMENT_ENV:"production",PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE:"1"};
+ const marks=[];
+ const stub=stubFetch(()=>jsonResponse({status:"completed",output_text:"Hello"}));
+ const input={systemPrompt:"system",userPrompt:"hello",channel:"voice",onTiming:stage=>{marks.push(stage);}};
+ try{
+  assert.equal((await adapter.requestAiDraft(input)).connected,true);
+  // providerHeaders joins the list only on a turn that actually reaches the provider; the refusals
+  // below still stop before the fetch, which is what the exact lists there are asserting.
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted","providerHeaders"]);
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"quota_exceeded");
+  assert.equal(stub.calls.length,1);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  sqlite.exec("INSERT INTO ai_kill_switches VALUES ('global','all','test',1)");
+  marks.length=0;
+  assert.equal((await adapter.requestAiDraft(input)).failure,"governance_blocked");
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted"]);
+  assert.equal((await adapter.requestAiDraft({...input,onTiming:()=>{throw new Error('diagnostic failure');}})).failure,"governance_blocked");
+  assert.equal(stub.calls.length,1);
+ }finally{stub.restore();globalThis.__AI_DB__=previousDb;globalThis.__PAWSPACE_TEST_ENV__=previousEnv;sqlite.close();}
+});
+
+test("the provider fetch reports its own time to first byte and first token",async()=>{
  globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"};
  const events=[
   'data: {"type":"response.output_text.delta","delta":"Yes. "}',
@@ -350,24 +378,29 @@ test("the provider call reports its own stages, so a phone caller's wait has an 
  const stub=stubFetch(()=>new Response(events,{status:200,headers:{"content-type":"text/event-stream"}}));
  try{
   const stages=[];
-  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"voice",intent:"service_info",maxTokens:160,onDelta:()=>{},onStage:name=>stages.push(name)});
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"voice",intent:"service_info",maxTokens:160,onDelta:()=>{},onTiming:stage=>stages.push(stage)});
   assert.equal(result.connected,true);
-  // The whole point of the change: these four were previously inside one opaque "model" mark, so a
-  // second of silence could not be attributed to the kill-switch read, the quota round trip, the
-  // provider's own time to first byte, or its time to first token.
-  assert.deepEqual(stages,["governance","reserve","providerHeaders","providerFirstDelta"],
-   "each stage before and around the provider call must report once, in order");
-  assert.equal(stages.filter(name=>name==="providerFirstDelta").length,1,
-   "first-token must be marked once, not re-marked on every delta");
+  // Governance and the reservation were already bracketed; the provider fetch was not, and on a voice
+  // turn it owns more of the caller's silence than either.
+  assert.ok(stages.includes("providerHeaders"),"time to first byte from the provider must be marked");
+  assert.ok(stages.includes("providerFirstDelta"),"time to first token must be marked");
+  assert.ok(stages.indexOf("providerHeaders")<stages.indexOf("providerFirstDelta"),
+   "headers must be marked before the first token");
+  assert.ok(stages.indexOf("governanceCompleted")<stages.indexOf("providerHeaders"),
+   "the provider must not be marked before the governance gate it depends on");
+  assert.equal(stages.filter(s=>s==="providerFirstDelta").length,1,
+   "first token must be marked once, not re-marked on every delta");
  }finally{stub.restore();}
 });
 
-test("stage reporting is optional, so chat and WhatsApp callers are unaffected",async()=>{
+test("a turn that never streams still reports provider headers and no first token",async()=>{
  globalThis.__PAWSPACE_TEST_ENV__={PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-openai-key"};
  const stub=stubFetch(()=>new Response(JSON.stringify({status:"completed",output:[{content:[{type:"output_text",text:"Hello."}]}]}),{status:200,headers:{"content-type":"application/json"}}));
  try{
-  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"chat",intent:"service_info"});
-  assert.equal(result.connected,true,"omitting onStage must not change the turn");
-  assert.equal(result.text,"Hello.");
+  const stages=[];
+  const result=await adapter.requestAiDraft({systemPrompt:"s",userPrompt:"u",channel:"chat",intent:"service_info",onTiming:stage=>stages.push(stage)});
+  assert.equal(result.connected,true);
+  assert.ok(stages.includes("providerHeaders"),"a blocking turn still has a time to first byte");
+  assert.ok(!stages.includes("providerFirstDelta"),"a blocking turn has no first-token moment to report");
  }finally{stub.restore();}
 });

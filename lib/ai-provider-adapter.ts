@@ -219,16 +219,17 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void; onStage?: (name: string) => void }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
   if (!apiKey) return fail("not_configured");
   const { modelRef } = aiModelRef(env, input.channel);
-  if (!(await governanceAllowsExternalAi(env, input, modelRef, providerRef))) return fail("governance_blocked");
-  // One D1 read of ai_kill_switches, but a serial one: it, the quota reads and the reservation insert
-  // are three round trips in a row before the provider is even asked. Marked so the next cut is aimed.
-  input.onStage?.("governance");
+  const mark = (stage: string) => { try { input.onTiming?.(stage); } catch { /* Diagnostics cannot affect provider controls. */ } };
+  mark("governanceStarted");
+  const governanceAllowed = await governanceAllowsExternalAi(env, input, modelRef, providerRef);
+  mark("governanceCompleted");
+  if (!governanceAllowed) return fail("governance_blocked");
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -238,11 +239,12 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   let reservation: AiRuntimeReservation = null;
   if (db) {
+    mark("reservationStarted");
     const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    mark("reservationCompleted");
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
   }
-  input.onStage?.("reserve");
 
   const finishFailure = async (failure: AiFailureClass, status?: number) => {
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
@@ -286,7 +288,10 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       return await finishFailure(failure, response.status);
     }
 
-    input.onStage?.("providerHeaders");
+    // Time to first byte from the provider. Their marks bracket governance, the reservation and the
+    // grounding build; the provider fetch itself was the one unmarked stage, and on a voice turn it
+    // is the largest.
+    mark("providerHeaders");
 
     if (streaming) {
       // Same byte ceiling and the same failure classes as the buffered path; the only difference is
@@ -313,7 +318,8 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             try { event = JSON.parse(payload); } catch { continue; }
             if (event.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
               streamed += event.delta;
-              if (!firstDeltaSeen) { firstDeltaSeen = true; input.onStage?.("providerFirstDelta"); }
+              // Time to first token: what the caller actually waits through before hearing anything.
+              if (!firstDeltaSeen) { firstDeltaSeen = true; mark("providerFirstDelta"); }
               input.onDelta?.(event.delta);
             } else if (event.type === "response.completed" && event.response) {
               if (typeof event.response.status === "string") stopReason = event.response.status;
