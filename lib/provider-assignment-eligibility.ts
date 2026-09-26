@@ -2,6 +2,7 @@ import{INVALID_VERIFICATION_STATUSES,ensureVerificationMandateTables}from"./prov
 import{resolveProviderVerificationPolicy,seedApprovedVerificationPolicies}from"./provider-verification-policy";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
+import{chunkedIn}from"./d1-chunked-in";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -101,8 +102,47 @@ export async function assertProviderAssignable(db:Db,providerId:string,at=Date.n
   return verdict;
 }
 
-/** Matching is fail-closed too: an evaluation exception never leaves a provider in the candidate set. */
-export async function filterAssignableProviders<T extends{id:string}>(db:Db,providers:T[],at=Date.now()){
+/**
+ * filterAssignableProviders for a shortlist whose capacity profiles are already loaded, in ONE wave.
+ *
+ * providerAssignmentBlock costs a provider without an onboarding application three D1 reads (application,
+ * services_json, updated_by), and the matcher ran it per provider - five sequential waves per request once
+ * home base and leave are counted. Here the application check is one IN read for the whole shortlist and
+ * the two profile columns come from the rows the caller already has. Only providers that DO have an
+ * application (or no loaded profile) take the full per-provider path, unchanged. Verdicts are identical:
+ * the same vet refusal, the same founder_seed / explicit-test exemption, and the same fail-closed refusal
+ * of everyone when the verification tables or the application read fail.
+ */
+async function filterAssignableShortlist<T extends{id:string}>(db:Db,providers:T[],at:number,profiles:ReadonlyMap<string,Row>):Promise<T[]>{
+  if(!providers.length)return[];
+  let onboarded:Set<string>;
+  try{
+    await ensureVerificationMandateTables(db);
+    const rows=await chunkedIn([...new Set(providers.map(provider=>text(provider.id)).filter(Boolean))],async(chunk,placeholders)=>(await db.prepare(`SELECT DISTINCT provider_id FROM provider_onboarding_applications WHERE provider_id IN (${placeholders})`).bind(...chunk).all<Row>()).results)
+      .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return[] as Row[];throw error;});
+    onboarded=new Set(rows.map(row=>text(row.provider_id)));
+  }catch{return[];}
+  const env=await runtimeEnv(),explicitTest=typeof process!=="undefined"&&process.env?.NODE_ENV==="test"&&process.env?.PAWSPACE_LOCAL_PREVIEW==="on",uatRuntime=uatRosterSeedingEnabled(env);
+  const verdicts=await Promise.all(providers.map(async provider=>{
+    try{
+      const id=text(provider.id),profile=profiles.get(id);if(!id)return false;
+      if(onboarded.has(id)||!profile)return(await providerAssignmentBlock(db,id,at)).blocked===false;
+      let services:string[]=[];try{services=JSON.parse(text(profile.services_json)||"[]") as string[];}catch{}
+      if(services.includes("vet_consult"))return false;
+      const provenance=text(profile.updated_by);
+      return(uatRuntime&&provenance==="founder_seed")||(explicitTest&&provenance.length>0);
+    }catch{return false;}
+  }));
+  return providers.filter((_,index)=>verdicts[index]);
+}
+
+/**
+ * Matching is fail-closed too: an evaluation exception never leaves a provider in the candidate set.
+ * Pass the providers' already-loaded capacity profile rows (by id) to evaluate the whole shortlist in one
+ * wave instead of one providerAssignmentBlock per provider; the verdicts are the same.
+ */
+export async function filterAssignableProviders<T extends{id:string}>(db:Db,providers:T[],at=Date.now(),profiles?:ReadonlyMap<string,Row>){
+  if(profiles)return filterAssignableShortlist(db,providers,at,profiles);
   const verdicts=await Promise.all(providers.map(async provider=>{
     try{return await providerAssignmentBlock(db,provider.id,at);}catch{return block(text(provider.id),"verification_evaluation_error");}
   }));

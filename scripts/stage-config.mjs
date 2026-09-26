@@ -75,6 +75,10 @@ cfg.name = WORKER_NAME;
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
+// Smart Placement runs the Worker next to the staging D1 instead of at the tester's edge. The V2
+// availability preview makes many sequential D1 reads, and each one paid the full edge-to-database
+// distance (bug B2: east zone 502 after ~30 s). Staging only; scripts/prod-config.mjs is unchanged.
+cfg.placement = { mode: "smart" };
 // Same-zone global fetches from pawspace-staging to another *.workers.dev Worker are refused by
 // Cloudflare. Bind exactly the certified checkout Worker when shadow relay is enabled; never grant
 // staging a broad Worker-to-Worker global-fetch capability.
@@ -146,5 +150,6 @@ writeFileSync(path, JSON.stringify(cfg));
 
 console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, FORBID_PRODUCTION=true, PAWSPACE_PAYMENT_LIVE_APPROVED=false, UAT_LOGIN=on, UAT integrations locked`);
 console.log(`Workers AI binding: configured as AI; voice self-test mode: uat; Exotel host: api.exotel.com`);
+console.log("Placement: smart (the Worker runs near the staging D1)");
 console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
 console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");

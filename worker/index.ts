@@ -39,6 +39,7 @@ import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
 import{handleEdgeHealth}from"../lib/edge-health";
 import{runProviderPayoutQueueSweep}from"../lib/provider-payout-queue";
+import{createRequestD1Metrics,runWithRequestD1Metrics,withRequestD1MetricsEnv}from"../lib/request-d1-metrics";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
 
@@ -87,7 +88,15 @@ function observeApiResponse(request:Request,response:Response){
 }
 
 const worker = {
+  // Scheduling requests run inside a per-request D1 accounting scope (lib/request-d1-metrics.ts): the
+  // route reports it as Server-Timing plus one scheduling_preview_timing log line (bug B2). Only DB is
+  // wrapped, and only for this path; every other request is untouched. handle() is called directly, never
+  // back through fetch: Sentry.withSentry wraps fetch and would instrument the counted env a second time.
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(request.method==="POST"&&new URL(request.url).pathname==="/api/uat-scheduling")return runWithRequestD1Metrics(createRequestD1Metrics(request,true,promise=>ctx.waitUntil(promise)),()=>worker.handle(request,withRequestD1MetricsEnv(env),ctx));
+    return worker.handle(request,env,ctx);
+  },
+  async handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try{
 
@@ -134,9 +143,11 @@ const worker = {
       // Provider webhooks are authenticated inside their route by HMAC/challenge verification, not by
       // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
       const eliteRequest=isMetaWebhook?request.clone():null;
-      if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
+      const leaseCleanup=request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings")?cleanupExpiredReservationLeases(env.DB):null;leaseCleanup?.catch(()=>undefined);
       const inspectionRequest=requestForAuthorization(request,env as unknown as Record<string,unknown>);
-      const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
+      // Lease cleanup and the session lookup are independent, so they run together. Both settle before any
+      // answer is given: an expired session is still never refused before its server-owned lease is considered.
+      const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB).finally(()=>leaseCleanup);
       if(sessionAccess instanceof Response)return secureApiResponse(sessionAccess);
       const providerEmail=isMetaWebhook?"meta-webhook@provider":isEmailWebhook?"email-webhook@provider":"dialler-webhook@provider";
       const access=isProviderWebhook

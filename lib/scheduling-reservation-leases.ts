@@ -1,4 +1,5 @@
 import {ensurePlatformSessionTables,resolvePlatformSession} from "./platform-session";
+import {markRequestFlag} from "./request-d1-metrics";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -58,11 +59,16 @@ export async function reservationLeaseForRequest(db:Db,request:Request,customerI
   };
 }
 
+/** Set on the request once its lease cleanup has completed, so a read-only preview can skip a second pass. */
+export const RESERVATION_LEASE_CLEANUP_FLAG="scheduling-reservation-lease-cleanup";
+// Tables are never dropped at runtime, so a table seen once stays seen; absence is always re-checked.
+const canonicalBookingsPresent=new WeakSet<Db>();
 export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
-  const running=cleanupRunning.get(db);if(running)return running;
+  const done=(result:{groups:number;reservations:number})=>{markRequestFlag(RESERVATION_LEASE_CLEANUP_FLAG);return result;};
+  const running=cleanupRunning.get(db);if(running)return running.then(done);
   const pending=(async()=>{
     if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
-    const hasCanonical=await tableExists(db,"canonical_bookings");
+    const hasCanonical=canonicalBookingsPresent.has(db)||await tableExists(db,"canonical_bookings");if(hasCanonical)canonicalBookingsPresent.add(db);
     const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
     // Missing, revoked, expired and unknown session states fail closed. Superseded is deliberately valid
     // until the server-owned lease ends: issuing a replacement login must not silently discard checkout.
@@ -86,5 +92,5 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
     return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
   })();
   cleanupRunning.set(db,pending);
-  try{return await pending;}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
+  try{return done(await pending);}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
 }
