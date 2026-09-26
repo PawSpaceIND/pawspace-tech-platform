@@ -393,6 +393,33 @@ test("real execution: customer session-change route validates programme/session 
   assert.equal(staffLeak.status, 400);
 });
 
+// QA: asking to move a locked session answered {"error":"{\"error\":\"Training session cannot request_reschedule from
+// locked. ...\",\"code\":...}"} - the route re-read the lifecycle's JSON refusal as text and wrapped it a second time.
+test("real execution: a customer reschedule refusal is one plain message naming the session that can move, with status and code kept", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  assert.equal(sessions[1].status, "locked");
+  const locked = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[1].id, reason: "family trip conflicts", idempotencyKey: "cc-locked" });
+  assert.equal(locked.status, 409, JSON.stringify(locked.body));
+  assert.equal(locked.body.code, "training_session_state_conflict");
+  assert.equal(locked.body.sessionStatus, "locked");
+  assert.equal(locked.body.error, "This session opens for changes once the session before it is complete. Only your next upcoming session can be rescheduled, before it starts.");
+  assert.equal(sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(sessions[1].id).status, "locked", "a refusal changes nothing");
+  // The next session can move; asking again while that request is open is refused in the same plain form.
+  const next = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-next" });
+  assert.equal(next.status, 200, JSON.stringify(next.body));
+  const again = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-next-again" });
+  assert.equal(again.status, 409, JSON.stringify(again.body));
+  assert.equal(again.body.code, "training_session_state_conflict");
+  assert.match(again.body.error, /^A new time for this session has already been requested; our team will confirm it with you\. Only your next upcoming session can be rescheduled, before it starts\.$/);
+  // Plain-text lifecycle refusals keep their own wording, still as a plain message.
+  sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id='B1'").run();
+  const inactive = await call(customerChangeRoute.POST, "POST", { action: "request_reschedule", bookingId: "B1", sessionId: sessions[0].id, reason: "family trip conflicts", idempotencyKey: "cc-inactive" });
+  assert.equal(inactive.status, 409, JSON.stringify(inactive.body));
+  assert.deepEqual(inactive.body, { error: "Training booking is no longer active" });
+});
+
 test("real execution: session-change and cancellation requests from a customer who does NOT own the programme are denied (403)", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", customer: "cus_t1" });
   const db = globalThis.__TRN_DB__;
