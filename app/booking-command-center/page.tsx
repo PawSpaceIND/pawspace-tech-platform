@@ -9,6 +9,7 @@ import StaffWorkspace from "../components/staff-workspace/StaffWorkspace";
 import {snapshotMetric} from "../components/staff-workspace/display-state";
 import ServiceProofReview from "./service-proof-review";
 import { awaitingPayment } from "../../lib/booking-payment-kpis";
+import { createBookingLoadSequence } from "./load-sequence";
 
 type Row = Record<string, unknown>;
 type Booking = Row & { pets: Row[]; lifecycle: Row[]; operations: Row[]; notifications: Row[]; rebooking: Row[]; refunds: Row[]; tickets: Row[]; adminActions: Row[] };
@@ -34,19 +35,30 @@ export default function BookingCommandCenter() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [actionReason, setActionReason] = useState("Customer service and booking follow-up");
+  // Loads are numbered: an older response never replaces a newer one, any successful load ends `loading`,
+  // and a stream refresh waits for the load in flight (./load-sequence, master E2E run 36243387701 row 40).
+  const sequenceRef = useRef(createBookingLoadSequence());
 
   async function load(silent = false) {
+    const ticket = sequenceRef.current.begin(silent);
     if (!silent) setLoading(true); setError("");
+    let loaded: { serverQuery: string; bookings: Booking[] } | null = null, failure = "Unable to load bookings";
     try {
       const serverQuery = queryRef.current.trim().length >= 3 ? queryRef.current.trim() : "";
       const response = await fetch(serverQuery ? `/api/booking-command-center?q=${encodeURIComponent(serverQuery)}` : "/api/booking-command-center", { cache: "no-store" });
-      searchedRef.current = serverQuery;
       const payload = await response.json() as { bookings?: Booking[]; error?: string };
       if (!response.ok) throw new Error(payload.error || "Unable to load bookings");
-      setBookings(payload.bookings || []);
-      setSelectedId(current => current || payload.bookings?.[0]?.id as string || "");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load bookings"); }
-    finally { if (!silent) setLoading(false); }
+      loaded = { serverQuery, bookings: payload.bookings || [] };
+    } catch (cause) { failure = cause instanceof Error ? cause.message : "Unable to load bookings"; }
+    const outcome = sequenceRef.current.settle(ticket, loaded !== null);
+    if (outcome.apply && loaded) {
+      const next = loaded.bookings;
+      searchedRef.current = loaded.serverQuery;
+      setBookings(next); setError("");
+      setSelectedId(current => current || next[0]?.id as string || "");
+    } else if (outcome.apply) setError(failure);
+    if (outcome.endLoading) setLoading(false);
+    outcome.heldRefresh?.();
   }
   useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => { queryRef.current = query; }, [query]);
@@ -58,7 +70,7 @@ export default function BookingCommandCenter() {
   }, [query]);
   useEffect(() => {
     const events = new EventSource("/api/booking-command-center/stream");
-    const refresh = () => { void load(true); };
+    const refresh = () => { sequenceRef.current.streamRefresh(() => { void load(true); }); };
     events.addEventListener("booking", refresh);
     return () => { events.removeEventListener("booking", refresh); events.close(); };
   }, []);

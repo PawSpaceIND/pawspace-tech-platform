@@ -1,12 +1,21 @@
 import { bookingPaymentBalances } from "../../../lib/booking-payment-balances";
 import { bookingSupportCases } from "../../../lib/booking-support-cases";
+import { chunkedIn } from "../../../lib/d1-chunked-in";
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
 
 type Db = Awaited<ReturnType<typeof database>>;
 type Row = Record<string, unknown>;
 
+// The DDL is idempotent, so it runs once per D1 binding: it used to be a 12-statement write batch on every
+// GET, and the live stream re-ran the GET's snapshot on every change. Concurrent first requests share one
+// attempt, the same pattern as app/api/canonical-bookings/route.ts.
+const bookingCommandTablesReady=new WeakSet<Db>();
+const bookingCommandTablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function ensureTables(db: Db) {
+  if(bookingCommandTablesReady.has(db))return;
+  const active=bookingCommandTablesEnsuring.get(db);if(active)return active;
+  const work=(async()=>{
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -20,7 +29,21 @@ async function ensureTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS customer_experience_tickets (id TEXT PRIMARY KEY,customer_id TEXT,booking_id TEXT,lead_id TEXT,category TEXT NOT NULL,priority TEXT NOT NULL,subject TEXT NOT NULL,detail TEXT NOT NULL,owner TEXT NOT NULL,manager TEXT NOT NULL,sla_due_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',escalation_level INTEGER NOT NULL DEFAULT 0,customer_status TEXT NOT NULL DEFAULT 'We received your request',resolution TEXT,root_cause TEXT,resolution_evidence TEXT,reopened_count INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,resolved_at INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_admin_actions (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,reason TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',actor_email TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+    // The snapshot reads every child table by booking_id. Only booking_lifecycle_events had an index for
+    // that (created by app/api/canonical-bookings/route.ts, repeated verbatim here); the other six were a
+    // full table scan per booking row. Also in drizzle/0042_booking_child_booking_id_indexes.sql.
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_lifecycle_events_booking ON booking_lifecycle_events(booking_id,occurred_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_operational_events_booking ON booking_operational_events(booking_id,created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_customer_notifications_booking ON booking_customer_notifications(booking_id,created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_rebooking_cases_booking ON booking_rebooking_cases(booking_id,created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_refund_cases_booking ON booking_refund_cases(booking_id,created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_experience_tickets_booking ON customer_experience_tickets(booking_id,created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_admin_actions_booking ON booking_admin_actions(booking_id,created_at)"),
   ]);
+  bookingCommandTablesReady.add(db);
+  })().finally(()=>{bookingCommandTablesEnsuring.delete(db);});
+  bookingCommandTablesEnsuring.set(db,work);
+  return work;
 }
 
 function parse(value: unknown) {
@@ -65,27 +88,66 @@ async function bookingRows(db:Db,scope:Awaited<ReturnType<typeof resolveManagerO
   return db.prepare(sql).bind(...binds).all<Row>();
 }
 
+/*
+ * The pets and seven child lists used to be read per booking: 8 queries per row, run row after row, so
+ * the default 150-row window cost 1,209 D1 calls with a serial depth of ~158. At staging's ~0.3 s round
+ * trip that is ~49 s, and the Command Center sat on "Loading connected booking records…" (master E2E run
+ * 36243387701 row 40). Each list is now one read per chunk of booking ids, grouped here, and all of them
+ * run together: the call count no longer grows with the window.
+ *
+ * The per-row reads left ties on the timestamp to the query plan. Each read below pins the order that
+ * plan produced on production's schema, so no row moves: booking_lifecycle_events was already indexed on
+ * (booking_id,occurred_at) and returned equal occurred_at newest rowid first; the other six tables had
+ * no booking_id index and were scanned, so equal created_at came back in insertion (rowid) order; pets
+ * were found through idx_canonical_pets_customer, so equal names came back in rowid order too.
+ */
+type BookingChildList="lifecycle"|"operations"|"notifications"|"rebooking"|"refunds"|"tickets"|"adminActions";
+const BOOKING_CHILD_READS:ReadonlyArray<readonly [BookingChildList,(placeholders:string)=>string]>=[
+  ["lifecycle",ids=>`SELECT * FROM booking_lifecycle_events WHERE booking_id IN (${ids}) ORDER BY occurred_at DESC,rowid DESC`],
+  ["operations",ids=>`SELECT * FROM booking_operational_events WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+  ["notifications",ids=>`SELECT * FROM booking_customer_notifications WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+  ["rebooking",ids=>`SELECT * FROM booking_rebooking_cases WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+  ["refunds",ids=>`SELECT * FROM booking_refund_cases WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+  ["tickets",ids=>`SELECT * FROM customer_experience_tickets WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+  ["adminActions",ids=>`SELECT * FROM booking_admin_actions WHERE booking_id IN (${ids}) ORDER BY created_at DESC,rowid`],
+];
+/*
+ * Pets keep the per-row predicate verbatim - the booking's own customer_id and the ids json_each yields
+ * from its pet_ids_json - joined per chunk of bookings rather than read by a pooled list of pet ids. A
+ * pooled list is chunked by pet, so one booking's pets can land in two chunks that are each sorted on
+ * their own, and a pet another customer owns must still never appear. b.id is the grouping key only;
+ * the output carries exactly the five columns it always did.
+ */
+const BOOKING_PETS_READ=(ids:string)=>`SELECT b.id booking_id,p.id,p.name,p.species,p.breed,p.vaccination_status FROM canonical_bookings b JOIN canonical_pets p ON p.customer_id=b.customer_id AND p.id IN (SELECT value FROM json_each(b.pet_ids_json)) WHERE b.id IN (${ids}) ORDER BY p.name,p.rowid`;
+
+/** Rows of one read over every booking id, grouped by booking_id in the read's own order. */
+async function rowsByBooking(db:Db,bookingIds:string[],read:(placeholders:string)=>string){
+  const grouped=new Map<string,Row[]>();
+  for(const row of await chunkedIn(bookingIds,async(chunk,placeholders)=>(await db.prepare(read(placeholders)).bind(...chunk).all<Row>()).results)){
+    const id=String(row.booking_id),list=grouped.get(id);
+    if(list)list.push(row);else grouped.set(id,[row]);
+  }
+  return grouped;
+}
+
 async function bookingSnapshot(db:Db,scope:Awaited<ReturnType<typeof resolveManagerOrganizationalScope>>,options:BookingListOptions={}){
   const rows=await bookingRows(db,scope,options);
-  const balances=await bookingPaymentBalances(db,rows.results.map(row=>String(row.id)));
-  const supportCases=await bookingSupportCases(db,rows.results.map(row=>String(row.id)));
+  const ids=[...new Set(rows.results.map(row=>String(row.id)))];
+  const[balances,supportCases,pets,children]=await Promise.all([
+    bookingPaymentBalances(db,ids),
+    bookingSupportCases(db,ids),
+    rowsByBooking(db,ids,BOOKING_PETS_READ),
+    Promise.all(BOOKING_CHILD_READS.map(async([list,read])=>[list,await rowsByBooking(db,ids,read)] as const)).then(entries=>new Map(entries)),
+  ]);
   const casesByBooking=new Map<string,Row[]>();
   for(const supportCase of supportCases){const id=String(supportCase.booking_id);casesByBooking.set(id,[...(casesByBooking.get(id)||[]),supportCase]);}
+  const child=(list:BookingChildList,id:string)=>children.get(list)?.get(id)||[];
   const bookings=[];
   for(const row of rows.results){
-    const[pets,lifecycle,operations,notifications,rebooking,refunds,tickets,adminActions]=await Promise.all([
-      db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all<Row>(),
-      db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM booking_rebooking_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM customer_experience_tickets WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-      db.prepare("SELECT * FROM booking_admin_actions WHERE booking_id=? ORDER BY created_at DESC").bind(row.id).all<Row>(),
-    ]);
-    const balance=balances.get(String(row.id));
+    const id=String(row.id),balance=balances.get(id);
     if(!balance)throw new Error("Canonical payment balance unavailable");
-    bookings.push({...row,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:pets.results,lifecycle:lifecycle.results,operations:operations.results,notifications:notifications.results,rebooking:rebooking.results,refunds:refunds.results,tickets:[...tickets.results,...(casesByBooking.get(String(row.id))||[])],adminActions:adminActions.results});
+    const bookingPets=(pets.get(id)||[]).map(pet=>({id:pet.id,name:pet.name,species:pet.species,breed:pet.breed,vaccination_status:pet.vaccination_status}));
+    bookings.push({...row,original_amount_due_now:row.amount_due_now,amount_due_now:balance.dueNow,payment_stage:balance.stage,outstanding_balance:balance.outstandingBalance,pricing:parse(row.pricing_json),assignment:parse(row.assignment_json),paymentDetail:parse(row.payment_detail_json),pets:bookingPets,lifecycle:child("lifecycle",id),operations:child("operations",id),notifications:child("notifications",id),rebooking:child("rebooking",id),refunds:child("refunds",id),tickets:[...child("tickets",id),...(casesByBooking.get(id)||[])],adminActions:child("adminActions",id)});
   }
   return{source:"canonical UAT database snapshot + live stream",bookings,organizationalScope:scope??"global"};
 }
