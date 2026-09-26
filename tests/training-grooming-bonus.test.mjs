@@ -89,3 +89,19 @@ test("plans under 8 sessions carry no grooming voucher", async (t) => {
   const { ctx, bookingId } = await bookTraining(t, "training-2-starter", { paid: true });
   assert.equal(await ensureTrainingGroomingBonus(ctx.db, { bookingId, liveCoupons: false }), null);
 });
+
+test("an unused voucher is withdrawn when its programme is refunded or cancelled", async (t) => {
+  const { ctx, bookingId } = await bookTraining(t, "training-8-basic", { paid: true });
+  const issued = await ensureTrainingGroomingBonus(ctx.db, { bookingId, liveCoupons: false });
+  assert.equal(issued.status, "issued");
+
+  ctx.sqlite.prepare("UPDATE booking_payments SET status='refunded' WHERE booking_id=?").run(bookingId);
+  const refunded = await ensureTrainingGroomingBonus(ctx.db, { bookingId, liveCoupons: false });
+  assert.equal(refunded.status, "withdrawn", "a refunded programme no longer carries a free grooming");
+  const refused = await groomingQuote(ctx, issued.code);
+  assert.equal(refused.valid, false);
+
+  ctx.sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id=?").run(bookingId);
+  assert.equal(await ensureTrainingGroomingBonus(ctx.db, { bookingId, liveCoupons: false }), null, "a cancelled programme shows no voucher");
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM coupon_campaigns WHERE id=?").get(`CPN-TRNBONUS-${bookingId}`).status, "paused");
+});

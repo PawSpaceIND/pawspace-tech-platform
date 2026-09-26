@@ -105,4 +105,5 @@ test('a signed-in customer asking about their own next session is a booking-stat
   assert.ok(decision.confidence>=0.65,question);
  }
  assert.equal(classifyAiIntent('I want a refund for my booking').intent,'refund_review','money questions still go to a person');
+ for(const request of ['Please cancel my booking','Can I change my session to Friday?'])assert.equal(classifyAiIntent(request).intent,'booking_change',request+' is a change, not a status question');
 });

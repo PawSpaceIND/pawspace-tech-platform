@@ -33,7 +33,7 @@ const intentRules:Array<{intent:AiConversationIntent;signals:string[];risk?:bool
  {intent:"refund_review",signals:["refund","money back","payment dispute","charged twice","wrong charge"],risk:true},
  {intent:"funeral_memorial",signals:["funeral","memorial","cremation","ashes"]},
  {intent:"relocation",signals:["relocation","relocate","move my pet","pet transport documents"]},
- {intent:"booking_change",signals:["reschedule","change booking","cancel booking","change date","change time"]},
+ {intent:"booking_change",signals:["reschedule","change booking","cancel booking","change date","change time","cancel my booking","cancel my session","cancel my appointment","cancel my training","change my booking","change my session"]},
  // "When is my Meet & Greet and who is my trainer?" matched nothing and was handed to a human (staging, 26 Sep
  // 2026). Founder decision: a signed-in customer's questions about their own bookings get a read-only answer.
  {intent:"booking_status",signals:["booking status","where is my provider","provider status","eta","on the way","my next session","next session","when is my","who is my trainer","my trainer","my booking","my appointment","upcoming booking"]},
