@@ -1,3 +1,4 @@
+import{d1ServerTiming,installD1RequestTiming,withD1RequestTiming}from"../lib/d1-request-timing";
 import {sweepPartnerHeartbeats} from "../lib/partner-job-heartbeat";
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import * as Sentry from "@sentry/cloudflare";
@@ -274,6 +275,19 @@ const worker = {
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
+};
+
+/* Staging only: /api responses carry a Server-Timing header naming their slowest D1 calls. */
+const untimedFetch=worker.fetch.bind(worker);
+worker.fetch=async(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>=>{
+  if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging"||!new URL(request.url).pathname.startsWith("/api/"))return untimedFetch(request,env,ctx);
+  installD1RequestTiming(env.DB);
+  const started=Date.now();
+  const{result:response,timings}=await withD1RequestTiming(()=>untimedFetch(request,env,ctx));
+  // A route that reports its own Server-Timing (uat-scheduling, lib/request-d1-metrics) keeps it.
+  if(response.status===101||(response as Response&{webSocket?:unknown}).webSocket||response.headers.has("server-timing"))return response;
+  try{const headers=new Headers(response.headers);headers.set("Server-Timing",d1ServerTiming(timings,Date.now()-started));return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}
+  catch{return response;}
 };
 
 export default Sentry.withSentry((env:Env)=>({dsn:env.SENTRY_DSN||undefined,environment:env.PAWSPACE_DEPLOYMENT_ENV||"unknown",tracesSampleRate:0.05,sendDefaultPii:false}),worker);

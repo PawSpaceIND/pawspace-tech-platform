@@ -354,17 +354,32 @@ test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpac
   assert.equal((await sweep(now + 5 * 60 * min)).escalated, 0, "escalated only once");
 });
 
-test("a second answer that does not fit the question goes to PawSpace AI, then the question is asked again", () => {
-  let state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state;
-  const first = bot.runBotTurn(state, { text: "hmm what is included", signedIn: true });
-  assert.equal(first.event.type, "none"); assert.match(first.reply.text, /Please pick one of the options/);
-  const second = bot.runBotTurn(first.state, { text: "which one is best for a husky?", signedIn: true });
-  assert.deepEqual(second.event, { type: "ai", question: "which one is best for a husky?" });
-  assert.match(second.reply.text, /^Whenever you're ready: /); assert.equal(second.state.step, state.step, "the flow waits on the same question");
-  const answered = bot.runBotTurn(second.state, { choiceId: second.reply.choices[0].id, signedIn: true });
+test("a signed-in customer who types instead of tapping talks to PawSpace AI; the bot stays quiet until they tap or type menu", () => {
+  const state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state;
+  const typed = bot.runBotTurn(state, { text: "hmm what is included", signedIn: true });
+  assert.deepEqual(typed.event, { type: "ai", question: "hmm what is included" });
+  assert.equal(typed.reply.text, "", "no bot message: the AI's answer is the reply");
+  assert.equal(typed.state.aiMode, true); assert.equal(typed.state.flow, null, "the bot's questions stop");
+  const next = bot.runBotTurn(typed.state, { text: "ok", signedIn: true });
+  assert.equal(next.event.type, "ai", "in AI mode every typed message goes to the AI"); assert.equal(next.reply.text, "");
+  const wants = bot.runBotTurn(state, { text: "i dont want chatbot can you take my details?", signedIn: true });
+  assert.equal(wants.event.type, "ai"); assert.equal(wants.state.aiMode, true);
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "can i book a grooming session now", signedIn: true }).event.type, "ai", "a sentence at the menu goes to the AI, which can book");
+  assert.equal(bot.runBotTurn(typed.state, { text: "menu", signedIn: true }).state.aiMode, undefined, "typing menu brings the bot back");
+  assert.equal(bot.runBotTurn(typed.state, { choiceId: "grooming", signedIn: true }).state.flow, "grooming", "tapping a service brings the bot back");
+});
+
+test("a visitor's answer that does not fit is asked again once; a question goes to PawSpace AI, then the question is asked again", () => {
+  // A visitor is asked for their name, then their number: "12" is not a number, a question is a question.
+  const named = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: false }).state;
+  const state = bot.runBotTurn(named, { text: "Asha", signedIn: false }).state;
+  const first = bot.runBotTurn(state, { text: "12", signedIn: false });
+  assert.equal(first.event.type, "none"); assert.equal(first.state.step, state.step, "the same question is asked again");
+  const question = bot.runBotTurn(state, { text: "which one is best for a husky?", signedIn: false });
+  assert.deepEqual(question.event, { type: "ai", question: "which one is best for a husky?" });
+  assert.match(question.reply.text, /^Whenever you're ready: /); assert.equal(question.state.step, state.step, "the flow waits on the same question");
+  const answered = bot.runBotTurn(first.state, { text: "9876543210", signedIn: false });
   assert.equal(answered.state.misses, undefined, "an answer clears the misses");
-  state = { ...first.state, misses: 0, aiTakeover: true };
-  assert.equal(bot.runBotTurn(state, { text: "can you just book it", signedIn: true }).event.type, "ai", "after a takeover the first off-script answer goes to the AI");
 });
 
 test("the follow-up timing is shared by web chat and WhatsApp", () => {
@@ -381,7 +396,8 @@ test("the follow-up timing is shared by web chat and WhatsApp", () => {
 
 test("a short request naming a service starts it; a lead's greeting starts the service it came for", () => {
   assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "Book grooming", signedIn: true }).state.flow, "grooming");
-  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "I need a dog walker", signedIn: true }).state.flow, "dog_walking");
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "I need a dog walker", signedIn: false }).state.flow, "dog_walking");
+  assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "I need a dog walker", signedIn: true }).event.type, "ai", "a signed-in customer's sentence goes to the AI, which can book it");
   assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "how much is grooming?", signedIn: true }).event.type, "ai", "a question goes to the AI");
   assert.equal(bot.runBotTurn(bot.initialBotState(), { text: "not grooming", signedIn: true }).state.flow, null);
   const lead = { ...bot.initialBotState(), preferredFlow: "relocation" };
@@ -397,7 +413,8 @@ test("a lead's service survives a question to the AI and 'Ask a question'", () =
     if (state.flow) break;
     assert.equal(state.preferredFlow, "relocation", JSON.stringify(input));
   }
-  assert.equal(bot.runBotTurn(state, { text: "Yes", signedIn: true }).state.flow, "relocation");
+  if (!state.flow) state = bot.runBotTurn(state, { text: "Yes", signedIn: true }).state;
+  assert.equal(state.flow, "relocation");
 });
 
 test("a date without a year means its next occurrence and is stored with the year", () => {

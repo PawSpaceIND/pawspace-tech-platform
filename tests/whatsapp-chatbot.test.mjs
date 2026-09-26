@@ -153,11 +153,22 @@ test("a WhatsApp customer who stops mid-flow is reminded at 10 minutes, PawSpace
  const sent=sqlite.prepare("SELECT payload_json FROM communication_messages WHERE direction='outbound' AND (idempotency_key LIKE '%whatsapp-chatbot-remind:%' OR idempotency_key LIKE '%whatsapp-chatbot-takeover:%') ORDER BY created_at").all().map(row=>JSON.parse(row.payload_json));
  assert.equal(sent.length,2);assert.match(sent[0].text,/^Still there\?/);assert.match(sent[1].text,/^PawSpace AI here\./);
  assert.ok(sent[1].interactive,"the question's buttons are sent again");
- const offScript=await inbound(sqlite,db,"stall-2","which is best for a shih tzu?");
- const answered=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:offScript,actorEmail:"whatsapp-chatbot"});
- assert.equal(answered.aiRequested,true,"after the takeover an answer that is not an option goes to the AI");
  assert.equal((await sweep(now+60*min)).escalated,0,"a person only after two more hours");
  assert.equal((await sweep(now+3*60*min)).escalated,1,"then a person follows up");
  assert.equal(sqlite.prepare("SELECT reason FROM ai_handoffs WHERE thread_id='THREAD-BOT' ORDER BY created_at DESC LIMIT 1").get()?.reason,"bot_abandoned");
  assert.equal((await sweep(now+5*60*min)).escalated,0,"a conversation a person owns is never followed up by the bot again");
+});
+
+test("a WhatsApp customer who types instead of tapping is answered by PawSpace AI, and the bot stops following up",async()=>{
+ const{sqlite,db}=await world();
+ const first=await inbound(sqlite,db,"typed-0","hi");
+ await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable certified deterministic chatbot"});
+ await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:first,actorEmail:"whatsapp-chatbot"});
+ const pick=await inbound(sqlite,db,"typed-1","Grooming");
+ await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:pick,actorEmail:"whatsapp-chatbot"});
+ const typed=await inbound(sqlite,db,"typed-2","which is best for a shih tzu?");
+ const answered=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:typed,actorEmail:"whatsapp-chatbot"});
+ assert.equal(answered.aiRequested,true,"a typed question goes to the AI");
+ const now=Date.now(),min=60_000;
+ assert.equal((await chatbot.runWhatsAppChatbotFollowUpSweep(db,{asOf:now+25*min})).nudged,0,"a conversation with the AI is not chased by bot reminders");
 });
