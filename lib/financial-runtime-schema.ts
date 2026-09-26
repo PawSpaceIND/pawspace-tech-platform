@@ -1,6 +1,6 @@
 type Db = D1Database;
 
-const runtimeSchemaReady = new WeakMap<object, Promise<void>>();
+const runtimeSchemaReady = new WeakSet<object>();
 
 async function applyFinancialRuntimeSchema(db: Db) {
   await db.batch([
@@ -245,14 +245,11 @@ async function applyFinancialRuntimeSchema(db: Db) {
  * Definitions are kept aligned with drizzle/0017, drizzle/0018 final index semantics,
  * and drizzle/0019 so a fresh D1 cannot fail just because deploy-time migrations were skipped.
  */
+// Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
+// A binding is remembered once its idempotent schema has been applied; until then each caller applies it.
 export async function ensureFinancialRuntimeTables(db: Db) {
   const key = db as unknown as object;
-  const existing = runtimeSchemaReady.get(key);
-  if (existing) return existing;
-  const pending = applyFinancialRuntimeSchema(db).catch((error) => {
-    runtimeSchemaReady.delete(key);
-    throw error;
-  });
-  runtimeSchemaReady.set(key, pending);
-  return pending;
+  if (runtimeSchemaReady.has(key)) return;
+  await applyFinancialRuntimeSchema(db);
+  runtimeSchemaReady.add(key);
 }

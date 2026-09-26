@@ -111,10 +111,11 @@ test("5. the home shows a loading state, not 'No assigned jobs' or 0 counts, unt
   assert.match(jobsEffect(page), /if \(next === null \|\| cancelled \|\| version !== sessionVersion\.current\) return;\s*setJobs\(next\);\s*setJobsLoaded\(true\);/);
   // The empty state and the counts are only reachable once loaded.
   const hero = page.slice(page.indexOf("<span>NEXT ASSIGNMENT</span>"), page.indexOf("<div className={styles.stats}>"));
-  assert.ok(hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') >= 0 && hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') < hero.indexOf('"No assigned jobs"'), "NEXT ASSIGNMENT says loading before it may say no assigned jobs");
-  const stats = page.slice(page.indexOf("<div className={styles.stats}>"), page.indexOf("<small>tap to start</small>"));
+  assert.ok(hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') >= 0 && hero.indexOf(': !jobsLoaded ? <><h2>Loading your jobs…</h2>') < hero.indexOf('<h2>No active assignments</h2>'), "NEXT ASSIGNMENT says loading before it may say no active assignments");
+  const stats = page.slice(page.indexOf("<div className={styles.stats}>"), page.indexOf('aria-label="Open GPS and navigation"'));
   assert.equal((stats.match(/<span>\{jobsLoaded\?[^}]*:"…"\}<\/span>/g) || []).length, 2, "both job counts show … until loaded");
-  assert.match(page, /\{jobs\.length === 0 && !error && <div className=\{styles\.empty\}>\{jobsLoaded \? "No canonical jobs assigned to this provider yet\." : "Loading your jobs…"\}<\/div>\}/);
+  // Once loaded, the Jobs tab says there are no grooming work orders (Sitting/Boarding/Taxi listed below, #1112) or none at all.
+  assert.match(page, /\{jobs\.length === 0 && !error && <div className=\{styles\.empty\}>\{jobsLoaded \? \([^()]*"No canonical jobs assigned to this provider yet\."\) : "Loading your jobs…"\}<\/div>\}/);
   // A new account starts unloaded again, so it never inherits the previous partner's "loaded, empty" state.
   const unauthorized = page.slice(page.indexOf("const handleUnauthorized = () => {"), page.indexOf("};", page.indexOf("const handleUnauthorized = () => {")));
   assert.match(unauthorized, /setJobs\(\[\]\);\s*setJobsLoaded\(false\);/);

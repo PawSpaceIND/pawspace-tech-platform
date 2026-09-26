@@ -14,6 +14,13 @@
 .workspace li { padding: 10px 0; border-bottom: 1px solid #e2e9e5; }
 @media (max-width: 480px) { .workspace { padding: 16px 12px 36px; } .workspace section { padding: 18px 14px; } .actions { grid-template-columns: 1fr; } }
 
+.offer { margin: 0 0 20px; padding: 14px 16px; border: 1px solid #c8d9d3; border-left-width: 6px; border-radius: 12px; background: #f3f7f4; }
+.offer p { margin: 4px 0 0; }
+.offer[data-tone="open"] { border-left-color: #176357; }
+.offer[data-tone="attention"] { border-left-color: #b86e0b; background: #fff7ea; }
+.offer[data-tone="done"] { border-left-color: #2f7d4f; }
+.offer[data-tone="muted"] { border-left-color: #8a9a93; }
+
 .carePlan { margin: 24px 0; padding: 16px; background: #f3f7f4; border-radius: 12px; }
 .carePlan h2 { margin-top: 0; }
 .carePlan dl { margin: 0; display: grid; gap: 14px; }

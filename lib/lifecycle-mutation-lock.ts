@@ -6,8 +6,11 @@ function lockConflict(){
  return new Response(JSON.stringify({error:"Another lifecycle mutation is already in progress for this booking."}),{status:409,headers:{"content-type":"application/json"}});
 }
 
+const lockTableReady=new WeakSet<object>();
 export async function ensureLifecycleMutationLockTable(db:D1Database){
+ if(lockTableReady.has(db))return;
  await db.prepare("CREATE TABLE IF NOT EXISTS lifecycle_mutation_locks (booking_id TEXT PRIMARY KEY,token TEXT NOT NULL,actor_id TEXT NOT NULL,action TEXT NOT NULL,acquired_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)").run();
+ lockTableReady.add(db);
 }
 
 export async function withLifecycleMutationLock<T>(db:D1Database,input:LifecycleLockInput,operation:()=>Promise<T>):Promise<T>{

@@ -1,7 +1,9 @@
 import { voiceSalesService } from "./voice-sales-specialists";
 import{ensureCommunicationTables}from"./communication-engine";
-import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
-import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
+import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn,minimumContext}from"./ai-conversation-orchestrator";
+import{createGroundedAiRuntimeProvider,requiresImmediateHumanHandoff}from"./ai-grounded-runtime-provider";
+import{assertAiMayReply}from"./ai-human-handoff";
+import{detectPromptInjection}from"./ai-evaluation-security";
 import type{AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;type Env=Record<string,unknown>;
@@ -38,7 +40,43 @@ export function extractElevenLabsResponsesInput(body:Row){
  return"";
 }
 
+export type VoiceHistoryMessage={role:"user"|"assistant";content:string};
+// Only conversational turns from this authenticated request; never accept supplied system prompts.
+export function extractElevenLabsHistory(body:Row):VoiceHistoryMessage[]{
+ const rows=Array.isArray(body.input)?body.input:Array.isArray(body.messages)?body.messages:[];
+ const history:VoiceHistoryMessage[]=[];
+ for(const item of rows.slice(-12)){
+  if(!item||typeof item!=="object")continue;
+  const row=item as Row,role=text(row.role).toLowerCase(),content=stringContent(row.content??row.input).slice(0,1000);
+  if(content&&(role==="user"||role==="assistant"))history.push({role,content});
+ }
+ return history;
+}
+export function classifyVoiceFollowup(input:string,history:VoiceHistoryMessage[]){
+ const current=classifyAiIntent(input);
+ if(current.intent!=="unknown"||current.policyRisk||requiresImmediateHumanHandoff(input)||detectPromptInjection(input).blocked)return current;
+ // Carry intent only for bounded slot answers/backchannels in an established grooming discussion.
+ // Do not infer authorization from an earlier "yes" or let history override a current risky intent.
+ const previous=[...history];
+ if(previous.at(-1)?.role==="user"&&previous.at(-1)?.content===input)previous.pop();
+ const lastQuestion=[...previous].reverse().find(m=>m.role==="assistant")?.content||"";
+ const priorIntent=[...previous].reverse().filter(m=>m.role==="user").map(m=>classifyAiIntent(m.content)).find(i=>i.intent!=="unknown");
+ if(!priorIntent||!["booking_create","service_info"].includes(priorIntent.intent)||priorIntent.policyRisk)return current;
+ const normalized=input.toLowerCase().replace(/[.,!?-]/g," ").replace(/\s+/g," ").trim();
+ const backchannel=/^(?:(?:hello|hi|okay|ok|sure|thank you|thanks|oh|damn|something|are you there|can you hear me)\s*)+$/.test(normalized);
+ const dateAnswer=input.length<=120&&/\b(date|time|when)\b/i.test(lastQuestion)&&/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm)\b/i.test(input)&&/^(?:i |want |would |like |prefer |for |at |on |please|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|am|pm|a m|p m|[0-9:.,!?\s])+$/i.test(input);
+ const confirmation=isExplicitCustomerActionConfirmation(input)&&!/\b(no|not|never|cancel|stop|wait|hold|don[’']t|without)\b/i.test(lastQuestion)&&/\b(confirm|proceed|go ahead|shall i|would you like me to)\b/i.test(lastQuestion)&&/\b(book|booking|reserve|slot|checkout)\b/i.test(lastQuestion);
+ const addressAnswer=input.length<=240&&/\b(address|pincode|pin code)\b/i.test(lastQuestion)&&/\b[1-9][0-9]{5}\b/.test(input);
+ if(!backchannel&&!dateAnswer&&!confirmation&&!addressAnswer)return current;
+ return{...priorIntent,...(confirmation?{intent:"booking_create" as const}:{}),signals:[...priorIntent.signals,"voice_conversation_followup"]};
+}
+
 function extra(body:Row){return((body.elevenlabs_extra_body||body.metadata||{})as Row);}
+export function voiceThreadIdForCall(voiceCallId:string){
+ const normalized=text(voiceCallId).replace(/[^A-Za-z0-9_-]/g,"").slice(0,96);
+ if(!normalized)throw new Error("invalid_voice_call_id");
+ return `THREAD-VOICE-${normalized}`;
+}
 async function voiceContext(db:D1Database,body:Row){
  const data=extra(body),sessionId=text(data.pawspace_voice_session_id),customerIdHint=text(data.pawspace_customer_id),threadIdHint=text(data.pawspace_thread_id),voiceCallId=text(data.pawspace_voice_call_id);
  if(sessionId){
@@ -56,11 +94,13 @@ async function voiceContext(db:D1Database,body:Row){
  if(voiceCallId){
   const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
   if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call context was not found",{status:409});
-  const customerId=text(call.customer_id);
-  const thread=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
-  let threadId=text(thread?.id);
-  if(!threadId){
-   threadId=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
+  const customerId=text(call.customer_id),threadId=voiceThreadIdForCall(voiceCallId);
+  const existing=await db.prepare("SELECT id,customer_id,status FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
+  if(existing){
+   if(text(existing.customer_id)!==customerId)throw new Response("PawSpace voice thread/customer mismatch",{status:409});
+   if(text(existing.status)==="closed")throw new Response("PawSpace outbound voice thread is closed",{status:409});
+  }else{
+   const now=Date.now();
    await db.batch([
     db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)").bind(threadId,customerId,text(call.booking_id)||null,text(call.lead_id)||null,now,now),
     db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(),threadId,"customer",customerId,customerId,now),
@@ -71,17 +111,107 @@ async function voiceContext(db:D1Database,body:Row){
  throw new Response("PawSpace voice identity is missing from ElevenLabs custom LLM request",{status:400});
 }
 
-export async function runElevenLabsGroundedTurn(db:D1Database,body:Row){
- await ensureCommunicationTables(db);
+/**
+ * Stage stopwatch for one voice turn, surfaced as a `Server-Timing` header.
+ *
+ * A live caller hears nothing until this whole function resolves, so "which stage owns the wait" is
+ * the only question that matters for phone latency, and it cannot be answered from the outside: the
+ * caller sees one number. Each mark is milliseconds from the start of the turn, so a stage's own cost
+ * is the difference between consecutive marks. Durations only — no customer, thread or reply content.
+ */
+export type TurnStopwatch={mark:(name:string)=>void;marks:Record<string,number>};
+export function turnStopwatch():TurnStopwatch{
+ const started=Date.now(),marks:Record<string,number>={};
+ return{mark:(name:string)=>{marks[name]=Date.now()-started;},marks};
+}
+
+/**
+ * The clock is started by the caller, not here: request decode, auth and acquiring the D1 binding all
+ * happen before this function and were previously outside every mark, leaving ~2.25s of a measured
+ * 8.3s turn attributed to nothing at all.
+ */
+/**
+ * Decides, from the first characters the model emits, whether this turn is safe to speak as it
+ * arrives. A grounded turn may answer with prose OR with a governed action envelope
+ * ({"reply":...,"actions":[...]}), and streaming the latter straight to TTS would have the agent read
+ * JSON aloud down the phone. Anything opening with `{` or a code fence is therefore withheld and the
+ * caller speaks only the parsed `reply` once the turn resolves; prose starts speaking immediately.
+ * The cost of the distinction is one delta, not one generation.
+ */
+export function speechGate(emit:(text:string)=>void){
+ let decided:"speak"|"withhold"|null=null,buffered="";
+ return{
+  push(delta:string){
+   if(decided==="withhold")return;
+   if(decided==="speak"){emit(delta);return;}
+   buffered+=delta;
+   const first=buffered.replace(/^\s+/,"").charAt(0);
+   if(!first)return;
+   if(first==="{"||first==="`"){decided="withhold";return;}
+   decided="speak";emit(buffered);buffered="";
+  },
+  /** True when nothing has been spoken, so the resolved reply still has to be sent in full. */
+  get unspoken(){return decided!=="speak";},
+ };
+}
+
+export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void){
+ await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
- const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();
- await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
-  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run();
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{salesService:voiceSalesService(body.model)});
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider});
+ const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
+ // Started, not awaited: the inbound transcript has to be recorded, but nothing about the reply
+ // depends on it having landed, so it overlaps the model call instead of preceding it. Both writes
+ // are settled before this function resolves, so the turn still cannot report success on a lost row.
+ // The rejection is captured rather than left floating, so a failed write surfaces at the await.
+ let inboundFailure:unknown=null;
+ const inboundWrite=db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
+  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run()
+  .then(()=>{},(error:unknown)=>{inboundFailure=error;});
+ const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
+ const persistReply=async(output:string,providerRef:string,modelRef:string|null)=>{
+  const replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
+  await Promise.all([
+   settleInbound(),
+   db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'sent',?,?,?,'{}',?,?,?)")
+    .bind(replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm"}),providerRef,modelRef,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done).run(),
+  ]);clock.mark("replyWrite");return replyId;
+ };
+ clock.mark("inboundWriteStarted");
+ try{await assertAiMayReply(db,ctx.threadId);}catch(error){
+  if(!(error instanceof Response)||error.status!==409){await settleInbound();throw error;}
+  // A governed staff pause is a conversation state, not an LLM transport failure. Explain it
+  // without generating, resuming AI, or claiming that a live telephone transfer has occurred.
+  const output="This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.";
+  const replyId=await persistReply(output,"human_handoff",null);
+  return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"human_handoff",timings:clock.marks,modelRef:null,providerRef:"human_handoff",upstreamMs:null as number|null};
+ }
+ clock.mark("handoffChecked");
+ let actionProvider;
+ const salesService=voiceSalesService(body.model);
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{salesService,fastVoice:!salesService,onTiming:clock.mark});clock.mark("provider");
+ const conversationHistory=extractElevenLabsHistory(body);
+ const intent=classifyVoiceFollowup(inputText,conversationHistory);
+ const fastEligible=!salesService&&!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
+ if(fastEligible){
+  const canonical=await minimumContext(db,{customerId:ctx.customerId,threadId:ctx.threadId,fastVoice:true});clock.mark("canonicalContext");
+  const generated=await provider.generate({threadId:ctx.threadId,customerId:ctx.customerId,channel:"voice",inputText,intent,context:{...canonical,voiceFastPath:true,conversationHistory,asOf:now},...(onDelta?{onDelta}:{})});clock.mark("model");
+  const confirmedAction=isExplicitCustomerActionConfirmation(inputText)&&Boolean(generated.actionRequests?.length);
+  if(confirmedAction)actionProvider={...provider,async generate(){return generated;}};
+  if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!confirmedAction){
+   const output=text(generated.text),replyId=await persistReply(output,generated.provider,generated.modelRef||null);
+   // `latencyMs` brackets only the provider round trip, so the "model" stage minus this is the runtime
+   // control cost (reservation sweep, circuit read, its own schema guard) that precedes every call.
+   // The resolved model ref is reported because the reasoning-effort shortcut applies to exactly one
+   // model id: if an override resolves to anything else, the shortcut silently stops applying.
+   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"fast",timings:clock.marks,modelRef:generated.modelRef||null,providerRef:generated.provider||null,upstreamMs:generated.latencyMs??null};
+  }
+ }
+ // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
+ await settleInbound();
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});
- return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId};
+ return{output,turnId:text(turn.id),sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"orchestrator",timings:clock.marks,modelRef:provider.modelRef??null,providerRef:provider.provider??null,upstreamMs:null as number|null};
 }
 
 export function responsesSse(output:string){

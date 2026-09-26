@@ -2,14 +2,17 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import{ensureD1Once,ensureD1OnceApplied}from"../lib/d1-ensure-once.js";
 
-test("ensureD1Once shares one successful setup per binding and key",async()=>{
+const never=()=>new Promise(()=>{});
+/** Resolves "timeout" if `promise` has not settled within `ms`: a hang, as the Workers runtime would see it. */
+const within=(promise,ms=200)=>Promise.race([promise.then(()=>"settled",()=>"settled"),new Promise(resolve=>setTimeout(()=>resolve("timeout"),ms))]);
+
+test("ensureD1Once remembers a completed setup per binding and key",async()=>{
  const db={},calls=[];
- let release;const gate=new Promise(resolve=>{release=resolve;});
- const first=ensureD1Once(db,"schema",async()=>{calls.push("run");await gate;});
- const second=ensureD1Once(db,"schema",async()=>{calls.push("duplicate");});
- assert.deepEqual(calls,["run"]);release();await Promise.all([first,second]);
+ await ensureD1Once(db,"schema",async()=>{calls.push("run");});
  await ensureD1Once(db,"schema",async()=>{calls.push("late");});
  assert.deepEqual(calls,["run"]);
+ await ensureD1Once({},"schema",async()=>{calls.push("other binding");});
+ assert.deepEqual(calls,["run","other binding"],"each binding is set up on its own");
 });
 
 test("ensureD1Once forgets a failed setup so a later request can retry",async()=>{
@@ -19,14 +22,23 @@ test("ensureD1Once forgets a failed setup so a later request can retry",async()=
  assert.equal(calls,2);
 });
 
-test("a caller that joined a failed setup retries once instead of inheriting the failure",async()=>{
- const db={};let calls=0,release;const gate=new Promise(resolve=>{release=resolve;});
- const owner=ensureD1Once(db,"schema",async()=>{calls++;await gate;throw new Error("transient");});
- const joiner=ensureD1Once(db,"schema",async()=>{calls++;});
- release();
- await assert.rejects(owner,/transient/);
- await joiner;
- assert.equal(calls,2,"the joiner ran its own retry after the shared attempt failed");
+// The staging "Worker threw exception" on GET /api/provider-chat: a request cancelled mid-setup leaves its
+// in-flight promise unsettled for ever. The old helper handed that promise to every later caller on the
+// isolate, so they hung too. A later caller must run the idempotent setup itself and finish.
+test("a setup that never settles (a cancelled request) does not block a later request",async()=>{
+ const db={};let calls=0;
+ void ensureD1Once(db,"trust_safety_tables",async()=>{calls++;await never();});
+ assert.equal(await within(ensureD1Once(db,"trust_safety_tables",async()=>{calls++;})),"settled","the second request must not wait on the cancelled one");
+ assert.equal(calls,2,"the later request ran the idempotent setup itself");
+ await ensureD1Once(db,"trust_safety_tables",async()=>{calls++;});
+ assert.equal(calls,2,"and once it completed, the key is remembered");
+});
+
+test("ensureD1OnceApplied never joins another request's unfinished setup either",async()=>{
+ const db={};let calls=0;
+ void ensureD1OnceApplied(db,"trigger",async()=>{calls++;await never();return true;});
+ assert.equal(await within(ensureD1OnceApplied(db,"trigger",async()=>{calls++;return true;})),"settled");
+ assert.equal(calls,2);
 });
 
 test("ensureD1OnceApplied keeps re-checking until the dependent setup is actually applied",async()=>{

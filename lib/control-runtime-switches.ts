@@ -14,8 +14,7 @@ const PROVIDER_INGRESS=new Set(["/api/razorpay-webhook","/api/razorpayx-webhook"
 // Once per isolate, and the six defaults in ONE batch: this ran on every API write before (a CREATE and
 // six sequential INSERT OR IGNOREs, seven D1 round trips in front of every scheduling request).
 async function ensureControlRuntimeTablesUncached(db:Db){
- await db.prepare("CREATE TABLE IF NOT EXISTS control_runtime_switches (code TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 1,reason TEXT NOT NULL DEFAULT 'default enabled',updated_by TEXT NOT NULL DEFAULT 'system',updated_at INTEGER NOT NULL)").run();
- const now=Date.now();await db.batch(CONTROL_SWITCHES.map(item=>db.prepare("INSERT OR IGNORE INTO control_runtime_switches (code,enabled,reason,updated_by,updated_at) VALUES (?,1,'default enabled','system',?)").bind(item.code,now)));
+ const now=Date.now();await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS control_runtime_switches (code TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 1,reason TEXT NOT NULL DEFAULT 'default enabled',updated_by TEXT NOT NULL DEFAULT 'system',updated_at INTEGER NOT NULL)"),...CONTROL_SWITCHES.map(item=>db.prepare("INSERT OR IGNORE INTO control_runtime_switches (code,enabled,reason,updated_by,updated_at) VALUES (?,1,'default enabled','system',?)").bind(item.code,now))]);
 }
 // Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
 const controlRuntimeTablesReady=new WeakSet<object>();
