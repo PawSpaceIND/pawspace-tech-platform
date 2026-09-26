@@ -83,4 +83,24 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(trainer,/const attendanceReady=safeArea&&\(attendanceMode!=="parent"\|\|parentConfirmed\);/);
   assert.match(trainer,/<strong>\{trainerName\|\|providerId\}<\/strong>/,'the header shows the trainer name, falling back to the provider id');
  });
+ // Staging E2E 36243387701: /trainer held "Loading trainer workspace…" until the selected session's photos had
+ // loaded too (identity, sessions, media: three sequential requests), past the run's waits. The data side is
+ // executed in tests/trainer-workspace-d1-scale.test.mjs; this pins the page's order and its stale-response guard.
+ test('trainer: the workspace opens once sessions are listed, and only the newest photo read writes',()=>{
+  const trainer=read('app/trainer/page.tsx');
+  const start=trainer.indexOf('useEffect(()=>{let active=true;'),effect=trainer.slice(start,trainer.indexOf('[requestedBookingId,requestedSessionId]);',start));
+  assert.ok(start>=0&&effect.length>0,'the workspace load effect');
+  const listed=effect.indexOf('await loadTrainerSessions(identity.subjectId)'),opened=effect.indexOf('setLoading(false);void providerDisplayName('),photos=effect.indexOf('if(first)await showEvidence(first.id);');
+  assert.ok(listed>=0&&opened>listed&&photos>opened,'loading ends after the sessions list and before the photos and display name are requested');
+  assert.doesNotMatch(effect,/loadTrainingEvidence|finally\{setLoading\(false\)/,'the loading state no longer waits for the photo read');
+  assert.match(effect,/if\(!active\)return;setProviderId\(identity\.subjectId\);/,'a superseded load (new bookingId/sessionId) cannot replace the newer selection');
+  assert.match(effect,/\.then\(name=>\{if\(active\)setTrainerName\(name\|\|""\);\}\)/);
+  assert.match(effect,/catch\(problem\)\{if\(active\)\{setError\(problem instanceof Error\?problem\.message:"Unable to authenticate trainer"\);setLoading\(false\);\}\}/,'a failed load still leaves the loading state');
+  assert.match(trainer,/const newestRequest=\(counter:\{current:number\}\)=>\{const request=\+\+counter\.current;return\(\)=>request===counter\.current;\};/);
+  // Every photo read takes a turn first, and every write of its result checks that the turn is still current.
+  const reads=trainer.match(/await loadTrainingEvidence\(/g)||[],turns=trainer.match(/const current=newestRequest\(evidenceRequest\);/g)||[];
+  assert.equal(reads.length,4);assert.equal(turns.length,3,'showEvidence, refreshEvidence and addEvidence (whose two reads share one turn)');
+  assert.equal((trainer.match(/setEvidence\(result\.assets\)/g)||[]).length,(trainer.match(/if\(current\(\)\)\{?setEvidence\(result\.assets\)/g)||[]).length,'no unguarded evidence write');
+  assert.match(trainer,/async function selectSession\(session:TrainerSession\)\{setSelectedId\(session\.id\);applyEditor\(editorFrom\(session\)\);await showEvidence\(session\.id\);\}/);
+ });
 }
