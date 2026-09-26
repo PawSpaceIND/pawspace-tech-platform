@@ -39,12 +39,12 @@ export default function LocationWelcome({ onContinue, compact = false }: {
     setBusy(true); setNote(""); setCoverage(null); setSuggestions([]);
     try {
       const params = placeId ? new URLSearchParams({ mode: "resolve", placeId }) : new URLSearchParams({ mode: "search", query: search.trim() });
-      const response = await fetch(`/api/address-autocomplete?${params}`, { cache: "no-store", signal: AbortSignal.timeout(10000) });
+      const response = await fetch(`/api/address-autocomplete?${params}`, { cache: "no-store", signal: AbortSignal.timeout(20000) });
       const body = await response.json() as { data?: AutocompleteResult & ResolvedAddress };
       if (request !== generation.current) return;
       if (!response.ok || body.data?.status !== "configured") throw new Error("area_unavailable");
       if (placeId) {
-        const foundPin = body.data.address?.match(/\b[1-9]\d{5}\b/)?.[0];
+        const foundPin = body.data.pincode || body.data.address?.match(/\b[1-9]\d{5}\b/)?.[0];
         if (!foundPin) throw new Error("area_unresolved");
         await checkPin(foundPin, request);
       } else {
@@ -85,8 +85,8 @@ export default function LocationWelcome({ onContinue, compact = false }: {
       try {
         const params = new URLSearchParams({ mode: "reverse", latitude: String(coords.latitude), longitude: String(coords.longitude) });
         const response = await fetch(`/api/address-autocomplete?${params}`, { cache: "no-store", signal: AbortSignal.timeout(10000) });
-        const body = await response.json() as { data?: { status?: string; address?: string } };
-        const foundPin = body.data?.address?.match(/\b[1-9]\d{5}\b/)?.[0];
+        const body = await response.json() as { data?: { status?: string; address?: string; pincode?: string } };
+        const foundPin = body.data?.pincode || body.data?.address?.match(/\b[1-9]\d{5}\b/)?.[0];
         if (!response.ok || body.data?.status !== "configured" || !foundPin) throw new Error("location_unresolved");
         if (request === generation.current) await checkPin(foundPin, request);
       } catch {
