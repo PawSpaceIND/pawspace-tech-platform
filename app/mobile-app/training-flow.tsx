@@ -77,6 +77,11 @@ export function firstBookableMeetGreetDayOffset(hour:number,minute=0,now:number=
 /** The three Meet & Greet chip candidates. Every one - including the pre-selected default - clears the
  * scheduler's minimum lead time, so "Selected" can never mean "the scheduler will refuse this". */
 export function meetGreetSlotDates(now:number=Date.now()){const firstOffset=firstBookableMeetGreetDayOffset(11,0,now),laterOffset=Math.max(firstOffset+1,firstBookableMeetGreetDayOffset(15,0,now));return [futureIst(firstOffset,11,0,now),futureIst(laterOffset,15,0,now),futureIst(laterOffset,16,0,now)];}
+/** A tap on a review-step payment option. Re-tapping the option already selected changes nothing: clearing the
+ * server quote without a mode change leaves the quote effect nothing to re-run on, so the pay button read
+ * "Refreshing server quote…" forever with no request in flight. A real switch clears the quote for the effect to
+ * re-price; switching to 50% also drops the coupon, which needs 100% payment. */
+export function choosePaymentOption(current:"half"|"full",next:"half"|"full",set:{mode:(value:"half"|"full")=>void;coupon:(code:string,quoteId:string)=>void;quote:(value:null)=>void}){if(current===next)return false;set.mode(next);if(next==="half")set.coupon("","");set.quote(null);return true;}
 // Dog Training's published booking-time policy (booking_time_policy:dog_training:*:v1) needs 24 hours'
 // notice; offering tomorrow's slot inside that window only ended in a refused reservation.
 const TRAINING_MIN_NOTICE_MS=24*60*60_000;
@@ -166,6 +171,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const dogCount=Math.max(1,selectedPets.length),priceFor=(item:Plan)=>trainingPriceForPets(item.price,dogCount,item.extraPetPercent),planPrice=priceFor(plan);
   const discount=checkoutQuote?.discount??0;
   const payableNow=checkoutQuote?.amountDueNow??0;
+  const paymentSetters={mode:setPaymentMode,coupon:(code:string,quoteId:string)=>{setCouponCode(code);setCouponQuoteId(quoteId);},quote:setCheckoutQuote};
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;if(pincode.length!==6){queueMicrotask(()=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");}});return()=>{active=false;};}void resolveServiceCoverage(pincode).then(resolved=>{if(!active)return;setCoverage(resolved);return loadTrainingTrainers({cityId:resolved.cityId,zoneId:resolved.zoneId,at:selectedStartIso});}).then(result=>{if(!active||!result)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");setScheduleError("");}).catch(problem=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to resolve Training coverage");}});return()=>{active=false;};},[pincode,selectedStartIso]);
   useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split",withCoupon=mode==="prepaid"&&Boolean(couponCode);queueMicrotask(()=>{if(active)setCheckoutQuote(null);});
@@ -460,8 +466,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             <div><span>Complimentary care</span><b>{plan.bonus ? "Bath & Basic grooming" : "Not included"}</b></div>
           </article>
           <div className={styles.paymentOptions}>
-            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {setPaymentMode("half");setCouponCode("");setCouponQuoteId("");setCheckoutQuote(null);}}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(planPrice*plan.splitDuePercent/100))} now · {money(planPrice-Math.round(planPrice*plan.splitDuePercent/100))} before your final session</span></div></button>
-            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(planPrice)} before an eligible coupon</span></div></button>
+            <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => choosePaymentOption(paymentMode,"half",paymentSetters)}><i>{paymentMode === "half" ? "✓" : ""}</i><div><b>Pay 50% upfront · no discount</b><span>{money(Math.round(planPrice*plan.splitDuePercent/100))} now · {money(planPrice-Math.round(planPrice*plan.splitDuePercent/100))} before your final session</span></div></button>
+            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => choosePaymentOption(paymentMode,"full",paymentSetters)}><i>{paymentMode === "full" ? "✓" : ""}</i><div><b>Pay 100% upfront · coupon eligible</b><span>{money(planPrice)} before an eligible coupon</span></div></button>
           </div>
           {/* Quoted for this programme and service city, so the governed coupon quote is one the Training quote and
               booking can honour. Keyed by payment mode: coupons need 100% payment, and a remount leaves the 50% view
