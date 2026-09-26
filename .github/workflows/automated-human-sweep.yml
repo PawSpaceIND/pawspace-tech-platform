@@ -107,6 +107,7 @@ jobs:
           set -euo pipefail
           npx wrangler d1 execute pawspace-staging --remote --file=scripts/employee-seed.sql
           npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-provider-capacity.sql
+          npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-citywide-groomers.sql
       - name: Run the multi-persona sweep
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}

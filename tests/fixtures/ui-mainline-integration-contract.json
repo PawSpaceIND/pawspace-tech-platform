@@ -2,7 +2,7 @@
   "ui": "dcc560b386f2f9b8ca990f0ab4c115887472366b",
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
-    ".github/workflows/deploy-staging.yml": "7d7362c7d375370acfe94b86be32b5990a348a2248e422727f0bf41f998efbac",
+    ".github/workflows/deploy-staging.yml": "2d89ad9460feaecf72e2b4b8794bf31d322ee27f1a36f8e69c012ab706bd6083",
     ".github/workflows/elevenlabs-provider-preflight.yml": "faf5456e92acd2fb255474981de62fdf166c7f68b62d502259bc84bde3425021",
     ".github/workflows/voice-uat-staging.yml": "1e02d3186125b727c8318be6d0a8831081d855f8b282e83b4a216e879f858539",
     ".gitleaksignore": "533e9eafcb5494f86679db424305186ad82841d1f56e2c2043f91df584308544",
