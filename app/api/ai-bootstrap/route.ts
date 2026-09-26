@@ -1,5 +1,6 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{seedPawspaceAiAssistant}from"../../../lib/pawspace-ai-seed";
+import{seedMayaKnowledge}from"../../../lib/maya-knowledge-base";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI bootstrap blocked",{status:403});}
@@ -11,9 +12,10 @@ export async function POST(request:Request){
   try{
     sameOrigin(request);
     const db=await database(),actor=await resolveActor(request);requirePermission(actor,"settings.manage");
-    const body=await request.json().catch(()=>({})) as {checkerEmail?:string};
+    const body=await request.json().catch(()=>({})) as {checkerEmail?:string;pack?:string};
     const checker=String(body.checkerEmail||"").trim()||actor.email;
-    const data=await seedPawspaceAiAssistant(db,{maker:actor.email,checker});
+    // {"pack":"maya"} publishes only the service knowledge entries that changed, leaving the rest as is.
+    const data=body.pack==="maya"?{serviceKnowledge:await seedMayaKnowledge(db,{maker:actor.email,checker})}:await seedPawspaceAiAssistant(db,{maker:actor.email,checker});
     await securityAudit(db,actor,"ai.bootstrap.seed","ai_configuration",null,"completed",data as Record<string,unknown>);
     return json({data},201);
   }catch(error){return authError(error,"Unable to seed AI assistant grounding");}

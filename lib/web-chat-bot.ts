@@ -51,6 +51,12 @@ export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting
  leadId?:string;
  /** When a stalled flow was last nudged by the follow-up sweep. */
  nudgedAt?:number;
+ /** How many reminders the stalled current question has had (10 and 20 minutes). */
+ nudges?:number;
+ /** Answers to the current question that did not fit it. */
+ misses?:number;
+ /** The flow stalled or the customer went off script: PawSpace AI answers anything that is not an option. */
+ aiTakeover?:boolean;
  /** The service a lead enquired about (its WhatsApp template was for it): a short reply starts that flow. */
  preferredFlow?:string};
 export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
@@ -408,8 +414,15 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  if(!step)return{state:initialBotState(),reply:menuReply(),event:{type:"none"},display};
  const context={flow,answers:state.answers,signedIn:input.signedIn};
  let value:string;
- if(step.kind==="choice"){if(!picked||!step.choices?.some(item=>item.id===picked.id))return{state,reply:askReply(step,"Please pick one of the options. ",context),event:{type:"none"},display};value=picked.value??picked.label;}
- else{const checked=validate(step,text);if("error"in checked)return{state,reply:askReply(step,`${checked.error} `,context),event:{type:"none"},display};value=checked.value;}
+ /* An answer that does not fit the question is asked again once. A second one - or any after the AI has
+  * taken over a stalled chat - goes to PawSpace AI, which answers it; the question is then asked again. */
+ const offScript=(error:string):BotTurnResult=>text&&(state.aiTakeover||(state.misses??0)>=1)
+  ?{state:{...state,misses:0},reply:askReply(step,"Whenever you're ready: ",context),event:{type:"ai",question:text},display}
+  :{state:{...state,misses:(state.misses??0)+1},reply:askReply(step,error,context),event:{type:"none"},display};
+ if(step.kind==="choice"){if(!picked||!step.choices?.some(item=>item.id===picked.id))return offScript("Please pick one of the options. ");value=picked.value??picked.label;}
+ else{const checked=validate(step,text);if("error"in checked)return offScript(`${checked.error} `);value=checked.value;}
+ // An answered question clears its reminders and misses; the next one starts afresh.
+ delete state.misses;delete state.nudges;delete state.nudgedAt;delete state.aiTakeover;
  // "No" to "confirm the booking?": the questions start again, as the WATI flow loops back.
  if(step.restartOn&&value===step.restartOn)return startFlow(flow,input.signedIn,{...contactOf(state.answers),...offerOf(state.answers)},"No problem, let's go through the details again. ",display);
  // WATI's "invoke flow": this answer carries on in another flow, with the contact details and the route.
@@ -444,3 +457,30 @@ export function currentStepReply(state:BotState,signedIn:boolean,prefix=""):BotR
 }
 /** The enquiry so far, for a lead created before the flow is finished. */
 export function partialSummary(state:BotState,signedIn:boolean){const flow=flowByCode(state.flow);return flow?botSummary(flow,state.answers,signedIn):"";}
+
+/* ---------------------------------------------------------------------------------------------------
+ * A customer who stops half way, as WATI follows up: a reminder of the question at 10 minutes, then at
+ * 20 minutes PawSpace AI takes over (anything that is not an option goes to the AI from then on), and if
+ * there is still no answer two hours after that, a person follows up. Web chat and WhatsApp share this.
+ * --------------------------------------------------------------------------------------------------- */
+export const BOT_REMINDER_AFTER_MS=10*60_000;
+export const BOT_ESCALATE_AFTER_MS=2*60*60_000;
+export type BotFollowUp=
+ |{kind:"wait"}
+ |{kind:"remind"|"takeover";reply:BotReply;next:BotState}
+ |{kind:"escalate";reply:BotReply;next:BotState};
+/** What a stalled flow needs now. `idleSince` is when the session last changed (an answer or a reminder). */
+export function botFollowUp(state:BotState,input:{asOf:number;idleSince:number;signedIn:boolean}):BotFollowUp{
+ if(state.status!=="collecting")return{kind:"wait"};
+ const nudges=state.nudges??(state.nudgedAt?1:0),idle=input.asOf-input.idleSince;
+ if(nudges===0&&idle>=BOT_REMINDER_AFTER_MS){
+  const reply=currentStepReply(state,input.signedIn,"Still there? Let's finish your details so I can book this for you. ");
+  return reply?{kind:"remind",reply,next:{...state,nudges:1,nudgedAt:input.asOf}}:{kind:"wait"};
+ }
+ if(nudges===1&&idle>=BOT_REMINDER_AFTER_MS){
+  const reply=currentStepReply(state,input.signedIn,"PawSpace AI here. Pick an option, or just tell me in your own words what you need and I'll take it from there. ");
+  return reply?{kind:"takeover",reply,next:{...state,nudges:2,nudgedAt:input.asOf,aiTakeover:true}}:{kind:"wait"};
+ }
+ if(nudges>=2&&idle>=BOT_ESCALATE_AFTER_MS)return{kind:"escalate",reply:{text:"No problem - a PawSpace team member will follow up with you to finish this.",choices:[],inputHint:null},next:{...state,status:"done"}};
+ return{kind:"wait"};
+}

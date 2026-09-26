@@ -51,12 +51,12 @@ function petIds(value: unknown) {
  * closing discount or GROOM400's cross-sell), quoted by the governed coupon engine against the server's
  * own package price. The model names a code; the discount, total and eligibility are the server's.
  */
-async function quoteSalesCoupon(db: D1Database, input: { code: string; customerId: string; cityId: string; quote: Row }) {
+async function quoteSalesCoupon(db: D1Database, input: { code: string; customerId: string; cityId: string; quote: Row; channel: "website" | "whatsapp" }) {
  const { approvedSalesOffers, couponsLiveApproved } = await import("./ai-sales-offers");
  const { quoteCoupon } = await import("./coupon-governance");
- const approved = await approvedSalesOffers(db, { customerId: input.customerId, channel: "website" });
+ const approved = await approvedSalesOffers(db, { customerId: input.customerId, channel: input.channel });
  if (!approved.some(offer => offer.code === input.code)) throw refusal("That coupon is not an offer PawSpace AI can apply for this customer", 400);
- const result = await quoteCoupon(db, { code: input.code, customerId: input.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: text(input.quote.packageCode), orderValue: Number(input.quote.totalAmount), paymentMode: "full", isSubscription: input.quote.offerType === "subscription" }, { liveApproved: await couponsLiveApproved() });
+ const result = await quoteCoupon(db, { code: input.code, customerId: input.customerId, serviceCode: "grooming", cityId: input.cityId, channel: input.channel, packageCode: text(input.quote.packageCode), orderValue: Number(input.quote.totalAmount), paymentMode: "full", isSubscription: input.quote.offerType === "subscription" }, { liveApproved: await couponsLiveApproved() });
  if (!result.valid || !("quoteId" in result) || !result.quoteId) throw refusal(`The coupon could not be applied: ${result.error || "not eligible for this booking"}`);
  return { quoteId: result.quoteId, code: result.code, discount: Number(result.discount), finalAmount: Number(result.finalAmount) };
 }
@@ -73,7 +73,15 @@ function summaryFor(service: VoiceSalesService, quote: Row, schedule: Row) {
  const remaining = total - dueNow;
  return `${text(quote.packageName)} for ${quote.petCount} pet(s). ${terms}${discounted ? ` Coupon ${text(coupon.code)}: ${money(coupon.discount)} off ${money(quote.totalAmount)}.` : ""} Total ${money(total)}; ${money(dueNow)} due now${remaining > 0 ? ` and ${money(remaining)} remaining under the quoted payment terms` : ""}. Requested start ${at} India time.${service === "dog_training" ? ` Recommended available trainer: ${text(recommended.name)}. Confirming also selects this trainer; you can ask for another option.` : ""} Availability was checked, not reserved. Shall I reserve this and create the booking with payment still pending?`;
 }
-export type SalesOfferChannel = "voice" | "chat";
+export type SalesOfferChannel = "voice" | "chat" | "whatsapp";
+/** Where a customer pays a booking the AI created: the V2 booking page takes payment for any service. */
+export async function bookingPaymentLink(bookingId: string, channel: SalesOfferChannel) {
+ const path = `/v2/booking?bookingId=${encodeURIComponent(bookingId)}`;
+ if (channel === "chat") return path;
+ let origin = "https://pawspace.in";
+ try { const { env } = await import("cloudflare:workers"); const configured = String((env as unknown as Row).PAWSPACE_PUBLIC_ORIGIN || "").trim(); if (/^https:\/\/[a-z0-9.-]+$/i.test(configured)) origin = configured; } catch { /* default origin */ }
+ return `${origin}${path}`;
+}
 export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel }) {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  const prior = await db.prepare("SELECT * FROM voice_sales_offers WHERE turn_key=?").bind(input.turnKey).first<Row>();
@@ -83,7 +91,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
  onlyKeys(schedule, ["serviceCode", "petIds", "serviceAddress", "servicePincode", "scheduledStart", "scheduledEnd", "cadenceDays", "weekdays", "occurrences"]);
  onlyKeys(booking, ["petIds", "packageCode", "paymentMode", "requirements", "couponCode"]);
  const couponCode = text(booking.couponCode).toUpperCase(); delete booking.couponCode;
- if (couponCode && (input.service !== "grooming" || (input.channel ?? "voice") === "voice")) throw refusal("Coupons are applied only to Grooming offers in web chat", 400); onlyKeys(object(input.actions[2].arguments), []);
+ if (couponCode && (input.service !== "grooming" || (input.channel ?? "voice") === "voice")) throw refusal("Coupons are applied only to Grooming offers in web chat and WhatsApp", 400); onlyKeys(object(input.actions[2].arguments), []);
  if (text(schedule.serviceCode) !== input.service) throw refusal("The proposal does not belong to this sales specialist", 403);
  const ids = petIds(schedule.petIds), bookingPets = petIds(booking.petIds);
  if (JSON.stringify([...ids].sort()) !== JSON.stringify([...bookingPets].sort())) throw refusal("Booking pets differ from the proposed appointment", 400);
@@ -109,7 +117,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   const { resolveGovernedServiceAddress } = await import("./service-discovery-address");
   const address = await resolveGovernedServiceAddress(db, { customerId: input.customerId, serviceCode: input.service, serviceAddress: text(schedule.serviceAddress), servicePincode: text(schedule.servicePincode) });
   quote = await quoteGroomingBookingWithLiveMultiPet(db, { packageCode: text(booking.packageCode), packageName: "", pets: pets.map(p => ({ species: text(p.species) as "dog" | "cat" | "other" })), paymentMode: mode, cityId: address.cityId, zoneId: address.zoneId, scheduledStart: start.toISOString() });
-  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
+  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote, channel: input.channel === "whatsapp" ? "whatsapp" : "website" }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
  }
  const { executeGovernedSchedulingRequest } = await import("../app/api/uat-scheduling/route");
  const response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor);
@@ -177,7 +185,10 @@ export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: Aut
    groupId = resultValue(result, "groupId") || groupId; bookingId = resultValue(result, "bookingId") || bookingId; orderId = resultValue(result, "orderId") || orderId;
   }
   if(!groupId||!bookingId||!orderId)throw refusal("Checkout is incomplete; no successful sale can be claimed",503);
-  const result = { offerId: input.offerId, bookingId, orderId, paymentVerified: false, paymentLinkDelivered: false, output: "Your booking has been created and the secure Razorpay checkout is ready. Payment is still pending verification. No payment or subscription activation has been claimed." };
+  // Voice reads no links aloud; chat and WhatsApp get the page where the customer pays this booking.
+  const channel = input.channel ?? "voice", payLink = channel === "voice" ? null : await bookingPaymentLink(bookingId, channel);
+  const output = payLink ? `Your booking is created. Pay securely here to confirm it: ${payLink}\nIt is confirmed as soon as the payment is verified; I'll let you know here.` : "Your booking has been created and the secure Razorpay checkout is ready. Payment is still pending verification. No payment or subscription activation has been claimed.";
+  const result = { offerId: input.offerId, bookingId, orderId, paymentVerified: false, paymentLinkDelivered: false, payLink, output };
   await db.prepare("UPDATE voice_sales_offers SET status='completed',result_json=?,completed_at=? WHERE id=? AND status='executing'").bind(JSON.stringify(result), Date.now(), input.offerId).run();
   return { ...result, duplicatePrevented: false };
  } catch (error) {

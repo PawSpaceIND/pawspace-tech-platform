@@ -11,6 +11,7 @@
 
 import { createAiBusinessDraft, transitionAiBusinessConfig } from "./ai-business-configuration";
 import { AI_PROVIDER_REF, DEFAULT_AI_MODEL_REF } from "./ai-provider-adapter";
+import { seedMayaKnowledge } from "./maya-knowledge-base";
 
 type Db = D1Database;
 type EntityType = "profile" | "intent" | "knowledge" | "prompt";
@@ -61,7 +62,9 @@ export async function seedPawspaceAiAssistant(db: Db, input: { maker: string; ch
   const prompt = await activate(db, "prompt", { policyKey: "pawspace_system", systemPrompt: SYSTEM_PROMPT, policy: { groundedOnly: true, neverQuotePriceFromMemory: true, forbiddenAutonomousActions: ["refund", "payment_capture", "price_change", "raw_provider_assignment", "campaign_activation"], handoffTopics: ["complaint", "refund_dispute", "payment_dispute", "safety", "medical_emergency"] } }, maker, checker);
   const knowledge = [];
   for (const k of KNOWLEDGE) knowledge.push(await activate(db, "knowledge", { sourceKey: k.sourceKey, title: k.title, contentText: k.contentText, sourceType: "policy", visibilityScope: ["public"] }, maker, checker));
+  // The detailed service knowledge (lib/maya-knowledge-base.ts); only entries not already active are published.
+  const maya = await seedMayaKnowledge(db, { maker, checker });
   const intents = [];
   for (const i of INTENTS) intents.push(await activate(db, "intent", { intentCode: i.intentCode, businessOwner: "cx@pawspace.in", workflowMapping: i.workflowMapping, escalationRule: i.escalationRule, requiredFields: i.requiredFields, confidenceThreshold: i.confidenceThreshold, enabled: true }, maker, checker));
-  return { profile: profile.id, prompt: prompt.id, knowledgeCount: knowledge.length, intentCount: intents.length };
+  return { profile: profile.id, prompt: prompt.id, knowledgeCount: knowledge.length + maya.total, serviceKnowledge: maya, intentCount: intents.length };
 }

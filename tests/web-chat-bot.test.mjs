@@ -324,7 +324,7 @@ test("a visitor's lead exists as soon as they give their number, and one that st
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM crm_activities WHERE type='web_chat_bot'").get().n), 1);
 });
 
-test("a signed-in customer who stops mid-flow is nudged once, then handed to the sales queue", async () => {
+test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpace AI takes over at 20, then a person", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-STALL", "+919900000203");
   const cookie = await customerCookie(db, "CUS-STALL", "+919900000203");
@@ -333,16 +333,50 @@ test("a signed-in customer who stops mid-flow is nudged once, then handed to the
   await call({ choiceId: "grooming", message: "", idempotencyKey: "stall-1" });
   const adapter = await import("../lib/ai-web-chat-adapter.ts");
   const sweep = (asOf) => runWithWorkersDb(db, () => adapter.runWebChatBotFollowUpSweep(db, { asOf }));
-  const now = Date.now();
-  assert.equal((await sweep(now + 5 * 60_000)).nudged, 0, "not yet stalled");
-  assert.equal((await sweep(now + 16 * 60_000)).nudged, 1);
-  assert.equal((await sweep(now + 20 * 60_000)).nudged, 0, "nudged only once");
-  const nudge = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-nudge:%'").get();
-  assert.match(JSON.parse(nudge.payload_json).text, /Still there\? .*active grooming subscription/);
-  assert.equal((await sweep(now + 16 * 60_000 + 2 * 60 * 60_000)).escalated, 1);
+  const now = Date.now(), min = 60_000;
+  assert.equal((await sweep(now + 5 * min)).nudged, 0, "not yet stalled");
+  // A reminder that fails to post leaves the session as it was, so the next sweep sends it.
+  sqlite.exec("CREATE TRIGGER messages_offline BEFORE INSERT ON communication_messages BEGIN SELECT RAISE(ABORT, 'offline'); END");
+  assert.equal((await sweep(now + 11 * min)).nudged, 0);
+  sqlite.exec("DROP TRIGGER messages_offline");
+  assert.equal((await sweep(now + 11 * min)).nudged, 1, "first reminder at 10 minutes");
+  assert.equal((await sweep(now + 15 * min)).takenOver, 0, "the second waits another 10 minutes");
+  assert.equal((await sweep(now + 22 * min)).takenOver, 1, "PawSpace AI takes over at 20 minutes");
+  const texts = sqlite.prepare("SELECT payload_json FROM communication_messages WHERE idempotency_key LIKE 'web-chat-bot-remind:%' OR idempotency_key LIKE 'web-chat-bot-takeover:%' ORDER BY created_at, idempotency_key").all().map((row) => JSON.parse(row.payload_json).text);
+  assert.match(texts[0], /Still there\? .*active grooming subscription/);
+  assert.match(texts[1], /PawSpace AI here\. Pick an option, or just tell me in your own words/);
+  const session = JSON.parse(sqlite.prepare("SELECT state_json FROM web_chat_bot_sessions WHERE session_ref='customer:CUS-STALL'").get().state_json);
+  assert.equal(session.aiTakeover, true, "anything that is not an option now goes to the AI");
+  assert.equal((await sweep(now + 60 * min)).escalated, 0, "a person only after two more hours");
+  assert.equal((await sweep(now + 22 * min + 2 * 60 * min)).escalated, 1);
   const handoff = sqlite.prepare("SELECT reason,queue_code FROM ai_handoffs WHERE customer_id='CUS-STALL'").get();
   assert.deepEqual({ ...handoff }, { reason: "bot_abandoned", queue_code: "sales-web-chat" });
-  assert.equal((await sweep(now + 5 * 60 * 60_000)).escalated, 0, "escalated only once");
+  assert.equal((await sweep(now + 5 * 60 * min)).escalated, 0, "escalated only once");
+});
+
+test("a second answer that does not fit the question goes to PawSpace AI, then the question is asked again", () => {
+  let state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state;
+  const first = bot.runBotTurn(state, { text: "hmm what is included", signedIn: true });
+  assert.equal(first.event.type, "none"); assert.match(first.reply.text, /Please pick one of the options/);
+  const second = bot.runBotTurn(first.state, { text: "which one is best for a husky?", signedIn: true });
+  assert.deepEqual(second.event, { type: "ai", question: "which one is best for a husky?" });
+  assert.match(second.reply.text, /^Whenever you're ready: /); assert.equal(second.state.step, state.step, "the flow waits on the same question");
+  const answered = bot.runBotTurn(second.state, { choiceId: second.reply.choices[0].id, signedIn: true });
+  assert.equal(answered.state.misses, undefined, "an answer clears the misses");
+  state = { ...first.state, misses: 0, aiTakeover: true };
+  assert.equal(bot.runBotTurn(state, { text: "can you just book it", signedIn: true }).event.type, "ai", "after a takeover the first off-script answer goes to the AI");
+});
+
+test("the follow-up timing is shared by web chat and WhatsApp", () => {
+  const state = bot.runBotTurn(bot.initialBotState(), { choiceId: "grooming", signedIn: true }).state, t = 1_000_000_000_000, min = 60_000;
+  assert.equal(bot.botFollowUp(state, { asOf: t + 9 * min, idleSince: t, signedIn: true }).kind, "wait");
+  const remind = bot.botFollowUp(state, { asOf: t + 10 * min, idleSince: t, signedIn: true });
+  assert.equal(remind.kind, "remind");
+  const takeover = bot.botFollowUp(remind.next, { asOf: t + 20 * min, idleSince: t + 10 * min, signedIn: true });
+  assert.equal(takeover.kind, "takeover"); assert.equal(takeover.next.aiTakeover, true);
+  assert.equal(bot.botFollowUp(takeover.next, { asOf: t + 20 * min + 119 * min, idleSince: t + 20 * min, signedIn: true }).kind, "wait");
+  assert.equal(bot.botFollowUp(takeover.next, { asOf: t + 20 * min + 120 * min, idleSince: t + 20 * min, signedIn: true }).kind, "escalate");
+  assert.equal(bot.botFollowUp(bot.initialBotState(), { asOf: t + 99 * min, idleSince: t, signedIn: true }).kind, "wait", "only an unfinished flow is followed up");
 });
 
 test("a short request naming a service starts it; a lead's greeting starts the service it came for", () => {
