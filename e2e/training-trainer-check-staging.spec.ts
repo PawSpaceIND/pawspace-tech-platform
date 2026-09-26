@@ -92,7 +92,14 @@ test("Dog Training: a tester on staging is offered a trainer", async ({ browser 
       const began = started.get(request);
       calls.push(`${request.method()} ${new URL(request.url()).pathname} → ${outcome}${began ? ` in ${((Date.now() - began) / 1000).toFixed(1)} s` : ""}`);
     };
-    page.on("requestfinished", async request => { if (watched.test(request.url())) logCall(request, `HTTP ${(await request.response())?.status() ?? "?"}`); });
+    page.on("requestfinished", async request => {
+      if (!watched.test(request.url())) return;
+      const response = await request.response();
+      // Staging answers with Server-Timing (total, D1 time and count, slowest query fingerprints): it tells a
+      // slow database apart from a slow network.
+      const timing = response?.headers()["server-timing"];
+      logCall(request, `HTTP ${response?.status() ?? "?"}${timing ? ` [server-timing: ${timing.slice(0, 160)}]` : ""}`);
+    });
     page.on("requestfailed", request => { if (watched.test(request.url())) logCall(request, `failed (${request.failure()?.errorText || "aborted"})`); });
     await page.goto("/v2/training"); await settle(page, 2500);
     const dogs = page.getByRole("group", { name: /Dogs/ });
