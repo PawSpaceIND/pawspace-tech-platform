@@ -6,9 +6,21 @@ on:
         description: 'Certified staging origin'
         required: true
         default: 'https://pawspace-staging.karthik-fce.workers.dev'
+      suite:
+        description: 'training-deployed (capture + recovery) or master (full Dog Training E2E across customer, trainer, staff, finance, CRM, maps and AI)'
+        required: false
+        default: 'training-deployed'
+        type: choice
+        options:
+          - training-deployed
+          - master
 jobs:
   training-acceptance:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
+    # contents:write is used only by the master suite's evidence step, and only on non-main branches.
+    permissions:
+      contents: write
     concurrency:
       group: pawspace-staging-sweep
       cancel-in-progress: false
@@ -28,15 +40,41 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run deployed Training acceptance
+        if: github.event.inputs.suite != 'master'
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           E2E_REPORT: test-results/uat-training-report.md
         run: npx playwright test --config playwright.uat-training.config.ts
+      - name: Run Dog Training master E2E
+        if: github.event.inputs.suite == 'master'
+        env:
+          PW_BASE_URL: ${{ github.event.inputs.base_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          MASTER_OUT: test-results/training-master
+        run: npx playwright test --config playwright.training-master.config.ts
       - name: Print report
         if: always()
         run: |
           echo '===== UAT TRAINING DEPLOYED REPORT ====='
-          cat test-results/uat-training-report.md 2>/dev/null || echo '(no report file produced)'
+          cat test-results/uat-training-report.md 2>/dev/null || true
+          cat test-results/training-master/report.md 2>/dev/null || true
+      - name: Commit master evidence to this branch
+        if: always() && github.event.inputs.suite == 'master' && github.ref_name != 'main'
+        run: |
+          set -e
+          [ -f test-results/training-master/report.md ] || exit 0
+          DEST="docs/qa-evidence/training-staging-${{ github.run_id }}"
+          mkdir -p "$DEST"
+          cp -r test-results/training-master/. "$DEST"/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+          git commit -m "test(qa): Dog Training master E2E evidence from staging (run ${{ github.run_id }})" || exit 0
+          for attempt in 1 2 3; do
+            git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0
+            sleep 5
+          done
+          exit 1
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
