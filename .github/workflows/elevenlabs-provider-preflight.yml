@@ -6,6 +6,14 @@ on:
         description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
+      uat_voice_call_id:
+        description: 'Exact UAT call context for confirm=resume-uat-voice (no dial)'
+        required: false
+        default: ''
+      probe_input:
+        description: 'Synthetic text for no-calls custom LLM probe'
+        required: false
+        default: 'I need grooming today for my dog.'
       expected_destination_last4:
         description: 'Required for direct-grooming-call: last four digits confirmed by the tester'
         required: false
@@ -161,6 +169,7 @@ jobs:
 
       - name: Inspect latest Grooming specialist conversation without dialing
         env:
+          PROBE_INPUT: ${{ inputs.probe_input }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
@@ -187,7 +196,7 @@ jobs:
             const cid=String(row?.conversation_id||'');if(!cid)continue;
             const rr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(cid)}`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(20000)});if(!rr.ok)continue;
             const cd=await rr.json().catch(()=>({})),ct=Array.isArray(cd?.transcript)?cd.transcript:[],cm=cd?.metadata&&typeof cd.metadata==='object'?cd.metadata:{},cp=cm?.phone_call&&typeof cm.phone_call==='object'?cm.phone_call:{};
-            if(ct.some(x=>x?.role==='user')) recentDetails.push({status:cd?.status||null,turns:ct.length,duration:Number(cm?.call_duration_secs||0),start:Number(cd?.start_time_unix_secs||cm?.start_time_unix_secs||0),agentNumberLast4:String(cp?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(cp?.external_number||'').replace(/\D/g,'').slice(-4)||null,hasCallSid:Boolean(cp?.call_sid),sample:ct.slice(0,4).map(x=>({role:x.role,message:String(x.message||'').replace(/\s+/g,' ').slice(0,180)}))});
+            if(ct.some(x=>x?.role==='user')) recentDetails.push({status:cd?.status||null,terminationReason:cm?.termination_reason||null,error:cm?.error||null,turns:ct.length,duration:Number(cm?.call_duration_secs||0),start:Number(cd?.start_time_unix_secs||cm?.start_time_unix_secs||0),agentNumberLast4:String(cp?.agent_number||'').replace(/\D/g,'').slice(-4)||null,externalNumberLast4:String(cp?.external_number||'').replace(/\D/g,'').slice(-4)||null,hasCallSid:Boolean(cp?.call_sid),sample:ct.slice(0,4).map(x=>({role:x.role,message:String(x.message||'').replace(/\s+/g,' ').slice(0,180)}))});
           }
           console.log('GROOMING_RECENT_ANSWERED='+JSON.stringify(recentDetails));
           const trResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(id)}?format=opentelemetry`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
@@ -196,7 +205,7 @@ jobs:
             const rawOtlp=JSON.stringify(otlp);
             const callId=(rawOtlp.match(/VCALL-[A-Z0-9-]+/)||[])[0]||'';
             const scrub=value=>JSON.parse(JSON.stringify(value,(k,v)=>/authorization|api[_-]?key|token|secret|phone|external_number|call_sid|stream_sid/i.test(k)?undefined:v));
-            const compact=JSON.stringify(scrub(otlp));
+            const compact=JSON.stringify(scrub(otlp)).replace(/\+?\d{10,15}/g,'[redacted-number]');
             const hits=[...compact.matchAll(/.{0,220}(?:error|exception|timeout|llm|response|status_code|http\.status).{0,420}/gi)].slice(0,20).map(m=>m[0]);
             console.log('GROOMING_OTLP_SIGNALS='+JSON.stringify(hits));
             const llmSecret=String(process.env.ELEVENLABS_LLM_SECRET||'').trim();
@@ -208,7 +217,7 @@ jobs:
               const probe=await fetch('https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1/responses',{
                 method:'POST',
                 headers:{'content-type':'application/json',authorization:'Bearer '+llmSecret},
-                body:JSON.stringify({input:'I need grooming today for my dog.',elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
+                body:JSON.stringify({input:String(process.env.PROBE_INPUT||'').trim().startsWith('[')?JSON.parse(process.env.PROBE_INPUT):String(process.env.PROBE_INPUT||'I need grooming today for my dog.'),elevenlabs_extra_body:{pawspace_voice_call_id:callId}}),
                 signal:AbortSignal.timeout(30000)
               });
               const headersMs=Date.now()-started;
@@ -815,3 +824,21 @@ jobs:
             softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null
           }));
           NODE
+
+  resume-uat-voice:
+    if: ${{ inputs.confirm == 'resume-uat-voice' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Resume only the confirmed UAT low-confidence handoff without dialing
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+        run: node scripts/resume-voice-uat.mjs
