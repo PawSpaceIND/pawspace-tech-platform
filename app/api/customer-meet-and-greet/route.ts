@@ -1,11 +1,13 @@
-import {authError,database} from '../../../lib/server-auth';
+import {ensureProviderCapacityTables} from "../../../lib/provider-capacity-governance";
+import {authError,database,resolveActor,requireCustomerOwnership} from '../../../lib/server-auth';
 import {resolvePlatformSession} from '../../../lib/platform-session';
 import {createMeetGreetRequest,listMeetGreetRequests,type MeetGreetFormat} from '../../../lib/meet-and-greet';
 import {stayMeetingPolicy,validateMeetingTime} from '../../../lib/stay-meeting-policy';
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
-async function context(request:Request){const db=await database(),session=await resolvePlatformSession(db,request);if(session?.subjectType!=='customer')throw new Response('Customer sign-in is required.',{status:401});return{db,customerId:String(session.subjectId)};}
+async function context(request:Request){const db=await database(),session=await resolvePlatformSession(db,request);if(session?.subjectType!=='customer')throw new Response('Customer sign-in is required.',{status:401});await requireCustomerOwnership(db,await resolveActor(request),String(session.subjectId));return{db,customerId:String(session.subjectId)};}
 async function eligible(db:D1Database,providerId:string,serviceCode:string){
  if(!['boarding','pet_sitting'].includes(serviceCode))throw new Response('Select Boarding or Sitting.',{status:400});
+ await ensureProviderCapacityTables(db);
  const row=await db.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=? AND status='active' AND live=1").bind(providerId).first<{services_json:string}>();
  if(!row||!JSON.parse(row.services_json).includes(serviceCode))throw new Response('The selected caregiver is not available for this service.',{status:409});
 }

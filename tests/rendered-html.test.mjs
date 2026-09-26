@@ -235,13 +235,15 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /nights > 4/);
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due\s+24\s+hours before check-in/);
-  assert.match(stays, /3-hour host-home trial · Included/);
+  assert.match(stays, /StayMeetingRequest/);
+  assert.doesNotMatch(stays, /3-hour host-home trial · Included/);
   // Owner decision 2026-09-22 (decision 1 of 10) made the Sitting Meet & Greet ₹499 everywhere the
   // customer sees it. This pinned the ₹500 literal that was the defect. It now pins the thing that
   // stops the defect returning: the screen reads the price from lib/meet-and-greet.ts and never writes
   // a Meet & Greet figure of its own. tests/sitting-meet-greet-price.test.mjs executes the rule.
-  assert.match(stays, /2-hour sitter Meet & Greet · \$\{meetFeeLabel\}/);
-  assert.match(stays, /meetGreetPrice\("house_visit"/);
+  assert.match(stays, /currentMeeting\.priceCharged/);
+  const meetingPolicy=await readFile(new URL("../lib/stay-meeting-policy.ts",import.meta.url),"utf8");
+  assert.match(meetingPolicy,/meetGreetPrice\('house_visit'/);
   assert.doesNotMatch(stays.replaceAll(/\/\*[\s\S]*?\*\//g, ""), /₹\s*50[0-9]/, "no hardcoded Meet & Greet price may survive outside a comment");
   assert.match(stays, /4 hours/);
   assert.match(stays, /12 hours/);
@@ -288,7 +290,10 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   assert.doesNotMatch(grooming.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//")).join("\n"), /status:pay==="online"\?"captured":"created"/);
   assert.match(training, /MEET A TRAINER FIRST/);
   assert.match(training, /Book a Meet & Greet/);
-  assert.match(stays, /10-minute phone call · Included/);
+  assert.match(stays, /currentMeeting\.id/);
+  assert.match(stays, /excluded from this stay total/);
+  const meetingCard=await readFile(new URL("../app/mobile-app/stay-meeting-request.tsx",import.meta.url),"utf8");
+  assert.match(meetingCard,/policy\.phone\.durationMinutes/);assert.match(meetingCard,/No meeting fee is collected by this form/);
   assert.match(groomer, /Package upgraded/);
   assert.match(groomer, /Bike issue/);
   assert.match(groomer, /Open protected rebooking/);
