@@ -52,6 +52,7 @@ function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__TRN_DB_
 const sessionsRoute = await import("../app/api/training-sessions/route.ts");
 const customerChangeRoute = await import("../app/api/training-customer-session-change/route.ts");
 const cancellationRoute = await import("../app/api/training-cancellation/route.ts");
+const financeRoute = await import("../app/api/training-finance/route.ts");
 const earningsRoute = await import("../app/api/training-provider-earnings/route.ts");
 const reconciliationRoute = await import("../app/api/training-reconciliation/route.ts");
 const opsRoute = await import("../app/api/training-ops/route.ts");
@@ -412,6 +413,20 @@ test("real execution: session-change and cancellation requests from a customer w
   assert.equal(owner.status, 200, JSON.stringify(owner.body));
 });
 
+// QA: the Finance page showed 'Training finance error {"error":"MFA enrollment required"}' because these
+// routes re-read the governed auth refusal (already a JSON {error} body) as text and wrapped it again.
+test("real execution: Training finance and cancellation auth refusals return a plain message, not re-encoded JSON", async () => {
+  freshDb(); baseTables();
+  await call(opsRoute.GET, "GET");
+  seedCustomerIdentity("mallory@pawspace.test", "cus_other");
+  const read = await callAs(financeRoute.GET, "GET", "", "mallory@pawspace.test");
+  assert.equal(read.status, 403, JSON.stringify(read.body));
+  assert.equal(read.body.error, "Permission denied");
+  const write = await callAs(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "none", feeValue: 0, noShowTreatment: "refundable", effectiveFrom: "2026-08-01", reason: "customer must not publish policy" }, "mallory@pawspace.test");
+  assert.equal(write.status, 403, JSON.stringify(write.body));
+  assert.equal(write.body.error, "Permission denied");
+});
+
 // ---- 5. Cancellation money math: server-computed, policy-driven, 100%-refund platform rule ----
 
 test("real execution: cancellation refund math is exact and 100% of captured money returns on an untouched programme (fee none)", async () => {
@@ -655,4 +670,10 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   assert.match(panel, /\/api\/training-(ops|sessions)/);
   const financePage = fs.readFileSync(new URL("../app/team/finance/training/page.tsx", import.meta.url), "utf8");
   assert.match(financePage, /\/api\/training-(finance|cancellation)/);
+  // The invoice button must use the same payment vocabulary issueTrainingInvoice enforces; it once waited
+  // for "captured", which the funding state never holds, so a fully paid invoice could never be issued.
+  const financeLib = fs.readFileSync(new URL("../lib/training-finance.ts", import.meta.url), "utf8");
+  assert.match(financeLib, /String\(existing\.payment_status\)!=="FULLY_PAID"/);
+  assert.match(financePage, /String\(row\.payment_status\)!=="FULLY_PAID"/);
+  assert.doesNotMatch(financePage, /payment_status\)!=="captured"/);
 });
