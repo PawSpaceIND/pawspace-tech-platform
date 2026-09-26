@@ -231,12 +231,16 @@ jobs:
                 signal:AbortSignal.timeout(30000)
               });
               const headersMs=Date.now()-started;
-              let firstByteMs=null,firstDeltaMs=null,bodyText='';
+              let firstByteMs=null,firstDeltaMs=null,firstSubstantiveDeltaMs=null,bodyText='';
               const decoder=new TextDecoder();
               for await (const chunk of probe.body){
                 if(firstByteMs===null)firstByteMs=Date.now()-started;
                 bodyText+=decoder.decode(chunk,{stream:true});
                 if(firstDeltaMs===null&&bodyText.includes('"response.output_text.delta"'))firstDeltaMs=Date.now()-started;
+                if(firstSubstantiveDeltaMs===null)for(const line of bodyText.split('\n')){
+                  if(!line.startsWith('data: {'))continue;
+                  try{const event=JSON.parse(line.slice(6));if(event.type==='response.output_text.delta'&&String(event.delta||'').replace(/^I'm checking the details[. ]*/i,'').trim())firstSubstantiveDeltaMs=Date.now()-started;}catch{}
+                }
               }
               const totalMs=Date.now()-started;
               // One fat delta and many small ones are the same firstDeltaMs but opposite outcomes on a
@@ -256,7 +260,7 @@ jobs:
                 if(event.type==='response.completed'&&event.response&&event.response.pawspace_timing)turnTiming=event.response.pawspace_timing;
                 if(event.type==='response.failed')turnTiming={failed:event.response&&event.response.error};
               }
-              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,headersMs,firstByteMs,firstDeltaMs,totalMs,ms:totalMs,deltaCount,firstDeltaChars,contentType:probe.headers.get('content-type'),serverTiming:probe.headers.get('server-timing'),turnTiming,bodyPrefix:bodyText.slice(0,700)}));
+              console.log('GROOMING_LLM_PROBE='+JSON.stringify({status:probe.status,headersMs,firstByteMs,firstDeltaMs,firstSubstantiveDeltaMs,totalMs,ms:totalMs,deltaCount,firstDeltaChars,contentType:probe.headers.get('content-type'),serverTiming:probe.headers.get('server-timing'),turnTiming,bodyPrefix:bodyText.slice(0,700)}));
               console.log('GROOMING_LLM_PROBE_TAIL='+JSON.stringify({tail:bodyText.slice(-1400)}));
             } else console.log('GROOMING_LLM_PROBE='+JSON.stringify({skipped:true,hasCallId:Boolean(callId),hasSecret:Boolean(llmSecret)}));
           }

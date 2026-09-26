@@ -53,11 +53,11 @@ test("Specialist voice offer then confirmation executes reserve -> booking -> Ra
  ]};}};
  const {runElevenLabsGroundedTurn}=await import("../lib/elevenlabs-custom-llm.ts");
  const actions=(await provider.generate()).actionRequests;
- const razorFetch=globalThis.fetch;let modelCalls=0;
- globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
+ const razorFetch=globalThis.fetch;let modelCalls=0;const generation=Promise.withResolvers();t.after(()=>generation.resolve());
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only",ELEVENLABS_LLM_SECRET:"test-voice-secret"};
  globalThis.fetch=async(url,init)=>{
   if(!String(url).includes('api.openai.com'))return razorFetch(url,init);
-  modelCalls++;
+  await generation.promise;modelCalls++;
   const req=JSON.parse(init.body),input=JSON.parse(req.input);
   assert.ok(input.canonicalContext.pets.some(p=>p.id===petId));
   assert.equal(input.canonicalContext.salesService,'grooming');
@@ -65,7 +65,19 @@ test("Specialist voice offer then confirmation executes reserve -> booking -> Ra
   const envelope=JSON.stringify({reply:"Ready",actions});
   return Response.json({output_text:envelope,usage:{total_tokens:100}});
  };
- const offer=await runElevenLabsGroundedTurn(ctx.db,{model:'pawspace-grooming-sales',input:'I need grooming for Milo at my saved address on October 20.',elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}},undefined,()=>{});
+ const {POST}=await import('../app/api/elevenlabs/v1/responses/route.ts');
+ const response=await POST(new Request('https://test/api/elevenlabs/v1/responses',{method:'POST',headers:{authorization:'Bearer test-voice-secret','content-type':'application/json'},body:JSON.stringify({model:'pawspace-grooming-sales',input:'I need grooming for Milo at my saved address on October 20.',elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}})}));
+ const reader=response.body.getReader(),decoder=new TextDecoder();let stream='';
+ while(!stream.includes("I'm checking the details")){const part=await reader.read();assert.equal(part.done,false,'progress must arrive before the model is released');stream+=decoder.decode(part.value);}
+ assert.equal(modelCalls,0);generation.resolve();
+ for(;;){const part=await reader.read();if(part.done)break;stream+=decoder.decode(part.value);}
+ const events=stream.split('\n').filter(s=>s.startsWith('data: {')).map(s=>JSON.parse(s.slice(6)));
+ const completed=events.find(e=>e.type==='response.completed');assert.ok(completed,stream);
+ const spoken=events.filter(e=>e.type==='response.output_text.delta').map(e=>e.delta).join('');
+ assert.equal(events.find(e=>e.type==='response.output_text.done').text,spoken);
+ assert.equal(completed.response.output[0].content[0].text,spoken);
+ assert.doesNotMatch(spoken,/"actions"|"toolCode"/);
+ const offer={path:completed.response.pawspace_timing.path,output:spoken};
  assert.equal(offer.path,'orchestrator');
  assert.match(offer.output,/Shall I reserve/);
  assert.equal(ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get()?ctx.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n:0,0);

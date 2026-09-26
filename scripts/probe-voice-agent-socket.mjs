@@ -15,7 +15,7 @@ await new Promise((resolve,reject)=>{
   if(d.type==='agent_response'){
    const reply=String(d.agent_response_event?.agent_response||'');console.log('VOICE_SOCKET_REPLY='+JSON.stringify({ms:Date.now()-started,afterUser:sent,text:reply.slice(0,600)}));
    if(!sent){sent=true;started=Date.now();socket.send(JSON.stringify({type:'user_message',text:String(process.env.PROBE_INPUT||'Hi, I want to book a grooming service for tomorrow at 11 AM for my pet Bruno.')}));}
-   else if(!/^(one moment|just a moment|let me check|please wait)/i.test(reply.trim()))finish();
+   else {const substantive=reply.replace(/^I'm checking the details[. ]*/i,'').trim();if(substantive&&!/^(one moment|just a moment|let me check|please wait)/i.test(substantive))finish();}
   }else if(d.type==='error'){console.log('VOICE_SOCKET_ERROR='+JSON.stringify({type:d.type,keys:Object.keys(d),code:d.code??null}));finish(Error('Agent socket returned error'));}
  });
  socket.addEventListener('error',()=>finish(Error('Agent socket transport error')));

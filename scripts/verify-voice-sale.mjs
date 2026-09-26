@@ -11,7 +11,8 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  const headers={authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'};
  const meta=await request(base,{headers,signal:AbortSignal.timeout(30000)});const mb=await meta.json();
  if(!meta.ok||!mb.success||mb.result?.name!=='pawspace-staging')throw Error('Isolated staging database not verified');
- async function rows(sql,params=[]){const r=await request(base+'/query',{method:'POST',headers,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok||!b.success||b.result?.some(x=>!x.success))throw Error('Staging evidence query failed');return b.result.flatMap(x=>x.results||[]);}
+ let loggedD1=false;
+ async function rows(sql,params=[]){const r=await request(base+'/query',{method:'POST',headers,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(60000)});const b=await r.json();if(!r.ok||!b.success||b.result?.some(x=>!x.success))throw Error('Staging evidence query failed');if(!loggedD1){loggedD1=true;console.log('VOICE_D1_LOCATION='+JSON.stringify({metadata:b.result[0]?.meta,databaseKeys:Object.keys(mb.result),locationHint:mb.result.primary_location_hint}));}return b.result.flatMap(x=>x.results||[]);}
  const [call]=await rows('SELECT customer_id,mode,phone_last4 FROM voice_call_orders WHERE id=?',[callId]);
  if(!call||call.mode!=='uat'||call.phone_last4!==last4||!call.customer_id)throw Error('Voice call does not belong to confirmed UAT tester');
  const threadId='THREAD-VOICE-'+callId;
@@ -32,7 +33,7 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
  function safe(value){if(Array.isArray(value))return value.map(safe);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).flatMap(([k,v])=>v&&typeof v==='object'?[[k,safe(v)]]:allowed.has(k)?[[k,v]]:[]));return undefined;}
  console.log('VOICE_WORKER_DIAGNOSTICS='+JSON.stringify({status:telemetry.status,success:tb.success,events:safe(tb.result?.events||tb.result||{}),inbound,reservations,runtimeRequests,toolReads}));
  if(env.ELEVENLABS_API_KEY&&env.GROOMING_AGENT_ID){
-  for(const version of ['', 'agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs']){
+  for(const version of ['',String(env.VOICE_AGENT_VERSION_ID||'')].filter((v,i)=>i===0||v)){
    const ar=await request('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID)+(version?'?version_id='+version:''),{headers:{'xi-api-key':env.ELEVENLABS_API_KEY},signal:AbortSignal.timeout(30000)});const a=await ar.json();const llm=a.conversation_config?.agent?.prompt?.custom_llm||{};
    console.log('VOICE_AGENT_VERSION='+JSON.stringify({requestedVersion:version||'current',status:ar.status,versionId:a.version_id,branchId:a.branch_id,model:llm.model_id,url:llm.url,apiType:llm.api_type,keys:Object.keys(llm),credentialConfigured:Boolean(llm.api_key)}));
   }

@@ -155,7 +155,7 @@ export function speechGate(emit:(text:string)=>void){
  };
 }
 
-export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void){
+export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void,onProgress?:(delta:string)=>void){
  await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
  const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
@@ -191,6 +191,12 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{salesService,fastVoice:!salesService,onTiming:clock.mark});clock.mark("provider");
  const conversationHistory=extractElevenLabsHistory(body);
  const intent=classifyVoiceFollowup(inputText,conversationHistory);
+ // ElevenLabs can abandon a silent custom-LLM turn before governed database work
+ // reaches generation. This is progress only, never a price/availability/action claim.
+ // Emit after canonical identity and staff-pause checks, and keep the final reply separate.
+ if(salesService&&provider.status==="connected"&&!intent.policyRisk&&!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&intent.intent!=="human_handoff"){
+  onProgress?.("I'm checking the details... ");clock.mark("progress");
+ }
  const fastEligible=!salesService&&!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
   const canonical=await minimumContext(db,{customerId:ctx.customerId,threadId:ctx.threadId,fastVoice:true});clock.mark("canonicalContext");
