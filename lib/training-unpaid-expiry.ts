@@ -44,6 +44,7 @@ import{trainingPaymentPredicate}from"./training-payment-eligibility";
 import{ensureTrainingSessionLifecycleTables}from"./training-session-lifecycle";
 import{ensureTrainingCommercialTables}from"./training-commercial-governance";
 import{withLifecycleMutationLock}from"./lifecycle-mutation-lock";
+import{chunkedIn}from"./d1-chunked-in";
 import{reconcileRazorpayCaptureIntent}from"./razorpay-capture-reconciliation";
 import{evaluateCancellationRefund,resolveRefundPolicy,type RefundEvaluation}from"./refund-policy-governance";
 import{creditWallet}from"./pawspace-wallet-governance";
@@ -89,7 +90,7 @@ const round2=(value:number)=>Math.round(value*100)/100;
 const money=(value:unknown)=>round2(Math.max(0,Number(value||0)));
 const iso=(value:number)=>new Date(value).toISOString();
 async function errorText(error:unknown){if(error instanceof Response){try{return`${error.status}: ${(await error.clone().text()).slice(0,300)}`;}catch{return String(error.status);}}return error instanceof Error?error.message:String(error);}
-async function tableSet(db:Db,names:readonly string[]){const rows=await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${names.map(()=>"?").join(",")})`).bind(...names).all<Row>();return new Set(rows.results.map(row=>String(row.name)));}
+async function tableSet(db:Db,names:readonly string[]){const rows=await chunkedIn(names,async(chunk,placeholders)=>(await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`).bind(...chunk).all<Row>()).results);return new Set(rows.map(row=>String(row.name)));}
 
 /** The customer's WhatsApp notice. Plain words: what happened, that nothing was charged, what came back. */
 export function trainingUnpaidExpiryNotice(packageName?:string|null){const name=text(packageName);return`Your PawSpace Dog Training booking${name?` (${name})`:""} was not paid, so the trainer's sessions have been released. No money was taken, and any wallet credit or PawPoints you used on it have been returned. You can book again whenever you are ready.`;}
