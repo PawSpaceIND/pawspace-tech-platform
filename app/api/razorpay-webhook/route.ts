@@ -146,8 +146,15 @@ export async function POST(request:Request){
         await postBookingRefundCollectionReversal(db,{gatewayRefundId:replay.gatewayRefundId,amountSubunits:replay.amountSubunits,createdAt:replay.createdAt});
       }
       const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
-      if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
-      return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
+      // Another delivery may own the claim, or a Worker may have stopped before committing it.
+      // Re-read after effect recovery; a durable claim alone must never suppress provider retries.
+      // Match capture commit verification: do not base acknowledgement on a stale replica.
+      const readDb=(db as D1Database & {withSession?: (constraint:"first-primary")=>Pick<D1Database,"prepare">}).withSession?.("first-primary")??db;
+      const inbox=await readDb.prepare("SELECT processing_status FROM gateway_webhook_events WHERE id=?").bind(String(accepted.row.id)).first<Row>();
+      const status=String(inbox?.processing_status||"MISSING");
+      if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status,captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
+      if(status!=="PROCESSED"&&status!=="REJECTED")return json({ok:false,environment:gate.environment,duplicate:true,status,code:"inbox_processing_incomplete",retryable:true,captureEffectsRecovered:Boolean(effects?.completed)},503);
+      return json({ok:true,environment:gate.environment,duplicate:true,status,captureEffectsRecovered:Boolean(effects?.completed)});
     }
     try{
       if(eventType==="refund.processed"){
