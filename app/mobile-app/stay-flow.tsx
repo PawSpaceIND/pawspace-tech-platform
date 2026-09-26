@@ -5,7 +5,8 @@ import Link from "next/link";
 import {boardingCareDraft} from "../../lib/boarding-customer-care";
 import type {SittingCarePlan} from "../../lib/sitting-lifecycle";
 import { staySearchKey, canPlanStay, currentBoardingHost } from "../../lib/stay-search-state";
-import { meetGreetPrice } from "../../lib/meet-and-greet";
+import StayMeetingRequest,{type StayMeeting} from "./stay-meeting-request";
+import CaregiverPublicProfile from "./caregiver-public-profile";
 import SittingCustomerPanel from "./sitting-customer-panel";
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
@@ -74,11 +75,6 @@ const money = (n: number) =>
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(n);
-const shortDate = (value: string) =>
-  new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-  });
 const dateOffset = indiaDateOffset;
 const boardingPlaceholder: Caregiver = {
   providerId: "",
@@ -118,6 +114,7 @@ const toBoardingCaregiver = (host: BoardingHost): Caregiver => ({
 import type { LoggedInCustomer } from "./customer-login";
 export default function StayFlow({ mode: initialMode, customer, onModeChange, routeScope="legacy" }: { routeScope?:"legacy"|"v2"; mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
   const actionLock=useRef(false);
+  const[meeting,setMeeting]=useState<StayMeeting|null>(null);
   const bookingAttempt=useRef<{key:string;id:string;host?:BoardingHost;boarding?:BoardingQuote;sitting?:SittingQuote;schedule?:UatScheduleResult}|null>(null);
   const recoveryBookingId=useInitialBookingReference();
   const [boardingQuotedKey,setBoardingQuotedKey]=useState(""),[sittingQuotedKey,setSittingQuotedKey]=useState("");
@@ -144,8 +141,6 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [boardingHostWindowKey, setBoardingHostWindowKey] = useState(""),
     [boardingHostError, setBoardingHostError] = useState(""),
     [hostRetry, setHostRetry] = useState(0),
-    [meet, setMeet] = useState(true),
-    [meetFormat, setMeetFormat] = useState<"visit" | "call">("visit"),
     [taxi, setTaxi] = useState(false),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(false),
@@ -219,20 +214,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const extra = mode === "boarding" ? extraPets*boardingUnitPrice*boardingUnits : extraPets*(sittingQuote?.extraPetPrice??0)*(sittingQuote?.billableUnits??0);
   const protection = 0;
   const taxiFee = 0;
-  /* Owner decision 2026-09-22 (decision 1 of 10): the Sitting Meet & Greet price is Rs 499 everywhere
-   * the customer sees a price. It read Rs 500 on the option card and Rs 0 on the review line and the
-   * bill, and the split-payment note below told the customer a Rs 500 fee was "collected now" - three
-   * different answers, none of them the real one, for the same thing on one screen.
-   *
-   * The number comes from lib/meet-and-greet.ts, which is where the platform's Meet & Greet price
-   * actually lives (phone calls free, house visits Rs 499, waived for a stay of 5 days or more). Nothing
-   * is hardcoded here, so the screen cannot drift from the rule again.
-   *
-   * The waiver is NAMED rather than shown as Rs 0: the price is Rs 499 whether or not this particular
-   * stay is long enough to have it waived, and a silent Rs 0 is what made the old screen unreadable. */
-  const meetFee = meetGreetPrice("house_visit", 0).amount;
-  const meetFeeWaived = meetGreetPrice("house_visit", nights).waived;
-  const meetFeeLabel = meetFeeWaived ? `${money(meetFee)} · waived for stays of 5 nights or more` : money(meetFee);
+  const currentMeeting=meeting&&meeting.hostProviderId===caregiver.providerId&&meeting.intendedStayStart===start&&meeting.intendedStayEnd===end?meeting:null;
   const total = mode === "boarding" ? boardingQuote?.totalAmount??0 : sittingQuote?.totalAmount??0;
   const splitEligible = careWindow === "24 hours" && nights > 4;
   const reserveAmount = mode === "boarding" ? boardingQuote?.amountDueNow??0 : sittingQuote?.amountDueNow??0;
@@ -533,7 +515,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 <div className={styles.caregiverFoot}>
                   <span>
                     {mode === "boarding" && <b>{c.rating} ★</b>}
-                    {mode === "boarding" ? `${c.availableGuestPets ?? 0} guest-pet spots available` : "Reviews are not connected"}
+                    {mode === "boarding" ? `${c.availableGuestPets ?? 0} guest-pet spots available` : "No synthetic customer reviews shown"}
                   </span>
                   <strong>
                     {activeQuote ? money(activeQuote.basePricePerPet) : quoteError ? "Price unavailable" : "Calculating price…"}
@@ -554,7 +536,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 {caregiver.name} · {caregiver.capacity}
               </b>
               <span>
-                {mode === "boarding" ? "Identity, species eligibility and stay capacity come from PawSpace governed records. Host media and customer reviews are not connected in Boarding UAT." : "Availability comes from the current schedule. Profiles, reviews and live messaging are not connected."}
+                {mode === "boarding" ? "Identity, species eligibility and stay capacity come from PawSpace governed records. Published profile details are loaded below. Private messages and your service feedback are linked to the saved booking." : "Availability comes from the current schedule. Published profile details appear below; private chat opens from a confirmed booking."}
               </span>
             </div>
             <button onClick={() => setProfileOpen((open) => !open)}>
@@ -565,15 +547,10 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </button>
           </article>}
           {showCaregiver && chatOpen && (
-            mode === "boarding" ? <article className={styles.secureChat}><header><b>Boarding chat</b><span>UAT boundary</span></header><p>Live masked chat is not connected yet. This screen does not simulate host messages.</p></article> : <article className={styles.secureChat}><header><b>Sitter chat</b></header><p>Live sitter messaging is not connected. No message has been sent.</p></article>
+            mode === "boarding" ? <article className={styles.secureChat}><header><b>Boarding chat</b><span>UAT boundary</span></header><p>Before booking, request a separate introduction on the Care Card. Private chat is linked to the confirmed stay.</p></article> : <article className={styles.secureChat}><header><b>Sitter chat</b></header><p>Before booking, request a separate introduction on the Care Card. Private chat is linked to the confirmed Sitting booking.</p></article>
           )}
           {showCaregiver && profileOpen && (
-            <CaregiverProfile
-              mode={mode}
-              caregiver={caregiver}
-              start={start}
-              end={end}
-            />
+            <CaregiverPublicProfile key={caregiver.providerId} providerId={caregiver.providerId!}/>
           )}
           <button className={styles.back} onClick={() => setStage(1)}>
             ← Plan
@@ -603,47 +580,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
           </article>
           <div className={styles.careInstructions}><p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field])=>mode==="sitting"||field!=="homeAccess").map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>
           {mode==="boarding"&&<><div className={styles.sectionHead}><b>Requested extras</b><span>Subject to host agreement</span></div><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
-          <div className={styles.options}>
-            <label>
-              <input
-                type="checkbox"
-                checked={meet}
-                onChange={(e) => setMeet(e.target.checked)}
-              />
-              <span>
-                <b>
-                  {mode === "boarding"
-                    ? "3-hour host-home trial · Included"
-                    : `2-hour sitter Meet & Greet · ${meetFeeLabel}`}
-                </b>
-                <small>
-                  {mode === "boarding"
-                    ? "Visit the host home with your pet before the stay"
-                    : "The sitter visits your home to learn routines and access"}
-                </small>
-              </span>
-            </label>
-            {meet && (
-              <div className={styles.meetFormats}>
-                <button className={meetFormat === "call" ? styles.selected : ""} onClick={() => setMeetFormat("call")}>
-                  <b>10-minute phone call · Included</b>
-                  <small>Speak with the {mode === "boarding" ? "host" : "sitter"}, understand routines and ask questions before booking.</small>
-                </button>
-                <button className={meetFormat === "visit" ? styles.selected : ""} onClick={() => setMeetFormat("visit")}>
-                  <b>{mode === "boarding" ? "3-hour host-home trial · Included" : `2-hour home Meet & Greet · ${meetFeeLabel}`}</b>
-                  <small>{mode === "boarding" ? "Visit the home with your pet and check comfort before the stay." : "Meet the sitter at home, explain access and walk through the care routine."}</small>
-                </button>
-              </div>
-            )}
-            {mode === "boarding" && <p className={styles.hint}>Pet Taxi pricing is not enabled in Boarding Gate 1 and is excluded from the canonical quote.</p>}
-            <label>
-              <input type="checkbox" defaultChecked />
-              <span>
-                <b>Care Card updates</b>
-                <small>Meals, walks, medication, photos and check-in/out</small>
-              </span>
-            </label>
-          </div>
+          {caregiver.providerId&&<StayMeetingRequest key={`${mode}:${caregiver.providerId}:${start}:${end}`} providerId={caregiver.providerId} providerName={caregiver.name} serviceCode={mode==="boarding"?"boarding":"pet_sitting"} start={start} end={end} onRequested={setMeeting}/>}
+          <p className={styles.hint}>Care updates appear against the saved booking. Introduction requests are separate and never silently added to this stay bill.</p>
           <button className={styles.back} onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}>
             ← Caregiver
           </button>
@@ -689,22 +627,12 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             <span>
               Food<b>{foodType||"See care instructions"}</b>
             </span>
+            <span>Separate introduction<b>{currentMeeting?`${currentMeeting.id} · ${currentMeeting.status} · quoted fee ${money(currentMeeting.priceCharged)}; no collection claimed`:"Not requested"}</b></span>
             <span>
-              {mode === "boarding" ? "Host-home trial" : "Meet & Greet"}
-              <b>
-                {meet
-                  ? meetFormat === "call"
-                    ? "10-minute phone call · Included"
-                    : mode === "boarding"
-                      ? "3 hours · Included"
-                      : `2 hours · ${meetFeeLabel}`
-                  : "Skipped"}
-              </b>
-            </span>
-            <span>
-              Primary + secondary<b>Booking and emergency updates enabled</b>
+              Booking updates<b>View recorded care and requests in Activity</b>
             </span>
           </article>
+          {mode==="sitting"&&sittingQuote?.mode==="visit"&&<p>Home Visit uses the current flat price for the selected visit, not an hourly multiplication. The selected care window and number of pets are included in this quote.</p>}
           <div className={styles.bill}>
             <span>
               {caregiver.name} · {stayWindow.duration}<b>{quoteMoney(base)}</b>
@@ -723,20 +651,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 Tracked Pet Taxi<b>{money(taxiFee)}</b>
               </span>
             )}
-            {meet && (
-              <span>
-                {meetFormat === "call"
-                  ? "10-minute confidence call"
-                  : mode === "boarding"
-                    ? "3-hour host-home trial"
-                    : "2-hour sitter Meet & Greet"}
-                {/* The lines in this panel add up to the booking total beneath them, and a Sitting Meet
-                  * & Greet is not in that total - it is its own request with its own price. Showing
-                  * ₹499 here without saying so would make the arithmetic look broken; showing ₹0, which
-                  * is what it used to do, hid the price altogether. */}
-                <b>{meetFormat === "call" || mode === "boarding" ? "Included" : `${meetFeeLabel} · paid separately`}</b>
-              </span>
-            )}
+            {currentMeeting&&<p>Introduction {currentMeeting.id} is a separate request and is excluded from this stay total.</p>}
             <strong>
               Booking total<b>{quoteMoney(total)}</b>
             </strong>
@@ -773,22 +688,13 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   <small>{quoteMoney(total)} · no later balance</small>
                 </span>
               </button>
-              {meet && mode === "sitting" && meetFormat === "visit" && (
-                <p>
-                  {/* This used to read "The ₹500 meeting fee is collected now", which was wrong twice
-                    * over: the fee is ₹499, and it is not collected here at all. A Meet & Greet is its
-                    * own request with its own price (meet_greet_requests.price_charged) and never joins
-                    * the stay's quote, so the booking total below neither includes it nor splits it. */}
-                  The {money(meetFee)} Meet &amp; Greet is arranged and paid separately from this
-                  booking, so it is not part of the booking total and is not split 50/50.
-                </p>
-              )}
+
             </section>
           ) : (
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for hourly care and stays up to 4 nights"}</b>
+                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
                 <span>
                   {"50/50 split payment becomes available automatically for overnight stays longer than four nights."}
                 </span>
@@ -832,31 +738,6 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
       )}
     </section>
   );
-}
-
-function CaregiverProfile({
-  mode,
-  caregiver,
-  start,
-  end,
-}: {
-  mode: Mode;
-  caregiver: Caregiver;
-  start: string;
-  end: string;
-}) {
-  const boarding = mode === "boarding";
-  if (boarding && (!caregiver.providerId || !caregiver.availabilityVerified)) return null;
-  if (boarding) return (
-    <article className={styles.fullProfile}>
-      <header className={styles.profileHeader}><div><span>GOVERNED BOARDING HOST · UAT</span><h3>{caregiver.name}</h3><p>📍 {caregiver.area} · selected-window capacity verified</p></div><b>{caregiver.rating} ★</b></header>
-      <section className={styles.aboutProfile}><span>CANONICAL HOST PROFILE</span><h4>{caregiver.home}</h4><p>This view uses PawSpace host identity, verification, species eligibility and capacity records. It does not fabricate reviews, response times, media, amenities or day-by-day availability.</p></section>
-      <section className={styles.amenities}><div className={styles.profileSectionHead}><b>Governed eligibility</b><span>UAT canonical</span></div><div>{caregiver.features.map(item=><span key={item}>✓ {item}</span>)}</div></section>
-      <section className={styles.profileRules}><div><b>Selected stay window</b><span>{shortDate(start)}–{shortDate(end)} · {caregiver.capacity}</span></div><div><b>Availability source</b><span>Host profile + leave blocks + accepted stay locks + pending Boarding scheduler reservations.</span></div></section>
-      <footer className={styles.verifiedBar}><div><b>✓ Home verified</b><b>✓ KYC verified</b><b>✓ Background verified</b><b>✓ Capacity checked</b></div><span>Media, reviews and live communications are not connected in Boarding UAT.</span></footer>
-    </article>
-  );
-  return <article className={styles.fullProfile}><h3>{caregiver.name}</h3><p>{caregiver.area} · {caregiver.model === "full_time" ? "Full-time sitter" : "Commission sitter"}</p><p>Available for the selected care window when last checked. Confirmation rechecks availability.</p><p>Profile photos, ratings, reviews and live messaging are not connected.</p></article>;
 }
 
 function Head({ title, note }: { title: string; note: string }) {

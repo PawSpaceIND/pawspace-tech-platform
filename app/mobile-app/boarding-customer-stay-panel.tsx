@@ -2,6 +2,8 @@
 
 import{useEffect,useState,useRef,useCallback}from"react";
 import Link from"next/link";
+import CaregiverConversation from "./caregiver-conversation";
+import BookingServiceFeedback from "./booking-service-feedback";
 import {useIntentIdempotency,intentOf} from "../../lib/use-intent-idempotency";
 import{saveCustomerBoardingCare}from"../../lib/boarding-customer-care";
 import type{BoardingCarePlan}from"../../lib/boarding-stay-lifecycle";
@@ -43,6 +45,7 @@ export default function BoardingCustomerStayPanel({bookingId,caregiverName,initi
   <article className={styles.next}><span>CHANGE STAY DATES</span><h4>Request first; price and capacity are revalidated</h4><p>The customer request does not alter the paid stay. Finance/Operations must apply a fresh canonical quote; a lower-priced change is blocked until refund policy is approved.</p><label className={styles.field}>Requested check-in (IST)<input type="datetime-local" value={changeStart} onChange={event=>setChangeStart(event.target.value)} /></label><label className={styles.field}>Requested checkout (IST)<input type="datetime-local" value={changeEnd} onChange={event=>setChangeEnd(event.target.value)} /></label><label className={styles.field}>Reason<textarea value={changeReason} onChange={event=>setChangeReason(event.target.value)} placeholder="Why do you need to change the stay dates?" /></label><button className={styles.primary} disabled={busy==="date-change"||!changeAllowed||!changeStart||!changeEnd||changeReason.trim().length<3} onClick={requestDateChange}>{busy==="date-change"?"Recording request…":"Request date change"}</button></article>
   <article className={styles.next}><span>CANCELLATION</span><h4>Refund policy review required</h4><p>Submitting a cancellation request does not calculate or issue a refund. The approved amount must be set explicitly by Finance until Boarding cancellation policy is signed off.</p><label className={styles.field}>Reason<textarea value={cancelReason} onChange={event=>setCancelReason(event.target.value)} placeholder="Why do you need to cancel?" /></label><button className={styles.primary} disabled={busy==="cancel"||closed||cancelReason.trim().length<3} onClick={requestCancellation}>{busy==="cancel"?"Recording request…":"Request cancellation"}</button></article>
   <div className={styles.events}>{stay.events.length?stay.events.map(item=><article key={item.id}><i>✓</i><div><b>{label(item.event_type)}</b><span>{when(item.created_at)} · {item.actor_id}</span></div></article>):<article><i>○</i><div><b>No care events yet</b><span>Host acceptance, check-in and care updates will appear here from the canonical ledger.</span></div></article>}</div>
+  <CaregiverConversation key={bookingId} bookingId={bookingId}/><BookingServiceFeedback bookingId={bookingId} completed={stay.status==="completed"}/>
   <p className={styles.hint}>Boarding media is private, scan-gated and booking/provider scoped. WhatsApp/push live delivery, live storage upload, payment/refund execution and payout execution remain disconnected in UAT.</p>
  </>;
 }

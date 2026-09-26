@@ -1,5 +1,7 @@
 "use client";
 import {useCallback,useEffect,useRef,useState,type ReactNode} from 'react';
+import CaregiverConversation from "./caregiver-conversation";
+import BookingServiceFeedback from "./booking-service-feedback";
 import type {SittingCarePlan} from '../../lib/sitting-lifecycle';
 import {loadSittingCustomerView,saveSittingCustomerPlan,requestCustomerSittingCancellation,type SittingCustomerView} from '../../lib/sitting-customer-view';
 const fields=[['feeding','Food and water routine'],['medication','Medication instructions from your vet'],['emergencyContact','Emergency contact'],['vet','Vet contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const;
@@ -19,7 +21,7 @@ export default function SittingCustomerPanel({bookingId,children,initialCarePlan
   <header><h2 style={{fontSize:24,fontWeight:700}}>Your sitting booking</h2><p>{bookingId}</p><button disabled={loading||busy} onClick={refresh} style={{minHeight:44}}>Refresh booking</button></header>
   {loading&&<p role="status">Loading saved booking and care updates…</p>}
   {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
-  {data&&!loading&&<><section><h3>Booking status</h3><p>{label(data.status)}</p><p>Booking total: {data.totalAmount==null?"Unavailable":new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR"}).format(data.totalAmount)}</p><p>{when(data.scheduledStart)} – {when(data.scheduledEnd)}</p></section>
+  {data&&!loading&&<><CaregiverConversation key={bookingId} bookingId={bookingId}/><BookingServiceFeedback bookingId={bookingId} completed={data.status==="completed"}/><section><h3>Booking status</h3><p>{label(data.status)}</p><p>Booking total: {data.totalAmount==null?"Unavailable":new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR"}).format(data.totalAmount)}</p><p>{when(data.scheduledStart)} – {when(data.scheduledEnd)}</p></section>
    <form onSubmit={event=>{event.preventDefault();void save();}} style={{display:'grid',gap:12}}><h3>Care instructions</h3><p>{data.carePlanStatus?`Saved plan: ${label(data.carePlanStatus)}`:'No care plan has been saved yet.'}</p>
    {fields.map(([key,title])=><label key={key} style={{display:'grid',gap:6}}>{title}<textarea value={plan[key]||''} required={['emergencyContact','vet','homeAccess'].includes(key)} disabled={busy||closed} onChange={event=>setPlan(current=>({...current,[key]:event.target.value}))} style={{width:'100%',minHeight:72,padding:10,border:'1px solid #adbdb5',borderRadius:8,fontSize:16}} /></label>)}
    <button disabled={busy||closed} style={{minHeight:44,background:'#124d3c',color:'white',borderRadius:8}}>{busy?'Please wait…':'Save care instructions'}</button></form>
