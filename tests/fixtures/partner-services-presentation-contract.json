@@ -726,7 +726,7 @@
     "app/trainer/trainer.module.css": "0e4a6031b06bacf48054abdf14e72dcb25433ec9c6ecafffbabf5c903c71aa44",
     "app/training/canonical-training.module.css": "188c20c716ded17ff3b1361c43a108ce94c4b28eea88c6984b3910f46a3e7fea",
     "app/training/layout.tsx": "c22b614df9abdf59aa04d6442d11b49858ab1e298972782cf3e05e64a6a7c7d2",
-    "app/training/page.tsx": "29e01af4c25445f08714c5c31cafc42da0208663b932073908e6e631e631ff94",
+    "app/training/page.tsx": "3609efa383e86d647f50edbae82ea293611d0352df722cdf252cb71a61cb2b6b",
     "app/training/training.module.css": "48defc9bd958b76632d244ca7bcb52c2f719837d8dddcfe2c4ba03a2f4547d10",
     "app/unified-pawspace-theme.css": "6150444684a9e499afacf462d8b0e830d8225fe5ce6cafb351d55b4c7dea3f69",
     "app/v2/account/page.tsx": "9662b65283643fcc4682252006833b58f472cd897c7a375342d871943b9d2e44",

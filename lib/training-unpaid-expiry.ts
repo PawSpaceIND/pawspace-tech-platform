@@ -92,7 +92,7 @@ async function errorText(error:unknown){if(error instanceof Response){try{return
 async function tableSet(db:Db,names:readonly string[]){const rows=await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${names.map(()=>"?").join(",")})`).bind(...names).all<Row>();return new Set(rows.results.map(row=>String(row.name)));}
 
 /** The customer's WhatsApp notice. Plain words: what happened, that nothing was charged, what came back. */
-export function trainingUnpaidExpiryNotice(packageName?:string|null){const name=text(packageName);return`Your PawSpace Dog Training booking${name?` (${name})`:""} was not paid, so the trainer's sessions have been released. No money was taken. Any coupon, wallet credit or PawPoints you used on it have been returned to you. You can book again whenever you are ready.`;}
+export function trainingUnpaidExpiryNotice(packageName?:string|null){const name=text(packageName);return`Your PawSpace Dog Training booking${name?` (${name})`:""} was not paid, so the trainer's sessions have been released. No money was taken, and any wallet credit or PawPoints you used on it have been returned. You can book again whenever you are ready.`;}
 
 const tablesEnsured=new WeakSet<Db>();
 /**

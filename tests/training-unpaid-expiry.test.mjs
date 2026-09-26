@@ -397,7 +397,7 @@ test("the customer's WhatsApp notice commits with the expiry, reads plainly, goe
   assert.equal(notice.template_code, TRAINING_UNPAID_EXPIRY_NOTICE_TEMPLATE);
   assert.equal(notice.event_id, `training-unpaid-expiry:${id}`, "the notice points at the lifecycle event it announces");
   assert.equal(notice.customer_id, CUSTOMER);
-  assert.equal(notice.message, "Your PawSpace Dog Training booking (Obedience Starter) was not paid, so the trainer's sessions have been released. No money was taken. Any coupon, wallet credit or PawPoints you used on it have been returned to you. You can book again whenever you are ready.");
+  assert.equal(notice.message, "Your PawSpace Dog Training booking (Obedience Starter) was not paid, so the trainer's sessions have been released. No money was taken, and any wallet credit or PawPoints you used on it have been returned. You can book again whenever you are ready.");
   assert.doesNotMatch(notice.message, /payment_pending|unpaid|expir|reservation|window|marker|sweep|refund|cancelled/i, "no internal terms");
   const messages = rows(world, "SELECT channel,purpose,template_key,payload_json FROM communication_messages WHERE booking_id=?", id);
   assert.equal(messages.length, 1, JSON.stringify(messages));
