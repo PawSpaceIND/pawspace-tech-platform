@@ -151,3 +151,68 @@ test("existing Taxi staging databases receive additive coordinate columns on BOT
   for(const column of COORDS)assert.ok(columns.has(column),`${table}.${column} must be added to a pre-existing table`);
  }
 });
+
+// ---------------------------------------------------------------------------------------------
+// ROUND 2 (26 Sep 2026 staging): a fare quote ran ~45 s and the customer read "Unexpected token '<'" (the
+// platform's HTML error page parsed as JSON); a pickup at Mysore Palace was priced and bookable; and the
+// Citroën card printed rule codes.
+const MYSORE_LABEL="Mysore Palace, Mysuru",AIRPORT_LABEL="Kempegowda International Airport, Bengaluru";
+GEOCODED[MYSORE_LABEL]={latitude:12.3052,longitude:76.6552};
+GEOCODED[AIRPORT_LABEL]={latitude:13.1986,longitude:77.7066};
+const quoteRequest=body=>new Request(taxiUrl("/api/taxi-commercial"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({scheduledStart:futurePickup(),passengerCount:1,petCount:1,luggageCount:0,originLabel:PICKUP_LABEL,destinationLabel:DROP_LABEL,...body})});
+
+test("round 2: a quote that runs past its deadline answers a governed 503 with Retry-After, not the platform's page",async t=>{
+ const{db}=world();stubMaps(t);
+ // D1 stops answering while the quote is written (staging: ~45 s, then the platform's HTML 500).
+ db.onSql("INSERT INTO taxi_ride_quotes",()=>new Promise(()=>{}));
+ const started=performance.now(),response=await commercialRoute.executeTaxiRideQuote(quoteRequest({}),{deadlineMs:150}),elapsed=performance.now()-started;
+ assert.equal(response.status,503);
+ assert.equal(response.headers.get("retry-after"),"5");
+ assert.match(response.headers.get("content-type")||"",/application\/json/);
+ const body=await response.json();
+ assert.deepEqual({code:body.code,retryAfterSeconds:body.retryAfterSeconds},{code:"TAXI_QUOTE_TIMEOUT",retryAfterSeconds:5});
+ assert.match(body.error,/taking longer than usual\. Please try again/);
+ assert.ok(elapsed<1000,`answered at the deadline (${Math.round(elapsed)} ms), not when D1 came back`);
+ assert.ok(commercialRoute.TAXI_QUOTE_DEADLINE_MS<=25_000,"the live deadline answers before the ~30 s platform and proxy cut-offs");
+});
+
+test("round 2: a D1 failure during a quote is a governed 503 retry, never a raw or redacted 500",async t=>{
+ const{db}=world();stubMaps(t);
+ db.onSql("INSERT INTO taxi_ride_quotes",()=>{throw new Error("D1_ERROR: Currently processing a long-running import.");});
+ const response=await commercialRoute.POST(quoteRequest({}));
+ const body=await response.json();
+ assert.equal(response.status,503,JSON.stringify(body));
+ assert.equal(body.code,"TAXI_QUOTE_UNAVAILABLE");
+ assert.doesNotMatch(body.error,/D1_ERROR|commercial request failed/);
+ assert.match(body.error,/Please try again/);
+ // Non-vacuity: once D1 answers again, the same request is priced.
+ assert.equal((await commercialRoute.POST(quoteRequest({}))).status,201);
+});
+
+test("round 2: a pickup outside the service area is refused on its geocoded coordinates before any route is priced",async t=>{
+ world();const routeBodies=stubMaps(t);
+ const mysore=await commercialRoute.POST(quoteRequest({originLabel:MYSORE_LABEL}));
+ const body=await mysore.json();
+ assert.equal(mysore.status,409,JSON.stringify(body));
+ assert.match(body.error,/PawSpace Pet Taxi picks up only within Bengaluru \(up to 35 km from the city centre\)/);
+ assert.equal(routeBodies.length,0,"no Routes call is spent on a pickup PawSpace cannot serve");
+ // Inside the city - the airport included - is priced, and a long ride OUT of the city is a product, not a refusal.
+ assert.equal((await commercialRoute.POST(quoteRequest({originLabel:AIRPORT_LABEL,ridePurpose:"airport"}))).status,201);
+ assert.equal((await commercialRoute.POST(quoteRequest({destinationLabel:MYSORE_LABEL}))).status,201);
+ const{assertTaxiPickupInServiceArea}=await import("../lib/taxi-service-area.ts");
+ const{db}=world();
+ await assert.rejects(()=>assertTaxiPickupInServiceArea(db,{pickup:GEOCODED[MYSORE_LABEL],cityId:"blr"}),error=>error instanceof Response&&error.status===409);
+ assert.equal((await assertTaxiPickupInServiceArea(db,{pickup:PICKUP,cityId:"blr"}))?.cityCode,"blr");
+});
+
+test("round 2: the Citroën card explains why it cannot take the ride in plain words",async t=>{
+ world();stubMaps(t);
+ const response=await commercialRoute.POST(quoteRequest({passengerCount:4,petCount:3,luggageCount:4}));
+ const body=await response.json();
+ assert.equal(response.status,201,JSON.stringify(body));
+ const citroen=body.data.fareOptions.citroen_ec3;
+ assert.equal(citroen.eligible,false);
+ assert.equal(citroen.ineligibleReason,"Seats up to 3 passengers and 3 bags — choose the XUV");
+ assert.doesNotMatch(citroen.ineligibleReason,/more_than|_/);
+ assert.equal(body.data.fareOptions.xuv.eligible,true);
+});
