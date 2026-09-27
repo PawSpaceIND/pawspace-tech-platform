@@ -12,7 +12,7 @@ import { createTestTransaction } from "../../lib/test-transaction";
 import { trainingTestPayment, trainingTestProviderModel } from "../../lib/training-test-record";
 import CouponField from "./coupon-field";
 import BookingPaymentPage from "./booking-payment-page";
-import { isProviderSlotRefusal, reserveUatSchedule } from "../../lib/uat-scheduling-client";
+import { isProviderSlotRefusal, previewUatProviders, reserveUatSchedule, type UatScheduleRequest } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import StayAddress from "./stay-address";
 import type { StayLocation } from "../../lib/stay-saved-address";
@@ -96,6 +96,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const actionLock=useRef(false);
   const [plans,setPlans]=useState<Plan[]>([]);
   const [trainers,setTrainers]=useState<TrainingTrainer[]>([]);
+  // Trainers free for every session of one calendar, found after the chosen trainer was refused for it.
+  const [calendarAlternatives,setCalendarAlternatives]=useState<{key:string;trainers:TrainingTrainer[]}|null>(null);
   const [trainerId,setTrainerId]=useState("");
   const [confirmedTrainerName,setConfirmedTrainerName]=useState("");
   const [meetTrainerName,setMeetTrainerName]=useState("");
@@ -196,6 +198,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const recommendation = recommendTrainingPlan({ goals: selectedGoals, packageCodes: plans.map((item) => item.packageCode), dogs: selectedPetObjs });
   const recommendedPlan = plans.find((item) => item.packageCode === recommendation?.packageCode) || null;
   const petKey = [...selectedPets].sort().join(",");
+  const calendarKey=[selectedStartIso,frequency,time,trainerId,petKey].join("|");
+  const calendarTrainers=calendarAlternatives?.key===calendarKey?calendarAlternatives.trainers:[];
   const meetLinked = Boolean(meetBookingId) && meetPetKey === petKey;
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
   const primaryPet = selectedPetObjs[0] ?? dogs[0];
@@ -281,7 +285,20 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const linkedMeetBookingId=meetLinked?meetBookingId:"";
         const mode=paymentMode==="full"?"prepaid":"split",quote=checkoutQuote,end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=trainingProgrammeRequestId({customerId:customer.customerId,petIds:selectedPets,packageCode:quote.packageCode,scheduledStart:selectedStart.toISOString(),frequency,trainingCategory,healthSafetyNotes,behaviourNotes});
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
+        const schedule:Omit<UatScheduleRequest,"clientRequestId">={customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency]};
+        let decision:Awaited<ReturnType<typeof reserveUatSchedule>>;
+        try{decision=await reserveUatSchedule({...schedule,clientRequestId:requestId,preferredProviderId:selectedTrainer?.id});}
+        catch(problem){
+          if(!isProviderSlotRefusal(problem)||!selectedTrainer)throw problem;
+          // Training selection is strict (lib/provider-assignment-policy.ts): PawSpace never substitutes the trainer.
+          // The trainer list is the roster for the first session only, so the chosen trainer can already be booked at
+          // one of this calendar's exact windows (staging master E2E 36278778677). Show who is free for every
+          // session of the same calendar, and let the customer choose.
+          const preview=await previewUatProviders({...schedule,clientRequestId:`${requestId}:alternatives`},{timeoutMs:60_000}).catch(()=>null);
+          const free=(preview?.providers??[]).flatMap(provider=>{const trainer=trainers.find(item=>item.id===provider.id);return trainer&&trainer.id!==selectedTrainer.id?[trainer]:[];});
+          setCalendarAlternatives({key:calendarKey,trainers:free});
+          throw free.length?new Error(`${selectedTrainer.name} is not free for every session of this calendar. Choose a trainer below who is, or change the time or days.`):preview?new Error(`No trainer is free for every session of this calendar (${frequency} · ${time}). Choose another time or other days.`):problem;
+        }
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:quote.couponCode||undefined,couponQuoteId:quote.couponQuoteId||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
         setConfirmedTrainerName(decision.provider.name);setBookingId(canonical.bookingId);
@@ -481,6 +498,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           <button className={styles.back} onClick={() => setStage(4)}>← Calendar</button>
           <button disabled={!agreed || scheduling || !checkoutQuote || selectedPets.length === 0 || !coverage} className={styles.primary} onClick={confirm}>{scheduling ? "Reserving all sessions…" : !checkoutQuote ? "Refreshing server quote…" : `Pay ${money(payableNow)} & request trainer approval`}</button>
           {scheduleError && <p role="alert">{scheduleError}</p>}
+          {calendarTrainers.length > 0 && <div className={styles.trainers} role="group" aria-label="Trainers free for every session">{calendarTrainers.map((item) => <button key={item.id} onClick={() => {setTrainerId(item.id);setScheduleError("");}}><i>{item.name.split(" ").map((x) => x[0]).join("")}</i><div><span>Free for every session of this calendar</span><h4>{item.name} · {item.rating.toFixed(1)} ★</h4><p>Quality {item.qualityScore}/100 · capacity {item.capacity}</p><small>Choose, then confirm again to reserve</small></div><em></em></button>)}</div>}
         </section>
       )}
     </>
