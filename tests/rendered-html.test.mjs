@@ -190,12 +190,13 @@ test("renders the evidence-based System Integration Control", async () => {
 });
 
 test("keeps the four-vertical closure UX explicit and partner-connected", async () => {
-  const [grooming, training, stays, host, partner] = await Promise.all(
+  const [grooming, training, stays, host, hostToday, partner] = await Promise.all(
     [
       "app/mobile-app/grooming-flow.tsx",
       "app/mobile-app/training-flow.tsx",
       "app/mobile-app/stay-flow.tsx",
       "app/host/page.tsx",
+      "app/host/host-today-stays.tsx",
       "app/partner-app/page.tsx",
     ].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
@@ -218,7 +219,9 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(stays, /Available sitters for your care window/);
   assert.doesNotMatch(stays, /TEST PARTNER PROFILE|What pet parents say/);
   assert.match(host, /GOVERNED BOARDING HOST PROFILE/);
-  assert.match(host, /Canonical Care Card/);
+  // The Care Card is rendered once per due or active stay, by the Today component the host page uses (R2-P02).
+  assert.match(host, /<HostTodayStays /);
+  assert.match(hostToday, /Canonical Care Card/);
   assert.match(partner, /LIVE CUSTOMER PROFILE/);
 });
 
@@ -631,4 +634,7 @@ test("consolidates PawSpace into four role-based entry points", async () => {
 });
 
 
-test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel]){assert.doesNotMatch(src,/Payment is captured/);assert.match(src,/Payment status is tracked separately/);}});
+// Round-2 BRD-02: the stay screens used to say "Payment status is tracked separately on the canonical booking payment
+// record". They now read that record (tests/boarding-customer-honesty.test.mjs renders it) and still never claim a
+// capture from the stay status.
+test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel,view]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx","lib/boarding-customer-stay-view.ts"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel,view]){assert.doesNotMatch(src,/Payment is captured/);}assert.match(view,/stay\.payment_status/);assert.match(view,/stay\.booking_status/);});

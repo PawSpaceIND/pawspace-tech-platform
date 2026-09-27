@@ -339,15 +339,17 @@ async function overnightAllAddOns(flow, net) {
   BK[id] = r;
   const combo = `2 nights ${r.dates.start}→${r.dates.end}, dog + cat, all ${ALL_EXTRAS.length} add-ons + food "${FOOD}", pay in full`;
   // Add-ons: are they priced and itemised? (round-1 BRD-01: listed but not priced)
-  const rv = r.review || {}, listed = ALL_EXTRAS.filter(x => String(rv.rows?.["Care benefits"] || "").includes(x));
+  const rv = r.review || {}, requestsRow = String(rv.rows?.["Requests for your host"] ?? rv.rows?.["Care benefits"] ?? ""), listed = ALL_EXTRAS.filter(x => requestsRow.includes(x));
+  // No add-on price exists (owner decision pending): the honest state is "requests, not included in this price".
+  const markedNotIncluded = /not included in this price/i.test(requestsRow) && /Not included in this total/i.test(rv.bill || "");
   const itemised = ALL_EXTRAS.filter(x => (rv.billLines || []).some(line => line.includes(x)));
   const quote = r.reviewQuote, quoteHasAddOns = quote ? Object.keys(quote).some(k => /addon|add_on|extra/i.test(k) && k !== "extraPetPrice") : false;
   const unpricedTotal = quote && near(quote.totalAmount, Number(quote.basePricePerPet) * Number(quote.petCount) * Number(quote.stayUnits));
   const addOnEvidence = r.shots.filter(s => /care-card|review/.test(s));
   if (r.review) {
     const priced = itemised.length > 0 || quoteHasAddOns || (quote && !unpricedTotal);
-    rec("B2-add-ons", `${ALL_EXTRAS.length} Care Card add-ons on a 2-night dog + cat stay`, priced ? "PASS" : "FAIL", `Care Card offers [${(r.careCard?.extrasOnScreen || []).join(", ")}] under "Requested extras · Subject to host agreement"; review "Care benefits": "${rv.rows?.["Care benefits"] || ""}" (${listed.length}/${ALL_EXTRAS.length} listed); bill lines [${(rv.billLines || []).join(" | ")}] itemise ${itemised.length} add-on(s); governed quote ${quote ? `${inr(quote.basePricePerPet)}×${quote.petCount}×${quote.stayUnits} = ${inr(quote.totalAmount)} (no add-on fields)` : "not captured"}; food "${rv.rows?.Food || ""}"`, addOnEvidence);
-    if (!priced && listed.length) file("BRD-01", { severity: "P2", area: "Boarding add-ons", flow: "/v2/boarding Care Card → Review", title: "Boarding add-ons are still listed but neither priced nor itemised (BRD-01 re-verified on staging)", steps: `Plan 2 nights dog + cat → Care Card: select ${ALL_EXTRAS.join(", ")} → Review`, expected: "Each chargeable add-on priced and itemised on the bill (or clearly marked free/included), and the total/Razorpay order to match", actual: `Review lists "${rv.rows?.["Care benefits"]}" under Care benefits, but the bill is only [${(rv.billLines || []).join(" | ")}] and the governed quote carries no add-on amount (total ${inr(quote?.totalAmount)} = ${inr(quote?.basePricePerPet)} × ${quote?.petCount} pets × ${quote?.stayUnits} nights). The Care Card only says "Subject to host agreement"; the add-ons reach the host as free text.`, evidence: addOnEvidence });
+    rec("B2-add-ons", `${ALL_EXTRAS.length} Care Card add-ons on a 2-night dog + cat stay`, priced || markedNotIncluded ? "PASS" : "FAIL", `Care Card offers [${(r.careCard?.extrasOnScreen || []).join(", ")}]; review "Requests for your host": "${requestsRow}" (${listed.length}/${ALL_EXTRAS.length} listed, marked not included=${markedNotIncluded}); bill "${rv.bill || ""}"; bill lines [${(rv.billLines || []).join(" | ")}] itemise ${itemised.length} add-on(s); governed quote ${quote ? `${inr(quote.basePricePerPet)}×${quote.petCount}×${quote.stayUnits} = ${inr(quote.totalAmount)} (no add-on fields)` : "not captured"}; food "${rv.rows?.Food || ""}"`, addOnEvidence);
+    if (!priced && !markedNotIncluded && listed.length) file("BRD-01", { severity: "P2", area: "Boarding add-ons", flow: "/v2/boarding Care Card → Review", title: "Boarding add-ons are still listed but neither priced nor itemised (BRD-01 re-verified on staging)", steps: `Plan 2 nights dog + cat → Care Card: select ${ALL_EXTRAS.join(", ")} → Review`, expected: "Each chargeable add-on priced and itemised on the bill (or clearly marked free/included), and the total/Razorpay order to match", actual: `Review lists "${rv.rows?.["Care benefits"]}" under Care benefits, but the bill is only [${(rv.billLines || []).join(" | ")}] and the governed quote carries no add-on amount (total ${inr(quote?.totalAmount)} = ${inr(quote?.basePricePerPet)} × ${quote?.petCount} pets × ${quote?.stayUnits} nights). The Care Card only says "Subject to host agreement"; the add-ons reach the host as free text.`, evidence: addOnEvidence });
   }
   else rec("B2-add-ons", `${ALL_EXTRAS.length} Care Card add-ons on a 2-night dog + cat stay`, "BLOCKED", `the V2 page did not reach Review: ${reviewBrief(r)}`, r.shots);
   if (!r.bookingId) { rec(id, combo, r.stage === "hosts" && !r.hosts?.timeouts ? "BLOCKED" : "FAIL", `stopped at ${r.stage}: ${reviewBrief(r)}; ${r.noHost || ""} ${(r.create?.errors || []).join(" | ")}`, r.shots); return r; }
@@ -452,9 +454,10 @@ async function validations(flow, net) {
   if (timeLeft() < 180_000) { for (const k of ["B4c", "B4d", "B4e"]) rec(k, "needs hosts, price and the Review step", "SKIPPED", "suite time budget"); return; }
   const planText = await H.mainText(page);
   const c = await bookStay(flow, net, { label: "B4c", dates: DATES.B4, pets: [PETS.pup], create: true, expectRefusal: true, open: false });
-  const cAlert = (c.create?.errors || []).join(" | ") || c.create?.lastAlert || "";
+  const planRefusal = c.hosts?.blocked ? c.hosts.planAlert || "" : "";
+  const cAlert = (c.create?.errors || []).join(" | ") || c.create?.lastAlert || planRefusal;
   const refusedClientSide = /verified vaccination/i.test(cAlert) && !c.bookingId;
-  const warnedEarlier = /vaccin/i.test(planText) || /vaccin/i.test((c.hosts?.hosts || []).map(h => h.text).join(" ")) || /vaccin/i.test(c.review?.review || "");
+  const warnedEarlier = /vaccin/i.test(planText) || /vaccin/i.test(planRefusal) || /vaccin/i.test((c.hosts?.hosts || []).map(h => h.text).join(" ")) || /vaccin/i.test(c.review?.review || "");
   rec("B4c", `unvaccinated pet (${PETS.pup}) — where the flow refuses it`, refusedClientSide ? (warnedEarlier ? "PASS" : "PARTIAL") : c.bookingId ? "FAIL" : "BLOCKED", `restored address CTA "${restored.cta}"; host step reached=${c.hosts?.state === "hosts"} (${(c.hosts?.hosts || []).length} hosts), Care Card and Review reached=${Boolean(c.review)}; refusal at the final "Create stay request & review payment" click: "${cAlert}"; any earlier vaccination hint=${warnedEarlier}; booking created=${c.bookingId || "no"}`, c.shots);
   if (refusedClientSide && !warnedEarlier) file("BRD-06", { severity: "P3", area: "Boarding UX", flow: "/v2/boarding", title: "An unvaccinated pet is refused only at the final click (BRD-06 re-verified on staging)", steps: `Select ${PETS.pup} (vaccination not provided) → See available homes → host → Care Card → Review → Create stay request`, expected: "The Plan step flags the pet (or hides it) before the customer builds the whole stay", actual: `Hosts, price, Care Card and Review all accept the pet; only the final click says "${cAlert}"`, evidence: c.shots });
   if (c.bookingId) { file("B4c-created", { severity: "P1", area: "Boarding validation", flow: "/v2/boarding", title: "A Boarding stay was created for an unvaccinated pet", steps: `Book ${PETS.pup}`, expected: "Refused", actual: `booking ${c.bookingId}`, evidence: c.shots }); await cancelUnpaid(flow, c.bookingId, "B4c"); }
@@ -468,7 +471,7 @@ async function validations(flow, net) {
   ]) {
     if (timeLeft() < 150_000) { rec(key, combo, "SKIPPED", "suite time budget"); continue; }
     const x = await bookStay(flow, net, { label: key, dates: d, pets: [PETS.dog], create: true, expectRefusal: true });
-    const msg = (x.create?.errors || []).filter(e => !H.TRANSPORT.test(e)).at(-1) || x.create?.lastAlert || "";
+    const msg = (x.create?.errors || []).filter(e => !H.TRANSPORT.test(e)).at(-1) || x.create?.lastAlert || (x.hosts?.blocked ? x.hosts.planAlert || "" : "");
     const reserveRow = net.reserve.at(-1) || {};
     const refused = !x.bookingId && Boolean(msg);
     const specific = expectText.test(msg);
@@ -503,7 +506,7 @@ async function manageB2(flow) {
   // Care plan save.
   const marker = `Updated from the manage page (${String(SEED).slice(-4)})`;
   await page.getByLabel(/^Special instructions/).first().fill(`${careBefore.specialInstructions || CARE.specialInstructions}\n${marker}`);
-  const save = await H.manageAction(page, page.getByRole("button", { name: /^(Save canonical care plan|Saving…)$/ }), { busyLabel: "Saving…", expect: /Care instructions saved/ });
+  const save = await H.manageAction(page, page.getByRole("button", { name: /^(Save care plan|Save canonical care plan|Saving…)$/ }), { busyLabel: "Saving…", expect: /Care instructions saved/ });
   const staySaved = await readStay(context, b2.bookingId);
   const persisted = staySaved === undefined ? null : String(staySaved?.carePlan?.plan?.specialInstructions || "").includes(marker);
   const saveShot = await flow.shot("B5-care-plan-saved");
@@ -519,7 +522,7 @@ async function manageB2(flow) {
   const stayAfter = await readStay(context, b2.bookingId);
   const unchanged = stayAfter && Date.parse(stayAfter.check_in_at) === Date.parse(H.istIso(b2.dates.start, b2.dates.startTime));
   const changeShot = await flow.shot("B5-date-change");
-  rec("B5-date-change", `request a date change (+1 day) on ${b2.bookingId}`, change.ok && /commercial quote required/i.test(change.message) && unchanged ? "PASS" : change.ok ? "PARTIAL" : "FAIL", `requested ${ns.date} ${ns.time} → ${ne.date} ${ne.time} IST; outcome "${change.message || change.alerts.join(" | ")}" in ${Math.round(change.ms / 1000)} s; paid stay window unchanged=${unchanged} (${stayAfter?.check_in_at} → ${stayAfter?.check_out_at})`, [changeShot]);
+  rec("B5-date-change", `request a date change (+1 day) on ${b2.bookingId}`, change.ok && /commercial quote required|waiting for PawSpace to price it/i.test(change.message) && unchanged ? "PASS" : change.ok ? "PARTIAL" : "FAIL", `requested ${ns.date} ${ns.time} → ${ne.date} ${ne.time} IST; outcome "${change.message || change.alerts.join(" | ")}" in ${Math.round(change.ms / 1000)} s; paid stay window unchanged=${unchanged} (${stayAfter?.check_in_at} → ${stayAfter?.check_out_at})`, [changeShot]);
   if (!change.ok) file("B5-date-change", { severity: "P1", area: "Boarding manage page", flow: "/v2/boarding/manage date change", title: "A customer date-change request on a paid stay was not recorded", steps: `Manage ${b2.bookingId} → Change stay dates (+1 day) → Request date change`, expected: "Recorded · Commercial quote required", actual: change.alerts.join(" | ") || "no confirmation", evidence: [changeShot] });
   // Extension and messaging before the host has accepted.
   const view = await H.readManage(flow, "B5-extension-messaging");
@@ -584,7 +587,7 @@ async function unpaidReservation(flow, net) {
   const spotsBefore = await hostSpots(context, r.dates, 1, "dog");
   const manageUnpaid = await H.openManage(flow, r.bookingId, "B5-unpaid-manage");
   const mentionsPayment = /payment (is )?pending|awaiting payment|unpaid|not (yet )?paid|pay now|complete (your )?payment|Pay securely/i.test(manageUnpaid.text);
-  if (!mentionsPayment) file("BRD-02", { severity: "P2", area: "Boarding manage page", flow: "/v2/boarding/manage (unpaid)", title: "An unpaid Boarding reservation's manage page shows no payment-pending state or pay link (BRD-02 re-verified)", steps: `Create ${r.bookingId}, do not pay, open Manage`, expected: "Payment pending + a way to pay (or a link to the booking page)", actual: `"${manageUnpaid.status}": ${oneLine(manageUnpaid.text.match(/CANONICAL BOARDING STAY.{0,260}/)?.[0], 260)}`, evidence: [manageUnpaid.shot] });
+  if (!mentionsPayment) file("BRD-02", { severity: "P2", area: "Boarding manage page", flow: "/v2/boarding/manage (unpaid)", title: "An unpaid Boarding reservation's manage page shows no payment-pending state or pay link (BRD-02 re-verified)", steps: `Create ${r.bookingId}, do not pay, open Manage`, expected: "Payment pending + a way to pay (or a link to the booking page)", actual: `"${manageUnpaid.status}": ${oneLine(manageUnpaid.text.match(/(?:CANONICAL )?BOARDING STAY.{0,260}/)?.[0], 260)}`, evidence: [manageUnpaid.shot] });
   const res = await cancelUnpaid(flow, r.bookingId, id);
   const shot = await flow.shot("B5-unpaid-cancelled");
   const statusAfter = await H.checkoutStatus(context, r.bookingId);

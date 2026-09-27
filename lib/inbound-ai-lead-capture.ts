@@ -1,5 +1,6 @@
 import { ensureCustomer360Tables } from "./customer-360";
 import { ensureHaptikTables } from "./haptik-integration-governance";
+import { storedCustomerPhone } from "./customer-phone";
 
 type Row = Record<string, unknown>;
 const text = (value: unknown) => String(value ?? "").trim();
@@ -14,6 +15,8 @@ export async function resolveOrCaptureInboundCaller(db: D1Database, caller: stri
   await Promise.all([ensureCustomer360Tables(db), ensureHaptikTables(db)]);
   await db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   const callerKey = digits(caller);
+  // The one stored form of the number (the carrier sends "+91 98765 43210", "09876543210"...), as every intake stores it.
+  const storedPhone = storedCustomerPhone(caller);
   if (callerKey.length !== 10) throw new Response("Inbound caller number is invalid", { status: 400 });
 
   const customers = (await db.prepare(
@@ -28,7 +31,7 @@ export async function resolveOrCaptureInboundCaller(db: D1Database, caller: stri
   const contactId = contact ? text(contact.id) : `INBOUND-${callerKey}`;
   if (!contact) {
     await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,stage,owner,source,created_at,updated_at) VALUES (?,?,?,?, 'New lead','Unassigned','inbound_voice',?,?)")
-      .bind(contactId, `Inbound caller ${callerKey.slice(-4)}`, caller, null, asOf, asOf).run();
+      .bind(contactId, `Inbound caller ${callerKey.slice(-4)}`, storedPhone, null, asOf, asOf).run();
   }
 
   let lead = await db.prepare("SELECT id FROM lead_work_items WHERE customer_id=? AND status IN ('active','sla_breached','qualified') ORDER BY created_at DESC LIMIT 1")
@@ -41,6 +44,6 @@ export async function resolveOrCaptureInboundCaller(db: D1Database, caller: stri
   }
 
   await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?, ?,NULL,NULL,'inbound_voice_lead','{}',?,?)")
-    .bind(contactId, "blr", `Inbound caller ${callerKey.slice(-4)}`, caller, asOf, asOf).run();
+    .bind(contactId, "blr", `Inbound caller ${callerKey.slice(-4)}`, storedPhone, asOf, asOf).run();
   return { customerId: contactId, leadId: text(lead.id), callerKey, capturedLead: true };
 }

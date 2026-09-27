@@ -130,7 +130,12 @@ export async function toHosts(flow, { maxRetries = 4 } = {}) {
   const { page } = flow;
   const out = { retries: 0, hosts: [], alert: "", timeouts: 0 };
   const see = page.getByRole("button", { name: "See available homes" });
-  if (!(await see.isEnabled().catch(() => false))) { out.blocked = oneLine(await page.getByRole("button", { name: /^(See available homes|Verify a service address to continue|Select a pet to continue)$/ }).innerText().catch(() => "")); return out; }
+  if (!(await see.isEnabled().catch(() => false))) {
+    out.blocked = oneLine(await page.getByRole("button", { name: /^(See available homes|Verify a service address to continue|Select a pet to continue)$/ }).innerText().catch(() => ""));
+    // The Plan step refuses short notice, a start past the 180-day horizon and unverified vaccination with a reason.
+    out.planAlert = oneLine((await page.locator("main [role=alert]").allInnerTexts().catch(() => [])).join(" | "), 400);
+    return out;
+  }
   await robustClick(see);
   for (;;) {
     const deadline = Date.now() + 60_000;

@@ -17,6 +17,29 @@ export const BALANCE_LEAD_MS=24*3_600_000;
 
 const round2=(value:number)=>Math.round(value*100)/100;
 
+/*
+ * WHICH stays may split (founder policy, round-1 SIT-05; still open in round 2): only overnight stays longer than
+ * four nights. The rule lived only in the browser (app/mobile-app/stay-flow.tsx splitEligible), so a direct
+ * POST /api/sitting-commercial quoted a 1-night Overnight at {total:799, amountDueNow:399.5, paymentMode:
+ * "split_50_50"} and a 4-night stay the same way, and either could be booked. The quote builders now refuse it.
+ * Nights are counted exactly as the Plan step counts them - IST calendar dates from check-in to check-out - so the
+ * server never refuses a split the screen offers and never grants one the screen hides.
+ */
+export const SPLIT_MINIMUM_NIGHTS_EXCLUSIVE=4;
+export const SPLIT_LONG_STAY_ONLY="Split payment is only for overnight stays longer than 4 nights. Please pay in full for this stay.";
+const IST_OFFSET_MS=330*60_000,DAY_MS=86_400_000;
+/** Nights between the IST check-in and check-out dates (0 for an invalid window). */
+export function stayCalendarNights(scheduledStart:string,scheduledEnd:string){
+ const start=new Date(scheduledStart).getTime(),end=new Date(scheduledEnd).getTime();
+ if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start)return 0;
+ const istDay=(ms:number)=>Date.parse(`${new Date(ms+IST_OFFSET_MS).toISOString().slice(0,10)}T00:00:00Z`);
+ return Math.round((istDay(end)-istDay(start))/DAY_MS);
+}
+/** `overnight` is the governed package's kind (Overnight Pet Sitting, the 24-hour Boarding stay). */
+export function splitPaymentEligible(input:{overnight:boolean;scheduledStart:string;scheduledEnd:string}){
+ return input.overnight&&stayCalendarNights(input.scheduledStart,input.scheduledEnd)>SPLIT_MINIMUM_NIGHTS_EXCLUSIVE;
+}
+
 /** Pure split plan. Throws 409 when the stay starts within 24h — the balance would be due
  *  immediately, so those bookings must pay in full. */
 export function splitPaymentPlan(input:{totalAmount:number;scheduledStart:string;now?:number}):{dueNow:number;balance:number;balanceDueAt:number}{

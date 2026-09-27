@@ -335,3 +335,29 @@ test("W2-MKT-04: a live programme in window is unaffected, and the frozen amount
   assert.equal(stillLive.value.discountAmount, 500,
     "at the amount frozen into the claim, which this fix deliberately does not change");
 });
+
+// =====================================================================================================
+// Round-2 staging (50-leads-crm): one number, several written forms. The web chat stored "+919000000001", sign-in
+// "9000000001", and the two self-referral checks compared the TEXT (claim time) or all its digits (booking time), so a
+// referrer and a "friend" who are one person holding one number written two ways passed both checks.
+// =====================================================================================================
+test("round-2: a referrer and friend holding one number written two ways are held as a self-referral, at claim and at booking", async () => {
+  const { sqlite, db, referral, now } = await referralWorld({ monthlyLimit: 5 });
+  const booking = await import("../lib/referral-booking-governance.ts");
+  await booking.ensureReferralBookingTables(db);
+  const customer = (id, phone) => sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(id, "blr", id, phone, `${id}@probe.test`.toLowerCase(), now, now);
+  customer("REFERRER", "+91 90000 00001"); // as the web chat stored it
+  customer("FRIEND-SAME", "9000000001"); // the same person, signed in
+  customer("FRIEND-OTHER", "9000000011");
+  const code = await referral.ensureReferralCode(db, { programmeId: "uat-referral-programme", customerId: "REFERRER" });
+  const claim = (friend, key) => referral.claimReferral(db, { code: String(code.code ?? code), referredCustomerId: friend, serviceCode: "grooming", cityId: "blr", idempotencyKey: key, actorId: "cust:uat" });
+  assert.equal((await claim("FRIEND-SAME", "claim-same")).fraudState, "hold", "the claim is held: it is the referrer's own number");
+  const other = await claim("FRIEND-OTHER", "claim-other");
+  assert.equal(other.fraudState, "clear", "a different number is not held");
+  // Redeemed at booking with the referrer's number as sign-in writes it (the referrer's record has the chat's form).
+  const prepared = await booking.prepareReferralBooking(db, {
+    claimId: String(other.claimId), customer: { id: "FRIEND-OTHER", primaryPhone: "9000000001", email: "friend-other@probe.test" },
+    serviceCode: "grooming", cityId: "blr", baseAmount: 2000, baseAmountDueNow: 2000, hasOtherOffer: false, isSubscription: false,
+  }).then((value) => ({ ok: true, value }), (error) => ({ ok: false, message: String(error?.message ?? error) }));
+  assert.deepEqual(prepared, { ok: false, message: "Referral claim requires identity review" });
+});

@@ -28,6 +28,9 @@ test("unknown inbound caller becomes one canonical customer and one CRM lead, wh
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM canonical_customers WHERE id=?").get(first.customerId).c, 1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM crm_contacts WHERE id=?").get(first.customerId).c, 1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM lead_work_items WHERE id=?").get(first.leadId).c, 1);
+  // Round-2: one stored form for the number, so the caller's own OTP sign-in and bookings reach this customer and lead.
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").get(first.customerId).primary_phone, "9876543210");
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM crm_contacts WHERE id=?").get(first.customerId).primary_phone, "9876543210");
   const replay = await resolveOrCaptureInboundCaller(db, "9876543210", now + 1);
   assert.equal(replay.capturedLead, false);
   assert.equal(replay.customerId, first.customerId);

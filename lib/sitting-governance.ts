@@ -1,5 +1,5 @@
 import{governedJsonError}from"./governed-http-error";
-import{splitPaymentPlan}from"./stay-split-payments";
+import{SPLIT_LONG_STAY_ONLY,splitPaymentEligible,splitPaymentPlan}from"./stay-split-payments";
 import{sameInstant}from"./booking-window-instant";
 import{HOME_VISIT_MINUTES}from"./stay-care-window";
 type Row=Record<string,unknown>;
@@ -57,7 +57,9 @@ export async function createSittingQuote(db:D1Database,input:{packageCode:string
  const row=await db.prepare("SELECT * FROM sitting_commercial_packages WHERE package_code=?").bind(input.packageCode).first<Row>();
  if(!row||!activePackage(row,input.scheduledStart))throw governedJsonError({error:"Active Sitting package not found for this date"},404);
  const petCount=Math.floor(Number(input.petCount));if(petCount<1||petCount>Number(row.max_pets))throw governedJsonError({error:`Sitting supports 1-${Number(row.max_pets)} pets per booking`},409);
- const mode=String(row.mode) as SittingMode,cityId=String(input.cityId||"blr"),zoneId=String(input.zoneId||"blr-east"),billableUnits=units(mode,input.scheduledStart,input.scheduledEnd),basePricePerPet=Number(row.base_price_per_pet),extraPetPrice=Number(row.extra_pet_price),unitAmount=basePricePerPet+Math.max(0,petCount-1)*extraPetPrice,totalAmount=unitAmount*billableUnits,amountDueNow=input.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:input.scheduledStart}).dueNow:totalAmount,now=Date.now(),expiresAt=now+15*60_000,id=`SQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+ const mode=String(row.mode) as SittingMode,cityId=String(input.cityId||"blr"),zoneId=String(input.zoneId||"blr-east"),billableUnits=units(mode,input.scheduledStart,input.scheduledEnd),basePricePerPet=Number(row.base_price_per_pet),extraPetPrice=Number(row.extra_pet_price),unitAmount=basePricePerPet+Math.max(0,petCount-1)*extraPetPrice,totalAmount=unitAmount*billableUnits;
+ if(input.paymentMode==="split_50_50"&&!splitPaymentEligible({overnight:mode==="overnight",scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd}))throw governedJsonError({error:SPLIT_LONG_STAY_ONLY,code:"split_payment_not_eligible"},409);
+ const amountDueNow=input.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:input.scheduledStart}).dueNow:totalAmount,now=Date.now(),expiresAt=now+15*60_000,id=`SQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
  await db.prepare("INSERT INTO sitting_commercial_quotes (id,package_code,package_version,mode,pet_count,city_id,zone_id,scheduled_start,scheduled_end,billable_units,payment_mode,total_amount,amount_due_now,expires_at,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?)").bind(id,row.package_code,row.version,mode,petCount,cityId,zoneId,input.scheduledStart,input.scheduledEnd,billableUnits,input.paymentMode,totalAmount,amountDueNow,expiresAt,now).run();
  return{quoteId:id,packageCode:String(row.package_code),packageName:String(row.name),packageVersion:Number(row.version),mode,petCount,cityId,zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,billableUnits,basePricePerPet,extraPetPrice,totalAmount,amountDueNow,paymentMode:input.paymentMode,expiresAt} satisfies SittingQuote;
 }

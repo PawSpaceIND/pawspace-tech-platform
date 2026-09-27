@@ -171,9 +171,10 @@ test("real execution: reserveTaxiSchedule fails loudly with no driver, and hides
   const originalFetch = global.fetch;
   try {
     global.fetch = async () => ({ ok: false, json: async () => ({ error: "NO_SCHEDULE_AVAILABLE" }) });
+    // Loudly, and in the customer's words: the scheduler's rule code is translated, never shown raw.
     await assert.rejects(
       () => reserveTaxiSchedule({ clientRequestId: "r", customerId: "c", petIds: ["Bruno"], zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e" }),
-      /NO_SCHEDULE_AVAILABLE/,
+      (error) => /No driver and car are free for this pickup time/.test(error.message) && !/NO_SCHEDULE_AVAILABLE/.test(error.message),
     );
     global.fetch = async () => ({ ok: true, json: async () => ({ data: { groupId: "g", provider: { id: "d1", name: "New Driver", model: "full_time" }, occurrences: [] } }) });
     const reservation = await reserveTaxiSchedule({ clientRequestId: "r2", customerId: "c", petIds: ["Bruno"], zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e" });
@@ -187,4 +188,99 @@ test("real execution: reserveTaxiSchedule fails loudly with no driver, and hides
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+// --- Round 2 (26 Sep 2026 staging): no Taxi call may show the customer a JavaScript error -------------
+// A fare quote hung ~45 s and the platform answered with its HTML error page: the customer read
+// "Unexpected token '<'". A proxy cut-off gave "Unexpected token 'u', "upstream r"... is not valid JSON".
+const PLATFORM_PAGE = "<!DOCTYPE html>\n<html><head><title>Worker threw exception | pawspace-staging.karthik-fce.workers.dev | Cloudflare</title></head><body>Error 1101</body></html>";
+const RIDE_QUOTE_INPUT = { originLabel: "Indiranagar 100ft Road, Bengaluru", destinationLabel: "Koramangala, Bengaluru", passengerCount: 1, petCount: 1, luggageCount: 0, scheduledStart: tomorrow9am().toISOString(), tripType: "one_way", ridePurpose: "regular", waitingMinutes: 0 };
+async function withFetch(stub, run) { const original = globalThis.fetch; globalThis.fetch = stub; try { return await run(); } finally { globalThis.fetch = original; } }
+async function refusedWith(run) { try { await run(); } catch (error) { return error; } assert.fail("expected the call to be refused"); }
+const RAW = /Unexpected token|is not valid JSON|Unexpected end|D1_ERROR|SyntaxError|Failed to fetch/;
+
+test("round 2: every Taxi customer call turns a platform error page into a plain retry sentence", async () => {
+  const { createTaxiRideQuote } = await import("../lib/taxi-commercial-client.ts");
+  const { createCanonicalTaxiRideBooking, reserveTaxiSchedule } = await import("../lib/taxi-booking-client.ts");
+  const { requestTaxiCancellation } = await import("../lib/taxi-finance-client.ts");
+  const { loadCustomerTaxiLifecycle } = await import("../lib/taxi-lifecycle-client.ts");
+  const calls = {
+    quote: () => createTaxiRideQuote(RIDE_QUOTE_INPUT),
+    reserve: () => reserveTaxiSchedule({ clientRequestId: "r", customerId: "c", petIds: ["p"], cityId: "blr", zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e" }),
+    book: () => createCanonicalTaxiRideBooking({ idempotencyKey: "k", groupId: "g", taxiQuoteId: "q", vehicleClass: "citroen_ec3", customer: { id: "c", name: "n", primaryPhone: "p" }, pets: [{ sourceId: "p", name: "Bruno" }], cityId: "blr", zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e", provider: { id: "d", name: "D", model: "full_time", rating: null }, totalAmount: 607.45, amountDueNow: 303.73 }),
+    cancel: () => requestTaxiCancellation({ bookingId: "PS-UAT-TAXI-1", reason: "Plans changed" }),
+    manage: () => loadCustomerTaxiLifecycle("PS-UAT-TAXI-1"),
+  };
+  for (const [name, call] of Object.entries(calls)) {
+    for (const [label, answer] of [
+      ["HTML 500", () => new Response(PLATFORM_PAGE, { status: 500, headers: { "content-type": "text/html" } })],
+      ["proxy 502", () => new Response("upstream request failed", { status: 502 })],
+      ["empty 504", () => new Response("", { status: 504 })],
+      ["raw D1 500", () => Response.json({ error: "D1_ERROR: Currently processing a long-running import." }, { status: 500 })],
+    ]) {
+      const error = await withFetch(async () => answer(), () => refusedWith(call));
+      assert.doesNotMatch(error.message, RAW, `${name} / ${label}: ${error.message}`);
+      assert.match(error.message, /taking longer than usual.*Please try again/, `${name} / ${label} offers a retry: ${error.message}`);
+      assert.equal(error.retryable, true, `${name} / ${label} is retryable`);
+    }
+    const offline = await withFetch(async () => { throw new TypeError("Failed to fetch"); }, () => refusedWith(call));
+    assert.match(offline.message, /could not reach PawSpace.*Check your connection and try again/, `${name} offline: ${offline.message}`);
+  }
+});
+
+test("round 2: governed answers keep their own sentences, and rule codes are translated", async () => {
+  const { createTaxiRideQuote } = await import("../lib/taxi-commercial-client.ts");
+  const { createCanonicalTaxiRideBooking } = await import("../lib/taxi-booking-client.ts");
+  const { requestTaxiCancellation } = await import("../lib/taxi-finance-client.ts");
+  // The quote's own deadline answer (a governed 503) is shown as the server wrote it.
+  const timeout = await withFetch(async () => Response.json({ error: "Calculating your Pet Taxi fare is taking longer than usual. Please try again in a moment.", code: "TAXI_QUOTE_TIMEOUT", retryAfterSeconds: 5 }, { status: 503, headers: { "retry-after": "5" } }), () => refusedWith(() => createTaxiRideQuote(RIDE_QUOTE_INPUT)));
+  assert.equal(timeout.message, "Calculating your Pet Taxi fare is taking longer than usual. Please try again in a moment.");
+  assert.deepEqual([timeout.status, timeout.code, timeout.retryAfterSeconds, timeout.retryable], [503, "TAXI_QUOTE_TIMEOUT", 5, true]);
+  // A refusal keeps its reason.
+  const area = await withFetch(async () => Response.json({ error: "PawSpace Pet Taxi picks up only within Bengaluru (up to 35 km from the city centre). This pickup address is outside that area - choose a pickup inside Bengaluru." }, { status: 409 }), () => refusedWith(() => createTaxiRideQuote(RIDE_QUOTE_INPUT)));
+  assert.match(area.message, /picks up only within Bengaluru/);
+  assert.equal(area.retryable, false);
+  const fleet = await withFetch(async () => Response.json({ error: "No Citroen eC3 is free for this 3-hour Taxi window in blr" }, { status: 409 }), () => refusedWith(() => createCanonicalTaxiRideBooking({ idempotencyKey: "k", groupId: "g", taxiQuoteId: "q", vehicleClass: "citroen_ec3", customer: { id: "c", name: "n", primaryPhone: "p" }, pets: [], cityId: "blr", zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e", provider: { id: "d", name: "D", model: "full_time", rating: null }, totalAmount: 1, amountDueNow: 1 })));
+  assert.equal(fleet.message, "No Citroen eC3 is free for this 3-hour Taxi window in blr");
+  // The Worker's answer while D1 refuses queries (an import or overload; lib/d1-transient.ts) is shown as written, with a retry.
+  const { serviceBusyResponse, SERVICE_BUSY_MESSAGE } = await import("../lib/d1-transient.ts");
+  for (const call of [() => createTaxiRideQuote(RIDE_QUOTE_INPUT), () => requestTaxiCancellation({ bookingId: "B", reason: "Plans changed" })]) {
+    const busy = await withFetch(async () => serviceBusyResponse(), () => refusedWith(call));
+    assert.equal(busy.message, SERVICE_BUSY_MESSAGE);
+    assert.deepEqual([busy.status, busy.code, busy.retryAfterSeconds, busy.retryable], [503, "SERVICE_BUSY", 5, true]);
+  }
+  // The cancellation's success replay is data, not an error.
+  const replay = await withFetch(async () => Response.json({ data: { bookingId: "B", status: "cancelled", duplicatePrevented: true } }), () => requestTaxiCancellation({ bookingId: "B", reason: "Plans changed" }));
+  assert.equal(replay.status, "cancelled");
+});
+
+test("round 2: a Taxi call that never answers stops at its time limit with a plain sentence", async () => {
+  const { taxiRequest, taxiErrorMessage } = await import("../lib/taxi-client-request.ts");
+  const hung = await withFetch((_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")))),
+    () => refusedWith(() => taxiRequest("/api/taxi-commercial", { method: "POST" }, { action: "calculate your Pet Taxi fare", refused: "x", timeoutMs: 30 })));
+  assert.equal(hung.message, "PawSpace is taking longer than usual to calculate your Pet Taxi fare. Please try again in a moment.");
+  // Errors thrown outside the Taxi helper (a shared client that still parses JSON blindly) are translated too.
+  assert.equal(taxiErrorMessage(new SyntaxError("Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON"), "reserve your Pet Taxi"), "PawSpace is taking longer than usual to reserve your Pet Taxi. Please try again in a moment.");
+  assert.match(taxiErrorMessage(new TypeError("Failed to fetch"), "load your pets"), /could not reach PawSpace to load your pets/);
+  assert.equal(taxiErrorMessage(new Error("Choose a pickup time in the future."), "calculate your Pet Taxi fare"), "Choose a pickup time in the future.", "a plain sentence passes through");
+  assert.equal(taxiErrorMessage(new Error("NO_SCHEDULE_AVAILABLE"), "reserve your Pet Taxi"), "PawSpace could not reserve your Pet Taxi just now. Please try again in a moment.", "a bare rule code never reaches the customer");
+});
+
+test("round 2: the Taxi screens route every caught error through the plain-sentence helper", () => {
+  const manage = fs.readFileSync("app/taxi/manage/taxi-customer-management.tsx", "utf8");
+  const incidents = fs.readFileSync("app/taxi/manage/taxi-customer-incidents.tsx", "utf8");
+  for (const [name, source] of [["taxi-flow", flowSource], ["taxi manage", manage], ["taxi incidents", incidents]]) {
+    assert.doesNotMatch(source, /await response\.json\(\)|\.then\(async r=>\{const b=await r\.json\(\)/, `${name} must not parse a response blindly`);
+    assert.doesNotMatch(source, /setError\(e instanceof Error\?e\.message|setError\(problem instanceof Error\?problem\.message/, `${name} must not show a raw error message`);
+    assert.match(source, /taxiErrorMessage\(/);
+  }
+  // The manage page shows exact amounts with paise and offers a retry when the ride cannot be loaded.
+  assert.match(manage, /taxiMoney as money/);
+  assert.doesNotMatch(manage, /maximumFractionDigits:0/);
+  assert.match(manage, />Try again</);
+  // A failed pets or incidents load offers a retry that runs the load again, instead of an empty list.
+  assert.match(flowSource, /\[customer\.customerId,petsAttempt\]/);
+  assert.match(flowSource, /petsFailed\?<button type="button" onClick=\{\(\)=>\{setError\(""\);setPetsFailed\(false\);setPetsLoading\(true\);setPetsAttempt\(n=>n\+1\)\}\}>/);
+  assert.match(incidents, /\[bookingId,attempt\]/);
+  assert.match(incidents, /loadFailed&&<button onClick=\{retryLoad\}>Try again<\/button>/);
 });

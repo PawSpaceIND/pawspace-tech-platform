@@ -324,6 +324,33 @@ test("a visitor's lead exists as soon as they give their number, and one that st
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM crm_activities WHERE type='web_chat_bot'").get().n), 1);
 });
 
+// Round-2 staging: "Request a call" told the visitor "A PawSpace team member will get in touch with you
+// shortly" while the lead stayed owned by "AI Orchestrator" with no SLA clock and nobody tasked to call.
+test("a signed-out visitor's 'Request a call' is owned by a sales rep with a first-response clock, and nothing is sent on WhatsApp", async () => {
+  const { sqlite, db } = await world();
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U-REP-CALL','rep.calls@pawspace.test','Rep Calls','associate','active',?,?)").run(now, now);
+  const { saveLeadAssignmentMember } = await import("../lib/lead-assignment-governance.ts");
+  await saveLeadAssignmentMember(db, { employeeEmail: "rep.calls@pawspace.test", teamCode: "sales", serviceCodes: ["boarding"], cityIds: ["blr"], active: true, actorId: "qa@pawspace.test" });
+  const sessionKey = "botvisitor0000000031";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  await call({ choiceId: "request_call", message: "" });
+  await call({ message: "Ravi Kumar" });
+  const consent = await call({ message: "9876543219" });
+  const noWhatsApp = consent.bot.choices.find((choice) => /call me instead/i.test(choice.label));
+  assert.ok(noWhatsApp, JSON.stringify(consent.bot));
+  const last = await call({ choiceId: noWhatsApp.id, message: "" });
+  assert.equal(last.event, "completed");
+  const lead = sqlite.prepare("SELECT id,owner,service FROM lead_work_items").get();
+  assert.equal(lead.owner, "rep.calls@pawspace.test", "a person owns the call request, not the AI");
+  assert.equal(sqlite.prepare("SELECT owner FROM crm_contacts").get().owner, "rep.calls@pawspace.test", "and the CRM shows them as the relationship owner");
+  const clock = sqlite.prepare("SELECT clock_type,status FROM lead_sla_clocks WHERE lead_id=?").get(lead.id);
+  assert.deepEqual({ ...clock }, { clock_type: "first_response", status: "running" }, "the first-response clock is running");
+  assert.equal(sqlite.prepare("SELECT status FROM whatsapp_ai_lead_triggers WHERE lead_id=?").get(lead.id).status, "blocked", "the visitor declined WhatsApp");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE channel='whatsapp'").get()?.n ?? 0), 0, "and nothing was queued on WhatsApp");
+});
+
 test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpace AI takes over at 20, then a person", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-STALL", "+919900000203");
@@ -616,4 +643,53 @@ test("a stale saved conversation restarts the questions but keeps the visitor's 
   assert.equal(parsed.leadId, "LEAD-KEEP", "the lead is updated, not duplicated");
   assert.equal(parsed.preferredFlow, "pet_taxi");
   assert.deepEqual(parsed.answers, {});
+});
+
+/*
+ * Round-2 staging (50-leads-crm, P1, reproduced twice): a visitor who enquired in the web chat and then signed in got a
+ * second customer. The chat hands the number over as "+919876543210", the enquiry's canonical customer kept that
+ * string, and OTP sign-in matched primary_phone exactly on "9876543210": existingCustomer was false, sign-in created
+ * CUS-OTP-..., their booking landed there, and the chat lead could never convert.
+ */
+test("a chat enquirer who signs in is the enquiry's customer, and their paid booking converts the chat lead", async () => {
+  const { sqlite, db } = await world();
+  globalThis.__AI_WEB_CHAT_ENV__ = { PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "chat-identity-assertion-secret-0123456789abcdef" };
+  const sessionKey = "botvisitor0000000031";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  let reply = (await call({ choiceId: "boarding", message: "" })).bot, last;
+  for (let guard = 0; guard < 16 && !last?.lead; guard++) { const answer = answerFor(reply); last = await call({ message: answer.text || "", choiceId: answer.choiceId }); reply = last.bot; }
+  assert.equal(last.event, "completed");
+  assert.equal(last.lead?.captured, true, JSON.stringify(last.lead));
+  const lead = sqlite.prepare("SELECT id,customer_id,service FROM lead_work_items").get();
+
+  const { requestCustomerOtp, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
+  const challenge = await requestCustomerOtp(db, { phone: "98765 43210" });
+  assert.equal(challenge.existingCustomer, true, "sign-in knows the enquirer");
+  const signedIn = await verifyCustomerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode, name: "Asha Rao" });
+  assert.equal(signedIn.customerId, lead.customer_id, "sign-in lands on the enquiry's customer, not a new CUS-OTP one");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM canonical_customers").get().n), 1, "one person, one customer");
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").get(lead.customer_id)?.primary_phone, "9876543210", "the enquiry's customer stores the one canonical form, not the chat's +91 display form");
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM crm_contacts WHERE id=?").get(lead.customer_id)?.primary_phone, "9876543210");
+
+  // Their own Boarding booking reaches the chat lead, and its captured payment converts it.
+  const { attributeBookingToOpenLead, convertLeadOnPaymentCaptured } = await import("../lib/lead-conversion-attribution.ts");
+  const now = Date.now(), bookingId = "PS-CHAT-BOARDING-1";
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR')");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,total_amount) VALUES (?,?,?,?)").run(bookingId, signedIn.customerId, "boarding", 1998);
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,updated_at) VALUES (?,?,?,?,?,?)").run("PAY-CHAT-1", bookingId, signedIn.customerId, 1998, "created", now);
+  const attributed = await attributeBookingToOpenLead(db, { customerId: signedIn.customerId, bookingId });
+  assert.deepEqual({ ...attributed }, { leadId: lead.id, converted: false, attribution: "lead" });
+  sqlite.prepare("UPDATE booking_payments SET status='captured',updated_at=? WHERE id='PAY-CHAT-1'").run(now + 1);
+  assert.deepEqual(await convertLeadOnPaymentCaptured(db, { customerId: signedIn.customerId, bookingId }), { leadId: lead.id });
+  assert.equal(sqlite.prepare("SELECT converted_booking_id FROM lead_work_items WHERE id=?").get(lead.id).converted_booking_id, bookingId);
+
+  // The visitor's next enquiry joins the same customer instead of going to identity review.
+  await call({ start: true });
+  reply = (await call({ choiceId: "pet_sitting", message: "" })).bot; last = null;
+  for (let guard = 0; guard < 16 && !last?.lead; guard++) { const answer = answerFor(reply); last = await call({ message: answer.text || "", choiceId: answer.choiceId }); reply = last.bot; }
+  assert.equal(last.lead?.captured, true);
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM public_contact_identity_reviews").get().n), 0, "no identity review");
+  assert.deepEqual(sqlite.prepare("SELECT DISTINCT customer_id FROM lead_work_items").all().map((row) => row.customer_id), [lead.customer_id]);
 });

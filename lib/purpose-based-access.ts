@@ -131,7 +131,7 @@ export type DataSubject={customerId:string;name:string;phone?:string|null;email?
 
 const holdsAll=(actor:AccessActor)=>(actor.permissions??[]).includes("*");
 const holds=(actor:AccessActor,permission:string)=>holdsAll(actor)||(actor.permissions??[]).includes(permission);
-const maskEmail=(value?:string|null)=>{const email=text(value);if(!email)return null;const at=email.indexOf("@");return at<=0?"•••":`•••${email.slice(at)}`;};
+export const maskEmail=(value?:string|null)=>{const email=text(value);if(!email)return null;const at=email.indexOf("@");return at<=0?"•••":`•••${email.slice(at)}`;};
 
 /** Is this record assigned to this actor right now? Assignment is what justifies a reveal, not the role. */
 const assignedToActor=(actor:AccessActor,assignment?:Assignment|null)=>

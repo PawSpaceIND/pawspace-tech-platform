@@ -115,7 +115,7 @@ const GLOBAL_CHECKS = [
     title: "Gateway refunds with no matching internal refund case", expected: "no open orphan_gateway_refund / refund_amount_mismatch exception, no refund.* gateway event left unprocessed",
     fmt: row => `${row.source} ${row.kind} ${row.status} booking ${row.booking_id || "—"} event ${row.event_id || "—"}` },
   { journey: "Global: recorded refunds reversed in the collection ledger (7 days)", parts: [["refundsWithoutReversal", "P1"], ["serviceRefundsNotInBooks", "P1"]],
-    title: "Recorded refunds that never reached the canonical books", expected: "every processed/completed refund case has COLL-refund_completed-<reference>; every service-ledger refund marked sandbox_recorded has its processed canonical refund case",
+    title: "Recorded refunds that never reached the canonical books", expected: "every processed/completed refund case has COLL-refund_completed-<reference>; every service-ledger refund marked sandbox_recorded (Training: completed_sandbox) has its processed canonical refund case",
     fmt: row => row.ledger ? `${row.booking_id} ${row.ledger} ${row.reference} ₹${row.amount} recorded, no processed canonical refund case` : `${row.booking_id} refund ${row.gateway_reference || "(no reference)"} ₹${row.amount} ${row.status}, no reversal posting` },
   { journey: "Global: capture post-commit effects completed (7 days)", parts: [["captureEffectsPending", "P1"]],
     title: "Razorpay capture post-commit effects (ledger, timeline, confirmation) not completed", expected: "every RAZORPAY_CAPTURE_POST_COMMIT outbox row older than 10 minutes SUCCEEDED",

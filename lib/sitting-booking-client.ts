@@ -1,5 +1,5 @@
 // @ts-expect-error Node 22 strip-types requires the explicit .ts extension at runtime.
-import{readJsonBody,unreadableAnswerMessage}from"./safe-json-response.ts";
+import{fetchOrExplain,readJsonBody,unreadableAnswerMessage}from"./safe-json-response.ts";
 export type SittingBookingInput={
  idempotencyKey:string;groupId:string;sittingQuoteId:string;
  customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -13,7 +13,7 @@ export type SittingBookingInput={
 export type SittingBookingResult={bookingId:string;customerId:string;petIds:string[];scheduleGroupId:string;workOrderId:string;paymentId:string;status:string;duplicatePrevented:boolean;liveMoney:false};
 
 export async function createCanonicalSittingBooking(input:SittingBookingInput){
- const response=await fetch("/api/sitting-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,scheduleGroupId:input.groupId})});
+ const response=await fetchOrExplain("/api/sitting-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...input,scheduleGroupId:input.groupId})},"create this booking");
  const body=await readJsonBody<{data?:SittingBookingResult;error?:string}>(response);
  if(!body)throw new Error(unreadableAnswerMessage(response.status,"create this booking"));
  if(!response.ok||!body.data)throw new Error(body.error??"Canonical Sitting booking could not be created");

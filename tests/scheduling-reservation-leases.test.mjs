@@ -231,3 +231,20 @@ test("a later lease generation for the same group can expire after an earlier cl
   assert.equal(ctx.sqlite.prepare("SELECT status FROM provider_assignment_offers WHERE group_id=?").get(groupId).status, "cancelled");
   assert.equal(ctx.sqlite.prepare("SELECT released_at FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(groupId).released_at, secondNow);
 });
+
+// Each request runs its own cleanup pass (a pass is never shared across requests), so two can run at once on one
+// isolate, as they always could across isolates: the released_at marker and the status='assigned' predicates let
+// exactly one of them release the group, and each reports only what it released.
+test("two cleanup passes at once release an expired group exactly once, and each reports only what it released", async (t) => {
+  const ctx = await bareLeaseContext(); t.after(ctx.close);
+  const now = Date.now(), customerId = "CUST-LEASE-CONCURRENT", groupId = "GROOM-LEASE-CONCURRENT";
+  const session = await customerSession(ctx, customerId);
+  seedLease(ctx, { groupId, customerId, sessionId: session.sessionId, leaseExpiresAt: now - 1, now });
+  const passes = await Promise.all([ctx.governance.cleanupExpiredReservationLeases(ctx.db, now), ctx.governance.cleanupExpiredReservationLeases(ctx.db, now)]);
+  assert.deepEqual(passes.reduce((sum, pass) => ({ groups: sum.groups + pass.groups, reservations: sum.reservations + pass.reservations }), { groups: 0, reservations: 0 }), { groups: 1, reservations: 1 }, `one pass released it: ${JSON.stringify(passes)}`);
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_reservations WHERE group_id=?").get(groupId).status, "cancelled");
+  assert.deepEqual({ ...ctx.sqlite.prepare("SELECT status,actor_id,reason,updated_at FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId) }, { status: "expired", actor_id: "system:reservation-lease-cleanup", reason: "reservation_lease_expired", updated_at: now });
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM provider_assignment_offers WHERE group_id=?").get(groupId).status, "cancelled");
+  assert.deepEqual(ctx.sqlite.prepare("SELECT reason,released_at FROM scheduling_reservation_lease_cleanup WHERE group_id=?").all(groupId).map((row) => ({ ...row })), [{ reason: "reservation_lease_expired", released_at: now }], "one durable marker");
+  assert.deepEqual(await ctx.governance.cleanupExpiredReservationLeases(ctx.db, now + 5_000), { groups: 0, reservations: 0 }, "and nothing is left to release");
+});

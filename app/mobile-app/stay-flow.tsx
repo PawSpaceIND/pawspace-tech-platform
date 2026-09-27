@@ -25,6 +25,10 @@ import BookingReferenceRecovery from "./booking-reference-recovery";
 import {boardingRequirements} from "../../lib/stay-host-requirements";
 import {useInitialBookingReference} from "../../lib/use-initial-booking-reference";
 import {indiaDateOffset,rememberBookingReference,sameReviewedStayQuote} from "../../lib/customer-booking-safety";
+import {boardingPetNote,boardingVaccinationProblem,stayBookingWindowRule,stayDateBounds,stayWindowCheckNow,stayWindowProblem} from "../../lib/stay-plan-checks";
+import {HOST_REQUESTS_NOTE,HOST_REQUESTS_NOT_INCLUDED,HOST_REQUESTS_TITLE,hostRequestsExcludedNote,hostRequestsReviewValue} from "../../lib/boarding-host-requests";
+import {stayMoney} from "../../lib/stay-money";
+import {plainErrorMessage} from "../../lib/safe-json-response";
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
@@ -68,13 +72,8 @@ const careBenefits = [
   "Grooming add-on",
   "Training add-on",
 ];
-const money = (n: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(n);
+/** Whole rupees stay short; a split's paise are shown in full (lib/stay-money.ts). */
+const money = stayMoney;
 const dateOffset = indiaDateOffset;
 const boardingPlaceholder: Caregiver = {
   providerId: "",
@@ -83,7 +82,7 @@ const boardingPlaceholder: Caregiver = {
   area: "Bengaluru East",
   rating: "—",
   price: 0,
-  badge: "Governed Boarding",
+  badge: "Verified Boarding",
   home: "Host availability is loaded from PawSpace capacity records for the selected stay window.",
   features: [],
   capacity: "Window availability required",
@@ -144,6 +143,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [petsState, setPets] = useState<CustomerPet[] | null>(null),
     [petsLoading, setPetsLoading] = useState(true),
     [petsError, setPetsError] = useState(""),
+    [petsAttempt, setPetsAttempt] = useState(0),
     [showPetManager, setShowPetManager] = useState(false),
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
@@ -185,6 +185,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const [sittingCare, setSittingCare] = useState<"visit" | "overnight">("overnight");
   const visitMode = mode === "sitting" && sittingCare === "visit", visitEnd = visitMode ? homeVisitEnd(start, startTime) : null;
   const end = visitMode ? visitEnd?.date ?? start : endInput, endTime = visitMode ? visitEnd?.time ?? startTime : endTimeInput;
+  // The Plan step's notice and horizon check reads this clock, refreshed each minute while the page is open.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -201,10 +204,10 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
         setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
         setPetsError("");
       })
-      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .catch((e) => { if (active) setPetsError(plainErrorMessage(e,"Unable to load your pets. Please try again.")); })
       .finally(() => { if (active) setPetsLoading(false); });
     return () => { active = false; };
-  }, [customer.customerId]);
+  }, [customer.customerId, petsAttempt]);
   const onPetsChanged = (updated: CustomerPet[]) => {
     setPets(updated);
     setSelectedPets((prev) => {
@@ -227,7 +230,15 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const showCaregiver = mode === "boarding" ? Boolean(selectedBoardingHost) : Boolean(selectedSitter);
   const nights = stayWindow.nights;
   const overnightTooShort = mode === "sitting" && !visitMode && stayWindow.valid && !stayWindow.overnight;
-  const datesValid = stayWindow.valid && !overnightTooShort;
+  const windowOk = stayWindow.valid && !overnightTooShort;
+  // Round-2 staging: 24 hours' notice, the 180-day horizon and Boarding's verified vaccination were refused only at
+  // the final click. They are Plan-step rules now: no host or sitter search and no price runs for a plan they refuse.
+  const windowProblem = windowOk ? stayWindowProblem(stayWindow.scheduledStart, clock) : null;
+  const datesValid = windowOk && !windowProblem;
+  const vaccinationProblem = mode === "boarding" ? boardingVaccinationProblem(selectedPetObjs) : null;
+  const planReady = datesValid && !vaccinationProblem;
+  const planProblem = windowProblem ?? vaccinationProblem;
+  const dateBounds = stayDateBounds(clock);
   const extraPets = Math.max(0, selectedPets.length - 1);
   const reviewKey=JSON.stringify([mode,boardingHostQueryKey,caregiver.providerId,splitPayment]);
   const activeQuote = mode === "boarding" ? (boardingQuotedKey===reviewKey?boardingQuote:null) : (sittingQuotedKey===reviewKey?sittingQuote:null);
@@ -245,14 +256,14 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
   const balanceAmount = mode === "boarding"
     ? Math.max(0, (boardingQuote?.totalAmount??0) - (boardingQuote?.amountDueNow??0))
     : Math.max(0,(sittingQuote?.totalAmount??0)-(sittingQuote?.amountDueNow??0));
-  useEffect(()=>{if(mode!=="sitting"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setSittingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="24 hours"?"sitting-overnight":"sitting-visit-60",paymentMode=splitEligible&&splitPayment?"split_50_50":"prepaid";queueMicrotask(()=>{if(active){setSittingQuote(null);setSittingQuoteError("");}});void createSittingQuote({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode,providerId:selectedSitter?.providerId}).then(value=>{if(active){setSittingQuote(value);setSittingQuotedKey(reviewKey);}}).catch(problem=>{if(active)setSittingQuoteError(problem instanceof Error?problem.message:"Unable to create canonical Sitting quote");});return()=>{active=false;};},[mode,serviceLocation,datesValid,start,end,careWindow,startTime,endTime,selectedPets.length,splitEligible,splitPayment,selectedSitter?.providerId,quoteRetry,reviewKey]);
-  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";queueMicrotask(()=>{if(active){setBoardingQuote(null);setBoardingQuoteError("");}});void quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid",providerId:selectedBoardingHost?.providerId}).then(value=>{if(active){setBoardingQuote(value);setBoardingQuotedKey(reviewKey);setBoardingQuoteError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setBoardingQuoteError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,serviceLocation,datesValid,careWindow,startTime,endTime,start,end,selectedPets.length,splitEligible,splitPayment,selectedBoardingHost?.providerId,quoteRetry,reviewKey]);
-  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!datesValid||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const controller=new AbortController(),queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime);const settle=window.setTimeout(()=>void loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),petCount:selectedPets.length,species:selectedSpeciesKey?selectedSpeciesKey.split(","):[],requirements:boardingRequirements(selectedNeeds)},{signal:controller.signal}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);}),STAY_SEARCH_SETTLE_MS);return()=>{active=false;window.clearTimeout(settle);controller.abort();};},[mode,serviceLocation,datesValid,careWindow,startTime,endTime,start,end,selectedPets.length,boardingHostQueryKey,selectedSpeciesKey,hostRetry,selectedNeeds]);
+  useEffect(()=>{if(mode!=="sitting"||!serviceLocation||!planReady||selectedPets.length===0){queueMicrotask(()=>setSittingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="24 hours"?"sitting-overnight":"sitting-visit-60",paymentMode=splitEligible&&splitPayment?"split_50_50":"prepaid";queueMicrotask(()=>{if(active){setSittingQuote(null);setSittingQuoteError("");}});void createSittingQuote({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode,providerId:selectedSitter?.providerId}).then(value=>{if(active){setSittingQuote(value);setSittingQuotedKey(reviewKey);}}).catch(problem=>{if(active)setSittingQuoteError(plainErrorMessage(problem,"Unable to price this Pet Sitting booking. Please try again."));});return()=>{active=false;};},[mode,serviceLocation,planReady,start,end,careWindow,startTime,endTime,selectedPets.length,splitEligible,splitPayment,selectedSitter?.providerId,quoteRetry,reviewKey]);
+  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!planReady||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";queueMicrotask(()=>{if(active){setBoardingQuote(null);setBoardingQuoteError("");}});void quoteBoarding({packageCode,petCount:selectedPets.length,cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid",providerId:selectedBoardingHost?.providerId}).then(value=>{if(active){setBoardingQuote(value);setBoardingQuotedKey(reviewKey);setBoardingQuoteError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setBoardingQuoteError(plainErrorMessage(problem,"Unable to price this Boarding stay. Please try again."));}});return()=>{active=false;};},[mode,serviceLocation,planReady,careWindow,startTime,endTime,start,end,selectedPets.length,splitEligible,splitPayment,selectedBoardingHost?.providerId,quoteRetry,reviewKey]);
+  useEffect(()=>{if(mode!=="boarding"||!serviceLocation||!planReady||selectedPets.length===0){queueMicrotask(()=>setBoardingQuote(null));return;}let active=true;const controller=new AbortController(),queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime);const settle=window.setTimeout(()=>void loadBoardingCommercial({cityId:serviceLocation.assignment.cityId,zoneId:serviceLocation.assignment.zoneId,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),petCount:selectedPets.length,species:selectedSpeciesKey?selectedSpeciesKey.split(","):[],requirements:boardingRequirements(selectedNeeds)},{signal:controller.signal}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(plainErrorMessage(problem,"Unable to load Boarding host availability. Please try again."));setCaregiver(boardingPlaceholder);}),STAY_SEARCH_SETTLE_MS);return()=>{active=false;window.clearTimeout(settle);controller.abort();};},[mode,serviceLocation,planReady,careWindow,startTime,endTime,start,end,selectedPets.length,boardingHostQueryKey,selectedSpeciesKey,hostRetry,selectedNeeds]);
   useEffect(()=>{
-   if(mode!=="sitting"||!serviceLocation||!datesValid||!selectedPets.length)return;
+   if(mode!=="sitting"||!serviceLocation||!planReady||!selectedPets.length)return;
    let active=true;const controller=new AbortController(),queryKey=boardingHostQueryKey,{scheduledStart,scheduledEnd}=stayCareWindow(start,end,startTime,endTime);
-   const settle=window.setTimeout(()=>void previewSittersPatiently({clientRequestId:`preview:${queryKey}`,customerId:customer.customerId,petIds:selectedPets,serviceCode:"pet_sitting",serviceAddress:serviceLocation.address,servicePincode:serviceLocation.assignment.pincode,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit"},controller.signal).then(data=>{if(!active)return;const rows:Caregiver[]=data.providers.map(provider=>({...sitterPlaceholder,providerId:provider.id,name:provider.name,model:provider.model,initials:hostInitials(provider.name),area:serviceLocation.assignment.area,badge:"Available for this window",home:"Availability checked against the current schedule. Confirmation rechecks the slot.",availabilityVerified:true}));setSitters(rows);setSitterWindowKey(queryKey);setSitterError("");setCaregiver(current=>rows.find(row=>row.providerId===current.providerId)??rows[0]??sitterPlaceholder);}).catch(problem=>{if(active){setSitters([]);setSitterWindowKey(queryKey);setSitterError(isAvailabilityPending(problem)?SITTER_STILL_CHECKING:problem instanceof Error?problem.message:"Unable to load sitters");setCaregiver(sitterPlaceholder);}}),STAY_SEARCH_SETTLE_MS);return()=>{active=false;window.clearTimeout(settle);controller.abort();};
-  },[mode,serviceLocation,datesValid,selectedPets,boardingHostQueryKey,customer.customerId,start,end,careWindow,startTime,endTime,hostRetry]);
+   const settle=window.setTimeout(()=>void previewSittersPatiently({clientRequestId:`preview:${queryKey}`,customerId:customer.customerId,petIds:selectedPets,serviceCode:"pet_sitting",serviceAddress:serviceLocation.address,servicePincode:serviceLocation.assignment.pincode,scheduledStart:scheduledStart.toISOString(),scheduledEnd:scheduledEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit"},controller.signal).then(data=>{if(!active)return;const rows:Caregiver[]=data.providers.map(provider=>({...sitterPlaceholder,providerId:provider.id,name:provider.name,model:provider.model,initials:hostInitials(provider.name),area:serviceLocation.assignment.area,badge:"Available for this window",home:"Availability checked against the current schedule. Confirmation rechecks the slot.",availabilityVerified:true}));setSitters(rows);setSitterWindowKey(queryKey);setSitterError("");setCaregiver(current=>rows.find(row=>row.providerId===current.providerId)??rows[0]??sitterPlaceholder);}).catch(problem=>{if(active){setSitters([]);setSitterWindowKey(queryKey);setSitterError(isAvailabilityPending(problem)?SITTER_STILL_CHECKING:plainErrorMessage(problem,"Unable to load sitters. Please try again."));setCaregiver(sitterPlaceholder);}}),STAY_SEARCH_SETTLE_MS);return()=>{active=false;window.clearTimeout(settle);controller.abort();};
+  },[mode,serviceLocation,planReady,selectedPets,boardingHostQueryKey,customer.customerId,start,end,careWindow,startTime,endTime,hostRetry]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
       current.includes(name)
@@ -263,6 +274,13 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
           ? [...current, name]
           : current,
     );
+  /** The notice rule is re-read at the click: the clock above refreshes once a minute. */
+  const planStillValid = () => {
+    const check = stayWindowCheckNow(stayWindow.scheduledStart);
+    if (!check.problem) return true;
+    setClock(check.now);
+    return false;
+  };
   const toggleNeed = (need: string) =>
     setSelectedNeeds((current) =>
       current.includes(need)
@@ -338,10 +356,10 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     setBookingId(canonicalBookingId);
     rememberBookingReference(canonicalBookingId);
     const paymentQuote=governedBoardingQuote??governedSittingQuote!;setPendingPayment({bookingId:canonicalBookingId,serviceName:mode==="boarding"?"Boarding":"Pet Sitting",total:paymentQuote.totalAmount,dueNow:paymentQuote.amountDueNow,mode:paymentQuote.paymentMode});
-    } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {actionLock.current=false;setScheduling(false);}
+    } catch(error){setScheduleError(plainErrorMessage(error,"No host or sitter is available for the full care window"));} finally {actionLock.current=false;setScheduling(false);}
 
   };
-  if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
+  if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} hostRequests={mode==="boarding"?selectedBenefits:[]} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
   if(recoveryBookingId)return <BookingReferenceRecovery bookingId={recoveryBookingId} service={mode} routeScope={routeScope} className={styles.flow}/>;
   if (confirmed)
     return (
@@ -368,6 +386,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     );
   return (
     <section className={styles.flow}>
+      {stage > 1 && planProblem && <div role="alert"><p>{planProblem.message}</p><button type="button" onClick={() => setStage(1)}>Change the plan</button></div>}
       {stage > 1 && quoteError && <div role="alert"><p>{quoteError}</p><button type="button" onClick={() => setQuoteRetry(value => value + 1)}>Retry price</button></div>}
       <header className={styles.stayIntro}><span>{mode === "boarding" ? "PAWSPACE BOARDING" : "PAWSPACE SITTING"}</span><div><h2>{mode === "boarding" ? "A stay that feels like home." : "Care at home, around their routine."}</h2><small>Plan the stay, choose the right caregiver, then confirm together.</small></div><b>{stage}<i>/4</i></b></header>
       <div className={styles.steps}>
@@ -409,12 +428,12 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
           </div>}
           <div className={styles.datePair}>
             {visitMode ? <fieldset className={styles.careDate}><legend>Home Visit</legend>
-              <label className={styles.field}>Visit date<input type="date" value={start} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
+              <label className={styles.field}>Visit date<input type="date" value={start} min={dateBounds.min} max={dateBounds.max} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
               <label className={styles.field}>Visit start time<input type="time" value={startTime} onChange={e=>{setStartTime(e.target.value);resetStaySelection();}}/></label>
               <p className={styles.hint}>{visitEnd ? `60 minutes, ending ${visitEnd.time} IST.` : "60 minutes from the start time."} Need more care that day? Book another visit after this one.</p>
             </fieldset> : <>
             <fieldset className={styles.careDate}><legend>Check-in</legend>
-              <label className={styles.field}>Check-in date<input type="date" value={start} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
+              <label className={styles.field}>Check-in date<input type="date" value={start} min={dateBounds.min} max={dateBounds.max} onChange={e=>{setStart(e.target.value);resetStaySelection();}}/></label>
               <label className={styles.field}>Check-in time<input type="time" value={startTime} onChange={e=>{setStartTime(e.target.value);resetStaySelection();}}/></label>
             </fieldset>
             <fieldset className={styles.careDate}><legend>Check-out</legend>
@@ -422,15 +441,16 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               <label className={styles.field}>Check-out time<input type="time" value={endTime} onChange={e=>{setEndTime(e.target.value);resetStaySelection();}}/></label>
             </fieldset></>}
           </div>
-          <p className={styles.durationSummary} role={datesValid?"status":"alert"}>{overnightTooShort ? "Overnight Pet Sitting covers more than 10 hours. For shorter care, choose a 60-minute Home Visit." : stayWindow.summary}</p>
-          <p className={styles.hint}>All care times are in India Standard Time (IST). Pricing updates for the full selected stay.</p>
+          <p className={styles.durationSummary} role={windowOk?"status":"alert"}>{overnightTooShort ? "Overnight Pet Sitting covers more than 10 hours. For shorter care, choose a 60-minute Home Visit." : stayWindow.summary}</p>
+          {windowProblem && <p className={styles.hint} role="alert">{windowProblem.message}</p>}
+          <p className={styles.hint}>All care times are in India Standard Time (IST). {stayBookingWindowRule()} Pricing updates for the full selected stay.</p>
           <div className={styles.sectionHead}>
             <b>Select pets</b>
             <span>{selectedPets.length} of 4</span>
           </div>
           <div className={styles.petList}>
             {petsLoading && <p className={styles.hint}>Loading your pets…</p>}
-            {petsError && <p className={styles.hint} role="alert">{petsError}</p>}
+            {petsError && <p className={styles.hint} role="alert">{petsError} <button type="button" onClick={() => { setPetsError(""); setPetsAttempt(value => value + 1); }}>Retry loading pets</button></p>}
             {!petsLoading && !petsError && pets.length === 0 && (
               <p className={styles.hint}>No pets on your profile yet — add one below, then select it to book.</p>
             )}
@@ -446,6 +466,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 <span>
                   <b>{p.name}</b>
                   <small>{petDetail(p)}</small>
+                  {mode === "boarding" && boardingPetNote(p) && <small>{boardingPetNote(p)}</small>}
                 </span>
                 <em>{selectedPets.includes(p.id) ? "✓" : "＋"}</em>
               </button>
@@ -477,18 +498,18 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               </button>
             ))}
           </div>
-          <p className={styles.hint}>
+          {vaccinationProblem ? <p className={styles.hint} role="alert">{vaccinationProblem.message}</p> : <p className={styles.hint}>
             {datesValid
               ? mode === "boarding"
                 ? `${stayWindow.duration} selected · We’ll show hosts available for your dates and location.`
                 : "We’ll show sitters available for your dates and location."
-              : "End date must be after the start date."}
-          </p>
+              : windowProblem ? windowProblem.message : "End date must be after the start date."}
+          </p>}
           <button
             type="button"
-            disabled={!canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable})}
+            disabled={!canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable})||Boolean(vaccinationProblem)}
             className={styles.primary}
-            onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}
+            onClick={() => {if(planStillValid()&&canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable})&&!vaccinationProblem)setStage(2);}}
           >
             {selectedPets.length === 0
               ? "Select a pet to continue"
@@ -516,8 +537,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
           {mode === "sitting" && sitterWindowKey === boardingHostQueryKey && !caregivers.length && <p role="alert">{sitterError||"No sitter is available for this care window. Try different dates."}</p>}
           {mode === "sitting" && sitterError && <button onClick={()=>{setSitterWindowKey("");setSitterError("");setHostRetry(value=>value+1);}}>Retry sitter search</button>}
           {mode === "boarding" && !serviceLocation && <p role="alert">Return to Plan and verify a service address before searching for hosts.</p>}
-          {mode === "boarding" && serviceLocation && boardingHostWindowKey !== boardingHostQueryKey && <p className={styles.hint}>Checking governed host availability for this stay window…</p>}
-          {mode === "boarding" && boardingHostWindowKey === boardingHostQueryKey && caregivers.length === 0 && <p role="alert" className={styles.hint}>{boardingHostError || "No verified Boarding host currently has capacity for every selected pet in this UAT window."}</p>}
+          {mode === "boarding" && serviceLocation && boardingHostWindowKey !== boardingHostQueryKey && <p className={styles.hint}>Checking host availability for this stay window…</p>}
+          {mode === "boarding" && boardingHostWindowKey === boardingHostQueryKey && caregivers.length === 0 && <p role="alert" className={styles.hint}>{boardingHostError || "No verified Boarding host currently has capacity for every selected pet on these dates. Try different dates."}</p>}
           {mode === "boarding" && boardingHostError && <button onClick={()=>{setBoardingHostWindowKey("");setBoardingHostError("");setHostRetry(value=>value+1);}}>Retry host search</button>}
           <div className={styles.caregivers}>
             {caregivers.map((c) => (
@@ -556,9 +577,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   </strong>
                 </div>
                 {mode === "boarding" ? (
-                  <label>✓ Governed host · selected-window availability verified in UAT</label>
+                  <label>✓ Verified host · selected-window availability verified in UAT</label>
                 ) : <>
-                  <label>UAT profile · final assignment is decided by the canonical scheduler</label>
+                  <label>Your sitter is confirmed when you send the request</label>
                 </>}
               </button>
             ))}
@@ -569,7 +590,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 {caregiver.name} · {caregiver.capacity}
               </b>
               <span>
-                {mode === "boarding" ? "Identity, species eligibility and stay capacity come from PawSpace governed records. Published profile details are loaded below. Private messages and your service feedback are linked to the saved booking." : "Availability comes from the current schedule. Published profile details appear below; private chat opens from a confirmed booking."}
+                {mode === "boarding" ? "PawSpace verifies each host's identity, the pets they can take and their capacity. Their published profile is below; private messages and your feedback are linked to the saved booking." : "Availability comes from the current schedule. Published profile details appear below; private chat opens from a confirmed booking."}
               </span>
             </div>
             <button onClick={() => setProfileOpen((open) => !open)}>
@@ -612,7 +633,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </div>
           </article>
           <div className={styles.careInstructions}><p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field])=>mode==="sitting"||field!=="homeAccess").map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>
-          {mode==="boarding"&&<><div className={styles.sectionHead}><b>Requested extras</b><span>Subject to host agreement</span></div><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
+          {mode==="boarding"&&<><div className={styles.sectionHead}><b>{HOST_REQUESTS_TITLE}</b><span>{HOST_REQUESTS_NOT_INCLUDED}</span></div><p className={styles.hint}>{HOST_REQUESTS_NOTE}</p><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
           {caregiver.providerId&&<StayMeetingRequest key={`${mode}:${caregiver.providerId}:${start}:${end}`} providerId={caregiver.providerId} providerName={caregiver.name} serviceCode={mode==="boarding"?"boarding":"pet_sitting"} start={start} end={end} onRequested={setMeeting}/>}
           <p className={styles.hint}>Care updates appear against the saved booking. Introduction requests are separate and never silently added to this stay bill.</p>
           <button className={styles.back} onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}>
@@ -652,11 +673,11 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </span>
             <span>Service address<b>{serviceLocation?.address||"Verify your saved address"}</b></span>
             <span>
-              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Final assignment and partner approval are requested at confirmation"}</b>
+              Partner approval<b>{mode === "boarding" ? "Your host accepts the stay after you book and pay" : "Final assignment and partner approval are requested at confirmation"}</b>
             </span>
-            <span>
-              Care benefits<b>{selectedBenefits.join(" · ")}</b>
-            </span>
+            {mode === "boarding" && <span>
+              {HOST_REQUESTS_TITLE}<b>{hostRequestsReviewValue(selectedBenefits)}</b>
+            </span>}
             <span>
               Food<b>{foodType||"See care instructions"}</b>
             </span>
@@ -685,6 +706,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               </span>
             )}
             {currentMeeting&&<p>Introduction {currentMeeting.id} is a separate request and is excluded from this stay total.</p>}
+            {mode === "boarding" && selectedBenefits.length > 0 && <p>{hostRequestsExcludedNote(selectedBenefits)}</p>}
             <strong>
               Booking total<b>{quoteMoney(total)}</b>
             </strong>
@@ -727,19 +749,19 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
+                <b>{mode === "boarding" ? "Full payment for daycare and stays up to 4 nights" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
                 <span>
                   {"50/50 split payment becomes available automatically for overnight stays longer than four nights."}
                 </span>
               </div>
             </article>
           )}
-          <p className={styles.hint}>{mode === "boarding" ? "Boarding" : "Pet Sitting"} coupons are disabled until that service has an explicit canonical redemption policy.</p>
+          <p className={styles.hint}>Coupons can&apos;t be used for {mode === "boarding" ? "Boarding" : "Pet Sitting"} yet.</p>
           <article className={styles.protection}>
             <i>✓</i>
             <div>
               <b>PawSpace Stay Protection</b>
-              <span>{mode === "boarding" ? "Host capacity is rechecked when requested. Payment is not yet verified. Cancellation/refund policy, live messaging and 24/7 support integrations remain pre-live gates." : "The canonical quote is ready. Sitter capacity is confirmed only when the scheduler accepts this request; payment remains UAT sandbox-only."}</span>
+              <span>{mode === "boarding" ? "Host capacity is rechecked when requested. Payment is not yet verified. Cancellation/refund policy, live messaging and 24/7 support integrations remain pre-live gates." : "Your price is ready. Your sitter's availability is confirmed when you send this request; payment is a sandbox test payment."}</span>
             </div>
           </article>
           <label className={styles.consent}>
@@ -782,6 +804,6 @@ function Head({ title, note }: { title: string; note: string }) {
   );
 }
 function LiveStay({bookingId,mode,caregiver,view,setView,initialCarePlan,initialError,routeScope="legacy"}:{routeScope?:"legacy"|"v2";bookingId:string;initialCarePlan?:SittingCarePlan;initialError?:string;start:string;end:string;nights:number;mode:Mode;caregiver:Caregiver;pets:string[];total:number;taxi:boolean;view:View;setView:(value:View)=>void;flash:(message:string)=>void}){
- if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} initialCarePlan={initialCarePlan} initialError={initialError} />;
+ if(mode === "sitting")return <SittingCustomerPanel key={bookingId} bookingId={bookingId} routeScope={routeScope} initialCarePlan={initialCarePlan} initialError={initialError} />;
  return <section className={styles.flow}><h2>Boarding booking · {bookingId}</h2><Link href={`${routeScope==="v2"?"/v2":""}/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`}>Open saved booking and care</Link><Link href={routeScope==="v2"?`/v2/taxi?sourceBookingId=${encodeURIComponent(bookingId)}`:`/mobile-app?service=pet_taxi&sourceBookingId=${encodeURIComponent(bookingId)}`}>Add Pet Taxi for this Boarding stay →</Link><nav aria-label="Boarding booking sections" className={styles.liveTabs}><button onClick={()=>setView("stay")}>Stay status</button><button onClick={()=>setView("care")}>Care and requests</button></nav>{view === "stay"?<BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name}/>:<BoardingCustomerStayPanel routeScope={routeScope} bookingId={bookingId} caregiverName={caregiver.name} initialCarePlan={initialCarePlan} initialError={initialError}/>}</section>;
 }

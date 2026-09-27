@@ -44,7 +44,7 @@ async function sandboxLogin(page: import("@playwright/test").Page, loginPhone=ph
   })).toBe(200);
 }
 
-async function ensureCustomerPet(page: import("@playwright/test").Page) {
+async function ensureCustomerPet(page: import("@playwright/test").Page, vaccinationStatus = "not_provided") {
   const accountResponse = await page.context().request.get("/api/customer-account");
   expect(accountResponse.ok(), `customer account must resolve after sandbox OTP (${accountResponse.status()})`).toBeTruthy();
   const account = await accountResponse.json().catch(() => ({})) as { data?: { customerId?: string; pets?: Array<{ name?: string }> } };
@@ -59,7 +59,7 @@ async function ensureCustomerPet(page: import("@playwright/test").Page) {
         name: "Buddy",
         species: "dog",
         breed: "Labrador Retriever",
-        vaccinationStatus: "not_provided",
+        vaccinationStatus,
       },
     },
   });
@@ -292,7 +292,10 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  // Google address autocomplete is an external transport boundary. Keep it deterministic here while
  // the PawSpace doorstep verification, pincode, city/zone, radius and scheduling gates remain real.
  await page.route("**/api/address-autocomplete?*",async route=>{const query=new URL(route.request().url()).searchParams;if(query.get("mode")==="search")return route.fulfill({json:{data:{status:"configured",suggestions:[{placeId:"e2e-doorstep",mainText:"42, Indiranagar Double Road",secondaryText:"Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",fullText:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038"}]}}});return route.fulfill({json:{data:{status:"configured",address:"42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru 560038",latitude:12.9783692,longitude:77.6408356}}});});
- await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);await ensureCustomerPet(page);
+ await sandboxLogin(page,mode==="boarding"?boardingCustomerPhone:sittingCustomerPhone);
+ // Boarding refuses an unverified pet on the Plan step, before any host or price (round-2 BRD-06; lib/stay-plan-checks.ts, unit-tested),
+ // so the Boarding run seeds a verified pet: its chosen times must reach the real quote and the stay request must be created.
+ await ensureCustomerPet(page,mode==="boarding"?"verified":"not_provided");
  const savedAddress=await page.request.post("/api/customer-account",{data:{action:"upsert_address",idempotencyKey:`phase2-address-${mode}-${Date.now()}`,address:{label:"Home",line1:"42, Indiranagar Double Road",area:"Indiranagar",city:"Bengaluru",postalCode:"560038",isDefault:true}}});expect(savedAddress.ok(),await savedAddress.text()).toBeTruthy();
  await page.goto(`/v2/${mode}`);
  const privacy=page.getByRole("button",{name:"Essential only",exact:true});if(await privacy.isVisible())await privacy.click();
@@ -351,10 +354,9 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
  await consent.check();
  const pay=page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true});
  if(mode==="boarding"){
-  const before=await page.context().request.get("/api/customer-account");expect(before.ok()).toBeTruthy();const initial=await before.json();
-  const writes:string[]=[];page.on("request",request=>{if(request.method()==="POST"&&/\/api\/(uat-scheduling|canonical-bookings|boarding-bookings|boarding-payment)/.test(request.url()))writes.push(request.url());});
-  await pay.click();await expect(page.getByRole("alert")).toContainText("Boarding requires verified vaccination");
-  expect(writes).toHaveLength(0);const after=await page.context().request.get("/api/customer-account");expect(after.ok()).toBeTruthy();expect((await after.json()).data.bookings).toEqual(initial.data.bookings);
+  const created=page.waitForResponse(response=>response.url().endsWith("/api/canonical-bookings")&&response.request().method()==="POST");
+  await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);
+  await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible({timeout:30_000});
  }else{
   const created=page.waitForResponse(response=>response.url().endsWith("/api/sitting-bookings")&&response.request().method()==="POST");await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);const body=await response.json();const bookingId=String(body.data.bookingId),paymentId=String(body.data.paymentId);expect(bookingId).not.toBe("");expect(paymentId).toMatch(/^PAY-SIT-/);
   await expect.poll(async()=>{const saved=await page.context().request.get("/api/customer-account");if(!saved.ok())return "account_unavailable";const account=await saved.json();const row=account.data.bookings.find((booking:{id:string})=>booking.id===bookingId);return row?.status??"missing";},{timeout:30_000,message:"Sitting booking should enter payment_pending before the payment review UI is asserted"}).toBe("payment_pending");
@@ -365,7 +367,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Meet and Greet",exact:true})).toContainText(meeting.request.id);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
-  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("payment pending");
+  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/payment pending/i);
   const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
   await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
   // Verify-first contract: provider execution remains locked until signed Razorpay evidence advances payment.

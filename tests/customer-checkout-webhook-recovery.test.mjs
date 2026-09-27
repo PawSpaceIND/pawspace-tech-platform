@@ -338,3 +338,49 @@ test("a stale completed replica cannot override a still-processing primary inbox
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
   assert.equal(w.providerCalls(), 1);
 });
+
+// Round-2 transactions audit (a payment.captured webhook left FAILED). A signed capture the webhook refuses
+// is answered 409 so Razorpay retries it, but the captured money used to be visible only in the webhook
+// inbox, FAILED for good once the retries stopped. Each refusal is now one open Finance exception.
+const refusedCaptureExceptions = (sqlite) => sqlite.prepare("SELECT id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json FROM payment_reconciliation_exceptions ORDER BY created_at").all();
+
+test("a signed capture no booking payment owns is refused for retry and reaches Finance as one open exception", async t => {
+  const w = await setup(t);
+  const raw = JSON.stringify({ event: "payment.captured", created_at: 1800000000, payload: { payment: { entity: {
+    id: "pay_strayFixture", order_id: "order_strayFixture", amount: 75000, currency: "INR", status: "captured", notes: { booking_id: "B-NOT-OURS" } } } } });
+  for (const attempt of [1, 2]) {
+    const refused = await w.deliver("payment.captured", "evt_stray_capture", raw);
+    assert.equal(refused.status, 409, `attempt ${attempt} stays retryable: ${JSON.stringify(refused.body)}`);
+    assert.equal(refused.body.code, "capture_atomic_link_missing");
+  }
+  const inbox = w.sqlite.prepare("SELECT processing_status,failure_reason FROM gateway_webhook_events WHERE event_id='evt_stray_capture'").get();
+  assert.deepEqual({ ...inbox }, { processing_status: "FAILED", failure_reason: "capture_has_no_canonical_payment_link" });
+  const exceptions = refusedCaptureExceptions(w.sqlite);
+  assert.equal(exceptions.length, 1, "one Finance exception however many times Razorpay retries");
+  assert.deepEqual({ type: exceptions[0].exception_type, severity: exceptions[0].severity, status: exceptions[0].status, eventId: exceptions[0].event_id, bookingId: exceptions[0].booking_id },
+    { type: "unmatched_gateway_capture", severity: "critical", status: "open", eventId: "evt_stray_capture", bookingId: null });
+  assert.deepEqual(JSON.parse(exceptions[0].detail_json), { eventType: "payment.captured", gatewayOrderId: "order_strayFixture", gatewayPaymentId: "pay_strayFixture",
+    amount: 750, currency: "INR", claimedBookingId: "B-NOT-OURS", refusal: "capture_has_no_canonical_payment_link" });
+  assert.equal(w.sqlite.prepare("SELECT status FROM booking_payments").get().status, "created", "no booking is settled by money it does not own");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions").get().n, 0);
+  const { listPaymentExceptions } = await import("../lib/grooming-payment-reconciliation.ts");
+  assert.deepEqual((await listPaymentExceptions(w.db)).map((row) => row.type), ["unmatched_gateway_capture"], "the Finance exceptions API lists it");
+});
+
+test("a signed capture whose notes name another booking is refused and reaches Finance against the order's own booking", async t => {
+  const w = await setup(t);
+  w.sqlite.exec(`INSERT INTO canonical_bookings SELECT 'B2','recovery-booking-2',customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,'GROUP2',provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at FROM canonical_bookings WHERE id='B1';
+    INSERT INTO booking_payments VALUES ('P2','B2','C1',499.50,499.50,'INR','upi','prepaid','created','razorpay_sandbox','recovery-payment-2','{}',0,0);`);
+  const raw = JSON.parse(w.payload("payment.captured"));
+  raw.payload.payment.entity.notes.booking_id = "B2";
+  const refused = await w.deliver("payment.captured", "evt_claims_other_booking", JSON.stringify(raw));
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.code, "gateway_order_booking_mismatch");
+  const [exception] = refusedCaptureExceptions(w.sqlite);
+  assert.ok(exception, "the refused capture must reach Finance");
+  assert.deepEqual({ type: exception.exception_type, bookingId: exception.booking_id, paymentId: exception.payment_id, status: exception.status },
+    { type: "gateway_order_booking_mismatch", bookingId: "B1", paymentId: "P1", status: "open" });
+  const detail = JSON.parse(exception.detail_json);
+  assert.deepEqual({ claimed: detail.claimedBookingId, linked: detail.linkedBookingId, amount: detail.amount }, { claimed: "B2", linked: "B1", amount: 499.5 });
+  assert.deepEqual(w.sqlite.prepare("SELECT booking_id,status FROM booking_payments ORDER BY booking_id").all().map((row) => [row.booking_id, row.status]), [["B1", "created"], ["B2", "created"]], "neither booking is settled");
+});

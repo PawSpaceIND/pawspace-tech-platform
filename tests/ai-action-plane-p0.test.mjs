@@ -29,9 +29,11 @@ test("financial authority remains gated while deterministic provider policy is A
     assert.match(plane,new RegExp(`NEVER_AUTONOMOUS_TOOLS[^\\n]+${tool.replaceAll(".","\\.")}`));
 });
 
-test("public leads are AI-owned and no immediate human call task is created",()=>{
+test("public leads get a person through canonical routing, the AI keeps only its conversation, and no legacy call task is created",()=>{
   const route=read("app/api/public-contact/route.ts");
-  assert.match(route,/AI Orchestrator/);
+  assert.match(route,/reconcileCanonicalLeadGovernance\(db/);
+  assert.match(route,/routeNewLead\(db/);
+  assert.doesNotMatch(route,/AI Orchestrator/);
   assert.match(route,/ai_lead_ownership/);
   assert.match(route,/max_clarifications[^\n]+DEFAULT 2/);
   assert.doesNotMatch(route,/First response to new website lead/);

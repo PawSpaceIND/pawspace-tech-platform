@@ -1,7 +1,7 @@
 import{ensureBoardingStayLifecycleTables}from"./boarding-stay-lifecycle";
 import{collectedForBooking}from"./collected-funds";
 import{providerPayoutHoldDays}from"./provider-payout-hold";
-import{recordStaffConfirmedRefund}from"./refund-collection-reversal";
+import{approvedServiceRefundCase,ensureCanonicalRefundCaseTable,recordServiceLedgerRefund}from"./refund-collection-reversal";
 
 type Row=Record<string,unknown>;
 export type BoardingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"reconcile";
@@ -40,17 +40,11 @@ export async function ensureBoardingFinanceTables(db:D1Database){await ensureBoa
  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_boarding_refund_reference ON boarding_refund_ledger(reference) WHERE reference IS NOT NULL"),
  db.prepare("CREATE TABLE IF NOT EXISTS boarding_host_settlement_ledger (booking_id TEXT PRIMARY KEY,stay_id TEXT NOT NULL,provider_id TEXT NOT NULL,gross_booking_value REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',base_payout REAL,add_on_payout REAL,travel_allowance REAL,incentives REAL,penalties REAL,cash_adjustment REAL,payout_amount REAL,payout_rule_status TEXT NOT NULL DEFAULT 'rule_pending',tax_status TEXT NOT NULL DEFAULT 'configuration_required',approval_status TEXT NOT NULL DEFAULT 'not_ready',payout_status TEXT NOT NULL DEFAULT 'not_instructed',eligible_at INTEGER,approved_by TEXT,payout_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS boarding_finance_reconciliation (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,booking_total REAL NOT NULL,amount_due_now REAL NOT NULL,refund_total REAL NOT NULL,net_customer_amount REAL NOT NULL,settlement_amount REAL,refund_state TEXT NOT NULL,settlement_state TEXT NOT NULL,tax_state TEXT NOT NULL,status TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',checked_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
- db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
- ]);await ensureRefundLedgerUniqueness(db,"boarding_refund_ledger");
- for(const column of["approved_by TEXT","policy_json TEXT NOT NULL DEFAULT '{}'"])await db.prepare(`ALTER TABLE booking_refund_cases ADD COLUMN ${column}`).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});}
+ ]);await ensureRefundLedgerUniqueness(db,"boarding_refund_ledger");await ensureCanonicalRefundCaseTable(db);}
 
-/**
- * An approved Boarding refund is also a canonical refund case, so BCC, the Finance queues, P&L and the
- * refund webhook see it (STAFF-05). Staff approval already happened, so the case is approved, but it is
- * not automatic: nothing is sent to the gateway on its own. Same id as the Boarding refund ledger row.
- */
+/** An approved Boarding refund is also a canonical refund case (STAFF-05), with the same id as its ledger row. */
 function canonicalRefundCase(db:D1Database,input:{refundId:string;bookingId:string;amount:number;reason:string;requestedBy:string;approvedBy:string;cancellationRequestId:string;now:number}){
- return db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,policy_json,created_at,updated_at) VALUES (?,?,(SELECT id FROM booking_payments WHERE booking_id=?),?,?,'approved',?,?,?,?,?)").bind(input.refundId,input.bookingId,input.bookingId,input.amount,input.reason,input.requestedBy,input.approvedBy,JSON.stringify({automatic:false,requiresApproval:false,policySource:"explicit_staff_approval",service:"boarding",cancellationRequestId:input.cancellationRequestId}),input.now,input.now);
+ return approvedServiceRefundCase(db,{...input,service:"boarding",policySource:"explicit_staff_approval"});
 }
 
 async function context(db:D1Database,bookingId:string){await ensureBoardingFinanceTables(db);const row=await db.prepare("SELECT b.id booking_id,b.customer_id,b.provider_id,b.total_amount,p.amount_due_now,b.status booking_status,p.status payment_status,b.package_code,b.package_name,b.scheduled_start,b.scheduled_end,s.id stay_id,s.status stay_status,s.check_in_status,s.check_out_status,s.host_provider_id,s.pet_count,s.city_id,s.zone_id,s.check_in_at,s.check_out_at FROM canonical_bookings b JOIN boarding_stays s ON s.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='boarding'").bind(bookingId).first<Row>();if(!row)throw new Response("Canonical Boarding booking not found",{status:404});return row;}
@@ -130,10 +124,7 @@ export async function mutateBoardingFinance(db:D1Database,input:BoardingFinanceI
  if(input.action==="record_refund"){
   const ref=String(input.refundReference||"").trim();if(!ref)throw new Response("Sandbox refund reference is required",{status:400});const refund=await db.prepare("SELECT * FROM boarding_refund_ledger WHERE booking_id=? AND status='sandbox_pending' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!refund)throw new Response("No sandbox refund is pending",{status:409});const duplicate=await db.prepare("SELECT id,booking_id FROM boarding_refund_ledger WHERE reference=?").bind(ref).first<Row>();if(duplicate&&String(duplicate.id)!==String(refund.id))throw new Response("Refund reference was already used",{status:409});// Refunds approved before canonical cases existed get theirs now, from the Boarding ledger row.
   const cancellation=refund.cancellation_request_id?await db.prepare("SELECT requested_by,decision_by,decision_reason FROM boarding_cancellation_requests WHERE id=?").bind(refund.cancellation_request_id).first<Row>():null;
-  await canonicalRefundCase(db,{refundId:String(refund.id),bookingId:input.bookingId,amount:Number(refund.amount),reason:String(cancellation?.decision_reason||"Boarding cancellation refund"),requestedBy:String(cancellation?.requested_by||refund.created_by),approvedBy:String(cancellation?.decision_by||refund.created_by),cancellationRequestId:String(refund.cancellation_request_id||""),now}).run();
-  let canonical;
-  try{canonical=await recordStaffConfirmedRefund(db,{refundCaseId:String(refund.id),reference:ref,actorId:input.actorId,statements:[db.prepare("UPDATE boarding_refund_ledger SET status='sandbox_recorded',reference=?,updated_at=? WHERE id=? AND status='sandbox_pending'").bind(ref,now,refund.id)]});}
-  catch(error){if(error instanceof Response)throw error;throw new Response(`The refund could not be recorded: ${error instanceof Error?error.message:String(error)}`,{status:409});}
+  const canonical=await recordServiceLedgerRefund(db,{ledger:"boarding_refund_ledger",service:"boarding",refund,cancellation,reference:ref,actorId:input.actorId,policySource:"explicit_staff_approval",fallbackReason:"Boarding cancellation refund",now});
   return remember(db,input,{bookingId:input.bookingId,status:"sandbox_recorded",refundId:refund.id,refundReference:ref,amount:Number(refund.amount),refundPosted:true,ledgerVerification:canonical.duplicate?null:canonical.ledger.verificationStatus});
  }
 

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { partnerJobWorkspaceHref } from '../lib/partner-job-workspace.ts';
+import { installWorkersHooks } from './helpers/module-hooks.mjs';
+
+installWorkersHooks('__V2_PARTNER_ROUTING_DB__');
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
@@ -53,4 +56,25 @@ test('V2 provider workspaces keep customer/proof/back links in the V2 namespace'
   assert.match(sources,/\/v2\/walking/);
   assert.match(sources,/\/v2\/taxi/);
   assert.match(sources,/\/v2\/training/);
+});
+
+// R2 (partner workspaces): /v2/partner/sitter opened without a booking sent the booking a sitter typed, and the
+// demo link, to the legacy /sitter shell. The driver entry already stayed inside /v2/partner; both are rendered.
+test('V2 sitter and driver entry pages open a booking inside /v2/partner',async()=>{
+  const React=await import('react');
+  const {renderToStaticMarkup}=await import('react-dom/server');
+  const {default:SittingWorkspace}=await import('../app/sitter/sitting-workspace.tsx');
+  const {default:CanonicalDriverPage}=await import('../app/driver/canonical-driver-page.tsx');
+  try{
+    globalThis.__PAWSPACE_TEST_PATHNAME__='/v2/partner/sitter';
+    const sitter=renderToStaticMarkup(React.createElement(SittingWorkspace,{bookingId:''}));
+    assert.match(sitter,/href="\/v2\/partner\/sitter\?bookingId=UATD-BK-SIT-1"/);
+    assert.match(sitter,/href="\/v2\/sitting"/);
+    globalThis.__PAWSPACE_TEST_PATHNAME__='/v2/partner/driver';
+    const driver=renderToStaticMarkup(React.createElement(CanonicalDriverPage));
+    assert.match(driver,/href="\/v2\/partner\/driver\?bookingId=UATD-BK-TAXI-1"/);
+    assert.match(driver,/href="\/v2\/taxi"/);
+    globalThis.__PAWSPACE_TEST_PATHNAME__='/sitter';
+    assert.match(renderToStaticMarkup(React.createElement(SittingWorkspace,{bookingId:''})),/href="\/sitter\?bookingId=UATD-BK-SIT-1"/,'the legacy shell keeps its own links');
+  }finally{delete globalThis.__PAWSPACE_TEST_PATHNAME__;}
 });
