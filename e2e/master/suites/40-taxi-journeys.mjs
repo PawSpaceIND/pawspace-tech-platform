@@ -525,7 +525,7 @@ async function staffPart(browser) {
       try {
         const r = await api(flow.context, "GET", `/api/booking-command-center?q=${encodeURIComponent(ride.bookingId)}`, undefined, { timeout: 150_000 });
         const row = (r.body?.bookings || []).find(x => x.id === ride.bookingId);
-        const expected = ride.paid ? "captured" : "created";
+        const expected = ride.label === "T4" && out.t7?.after?.status === "cancelled" ? "cancelled" : ride.paid ? "captured" : "created";
         let evidence = [];
         if (["T1", "T4"].includes(ride.label)) {
           await page.goto(`${BASE}/team/operations/bookings?bookingId=${encodeURIComponent(ride.bookingId)}`, { waitUntil: "domcontentloaded" }); await dismissCookies(page);
@@ -548,7 +548,7 @@ async function staffPart(browser) {
       await settle(page, 1500);
       const t = await text(page), shot = await flow.shot("taxi-finance-workspace");
       const value = inr(t1.total);
-      const ok = api1.status === 200 && /Taxi payment & reconciliation/.test(t) && t.includes(`Booking value | ${value}`) && !/Unable to load|role=alert/.test(t);
+      const ok = api1.status === 200 && /Taxi payment & reconciliation/.test(t) && new RegExp(`Booking value\\s*\\|\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(t) && !/Unable to load|role=alert/.test(t);
       rec({ journey: "Staff: Taxi finance workspace (/team/finance/taxi)", combo: `founder@pawspace.in, ${t1.bookingId}`, result: ok ? "PASS" : "FAIL", detail: `API ${api1.status} booking ${api1.body?.data?.booking?.status} payment ${api1.body?.data?.booking?.payment_status}; page "${t.slice(t.indexOf("Taxi payment"), t.indexOf("Taxi payment") + 300)}" (Finance accounts such as anjali.finance33 need MFA on staging, so the founder account is used)`, evidence: [shot] });
     }
   } catch (e) { rec({ journey: "Staff: Booking Command Center + Taxi finance", combo: "founder", result: "BLOCKED", detail: harness(e), evidence: [] }); }
@@ -584,7 +584,10 @@ async function d1Part() {
     const r = f(rows.ride), fl = f(rows.fleet), sch = f(rows.schedule), rc = f(rows.reconciliation), pmt = f(rows.payment);
     if (cents(sch.booking_fee_amount) !== cents(ride.fee) || cents(sch.balance_amount) !== cents(ride.balance) || cents(sch.total_amount) !== cents(ride.total)) problems.push(`schedule ${JSON.stringify(sch)}`);
     if (r.vehicle_class !== ride.vehicle || Number(r.passenger_count) !== ride.q.passengerCount || Number(r.pet_count) !== ride.q.petCount || Number(r.luggage_count) !== ride.q.luggageCount || r.trip_type !== ride.q.tripType || r.ride_purpose !== ride.q.ridePurpose || Number(r.waiting_minutes) !== ride.q.waitingMinutes) problems.push(`ride details ${JSON.stringify(r)}`);
-    if (!["confirmed", "in_progress"].includes(String(fl.status)) || fl.vehicle_class !== ride.vehicle) problems.push(`fleet ${JSON.stringify(fl)}`);
+    const cancelledByT7 = ride.label === "T4" && out.t7?.after?.status === "cancelled";
+    if (cancelledByT7) {
+      if (String(fl.status) !== "released" || fl.vehicle_class !== ride.vehicle) problems.push(`fleet ${JSON.stringify(fl)}`);
+    } else if (!["confirmed", "in_progress"].includes(String(fl.status)) || fl.vehicle_class !== ride.vehicle) problems.push(`fleet ${JSON.stringify(fl)}`);
     const types = rows.lifecycle.map(x => x.event_type);
     if (!types.includes("taxi_booking_fee_pending")) problems.push("no taxi_booking_fee_pending event");
     let money = [];
@@ -601,7 +604,9 @@ async function d1Part() {
       if (!["confirmed", "assigned"].includes(String(f(rows.booking).status))) problems.push(`booking ${f(rows.booking).status}`);
       if (rows.webhooks.some(w => ["RECEIVED", "PROCESSING", "FAILED"].includes(String(w.processing_status)))) problems.push(`webhooks ${JSON.stringify(rows.webhooks)}`);
     } else {
-      if (pmt.status !== "created" || sch.status !== "booking_fee_pending" || f(rows.booking).status !== "payment_pending") problems.push(`unpaid state ${JSON.stringify({ payment: pmt.status, schedule: sch.status, booking: f(rows.booking).status })}`);
+      if (cancelledByT7) {
+        if (pmt.status !== "cancelled" || sch.status !== "cancelled" || f(rows.booking).status !== "cancelled") problems.push(`cancelled unpaid state ${JSON.stringify({ payment: pmt.status, schedule: sch.status, booking: f(rows.booking).status })}`);
+      } else if (pmt.status !== "created" || sch.status !== "booking_fee_pending" || f(rows.booking).status !== "payment_pending") problems.push(`unpaid state ${JSON.stringify({ payment: pmt.status, schedule: sch.status, booking: f(rows.booking).status })}`);
       if (rows.ledger.length || rows.events.some(e => e.event_type === "payment.captured")) money.push(`money posted for an unpaid ride: ${JSON.stringify(rows.ledger)}`);
     }
     const all = [...money, ...problems];

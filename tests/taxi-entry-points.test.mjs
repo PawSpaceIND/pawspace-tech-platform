@@ -15,6 +15,7 @@ test("staff-assisted Taxi reuses v2 quote scheduler and canonical booking",()=>{
  assert.match(assisted,/createTaxiRideQuote/);assert.match(assisted,/reserveTaxiSchedule/);assert.match(assisted,/createCanonicalTaxiRideBooking/);
  assert.match(assisted,/channel:"assisted_staff"/);assert.match(assisted,/assistedConsent:\{method:consentMethod,reference:consentReference\.trim\(\)\}/);
  assert.match(assisted,/50% booking-fee gate/);assert.match(assisted,/Create payment-pending Taxi/);assert.doesNotMatch(assisted,/status:\s*"confirmed"/);
+ assert.match(assisted,/serviceAddress:pickup\.trim\(\),servicePincode:pincode,vehicleClass:vehicle/);
  assert.match(assistedPage,/AssistedTaxiPanel/);
 });
 

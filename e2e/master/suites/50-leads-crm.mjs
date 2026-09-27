@@ -495,7 +495,8 @@ try {
       await f.page.goto(`${BASE}/team/sales`, { waitUntil: "domcontentloaded" }); await settle(f.page, 4000);
       await f.page.getByPlaceholder("Filter by name, phone, stage or owner").fill(leadCustomer.name).catch(() => {});
       await f.page.locator("button").filter({ hasText: leadCustomer.name }).first().click().catch(() => {});
-      await settle(f.page, 1500);
+      if (ours[0]) await f.page.getByText(ours[0], { exact: false }).first().waitFor({ timeout: 20_000 }).catch(() => {});
+      await settle(f.page, 500);
       const ui = await mainText(f.page, 6000), shot = await f.shot("customer-360-lead");
       const uiListsBookings = ours.length > 0 && ours.every((id) => ui.includes(id));
       const paidTotal = [booked.boarding, booked.taxi].filter((b) => b?.paid).reduce((s, b) => s + Number(b.dueNow ?? b.fee ?? 0), 0);
