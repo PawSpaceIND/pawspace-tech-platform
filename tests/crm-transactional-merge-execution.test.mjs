@@ -112,3 +112,25 @@ test("merge is refused for an unclear reason and for identical ids", async () =>
     /must differ/,
   );
 });
+
+test('identity merge preserves restrictive consent and archives both original preferences',async()=>{
+ const sqlite=freshSqlite();seed(sqlite);
+ sqlite.exec(`CREATE TABLE customer_contact_preferences(customer_id TEXT PRIMARY KEY,marketing_consent INTEGER,service_consent INTEGER,whatsapp_consent INTEGER,sms_consent INTEGER,email_consent INTEGER,opt_out INTEGER);
+ INSERT INTO customer_contact_preferences VALUES('CUST-P',1,1,1,0,1,0),('CUST-D',0,0,0,1,1,1);`);
+ await executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-P',duplicateCustomerId:'CUST-D',actorId:'qa',reason:'Verified synthetic duplicate'});
+ const row=sqlite.prepare("SELECT * FROM customer_contact_preferences WHERE customer_id='CUST-P'").get();
+ assert.equal(row.marketing_consent,0);assert.equal(row.service_consent,0);assert.equal(row.whatsapp_consent,0);assert.equal(row.sms_consent,0);assert.equal(row.email_consent,1);assert.equal(row.opt_out,1);
+ const saved=JSON.parse(sqlite.prepare('SELECT summary_json FROM customer_merge_runs').get().summary_json);
+ assert.equal(saved.preferenceSnapshot.length,2);assert.equal(saved.preferenceSnapshot.find(x=>x.customer_id==='CUST-D').opt_out,1);
+});
+
+test('reviewed merge keeps food and payment ownership aligned without changing payment evidence',async()=>{
+ const sqlite=freshSqlite();seed(sqlite);
+ for(const table of ['booking_payments','payment_intents','food_orders','food_order_payments']){
+  sqlite.exec(`CREATE TABLE ${table}(id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,amount INTEGER,gateway_reference TEXT); INSERT INTO ${table} VALUES('audit','CUST-D',39900,'pay_evidence');`);
+ }
+ await executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-P',duplicateCustomerId:'CUST-D',actorId:'qa',reason:'Verified synthetic duplicate'});
+ for(const table of ['booking_payments','payment_intents','food_orders','food_order_payments']){
+  const row=sqlite.prepare(`SELECT * FROM ${table}`).get();assert.equal(row.customer_id,'CUST-P');assert.equal(row.amount,39900);assert.equal(row.gateway_reference,'pay_evidence');
+ }
+});
