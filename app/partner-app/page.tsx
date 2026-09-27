@@ -827,4 +827,3 @@ function PartnerMobileAppContent() {
     </section>
   </main>;
 }
-
