@@ -152,3 +152,23 @@ test("real quiet-hour policy still fails closed outside the mocked daytime case"
   assert.equal(result.status, "quiet_hours");
   assert.equal(contacted, false);
 });
+
+test('marketing consent revoked after queueing prevents a carrier request', async () => {
+ const {sqlite,db}=await seeded();
+ sqlite.prepare("UPDATE customer_contact_preferences SET marketing_consent=0 WHERE customer_id='C1'").run();
+ let requests=0;
+ const result=await dialler.claimAndDialNextHuman(db,sandboxEnv(),{actorId:ACTOR,asOf:TEN_AM_IST,fetcher:async()=>{requests++;return Response.json({Call:{Sid:'must-not-dial'}});}});
+ assert.equal(requests,0);
+ assert.equal(result.status,'suppressed');
+ assert.match(result.reason,/consent/i);
+});
+
+test('late connected callback cannot reopen a completed employee call', async () => {
+ const {db}=await seeded(),env=sandboxEnv();
+ const started=await dialler.claimAndDialNextHuman(db,env,{actorId:ACTOR,asOf:TEN_AM_IST,fetcher:async()=>Response.json({Call:{Sid:'SANDBOX-LATE',Status:'queued'}})});
+ async function callback(status,at){return dialler.applyEmployeePowerDiallerCallback(db,env,{rawBody:new URLSearchParams({CallSid:started.call.providerCallId,CallStatus:status,CustomField:started.call.id}).toString(),headers:basicCallbackHeaders(env.EXOTEL_WEBHOOK_SECRET),asOf:at});}
+ await callback('completed',TEN_AM_IST+60000);
+ const late=await callback('in-progress',TEN_AM_IST+61000);
+ assert.equal(late.call.status,'completed');
+ assert.equal(await dialler.currentEmployeePowerCall(db,ACTOR),null);
+});
