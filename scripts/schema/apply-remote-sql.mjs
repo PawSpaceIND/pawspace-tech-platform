@@ -15,7 +15,9 @@
  * Usage:
  *   node scripts/schema/apply-remote-sql.mjs --binding DB --config dist/server/wrangler.json --file scripts/employee-seed.sql [--max-chunk-bytes 30000] [--dry-run]
  */
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { classifyRemoteD1Retry } from "../../lib/remote-d1-retry.mjs";
@@ -57,6 +59,36 @@ export function executeRemoteCommand({ binding, config, sql, label, run = runWra
       log.warn(`[d1] ${label} hit ${retry.reason}; retry ${attempt}/${attempts - 1} in ${wait}s`);
       sleep(wait);
     }
+  }
+  throw new Error(`unreachable: ${label}`);
+}
+
+/**
+ * The import API, for the one kind of statement D1's query API cannot take: a trigger whose body D1
+ * would split apart. It takes the database offline while it runs, so callers send only what is
+ * missing (see scripts/schema/apply-remote-migrations.mjs resolveTriggerSteps).
+ */
+export function executeRemoteFile({ binding, config, sql, label, run = runWrangler, sleep = sleepSeconds, attempts = DEFAULT_ATTEMPTS, log = console }) {
+  const dir = mkdtempSync(path.join(tmpdir(), "pawspace-d1-"));
+  const file = path.join(dir, "statement.sql");
+  writeFileSync(file, sql);
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const args = ["wrangler", "d1", "execute", binding, "--remote"];
+        if (config) args.push("--config", config);
+        return run([...args, "--file", file]);
+      } catch (error) {
+        const detail = `${error?.message ?? ""}\n${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
+        const retry = classifyRemoteD1Retry(detail);
+        if (!retry.retryable || attempt === attempts) throw error;
+        const wait = retryDelaySeconds(attempt);
+        log.warn(`[d1] ${label} hit ${retry.reason}; retry ${attempt}/${attempts - 1} in ${wait}s`);
+        sleep(wait);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
   throw new Error(`unreachable: ${label}`);
 }

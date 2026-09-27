@@ -26,7 +26,7 @@ import { freshSqlite, makeD1 } from "./helpers/taxi-harness.mjs";
 import { classifyRemoteD1Retry } from "../lib/remote-d1-retry.mjs";
 import { assertNoTransactionControl, chunkSqlStatements, splitSqlStatements } from "../scripts/schema/sql-statements.mjs";
 import { executeRemoteCommand, executeRemoteSql, wranglerCommandArgs } from "../scripts/schema/apply-remote-sql.mjs";
-import { addColumnSql, loadMigrations, planMigrationSteps } from "../scripts/schema/apply-remote-migrations.mjs";
+import { addColumnSql, loadMigrations, planMigrationSteps, resolveTriggerSteps, triggerStatement } from "../scripts/schema/apply-remote-migrations.mjs";
 import { applyIdempotentMigrationFile } from "../scripts/schema/apply-idempotent-drizzle.mjs";
 
 installWorkersHooks("__REMOTE_SQL_DB__", "__REMOTE_SQL_ENV__");
@@ -89,12 +89,23 @@ async function deploymentShapedDatabase() {
 const schemaOf = (sqlite) => sqlite.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
 
 /** planMigrationSteps() executed locally, doing exactly what the remote runner does for each step. */
+const liveTriggers = (sqlite) => new Map(sqlite.prepare("SELECT name, sql FROM sqlite_master WHERE type='trigger'").all().map((row) => [row.name, row.sql]));
+/** Returns the trigger statements it had to send, as the remote runner decides them from the live triggers. */
 function applyPlan(sqlite, steps) {
-  for (const step of steps) {
-    if (step.type === "sql") { sqlite.exec(step.sql); continue; }
+  const decisions = resolveTriggerSteps(steps, liveTriggers(sqlite));
+  const sent = [];
+  steps.forEach((step, index) => {
+    if (step.type === "sql") { sqlite.exec(step.sql); return; }
+    if (step.type === "trigger") {
+      if (decisions[index] === "drop") sqlite.exec(`DROP TRIGGER IF EXISTS "${step.name}"`);
+      if (decisions[index] === "create") sqlite.exec(step.sql);
+      if (decisions[index] !== "skip") sent.push(`${decisions[index]} ${step.name}`);
+      return;
+    }
     const columns = sqlite.prepare(`PRAGMA table_info("${step.directive.table}")`).all().map((row) => row.name);
     if (columns.length && !columns.includes(step.directive.column)) sqlite.exec(addColumnSql(step.directive));
-  }
+  });
+  return sent;
 }
 
 test("the migration set sent as chunks builds exactly the schema the file-by-file runner builds, and re-sending it changes nothing", async () => {
@@ -106,7 +117,7 @@ test("the migration set sent as chunks builds exactly the schema the file-by-fil
   assert.equal(migrations.length, files.length);
   const steps = planMigrationSteps(migrations);
   const chunks = steps.filter((step) => step.type === "sql");
-  assert.ok(chunks.length < files.length / 5, `${files.length} imports became ${chunks.length} ordinary queries`);
+  assert.ok(chunks.length < files.length / 2, `${files.length} imports became ${chunks.length} ordinary queries`);
   for (const chunk of chunks) assert.ok(Buffer.byteLength(chunk.sql) <= 30_000);
 
   // 0038's directives run after every earlier file and before 0038's own index on the new column.
@@ -114,12 +125,32 @@ test("the migration set sent as chunks builds exactly the schema the file-by-fil
   assert.ok(firstDirective > 0, "0038's directives follow the chunks that create their tables");
   assert.ok(steps.slice(firstDirective).some((step) => step.type === "sql" && /aad_agent_id/.test(step.sql)), "the index on the added column is sent after the directive");
 
-  const chunked = await deploymentShapedDatabase();
-  applyPlan(chunked, steps);
-  assert.deepEqual(schemaOf(chunked), schemaOf(reference));
+  // D1's query API splits some trigger bodies apart ("incomplete input", first staging deploy), so no
+  // chunk may carry one: every trigger statement is its own step.
+  for (const chunk of chunks) assert.equal(chunk.sql.split(";\n").filter((statement) => triggerStatement(statement.trim())).length, 0, "a chunk carries no trigger");
+  assert.ok(steps.filter((step) => step.type === "trigger").length >= 30);
 
-  applyPlan(chunked, steps);
+  const chunked = await deploymentShapedDatabase();
+  const firstDeploy = applyPlan(chunked, steps);
+  assert.deepEqual(schemaOf(chunked), schemaOf(reference));
+  assert.ok(firstDeploy.length >= 30, "a new database gets every trigger");
+
+  assert.deepEqual(applyPlan(chunked, steps), [], "a database that is up to date imports nothing");
   assert.deepEqual(schemaOf(chunked), schemaOf(reference), "a second deploy is a no-op");
+});
+
+test("a trigger is sent only when the database lacks exactly that trigger", () => {
+  const create = (name, body) => ({ type: "trigger", action: "create", name, sql: `CREATE TRIGGER IF NOT EXISTS ${name} BEFORE UPDATE ON t BEGIN ${body}; END` });
+  const drop = (name) => ({ type: "trigger", action: "drop", name, sql: `DROP TRIGGER IF EXISTS ${name}` });
+  // 0017 defines the trigger, 0030 drops it and defines it again: staging already holds 0030's version.
+  const steps = [create("g", "SELECT 1"), { type: "sql", sql: "SELECT 1;\n" }, drop("g"), create("g", "SELECT 2")];
+  assert.deepEqual(resolveTriggerSteps(steps, new Map([["g", "CREATE TRIGGER g  BEFORE UPDATE ON t BEGIN SELECT 2; END"]])), ["skip", null, "skip", "skip"]);
+  // Staging still holds 0017's version: 0030 replaces it.
+  assert.deepEqual(resolveTriggerSteps(steps, new Map([["g", "CREATE TRIGGER g BEFORE UPDATE ON t BEGIN SELECT 1; END"]])), ["skip", null, "drop", "create"]);
+  // A new database: 0017 creates it, 0030 drops and re-creates it.
+  assert.deepEqual(resolveTriggerSteps(steps, new Map()), ["create", null, "drop", "create"]);
+  assert.deepEqual(triggerStatement("CREATE TEMP TRIGGER IF NOT EXISTS \"x_y\" AFTER INSERT ON t BEGIN SELECT 1; END"), { action: "create", name: "x_y" });
+  assert.equal(triggerStatement("CREATE INDEX i ON t(v)"), null);
 });
 
 // ---------------------------------------------------------------------------------------------

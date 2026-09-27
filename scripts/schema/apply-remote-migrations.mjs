@@ -34,7 +34,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeReplaySafeDdl } from "./apply-idempotent-drizzle.mjs";
-import { DEFAULT_MAX_CHUNK_BYTES, executeRemoteCommand } from "./apply-remote-sql.mjs";
+import { DEFAULT_MAX_CHUNK_BYTES, executeRemoteCommand, executeRemoteFile } from "./apply-remote-sql.mjs";
 import { assertNoTransactionControl, chunkSqlStatements, splitSqlStatements } from "./sql-statements.mjs";
 
 const ADD_COLUMN = /^\s*--\s*@add-column-if-missing\s+([A-Za-z0-9_]+)\|([A-Za-z0-9_]+)\|(.+)\s*$/gm;
@@ -73,10 +73,67 @@ export function planMigrationSteps(migrations, maxChunkBytes = DEFAULT_MAX_CHUNK
       flush();
       for (const directive of migration.directives) steps.push({ type: "directive", directive });
     }
-    pending.push(...migration.statements);
+    for (const statement of migration.statements) {
+      const trigger = triggerStatement(statement);
+      if (!trigger) { pending.push(statement); continue; }
+      flush();
+      steps.push({ type: "trigger", ...trigger, sql: statement, file: migration.file });
+    }
   }
   flush();
   return steps;
+}
+
+/*
+ * TRIGGERS NEVER TRAVEL IN A --command CHUNK. D1's query API splits multi-statement text itself and
+ * cuts some trigger bodies (BEGIN ... CASE ... END; ... END) apart: the first staging deploy of the
+ * chunked runner failed with "incomplete input: SQLITE_ERROR" on the chunk holding 13 of them. The
+ * import API (--file) parses them correctly but takes the database offline while it runs, so a
+ * trigger is sent only when the database does not already hold exactly that trigger:
+ *   - CREATE TRIGGER IF NOT EXISTS for a name that exists is a no-op, as the SQL itself says;
+ *   - a DROP TRIGGER followed by the CREATE that replaces it (0030 re-defines 0017's
+ *     gateway_webhook_events_immutable_update) is skipped as a pair when the live definition
+ *     already equals the replacement.
+ * On a database that is up to date, a deploy therefore imports nothing.
+ */
+const TRIGGER = /^\s*(CREATE|DROP)\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?["`\[]?([A-Za-z_][A-Za-z0-9_]*)/i;
+export function triggerStatement(statement) {
+  const match = TRIGGER.exec(statement);
+  return match ? { action: match[1].toLowerCase(), name: match[2] } : null;
+}
+/** A trigger's definition as SQLite stores it in sqlite_master (IF NOT EXISTS dropped), whitespace-insensitive. */
+export const triggerDefinition = (sql) => String(sql ?? "").replace(/\bIF\s+NOT\s+EXISTS\s+/i, "").replace(/\s+/g, " ").replace(/;\s*$/, "").trim();
+
+/**
+ * For each trigger step, what the deploy must do given the triggers the database holds now
+ * (name -> stored sql): "skip", "drop" (a --command without a body, safe for the query API) or
+ * "create" (a single-statement --file import). Other steps map to null.
+ */
+export function resolveTriggerSteps(steps, existing) {
+  const live = new Map([...existing].map(([name, sql]) => [name, triggerDefinition(sql)]));
+  const decisions = steps.map(() => null);
+  const pairedCreate = new Set();
+  steps.forEach((step, index) => {
+    if (step.type !== "trigger") return;
+    if (step.action === "drop") {
+      const next = steps.findIndex((later, at) => at > index && later.type === "trigger" && later.name === step.name);
+      const replacement = next >= 0 && steps[next].action === "create" ? steps[next] : null;
+      if (replacement && live.get(step.name) === triggerDefinition(replacement.sql)) {
+        decisions[index] = "skip";
+        decisions[next] = "skip";
+        pairedCreate.add(next);
+        return;
+      }
+      decisions[index] = live.has(step.name) ? "drop" : "skip";
+      live.delete(step.name);
+      return;
+    }
+    if (pairedCreate.has(index)) return;
+    if (live.has(step.name)) { decisions[index] = "skip"; return; }
+    decisions[index] = "create";
+    live.set(step.name, triggerDefinition(step.sql));
+  });
+  return decisions;
 }
 
 export const addColumnSql = (directive) => `ALTER TABLE ${ident(directive.table)} ADD COLUMN ${ident(directive.column)} ${directive.definition}`;
@@ -93,13 +150,20 @@ function main(args) {
   const steps = planMigrationSteps(migrations);
   const directives = steps.filter((step) => step.type === "directive");
   const chunks = steps.filter((step) => step.type === "sql");
-  console.log(`[schema] ${migrations.length} migration files, ${migrations.reduce((n, m) => n + m.statements.length, 0)} statements, ${directives.length} add-column directives, ${chunks.length} chunk(s)`);
+  const triggers = steps.filter((step) => step.type === "trigger");
+  console.log(`[schema] ${migrations.length} migration files, ${migrations.reduce((n, m) => n + m.statements.length, 0)} statements, ${directives.length} add-column directives, ${chunks.length} chunk(s), ${triggers.length} trigger statement(s)`);
 
   if (DRY) {
     for (const { directive: d } of directives) console.log(`[schema]   would check ${d.table}.${d.column} before ${d.file}`);
     return;
   }
 
+  const remoteQuery = (sql) => {
+    const base = ["wrangler", "d1", "execute", BINDING, "--remote"];
+    if (CONFIG) base.push("--config", CONFIG);
+    const parsed = JSON.parse(execFileSync("npx", [...base, "--json", "--command", sql], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+    return parsed?.[0]?.results ?? parsed?.results ?? [];
+  };
   /** Columns a remote table already has, via PRAGMA over wrangler's JSON output. */
   const remoteColumns = (table) => {
     try {
@@ -116,9 +180,20 @@ function main(args) {
     }
   };
 
-  let added = 0, skipped = 0, deferred = 0, sent = 0;
+  // The triggers the database holds now decide which trigger statements still have to be sent.
+  const existingTriggers = new Map(remoteQuery("SELECT name, sql FROM sqlite_master WHERE type='trigger'").map((row) => [String(row.name), String(row.sql ?? "")]));
+  const decisions = resolveTriggerSteps(steps, existingTriggers);
+
+  let added = 0, skipped = 0, deferred = 0, sent = 0, triggersSent = 0;
   console.log(`[schema] applying replay-safe DDL to ${BINDING} (remote) through the query API…`);
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
+    if (step.type === "trigger") {
+      const decision = decisions[index];
+      if (decision === "drop") executeRemoteCommand({ binding: BINDING, config: CONFIG, sql: `DROP TRIGGER IF EXISTS ${ident(step.name)}`, label: `drop trigger ${step.name}` });
+      if (decision === "create") executeRemoteFile({ binding: BINDING, config: CONFIG, sql: `${step.sql};\n`, label: `trigger ${step.name} (${step.file})` });
+      if (decision !== "skip") { triggersSent += 1; console.log(`[schema]   ${decision} trigger ${step.name}`); }
+      continue;
+    }
     if (step.type === "sql") {
       sent += 1;
       executeRemoteCommand({ binding: BINDING, config: CONFIG, sql: step.sql, label: `migration chunk ${sent}/${chunks.length}` });
@@ -137,7 +212,7 @@ function main(args) {
       console.log(`[schema]   added ${directive.table}.${directive.column}`);
     }
   }
-  console.log(`[schema] done — ${sent} chunk(s) sent, columns added ${added}, already present ${skipped}, deferred ${deferred}`);
+  console.log(`[schema] done — ${sent} chunk(s) sent, ${triggersSent} trigger statement(s) sent (${triggers.length - triggersSent} already in place), columns added ${added}, already present ${skipped}, deferred ${deferred}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main(process.argv.slice(2));
