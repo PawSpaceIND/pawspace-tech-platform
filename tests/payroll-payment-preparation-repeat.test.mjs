@@ -13,6 +13,11 @@ const world = async () => {
   await engine.ensurePayrollTables(db);
   await db.prepare("INSERT INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at) VALUES ('RUN-1','k1',1,2,'approved','{}','maker@pawspace.in',1,'checker@pawspace.in',2,'founder@pawspace.in',3)").run();
   await db.prepare("INSERT INTO employee_payroll_results (id,run_id,employee_id,structure_id,gross_earnings,total_deductions,reimbursements,employer_cost,net_pay,source_snapshot_json) VALUES ('R1','RUN-1','EMP1','S1',1000,100,0,1100,900,'{}')").run();
+  // A payable historical fixture needs its component evidence and matching payslip.
+  for(const [id,kind,amount] of [['L1','earning',1000],['L2','deduction',100],['L3','employer_cost',1100]]){
+    await db.prepare("INSERT INTO payroll_result_lines (id,result_id,component_code,label,kind,amount,source_type,source_reference,policy_version) VALUES (?,'R1',?,?,?,?,'salary_structure','S1','salary_structure:1')").bind(id,id,id,kind,amount).run();
+  }
+  await db.prepare("INSERT INTO payslips (id,run_id,employee_id,result_id,status,created_at) VALUES ('SLIP1','RUN-1','EMP1','R1','available_uat',3)").run();
   return { sqlite, db, engine };
 };
 

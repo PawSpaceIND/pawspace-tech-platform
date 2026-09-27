@@ -173,7 +173,7 @@ test("after the repair, the real leave module accepts the request the /me form o
   assert.equal(blocked.status, 409);
 
   // Now run the seed's own leave statements over that same database, exactly as a redeploy would.
-  for (const statement of seed.split(";\n").map((line) => line.trim()).filter((line) => /leave_policies|employee_leave_balances/.test(line))) {
+  for (const statement of seed.split(";\n").map((line) => line.trim()).filter((line) => /leave_policies|employee_leave_balances|shift_policies|employee_shift_assignments/.test(line))) {
     if (/^CREATE /i.test(statement)) continue;
     sqlite.exec(`${statement};`);
   }
@@ -207,4 +207,46 @@ test("a redeploy never hands back leave somebody already took", () => {
 
   assert.equal(spent.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id=? AND leave_code='CL'").get(employeeId).balance, 7,
     "five days taken stay taken; a seed must never credit leave back");
+});
+
+test("synthetic employee calendar seeds once and never replaces an operator assignment",()=>{
+ const seed=read("scripts/employee-seed.sql");
+ const statements=seed.split(";\n").map(s=>s.trim()).filter(s=>/shift_policies|employee_shift_assignments/.test(s));
+ const db=new DatabaseSync(":memory:");
+ try{
+  for(const sql of statements.filter(s=>/(^|\n)\s*CREATE\s/i.test(s)))db.exec(sql);
+  db.prepare("INSERT INTO shift_policies (id,name,version,status,timezone,start_time,end_time,weekly_off_json,approval_reference,effective_from,created_by,created_at) VALUES ('HUMAN-SHIFT','Approved operator schedule',1,'active_uat','Asia/Kolkata','12:00','20:00','[\"1\"]','HR-REVIEWED',1,'hr@pawspace.test',1)").run();
+  db.prepare("INSERT INTO employee_shift_assignments (id,employee_id,shift_policy_id,effective_from,reason,actor_id,created_at) VALUES ('HUMAN-ASSIGNMENT','SEEDEMP-EMP001','HUMAN-SHIFT',1,'Operator reviewed schedule','hr@pawspace.test',1)").run();
+  const writes=statements.filter(s=>!/(^|\n)\s*CREATE\s/i.test(s));for(const sql of writes)db.exec(sql);for(const sql of writes)db.exec(sql);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM employee_shift_assignments").get().n,40);
+  assert.equal(db.prepare("SELECT shift_policy_id FROM employee_shift_assignments WHERE employee_id='SEEDEMP-EMP001'").get().shift_policy_id,'HUMAN-SHIFT');
+  const owned=db.prepare("SELECT s.approval_reference,s.timezone FROM employee_shift_assignments a JOIN shift_policies s ON s.id=a.shift_policy_id WHERE a.employee_id='SEEDEMP-EMP002'").get();
+  assert.equal(owned.approval_reference,'UAT-ONLY-NOT-PRODUCTION');assert.equal(owned.timezone,'Asia/Kolkata');
+ }finally{db.close();}
+});
+
+test("seeded August payroll does not block the next IST payroll month",async t=>{
+ const {employeeAuditD1}=await import('./helpers/employee-audit-d1.mjs');const {db,sqlite}=employeeAuditD1(t);
+ globalThis.__SEED_REPAIR_DB__=db;globalThis.__SEED_REPAIR_ENV__={DB:db};
+ sqlite.exec(read('scripts/employee-seed.sql'));
+ const payroll=await import('../lib/payroll-engine.ts');
+ const start=Date.parse('2026-09-01T00:00:00+05:30'),end=Date.parse('2026-10-01T00:00:00+05:30');
+ assert.equal(sqlite.prepare("SELECT period_end FROM payroll_runs WHERE id='SEEDRUN-AUG2026'").get().period_end,start);
+ const result=await payroll.calculatePayroll(db,{periodStart:start,periodEnd:end,idempotencyKey:'test-september-uat',actorId:'maker@seed.test'});
+ assert.equal(result.results.length,40);assert.equal(result.run.status,'calculated');
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM payroll_payment_batches').get().n,0,'calculation must not dispatch a salary');
+});
+
+test("only the exact untouched unpaid legacy seed payroll has its month boundary repaired",()=>{
+ const seed=read('scripts/employee-seed.sql'),start=Date.UTC(2026,7,1),end=Date.UTC(2026,7,31,23,59,59);
+ for(const variant of ['untouched','operator','prepared']){
+  const db=new DatabaseSync(':memory:');try{
+   db.exec(seed);db.prepare("UPDATE payroll_runs SET period_start=?,period_end=? WHERE id='SEEDRUN-AUG2026'").run(start,end);
+   if(variant==='operator')db.prepare("UPDATE payroll_runs SET created_by='human@seed.test' WHERE id='SEEDRUN-AUG2026'").run();
+   if(variant==='prepared')db.prepare("INSERT INTO payroll_payment_batches (id,run_id,status,instruction_count,total_amount,external_transmission,created_by,created_at) VALUES ('HISTORICAL-BATCH','SEEDRUN-AUG2026','sandbox_prepared',40,1,0,'finance@seed.test',1)").run();
+   db.exec(seed);const actual=db.prepare("SELECT period_start,period_end FROM payroll_runs WHERE id='SEEDRUN-AUG2026'").get();
+   if(variant==='untouched'){assert.equal(actual.period_start,Date.parse('2026-08-01T00:00:00+05:30'));assert.equal(actual.period_end,Date.parse('2026-09-01T00:00:00+05:30'));}
+   else{assert.equal(actual.period_start,start);assert.equal(actual.period_end,end,variant+' history must not be rewritten');}
+  }finally{db.close();}
+ }
 });

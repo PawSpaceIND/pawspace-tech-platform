@@ -16,8 +16,10 @@ import { writeFileSync } from "node:fs";
 const money = (v) => Math.round(Number(v || 0) * 100) / 100;
 const q = (v) => (v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
 const BASE = Date.UTC(2026, 7, 1);            // 2026-08-01
-const PERIOD_START = Date.UTC(2026, 7, 1);
-const PERIOD_END = Date.UTC(2026, 7, 31, 23, 59, 59);
+const PERIOD_START = Date.parse("2026-08-01T00:00:00+05:30");
+const PERIOD_END = Date.parse("2026-09-01T00:00:00+05:30"); // exclusive, matching the Payroll UI
+const LEGACY_PERIOD_START = Date.UTC(2026, 7, 1);
+const LEGACY_PERIOD_END = Date.UTC(2026, 7, 31, 23, 59, 59);
 const JOINED = Date.UTC(2024, 0, 15);
 const s = [];
 
@@ -99,6 +101,11 @@ s.push("CREATE TABLE IF NOT EXISTS finance_document_series (id TEXT PRIMARY KEY,
 s.push("CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number TEXT NOT NULL UNIQUE,entity_id TEXT NOT NULL,customer_id TEXT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_event_key TEXT NOT NULL UNIQUE,policy_id TEXT NOT NULL,registration_id TEXT NOT NULL,issue_date TEXT NOT NULL,currency TEXT NOT NULL,subtotal REAL NOT NULL,tax_total REAL NOT NULL,total REAL NOT NULL,status TEXT NOT NULL DEFAULT 'issued',tax_snapshot_json TEXT NOT NULL,document_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(source_type,source_id));");
 s.push("CREATE TABLE IF NOT EXISTS finance_invoice_lines (id TEXT PRIMARY KEY,invoice_id TEXT NOT NULL,line_key TEXT NOT NULL,description TEXT NOT NULL,service_code TEXT NOT NULL,taxable_amount REAL NOT NULL,tax_amount REAL NOT NULL,tax_snapshot_json TEXT NOT NULL,UNIQUE(invoice_id,line_key));");
 
+// ---- Explicit synthetic working calendar for employee UAT, never production HR policy. ----
+s.push("CREATE TABLE IF NOT EXISTS shift_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',timezone TEXT NOT NULL,start_time TEXT,end_time TEXT,weekly_off_json TEXT NOT NULL DEFAULT '[]',location_rule TEXT NOT NULL DEFAULT 'not_required',approval_reference TEXT,effective_from INTEGER NOT NULL,effective_until INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(name,version));");
+s.push("CREATE TABLE IF NOT EXISTS employee_shift_assignments (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,shift_policy_id TEXT NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL);");
+s.push(`INSERT OR IGNORE INTO shift_policies (id,name,version,status,timezone,start_time,end_time,weekly_off_json,location_rule,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-SHIFT-EMPLOYEE-UAT','Synthetic employee work calendar',1,'active_uat','Asia/Kolkata','09:00','18:00','["0","6"]','not_required','UAT-ONLY-NOT-PRODUCTION',${JOINED},'employee_uat_seed',${BASE});`);
+
 // ---- Platform-owner identity for UAT sign-in ----
 // founder@pawspace.in is offered as the "Founder (full access)" identity on /staging-login and in
 // docs/UAT-TESTER-GUIDE.md, but it is the OWNER identity, not an employee on a payroll band, so the
@@ -120,6 +127,12 @@ Object.entries(BANDS).forEach(([band, cfg]) => {
 // ---- One approved Aug-2026 payroll run ----
 const RUN = "SEEDRUN-AUG2026";
 s.push(`INSERT OR IGNORE INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at) VALUES (${q(RUN)},'seed-payroll-aug-2026',${PERIOD_START},${PERIOD_END},'approved','{"seed":true,"period":"2026-08"}',${q("hr@pawspace.in")},${BASE},${q("finance@pawspace.in")},${BASE},${q("founder@pawspace.in")},${BASE});`);
+
+// Correct only the exact untouched, unpaid synthetic run emitted by older versions of this seed.
+// UTC August's inclusive end overlaps the new September IST month by 5.5 hours. Do not edit any
+// non-seed payroll, prepared batch, operator-modified period, or paid history.
+s.push("CREATE TABLE IF NOT EXISTS payroll_payment_batches (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'sandbox_prepared',instruction_count INTEGER NOT NULL,total_amount REAL NOT NULL,external_transmission INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at INTEGER NOT NULL);");
+s.push(`UPDATE payroll_runs SET period_start=${PERIOD_START},period_end=${PERIOD_END} WHERE id=${q(RUN)} AND idempotency_key='seed-payroll-aug-2026' AND period_start=${LEGACY_PERIOD_START} AND period_end=${LEGACY_PERIOD_END} AND input_snapshot_json='{"seed":true,"period":"2026-08"}' AND created_by='hr@pawspace.in' AND reviewed_by='finance@pawspace.in' AND approved_by='founder@pawspace.in' AND status='approved' AND payment_prepared_at IS NULL AND NOT EXISTS (SELECT 1 FROM payroll_payment_batches WHERE run_id=${q(RUN)});`);
 
 // ---- Current employment version for the seeded managers (location, team, cost centre). Without
 // these rows a manager resolves no organizational scope and is locked out of Booking Command
@@ -170,6 +183,9 @@ for (const e of employees) {
     s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
     s.push(`UPDATE employee_leave_balances SET balance=${lp.units},updated_at=${BASE} WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)} AND balance<${lp.units} AND NOT EXISTS (SELECT 1 FROM leave_ledger_events WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)});`);
   }
+  // Assign only the seed-owned synthetic employees that have NO existing shift history. Never
+  // replace a calendar assigned by an operator, or resurrect a retired/replaced schedule.
+  s.push(`INSERT OR IGNORE INTO employee_shift_assignments (id,employee_id,shift_policy_id,effective_from,reason,actor_id,created_at) SELECT ${q("SEEDSHIFT-"+e.code)},${q(e.id)},'SEED-SHIFT-EMPLOYEE-UAT',${JOINED},'UAT-ONLY-NOT-PRODUCTION','employee_uat_seed',${BASE} WHERE NOT EXISTS (SELECT 1 FROM employee_shift_assignments WHERE employee_id=${q(e.id)}) AND EXISTS (SELECT 1 FROM shift_policies WHERE id='SEED-SHIFT-EMPLOYEE-UAT' AND created_by='employee_uat_seed' AND approval_reference='UAT-ONLY-NOT-PRODUCTION' AND status='active_uat');`);
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);
   const c = st.comp, net = money(c.gross - c.deductions);

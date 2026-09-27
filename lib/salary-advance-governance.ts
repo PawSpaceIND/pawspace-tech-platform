@@ -1,3 +1,4 @@
+import{appendPayrollCheck}from"./payroll-integrity";
 /**
  * Salary advances with a CONFIGURABLE N-month recovery schedule. HR grants an employee an advance;
  * the number of deduction months is set per advance (1..24). On approval (maker/checker - the
@@ -66,14 +67,14 @@ export async function advanceDeductionEntriesForPayroll(db:Db,input:{employeeId:
 }
 
 /** Mark instalments deducted against a payroll run; close the advance when fully recovered. */
-export async function markAdvanceInstallmentsDeducted(db:Db,input:{entries:AdvanceDeductionEntry[];payrollRunId:string;payrollResultId:string;employeeId:string}){
- await ensureSalaryAdvanceTables(db);
- const now=Date.now();
+export async function markAdvanceInstallmentsDeducted(db:Db,input:{entries:AdvanceDeductionEntry[];payrollRunId:string;payrollResultId:string;employeeId:string},pending?:D1PreparedStatement[]){
+ await ensureSalaryAdvanceTables(db);const now=Date.now(),writes:D1PreparedStatement[]=[];
  for(const e of input.entries){
-  await db.prepare("UPDATE salary_advance_installments SET status='deducted',payroll_run_id=?,payroll_result_id=?,deducted_at=? WHERE id=? AND status='pending'").bind(input.payrollRunId,input.payrollResultId,now,e.installmentId).run();
-  const left=await db.prepare("SELECT COUNT(*) c FROM salary_advance_installments WHERE advance_id=? AND status='pending'").bind(e.advanceId).first<Row>();
-  if(Number(left?.c||0)===0)await db.prepare("UPDATE salary_advances SET status='recovered',closed_reason='fully_recovered',updated_at=? WHERE id=? AND status='active'").bind(now,e.advanceId).run();
+  if(pending)appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM salary_advance_installments i JOIN salary_advances a ON a.id=i.advance_id WHERE i.id=? AND i.employee_id=? AND i.status='pending' AND a.status='active' AND i.amount=?)",[e.installmentId,input.employeeId,e.amount]);
+  writes.push(db.prepare("UPDATE salary_advance_installments SET status='deducted',payroll_run_id=?,payroll_result_id=?,deducted_at=? WHERE id=? AND status='pending'").bind(input.payrollRunId,input.payrollResultId,now,e.installmentId));
+  writes.push(db.prepare("UPDATE salary_advances SET status='recovered',closed_reason='fully_recovered',updated_at=? WHERE id=? AND status='active' AND NOT EXISTS(SELECT 1 FROM salary_advance_installments WHERE advance_id=? AND status='pending')").bind(now,e.advanceId,e.advanceId));
  }
+ if(pending)pending.push(...writes);else if(writes.length)await db.batch(writes);
 }
 
 /** Cancel a pending advance, or waive the remaining balance of an active one (reason required). */
