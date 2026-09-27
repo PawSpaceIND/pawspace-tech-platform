@@ -134,3 +134,24 @@ test('reviewed merge keeps food and payment ownership aligned without changing p
   const row=sqlite.prepare(`SELECT * FROM ${table}`).get();assert.equal(row.customer_id,'CUST-P');assert.equal(row.amount,39900);assert.equal(row.gateway_reference,'pay_evidence');
  }
 });
+
+
+test("approved duplicate review completes with the selected survivor",async()=>{
+ const sqlite=freshSqlite();seed(sqlite);
+ sqlite.exec("UPDATE customer_merge_reviews SET status='approved_for_merge',reviewed_by='reviewer',reviewed_at=2");
+ const result=await executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-P',duplicateCustomerId:'CUST-D',actorId:'ops',reason:'Approved duplicate identity'});
+ assert.equal(result.status,'completed');
+ assert.equal(sqlite.prepare("SELECT customer_id FROM canonical_bookings WHERE id='BKG-1'").get().customer_id,'CUST-P');
+ assert.equal(sqlite.prepare("SELECT status FROM customer_merge_reviews").get().status,'merged');
+});
+
+test("approval cannot reverse the surviving customer or reuse a merged identity",async()=>{
+ const sqlite=freshSqlite();seed(sqlite);
+ sqlite.exec("UPDATE customer_merge_reviews SET status='approved_for_merge'");
+ await assert.rejects(executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-D',duplicateCustomerId:'CUST-P',actorId:'ops',reason:'Attempt reversed approval'}),/approved surviving customer/);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM customer_merge_runs').get().n,0);
+ await executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-P',duplicateCustomerId:'CUST-D',actorId:'ops',reason:'Approved duplicate identity'});
+ sqlite.exec("UPDATE customer_merge_reviews SET status='open'");
+ await assert.rejects(executeTransactionalCustomerMerge(makeD1(sqlite),{primaryCustomerId:'CUST-D',duplicateCustomerId:'CUST-P',actorId:'ops',reason:'Attempt identity reversal'}),/Already merged customers/);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM customer_merge_runs').get().n,1);
+});

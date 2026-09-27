@@ -15,9 +15,11 @@ export async function executeTransactionalCustomerMerge(db: Db, input: { primary
     db.prepare("SELECT * FROM canonical_customers WHERE id=?").bind(input.duplicateCustomerId).first<Row>(),
   ]);
   if (!primary || !duplicate) throw new Error("Both canonical customer records are required for merge");
-  const review = await db.prepare("SELECT * FROM customer_merge_reviews WHERE ((primary_customer_id=? AND duplicate_customer_id=?) OR (primary_customer_id=? AND duplicate_customer_id=?)) AND status='open' LIMIT 1")
+  if (primary.merged_into || duplicate.merged_into) throw new Error("Already merged customers cannot be merged again");
+  const review = await db.prepare("SELECT * FROM customer_merge_reviews WHERE ((primary_customer_id=? AND duplicate_customer_id=?) OR (primary_customer_id=? AND duplicate_customer_id=?)) AND status IN ('open','approved_for_merge') ORDER BY CASE status WHEN 'approved_for_merge' THEN 0 ELSE 1 END,created_at DESC LIMIT 1")
     .bind(input.primaryCustomerId, input.duplicateCustomerId, input.duplicateCustomerId, input.primaryCustomerId).first<Row>().catch(() => null);
-  if (!review) throw new Error("An open duplicate review is required before transactional merge");
+  if (!review) throw new Error("An open duplicate review is required before transactional merge, or an approved review for the same survivor");
+  if (review.status === "approved_for_merge" && (review.primary_customer_id !== input.primaryCustomerId || review.duplicate_customer_id !== input.duplicateCustomerId)) throw new Error("The merge must preserve the approved surviving customer");
   // The loser row is soft-merged below (marked, and its phone/email neutralized) so it can never be
   // re-detected as a duplicate of the survivor again. These marker columns must exist first: ALTER cannot
   // run inside the transactional batch, and ADD COLUMN on a column that already exists simply no-ops here.
