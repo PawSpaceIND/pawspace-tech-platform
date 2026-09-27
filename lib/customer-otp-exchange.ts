@@ -63,7 +63,7 @@ export async function startCustomerOtp(db: D1Database, request: Request, runtime
     throw new CustomerOtpUnavailableError("OTP delivery failed - please try again", 503);
   }
   // The code itself never leaves the server when it was delivered by SMS.
-  return { challengeId: result.challengeId, phone: result.phone, expiresInSeconds: result.expiresInSeconds, sandboxDelivery: false, liveSmsDelivered: true, existingCustomer: result.existingCustomer };
+  return { challengeId: result.challengeId, phone: result.phone, expiresInSeconds: result.expiresInSeconds, sandboxDelivery:false,liveSmsDelivered:true,existingCustomer:result.existingCustomer };
 }
 
 /**
