@@ -1071,7 +1071,7 @@
     "lib/communication-provider-boundary.ts": "9cd6b1928ec7bcf9da61138ddcb69cb0de46caf12bb92722d497e083129492a7",
     "lib/communication-rule-decisions.ts": "564093725a8b7a906fe94b56f5ecf3883e27868eb6b4ca72ef264ba751d4c6e8",
     "lib/communication-runtime-guards.ts": "96e4863ab1fc9714ed9c3340a101ef5efa93e4f23a3b5123aca42f6e568fed07",
-    "lib/company-analytics.ts": "a50512fad5eda6527cd937d82b495c8f5e6e3056e8a80291c458af2923a3bb79",
+    "lib/company-analytics.ts": "8a72cfe4ec20cf56b1f2836000806a910ebbd1f72801157a513cb2232f00bd24",
     "lib/contact-submission-client.ts": "90effb8737a85ab495916636b42d586f44e326d256ff9f167ac13c8e52db713a",
     "lib/content-controls.ts": "aee02f629494d3fd328ff3d363e950d6fc985d27fcdb1a80907fcc64b791c17c",
     "lib/control-center-operations.ts": "f13ddeb58374aaf959a7f4efdd9427ae9685ed941c1c3b8875259b3363ed1d70",

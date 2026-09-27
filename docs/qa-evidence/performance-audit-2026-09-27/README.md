@@ -4,7 +4,7 @@ This change addresses gaps left uncovered after checking open PRs #1130 (web cha
 
 - Chat transcript polling is single-flight with a 10-second abort deadline and unmount cancellation. This specific gap is outside #1130's provider/OTP changes.
 - Home publishes availability independently of identity/account reads.
-- Company analytics uses the existing scheduled-start index while retaining inclusive date-prefix semantics. IN-list reads retain all results with four concurrent chunks per invocation.
+- Company analytics uses the existing scheduled-start index while retaining inclusive date-prefix semantics. Payment, CX, schedule and refund ledgers query the selected booking cohort once each, rather than once per 80 booking IDs. Other IN-list reads retain all results with four concurrent chunks per invocation. A 1,000-booking SQLite regression verifies complete collected funds and constant money-ledger read counts.
 - AI analytics batches nine reads in one round trip and caches successful schema initialization per binding. Booking-linked threads share the turn filters. Independent operational ledgers remain explicitly labeled all-time/all-channels. Latency shows its recorded sample count, and previous-filter data is hidden during refresh/error.
 - Finance API and screen explicitly identify latest-200 ledger scope; chart filters remain independently labeled. No totals are fabricated, and no unbounded ledger fetch is introduced.
 - The performance gate enforces every operation separately; fast ledger traffic cannot hide slow booking/assignment samples.

@@ -53,3 +53,15 @@ test('API failure is visible but private response text is never in the report',a
 const {createTranscriptPoll}=await import('../lib/v2/transcript-poll.ts');
 test('slow transcript polling remains single-flight and restarts after completion',async()=>{let calls=0;const pending=deferred();const poll=createTranscriptPoll(async()=>{calls++;await pending.promise;});const first=poll.tick();await poll.tick();await poll.tick();assert.equal(calls,1);pending.resolve();await first;await poll.tick();assert.equal(calls,2);poll.stop();await poll.tick();assert.equal(calls,2);});
 test('transcript timeout and unmount abort reads; timeout permits a later retry',async()=>{let calls=0,aborts=0;const poll=createTranscriptPoll(signal=>{calls++;return new Promise((_,reject)=>signal.addEventListener('abort',()=>{aborts++;reject(Error('aborted'));},{once:true}));},5);await poll.tick();assert.equal(aborts,1);const next=poll.tick();poll.stop();await next;assert.equal(calls,2);assert.equal(aborts,2);await poll.tick();assert.equal(calls,2);});
+
+test('a thousand-booking report reads each money/CX ledger once, preserving all collected funds',async()=>{
+ const w=world();w.sql.exec(`CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT,scheduled_start TEXT,scheduled_end TEXT);CREATE INDEX scheduled ON canonical_bookings(scheduled_start);
+ CREATE TABLE booking_payments(booking_id TEXT,amount REAL,amount_due_now REAL,status TEXT,gateway TEXT);
+ CREATE TABLE customer_experience_tickets(booking_id TEXT,category TEXT,priority TEXT,status TEXT,created_at INTEGER,resolved_at INTEGER,reopened_count INTEGER);
+ CREATE TABLE stay_payment_schedules(booking_id TEXT,paid_now_amount REAL,balance_amount REAL,status TEXT);
+ CREATE TABLE booking_refund_cases(booking_id TEXT,amount REAL,status TEXT);`);
+ for(let i=0;i<1000;i++){w.sql.prepare("INSERT INTO canonical_bookings VALUES (?,?,'dog_walking','p','z','provider','completed',100,'INR','2026-07-15','2026-07-15')").run('b'+i,'c'+i);w.sql.prepare("INSERT INTO booking_payments VALUES (?,100,100,'captured','sandbox')").run('b'+i);}
+ const r=await buildCompanyAnalytics(w.db,{from:'2026-07-01',to:'2026-07-31'});assert.equal(r.bookings.total,1000);assert.equal(r.money.collected,100000);
+ for(const table of ['booking_payments','stay_payment_schedules','booking_refund_cases']){const reads=w.selects.filter(x=>x.query.includes('FROM '+table+' WHERE'));assert.equal(reads.length,1,table);assert.deepEqual(reads[0].args,['2026-07-01','2026-07-31\uffff']);}
+ w.sql.close();
+});
