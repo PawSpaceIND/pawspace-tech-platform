@@ -6,7 +6,7 @@
       "mainRoots": 1
     },
     "app/team/finance/cash-flow/page.tsx": {
-      "semantic": "e0cb0c0245bdf0e4c6ce621a1d26014291c92900be1e709ca8514edf34f8eb6d",
+      "semantic": "f2a4a69651e4f2931adff2ea40aea67b31bd81be08b814b0c692511ef4736b7a",
       "mainRoots": 1
     },
     "app/team/finance/food/food-finance-workspace.tsx": {
@@ -18,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "7fbfc67eb623b8fcdf3716b52d62a770942e4fbbfe1d85f5cec12b49cb541c46",
+      "semantic": "4a3fd272ea8b1f4c0de1f434606c08e219d313d221eb0a17247681c8fc588d83",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
@@ -34,7 +34,7 @@
       "mainRoots": 1
     },
     "app/team/finance/statutory/page.tsx": {
-      "semantic": "fce36e3bd48c0aeccbdf58fdd80f95c898e67d97c9c9a8f1e344ee1ab0adfed8",
+      "semantic": "115fe2761e2b35a9132c160c9f0c045c6cd925ee240b598c3070a3185146956c",
       "mainRoots": 1
     },
     "app/team/finance/statutory/service-invoice-ownership.tsx": {
@@ -42,15 +42,15 @@
       "mainRoots": 0
     },
     "app/team/finance/taxi/taxi-finance-workspace.tsx": {
-      "semantic": "a8dbbf9e6484a9afc178db4a3a6fe87f2139bd7ec4a6a371033f3fc3d0a1c23b",
+      "semantic": "bee12f6820a0c84b0fb99da0abb3ee90820908c0f09d2acb55cdc8890d559c75",
       "mainRoots": 1
     },
     "app/team/finance/training/page.tsx": {
-      "semantic": "1c278f464ecc168049c2ef6ffb17dd2516e43e4252ec08acf1b4bfd8089665dc",
+      "semantic": "248c2943dc008d14f0120227cf7388a87abd1409de078cf2a52fb827d399b8cb",
       "mainRoots": 1
     },
     "app/team/finance/unit-economics/page.tsx": {
-      "semantic": "2584e81f0695a00cfe59ef08ce1826fa388976ba55ddb8dacf530e7db269b6a9",
+      "semantic": "ada706edb9390cd376f3c5da93d7e92d89797a41b2dce1148ba5cb45076185dd",
       "mainRoots": 1
     },
     "app/team/finance/walking/walking-finance-workspace.tsx": {
@@ -66,7 +66,7 @@
       "mainRoots": 1
     },
     "app/team/people/manager-dashboard/page.tsx": {
-      "semantic": "8ff16693dc470d585858b31ac63eead6357a700dcdebdcbffd85c9dcd6186193",
+      "semantic": "e2184d627d0456c27b334d2c83a2376e39942de2c2af79749967caeb38f4e45c",
       "mainRoots": 1
     },
     "app/team/people/onboarding/page.tsx": {

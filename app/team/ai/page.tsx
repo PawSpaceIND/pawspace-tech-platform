@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import {useCallback,useEffect,useState} from "react";
+import { MetricBars, TargetProgress, VisualGrid, reportDate } from "../../components/ui/ReportVisuals";
 import {StatCard} from "../../components/ui";
 import {FounderScenarioPlanner} from "./founder-scenario-planner";
 import {AtlasChat} from "./atlas-chat";
@@ -42,6 +43,11 @@ export default function AiReviewPage(){
   {error&&<div style={{padding:12,background:"var(--staff-danger-bg)",borderRadius:10,marginBottom:12}}>{error}</div>}
   <AtlasChat/>
   <section style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}} data-staff-grid="stats">{[["Target",money(m?.target)],["Collected",money(m?.collected)],["Net",money(m?.net)],["Achieved",m?m.percent.toFixed(2)+"%":"—"]].map(([k,v])=><StatCard key={k} label={k} value={v} />)}</section>
+  {snapshot && <VisualGrid>
+    <TargetProgress title="Revenue mission achievement" percent={m?.percent ?? null} note={`Basis: ${m?.basis.replaceAll("_", " ") || "unavailable"} · snapshot ${reportDate(snapshot.mission.asOf)} · IST`} />
+    <MetricBars title="Canonical revenue snapshot" note="Independent ledger amounts, not additive stages." format={value => money(value)} items={[{ label: "Booked", value: m?.booked, tone: "gold" }, { label: "Collected", value: m?.collected }, { label: "Refunded", value: m?.refunded, tone: "warning" }, { label: "Net collected", value: m?.net }]} />
+    <MetricBars title="Operating exceptions" note="Current snapshot. Counts can overlap." items={[{ label: "Open cases", value: snapshot.ops.open_cases.value }, { label: "SLA breaches", value: snapshot.ops.sla_breaches.value, tone: "warning" }, { label: "Sitting pending accepts", value: snapshot.ops.sitting_pending_accepts.value, tone: "gold" }, { label: "Boarding pending accepts", value: snapshot.ops.boarding_pending_accepts.value, tone: "gold" }, { label: "Cash collection holds", value: snapshot.ops.cash_collection_holds.value, tone: "warning" }]} />
+  </VisualGrid>}
   <section style={{...card,padding:16,marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><div><b>Canonical business snapshot</b><p style={{margin:"6px 0",color:"var(--staff-muted)"}}>{m?"Basis: "+m.basis+" · booked "+money(m.booked)+" · refunded "+money(m.refunded):"Mission data unavailable — no zero is being substituted."}</p></div><strong>UAT ONLY · PRODUCTION READY = FALSE</strong></div><div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}} data-staff-grid="stats"><StatCard label="Open cases" value={String(snapshot?.ops.open_cases.value??"—")} /><StatCard label="SLA breaches" value={String(snapshot?.ops.sla_breaches.value??"—")} /><StatCard label="Sitter accepts" value={String(snapshot?.ops.sitting_pending_accepts.value??"—")} /><StatCard label="Host accepts" value={String(snapshot?.ops.boarding_pending_accepts.value??"—")} /><StatCard label="Invoice gap" value={String(snapshot?.finance.invoice_completed_gap.value?.gap??"—")} /></div>{snapshot?.limitations.length?<p style={{fontSize:14,color:"var(--staff-warning)"}}>{snapshot.limitations.join(" · ")}</p>:null}</section>
   <section style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}} data-staff-grid="stats">{[["Internal autonomy",autonomyEnvelope?.enabled?"ENABLED":"PAUSED"],["Circuit breaker",autonomyEnvelope?.circuitOpen?"OPEN · RESET REQUIRED":"CLOSED"],["Critical limit",autonomyEnvelope?String(autonomyEnvelope.criticalRefusalLimit):"—"],["Execution scope",autonomyEnvelope?.executionMode||"—"]].map(([k,v])=><StatCard key={k} label={k} value={v} />)}</section>
   <FounderScenarioPlanner />

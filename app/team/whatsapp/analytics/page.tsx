@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, EmptyState } from "../../../components/ui";
 import OpsShell from "../../../components/ops-shell/OpsShell";
+import { MetricBars, TargetProgress, VisualGrid } from "../../../components/ui/ReportVisuals";
 import teamStyles from "../../team-console.module.css";
 
 type Row = Record<string, unknown>;
@@ -80,6 +81,13 @@ export default function WhatsAppAnalyticsPage() {
       <div className={teamStyles.actions}><Button type="button" disabled={busy || !range} onClick={() => { void load(); }}>{busy ? "Refreshing…" : "Refresh report"}</Button><Button type="button" variant="secondary" disabled={busy || !range} onClick={() => { if (exportUrl) window.location.assign(exportUrl); }}>Export CSV</Button></div>
     </section>
     {!report ? <EmptyState title="No analytics loaded." body="Choose a date range and refresh the report." /> : <>
+      <p>Loaded period: {report.from == null ? "Unavailable" : new Date(report.from).toISOString().slice(0, 10)} – {report.to == null ? "Unavailable" : new Date(report.to).toISOString().slice(0, 10)} · UTC{busy ? " · Refreshing…" : ""}</p>
+      <VisualGrid>
+        <MetricBars title="Message activity" note="Messages and delivery events are separate counts; this is not a unique-message conversion funnel." items={[{ label: "Inbound messages", value: funnel.inboundMessages }, { label: "Outbound messages", value: funnel.outboundMessages }, { label: "Delivered events", value: funnel.deliveredEvents, tone: "gold" }, { label: "Read events", value: funnel.readEvents, tone: "gold" }]} />
+        <TargetProgress title="AI containment" percent={report.automation?.aiContainmentRate == null ? null : report.automation.aiContainmentRate * 100} note="Share of AI turns without handoff within the loaded period." />
+        <MetricBars title="Human handoff workload" note="Independent counts; categories may overlap." items={[{ label: "AI handoffs", value: report.automation?.aiHandoffs }, { label: "Chatbot handoffs", value: report.automation?.chatbotHandoffs }, { label: "Governed human handoffs", value: report.automation?.humanHandoffs, tone: "gold" }]} />
+        <MetricBars title="Assignments by agent" items={assignees.map(row => ({ label: String(row.assignee || "Unassigned"), value: typeof row.assignments === "number" ? row.assignments : null }))} />
+      </VisualGrid>
       <section className={teamStyles.panel}><div className={teamStyles.panelHead}><h2>WhatsApp funnel & SLA</h2><span>canonical messages</span></div><div className={teamStyles.grid}>
         <div><b>Inbound</b><p>{number(funnel.inboundMessages)}</p></div><div><b>Outbound</b><p>{number(funnel.outboundMessages)}</p></div><div><b>Delivered events</b><p>{number(funnel.deliveredEvents)}</p></div><div><b>Read events</b><p>{number(funnel.readEvents)}</p></div><div><b>First response</b><p>{duration(report.whatsapp?.firstResponse?.averageMs)}</p></div><div><b>Resolution SLA</b><p>{duration(report.whatsapp?.resolutionSla?.averageMs)}</p></div>
       </div></section>

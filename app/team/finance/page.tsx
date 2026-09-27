@@ -1,4 +1,5 @@
 "use client";
+import {MetricBars, TargetProgress, VisualGrid} from "../../components/ui/ReportVisuals";
 import VisualAnalytics from "../../components/ui/VisualAnalytics";
 
 import Link from"next/link";
