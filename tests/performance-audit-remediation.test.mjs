@@ -27,3 +27,25 @@ INSERT INTO ai_conversation_turns (id,session_id,thread_id,customer_id,channel,i
 INSERT INTO ai_explicit_csat VALUES ('r','voice','v',5,'voice',0);
 `);w.reset();const r=await buildAiAnalytics(w.db,{channel:'chat',from:0,to:0});assert.equal(r.volume.turns,1);assert.equal(r.conversion.canonicalBookingLinkedThreads,1);assert.equal(r.performance.latencySamples,1);assert.equal(r.performance.avgLatencyMs,100);assert.equal(r.csat.responses,1);assert.match(r.definitions.scope,/all-time across all channels/);assert.deepEqual(w.stats(),{batches:1,ddl:0});const empty=await buildAiAnalytics(w.db,{channel:'whatsapp'});assert.equal(empty.conversion.canonicalBookingLinkedThreads,0);assert.equal(empty.performance.avgLatencyMs,null);w.sql.close();});
 test('company report includes closing-day timestamps and uses indexed raw date bounds',async()=>{const w=world();w.sql.exec(`CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT,scheduled_start TEXT,scheduled_end TEXT);CREATE INDEX scheduled ON canonical_bookings(scheduled_start);`);for(const [id,date] of [['before','2026-06-30T23:59:59Z'],['first','2026-07-01T00:00:00Z'],['last','2026-07-31T23:59:59.999+05:30'],['after','2026-08-01T00:00:00Z']])w.sql.prepare("INSERT INTO canonical_bookings VALUES (?,?,'dog_walking','p','z','provider','completed',100,'INR',?,?)").run(id,id,date,date);const r=await buildCompanyAnalytics(w.db,{from:'2026-07-01',to:'2026-07-31'});assert.equal(r.bookings.total,2);assert.equal(r.money.gmv,200);const q=w.selects.find(x=>x.query.includes('FROM canonical_bookings WHERE'));const plan=w.sql.prepare('EXPLAIN QUERY PLAN '+q.query).all(...q.args);assert.ok(plan.some(x=>/SEARCH.*USING INDEX scheduled/.test(x.detail)),JSON.stringify(plan));w.sql.close();});
+
+// The isolated staging measurement runner belongs to this performance regression suite.
+import {runStagingReadPerformance} from '../scripts/ops/staging-read-performance.mjs';
+const sha='a'.repeat(40);
+async function run({origin='https://pawspace-staging.karthik-fce.workers.dev',certificateSha=sha,fail=false}={}) {
+ let output='',saved='',requests=0;
+ const report=await runStagingReadPerformance({env:{STAGING_URL:origin,EXPECTED_SHA:sha,PAWSPACE_UAT_ACCESS_CODE:'ACCESS_DO_NOT_LOG'},read:async()=>JSON.stringify({sha:certificateSha,checks:[{ok:true}]}),write:async(_,s)=>{saved=s;},log:s=>{output=s;},fetcher:async(url,options)=>{
+ requests++;
+ if(url.endsWith('/api/staging-login'))return Response.json({},{headers:{'set-cookie':'session=DO_NOT_LOG; HttpOnly'}});
+ assert.equal(options.method,'GET');
+ if(fail)return Response.json({error:'PRIVATE_DATA_DO_NOT_LOG'},{status:500});
+ const headers={'server-timing':'app;dur=120, d1;dur=90;desc="9 calls"'};
+ if(url.includes('company-analytics'))return Response.json({data:{source:'canonical_company_metric_layer',degraded:null}},{headers});
+ if(url.includes('ai-analytics'))return Response.json({data:{conversion:{canonicalBookingLinkedThreads:1},volume:{threads:2},performance:{latencySamples:2}}},{headers});
+ if(url.includes('grooming-finance'))return Response.json({scope:{limit:200,dateFiltered:false},items:[]},{headers});
+ return Response.json({services:[]},{headers});
+ }});
+ return {report,output,saved,requests};
+}
+test('performance probe refuses production and mismatched certified builds',async()=>{for(const input of [{origin:'https://pawspace.in'},{certificateSha:'b'.repeat(40)}])await assert.rejects(run(input),/staging/i);});
+test('performance probe records bounded read samples and numeric server timing without credentials',async()=>{const r=await run();assert.equal(r.requests,41);assert.equal(Object.keys(r.report.operations).length,4);assert.ok(Object.values(r.report.operations).every(x=>x.samplesMs.length===10));assert.deepEqual(r.report.operations['grooming-finance'].serverTiming[0],{appMs:120,d1TotalMs:90,d1Calls:9});assert.deepEqual(r.report.failures,[]);assert.doesNotMatch(r.output+r.saved,/DO_NOT_LOG|set-cookie/);});
+test('API failure is visible but private response text is never in the report',async()=>{const r=await run({fail:true});assert.equal(r.report.failures.length,40);assert.doesNotMatch(r.output+r.saved,/PRIVATE_DATA|DO_NOT_LOG/);});
