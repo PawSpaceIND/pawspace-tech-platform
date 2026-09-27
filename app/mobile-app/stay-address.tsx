@@ -4,6 +4,7 @@ import { loadCustomerAccount } from "../../lib/customer-account-client";
 import { defaultStayAddress, savedStayAddressText, validateSavedStayAddress, type StayLocation } from "../../lib/stay-saved-address";
 import AddressPicker, { type ZoneResult } from "./address-picker";
 import styles from "./stay-flow.module.css";
+import {plainErrorMessage} from "../../lib/safe-json-response";
 
 export default function StayAddress({ customerId, mode, onResolved }: { customerId: string; mode: "boarding" | "sitting" | "training"; onResolved: (address: StayLocation | null) => void }) {
   const [summary, setSummary] = useState(""), [loading, setLoading] = useState(true), [error, setError] = useState("");
@@ -20,7 +21,7 @@ export default function StayAddress({ customerId, mode, onResolved }: { customer
       setSummary(savedStayAddressText(saved));
       const resolved = await validateSavedStayAddress(saved, controller.signal);
       if (active) onResolved(resolved);
-    }).catch(problem => { if (active) setError(controller.signal.aborted ? "Address check timed out. Please retry." : problem instanceof Error ? problem.message : "Unable to check your address."); })
+    }).catch(problem => { if (active) setError(controller.signal.aborted ? "Address check timed out. Please retry." : plainErrorMessage(problem,"Unable to check your address.")); })
       .finally(() => { clearTimeout(timer); if (active) setLoading(false); });
     return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [customerId, onResolved, retry]);

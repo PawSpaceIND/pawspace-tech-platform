@@ -641,4 +641,7 @@ test("consolidates PawSpace into four role-based entry points", async () => {
 });
 
 
-test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel]){assert.doesNotMatch(src,/Payment is captured/);assert.match(src,/Payment status is tracked separately/);}});
+// Round-2 BRD-02: the stay screens used to say "Payment status is tracked separately on the canonical booking payment
+// record". They now read that record (tests/boarding-customer-honesty.test.mjs renders it) and still never claim a
+// capture from the stay status.
+test("Boarding status never infers payment capture from stay status alone", async()=>{const [status,panel,view]=await Promise.all(["app/mobile-app/boarding-customer-stay-status.tsx","app/mobile-app/boarding-customer-stay-panel.tsx","lib/boarding-customer-stay-view.ts"].map(path=>readFile(new URL("../"+path,import.meta.url),"utf8")));for(const src of [status,panel,view]){assert.doesNotMatch(src,/Payment is captured/);}assert.match(view,/stay\.payment_status/);assert.match(view,/stay\.booking_status/);});

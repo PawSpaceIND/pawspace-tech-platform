@@ -16,6 +16,33 @@ export async function readJsonBody<T=Record<string,unknown>>(response:Response):
   try{return JSON.parse(text) as T|null;}catch{return undefined;}
 }
 
+/**
+ * A request that never reached PawSpace. The browser's own words for it - "Failed to fetch" (Chrome), "Load failed"
+ * (Safari), "NetworkError when attempting to fetch resource." (Firefox) - are not customer copy.
+ */
+export function unreachableMessage(action="finish this step"){
+  return`We couldn't reach PawSpace to ${action}. Check your connection and try again.`;
+}
+
+/** fetch() whose transport failure is that plain sentence. A cancelled request still rejects with its AbortError. */
+export async function fetchOrExplain(input:RequestInfo|URL,init:RequestInit|undefined,action:string):Promise<Response>{
+  try{return await fetch(input,init);}
+  catch(error){
+    if(init?.signal?.aborted||(error as {name?:unknown}|null)?.name==="AbortError")throw error;
+    throw new Error(unreachableMessage(action));
+  }
+}
+
+/**
+ * What a screen shows for a failure from any client it calls: a JSON parse error or a browser transport error reads
+ * as a sentence with a retry, never as "Unexpected token..." or "Failed to fetch". Other errors keep their message.
+ */
+export function plainErrorMessage(problem:unknown,fallback:string){
+  if(problem instanceof SyntaxError)return"PawSpace sent an answer we could not read. Please try again in a moment.";
+  if(problem instanceof TypeError)return /fetch|network|load failed/i.test(problem.message)?"We couldn't reach PawSpace. Check your connection and try again.":fallback;
+  return problem instanceof Error&&problem.message.trim()?problem.message:fallback;
+}
+
 /** The plain retry sentence for an answer that could not be read (a timeout page, an empty body). */
 export function unreadableAnswerMessage(status:number,action="finish this step"){
   return status===0||status>=500

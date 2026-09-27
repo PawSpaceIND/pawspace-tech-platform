@@ -137,8 +137,11 @@ export async function planCare(flow, spec) {
 /** Choose step: run the sitter search (retrying the screen's own "Retry sitter search"), list the sitters and pick one. */
 export async function chooseSitter(flow, { prefer, avoid = [], retries = 3 } = {}) {
   const { page } = flow;
-  await page.getByRole("button", { name: /See available sitters/ }).click();
   const out = { attempts: 0, alerts: [], sitters: [], priceLabels: [] };
+  const see = page.getByRole("button", { name: /See available sitters/ });
+  // The Plan step refuses less than 24 hours' notice (and the 180-day horizon) before any search, with the reason.
+  if (!(await see.isEnabled().catch(() => false))) { out.planBlocked = true; out.alerts = (await page.getByRole("alert").allInnerTexts().catch(() => [])).map(flat).filter(Boolean); return out; }
+  await see.click();
   const cards = page.getByRole("button").filter({ has: page.locator("h4") });
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     out.attempts = attempt;
