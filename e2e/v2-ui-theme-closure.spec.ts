@@ -150,7 +150,9 @@ test("Mobile utilities do not cover dock targets, including the signed-in notifi
     const targets = page.locator('nav[aria-label="PawSpace V2 navigation"] a:visible, nav[aria-label="PawSpace mobile navigation"] :is(a,button):visible');
     for (const target of await targets.all()) {
       const box = (await target.boundingBox())!;
-      for (const utility of utilities) expect(!utility || utility.y + utility.height <= box.y || utility.x + utility.width <= box.x || utility.x >= box.x + box.width).toBe(true);
+      // Chat utilities are in document flow and may be below the fixed dock.
+      // Non-overlap must include all four directions, not only above/left/right.
+      for (const utility of utilities) expect(!utility || utility.y + utility.height <= box.y || utility.y >= box.y + box.height || utility.x + utility.width <= box.x || utility.x >= box.x + box.width, `${route}: utility ${JSON.stringify(utility)} overlaps dock target ${JSON.stringify(box)}`).toBe(true);
       expect(await target.evaluate(e => { const b = e.getBoundingClientRect(); const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); return hit === e || e.contains(hit); })).toBe(true);
     }
     await updates.click(); await expect(page.getByRole("dialog", { name: "PawSpace order notifications" })).toBeVisible();
