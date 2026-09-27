@@ -503,7 +503,7 @@ export function checkSchedules(fact) {
       if (!["pending_balance", "booking_fee_paid"].includes(status)) problem(out, status === "paid" ? "P0" : "P1", `booking fee captured but the taxi schedule is '${status}'`);
       if (!Number(taxi.booking_fee_paid_at) || !text(taxi.booking_fee_reference)) problem(out, "P1", `booking fee captured without booking_fee_paid_at / booking_fee_reference`);
       else if (fact.captures[0]?.gatewayPaymentId && text(taxi.booking_fee_reference) !== fact.captures[0].gatewayPaymentId) note(out, `booking_fee_reference ${text(taxi.booking_fee_reference)} is not the fee capture ${fact.captures[0].gatewayPaymentId}`);
-    } else if (!fact.sandboxCaptured && status !== "booking_fee_pending" && !(status === "cancelled" && text(b.status) === "cancelled")) problem(out, status === "paid" ? "P0" : "P1", `nothing captured but the taxi schedule is '${status}'`);
+    } else if (!fact.sandboxCaptured && status !== "booking_fee_pending" && !(status === "cancelled" && text(b.booking_status) === "cancelled")) problem(out, status === "paid" ? "P0" : "P1", `nothing captured but the taxi schedule is '${status}'`);
     if (fact.saved.balancePaid === true && !full && text(b.payment_status) !== "paid") problem(out, "P0", `the saving suite paid the ride balance, but D1 shows only ${rupees(fact.capturedSum)} captured`);
   }
   return out;
