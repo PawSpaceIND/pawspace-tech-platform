@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { quoteGovernedCoupon } from "../../../lib/coupon-governance-client";
 import styles from "./grooming.module.css";
 
@@ -19,6 +19,8 @@ type Props = {
 export default function V2GroomingCouponBox({ customerId, cityId, packageCode, orderValue, onChange }: Props) {
   const [code, setCode] = useState(""), [applied, setApplied] = useState(""), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
   const version = useRef(0);
+  // A removed price/package/slot form must never apply its late quote to the replacement basket.
+  useEffect(() => () => { version.current++; }, []);
   const apply = async () => {
     const normalized = code.trim().toUpperCase();
     if (!normalized || busy) return;
