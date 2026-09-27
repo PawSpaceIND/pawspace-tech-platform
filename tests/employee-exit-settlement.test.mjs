@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {createHmac} from 'node:crypto';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+import {employeeAuditD1} from './helpers/employee-audit-d1.mjs';
+installWorkersHooks('__EXIT_DB__','__EXIT_ENV__');
+const exit=await import('../lib/employee-offboarding.ts');
+const people=await import('../lib/people-foundation.ts');
+const payroll=await import('../lib/payroll-engine.ts');
+const proration=await import('../lib/payroll-proration.ts');
+const salary=await import('../lib/employee-payroll-payout.ts');
+const access=await import('../lib/employee-exit-access.ts');
+const uat=await import('../lib/uat-staging-auth.ts');
+const START=Date.parse('2026-09-01T00:00:00+05:30'),END=Date.parse('2026-10-01T00:00:00+05:30'),CUTOFF=Date.parse('2026-09-16T00:00:00+05:30');
+const env={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'isolated-employee-exit-signing-key-not-a-live-secret',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',RAZORPAYX_KEY_ID_SANDBOX:'rzp_test_exit',RAZORPAYX_KEY_SECRET_SANDBOX:'isolated-test-secret',RAZORPAYX_ACCOUNT_NUMBER_SANDBOX:'isolated-test-account',RAZORPAYX_WEBHOOK_SECRET_SANDBOX:'isolated-exit-webhook'};
+async function world(t){
+ const w=employeeAuditD1(t);globalThis.__EXIT_DB__=w.db;globalThis.__EXIT_ENV__={...env,DB:w.db};await exit.ensureEmployeeExitTables(w.db);
+ const employee=await people.upsertEmployee(w.db,{employeeCode:'EXIT-QA',displayName:'Synthetic Exit Employee',workEmail:'employee@exit.test',userEmail:'employee@exit.test',joinedAt:START-31*86400000,actorId:'hr@exit.test'});
+ await people.addEmploymentVersion(w.db,{employeeId:employee.id,effectiveFrom:START-31*86400000,employmentType:'direct_employee',teamCode:'sales',reason:'Isolated test employment',actorId:'hr@exit.test'});
+ w.sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('EXIT-USER','employee@exit.test','Synthetic Exit Employee','associate','active',1,1)").run();
+ const structure=await payroll.saveSalaryStructure(w.db,{structureCode:'EXIT-BASIC',effectiveFrom:START-31*86400000,components:[{code:'BASIC',label:'Basic',kind:'earning',amount:30000}],actorId:'hr@exit.test'});
+ await payroll.assignCompensation(w.db,{employeeId:employee.id,structureId:structure.id,effectiveFrom:START-31*86400000,reason:'Explicit synthetic salary',actorId:'hr@exit.test'});
+ await proration.saveSalaryCalculationPolicy(w.db,{structureId:structure.id,mode:'calendar_days',componentCodes:['BASIC'],approvalReference:'TEST-ONLY-POLICY',actorId:'finance@exit.test'});
+ return{...w,employeeId:employee.id,structureId:structure.id};
+}
+const request=(w,extra={})=>exit.requestEmployeeExit(w.db,{employeeId:w.employeeId,accessEndsAt:CUTOFF,reason:'Synthetic employee exit',idempotencyKey:'EXIT-ONE',actorId:'hr@exit.test',...extra});
+async function approved(w,extra={}){const r=await request(w,extra);await exit.approveEmployeeExit(w.db,{caseId:r.case.id,actorId:'manager@exit.test'});return r.case.id;}
+async function executed(w){const caseId=await approved(w);await exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'});return caseId;}
+test('request does not disable anyone; same-key replay cannot name another employee or cutoff',async t=>{const w=await world(t);const a=await request(w),b=await request(w);assert.equal(a.case.id,b.case.id);assert.equal(b.duplicatePrevented,true);assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'active');await assert.rejects(()=>request(w,{accessEndsAt:CUTOFF+1}));});
+test('requester and employee cannot approve their own exit',async t=>{const w=await world(t),r=await request(w);for(const actorId of ['HR@EXIT.TEST','employee@exit.test'])await assert.rejects(()=>exit.approveEmployeeExit(w.db,{caseId:r.case.id,actorId}));assert.equal(w.sqlite.prepare('SELECT status FROM employee_exit_cases').get().status,'pending');});
+test('future cutoff cannot be executed early and cancellation preserves access',async t=>{const w=await world(t),cutoff=Date.now()+86400000,caseId=await approved(w,{accessEndsAt:cutoff});assert.equal(await access.employeeAccessHasEnded(w.db,'employee@exit.test'),false);await assert.rejects(()=>exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'}));await exit.cancelEmployeeExit(w.db,{caseId,actorId:'manager@exit.test',reason:'Approved exit withdrawn'});assert.equal(await access.employeeAccessHasEnded(w.db,'employee@exit.test',cutoff+1),false);});
+test('approved cutoff refuses an existing UAT session even before the scheduled writer runs',async t=>{
+ const w=await world(t),token=await uat.issueUatToken(env,'employee@exit.test',3600),req=new Request('https://pawspace.test/api/me',{headers:{cookie:`pawspace_uat=${token}`}});
+ assert.equal((await uat.resolveUatStaffActor(w.db,req,env)).email,'employee@exit.test');await approved(w);
+ assert.equal(await uat.resolveUatStaffActor(w.db,req,env),null);assert.equal(await uat.uatStaffIdentityAllowed(w.db,'employee@exit.test'),false);
+ assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'active','cutoff enforcement itself is read-only');
+});
+test('executing an exit revokes identity and sessions atomically while retaining employee records',async t=>{
+ const w=await world(t),caseId=await approved(w);w.sqlite.prepare("INSERT INTO active_sessions(id,user_id,token_hash,mfa_verified_at,issued_at,expires_at) VALUES ('MFA','EXIT-USER','synthetic-hash',1,1,9999999999999)").run();
+ await exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'});assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'disabled');
+ const e=w.sqlite.prepare('SELECT * FROM employees WHERE id=?').get(w.employeeId);assert.equal(e.employment_status,'exited');assert.equal(e.ended_at,CUTOFF);assert.ok(w.sqlite.prepare("SELECT revoked_at FROM active_sessions WHERE id='MFA'").get().revoked_at);
+ const again=await exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'});assert.equal(again.duplicatePrevented,true);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_exit_events WHERE action='access_revoked'").get().n,1);
+});
+test('late audit failure rolls back access removal and keeps the exit retryable',async t=>{
+ const w=await world(t),caseId=await approved(w);w.sqlite.exec("CREATE TRIGGER fail_exit BEFORE INSERT ON employee_exit_events WHEN NEW.action='access_revoked' BEGIN SELECT RAISE(ABORT,'exit audit failure'); END");
+ await assert.rejects(()=>exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'}),/exit audit failure/);
+ assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'active');assert.equal(w.sqlite.prepare('SELECT employment_status FROM employees').get().employment_status,'active');
+ assert.equal(w.sqlite.prepare('SELECT status FROM employee_exit_cases').get().status,'approved');w.sqlite.exec('DROP TRIGGER fail_exit');await exit.executeEmployeeExit(w.db,{caseId,actorId:'hr@exit.test'});
+});
+test('changed identity after request and protected founder identity are refused',async t=>{const w=await world(t),r=await request(w);w.sqlite.prepare("UPDATE app_users SET role_code='founder' WHERE id='EXIT-USER'").run();await assert.rejects(()=>exit.approveEmployeeExit(w.db,{caseId:r.case.id,actorId:'manager@exit.test'}));await assert.rejects(()=>request(w,{idempotencyKey:'another'}));});
+test('approved due-exit sweep does not execute unapproved requests',async t=>{const w=await world(t);await request(w);assert.equal((await exit.runApprovedEmployeeExitSweep(w.db)).processed,0);const caseId=await approved(w);assert.equal((await exit.runApprovedEmployeeExitSweep(w.db)).processed,1);assert.equal(w.sqlite.prepare('SELECT status FROM employee_exit_cases WHERE id=?').get(caseId).status,'access_revoked');});
+test('verified leaver stays in their earned month but never the following month',async t=>{
+ const w=await world(t);await executed(w);const result=await payroll.calculatePayroll(w.db,{periodStart:START,periodEnd:END,idempotencyKey:'FINAL-MONTH',actorId:'maker@exit.test'});
+ assert.equal(result.results.length,1);assert.equal(result.results[0].net_pay,15000);assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'disabled');
+ await assert.rejects(()=>payroll.calculatePayroll(w.db,{periodStart:END,periodEnd:Date.parse('2026-11-01T00:00:00+05:30'),idempotencyKey:'AFTER-EXIT',actorId:'maker@exit.test'}));
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:'fa_ExitFinal',verificationReference:'FINANCE-TEST-REVIEW',expiresAt:Date.now()+86400000,actorId:'finance@exit.test'});
+});
+async function paidExit(w){
+ const caseId=await executed(w),run=await payroll.calculatePayroll(w.db,{periodStart:START,periodEnd:END,idempotencyKey:'FINAL-PAID',actorId:'maker@exit.test'}),runId=run.run.id;
+ await payroll.reviewPayroll(w.db,{runId,actorId:'reviewer@exit.test'});await payroll.approvePayroll(w.db,{runId,actorId:'approver@exit.test'});await payroll.prepareSandboxPaymentBatch(w.db,{runId,actorId:'finance@exit.test'});
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:'fa_ExitFinal',verificationReference:'FINANCE-TEST-REVIEW',expiresAt:Date.now()+86400000,actorId:'finance@exit.test'});
+ const queued=await salary.queueEmployeeSalary(w.db,{runId,actorId:'finance@exit.test'}),instruction=queued.instructions[0];
+ const send=async(status,id)=>{const rawBody=JSON.stringify({event:`payout.${status}`,payload:{payout:{entity:{id:'pout_ExitFinal',reference_id:instruction.id,fund_account_id:'fa_ExitFinal',amount:instruction.amountPaise,currency:'INR',status,utr:'SYNTHETIC-NOT-A-BANK-PAYMENT'}}}});const signature=createHmac('sha256',env.RAZORPAYX_WEBHOOK_SECRET_SANDBOX).update(rawBody).digest('hex');return salary.processEmployeeSalaryWebhook(w.db,env,{rawBody,signature,eventId:id});};
+ await send('processed','EXIT-PAID');return{caseId,runId,instruction,send};
+}
+const settle=(w,review,extra={})=>exit.closeEmployeeExitSandbox(w.db,{caseId:review.caseId,revision:review.revision,clearanceReference:'HR-HANDOVER-ASSETS-TEST',policyReviewReference:'FINANCE-POLICY-TEST',actorId:'finance@exit.test',confirmSandbox:true,...extra});
+test('a missing final payroll blocks settlement instead of inventing zero salary',async t=>{const w=await world(t),caseId=await executed(w),review=await exit.employeeExitSettlement(w.db,caseId);assert.equal(review.ready,false);assert.ok(review.blockers.includes('one_canonical_final_period_payroll_required'));await assert.rejects(()=>settle(w,review));});
+test('signed sandbox payroll proof permits one explicit settlement review without moving money',async t=>{
+ const w=await world(t),{caseId}=await paidExit(w),review=await exit.employeeExitSettlement(w.db,caseId);assert.equal(review.ready,true);assert.equal(review.livePaymentConfirmed,false);
+ await assert.rejects(()=>settle(w,review,{revision:'stale'}));await assert.rejects(()=>settle(w,review,{confirmSandbox:false}));
+ const result=await settle(w,review);assert.equal(result.review.caseStatus,'settled_sandbox');assert.equal(result.review.settledEvidenceCurrent,true);assert.equal((await settle(w,result.review)).duplicatePrevented,true);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM employee_salary_instructions').get().n,1);
+});
+test('a later signed salary reversal invalidates settlement evidence without deleting history',async t=>{
+ const w=await world(t),proof=await paidExit(w);await settle(w,await exit.employeeExitSettlement(w.db,proof.caseId));await proof.send('reversed','EXIT-REVERSED');
+ const review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.equal(review.ready,false);assert.equal(review.settledEvidenceCurrent,false);assert.ok(review.blockers.includes('sandbox_salary_confirmation_required'));await assert.rejects(()=>settle(w,review));
+});
+test('manager handover must be resolved in the existing People records before final settlement',async t=>{
+ const w=await world(t),proof=await paidExit(w);const report=await people.upsertEmployee(w.db,{employeeCode:'REPORT',displayName:'Synthetic Direct Report',workEmail:'report@exit.test',joinedAt:START,actorId:'hr@exit.test'});
+ await people.addEmploymentVersion(w.db,{employeeId:report.id,effectiveFrom:START,employmentType:'direct_employee',managerEmployeeId:w.employeeId,reason:'Synthetic existing manager',actorId:'hr@exit.test'});
+ let review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.ok(review.blockers.includes('open_work_handover_required'));await assert.rejects(()=>settle(w,review));
+ await people.addEmploymentVersion(w.db,{employeeId:report.id,effectiveFrom:CUTOFF,employmentType:'direct_employee',managerEmployeeId:null,reason:'Handover resolved by HR',actorId:'hr@exit.test'});
+ review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.equal(review.ready,true);
+});
+test('ordinary onboarding cannot silently reactivate a completed exit',async t=>{const w=await world(t);await executed(w);const {onboardEmployeeJourney}=await import('../lib/employee-journey-onboarding.ts');await assert.rejects(()=>onboardEmployeeJourney(w.db,{employeeCode:'EXIT-QA',displayName:'Synthetic Exit Employee',workEmail:'employee@exit.test',joinedAt:START,structureId:w.structureId,roleCode:'associate',reason:'Must not bypass rehire',actorId:'hr@exit.test'}),/explicit rehire/);assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'disabled');});
