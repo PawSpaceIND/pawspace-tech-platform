@@ -10,6 +10,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__TRAINING_APP_PAYMENT_DB__");
+// React loads before the first import of the payment page. On Node 22.16 (the CI runners) with registerHooks, a
+// transpiled TSX that is the first module to import both "react/jsx-runtime" and "react" leaves the JSX runtime
+// holding React before its exports are populated, and a later server render then fails on undefined React internals.
+const React = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
@@ -75,8 +80,6 @@ test("every other caller of the payment page, the web Training pages included, k
 });
 
 test("the option changes only what happens after a verified payment, not what the payment step shows", async () => {
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const React = await import("react");
   const { default: BookingPaymentPage } = await import("../app/mobile-app/booking-payment-page.tsx");
   const render = (props) => renderToStaticMarkup(React.createElement(BookingPaymentPage, { serviceName: "Dog Training", bookingId: "PS-UAT-TRAINING-1", totalAmount: 12000, amountDueNow: 6000, mode: "split", ...props }));
   const returning = render({}), staying = render({ returnAfterVerified: false });
