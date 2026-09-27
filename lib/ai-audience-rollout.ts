@@ -12,6 +12,7 @@
  */
 
 type Db = D1Database;
+import { ensureD1Once } from "./d1-ensure-once.js";
 type Row = Record<string, unknown>;
 export type RolloutStage = "off" | "staff_only" | "customers";
 export type Audience = "staff" | "customer";
@@ -41,7 +42,9 @@ async function customerRolloutApprovedHere(): Promise<boolean> {
 }
 
 export async function ensureAiAudienceRolloutTables(db: Db) {
+  return ensureD1Once(db, "ai_audience_rollout", async () => {
   await db.prepare("CREATE TABLE IF NOT EXISTS ai_audience_rollout (id INTEGER PRIMARY KEY CHECK(id=1),stage TEXT NOT NULL DEFAULT 'off',reason TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)").run();
+  });
 }
 
 /** Current rollout stage (defaults to 'off' when never configured). Cold-DB safe. */

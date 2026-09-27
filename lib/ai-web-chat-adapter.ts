@@ -204,11 +204,11 @@ async function activeHandoff(db:D1Database,threadId:string){await ensureAiHumanH
  * to nobody, and a customer who reloaded the page lost every answer. Keyed on the turn, so a replayed
  * turn never writes a second copy.
  */
-async function mirrorAiReply(db:D1Database,input:{threadId:string;customerId:string;turn:Row|null|undefined}){
- const turn=input.turn,turnId=text(turn?.id),output=text(turn?.output??turn?.output_text);if(!turnId||!output)return;
+function mirrorAiReplyStatement(db:D1Database,input:{threadId:string;customerId:string;turn:Row|null|undefined}){
+ const turn=input.turn,turnId=text(turn?.id),output=text(turn?.output??turn?.output_text);if(!turnId||!output)return null;
  const now=Date.now();
- await db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_ai',?,?,?,'ai-orchestrator',?,?)")
-  .bind(`MSG-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_AI_REPLY_TEMPLATE_KEY,JSON.stringify({text:output,outcome:text(turn?.outcome)||null,turnId}),turnId,`ai-web-reply:${turnId}`,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,aiGenerated:true}),now,now).run();
+ return db.prepare("INSERT OR IGNORE INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'outbound','chat','service',?,?,'delivered','pawspace_ai',?,?,?,'ai-orchestrator',?,?)")
+  .bind(`MSG-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.threadId,input.customerId,WEB_CHAT_AI_REPLY_TEMPLATE_KEY,JSON.stringify({text:output,outcome:text(turn?.outcome)||null,turnId}),turnId,`ai-web-reply:${turnId}`,JSON.stringify({channel:"chat",externalDelivery:false,productionDelivery:false,aiGenerated:true}),now,now);
 }
 
 /** A stored turn in the shape a fresh turn is returned in, so a replay shows the customer the real answer. */
@@ -217,6 +217,13 @@ function replayedTurn(row:Row){return{id:text(row.id),output:text(row.output_tex
 type WebChatOptions={
  /** Customer web chat: while a person owns the thread, accept the message and say so instead of refusing it. */
  acceptWhileWithTeam?:boolean;
+ /* Facts the calling bot turn established in this same request, so the AI turn does not read them again
+  * (each D1 call costs 0.3-0.5 s on staging): the customer's open thread, that the actor owns the customer,
+  * that no message carries this idempotency key yet, and that no person owns the thread. */
+ threadId?:string;
+ ownershipVerified?:boolean;
+ priorChecked?:boolean;
+ handoffChecked?:boolean;
 };
 
 /**
@@ -246,7 +253,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
  const aiKey=`ai:${input.idempotencyKey}`;
  // Ownership and the retry lookup are independent reads; a failed ownership check still rejects before any write.
- const[,prior]=await Promise.all([requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
+ const[,prior]=await Promise.all([options.ownershipVerified?null:requireCustomerOwnership(db,input.actor,input.customerId),options.priorChecked?null:db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
  let threadId="",messageId="",inspectedDetected=false;
  if(prior){
@@ -260,7 +267,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  /* The AI provider loads while the message is saved (#1093). A path that returns before using it (the
   * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
- if(!prior)threadId=await openThread(db,input.customerId);
+ if(!prior)threadId=text(options.threadId)||await openThread(db,input.customerId);
  const salesPromise=chatSalesService(db,input.customerId,threadId,input.text);salesPromise.catch(()=>{});
  const providerPromise=salesPromise.then(salesService=>createGroundedAiRuntimeProvider(db,salesService?WEB_CHAT_SALES_ACTOR:input.actor,"chat",{salesService}));providerPromise.catch(()=>{});
  if(!prior){
@@ -276,7 +283,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  /* While a person owns the conversation the AI stays silent - that is the point of a takeover. What
   * changed is what the customer sees: their message is kept for the team and they are told a person
   * will answer here, instead of a red "AI replies are paused" error on every message they send. */
- if(options.acceptWhileWithTeam&&(await activeHandoff(db,threadId)).active)return withTeam();
+ if(options.acceptWhileWithTeam&&!options.handoffChecked&&(await activeHandoff(db,threadId)).active)return withTeam();
  let result:Awaited<ReturnType<typeof orchestrateAiTurn>>;
  try{const provider=await providerPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider});}
  catch(error){
@@ -285,13 +292,15 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   throw error;
  }
  const turn=result.turn&&typeof result.turn==="object"?result.turn as Row:null;
- if(turn){await mirrorAiReply(db,{threadId,customerId:input.customerId,turn});if(result.duplicatePrevented)result={...result,turn:replayedTurnFromAny(turn)} as typeof result;}
+ if(turn&&result.duplicatePrevented)result={...result,turn:replayedTurnFromAny(turn)} as typeof result;
  /* Why a turn went to a person, for whoever diagnoses it: the handoff reason and the provider failure class
   * or thrown error type (never a message, prompt or credential). It is recorded here, not shown to the customer. */
  let providerFailure:string|null=null;
  if("providerFailure"in result){providerFailure=result.providerFailure??null;const shown={...result};delete shown.providerFailure;result=shown;}
- await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,handoffReason:text(turn?.handoffReason??turn?.handoff_reason)||null,...(providerFailure?{providerFailure}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now()).run();
- const handoff=turn&&text(turn.outcome)==="handoff"?await activeHandoff(db,threadId):undefined;
+ // The mirrored reply and the turn event share one round trip.
+ const event=db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:turn?turn.outcome:null,handoffReason:text(turn?.handoffReason??turn?.handoff_reason)||null,...(providerFailure?{providerFailure}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected}),Date.now());
+ const mirror=turn?mirrorAiReplyStatement(db,{threadId,customerId:input.customerId,turn}):null;
+ const[handoff]=await Promise.all([turn&&text(turn.outcome)==="handoff"?activeHandoff(db,threadId):undefined,db.batch(mirror?[mirror,event]:[event])]);
  return{duplicatePrevented:Boolean(prior),messageId,threadId,ai:result,...(handoff?{handoff}:{}),autonomousExecution:false,trustSafetyRedacted:inspectedDetected};
 }
 /** A replayed orchestrator turn is a raw table row; give it the same `output` field a fresh turn has. */
@@ -308,21 +317,22 @@ export type WebChatTranscriptMessage={id:string;role:"customer"|"ai"|"bot"|"team
  * customer, and only customer-visible chat messages come back - never notes, other channels or staff
  * identities beyond "PawSpace team".
  */
-export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number;ownershipVerified?:boolean}){
+export async function customerWebChatTranscript(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId?:string|null;limit?:number;ownershipVerified?:boolean;threadVerified?:boolean;handoff?:{active:boolean;status:"queued"|"staff_active"|null}}){
  // ownershipVerified: the same request has just proved this actor owns the customer (a bot turn or start).
+ // threadVerified / handoff: the same request has just written to this thread and knows who owns it.
  await ensureAiWebChatTables(db);if(!input.ownershipVerified)await requireCustomerOwnership(db,input.actor,input.customerId);
  let threadId=text(input.threadId);
- if(threadId){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
- else threadId=await currentWebChatThread(db,input.customerId);
+ if(!threadId)threadId=await currentWebChatThread(db,input.customerId);
+ else if(!input.threadVerified){const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();if(!thread||text(thread.customer_id)!==input.customerId)throw new Response("Conversation not found",{status:404});}
  if(!threadId)return{threadId:null,messages:[] as WebChatTranscriptMessage[],handoff:{active:false,status:null}};
  // A booking PawSpace AI made here whose payment has since been verified is confirmed in the conversation.
- await announcePaidAiBookings(db,{threadId}).catch(()=>undefined);
+ const[,handoff]=await Promise.all([announcePaidAiBookings(db,{threadId}).catch(()=>undefined),input.handoff??activeHandoff(db,threadId)]);
  const limit=Math.min(200,Math.max(1,Math.floor(Number(input.limit)||100)));
  // A customer message and the bot's reply are often written in the same millisecond; insertion order
  // (rowid), not the random message id, keeps the reply after the message it answers.
  const rows=await db.prepare("SELECT id,direction,template_key,payload_json,created_at FROM communication_messages WHERE thread_id=? AND customer_id=? AND channel='chat' AND direction IN ('inbound','outbound') ORDER BY created_at DESC,rowid DESC LIMIT ?").bind(threadId,input.customerId,limit).all<Row>();
  const messages=rows.results.reverse().flatMap(row=>{let payload:Row={};try{payload=JSON.parse(text(row.payload_json)||"{}") as Row;}catch{}const body=text(payload.text||payload.message||payload.body);if(!body)return[];const inbound=text(row.direction)==="inbound",template=text(row.template_key),ai=template===WEB_CHAT_AI_REPLY_TEMPLATE_KEY,bot=template===WEB_CHAT_BOT_TEMPLATE_KEY;const choices=bot&&Array.isArray(payload.choices)?(payload.choices as Row[]).map(item=>({id:text(item.id),label:text(item.label)})).filter(item=>item.id&&item.label):[];return[{id:text(row.id),role:inbound?"customer":ai?"ai":bot?"bot":"team",text:body,createdAt:Number(row.created_at||0),author:inbound?null:ai?"PawSpace AI":bot?"PawSpace bot":"PawSpace team",...(bot?{choices,inputHint:payload.inputHint?text(payload.inputHint):null}:{})} as WebChatTranscriptMessage];});
- return{threadId,messages,handoff:await activeHandoff(db,threadId)};
+ return{threadId,messages,handoff};
 }
 
 /* -------------------------------------------------------------------------------------------------
@@ -403,28 +413,33 @@ export async function startCustomerWebChatBot(db:D1Database,input:{actor:Authent
  * One signed-in customer message through the bot. Returns what happened so the route can report it;
  * the customer's page then reads the thread back, which already holds every message written here.
  */
-export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string}){
- await ensureAiWebChatTables(db);await requireCustomerOwnership(db,input.actor,input.customerId);
+export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string;ownershipVerified?:boolean}){
+ await ensureAiWebChatTables(db);
  const key=text(input.idempotencyKey);if(!key)throw new Response("Idempotency key is required",{status:400});
- const prior=await db.prepare("SELECT thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(key).first<Row>();
+ // Independent reads share one round trip; a failed ownership check still rejects before any write.
+ const[,prior,current]=await Promise.all([input.ownershipVerified?null:requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(key).first<Row>(),currentWebChatThread(db,input.customerId)]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
  if(prior)return{duplicatePrevented:true,threadId:text(prior.thread_id),path:"duplicate" as const};
- const current=await currentWebChatThread(db,input.customerId);
+ // What this turn has established, so the AI turn it may run does not read it again.
+ const known={threadId:current||undefined,ownershipVerified:true,priorChecked:true,handoffChecked:true,acceptWhileWithTeam:true};
  // A person owns the conversation: no bot and no AI, the message goes to the team.
- if(current&&(await activeHandoff(db,current)).active){const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:text(input.text)||text(input.choiceId),idempotencyKey:key},{acceptWhileWithTeam:true});return{duplicatePrevented:false,threadId:data.threadId,path:"team" as const};}
+ if(current&&(await activeHandoff(db,current)).active){const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:text(input.text)||text(input.choiceId),idempotencyKey:key},{...known,handoffChecked:false});return{duplicatePrevented:false,threadId:data.threadId,path:"team" as const};}
  if(!text(input.text)&&!text(input.choiceId))throw new Response("Message is required",{status:400});
  // The turn claims the bot's position before anything is written, so two messages sent together
  // cannot both answer the same question.
- const ref=`customer:${input.customerId}`,crossSell=await activeCrossSell(db,{customerId:input.customerId,channel:"website"}),turn=await advanceBotSession(db,ref,state=>runBotTurn(state,{text:input.text,choiceId:input.choiceId,signedIn:true,crossSell}));
+ // The cross-sell offer is read only when the bot is still asking: in AI mode the AI carries its own offers.
+ const ref=`customer:${input.customerId}`,turn=await advanceBotSession(db,ref,async state=>runBotTurn(state,{text:input.text,choiceId:input.choiceId,signedIn:true,crossSell:state.aiMode?null:await activeCrossSell(db,{customerId:input.customerId,channel:"website"})}));
  if(!turn.display)throw new Response("Message is required",{status:400});
  if(turn.event.type==="ai"){
   /* A question: PawSpace AI answers it in the same thread, then the bot offers the menu again - unless
    * the AI itself handed the customer to a person. */
-  const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:turn.event.question,idempotencyKey:key},{acceptWhileWithTeam:true});
+  const data=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:turn.event.question,idempotencyKey:key},known);
   const handedOff="withTeam"in data||("handoff"in data&&data.handoff?.active);
   // An empty reply is AI mode: the AI's answer stands alone, with no bot buttons after it.
   if(!handedOff&&turn.reply.text)await postBotMessage(db,{threadId:data.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
-  return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const};
+  // The AI turn's own reading of who owns the thread, so the transcript read does not repeat it.
+  const handoff="handoff"in data&&data.handoff?data.handoff:{active:false as const,status:null};
+  return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const,handoff};
  }
  const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key});
  /* A person's or a team's enquiry is queued before the customer is told so: a failed handoff surfaces as an
