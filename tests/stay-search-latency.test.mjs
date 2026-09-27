@@ -303,6 +303,7 @@ test("every Boarding and Pet Sitting client call reads a network failure or an u
     "Pet Sitting booking read": () => sittingView.loadSittingCustomerView("PS-S1"),
     "service PIN check": () => zones.resolveServiceCoverage("560038"),
     "account and pets": () => account.loadCustomerAccount(),
+    "pet saved on the Plan step": () => account.upsertCustomerPet({ customerId: "C1", pet: { name: "Bruno", species: "dog", vaccinationStatus: "verified" } }),
   };
   const failures = {
     "no network": () => { throw new TypeError("Failed to fetch"); },
