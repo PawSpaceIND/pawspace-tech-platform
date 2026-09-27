@@ -13,7 +13,7 @@
     ]
   },
   "app/team/sales/page.tsx": {
-    "logicHash": "e796047787da69bfaf46de2cb2f94c39efb90be766bd26e5146f030e46fd855c",
+    "logicHash": "9f0ac8378afce44cbe3a31f9e2dccefeded77cfd7111580ca1123812fe6b3ece",
     "bindings": [
       "disabled={busy===a.id}",
       "disabled={busy===a.id}",

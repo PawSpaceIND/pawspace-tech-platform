@@ -194,7 +194,7 @@ export async function POST(request:Request){
           atomic=await commitRazorpayCaptureAtomic(db,{
             inboxId:String(accepted.row.id),eventId,environment:gate.environment,intentId:intent?String(intent.id):null,
             bookingId:linked.bookingId,paymentId:linked.paymentId,gatewayOrderId:event.gatewayOrderId||null,gatewayPaymentId:event.gatewayPaymentId||null,
-            amountPaise,currency:event.currency||String(intent?.currency||"INR"),payloadHash:String(accepted.row.payload_sha256),detail:event.detail,
+            gatewayMethod:String(entity(payload,"payment").method||""),amountPaise,currency:event.currency||String(intent?.currency||"INR"),payloadHash:String(accepted.row.payload_sha256),detail:event.detail,
           });
         }catch(error){
           if(!(error instanceof RazorpayCaptureAmountMismatchError))throw error;

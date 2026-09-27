@@ -82,6 +82,7 @@ test("every chunked read whose SQL orders or limits reapplies it, or is provably
   // approval trail stayed wrong - so each call site is judged on its own statement.
   const preOrdered = new Map([
     ["manager-dashboard.ts", "resolveDashboardScope already returns the scope ORDER BY e.display_name, so chunks are name-contiguous and each chunk's ORDER BY reproduces the global order"],
+    ["case-sop-governance.ts", "case IDs are unique and assigned to exactly one chunk; rows are regrouped by case after the chunked read, so each case keeps the SQL status/created_at order from its single chunk and no cross-case global order is consumed"],
   ]);
 
   const undecided = [];
