@@ -14,6 +14,7 @@ const completion = await import("../lib/service-completion-finance.ts");
 const gstAccounting = await import("../lib/gst-accounting.ts");
 const returns = await import("../lib/gst-returns.ts");
 const invoices = await import("../lib/booking-tax-invoice.ts");
+const statutory = await import("../lib/statutory-invoicing.ts");
 
 const ENTITY = "SEEDFE-TKPET", REG = "SEEDTR-TKPET-KA", POLICY = "SEEDTP-TKPET-1", GSTIN = "29AAICT7352F1Z0";
 const SELLER = { legalName: "TK PETCARE SOLUTIONS PRIVATE LIMITED", gstin: GSTIN, stateCode: "29", state: "Karnataka", address: "Jayanagar 9th Block, Bengaluru, Karnataka 560041" };
@@ -85,4 +86,25 @@ test("an unexpected failure for one booking never stops Finance's backfill run: 
   assert.deepEqual(backfill.notIssued.map((row) => [row.bookingId, row.status]), [["BK-B", "refused"]]);
   assert.doesNotMatch(JSON.stringify(backfill), /disk I\/O/, "internal error text is logged, not returned");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM gst_accounting_audit_events WHERE entity_type='booking_invoice_backfill'").get().n, 1);
+});
+
+const manualInvoice = (db, n, issueDate, extra = {}) => statutory.issueInvoiceStatutory(db, { entityId: ENTITY, registrationId: REG, customerId: `CUS-M${n}`, issueDate, sourceType: "manual", sourceId: `M-${n}`, sourceEventKey: `manual:M-${n}`, recipientState: "29", serviceState: "29", recipientRegistered: false, lines: [{ lineKey: "service", serviceCode: "grooming", description: "Grooming", taxableAmount: 100 }], ...extra }, FINANCE);
+function classifyGrooming(sqlite) {
+  sqlite.prepare("INSERT INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES ('TC-G',?,'grooming','998612',?,'service_location','standard',1)").run(POLICY, JSON.stringify([{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }]));
+}
+
+test("an amount received that is not a number is refused, not stored", async () => {
+  const { sqlite, db } = await invoiceWorld();
+  classifyGrooming(sqlite);
+  await assert.rejects(manualInvoice(db, 1, "2026-09-01", { amountReceived: "one hundred" }), /invoice_amount_received_invalid/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_invoices").get().n, 0);
+});
+
+test("a series without {FY} continues its counter into the next financial year instead of repeating a number", async () => {
+  const { sqlite, db } = await invoiceWorld();
+  classifyGrooming(sqlite);
+  sqlite.prepare("UPDATE finance_document_series SET prefix='TKX/' WHERE id='SERIES-TKP'").run();
+  const march = await manualInvoice(db, 1, "2026-03-31");
+  const april = await manualInvoice(db, 2, "2026-04-01");
+  assert.deepEqual([march.invoice_number, april.invoice_number], ["TKX/00001", "TKX/00002"]);
 });

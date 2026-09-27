@@ -130,3 +130,39 @@ test("the sample vendors seeded for Finance carry GSTINs with valid check charac
   assert.equal(rows.ven_food, "27AAACF9999M1ZM", "a GSTIN Finance changed is left alone");
   for (const gstin of ["29AAACS0001A1ZB", "29AAHFT2201B1ZP", "29AABCC2233D1Z6"]) assert.equal(inputTax.validateGstin(gstin).ok, true, gstin);
 });
+
+test("two sessions importing the same GSTR-2B at once: one import, and the other writes nothing", async () => {
+  const { sqlite } = await itcWorld();
+  const billId = await approvedInternetBill(sqlite);
+  const file = gstr2b(PERIOD, [{ ctin: NET.gstin, inum: "inv001", dt: "10-07-2026", txval: 10000, igst: 0, cgst: 900, sgst: 900 }]);
+  const both = await Promise.all([1, 2].map((n) => gst(MAKER, { action: "import_gstr2b", ...scope, reason: `July GSTR-2B, session ${n}`, gstr2b: file })));
+  // Whichever way the two interleave, exactly one import is recorded: the other is refused (409) or sees it as a duplicate.
+  assert.ok(both.every((r) => r.status === 200 || r.status === 409), JSON.stringify(both.map((r) => r.body)));
+  assert.equal(both.filter((r) => r.status === 200 && r.body.data.duplicatePrevented === false).length, 1);
+  const imports = sqlite.prepare("SELECT id FROM finance_gstr2b_imports").all();
+  assert.equal(imports.length, 1);
+  assert.deepEqual(sqlite.prepare("SELECT DISTINCT import_id FROM finance_gstr2b_lines").all().map((r) => r.import_id), [imports[0].id], "no lines from the refused session");
+  const bill = sqlite.prepare("SELECT gstr2b_status,gstr2b_line_id FROM finance_bills WHERE id=?").get(billId);
+  assert.equal(bill.gstr2b_status, "matched");
+  assert.equal(sqlite.prepare("SELECT import_id FROM finance_gstr2b_lines WHERE id=?").get(bill.gstr2b_line_id).import_id, imports[0].id, "the bill points at the import that exists");
+});
+
+test("an import that stopped part-way is refused while fresh and redone once it is abandoned", async () => {
+  const { sqlite } = await itcWorld();
+  const billId = await approvedInternetBill(sqlite);
+  const file = gstr2b(PERIOD, [{ ctin: NET.gstin, inum: "inv001", dt: "10-07-2026", txval: 10000, igst: 0, cgst: 900, sgst: 900 }]);
+  assert.equal((await gst(MAKER, { action: "import_gstr2b", ...scope, reason: "July GSTR-2B from the portal", gstr2b: file })).status, 200);
+  // As if the session stopped after claiming the import and writing its lines, before recording the result.
+  sqlite.prepare("UPDATE finance_gstr2b_imports SET result_json='',imported_at=?").run(Date.now());
+  const fresh = await gst(MAKER, { action: "import_gstr2b", ...scope, reason: "July GSTR-2B again", gstr2b: file });
+  assert.equal(fresh.status, 409);
+  assert.match(fresh.body.error, /being imported from another session/);
+  sqlite.prepare("UPDATE finance_gstr2b_imports SET imported_at=?").run(Date.now() - 11 * 60_000);
+  const redone = await gst(MAKER, { action: "import_gstr2b", ...scope, reason: "July GSTR-2B again", gstr2b: file });
+  assert.equal(redone.status, 200, JSON.stringify(redone.body));
+  assert.equal(redone.body.data.duplicatePrevented, false, "a new, complete import");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_gstr2b_imports").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_gstr2b_lines").get().n, 1, "the stopped import's lines are gone");
+  assert.equal(sqlite.prepare("SELECT gstr2b_status FROM finance_bills WHERE id=?").get(billId).gstr2b_status, "matched");
+  assert.ok(balanced(sqlite));
+});

@@ -96,6 +96,7 @@ export async function proposeServiceCommissionDefault(db:Db,input:{serviceCode?:
  if(!actorId)throw refuse("The person proposing the default is required");
  if(!all&&!single)throw refuse("Choose the service whose default commission you are changing, or every service");
  if(!all&&isFuneralService(single))throw refuse("Funeral and memorial are not commission services, so they have no default commission here.");
+ if(!all&&!COMMISSION_DEFAULT_SERVICES.includes(single)&&!(await defaultRows(db)).some(r=>text(r.service_code).toLowerCase()===single))throw refuse(`${serviceLabel(single)} is not a commission service, so it has no default commission here.`);
  const problem=pawspaceCommissionProblem(input.pawspaceCommissionPercent,all?"every service":serviceLabel(single));if(problem)throw refuse(problem);
  const start=serviceDefaultStartProblem(effectiveFrom,today());if(start)throw refuse(start);
  if(reason.length<8)throw refuse("A clear reason of at least 8 characters is required");

@@ -194,11 +194,11 @@ export async function activateCommercialTerm(db:Db,input:{termId:string;approval
 
 /** Why terms cannot start on these days: a month whose books are closed and locked (finance_close_periods) is final. Null when every month is open. */
 export async function lockedMonthProblem(db:Db,days:ReadonlyArray<unknown>){
- for(const month of[...new Set(days.map(day=>text(day).slice(0,7)).filter(month=>/^\d{4}-\d{2}$/.test(month)))].sort()){
-  const row=await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(month).first<Row>().catch((error:unknown)=>{/* no month was ever closed */if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
-  if(text(row?.status)==="locked")return`The books for ${month} are closed, so commission terms cannot start in that month. Choose a start date in an open month.`;
- }
- return null;
+ const months=[...new Set(days.map(day=>text(day).slice(0,7)).filter(month=>/^\d{4}-\d{2}$/.test(month)))].sort();if(!months.length)return null;
+ // Terms apply from their start date onwards, so a closed month on or after the earliest start month would be changed too.
+ const row=await db.prepare("SELECT period_code FROM finance_close_periods WHERE status='locked' AND period_code>=? ORDER BY period_code LIMIT 1").bind(months[0]).first<Row>().catch((error:unknown)=>{/* no month was ever closed */if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
+ if(!row)return null;const closed=text(row.period_code);
+ return closed===months[0]?`The books for ${closed} are closed, so commission terms cannot start in that month. Choose a start date in an open month.`:`The books for ${closed} are closed, and terms starting in ${months[0]} would change bookings in it. Choose a start date after ${closed}.`;
 }
 
 /* Every statement of one activation runs only if the activation's own audit row (the batch's first statement) was written. */

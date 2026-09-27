@@ -459,7 +459,14 @@ export async function importGstr2b(db:Db,input:{entityId:string;registrationId:s
  if(parsed.gstin!==reg.gstin)throw refuse(`This GSTR-2B is for GSTIN ${parsed.gstin}, not the selected registration ${reg.gstin}`,400);
  const checksum=await sha256(JSON.stringify(parsed.lines));
  const prior=await db.prepare("SELECT * FROM finance_gstr2b_imports WHERE registration_id=? AND return_period=? AND checksum=?").bind(input.registrationId,parsed.returnPeriod,checksum).first<Row>();
- if(prior)return await rematchPriorImport(db,prior,parsed.lines,input.entityId,actor,reason);
+ if(prior&&text(prior.result_json))return await rematchPriorImport(db,prior,parsed.lines,input.entityId,actor,reason);
+ if(prior){
+  // Claimed but never finished: another session is importing this file now, or an earlier attempt stopped part-way.
+  if(Date.now()-num(prior.imported_at)<10*60_000)throw refuse("This GSTR-2B file is being imported from another session; refresh in a minute",409);
+  const stale=text(prior.id);
+  await db.batch([db.prepare("UPDATE finance_bills SET gstr2b_status='not_in_2b',gstr2b_period=NULL,gstr2b_line_id=NULL WHERE gstr2b_status='matched' AND gstr2b_line_id IN (SELECT id FROM finance_gstr2b_lines WHERE import_id=?)").bind(stale),
+   db.prepare("DELETE FROM finance_gstr2b_lines WHERE import_id=?").bind(stale),db.prepare("DELETE FROM finance_gstr2b_imports WHERE id=? AND result_json=''").bind(stale)]);
+ }
  const bills=await entityBills(db,input.entityId),byKey=new Map<string,Row[]>();
  for(const b of bills){const g=billGstin(b);if(!g)continue;const key=`${g}|${normaliseInvoiceNumber(text(b.supplier_invoice_number)||text(b.bill_number))}`;byKey.set(key,[...(byKey.get(key)??[]),b]);}
  const importId=idOf("g2b"),taken=new Set<string>(),outcomes:Array<{line:Gstr2bLine;outcome:MatchOutcome;lineId:string}>=[];
@@ -476,15 +483,19 @@ export async function importGstr2b(db:Db,input:{entityId:string;registrationId:s
   needsAttention:outcomes.filter(o=>!["matched","already_matched","no_bill"].includes(o.outcome.status)).map(view),
   unmatchedIn2b,skipped:parsed.skipped,otherSections:parsed.otherSections,
   note:"Only matched bills (or bills Finance confirms with a reason) can be credited. Credit and debit notes and amendments in GSTR-2B are listed, not matched."};
- const header=[db.prepare("INSERT INTO finance_gstr2b_imports (id,entity_id,registration_id,gstin,return_period,generated_on,checksum,invoice_count,matched_count,result_json,reason,imported_by,imported_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(importId,input.entityId,input.registrationId,parsed.gstin,period,parsed.generatedOn||null,checksum,parsed.lines.length,matched.length,JSON.stringify(result),reason,actor,now)],statements:D1PreparedStatement[]=[];
+ // The import row is claimed first (its result empty until the end), so a second session importing the same file at the same
+ // time is refused before it writes anything, and never leaves lines or bill matches of its own.
+ try{await db.prepare("INSERT INTO finance_gstr2b_imports (id,entity_id,registration_id,gstin,return_period,generated_on,checksum,invoice_count,matched_count,result_json,reason,imported_by,imported_at) VALUES (?,?,?,?,?,?,?,?,0,'',?,?,?)").bind(importId,input.entityId,input.registrationId,parsed.gstin,period,parsed.generatedOn||null,checksum,parsed.lines.length,reason,actor,now).run();}
+ catch(error){if(/UNIQUE|constraint/i.test(error instanceof Error?error.message:String(error)))throw refuse("The same GSTR-2B file was imported at the same time from another session; refresh",409);throw error;}
+ const header=[db.prepare("UPDATE finance_gstr2b_imports SET matched_count=?,result_json=? WHERE id=?").bind(matched.length,JSON.stringify(result),importId)],statements:D1PreparedStatement[]=[];
  for(const o of outcomes)statements.push(db.prepare("INSERT INTO finance_gstr2b_lines (id,import_id,supplier_gstin,supplier_name,invoice_number,invoice_key,invoice_date,invoice_type,place_of_supply,reverse_charge,itc_available,itc_reason,invoice_value,taxable_value,igst,cgst,sgst,cess,supplier_period,match_status,matched_bill_id,match_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(o.lineId,importId,o.line.supplierGstin,o.line.supplierName||null,o.line.invoiceNumber,o.line.invoiceKey,o.line.invoiceDate,o.line.invoiceType,o.line.placeOfSupply||null,o.line.reverseCharge?1:0,o.line.itcAvailable,o.line.itcReason||null,o.line.invoiceValue,o.line.taxableValue,o.line.tax.igst,o.line.tax.cgst,o.line.tax.sgst,o.line.tax.cess,o.line.supplierPeriod||null,o.outcome.status,o.outcome.billId,o.outcome.note));
  // A bill is matched into the later of the GSTR-2B month and its invoice month, and only if nothing matched it meanwhile.
  for(const o of matched){const b=billById.get(o.outcome.billId as string)!,invMonth=(text(b.supplier_invoice_date)||text(b.bill_date)).slice(0,7);statements.push(db.prepare("UPDATE finance_bills SET gstr2b_status='matched',gstr2b_period=?,gstr2b_line_id=?,updated_at=? WHERE id=? AND gstr2b_status NOT IN ('matched','manual_confirmed')").bind(invMonth>period?invMonth:period,o.lineId,now,text(b.id)));}
  header.push(await audit(db,actor,"gstr2b_import",importId,"imported",{registrationId:input.registrationId,returnPeriod:period,checksum,invoices:parsed.lines.length,matched:matched.length,unmatchedInBooks:result.unmatchedInBooks.length,unmatchedIn2b:unmatchedIn2b.length,needsAttention:result.needsAttention.length},reason));
- // D1 binds at most 100 values per statement and each batch is one transaction: write in chunks, the import row last, so a
- // failure part-way never leaves an import that looks complete (re-importing the same file then finishes the job).
+ // D1 binds at most 100 values per statement and each batch is one transaction: write in chunks and the import's result last,
+ // so a failure part-way never leaves an import that looks complete (after 10 minutes, re-importing the same file redoes it).
  for(let i=0;i<statements.length;i+=50)await db.batch(statements.slice(i,i+50));
- try{await db.batch(header);}catch(error){if(/UNIQUE|constraint/i.test(error instanceof Error?error.message:String(error)))throw refuse("The same GSTR-2B file was imported at the same time from another session; refresh");throw error;}
+ await db.batch(header);
  const journals:Array<{billId:string;journalGroup:string|null}>=[];
  for(const o of matched){const fresh=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(o.outcome.billId).first<Row>();if(fresh){const synced=await syncBillLedger(db,fresh,{actor,reason:`matched in GSTR-2B ${period}`});if(synced.journalGroup)journals.push({billId:text(fresh.id),journalGroup:synced.journalGroup});}}
  return{...result,id:importId,journals,duplicatePrevented:false};
