@@ -139,6 +139,33 @@ test("the migration set sent as chunks builds exactly the schema the file-by-fil
   assert.deepEqual(schemaOf(chunked), schemaOf(reference), "a second deploy is a no-op");
 });
 
+test("the triggers of the chunk that failed the first chunked staging deploy each travel alone and whole", () => {
+  // Staging deploy of ff6ab2e (job 108573654969): migration chunk 2 of 8 (0017..0023) was refused with
+  // "incomplete input: SQLITE_ERROR [code: 7500]". It carried these 13 triggers; 0017's
+  // journal_transactions_post_balanced has CASE ... END; inside BEGIN ... END, which D1's own
+  // statement splitter cuts apart.
+  const failedChunkTriggers = ["gateway_webhook_events_immutable_delete", "journal_entries_no_update", "journal_entries_no_delete",
+    "journal_transactions_post_balanced", "journal_transactions_posted_immutable", "journal_transactions_no_delete",
+    "partner_release_requires_completed_booking", "tax_rule_versions_no_update", "tax_rule_versions_no_delete", "gst_documents_no_update",
+    "gst_documents_no_delete", "payment_settlement_reconciliations_no_update", "payment_settlement_reconciliations_no_delete"];
+  const steps = planMigrationSteps(loadMigrations("drizzle"));
+  for (const step of steps.filter((s) => s.type === "sql")) assert.doesNotMatch(step.sql, /\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\b/i, "no --command chunk carries a trigger");
+  const sqlite = freshSqlite();
+  for (const name of failedChunkTriggers) {
+    const step = steps.find((s) => s.type === "trigger" && s.action === "create" && s.name === name);
+    assert.ok(step, `${name} is its own step`);
+    assert.equal(splitSqlStatements(`${step.sql};`).length, 1, `${name} is one whole statement`);
+    assert.match(step.sql, /\bEND$/, `${name} keeps its closing END`);
+  }
+  const balanced = steps.find((s) => s.type === "trigger" && s.name === "journal_transactions_post_balanced").sql;
+  assert.equal((balanced.match(/\bCASE\b/g) || []).length, 2, "the CASE ... END; body that D1's splitter cut is intact");
+  // The exact statement SQLite accepts and enforces as one trigger.
+  sqlite.exec("CREATE TABLE journal_transactions (id TEXT PRIMARY KEY, status TEXT); CREATE TABLE journal_entries (transaction_id TEXT, direction TEXT, amount_paise INTEGER)");
+  sqlite.exec(balanced);
+  sqlite.exec("INSERT INTO journal_transactions VALUES ('T1','DRAFT'); INSERT INTO journal_entries VALUES ('T1','DEBIT',100),('T1','CREDIT',90)");
+  assert.throws(() => sqlite.exec("UPDATE journal_transactions SET status='POSTED' WHERE id='T1'"), /journal is not balanced/);
+});
+
 test("a trigger is sent only when the database lacks exactly that trigger", () => {
   const create = (name, body) => ({ type: "trigger", action: "create", name, sql: `CREATE TRIGGER IF NOT EXISTS ${name} BEFORE UPDATE ON t BEGIN ${body}; END` });
   const drop = (name) => ({ type: "trigger", action: "drop", name, sql: `DROP TRIGGER IF EXISTS ${name}` });
