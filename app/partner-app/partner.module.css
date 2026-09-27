@@ -5,7 +5,9 @@
 .viewport.viewport { background:var(--brand-raised) !important; color:var(--brand-text) !important; font-family:var(--paw-font) !important; }
 .viewport .phoneShell { background:var(--brand-surface) !important; }
 .viewport .appHeader { background:var(--brand-surface) !important; border-bottom:1px solid var(--brand-line) !important; }
-.viewport .brand { color:var(--brand-warning) !important; }
+.viewport .brand { color:var(--brand-warning) !important; min-width:0; flex:1 1 auto; align-items:center; }
+.viewport .brand img { display:block; width:min(160px,calc(100vw - 150px)); max-width:100%; height:auto; object-fit:contain; flex:0 1 auto; }
+.viewport .identityPill { flex:0 0 auto; }
 .viewport .brand b { color:var(--brand-muted) !important; }
 .viewport .brand small { font-size:13px !important; color:var(--brand-muted) !important; }
 .viewport .identityPill { background:var(--brand-raised) !important; color:var(--brand-text) !important; font-size:13px !important; }
