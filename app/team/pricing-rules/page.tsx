@@ -9,9 +9,9 @@ type City = { cityId: string; label: string; source: string };
 type RuleType = "weekend" | "time_band" | "weekday" | "season" | "date_range";
 
 const wrap = { minHeight: "100vh", background: "var(--staff-bg)", padding: 28, fontFamily: "inherit", color: "var(--staff-text)" } as const;
-const card = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14 } as const;
-const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid var(--staff-line)", borderRadius: 9, font: "inherit", color: "inherit", background: "var(--staff-surface)", width: "100%" };
-const labelStyle: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--staff-primary)", marginBottom: 4 };
+const card = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))" } as const;
+const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid var(--staff-line)", borderRadius: "calc(9px * var(--paw-radius-scale))", font: "inherit", color: "inherit", background: "var(--staff-surface)", width: "100%" };
+const labelStyle: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--paw-link)", marginBottom: 4 };
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 // Sunday-indexed to match the pricing engine's day numbering (lib/pricing-engine.ts isoDay).
 const DAYS = [{ n: 0, s: "Sun" }, { n: 1, s: "Mon" }, { n: 2, s: "Tue" }, { n: 3, s: "Wed" }, { n: 4, s: "Thu" }, { n: 5, s: "Fri" }, { n: 6, s: "Sat" }];
@@ -145,11 +145,11 @@ export default function PricingRulesPage() {
   const needs = NEEDS[ruleType];
   return <StaffModule><main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
-      <div><small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div><small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
+      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: "calc(10px * var(--paw-radius-scale))", fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: "calc(10px * var(--paw-radius-scale))", textDecoration: "none" }}>Team home</Link></div>
     </header>
-    {error && <div role="alert" style={{ padding: 12, background: "var(--staff-danger-bg)", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
-    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "var(--staff-warning-bg)" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid var(--staff-line)" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "var(--staff-muted)" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
+    {error && <div role="alert" style={{ padding: 12, background: "var(--staff-danger-bg)", borderRadius: "calc(10px * var(--paw-radius-scale))", marginBottom: 12 }}>{error}</div>}
+    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "var(--staff-warning-bg)" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid var(--staff-line)" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "var(--staff-muted)" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: "calc(8px * var(--paw-radius-scale))", fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
 
     <form onSubmit={create} style={{ ...card, padding: 18, marginBottom: 16, display: "grid", gap: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }} data-staff-grid="stats">
@@ -190,7 +190,7 @@ export default function PricingRulesPage() {
         <label><span style={labelStyle}>Effective to {needs.endDate ? "" : "(optional)"}</span><input name="effectiveTo" type="date" required={needs.endDate} min={effectiveFrom} value={effectiveTo} onChange={e => setEffectiveTo(e.target.value)} style={field} /></label>
       </div>
 
-      <div><button disabled={busy || !selectedCity} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 9, fontWeight: 800, padding: "11px 20px", cursor: busy ? "wait" : "pointer" }}>{busy ? "Saving…" : "Add rule"}</button>
+      <div><button disabled={busy || !selectedCity} style={{ background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: "calc(9px * var(--paw-radius-scale))", fontWeight: 800, padding: "11px 20px", cursor: busy ? "wait" : "pointer" }}>{busy ? "Saving…" : "Add rule"}</button>
         <small style={{ marginLeft: 12, color: "var(--staff-muted)" }}>Rules are created as <b>draft</b> — publishing stays a separate governed step.</small></div>
     </form>
 

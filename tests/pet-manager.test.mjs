@@ -202,9 +202,9 @@ test("pet manager offers the rich profile capture with add and edit-in-place", (
   assert.match(component, /openEdit/, "edit-in-place entry point exists");
   assert.match(component, /form\?\.id === pet\.id \?/, "the pet row itself becomes the edit form");
   assert.match(component, /Save changes/);
-  assert.match(componentCss, /#01261f/i);
-  assert.match(componentCss, /#e6b34e/i);
-  assert.match(componentCss, /system-ui/);
+  assert.match(componentCss, /var\(--ui-brand-deep\)/);
+  assert.match(componentCss, /var\(--ui-gold-soft\)/);
+  assert.match(componentCss, /var\(--paw-font\)/);
 });
 
 test("real execution: the owning lib adds the profile_json column and round-trips a rich profile", async () => {

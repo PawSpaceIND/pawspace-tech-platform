@@ -36,15 +36,15 @@ export default function RecoveryScreen({
         justifyContent: "center",
         padding: "32px 20px",
         fontFamily:
-          'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+          "var(--paw-font, system-ui)",
       }}
     >
       <div style={{ maxWidth: 460, width: "100%", textAlign: "center" }}>
         <div aria-hidden="true" style={{ fontSize: 40, lineHeight: 1, marginBottom: 14 }}>
           ⌾
         </div>
-        <h1 style={{ fontSize: 20, margin: "0 0 8px", color: "#06231c" }}>{title}</h1>
-        <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 20px", color: "#5b6b66" }}>
+        <h1 style={{ fontSize: 20, margin: "0 0 8px", color: "var(--paw-link)" }}>{title}</h1>
+        <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 20px", color: "var(--paw-text)" }}>
           {detail}
         </p>
         <div
@@ -56,13 +56,13 @@ export default function RecoveryScreen({
               onClick={onRetry}
               style={{
                 padding: "11px 20px",
-                borderRadius: 12,
+                borderRadius: "calc(12px * var(--paw-radius-scale))",
                 border: "none",
                 cursor: "pointer",
                 fontSize: 14,
                 fontWeight: 600,
                 color: "#ffffff",
-                background: "#01261F",
+                background: "var(--paw-deep)",
               }}
             >
               Try again
@@ -72,12 +72,12 @@ export default function RecoveryScreen({
             href={homeHref}
             style={{
               padding: "11px 20px",
-              borderRadius: 12,
+              borderRadius: "calc(12px * var(--paw-radius-scale))",
               fontSize: 14,
               fontWeight: 600,
               textDecoration: "none",
-              color: "#06231c",
-              border: "1px solid #d5ded9",
+              color: "var(--paw-link)",
+              border: "1px solid var(--paw-line)",
             }}
           >
             Back to home
@@ -86,7 +86,7 @@ export default function RecoveryScreen({
         {/* The digest is the only handle a tester can quote that ties their white screen to a log
             line. Without it a bug report is "it broke on some screen at some time". */}
         {digest ? (
-          <p style={{ fontSize: 11, marginTop: 18, color: "#8a9a95" }}>
+          <p style={{ fontSize: 11, marginTop: 18, color: "var(--paw-muted)" }}>
             Reference: <code>{digest}</code>
           </p>
         ) : null}

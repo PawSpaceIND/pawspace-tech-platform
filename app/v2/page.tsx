@@ -18,6 +18,7 @@ import { bootstrapHome } from "../../lib/v2/home-bootstrap";
 import styles from "./v2.module.css";
 import { AdditionalCareTiles, HomePets } from "./home-care-extras";
 import V2ServiceIcon from "./service-icon";
+import PawSpaceWelcome from "../components/pawspace-welcome";
 
 type ServiceCard = {
   code: string;
@@ -164,6 +165,7 @@ export default function PawSpaceV2() {
 
   return (
     <main className={styles.page} data-v2-home="true">
+      <PawSpaceWelcome />
       <div className={styles.aurora} aria-hidden="true" />
       <div className={styles.shell}>
         <header className={styles.nav}>
@@ -192,11 +194,11 @@ export default function PawSpaceV2() {
 
         <section className={styles.hero}>
           <div className={styles.heroCopy}>
-            <span className={styles.kicker}><i /> PAWSPACE CARE, REIMAGINED</span>
-            <h1>Everything your pet needs.<br /><em>Beautifully cared for.</em></h1>
-            <p>Trusted people, intelligent care and every service in one delightful PawSpace experience.</p>
+            <span className={styles.kicker}><i /> YOUR PETTER HALF</span>
+            <h1>Happy pets.<br /><em>Happier days.</em></h1>
+            <p>A little care. A lot of love.</p>
             <div className={styles.heroActions}>
-              <a href="#services" className={styles.primaryAction}>Explore care <span>↗</span></a>
+              <a href="#services" className={styles.primaryAction}>Book a service <span>↗</span></a>
               <Link href="/v2/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
             </div>
             <div className={styles.trustRow}>
@@ -237,26 +239,26 @@ export default function PawSpaceV2() {
           </div>
           {account ? (
             <div className={styles.familyFacts}>
-              <div className={styles.fact}><span>♥</span><div><b>{account.pets.length || "—"}</b><small>{account.pets.length === 1 ? "pet profile" : "pet profiles"}</small></div></div>
+              <Link href="/v2/account" className={styles.fact}><span>♥</span><div><b>My Pets</b><small>{account.pets.length ? account.pets.map(pet => pet.name).join(", ") : "Add your pet"}</small></div></Link>
               <div className={styles.fact}><span>⌂</span><div><b>{account.addresses.length || "—"}</b><small>saved places</small></div></div>
               <div className={styles.fact}><span>◎</span><div><b>{account.bookings.length || "—"}</b><small>care records</small></div></div>
             </div>
           ) : (
-            <button className={styles.familySignIn} onClick={() => setAuthOpen(true)}><span>＋</span><div><b>Bring your pet family in</b><small>Sign in once for pets, addresses and booking history.</small></div><strong>Continue →</strong></button>
+            <button className={styles.familySignIn} onClick={() => setAuthOpen(true)}><span>＋</span><div><b>Bring your pet family in</b><small>Pets, addresses and bookings, together.</small></div><strong>Continue →</strong></button>
           )}
         </section>
 
         <div className={styles.contentGrid}>
           <section className={styles.servicesSection} id="services">
             <div className={styles.sectionHeader}>
-              <div><span className={styles.eyebrow}>CARE COLLECTION</span><h2>What would make today better?</h2></div>
+              <div><span className={styles.eyebrow}>CARE COLLECTION</span><h2>What does your pet need?</h2></div>
               <p>Every service checks PawSpace availability before you book.</p>
             </div>
             <div className={styles.servicesGrid}>
               {SERVICES.map(service => {
                 const enabled = enabledByCode.get(service.code) === true;
                 const availabilityKnown = availability !== null;
-                const cardStyle = { "--accent": service.accent, "--wash": service.wash } as CSSProperties;
+                const cardStyle = { "--accent": "var(--paw-primary)", "--wash": "var(--paw-raised)" } as CSSProperties;
                 const content = (
                   <>
                     <span className={styles.serviceIcon} aria-hidden="true"><V2ServiceIcon code={service.code} /></span>
@@ -306,7 +308,7 @@ export default function PawSpaceV2() {
               ) : (
                 <>
                   <h3>No care booked yet.</h3>
-                  <p>When you book, the live PawSpace record will appear here automatically.</p>
+                  <p>Your next booking will appear here.</p>
                   <a href="#services" className={styles.textLink}>Choose a service →</a>
                 </>
               )}

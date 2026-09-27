@@ -21,7 +21,7 @@ type PolicyRecord = {
 type AuditRow = { id: string; service_code: string; city_id: string; action: string; actor_id: string; reason: string; created_at: number };
 type DomainSummary = { domain: string; label: string; managePermission: string; defaults: Record<string, unknown> };
 
-const box: React.CSSProperties = { border: "1px solid var(--staff-line, #e4e4e7)", borderRadius: 10, padding: 14, background: "var(--staff-surface, #fff)" };
+const box: React.CSSProperties = { border: "1px solid var(--staff-line, var(--paw-line))", borderRadius: "calc(10px * var(--paw-radius-scale))", padding: 14, background: "var(--staff-surface, #fff)" };
 const when = (value: number) => (value ? new Date(value).toLocaleString("en-IN") : "—");
 
 export default function BusinessPolicyPanel({ notify }: { notify?: (message: string) => void }) {
@@ -97,7 +97,7 @@ export default function BusinessPolicyPanel({ notify }: { notify?: (message: str
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {domains.map((item) => (
           <button key={item.domain} onClick={() => retarget(() => setDomain(item.domain))} aria-pressed={domain === item.domain}
-            style={{ ...box, cursor: "pointer", outline: domain === item.domain ? "2px solid #222" : "none" }}>
+            style={{ ...box, cursor: "pointer", outline: domain === item.domain ? "2px solid var(--paw-text)" : "none" }}>
             <strong>{item.label}</strong>
             <div style={{ color: "var(--staff-muted, #71717a)", fontSize: 14 }}>changed by {item.managePermission}</div>
           </button>
@@ -134,7 +134,7 @@ export default function BusinessPolicyPanel({ notify }: { notify?: (message: str
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr><th align="left">Service</th><th align="left">City</th><th align="left">Version</th><th align="left">Effective</th><th align="left">Changed by</th><th align="left">When</th></tr></thead>
               <tbody>{detail.policies.map((policy) => (
-                <tr key={policy.id} style={{ borderTop: "1px solid var(--staff-line, #f4f4f5)" }}>
+                <tr key={policy.id} style={{ borderTop: "1px solid var(--staff-line, var(--paw-surface))" }}>
                   <td>{policy.serviceCode}</td><td>{policy.cityId}</td><td>v{policy.version}{policy.active ? "" : " (inactive)"}</td>
                   <td>{policy.effectiveFrom}{policy.effectiveTo ? ` → ${policy.effectiveTo}` : ""}</td>
                   <td>{policy.updatedBy}</td><td>{when(policy.updatedAt)}</td>

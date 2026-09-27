@@ -1,12 +1,12 @@
 /* Meet & Greet card — Emerald #01261F / Gold #E6B34E, system font stack. */
 
 .card {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  border: 1px solid rgba(1, 38, 31, 0.18);
-  border-radius: 14px;
+  font-family: var(--paw-font);
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 18%, transparent);
+  border-radius: var(--paw-card-radius);
   padding: 16px;
-  background: #fff;
-  color: #01261f;
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   display: grid;
   gap: 12px;
 }
@@ -15,13 +15,13 @@
   display: block;
   font-size: 15px;
   font-weight: 700;
-  color: #01261f;
+  color: var(--ui-ink);
 }
 
 .header span {
   display: block;
   font-size: 12px;
-  color: rgba(1, 38, 31, 0.65);
+  color: color-mix(in srgb, var(--ui-ink) 65%, transparent);
   margin-top: 2px;
 }
 
@@ -32,20 +32,20 @@
 }
 
 .formats label {
-  border: 1px solid rgba(1, 38, 31, 0.22);
-  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 22%, transparent);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 12px;
   cursor: pointer;
   text-align: center;
   display: grid;
   gap: 2px;
-  background: #fff;
+  background: var(--ui-surface);
   transition: border-color 0.15s, background 0.15s;
 }
 
 .formats label.selected {
-  border: 2px solid #e6b34e;
-  background: #01261f;
+  border: 2px solid var(--ui-gold-soft);
+  background: var(--ui-brand-deep);
   color: #fff;
 }
 
@@ -66,24 +66,24 @@
 
 .formats small {
   font-size: 11px;
-  color: rgba(1, 38, 31, 0.6);
+  color: color-mix(in srgb, var(--ui-ink) 60%, transparent);
 }
 
 .formats em {
   font-style: normal;
   font-size: 12px;
   font-weight: 700;
-  color: #e6b34e;
+  color: var(--ui-gold-ink);
 }
 
 .waiver {
   margin: 0;
   font-size: 12px;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(230, 179, 78, 0.14);
-  border: 1px solid rgba(230, 179, 78, 0.5);
-  color: #01261f;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: color-mix(in srgb, var(--ui-gold-soft) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-gold-soft) 50%, transparent);
+  color: var(--ui-on-gold);
 }
 
 .guest,
@@ -103,24 +103,24 @@
 .datetime span {
   font-size: 11px;
   font-weight: 600;
-  color: rgba(1, 38, 31, 0.8);
+  color: color-mix(in srgb, var(--ui-ink) 80%, transparent);
 }
 
 .guest input,
 .datetime input {
   padding: 9px 10px;
-  border: 1px solid rgba(1, 38, 31, 0.25);
-  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 25%, transparent);
+  border-radius: calc(8px * var(--paw-radius-scale));
   font-size: 13px;
-  font-family: inherit;
-  color: #01261f;
-  background: #fff;
+  font-family: var(--paw-font);
+  color: var(--ui-ink);
+  background: var(--ui-surface);
 }
 
 .guest input:focus,
 .datetime input:focus {
   outline: none;
-  border-color: #e6b34e;
+  border-color: var(--ui-gold-soft);
   box-shadow: 0 0 0 2px rgba(230, 179, 78, 0.35);
 }
 
@@ -128,12 +128,12 @@
   width: 100%;
   padding: 12px;
   border: none;
-  border-radius: 10px;
-  background: #01261f;
-  color: #e6b34e;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-brand-deep);
+  color: var(--ui-on-primary);
   font-size: 14px;
   font-weight: 700;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -154,7 +154,7 @@
 }
 
 .confirmed b {
-  color: #01261f;
+  color: var(--paw-deep);
   font-size: 15px;
 }
 
