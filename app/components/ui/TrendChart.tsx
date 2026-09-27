@@ -34,7 +34,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
             <CartesianGrid stroke="var(--staff-line, var(--paw-line, #ddd))" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey={xKey} stroke="var(--staff-muted, var(--paw-muted, #68716b))" fontSize={11} tickLine={false} axisLine={false} />
             <YAxis stroke="var(--staff-muted, var(--paw-muted, #68716b))" fontSize={11} tickLine={false} axisLine={false} width={64} tickFormatter={axisValueFormatter ?? format} />
-            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid var(--staff-bg, var(--paw-bg))", fontSize: 12, background: "var(--staff-surface, var(--paw-surface, #fff))", color: "var(--staff-text, var(--paw-text, #182c25))" }} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid var(--staff-bg, var(--paw-bg))", fontSize: 12, background: "var(--staff-surface, var(--paw-surface, #fff))", color: "var(--staff-text, var(--paw-text, #182c25))" }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Line key={s.key} type="monotone" dataKey={s.key} name={s.label ?? s.key} stroke={s.color ?? palette[i % palette.length]} strokeDasharray={s.dashed ? "5 4" : undefined} strokeWidth={2.5} dot={data.length === 1} activeDot={onSelect ? { r: 5, cursor: "pointer", onClick: (_event: unknown, point: unknown) => { const row = (point as { payload?: Record<string, unknown> } | null)?.payload; if (row) onSelect(row, s.key); } } : undefined} isAnimationActive={false} />
@@ -45,7 +45,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
             <CartesianGrid stroke="var(--staff-line, var(--paw-line, #ddd))" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey={xKey} stroke="var(--staff-muted, var(--paw-muted, #68716b))" fontSize={11} tickLine={false} axisLine={false} />
             <YAxis stroke="var(--staff-muted, var(--paw-muted, #68716b))" fontSize={11} tickLine={false} axisLine={false} width={64} tickFormatter={axisValueFormatter ?? format} />
-            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid var(--staff-bg, var(--paw-bg))", fontSize: 12, background: "var(--staff-surface, var(--paw-surface, #fff))", color: "var(--staff-text, var(--paw-text, #182c25))" }} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid var(--staff-bg, var(--paw-bg))", fontSize: 12, background: "var(--staff-surface, var(--paw-surface, #fff))", color: "var(--staff-text, var(--paw-text, #182c25))" }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Bar onClick={entry => { if (entry.payload) onSelect?.(entry.payload, s.key); }} cursor={onSelect ? "pointer" : undefined} key={s.key} dataKey={s.key} name={s.label ?? s.key} fill={s.color ?? palette[i % palette.length]} radius={[6, 6, 0, 0]} isAnimationActive={false} />

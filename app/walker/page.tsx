@@ -21,18 +21,18 @@ export default function WalkerPage(){const intents=useIntentIdempotency("walker"
  const bookedPetName=booking?.pets?.map(pet=>pet.name).filter(Boolean).join(", ")||"Pet details unavailable";
  const[view,setView]=useState<"schedule"|"sessions"|"paymentDue">("schedule");
  const sessions=useMemo(()=>(booking?.sessions||[]) as Array<Record<string,unknown>>,[booking?.sessions]),sessionPayments=(booking?.sessionPayments||[]) as Array<Record<string,unknown>>,selected=sessions.find(item=>String(item.id)===selectedSessionId),completed=sessions.filter(item=>String(item.status)==="completed").length,due=sessionPayments.filter(item=>String(item.status)==="due").reduce((sum,item)=>sum+Number(item.amount||0),0),bookingStatus=String(booking?.status||"loading"),sessionStatus=String(selected?.status||""),routeSamples=((booking?.events||[]) as Array<Record<string,unknown>>).filter(item=>String(item.event_type)==="route_location_sample"&&String(item.session_id)===selectedSessionId).length,sessionsDueIds=new Set(sessionPayments.filter(item=>String(item.status)==="due").map(item=>String(item.session_id))),visibleSessions=view==="paymentDue"?sessions.filter(item=>sessionsDueIds.has(String(item.id))):sessions;
- if(!bookingId)return <main style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 20px",fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif",background:"#f7f4fb",color:"#24133f"}}>
-   <div style={{width:"100%",maxWidth:520,background:"#fff",border:"1px solid #e9e3f1",borderRadius:16,padding:26,boxShadow:"0 10px 30px rgba(36,20,54,.06)"}}>
-     <p style={{fontWeight:800,letterSpacing:2,color:"#6c39a8",fontSize:12,margin:0}}>PAWSPACE · DOG WALKER</p>
+ if(!bookingId)return <main style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"40px 20px",fontFamily:"var(--paw-font, system-ui)",background:"var(--paw-surface)",color:"var(--paw-link)"}}>
+   <div style={{width:"100%",maxWidth:520,background:"var(--paw-surface)",border:"1px solid var(--paw-line)",borderRadius:"calc(16px * var(--paw-radius-scale))",padding:26,boxShadow:"0 10px 30px rgba(36,20,54,.06)"}}>
+     <p style={{fontWeight:800,letterSpacing:2,color:"var(--paw-link)",fontSize:12,margin:0}}>PAWSPACE · DOG WALKER</p>
      <h1 style={{margin:"6px 0",fontSize:26}}>Walker workspace</h1>
-     <p style={{color:"#6b6478",margin:"0 0 18px"}}>Open a Dog Walking booking to accept the schedule, run the walk, log care events and record route &amp; proof.</p>
-     <label style={{display:"block",fontSize:13,color:"#6b6478",fontWeight:600}}>Booking ID
+     <p style={{color:"var(--paw-link)",margin:"0 0 18px"}}>Open a Dog Walking booking to accept the schedule, run the walk, log care events and record route &amp; proof.</p>
+     <label style={{display:"block",fontSize:13,color:"var(--paw-link)",fontWeight:600}}>Booking ID
        <div style={{display:"flex",gap:8,marginTop:6}}>
-         <input value={lookup} onChange={e=>setLookup(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")openBooking(lookup)}} placeholder="e.g. UATD-BK-WALK-1" style={{flex:1,padding:11,borderRadius:9,border:"1px solid #e9e3f1",background:"#faf8fc",color:"#24133f",boxSizing:"border-box"}}/>
-         <button disabled={!lookup.trim()} onClick={()=>openBooking(lookup)} style={{padding:"11px 18px",borderRadius:10,border:"none",background:lookup.trim()?"#4b168c":"#c9bce0",color:"#fff",fontWeight:700,cursor:lookup.trim()?"pointer":"not-allowed"}}>Open</button>
+         <input value={lookup} onChange={e=>setLookup(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")openBooking(lookup)}} placeholder="e.g. UATD-BK-WALK-1" style={{flex:1,padding:11,borderRadius:"calc(9px * var(--paw-radius-scale))",border:"1px solid var(--paw-line)",background:"var(--paw-surface)",color:"var(--paw-link)",boxSizing:"border-box"}}/>
+         <button disabled={!lookup.trim()} onClick={()=>openBooking(lookup)} style={{padding:"11px 18px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"none",background:lookup.trim()?"var(--paw-primary)":"var(--paw-raised)",color:"#fff",fontWeight:700,cursor:lookup.trim()?"pointer":"not-allowed"}}>Open</button>
        </div>
      </label>
-     <div style={{marginTop:16,padding:"12px 14px",borderRadius:12,background:"#f4eefb",fontSize:14,lineHeight:1.5}}><b>Testing?</b> Open the seeded demo walk: <Link href={`${walkerBase}?bookingId=UATD-BK-WALK-1`} style={{color:"#4b168c",fontWeight:700}}>UATD-BK-WALK-1 →</Link></div>
+     <div style={{marginTop:16,padding:"12px 14px",borderRadius:"calc(12px * var(--paw-radius-scale))",background:"#f4eefb",fontSize:14,lineHeight:1.5}}><b>Testing?</b> Open the seeded demo walk: <Link href={`${walkerBase}?bookingId=UATD-BK-WALK-1`} style={{color:"#4b168c",fontWeight:700}}>UATD-BK-WALK-1 →</Link></div>
      <p style={{marginTop:16,fontSize:13,color:"#6b6478"}}>No booking yet? <Link href={customerHref} style={{color:"#4b168c",fontWeight:600}}>Book a Dog Walking service</Link>. Staff can find booking IDs in <Link href="/team/operations/walking" style={{color:"#4b168c",fontWeight:600}}>Operations → Walking</Link>.</p>
    </div>
  </main>;

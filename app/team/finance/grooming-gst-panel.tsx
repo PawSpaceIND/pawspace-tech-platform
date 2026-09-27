@@ -5,7 +5,7 @@ import { gstOn, type GstMethod } from "../../../lib/gst-method";
 type Setting = { settingId: string | null; cityId: string; scope: "city" | "all_cities" | "built_in_default"; ratePercent: number; method: GstMethod; effectiveFrom: string | null; version: number };
 type Version = { id: string; city_id: string; rate_percent: number; method: GstMethod; effective_from: string; version: number; reason: string; created_by: string };
 type Directory = { platform: Setting; cities: Setting[]; knownCities?: { cityId: string; name: string }[]; history: Version[] };
-const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 18, marginBottom: 22 } as const;
+const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 18, marginBottom: 22 } as const;
 const rupees = (value: number) => `Rs ${value.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const cityLabel = (cityId: string, known?: { cityId: string; name: string }[]) => cityId === "*" ? "All cities" : known?.find(item => item.cityId === cityId)?.name ?? (cityId === "blr" ? "Bengaluru" : cityId.toUpperCase());
 const methodName = (method: GstMethod, rate: number) => method === "extract_inclusive" ? `taken out of an amount that already includes ${rate}% GST` : `${rate}% of the amount`;
@@ -55,7 +55,7 @@ export default function GstSettingPanel() {
     <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end", marginTop: 12 }}>
       <label>Applies to<br /><select value={cityId} onChange={event => setCityId(event.target.value)}>{cities.map(city => <option key={city} value={city}>{cityName(city)}</option>)}</select></label>
       <label>GST rate (%)<br /><input type="number" min="0" max="40" step="0.01" value={rate} onChange={event => setRate(event.target.value)} style={{ width: 90 }} /></label>
-      <fieldset style={{ border: "1px solid var(--staff-line)", borderRadius: 10, padding: "6px 10px" }}><legend>How GST is worked out</legend>
+      <fieldset style={{ border: "1px solid var(--staff-line)", borderRadius: "calc(10px * var(--paw-radius-scale))", padding: "6px 10px" }}><legend>How GST is worked out</legend>
         <label style={{ display: "block" }}><input type="radio" name="gst-method" value="percent_of_base" checked={method === "percent_of_base"} onChange={() => setMethod("percent_of_base")} /> The rate applied to the amount PawSpace makes (owner-approved method, 27 Sept 2026)</label>
         <label style={{ display: "block" }}><input type="radio" name="gst-method" value="extract_inclusive" checked={method === "extract_inclusive"} onChange={() => setMethod("extract_inclusive")} /> Taken out of an amount that already includes GST</label>
       </fieldset>
@@ -63,7 +63,7 @@ export default function GstSettingPanel() {
       <label style={{ flex: "1 1 260px" }}>Reason (at least 8 characters)<br /><input value={reason} onChange={event => setReason(event.target.value)} placeholder="e.g. Confirmed by our CA for FY 26-27" style={{ width: "100%" }} /></label>
       <button type="button" disabled={busy || reason.trim().length < 8} onClick={() => void publish()}>{busy ? "Publishing…" : "Publish GST setting"}</button>
     </div>
-    <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "var(--staff-raised)" }} aria-label="Worked example">
+    <div style={{ marginTop: 14, padding: 12, borderRadius: "calc(10px * var(--paw-radius-scale))", background: "var(--staff-raised)" }} aria-label="Worked example">
       <b>Worked example: a customer pays Rs 1,000</b>
       <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
         <li>Commission job at 70/30 (every service except funeral): provider gets Rs 700, PawSpace&apos;s commission is Rs 300, GST {rupees(commissionGst)}, PawSpace keeps {rupees(300 - commissionGst)}.</li>

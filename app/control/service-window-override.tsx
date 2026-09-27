@@ -48,7 +48,7 @@ export default function ServiceWindowOverride({ bookingId }: { bookingId: string
   };
 
   const closed = view ? CLOSED.has(view.status) : false;
-  return <section aria-label="Authorise early or late start" style={{ border: "1px solid var(--staff-line, #d9e2dc)", borderRadius: 14, padding: 14, display: "grid", gap: 10, background: "var(--staff-surface, #fff)" }}>
+  return <section aria-label="Authorise early or late start" style={{ border: "1px solid var(--staff-line, #d9e2dc)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 14, display: "grid", gap: 10, background: "var(--staff-surface, #fff)" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><div><span style={{ fontSize: 14, letterSpacing: ".08em", textTransform: "uppercase", opacity: .7 }}>Booked-time window</span><h4 style={{ margin: 0 }}>Authorise early/late start</h4></div><button type="button" onClick={() => void load()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button></header>
     {error && <p role="alert" style={{ color: "var(--staff-muted, #b3261e)", margin: 0 }}>{error}</p>}
     {notice && <p role="status" style={{ margin: 0 }}>{notice}</p>}
@@ -56,7 +56,7 @@ export default function ServiceWindowOverride({ bookingId }: { bookingId: string
       <p style={{ margin: 0 }}>Booked for {bookedTime(view.scheduledStart)}. The groomer can mark arrived or start service from {view.opensAt ? `${ist(view.opensAt)} IST` : "—"} to {view.closesAt ? `${ist(view.closesAt)} IST` : "—"} ({SERVICE_WINDOW_EARLY_MINUTES} minutes before to {SERVICE_WINDOW_LATE_MINUTES / 60} hours after the booked time).</p>
       <small style={{ opacity: .8 }}>{view.enforced ? "The window is switched on here: outside it, arrive and start are refused unless you authorise them below." : "The window is not switched on in this environment, so the groomer is not blocked. An authorisation is still recorded."}</small>
       {view.override
-        ? <article style={{ display: "grid", gap: 4, padding: 10, borderRadius: 10, background: "#eef8f2" }}><strong>Early/late start authorised</strong><small>By {view.override.authorisedBy} on {ist(view.override.authorisedAt)} IST, for the booked time {bookedTime(view.override.scheduledStart)} · &quot;{view.override.reason}&quot;</small></article>
+        ? <article style={{ display: "grid", gap: 4, padding: 10, borderRadius: "calc(10px * var(--paw-radius-scale))", background: "#eef8f2" }}><strong>Early/late start authorised</strong><small>By {view.override.authorisedBy} on {ist(view.override.authorisedAt)} IST, for the booked time {bookedTime(view.override.scheduledStart)} · &quot;{view.override.reason}&quot;</small></article>
         : <p style={{ margin: 0, opacity: .75 }}>No early or late start is authorised for this booked time.</p>}
       {view.earlierOverrides.map(item => <small key={`${item.authorisedAt}-${item.authorisedBy}`} style={{ opacity: .7 }}>No longer applies ({item.scheduledStart ? "the booking was rescheduled after it" : "it was recorded without a booked time"}): authorised by {item.authorisedBy} on {ist(item.authorisedAt)} IST for {bookedTime(item.scheduledStart)} · &quot;{item.reason}&quot;</small>)}
       {closed

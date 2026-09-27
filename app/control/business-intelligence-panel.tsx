@@ -135,7 +135,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
 
     {view === "Overview" && liveDataLoaded && !liveDataError && <>
       {!liveDataLoaded && <p style={{ padding: 12, color: "var(--staff-primary, #6c39a8)" }}>Loading live company data…</p>}
-      {liveDataError && <p style={{ padding: 12, background: "var(--staff-danger-bg, #fff1f1)", borderRadius: 10, color: "var(--staff-muted, #9a3d32)" }}>Live company data unavailable: {liveDataError}</p>}
+      {liveDataError && <p style={{ padding: 12, background: "var(--staff-danger-bg, #fff1f1)", borderRadius: "calc(10px * var(--paw-radius-scale))", color: "var(--staff-muted, #9a3d32)" }}>Live company data unavailable: {liveDataError}</p>}
       <section className={css.metrics}>
         <article><span>Gross revenue</span><strong>{money(revenue)}</strong><small>Canonical bookings · GST-inclusive</small></article>
         <article><span>Collected</span><strong>{money(collected)}</strong><small>{revenue > 0 ? `${((collected / revenue) * 100).toFixed(1)}% collection rate` : "No bookings in range"}</small></article>

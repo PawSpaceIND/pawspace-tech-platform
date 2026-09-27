@@ -50,7 +50,7 @@ type Handoff = {
 const box = {
   background: "var(--staff-surface)",
   border: "1px solid var(--staff-line)",
-  borderRadius: 14,
+  borderRadius: "calc(14px * var(--paw-radius-scale))",
 };
 
 const label = (value: unknown) => String(value || "—").replaceAll("_", " ");
@@ -206,7 +206,7 @@ export default function AiHandoffPage() {
               marginBottom: 14,
               background: "var(--staff-danger-bg)",
               border: "1px solid var(--staff-line)",
-              borderRadius: 10,
+              borderRadius: "calc(10px * var(--paw-radius-scale))",
             }}
           >
             {error}
@@ -346,7 +346,7 @@ export default function AiHandoffPage() {
                       transcript.map((message, index) => (
                         <div
                           key={index}
-                          style={{ padding: 10, marginBottom: 8, background: "var(--staff-raised)", borderRadius: 10 }}
+                          style={{ padding: 10, marginBottom: 8, background: "var(--staff-raised)", borderRadius: "calc(10px * var(--paw-radius-scale))" }}
                         >
                           <small>
                             {label(message.direction)} · {label(message.channel)}

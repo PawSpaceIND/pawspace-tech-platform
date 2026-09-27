@@ -18,7 +18,7 @@ const money = (value: unknown) => new Intl.NumberFormat("en-IN", { style: "curre
 const label = (value: unknown) => String(value || "").replaceAll("_", " ");
 const when = (ms: number) => (ms ? new Date(ms).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }) : "—");
 const cell = { padding: "10px 12px", borderBottom: "1px solid var(--staff-line)", verticalAlign: "top" } as const;
-const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, overflow: "hidden", marginBottom: 20 } as const;
+const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", overflow: "hidden", marginBottom: 20 } as const;
 
 const EXCEPTION_TYPES: Record<string, string> = {
   over_collection: "Over-collection (paid more than the booking value)",
@@ -45,7 +45,7 @@ export function exceptionAmounts(detail: Record<string, unknown>) {
 }
 
 function Stat({ name, value, alert }: { name: string; value: number; alert?: boolean }) {
-  return <article style={{ background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 18 }}><small style={{ color: "var(--staff-muted)" }}>{name}</small><strong style={{ display: "block", fontSize: 25, marginTop: 7, color: alert && value > 0 ? "var(--staff-danger)" : undefined }}>{value}</strong></article>;
+  return <article style={{ background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 18 }}><small style={{ color: "var(--staff-muted)" }}>{name}</small><strong style={{ display: "block", fontSize: 25, marginTop: 7, color: alert && value > 0 ? "var(--staff-danger)" : undefined }}>{value}</strong></article>;
 }
 function Table({ title, headings, empty, children, count }: { title: string; headings: string[]; empty: string; children: ReactNode; count: number }) {
   return <section style={box}><div style={{ padding: "14px 18px", borderBottom: "1px solid var(--staff-line)" }}><b>{title}</b> <small style={{ color: "var(--staff-muted)" }}>({count})</small></div>
@@ -61,8 +61,8 @@ export function PaymentReconciliationView({ data, status, onStatus, loading, err
       {[["open", "Open"], ["investigating", "Investigating"], ["all", "All"]].map(([value, name]) => <button key={value} type="button" aria-pressed={status === value} disabled={loading} onClick={() => onStatus(value)}
         style={{ padding: "8px 14px", borderRadius: 999, border: "1px solid var(--staff-line)", background: status === value ? "var(--staff-primary)" : "var(--staff-surface)", color: status === value ? "var(--staff-on-primary)" : "var(--staff-text)", fontWeight: 700 }}>{name}</button>)}
     </nav>
-    {error && <section role="alert" style={{ padding: 18, borderRadius: 12, background: "var(--staff-danger-bg)", border: "1px solid var(--staff-line)", marginBottom: 20 }}><b>Reconciliation unavailable</b><div>{error}</div></section>}
-    {loading && <section style={{ padding: 24, background: "var(--staff-surface)", borderRadius: 14 }}>Loading payment exceptions and reconciliation…</section>}
+    {error && <section role="alert" style={{ padding: 18, borderRadius: "calc(12px * var(--paw-radius-scale))", background: "var(--staff-danger-bg)", border: "1px solid var(--staff-line)", marginBottom: 20 }}><b>Reconciliation unavailable</b><div>{error}</div></section>}
+    {loading && <section style={{ padding: 24, background: "var(--staff-surface)", borderRadius: "calc(14px * var(--paw-radius-scale))" }}>Loading payment exceptions and reconciliation…</section>}
     {data && !loading && !error && <>
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 20 }} data-staff-grid="stats">
         <Stat name="Open exceptions" value={data.summary.openExceptions} alert /><Stat name="Critical" value={data.summary.criticalExceptions} alert />
@@ -99,7 +99,7 @@ export default function ReconciliationWorkspace() {
     <div style={{ maxWidth: 1420, margin: "0 auto" }}>
       <header style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 20, alignItems: "center", marginBottom: 24 }}>
         <div><small style={{ fontWeight: 800, letterSpacing: 1.4, color: "var(--staff-primary)" }}>PAWSPACE TEAM · FINANCE</small><h1 style={{ fontSize: 32, margin: "8px 0" }}>Payment reconciliation &amp; exceptions</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>Over-collections, refund overages, captures no booking owns and captures stuck before they reached the books, for every service.</p></div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><button type="button" disabled={loading} onClick={() => void load()} style={{ padding: "11px 16px", borderRadius: 10, border: "1px solid var(--staff-line)", background: "var(--staff-surface)", fontWeight: 700 }}>Refresh</button><Link href="/team/finance" style={{ padding: "11px 16px", borderRadius: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", textDecoration: "none", fontWeight: 700 }}>Finance home</Link></div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><button type="button" disabled={loading} onClick={() => void load()} style={{ padding: "11px 16px", borderRadius: "calc(10px * var(--paw-radius-scale))", border: "1px solid var(--staff-line)", background: "var(--staff-surface)", fontWeight: 700 }}>Refresh</button><Link href="/team/finance" style={{ padding: "11px 16px", borderRadius: "calc(10px * var(--paw-radius-scale))", background: "var(--staff-primary)", color: "var(--staff-on-primary)", textDecoration: "none", fontWeight: 700 }}>Finance home</Link></div>
       </header>
       <PaymentReconciliationView data={data} status={status} onStatus={next => { setStatus(next); void load(next); }} loading={loading} error={error} />
     </div>

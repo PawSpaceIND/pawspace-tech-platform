@@ -29,7 +29,7 @@ export default function ProviderTrainingPage(){
   </section>}
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
   <section style={{display:"grid",gridTemplateColumns:"minmax(0,.9fr) minmax(0,1.1fr)",gap:16,alignItems:"start"}} data-staff-grid="split">
-   <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16}}>
     <h2>Author a module</h2>
     <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}>{["all","grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","pet_food","pet_relocation"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select>
@@ -44,7 +44,7 @@ export default function ProviderTrainingPage(){
     <button disabled={busy} onClick={saveModule}>Save draft</button>
    </article>
    <section style={{display:"grid",gap:12}}>
-    <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
+    <article style={{border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16}}>
      <h2>Modules</h2>
      {(overview?.modules??[]).map(module=><div key={module.id} style={{borderBottom:"1px solid var(--staff-line)",padding:"8px 0"}}>
       <b>{module.title}</b> · {label(module.service_code)} · v{module.version} · {label(module.status)} · pass ≥{module.pass_pct}% · {module.quizQuestions} question(s)
@@ -55,7 +55,7 @@ export default function ProviderTrainingPage(){
       </div>
      </div>)}
     </article>
-    <article style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
+    <article style={{border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16}}>
      <h2>Provider compliance</h2>
      {(overview?.providers??[]).map(provider=><p key={provider.providerId}>{provider.trainingReady?"✅":"❌"} <b>{provider.name}</b> · {provider.requiredComplete}/{provider.requiredTotal} required modules · <code>{provider.providerId}</code></p>)}
     </article>

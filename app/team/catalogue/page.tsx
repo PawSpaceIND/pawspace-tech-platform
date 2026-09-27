@@ -18,7 +18,7 @@ export default function CataloguePage() {
     <p style={{ margin: "0 0 6px", color: "var(--staff-muted)", fontSize: 12, fontWeight: 800, letterSpacing: ".08em" }}>PAWSPACE · PRICING CONTROL</p>
     <h1 style={{ margin: "0 0 8px" }}>Packages, prices and slots</h1>
     <p style={{ margin: "0 0 16px", color: "var(--staff-muted)" }}>This is the one place bookings read prices from. The old catalogue list has been retired because no booking used it. The same controls are also in <Link href="/control" style={{ color: "var(--staff-gold)" }}>Founder &amp; system controls</Link> → Pricing.</p>
-    {toast && <div role="status" style={{ padding: 12, background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 10, marginBottom: 12 }}>{toast}</div>}
+    {toast && <div role="status" style={{ padding: 12, background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(10px * var(--paw-radius-scale))", marginBottom: 12 }}>{toast}</div>}
     <PricingControlPanel notify={notify} />
   </div></main></StaffModule>;
 }
