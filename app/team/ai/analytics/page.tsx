@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { MetricBars, TargetProgress, VisualGrid } from "../../../components/ui/ReportVisuals";
 import { StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../../components/ui";
 
 /**
@@ -121,6 +122,16 @@ export default function AiAnalyticsPage() {
       {!data && !error && !loading && <TeamAlert tone="info">No AI analytics were returned for this filter.</TeamAlert>}
 
       {data && <>
+        <p>{loading ? "Updating report…" : `Loaded period: ${from || "All recorded history"} – ${to || "present"} · ${channel || "all channels"}`}</p>
+        {!loading && !error && <VisualGrid>
+          <TargetProgress title="AI containment" percent={data.containment.rate == null ? null : data.containment.rate * 100} note="Share of turns without human handoff; this does not measure resolution." />
+          <MetricBars title="Conversation channels" items={data.volume.byChannel.map(row => ({ label: pretty(row.channel), value: row.count }))} />
+          <MetricBars title="Intent volume" items={data.volume.byIntent.map(row => ({ label: pretty(row.intent), value: row.count }))} />
+          <MetricBars title="Handoff reasons" items={data.handoff.byReason.map(row => ({ label: pretty(row.reason), value: row.count, tone: "gold" }))} />
+          <MetricBars title="Policy decisions" items={data.policy.byDecision.map(row => ({ label: pretty(row.decision), value: row.count }))} />
+          <MetricBars title="Message delivery events" note="Event counts may overlap for the same message." items={data.delivery.byStatus.map(row => ({ label: pretty(row.status), value: row.count }))} />
+        </VisualGrid>}
+
         <TeamSection title="By channel"><TeamTable head={["Channel", "Turns"]} rows={data.volume.byChannel.map((row) => [pretty(row.channel), row.count])} empty="No turns on any channel in this window." /></TeamSection>
         <TeamSection title="By intent" note="Intent is a deterministic keyword heuristic, not a model probability."><TeamTable head={["Intent", "Turns", "Handed off"]} rows={data.volume.byIntent.map((row) => [pretty(row.intent), row.count, row.handoffs])} /></TeamSection>
         <TeamSection title="Why the assistant handed over"><TeamTable head={["Reason", "Count", "Avg time to staff takeover"]} rows={data.handoff.byReason.map((row) => [pretty(row.reason), row.count, row.avgTakeoverMs == null ? "not taken over yet" : `${Math.round(row.avgTakeoverMs / 1000)}s`])} empty="No conversation has been escalated to a human." /></TeamSection>
