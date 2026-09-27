@@ -20,7 +20,10 @@ test("every seeded service classification carries the SAC table's code and rule"
 });
 
 test("an old placeholder is corrected only where it is still exactly the placeholder", () => {
-  const updates = [...seed.matchAll(/UPDATE tax_classifications SET classification_code='(\d+)',place_of_supply_rule='[a-z_]+' WHERE id='SEEDTC-([a-z_]+)' AND policy_id='[^']+' AND classification_code='SAC-9985-\d'/g)];
-  assert.equal(updates.length, 6);
+  const updates = [...seed.matchAll(/UPDATE tax_classifications SET classification_code='(\d+)',place_of_supply_rule='([a-z_]+)' WHERE id='SEEDTC-([a-z_]+)' AND policy_id='[^']+' AND classification_code='SAC-9985-\d'/g)];
+  const byService = new Map(updates.map(([, sac, rule, service]) => [service, [sac, rule]]));
+  assert.equal(updates.length, byService.size, "one correction per service");
+  assert.deepEqual([...byService.keys()].sort(), ["boarding", "dog_training", "dog_walking", "grooming", "pet_sitting", "pet_taxi"]);
+  for (const [service, codes] of byService) assert.deepEqual(codes, [SERVICE_SAC_DEFAULTS[service].sac, SERVICE_SAC_DEFAULTS[service].placeOfSupplyRule], service);
   assert.doesNotMatch(seed, /DELETE FROM tax_classifications/);
 });
