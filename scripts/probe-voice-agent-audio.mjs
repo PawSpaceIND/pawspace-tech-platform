@@ -2,7 +2,7 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {readFile} from 'node:fs/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
-import {audioFormat,audioProof} from './voice-audio-proof.mjs';
+import {audioFormat,audioProof,greetingPlaybackFinished} from './voice-audio-proof.mjs';
 // Remote values are stripped of CR/LF/control characters and capped before reaching workflow logs.
 const logSafe=(value,max=128)=>String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,'').slice(0,max);
 const before=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'probe-agent-socket'});
@@ -18,6 +18,7 @@ console.log('::add-mask::'+signed.signed_url);
 const socket=new WebSocket(signed.signed_url);
 let format,outputFormat,greeting=false,sending=false,finished=false,transcript='',reply='',audioBytes=0,nonSilentBytes=0,lastAudio=0,started=0,sentBytes=0;
 const eventCounts={};
+let greetingBytes=0,firstGreetingAudioAt=0,lastGreetingAudioAt=0;
 await new Promise((resolve,reject)=>{
  const deadline=setTimeout(()=>finish(Error('Audio round trip did not complete within 90 seconds')),90000);
  const check=setInterval(()=>{if(reply&&Date.now()-lastAudio>1500&&audioProof({transcript,reply,audioBytes,nonSilentBytes}))finish();},250);
@@ -28,8 +29,9 @@ await new Promise((resolve,reject)=>{
   if(format!=='pcm_16000')throw Error('Caller fixture requires negotiated pcm_16000 input');
   const audio=await readFile(new URL('./fixtures/amaya-caller.pcm',import.meta.url)),f=audioFormat(format);
   if(audio.length<1000||audio.length>f.rate*f.bytesPerSample*30)throw Error('Invalid synthetic caller audio size');
-  await delay(1500);started=Date.now();
-  const chunk=Math.floor(f.rate*f.bytesPerSample/10),input=Buffer.concat([audio,Buffer.alloc(f.rate*f.bytesPerSample*2,f.silence)]);
+  while(!finished&&!greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreetingAudioAt,lastAudioAt:lastGreetingAudioAt,bytes:greetingBytes,format:outputFormat}))await delay(100);
+  if(finished)return;started=Date.now();
+  const chunk=Math.floor(f.rate*f.bytesPerSample/10),input=Buffer.concat([Buffer.alloc(f.rate*f.bytesPerSample/2,f.silence),audio,Buffer.alloc(f.rate*f.bytesPerSample*2,f.silence)]);
   for(let i=0;i<input.length&&!finished;i+=chunk){socket.send(JSON.stringify({user_audio_chunk:input.subarray(i,i+chunk).toString('base64')}));sentBytes+=Math.min(chunk,input.length-i);await delay(100);}
  }
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_voice_call_id:callId},dynamic_variables:{pawspace_voice_call_id:callId,pawspace_uat:'true'}})));
@@ -42,6 +44,7 @@ await new Promise((resolve,reject)=>{
    console.log('VOICE_AUDIO_FORMATS='+JSON.stringify({input:format,output:outputFormat}));void sendAudio().catch(finish);
   }
   if(d.type==='user_transcript'&&started){transcript=String(d.user_transcription_event?.user_transcript||'');console.log('VOICE_AUDIO_TRANSCRIPT='+JSON.stringify({text:transcript,ms:Date.now()-started}));}
+  if(d.type==='audio'&&!started){const n=Buffer.from(d.audio_event?.audio_base_64||'','base64').length;if(n){firstGreetingAudioAt ||= Date.now();lastGreetingAudioAt=Date.now();greetingBytes+=n;}}
   if(d.type==='audio'&&transcript){const b=Buffer.from(d.audio_event?.audio_base_64||'','base64');audioBytes+=b.length;const silence=audioFormat(outputFormat).silence;for(const byte of b)if(byte!==silence)nonSilentBytes++;lastAudio=Date.now();}
   if(d.type==='agent_response'){
    const text=String(d.agent_response_event?.agent_response||'');

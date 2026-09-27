@@ -7,3 +7,9 @@ export function audioFormat(format){
 export function audioProof({transcript,reply,audioBytes,nonSilentBytes}){
  return /grooming/i.test(transcript)&&/bruno/i.test(transcript)&&isSubstantiveVoiceReply(reply)&&!/waiting for a PawSpace team member|routing this to a PawSpace team member|cannot continue the booking/i.test(reply)&&audioBytes>1600&&nonSilentBytes>100;
 }
+
+export function greetingPlaybackFinished({now,firstAudioAt,lastAudioAt,bytes,format}){
+ if(!firstAudioAt||!lastAudioAt||bytes<=0)return false;
+ const f=audioFormat(format);
+ return now-lastAudioAt>=750&&now>=firstAudioAt+bytes/(f.rate*f.bytesPerSample)*1000+750;
+}
