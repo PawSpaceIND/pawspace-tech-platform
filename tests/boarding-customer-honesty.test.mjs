@@ -27,7 +27,7 @@ const { BoardingStaySummary, BoardingHostRequests } = await import("../app/mobil
 const { default: StayCarePaymentGate } = await import("../app/mobile-app/stay-care-payment-gate.tsx");
 const { SittingBookingStatus } = await import("../app/mobile-app/sitting-customer-panel.tsx");
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;|&#39;/g, "'").replace(/\s+/g, " ").trim();
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;|&#39;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 const JARGON = /canonical|governed|Awaiting Host Acceptance|tracked separately|commercial quote required/i;
 
 const EXTRAS = ["Pickup & drop", "Three walks", "Medication support", "1-hour play time", "Grooming add-on", "Training add-on"];

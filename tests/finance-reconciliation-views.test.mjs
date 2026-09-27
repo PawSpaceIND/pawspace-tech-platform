@@ -91,7 +91,7 @@ async function get(email, query) {
   const response = await route.GET(asActor(email, `/api/payment-reconciliation${query}`));
   return { status: response.status, body: await response.json() };
 }
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, " ").trim();
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;|&apos;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 
 test("the Finance ledger lists every service's bookings with their payment state", async () => {
   const h = await world();
