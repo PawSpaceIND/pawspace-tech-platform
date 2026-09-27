@@ -412,16 +412,24 @@ async function payOnPage(page: Page, contactPhone: string, bookingId: string, la
   if (!/captured|paid|settled/i.test(status.status)) throw fail(`${label}: ${payLabel} → payment status after Razorpay "${status.status}" (http ${status.http})`);
   return `${payLabel} → ${status.status}`;
 }
-async function confirmScreen(page: Page, heading: RegExp) {
+/**
+ * The confirmation a paying customer is shown, for this booking only. #1120 returns every verified modal payment
+ * to the shared booking confirmation (/v2/booking-confirmation?bookingId=…, "Your Dog Training booking is
+ * confirmed"); before it, the Training page showed its own heading. Says which one appeared, or null.
+ */
+async function confirmScreen(page: Page, heading: RegExp, bookingId: string): Promise<string | null> {
   const check = page.getByRole("button", { name: "Check payment status" }); if (await visible(check, 15_000)) await check.click().catch(() => {});
   const refresh = page.getByRole("button", { name: "Refresh confirmation" });
+  const shared = page.getByRole("heading", { name: /^Your Dog Training booking is confirmed$/ });
+  const onShared = () => { const url = new URL(page.url()); return url.pathname.endsWith("/booking-confirmation") && url.searchParams.get("bookingId") === bookingId; };
   const until = Date.now() + 90_000;
   while (Date.now() < until) {
-    if (await visible(page.getByRole("heading", { name: heading }), 2000)) return true;
+    if (await visible(page.getByRole("heading", { name: heading }), 2000)) return "Training page";
+    if (onShared() && await visible(shared, 500)) return `booking confirmation (${new URL(page.url()).pathname})`;
     if (await visible(refresh, 500)) await refresh.click().catch(() => {});
     await page.waitForTimeout(2000);
   }
-  return false;
+  return null;
 }
 
 // ---------------------------------------------------------------- trainer helpers
@@ -622,9 +630,9 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
     });
     await step("Customer V2", "Meet & Greet confirmation screen", async () => {
       if (!state.meet?.bookingId) throw blocked("Meet & Greet was not reserved");
-      const ok = await confirmScreen(a.page, /Trainer Meet & Greet confirmed/); await shot(a.page, "meet-confirmed");
-      if (!ok) throw fail(`${state.meet.bookingId}: confirmation did not render`);
-      return `${state.meet.bookingId} confirmed`;
+      const shown = await confirmScreen(a.page, /Trainer Meet & Greet confirmed/, state.meet.bookingId); await shot(a.page, "meet-confirmed");
+      if (!shown) throw fail(`${state.meet.bookingId}: confirmation did not render (page ${new URL(a.page.url()).pathname})`);
+      return `${state.meet.bookingId} confirmed · ${shown}`;
     });
     await step("Customer app", "Coupon UATCARE100 on the Training review step (fresh page)", async () => {
       // The coupon is two sequential server answers: CouponField's coupon quote, then the Training quote bound to it.
@@ -715,10 +723,10 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
       });
       await step("Customer V2", "Programme confirmation screen after deposit", async () => {
         if (!state.starter?.depositPaid) throw blocked("Deposit not captured");
-        const ok = await confirmScreen(b.page, /Training programme confirmed/);
+        const shown = await confirmScreen(b.page, /Training programme confirmed/, state.starter.bookingId);
         await shot(b.page, "starter-confirmed"); await shot(b.page, "starter-confirmed-full", true);
-        if (!ok) throw fail("Captured, but the programme confirmation did not render");
-        return (await mainText(b.page)).slice(0, 300);
+        if (!shown) throw fail(`Captured, but the programme confirmation did not render (page ${new URL(b.page.url()).pathname})`);
+        return `${shown} · ${(await mainText(b.page)).slice(0, 300)}`;
       });
       await step("Customer V2", "Activity + booking page after deposit", async () => {
         if (!state.starter?.bookingId) throw blocked("Starter was not reserved");
@@ -898,9 +906,22 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         const pay = c.page.getByRole("button", { name: /Pay ₹[\d,]+ & request trainer approval/ });
         if (!(await visible(pay, 45_000))) { await shot(c.page, "app-no-pay-button", true); throw fail(`Pay button not ready: "${(await c.page.getByRole("button", { name: /Pay ₹|Refreshing/ }).first().innerText().catch(() => "?")).trim()}" alerts ${JSON.stringify(await c.page.locator("[role=alert]").allInnerTexts())}`); }
         // Same race as V2: in run 36243387701 this create hit apiSend's 20 s deadline ("The request took too long").
-        const made = await awaitPayButton(c.page, "app", await createBooking(c.page, "app", () => pay.click()));
+        const reserve = async () => awaitPayButton(c.page, "app", await createBooking(c.page, "app", () => pay.click()));
+        let made: Awaited<ReturnType<typeof reserve>>, chose = "";
+        try { made = await reserve(); }
+        catch (problem) {
+          // Training selection is strict: when the chosen trainer is not free for every session, the review step
+          // lists who is (run 36278778677 stopped here). A tester picks one and confirms again.
+          const free = c.page.getByRole("group", { name: "Trainers free for every session" }).getByRole("button");
+          if (!(await visible(free.first(), 60_000))) throw problem;
+          const choice = (await free.first().locator("h4").innerText().catch(() => "?")).trim();
+          await free.first().click(); await shot(c.page, "app-trainer-alternative");
+          if (!(await visible(pay, 45_000))) throw fail(`chose ${choice} from the trainers free for every session, but the pay button did not return`);
+          chose = `the first trainer was not free for every session; chose ${choice} from the trainers who are · `;
+          made = await reserve();
+        }
         state.app = { bookingId: made.bookingId };
-        return `${state.app.bookingId} · ${made.timing}`;
+        return `${chose}${state.app.bookingId} · ${made.timing}`;
       });
       await step("Payment", "Mobile app: pay ₹6,000 deposit with Razorpay TEST card → captured", async () => {
         if (!state.app?.bookingId) throw blocked("App programme not reserved");
@@ -912,7 +933,7 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         if (!state.app?.paid) throw blocked("App deposit not captured");
         const ready = await visible(c.page.getByText(/plan is ready/i), 60_000);
         await shot(c.page, "app-dashboard");
-        if (!ready) throw fail("Captured, but the in-app programme dashboard did not appear");
+        if (!ready) throw fail(`Captured, but the in-app programme dashboard did not appear (page ${new URL(c.page.url()).pathname}${new URL(c.page.url()).search})`);
         for (const tab of ["Homework", "Progress", "Plan"]) { const tb = c.page.getByRole("button", { name: tab, exact: true }); if (await tb.count()) { await tb.click(); await c.page.waitForTimeout(600); await shot(c.page, `app-dashboard-${tab.toLowerCase()}`); } }
         return (await mainText(c.page)).slice(0, 300);
       });
