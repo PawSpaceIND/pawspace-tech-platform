@@ -598,7 +598,9 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(workflow, /node tests\/e2e\/staging-certification\.mjs/, "the deploy must run certification");
   assert.match(workflow, /upload-artifact/, "the sanitized evidence must be uploaded");
   assert.match(workflow, /employee-seed\.sql/, "the staff directory must be loaded, or no advertised identity can sign in");
-  assert.match(workflow, /wrangler d1 execute DB --config dist\/server\/wrangler\.json --remote --file=scripts\/employee-seed\.sql/,
+  // The seed runs through D1's query API (scripts/schema/apply-remote-sql.mjs), never a `--file` import,
+  // which would make D1 refuse the live Worker's queries until it finished.
+  assert.match(workflow, /node scripts\/schema\/apply-remote-sql\.mjs --binding DB --config dist\/server\/wrangler\.json --file scripts\/employee-seed\.sql/,
     "the seed must resolve the isolation-verified DB binding from the generated staging config");
   assert.doesNotMatch(workflow, /wrangler d1 execute "\$STAGING_D1_ID"/,
     "wrangler d1 execute does not resolve a raw database identifier as its positional database");

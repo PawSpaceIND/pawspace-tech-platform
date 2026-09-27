@@ -105,9 +105,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx wrangler d1 execute pawspace-staging --remote --file=scripts/employee-seed.sql
-          npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-provider-capacity.sql
-          npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-staging-citywide-groomers.sql
+          node scripts/schema/apply-remote-sql.mjs --binding pawspace-staging --file scripts/employee-seed.sql
+          node scripts/schema/apply-remote-sql.mjs --binding pawspace-staging --file scripts/uat-staging-provider-capacity.sql
+          node scripts/schema/apply-remote-sql.mjs --binding pawspace-staging --file scripts/uat-staging-citywide-groomers.sql
       - name: Run the multi-persona sweep
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
