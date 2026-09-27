@@ -49,3 +49,23 @@
 .checkoutPage .continue { background:var(--brand-gold); color:var(--brand-on-gold); }
 .checkoutPage .checkoutCard .inlineError { background:var(--brand-danger-bg); color:var(--brand-danger); border:1px solid var(--brand-line); }
 .checkoutPage .recoveryForm input { border-color:var(--brand-line); background:var(--brand-surface); color:var(--brand-text); }
+
+/* G10: real, keyboard-accessible step navigation on desktop and mobile. */
+.page .stepNavigation { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; min-width:0; }
+.page .stepNavigation button { display:flex; align-items:center; justify-content:center; gap:6px; min-height:44px; border:1px solid var(--brand-line); border-radius:calc(12px * var(--paw-radius-scale)); padding:7px 10px; background:var(--brand-surface); color:var(--brand-text); font:inherit; font-size:12px; font-weight:700; cursor:pointer; }
+.page .stepNavigation button b { display:grid; place-items:center; width:22px; height:22px; flex:none; border-radius:50%; background:var(--brand-raised); }
+.page .stepNavigation button[aria-current="step"] { background:var(--brand-primary); color:var(--brand-on-primary); }
+.page .stepNavigation button[aria-current="step"] b { background:var(--brand-gold); color:var(--brand-on-gold); }
+.page .stepNavigation button:disabled { color:var(--brand-muted); cursor:not-allowed; opacity:.65; }
+.page .step { scroll-margin-top:20px; }
+.page .step:focus-visible { outline:3px solid var(--brand-gold); outline-offset:3px; }
+@media(max-width:900px) {
+  .page.page .nav { grid-template-columns:minmax(0,1fr) auto; gap:10px; padding:10px 0; }
+  .page .stepNavigation { grid-column:1 / -1; grid-row:2; width:100%; }
+  .page.page .close { grid-column:2; grid-row:1; }
+  .page .stepNavigation button { flex-direction:column; gap:3px; padding:6px 3px; font-size:11px; }
+}
+
+/* Keep the horizontal date strip inside the booking column, not the page's hidden overflow. */
+.page .journey { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }
+.page .journey > .step { min-width:0; max-width:100%; box-sizing:border-box; }
