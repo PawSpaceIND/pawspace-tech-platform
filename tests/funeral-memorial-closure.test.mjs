@@ -382,3 +382,21 @@ test("Funeral and Memorial reads and the gateway keep customer, Ops and Finance 
     "an anonymous caller cannot close a bereavement case");
   assert.equal(await ask("/api/funeral-memorial"), 401);
 });
+
+test("disabled funeral service returns a caller-safe JSON refusal instead of a generic update failure",async()=>{
+ const {db}=await funeralWorld();
+ const {authError}=await import('../lib/server-auth.ts');
+ let failure;
+ try{await newCase(db,{serviceType:'burial'});}catch(error){failure=error;}
+ assert.ok(failure);
+ const response=authError(failure,'Unable to update funeral or memorial request');
+ assert.equal(response.status,409);
+ assert.deepEqual(await response.json(),{error:'This service type is not enabled'});
+});
+
+test('customer availability uses booking authority while full configuration stays staff-only',async()=>{
+ const {requiredPermission}=await import('../lib/api-gateway.ts');
+ assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?availability=1`)),'scheduling.book');
+ assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?config=1`)),'pricing.view');
+ assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?report=summary`)),'reports.view');
+});

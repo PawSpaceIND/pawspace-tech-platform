@@ -1,4 +1,5 @@
 "use client";
+import{staffReadJson}from"../../../../lib/staff-read-json";
 import Link from"next/link";
 import{useEffect,useMemo,useState}from"react";
 import { MetricBars, TargetProgress, VisualGrid, statusCounts } from "../../../components/ui/ReportVisuals";
@@ -12,7 +13,7 @@ const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",cur
 const label=(value:unknown)=>String(value||"not configured").replaceAll("_"," ");
 // Mirrors issueTrainingInvoice: only an unnumbered draft with a published tax policy and a FULLY_PAID package payment can be numbered.
 const invoiceBlock=(row:Row)=>row.invoice_number?"Invoice already issued":String(row.status)!=="draft_ready_for_number"?"Needs a published tax policy":String(row.payment_status)!=="FULLY_PAID"?"Available once the package is fully paid":"";
-async function getJson<T>(url:string){const response=await fetch(url,{cache:"no-store"}),body=await response.json() as {data?:T;error?:string};if(!response.ok||!body.data)throw new Error(body.error||`Unable to load ${url}`);return body.data;}
+async function getJson<T>(url:string){const body=await staffReadJson<{data?:T;error?:string}>(url);if(!body.data)throw new Error(body.error||`Unable to load ${url}`);return body.data;}
 async function getTrainingReports(){
  const[finance,reconciliation]=await Promise.allSettled([getJson<FinanceData>("/api/training-finance"),getJson<Reconciliation>("/api/training-reconciliation")]);
  return {

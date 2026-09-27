@@ -8,13 +8,13 @@ const money = (value: unknown) => Math.round(Math.max(0, Number(value || 0)) * 1
  * Schema discovery is separate; missing optional ledgers mean never used, but query/schema faults
  * propagate. A capture cannot split the payment, instalment, credit and reconciliation read.
  */
-export async function readPaymentStageSnapshots(db: Pick<D1Database, "prepare">, bookingIds: string[], options: { includePaymentMetadata?: boolean } = {}): Promise<Map<string, PaymentStageSnapshot>> {
+export async function readPaymentStageSnapshots(db: Pick<D1Database, "prepare">, bookingIds: string[], options: { includePaymentMetadata?: boolean; includeBalanceDeadline?: boolean } = {}): Promise<Map<string, PaymentStageSnapshot>> {
   const ids = [...new Set(bookingIds)], result = new Map<string, PaymentStageSnapshot>();
   if (!ids.length) return result;
   const schema = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${optionalTables.map(() => '?').join(',')})`).bind(...optionalTables).all<Row>();
   const tables = new Set(schema.results.map(row => String(row.name)));
   const optional = (table: string, select: string) => tables.has(table) ? `(${select})` : 'NULL';
-  const stay = optional('stay_payment_schedules', "SELECT json_object('paid_now_amount',s.paid_now_amount,'balance_amount',s.balance_amount,'status',s.status) FROM stay_payment_schedules s WHERE s.booking_id=p.booking_id LIMIT 1");
+  const stay = optional('stay_payment_schedules', `SELECT json_object('paid_now_amount',s.paid_now_amount,'balance_amount',s.balance_amount,'status',s.status${options.includeBalanceDeadline ? ",'balance_due_at',s.balance_due_at" : ""}) FROM stay_payment_schedules s WHERE s.booking_id=p.booking_id LIMIT 1`);
   const taxi = optional('taxi_payment_schedules', "SELECT json_object('paid_now_amount',t.booking_fee_amount,'balance_amount',t.balance_amount,'status',t.status) FROM taxi_payment_schedules t WHERE t.booking_id=p.booking_id LIMIT 1");
   const recon = optional('payment_reconciliation_records', "SELECT json_object('captured_amount',r.captured_amount) FROM payment_reconciliation_records r WHERE r.payment_id=p.id LIMIT 1");
   const wallet = optional('pawspace_wallet_ledger', "SELECT SUM(w.applied_value) FROM pawspace_wallet_ledger w WHERE w.source_id=p.booking_id AND w.entry_type='redeem' AND w.source_type='booking'");
