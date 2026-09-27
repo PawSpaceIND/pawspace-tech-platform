@@ -13,7 +13,6 @@ export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,sc
 // predicate above must stay identical to the unique index already deployed (the reserve upsert names it), so overlap
 // checks that decide whether a provider is free add overnight Sitting with this predicate.
 export const SCHEDULING_RESERVATION_OVERNIGHT_SITTING_PREDICATE="status!='cancelled' AND service_code='pet_sitting' AND care_mode='overnight'";
-const cleanupRunning=new WeakMap<Db,Promise<{groups:number;reservations:number}>>();
 
 async function tableExists(db:Db,name:string){
   const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
@@ -67,10 +66,20 @@ export async function reservationLeaseForRequest(db:Db,request:Request,customerI
 export const RESERVATION_LEASE_CLEANUP_FLAG="scheduling-reservation-lease-cleanup";
 // Tables are never dropped at runtime, so a table seen once stays seen; absence is always re-checked.
 const canonicalBookingsPresent=new WeakSet<Db>();
+/*
+ * One pass per call, never shared across requests. A pass in progress used to be handed to every concurrent caller
+ * on the isolate; a request cancelled mid-cleanup never settles that promise, so every later Reserve and canonical
+ * booking (worker/index.ts waits for this cleanup before answering) joined it and hung. Concurrent passes are safe,
+ * as they always were across isolates: the marker only advances to a later released_at and every release requires
+ * status='assigned', so exactly one pass releases a group. Each pass reports what it released itself, and the
+ * request is flagged once its own pass has completed.
+ */
 export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
-  const done=(result:{groups:number;reservations:number})=>{markRequestFlag(RESERVATION_LEASE_CLEANUP_FLAG);return result;};
-  const running=cleanupRunning.get(db);if(running)return running.then(done);
-  const pending=(async()=>{
+  const result=await releaseExpiredReservationLeases(db,now);
+  markRequestFlag(RESERVATION_LEASE_CLEANUP_FLAG);
+  return result;
+}
+async function releaseExpiredReservationLeases(db:Db,now:number):Promise<{groups:number;reservations:number}>{
     if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
     const hasCanonical=canonicalBookingsPresent.has(db)||await tableExists(db,"canonical_bookings");if(hasCanonical)canonicalBookingsPresent.add(db);
     const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
@@ -94,9 +103,6 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
     if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers AS r SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE r.status='pending' AND r.group_id IN (${placeholders}) AND ${marker}`).bind(now,reason,now,...groupIds,reason,now));
     const result=await db.batch(statements);
     return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
-  })();
-  cleanupRunning.set(db,pending);
-  try{return done(await pending);}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
 }
 
 /** How long an unpaid UAT grooming checkout may hold its groomer after the booking was created. */
