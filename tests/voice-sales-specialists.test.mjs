@@ -173,5 +173,6 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
  const r=await turn(w,'Please show the grooming quote before booking','repair-proposal',provider);
  assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/Total INR|reserve/i);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
- assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);
+ const bookingTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get();
+ assert.equal(bookingTable ? w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n : 0,0);
 });
