@@ -33,7 +33,8 @@ test("forecast is probabilistic and includes win-loss analytics", () => {
 
 test("duplicate merge requires review and uses a single D1 transactional batch", () => {
   assert.match(merge, /customer_merge_reviews/);
-  assert.match(merge, /status='open'/);
+  assert.match(merge, /status IN \('open','approved_for_merge'\)/);
+  assert.match(merge, /The merge must preserve the approved surviving customer/);
   assert.match(merge, /const results = await db\.batch\(statements\)/);
   for (const table of ["canonical_pets","canonical_bookings","lead_work_items","communication_threads","communication_messages","customer_experience_tickets"]) assert.match(merge, new RegExp(table));
 });

@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+import {makeD1} from './helpers/taxi-harness.mjs';
+installWorkersHooks('__PAYMENT_DEADLINE_DB__');
+const {bookingPaymentBalances}=await import('../lib/booking-payment-balances.ts');
+const {paymentDeadlineLabel}=await import('../lib/payment-deadline-label.ts');
+test('early payable balance retains its later recorded deadline and checkout amount',async t=>{
+ const sqlite=new DatabaseSync(':memory:');t.after(()=>sqlite.close());
+ const due=Date.parse('2026-09-30T03:30:00Z');
+ sqlite.exec(`CREATE TABLE booking_payments(id TEXT,booking_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,status TEXT);
+ CREATE TABLE stay_payment_schedules(booking_id TEXT,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT);
+ INSERT INTO booking_payments VALUES('P','B',3495,1747.5,'INR','captured');
+ INSERT INTO stay_payment_schedules VALUES('B',1747.5,1747.5,${due},'pending_balance');`);
+ const balance=(await bookingPaymentBalances(makeD1(sqlite),['B'],{includeBalanceDeadline:true})).get('B');
+ assert.equal(balance.dueNow,1747.5);assert.equal(balance.balanceDueAt,due);
+ assert.match(paymentDeadlineLabel(balance.stage,balance.balanceDueAt),/30 Sept 2026.*9:00 am IST/);
+ assert.equal(paymentDeadlineLabel('settled',due),'No payment outstanding');
+ assert.equal(paymentDeadlineLabel('outstanding_balance',null),'Balance deadline not recorded');
+});

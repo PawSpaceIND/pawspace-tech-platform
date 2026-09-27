@@ -120,8 +120,10 @@ export async function resolveDataAccessPolicy(db:Db,scope:{serviceCode?:string|n
 const accessReady=new WeakSet<Db>();
 export async function ensureDataAccessTables(db:Db){
   if(accessReady.has(db))return;
-  await db.prepare("CREATE TABLE IF NOT EXISTS customer_data_reveals (id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,actor_role TEXT NOT NULL,subject_id TEXT NOT NULL,data_class TEXT NOT NULL,purpose TEXT NOT NULL,assignment_type TEXT,assignment_id TEXT,reason TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
-  await db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_data_reveals_subject ON customer_data_reveals(subject_id,created_at)").run();
+  await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS customer_data_reveals (id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,actor_role TEXT NOT NULL,subject_id TEXT NOT NULL,data_class TEXT NOT NULL,purpose TEXT NOT NULL,assignment_type TEXT,assignment_id TEXT,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_data_reveals_subject ON customer_data_reveals(subject_id,created_at)"),
+  ]);
   accessReady.add(db);
 }
 

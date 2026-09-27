@@ -268,6 +268,7 @@ function PartnerMobileAppContent() {
         setJobs(next);
         setJobsLoaded(true);
         setSelectedId(current=>selectPartnerWorkOrder(next,current,requestedBookingId));
+        if (requestedBookingId) setTab("jobs");
         setError("");
       })
       .catch((err) => { if (!cancelled && version === sessionVersion.current) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); })

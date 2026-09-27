@@ -59,3 +59,16 @@ Executed on the isolated Mac checkout with Node **22.16.0**:
 - `git diff --check`: clean. This follow-up changes nine snapshot JSON files and this evidence note only.
 
 Full hosted CI on the follow-up commit and actual deployed Founder browser acceptance remain separate closure gates. No merge or deployment is claimed by these local results.
+
+
+## Merge-readiness follow-up: integrate current main
+
+The original PR head `862650984560f073a5460a099d16eb7dc515574e` completed all 16 PR workflows successfully. GitHub nevertheless refused an immediate merge because main had advanced to `fd2ee5759c9578fe57c4cd6698284fd3b0b47bba`, including PRs #1141, #1138 and #1146. The nine presentation contracts conflicted.
+
+Resolution preserves all current-main snapshot values and re-pins only the two reviewed Founder-auth source entries to the combined code. The incoming funeral-availability permission mapping and all browser-session issuance/revocation changes remain intact.
+
+The incoming main commit also contained a literal Desktop Commander output suffix outside the JSON object in eight fixtures and at the end of `app/partner-app/page.tsx`. Git object hashes confirmed this text was actually committed, not merely printed by the tool. Removed only that invalid suffix. The cleaned partner page has SHA-256 `d2495a5277d8888a159fb2c1ab87f0cbd6057fd206e00bc1c58f81caba66c462`, exactly matching main's existing reviewed fingerprint; its functional lint repair is retained unchanged. All tracked fixture JSON now parses, with no remaining tool-output footer in tracked TS/TSX/JSON/MJS files.
+
+On the integrated tree, 25 focused suites execute **355/355 passing, 0 skipped** using Node 22.16.0. The same 355 scenarios also pass with the forced compatibility loader. These cover Founder recovery, all affected presentation boundaries, auth/bootstrap/navigation, G20 browser-session continuity, malformed-login rejection, disabled UAT-session handling and funeral availability. No test is disabled or relaxed. `git diff --check` passes.
+
+The current-main integration changes the PR head, so the old green CI is not used as authorization to merge this new tree. Fresh required hosted checks must pass under the existing strict branch protection. No deployed Founder-browser acceptance or production promotion is claimed.
