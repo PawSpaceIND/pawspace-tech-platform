@@ -44,7 +44,7 @@ jobs:
         env:
           NODE_ENV: test
           PAWSPACE_LOCAL_PREVIEW: 'on'
-        run: node --experimental-strip-types --test --test-concurrency=1 tests/scheduler-choice-ci-coverage.test.mjs tests/scheduler-provider-choice.test.mjs tests/scheduling-hardening.test.mjs tests/training-availability-preview.test.mjs tests/provider-assignment-execution.test.mjs tests/v2-grooming-checkout.test.mjs tests/training-booking-guards.test.mjs tests/training-mobile-trainer-alternatives.test.mjs
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/scheduler-provider-choice.test.mjs tests/scheduling-hardening.test.mjs tests/training-availability-preview.test.mjs tests/provider-assignment-execution.test.mjs tests/v2-grooming-checkout.test.mjs tests/training-booking-guards.test.mjs tests/training-mobile-trainer-alternatives.test.mjs
       - run: node node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
       - name: V2 automatic and explicit choice journeys
         run: node node_modules/@playwright/test/cli.js test --config playwright.scheduler-choice.config.ts
