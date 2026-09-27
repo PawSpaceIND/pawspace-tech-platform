@@ -28,7 +28,7 @@ function hasAuthenticationMaterial(request:Request){if(isDevelopmentPreviewReque
  * customer_data_reveals row. The area survives here so an associate arranging a home visit can still
  * recognise where they are going.
  */
-export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const query=new URL(request.url).searchParams.get("q")?.slice(0,200)||"";await ensureCustomer360Tables(db);const phoneIds=!id&&query?await customerIdsForPhone(db,query):null;
+export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const query=new URL(request.url).searchParams.get("q")?.slice(0,200)||"";const phoneIds=!id&&query?await customerIdsForPhone(db,query):null;
   const built=(phoneIds===null?await buildCustomer360(db,id):(await Promise.all(phoneIds.map(customerId=>buildCustomer360(db,customerId)))).flat()).filter(record=>matchesCustomerSearch(record,query));
   // One customer's detail carries each booking's payment state (the /team/sales booking list). The list
   // read does not: payment for every booking of every customer would break its fan-out budget.

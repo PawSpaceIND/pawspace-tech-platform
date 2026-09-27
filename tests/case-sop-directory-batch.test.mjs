@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {listCaseSopRequirementsForCases} from '../lib/case-sop-governance.ts';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__CASE_SOP_DB__','__CASE_SOP_ENV__');
+const {listCaseSopRequirementsForCases}=await import('../lib/case-sop-governance.ts');
 
 test('500-case directory uses bounded D1 binds and preserves requirement ownership',async()=>{
  const reads=[];let schemaBatches=0;

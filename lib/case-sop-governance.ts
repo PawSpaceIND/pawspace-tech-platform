@@ -1,3 +1,4 @@
+import {chunkedIn} from "./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -32,7 +33,8 @@ export async function syncCaseSopRequirements(db:Db,input:{caseId?:string;actorI
   const bookingById=new Map<string,Row>(),modulesByService=new Map<string,Row[]>();
   const bookingIds=[...new Set(rows.results.filter(row=>CASE_TYPES_REQUIRING_SOP.has(text(row.case_type))).map(row=>text(row.booking_id)).filter(Boolean))];
   if(bookingIds.length&&await tableExists(db,"canonical_bookings")){
-    for(let offset=0;offset<bookingIds.length;offset+=80){const ids=bookingIds.slice(offset,offset+80);const bookings=await db.prepare(`SELECT id,service_code,provider_id FROM canonical_bookings WHERE id IN (${ids.map(()=>"?").join(",")})`).bind(...ids).all<Row>();for(const booking of bookings.results)bookingById.set(text(booking.id),booking);}
+    const bookings=await chunkedIn(bookingIds,async(ids,placeholders)=>(await db.prepare(`SELECT id,service_code,provider_id FROM canonical_bookings WHERE id IN (${placeholders})`).bind(...ids).all<Row>()).results);
+    for(const booking of bookings)bookingById.set(text(booking.id),booking);
   }
   const existing=await listCaseSopRequirementsForCases(db,rows.results.map(row=>text(row.id)));
   const requirementKeys=new Set([...existing.values()].flat().map(row=>`${text(row.case_id)}:${text(row.module_id)}:${Number(row.module_version)}`));
@@ -72,11 +74,8 @@ export async function listCaseSopRequirementsForCases(db:Db,caseIds:string[]){
   await ensureCaseSopTables(db);
   const grouped=new Map<string,Row[]>();
   const ids=[...new Set(caseIds)];
-  for(let offset=0;offset<ids.length;offset+=80){
-    const chunk=ids.slice(offset,offset+80);
-    const rows=await db.prepare(`SELECT * FROM unified_case_sop_requirements WHERE case_id IN (${chunk.map(()=>"?").join(",")}) ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,created_at`).bind(...chunk).all<Row>();
-    for(const row of rows.results){const id=text(row.case_id);const entries=grouped.get(id)||[];entries.push(row);grouped.set(id,entries);}
-  }
+  const rows=await chunkedIn(ids,async(chunk,placeholders)=>(await db.prepare(`SELECT * FROM unified_case_sop_requirements WHERE case_id IN (${placeholders}) ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,created_at`).bind(...chunk).all<Row>()).results);
+  for(const row of rows){const id=text(row.case_id);const entries=grouped.get(id)||[];entries.push(row);grouped.set(id,entries);}
   return grouped;
 }
 
