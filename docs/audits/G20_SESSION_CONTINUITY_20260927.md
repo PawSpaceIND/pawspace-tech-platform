@@ -58,3 +58,12 @@ Two independently verified authentication findings are included. Malformed JSON,
 Previously issued UAT provider-switch sessions are recognized using server-owned session metadata or their legacy `uat-provider:` principal. Each new request checks the same UAT flag/signing-key gate as the issuer. Disabling UAT or using an invalid signing key therefore denies those sessions, while ordinary verified partner OTP sessions remain valid. The existing partner identity-source value is preserved for compatibility.
 
 Executed on the Mac: 108 focused tests passed, zero failed/skipped; TypeScript passed. The expanded tests exercise the actual identity route and real session resolver. Narrow protected-source fingerprints were refreshed only for the two further authentication edits. Live after-fix acceptance and final exact-head CI remain separate gates.
+
+
+## Failed-CI follow-up — 27 September 2026
+
+The completed Pre-UAT run 36320305607 on `1ad259a4ff9e713f9b3ed0500ebc454186b899dc` reported 8,416 passes and eight failures. Seven failed suites were historical source-byte guards: 21 entries in seven manifests still held pre-G20 hashes for the partner OTP and two UAT switch routes. They now match the reviewed source; all unrelated entries remain unchanged. Each old hash was checked against main `c8b3f274a3ca3e7975ed2a84abb22788d4e51f67` before replacement.
+
+The eighth failure, also the sole failure in Test harness hook paths (4,487 passed / one failed), was the LP-D09 ordinary commission-provider fixture identifying itself with the reserved `uat-provider:` principal prefix while test access was disabled. It now uses a normal partner-OTP principal. The provider rates route and session security gates are unchanged. A new executed route regression requires UAT identities to receive 401 when disabled, 200 when enabled, then 401 again immediately after disabling. Fixture databases are closed after each executed test.
+
+The failing eight suites plus session, payload and UAT customer regressions now pass: **230 passed, zero failed, zero skipped**. The affected authentication/route suites also pass under the forced asynchronous loader path. Full exact-head CI and deployed after-fix acceptance are still separate requirements; these targeted results are not blanket release sign-off.
