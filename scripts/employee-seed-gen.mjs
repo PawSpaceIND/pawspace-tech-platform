@@ -214,11 +214,14 @@ const policyJson = JSON.stringify({ seller: COMPANY, defaultComponents: [{ code:
 s.push(`INSERT OR IGNORE INTO tax_policy_versions (id,entity_id,version,status,effective_from,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES (${q(POLICY)},${q(ENTITY)},1,'active','2024-01-01',${q(policyJson)},'SEED-GST-APPROVAL',${q("founder@pawspace.in")},${BASE},${BASE},${BASE});`);
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 const comps = JSON.stringify([{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }]);
-// Earlier seeds wrote placeholder classifications ("SAC-9985-<n>") that are not SACs and cannot be printed on a tax invoice.
-// Remove only a row that still holds exactly that placeholder, so anything Finance set is never touched. The customer tax
-// invoice (lib/booking-tax-invoice.ts) then seeds each missing service from the one SAC table (lib/service-sac-defaults.ts).
+// Each seeded service's SAC and place-of-supply rule, as in the one SAC table (lib/service-sac-defaults.ts; a test keeps the two
+// the same). Earlier seeds wrote placeholder classifications ("SAC-9985-<n>") that are not SACs and cannot be printed on a tax
+// invoice: only a row that still holds exactly that placeholder is corrected, so anything Finance set is never touched.
+const SERVICE_SACS = { grooming: ["998612", "service_location"], dog_training: ["998612", "training_performance"], boarding: ["998612", "default_recipient_or_service"], pet_sitting: ["998612", "default_recipient_or_service"], dog_walking: ["998612", "default_recipient_or_service"], pet_taxi: ["996511", "transport"] };
 SERVICES.forEach((svc, i) => {
-  s.push(`DELETE FROM tax_classifications WHERE id=${q("SEEDTC-" + svc)} AND policy_id=${q(POLICY)} AND classification_code=${q("SAC-9985-" + i)};`);
+  const [sac, rule] = SERVICE_SACS[svc];
+  s.push(`UPDATE tax_classifications SET classification_code=${q(sac)},place_of_supply_rule=${q(rule)} WHERE id=${q("SEEDTC-" + svc)} AND policy_id=${q(POLICY)} AND classification_code=${q("SAC-9985-" + i)};`);
+  s.push(`INSERT OR IGNORE INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES (${q("SEEDTC-" + svc)},${q(POLICY)},${q(svc)},${q(sac)},${q(comps)},${q(rule)},'standard',${BASE});`);
 });
 // One invoice series a financial year for the seeded seller: "{FY}" becomes 26-27, 27-28, ... and each year starts at 00001
 // (TKP/26-27/00001: 15 characters, within Rule 46's 16, room for 99,999 invoices a year). The sample invoices below keep their
