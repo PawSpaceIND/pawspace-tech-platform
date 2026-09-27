@@ -26,9 +26,10 @@ const text = (value: unknown) => String(value ?? "").trim();
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "payroll.view");
+    const actor=await authorize(request, "payroll.view");
     const db = await database();
     const url = new URL(request.url);
+    if(url.searchParams.get("mode")==="salary"){const {employeeSalaryDirectory}=await import("../../../lib/employee-payroll-payout");return Response.json({data:await employeeSalaryDirectory(db,url.searchParams.get("runId")||undefined),productionReady:false});}
     if (url.searchParams.get("mode") === "advances") {
       return Response.json({
         data: await salaryAdvanceDirectory(db, {
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
       });
     }
     return Response.json({
-      data: await payrollDirectory(db),
+      data: {...await payrollDirectory(db),capabilities:{configure:actor.permissions.includes("*")||actor.permissions.includes("compensation.manage"),calculate:actor.permissions.includes("*")||actor.permissions.includes("payroll.manage"),approve:actor.permissions.includes("*")||actor.permissions.includes("payroll.approve")}},
       productionReady: false,
     });
   } catch (error) {
@@ -279,8 +280,39 @@ const handleCloseAdvance: PayrollActionHandler = async ({
   return Response.json({ data: result, productionReady: false });
 };
 
+const handleSaveCalculationPolicy: PayrollActionHandler = async ({request,body,db}) => {
+  const actor=await authorize(request,"compensation.manage");
+  const {ensurePayrollTables}=await import("../../../lib/payroll-engine");
+  const {saveSalaryCalculationPolicy}=await import("../../../lib/payroll-proration");
+  await ensurePayrollTables(db);
+  const data=await saveSalaryCalculationPolicy(db,{structureId:text(body.structureId),mode:text(body.mode),componentCodes:Array.isArray(body.componentCodes)?body.componentCodes.map(text):[],approvalReference:text(body.approvalReference),actorId:actor.email});
+  await securityAudit(db,actor,"payroll.calculation_policy.save","salary_structure",text(body.structureId),"completed");
+  return Response.json({data,productionReady:false});
+};
+
+const handleSalarySandbox: PayrollActionHandler = async ({request,body,db}) => {
+  const actor=await authorize(request,"payroll.approve");
+  if(body.confirmSandbox!==true)return Response.json({error:"Explicit TEST-only salary action confirmation is required"},{status:400});
+  const {env}=await import("cloudflare:workers");
+  const runtime=env as unknown as Record<string,unknown>;
+  const {razorpayXSandboxReadiness}=await import("../../../lib/razorpayx-client");
+  if(!razorpayXSandboxReadiness(runtime).ready)return Response.json({error:"Employee salary actions require complete sandbox payout configuration; live salary is disabled"},{status:503});
+  const salary=await import("../../../lib/employee-payroll-payout");
+  const action=text(body.action);let data:unknown;
+  if(action==="save_salary_beneficiary")data=await salary.saveEmployeeSalaryBeneficiary(db,{employeeId:text(body.employeeId),fundAccountId:text(body.fundAccountId),verificationReference:text(body.verificationReference),expiresAt:Number(body.expiresAt),actorId:actor.email});
+  else if(action==="authorize_salary_sandbox")data=await salary.queueEmployeeSalary(db,{runId:text(body.runId),actorId:actor.email});
+  else{const input={instructionId:text(body.instructionId),actorId:actor.email};data=action==="dispatch_salary_sandbox"?await salary.dispatchEmployeeSalarySandbox(db,runtime,input):await salary.reconcileEmployeeSalarySandbox(db,runtime,input);}
+  await securityAudit(db,actor,`payroll.${action}`,"employee_salary",text(body.instructionId)||text(body.runId)||text(body.employeeId),"completed");
+  return Response.json({data,productionReady:false});
+};
+
 const ACTION_MAP: Readonly<Record<string, PayrollActionDefinition>> =
   Object.freeze({
+    save_salary_beneficiary:{requiredPermission:"payroll.approve",handler:handleSalarySandbox},
+    authorize_salary_sandbox:{requiredPermission:"payroll.approve",handler:handleSalarySandbox},
+    dispatch_salary_sandbox:{requiredPermission:"payroll.approve",handler:handleSalarySandbox},
+    reconcile_salary_sandbox:{requiredPermission:"payroll.approve",handler:handleSalarySandbox},
+    save_calculation_policy: {requiredPermission:"compensation.manage",handler:handleSaveCalculationPolicy},
     approve: { requiredPermission: "payroll.approve", handler: handleApprove },
     authorize_live_disbursement: {
       requiredPermission: "payroll.approve",

@@ -126,7 +126,8 @@ test("a chunked LIMIT returns the newest n overall, not n per chunk", async () =
   const stamps = [];
   for (let run = 0; run < RUNS; run += 1) {
     const runId = `RUN-${String(run).padStart(4, "0")}`;
-    sqlite.prepare("INSERT INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at) VALUES (?,?,?,?,'approved','{}','seed',0)").run(runId, `${runId}-idem`, periodStart, periodEnd);
+    // Keep the history non-overlapping: this test measures chunk ordering, not conflicting payroll.
+    sqlite.prepare("INSERT INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at) VALUES (?,?,?,?,'approved','{}','seed',0)").run(runId, `${runId}-idem`, periodStart + run * 60000, periodStart + (run + 1) * 60000);
     sqlite.prepare("INSERT INTO employee_payroll_results (id,run_id,employee_id,structure_id,gross_earnings,total_deductions,reimbursements,employer_cost,net_pay,source_snapshot_json) VALUES (?,?,'EMP-1','STR-1',1000,0,0,100,900,'{}')").run(`RES-${run}`, runId);
     // Five events per run: 460 in total, and every chunk holds well under the per-chunk LIMIT of 200,
     // so the wrong answer is not "too many rows" but "the wrong rows, in the wrong order".
