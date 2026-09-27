@@ -2,7 +2,7 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
-const governance=read("lib/coupon-governance.ts"),route=read("app/api/coupon-governance/route.ts"),client=read("lib/coupon-governance-client.ts"),legacy=read("lib/offer-engine.ts"),field=read("app/mobile-app/coupon-field.tsx"),control=read("app/control/coupons-control-panel.tsx"),gateway=read("lib/api-gateway.ts");
+const governance=read("lib/coupon-governance.ts")+read("lib/coupon-eligibility-policy.ts"),route=read("app/api/coupon-governance/route.ts"),client=read("lib/coupon-governance-client.ts"),legacy=read("lib/offer-engine.ts"),field=read("app/mobile-app/coupon-field.tsx"),control=read("app/control/coupons-control-panel.tsx"),gateway=read("lib/api-gateway.ts");
 
 test("coupon commercial truth is persisted on the server",()=>{assert.match(governance,/coupon_campaigns/);assert.match(governance,/coupon_quotes/);assert.match(governance,/coupon_redemptions/);assert.match(governance,/policy_snapshot_json/);assert.match(governance,/testOnly:true/);});
 test("server derives customer eligibility and enforces campaign limits",()=>{assert.match(governance,/SELECT COUNT\(\*\) count FROM canonical_bookings WHERE customer_id/);assert.match(governance,/customer_grooming_subscriptions/);assert.match(governance,/perCustomerLimit/);assert.match(governance,/totalLimit/);assert.match(governance,/Coupon is outside its validity window/);assert.match(governance,/Coupon is not eligible for this service/);assert.match(governance,/Coupon is not eligible in this city/);assert.match(governance,/Coupon is not eligible on this channel/);});

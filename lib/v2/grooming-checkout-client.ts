@@ -99,7 +99,8 @@ export async function createV2GroomingBooking(
   // before anything is reserved, and book with the server's fresh discount and quote - never the
   // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
   const basketTotal = v2GroomingTotal(input);
-  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false }) : null;
+  const idempotencyKey = await v2GroomingIdempotencyKey(input);
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false, bookingKey: idempotencyKey }) : null;
   if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
   const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
   const discount = coupon ? coupon.discount : 0;
@@ -119,7 +120,7 @@ export async function createV2GroomingBooking(
     const youngIssue = v2YoungPackageIssue(input.selectedPets, serviceDate);
     if (youngIssue) throw new Error(youngIssue.message);
   }
-  const idempotencyKey = await v2GroomingIdempotencyKey(input);
+
   const decision = await reserveUatSchedule({
     clientRequestId: idempotencyKey,
     customerId: input.account.customerId,

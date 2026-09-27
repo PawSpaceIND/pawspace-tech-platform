@@ -1,3 +1,4 @@
+import { couponEligibilityIssue, NORMAL_COUPON_BOOKING_LIMIT, NORMAL_COUPON_LIMIT_MESSAGE } from "./coupon-eligibility-policy";
 import { CANONICAL_BOOKING_CORE_DDL } from "./canonical-booking-core-schema";
 import { CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL } from "./subscription-wallet";
 import { groomingPricingPackageCode } from "./grooming-pricing-code";
@@ -9,7 +10,7 @@ function couponPaise(value:unknown):number|null{
   return paise<=BigInt(Number.MAX_SAFE_INTEGER)?Number(paise):null;
 }
 function sameMoney(left:number,right:number){const amount=couponPaise(left);return amount!==null&&amount===couponPaise(right);}
-function couponAmounts(orderValue:number,campaign:CouponCampaign){
+export function couponAmounts(orderValue:number,campaign:CouponCampaign){
   const order=couponPaise(orderValue),cap=campaign.maxDiscount===null?null:couponPaise(campaign.maxDiscount);
   if(order===null||(campaign.maxDiscount!==null&&cap===null))throw new Error("Coupon amount configuration is invalid");
   let raw:number;
@@ -49,7 +50,7 @@ export type CouponCampaign={
   packageScope:CouponPackageScope;packageCodes:string[];crossSellFromServices:CouponService[];firstOrderOnly:boolean;minOrder:number;maxOrder:number|null;subscriptionEligible:boolean;fullPaymentOnly:boolean;
   discountType:CouponDiscountType;discountValue:number;maxDiscount:number|null;perCustomerLimit:number;totalLimit:number;validFrom:number;validUntil:number;createdAt:number;updatedAt:number;customerIds?:string[];
 };
-export type CouponQuoteInput={code:string;customerId:string;serviceCode:CouponService;cityId:string;channel:CouponChannel;packageCode:string;orderValue:number;paymentMode:"full"|"partial"|"after_service";isSubscription:boolean};
+export type CouponQuoteInput={code:string;customerId:string;serviceCode:CouponService;cityId:string;channel:CouponChannel;packageCode:string;orderValue:number;paymentMode:"full"|"partial"|"after_service";isSubscription:boolean;bookingKey?:string};
 
 /*
  * PawSpace's sales coupons: the offers the WATI flows and PawSpace AI may give a customer.
@@ -165,7 +166,7 @@ export async function customerFacts(db:Db,customerId:string){
     if(!customerId.trim())throw new Error("Missing customer");
     await ensureCouponCustomerAuthority(db);
     const [count,subscriptions,history]=await Promise.all([
-      db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=?").bind(customerId).first<Row>(),
+      db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=? AND status NOT IN ('cancelled','failed')").bind(customerId).first<Row>(),
       db.prepare("SELECT COUNT(*) count FROM customer_grooming_subscriptions WHERE customer_id=? AND status IN ('active','paused')").bind(customerId).first<Row>(),
       db.prepare("SELECT DISTINCT service_code FROM canonical_bookings WHERE customer_id=? AND status='completed'").bind(customerId).all<Row>(),
     ]);
@@ -182,7 +183,39 @@ export async function customerFacts(db:Db,customerId:string){
 }
 
 export async function quoteCoupon(db:Db,input:CouponQuoteInput,opts:{liveApproved?:boolean}={}){
-  await seedUatCoupons(db);const code=normalize(input.code);if(!code||!input.customerId||!input.serviceCode||!input.cityId||!input.channel||!input.packageCode)return{valid:false,discount:0,error:"Complete coupon context is required"};if(couponPaise(input.orderValue)===null)return{valid:false,discount:0,error:"Order value must be valid"};const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE code=?").bind(code).first<Row>();if(!row)return{valid:false,discount:0,error:"Coupon not found"};const campaign=rowToCampaign(row),now=Date.now();if(campaign.status!=="active")return{valid:false,discount:0,error:"Coupon is paused"};if(campaign.customerIds?.length&&!campaign.customerIds.includes(input.customerId))return{valid:false,discount:0,error:"This coupon belongs to another account"};if(!campaign.testOnly&&!opts.liveApproved)return{valid:false,discount:0,error:"Live coupons are not enabled in this environment (PAWSPACE_COUPONS_LIVE_APPROVED not set)"};if(now<campaign.validFrom||now>campaign.validUntil)return{valid:false,discount:0,error:"Coupon is outside its validity window"};if(!campaign.serviceCodes.includes(input.serviceCode))return{valid:false,discount:0,error:"Coupon is not eligible for this service"};if(!campaign.cityIds.includes(input.cityId))return{valid:false,discount:0,error:"Coupon is not eligible in this city"};if(!campaign.channels.includes(input.channel))return{valid:false,discount:0,error:"Coupon is not eligible on this channel"};const facts=await customerFacts(db,input.customerId);if(!campaign.customerKinds.includes(facts.kind))return{valid:false,discount:0,error:"Customer is not eligible for this coupon"};if(campaign.firstOrderOnly&&facts.orderCount>0)return{valid:false,discount:0,error:"Coupon is for the first booking only"};if(campaign.crossSellFromServices.length&&!campaign.crossSellFromServices.some(service=>facts.previousServices.includes(service)))return{valid:false,discount:0,error:"This cross-sell coupon requires an eligible previous service"};if(input.isSubscription&&!campaign.subscriptionEligible)return{valid:false,discount:0,error:"Coupon is not eligible for subscriptions"};if(campaign.packageScope==="subscription"&&!input.isSubscription)return{valid:false,discount:0,error:"Coupon requires a subscription package"};if(campaign.packageScope==="single_session"&&input.isSubscription)return{valid:false,discount:0,error:"Coupon is limited to single-session packages"};if(campaign.packageScope==="selected"&&!campaign.packageCodes.includes(input.packageCode))return{valid:false,discount:0,error:"Coupon is not eligible for this package"};if(campaign.fullPaymentOnly&&input.paymentMode!=="full")return{valid:false,discount:0,error:"Coupon requires full payment"};if(input.orderValue<campaign.minOrder)return{valid:false,discount:0,error:"Minimum order value not met"};if(campaign.maxOrder!=null&&input.orderValue>campaign.maxOrder)return{valid:false,discount:0,error:"Maximum order value exceeded"};const [totalUsed,customerUsed]=await Promise.all([db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(campaign.id).first<Row>(),db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(campaign.id,input.customerId).first<Row>()]);if(Number(totalUsed?.count||0)>=campaign.totalLimit)return{valid:false,discount:0,error:"Coupon has reached its total redemption limit"};if(Number(customerUsed?.count||0)>=campaign.perCustomerLimit)return{valid:false,discount:0,error:"Customer has reached this coupon's usage limit"};const {discount,finalAmount}=couponAmounts(input.orderValue,campaign),quoteId=`CPQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,expiresAt=now+15*60_000,snapshot={campaignId:campaign.id,code:campaign.code,discountType:campaign.discountType,discountValue:campaign.discountValue,maxDiscount:campaign.maxDiscount,perCustomerLimit:campaign.perCustomerLimit,totalLimit:campaign.totalLimit,customerKind:facts.kind,orderCount:facts.orderCount,crossSellFromServices:campaign.crossSellFromServices,previousServices:facts.previousServices,testOnly:campaign.testOnly};await db.prepare("INSERT INTO coupon_quotes (id,code,campaign_id,customer_id,service_code,city_id,channel,package_code,order_value,discount_amount,final_amount,policy_snapshot_json,status,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',?,?,?)").bind(quoteId,campaign.code,campaign.id,input.customerId,input.serviceCode,input.cityId,input.channel,input.packageCode,input.orderValue,discount,finalAmount,JSON.stringify(snapshot),expiresAt,now,now).run();return{valid:true,quoteId,code:campaign.code,discount,finalAmount,expiresAt,testOnly:campaign.testOnly,liveMoney:!campaign.testOnly,policySnapshot:snapshot};
+  await seedUatCoupons(db);
+  const code=normalize(input.code);
+  if(!code||!input.customerId||!input.serviceCode||!input.cityId||!input.channel||!input.packageCode)return{valid:false,discount:0,error:"Complete coupon context is required"};
+  if(couponPaise(input.orderValue)===null)return{valid:false,discount:0,error:"Order value must be valid"};
+  // Historical recovery is not a new discount. Only the same customer's same canonical key/context
+  // can reuse its already-consumed quote; new bookings must pass every current gate below.
+  if(typeof input.bookingKey==="string"&&input.bookingKey.length>0&&input.bookingKey.length<=250){
+    const prior=await db.prepare("SELECT q.* FROM coupon_quotes q JOIN canonical_bookings b ON b.id=q.booking_id WHERE b.idempotency_key=? AND b.customer_id=? AND b.status NOT IN ('cancelled','failed') AND q.customer_id=b.customer_id AND q.status='consumed' AND q.code=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.channel=?").bind(input.bookingKey,input.customerId,code,input.serviceCode,input.cityId,input.packageCode,input.channel).first<Row>();
+    if(prior&&sameMoney(Number(prior.order_value),input.orderValue))return{valid:true,quoteId:String(prior.id),code:String(prior.code),discount:Number(prior.discount_amount),finalAmount:Number(prior.final_amount),expiresAt:Number(prior.expires_at),replayed:true};
+  }
+  const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE code=?").bind(code).first<Row>();
+  if(!row)return{valid:false,discount:0,error:"Coupon not found"};
+  const campaign=rowToCampaign(row),now=Date.now();
+  const [facts,totalUsed,customerUsed]=await Promise.all([
+    customerFacts(db,input.customerId),
+    db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(campaign.id).first<Row>(),
+    db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(campaign.id,input.customerId).first<Row>(),
+  ]);
+  const issue=couponEligibilityIssue(campaign,input,facts,{totalUsed:Number(totalUsed?.count||0),customerUsed:Number(customerUsed?.count||0)},{now,...opts});
+  if(issue)return{valid:false,discount:0,error:issue};
+  const {discount,finalAmount}=couponAmounts(input.orderValue,campaign),quoteId=`CPQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,expiresAt=now+15*60_000;
+  const snapshot={campaignId:campaign.id,code:campaign.code,discountType:campaign.discountType,discountValue:campaign.discountValue,maxDiscount:campaign.maxDiscount,perCustomerLimit:campaign.perCustomerLimit,totalLimit:campaign.totalLimit,customerKind:facts.kind,orderCount:facts.orderCount,crossSellFromServices:campaign.crossSellFromServices,previousServices:facts.previousServices,testOnly:campaign.testOnly,normalBookingLimit:NORMAL_COUPON_BOOKING_LIMIT,customerSpecific:Boolean(campaign.customerIds?.length)};
+  await db.prepare("INSERT INTO coupon_quotes (id,code,campaign_id,customer_id,service_code,city_id,channel,package_code,order_value,discount_amount,final_amount,policy_snapshot_json,status,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',?,?,?)").bind(quoteId,campaign.code,campaign.id,input.customerId,input.serviceCode,input.cityId,input.channel,input.packageCode,input.orderValue,discount,finalAmount,JSON.stringify(snapshot),expiresAt,now,now).run();
+  return{valid:true,quoteId,code:campaign.code,discount,finalAmount,expiresAt,testOnly:campaign.testOnly,liveMoney:!campaign.testOnly,policySnapshot:snapshot};
+}
+
+const couponBookingWindowSql="((json_array_length(c.customer_ids_json)>0 AND c.first_order_only=0) OR (SELECT COUNT(*) FROM canonical_bookings h WHERE h.customer_id=q.customer_id AND h.status NOT IN ('cancelled','failed') AND h.id<>?)<CASE WHEN c.first_order_only=1 THEN 1 ELSE 3 END)";
+async function checkNormalCouponWindow(db:Db,customerIds:string[],customerId:string,bookingId:string,firstOrderOnly=false){
+  if(customerIds.length&&!firstOrderOnly)return;
+  const count=await db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=? AND status NOT IN ('cancelled','failed') AND id<>?").bind(customerId,bookingId).first<Row>();
+  if(!count||!Number.isSafeInteger(Number(count.count))||Number(count.count)<0)throw new Error("Coupon customer eligibility is temporarily unavailable");
+  if(firstOrderOnly&&Number(count.count)>0)throw new Error("Coupon is for the first booking only");
+  if(!customerIds.length&&Number(count.count)>=NORMAL_COUPON_BOOKING_LIMIT)throw new Error(NORMAL_COUPON_LIMIT_MESSAGE);
 }
 
 export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:string;customerId:string;idempotencyKey:string}){
@@ -213,6 +246,7 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   ]);
   if(!campaignRow)throw new Error("Coupon campaign not found");
   const campaign=rowToCampaign(campaignRow);
+  await checkNormalCouponWindow(db,campaign.customerIds||[],input.customerId,input.bookingId,campaign.firstOrderOnly);
   if(campaign.customerIds?.length&&!campaign.customerIds.includes(input.customerId))throw new Error("Coupon quote customer mismatch");
   if(Number(totalUsed?.count||0)>=campaign.totalLimit)throw new Error("Coupon total redemption limit reached");
   if(Number(customerUsed?.count||0)>=campaign.perCustomerLimit)throw new Error("Customer coupon limit reached");
@@ -222,7 +256,7 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
       db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open'").bind(input.bookingId,now,input.quoteId),
       // campaign_id is NOT NULL. If the quote claim or either limit guard loses a race, the subquery
       // returns NULL and aborts this entire D1 batch, rolling the quote claim back with the insert.
-      db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.status='consumed' AND q.booking_id=? AND ${customerCouponScopeSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.bookingId,input.customerId,quote.code,input.customerId,input.bookingId,quote.discount_amount,now,now),
+      db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.status='consumed' AND q.booking_id=? AND ${customerCouponScopeSql} AND ${couponBookingWindowSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.bookingId,input.bookingId,input.customerId,quote.code,input.customerId,input.bookingId,quote.discount_amount,now,now),
     ]);
     if(Number(results[0]?.meta?.changes||0)!==1||Number(results[1]?.meta?.changes||0)!==1)throw new Error("Coupon quote is no longer open");
   }catch(error){
@@ -254,10 +288,11 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
  */
 export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number;petCount?:number}):Promise<CouponBookingPreparation>{
   await ensureCouponTables(db);
-  const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit,c.customer_ids_json campaign_customer_ids_json FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
+  const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit,c.customer_ids_json campaign_customer_ids_json,c.first_order_only campaign_first_order_only FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
   if(!quote)throw new Error("Coupon quote not found");
   if(String(quote.customer_id)!==input.customerId)throw new Error("Coupon quote customer mismatch");
   const customerIds=storedCustomerIds(quote.campaign_customer_ids_json);
+  await checkNormalCouponWindow(db,customerIds,input.customerId,input.bookingId,Number(quote.campaign_first_order_only)===1);
   if(customerIds.length&&!customerIds.includes(input.customerId))throw new Error("Coupon quote customer mismatch");
   const couponPackageCode=bookingCouponPackage(input.serviceCode,input.packageCode,input.petCount);
   if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==couponPackageCode)throw new Error("Coupon quote does not match this booking");
@@ -272,8 +307,8 @@ export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId
   if(Number(totalUsed?.count||0)>=Number(quote.total_limit))throw new Error("Coupon total redemption limit reached");
   if(Number(customerUsed?.count||0)>=Number(quote.per_customer_limit))throw new Error("Customer coupon limit reached");
   const redemptionId=`CPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-  const eligibleCampaign=`SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND ${customerCouponScopeSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit`;
-  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,couponPackageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
+  const eligibleCampaign=`SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND ${customerCouponScopeSql} AND ${couponBookingWindowSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit`;
+  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,couponPackageCode,input.now,input.bookingId,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
   const claimStatement=db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open' AND EXISTS (SELECT 1 FROM coupon_redemptions WHERE id=? AND booking_id=?)").bind(input.bookingId,input.now,input.quoteId,redemptionId,input.bookingId);
   return{quoteId:input.quoteId,code:String(quote.code),campaignId:String(quote.campaign_id),discount,orderValue,finalAmount,redemptionId,redemptionStatement,claimStatement};
 }

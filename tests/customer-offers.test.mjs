@@ -56,13 +56,13 @@ test("the WELCOME coupon seed is scoped to new/first-time customers only", () =>
 test("listAvailableCoupons filters by real customer facts, not a static list", () => {
   assert.match(libSource, /customerFacts\(db,\s*customerId\)/);
   assert.match(libSource, /campaign\.customerKinds\.includes\(facts\.kind\)/);
-  assert.match(libSource, /campaign\.firstOrderOnly\s*\|\|\s*facts\.orderCount\s*===\s*0/);
+  assert.match(libSource, /campaign\.firstOrderOnly\s*&&\s*facts\.orderCount\s*>\s*0/);
   assert.match(libSource, /campaign\.code\s*===\s*WELCOME_COUPON_CODE\s*&&\s*facts\.orderCount\s*===\s*0/);
 });
 
 test("the API route requires verified customer ownership and delegates to listAvailableCoupons", () => {
   assert.match(routeSource, /listAvailableCoupons\(/);
-  assert.match(routeSource, /searchParams\.get\("customerId"\)/);
+  assert.match(routeSource, /params\.get\("customerId"\)/);
   assert.match(routeSource, /resolveActor\(/);
   assert.match(routeSource, /resolvePlatformSession\(/);
   assert.match(routeSource, /requireCustomerOwnership\(/);
