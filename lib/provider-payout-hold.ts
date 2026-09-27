@@ -36,17 +36,25 @@ export async function ensureProviderPayoutHoldTables(db:Db){
  // production behaviour is unchanged because validDays() still enforces >=1 there regardless of what the column allows.
  const existing=await db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_payout_hold_settings'").first<Row>();
  if(existing&&/hold_days\s*>=\s*1\b/.test(text(existing.sql))){
-  await db.batch([
-   db.prepare("DROP TRIGGER IF EXISTS trg_finance_payout_hold_no_update"),
-   db.prepare("DROP TRIGGER IF EXISTS trg_finance_payout_hold_no_delete"),
-   db.prepare("ALTER TABLE finance_payout_hold_settings RENAME TO finance_payout_hold_settings_pre_floor0"),
-   db.prepare("CREATE TABLE finance_payout_hold_settings (id TEXT PRIMARY KEY,hold_days INTEGER NOT NULL CHECK(hold_days>=0 AND hold_days<=60),counted_from TEXT NOT NULL DEFAULT 'service_completion' CHECK(counted_from='service_completion'),effective_from INTEGER NOT NULL,reason TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-   db.prepare("INSERT INTO finance_payout_hold_settings SELECT * FROM finance_payout_hold_settings_pre_floor0"),
-   db.prepare("DROP TABLE finance_payout_hold_settings_pre_floor0"),
-   db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_payout_hold_effective ON finance_payout_hold_settings(effective_from,created_at)"),
-   db.prepare("CREATE TRIGGER trg_finance_payout_hold_no_update BEFORE UPDATE ON finance_payout_hold_settings BEGIN SELECT RAISE(ABORT,'payout_hold_settings_append_only'); END"),
-   db.prepare("CREATE TRIGGER trg_finance_payout_hold_no_delete BEFORE DELETE ON finance_payout_hold_settings BEGIN SELECT RAISE(ABORT,'payout_hold_settings_append_only'); END"),
-  ]);
+  try{
+   await db.batch([
+    db.prepare("DROP TRIGGER IF EXISTS trg_finance_payout_hold_no_update"),
+    db.prepare("DROP TRIGGER IF EXISTS trg_finance_payout_hold_no_delete"),
+    db.prepare("ALTER TABLE finance_payout_hold_settings RENAME TO finance_payout_hold_settings_pre_floor0"),
+    db.prepare("CREATE TABLE finance_payout_hold_settings (id TEXT PRIMARY KEY,hold_days INTEGER NOT NULL CHECK(hold_days>=0 AND hold_days<=60),counted_from TEXT NOT NULL DEFAULT 'service_completion' CHECK(counted_from='service_completion'),effective_from INTEGER NOT NULL,reason TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+    db.prepare("INSERT INTO finance_payout_hold_settings SELECT * FROM finance_payout_hold_settings_pre_floor0"),
+    db.prepare("DROP TABLE finance_payout_hold_settings_pre_floor0"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_payout_hold_effective ON finance_payout_hold_settings(effective_from,created_at)"),
+    db.prepare("CREATE TRIGGER trg_finance_payout_hold_no_update BEFORE UPDATE ON finance_payout_hold_settings BEGIN SELECT RAISE(ABORT,'payout_hold_settings_append_only'); END"),
+    db.prepare("CREATE TRIGGER trg_finance_payout_hold_no_delete BEFORE DELETE ON finance_payout_hold_settings BEGIN SELECT RAISE(ABORT,'payout_hold_settings_append_only'); END"),
+   ]);
+  }catch(error){
+   // Two concurrent Workers can both see the pre-migration table and race this one-time rebuild; the loser's
+   // statements fail once the winner has already renamed the table away. If the table now carries the new
+   // constraint, the migration is done (by the other worker) - proceed rather than surface a spurious error.
+   const after=await db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_payout_hold_settings'").first<Row>();
+   if(!after||/hold_days\s*>=\s*1\b/.test(text(after.sql)))throw error;
+  }
   ready.add(db);return;
  }
  await db.batch([
