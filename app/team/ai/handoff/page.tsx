@@ -188,7 +188,7 @@ export default function AiHandoffPage() {
           }}
         >
           <div>
-            <small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · AI GATE 4</small>
+            <small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM · AI GATE 4</small>
             <h1 style={{ margin: "6px 0" }}>Human handoff & staff takeover</h1>
             <p style={{ margin: 0, color: "var(--staff-muted)" }}>
               AI pauses during staff ownership. Return to AI requires an explicit governed staff action.

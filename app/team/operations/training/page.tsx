@@ -20,14 +20,14 @@ export default function TrainingOperationsPage() {
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
           <div>
-            <small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · OPERATIONS · TRAINING</small>
+            <small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM · OPERATIONS · TRAINING</small>
             <h1 style={{ margin: "7px 0" }}>Training operations</h1>
             <p style={{ margin: 0, color: "var(--staff-muted)" }}>Session recovery, trainer replacement and canonical payment records.</p>
           </div>
           <Link href="/team/operations" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: "calc(10px * var(--paw-radius-scale))", textDecoration: "none" }}>← Operations</Link>
         </header>
         <TrainingPanel notify={notify} />
-        {toast && <p role="status" style={{ marginTop: 14, color: "var(--staff-primary)", fontWeight: 700 }}>✓ {toast}</p>}
+        {toast && <p role="status" style={{ marginTop: 14, color: "var(--paw-link)", fontWeight: 700 }}>✓ {toast}</p>}
       </div>
     </main></StaffModule>
   );

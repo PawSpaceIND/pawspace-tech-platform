@@ -72,7 +72,7 @@
 }
 :global([data-staff-module]) .integration-ready {
     background: var(--staff-raised, #e2ecff) !important;
-    color: var(--staff-primary, #315ca8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .missing-core {
     background: var(--staff-raised, #ffe3e3) !important;

@@ -18,7 +18,7 @@
 .frame .content h3 { font-size:19px !important; margin-block:12px 8px; }
 .frame .content :is(p,li,td,dd) { font-size:16px !important; line-height:1.6 !important; overflow-wrap:anywhere; }
 .frame .content :is(small,label,dt,th) { font-size:14px !important; line-height:1.55 !important; }
-.frame .content a { color:var(--brand-primary) !important; font-size:15px; text-underline-offset:4px; }
+.frame .content a { color:var(--paw-link) !important; font-size:15px; text-underline-offset:4px; }
 .frame .content :is(button,input,select,textarea) { font-family:var(--paw-font) !important; font-size:16px !important; line-height:1.5 !important; }
 .frame .content button { min-height:46px; padding:10px 16px; border:1px solid var(--brand-line); border-radius:calc(11px * var(--paw-radius-scale)); background:var(--brand-surface) !important; color:var(--brand-text) !important; font-weight:750; cursor:pointer; white-space:normal; }
 .frame .content button:disabled { opacity:.6; cursor:not-allowed; }
@@ -67,7 +67,7 @@
 .frame .content :global([class*="main_"]) { padding:24px; }
 .frame .content :global([class*="main_"]) > header { flex-wrap:wrap; gap:12px; }
 .frame .content :global([class*="precheck"]),.frame .content :global([class*="goals"]),.frame .content :global([class*="homework"]),.frame .content :global([class*="carePlan"]) { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line); }
-.frame .content :global([class*="precheck"]) span,.frame .content :global([class*="goals"]) span { font-size:14px !important; color:var(--brand-primary) !important; }
+.frame .content :global([class*="precheck"]) span,.frame .content :global([class*="goals"]) span { font-size:14px !important; color:var(--paw-link) !important; }
 .frame .content :global([class*="actions"]) { gap:10px; }
 @media(max-width:1100px) {
  .frame .content :global([class*="layout_"]),.frame .content :global([class*="todayGrid"]),.frame .content :global([class*="requestLayout"]),.frame .content :global([class*="profileGrid"]) { grid-template-columns:minmax(0,1fr) !important; }
@@ -99,8 +99,8 @@
 .frame .content main:not([class]) > div > section > div[style*="background"] { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
 .frame .content main:not([class]) > div > section > div[style*="background"] b { color:var(--brand-text) !important; }
 .frame .content :where(main:not([class]) p:not([role="alert"]),main:not([class]) label) { color:var(--brand-text) !important; }
-.frame .content main:not([class]) > div > section > p:first-child,.frame .content main:not([class]) > div > section > div[style*="background"] > small { color:var(--brand-primary) !important; }
+.frame .content main:not([class]) > div > section > p:first-child,.frame .content main:not([class]) > div > section > div[style*="background"] > small { color:var(--paw-link) !important; }
 /* Walker's no-booking entry uses a div card rather than a section. */
 .frame .content main:not([class]) > div[style*="background"] { background:var(--brand-surface) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
 .frame .content main:not([class]) > div[style*="background"] > div[style*="background"] { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
-.frame .content main:not([class]) > div[style*="background"] > p:first-child { color:var(--brand-primary) !important; }
+.frame .content main:not([class]) > div[style*="background"] > p:first-child { color:var(--paw-link) !important; }

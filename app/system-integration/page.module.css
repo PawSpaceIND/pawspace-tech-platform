@@ -40,7 +40,7 @@
 }
 :global([data-staff-module]) .top span, :global([data-staff-module]) .panel header span, :global([data-staff-module]) .external>div:first-child>span {
     font-size: 13px !important;
-    color: var(--staff-primary, #76558a) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .top p {
     color: var(--staff-muted, #766b7d) !important
@@ -116,7 +116,7 @@
 }
 :global([data-staff-module]) .integrations article>span {
     font-size: 13px !important;
-    color: var(--staff-primary, #76558a) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .external {
     background: var(--staff-primary, #2b1739) !important;
@@ -141,7 +141,7 @@
     color: var(--staff-muted, #786b7f) !important
 }
 :global([data-staff-module]) .workspace>footer a {
-    color: var(--staff-primary, #663684) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .error {
     background: var(--staff-raised, #ffe2df) !important;
@@ -149,7 +149,7 @@
 }
 :global([data-staff-module]) .loading {
     background: var(--staff-raised, #f4f1f7) !important;
-    color: var(--staff-primary, #5b386f) !important
+    color: var(--paw-link) !important
 }
 @media (max-width:680px) {
     :global([data-staff-module]) .top p {

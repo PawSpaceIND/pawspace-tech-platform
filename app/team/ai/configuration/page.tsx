@@ -52,7 +52,7 @@ export default function AiConfigurationPage(){
 
   return <StaffModule><main style={{minHeight:"100vh",background:"var(--staff-bg)",padding:28,fontFamily:"inherit",color:"var(--staff-text)"}}><div style={{maxWidth:1300,margin:"0 auto"}}>
     <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <div><small style={{fontWeight:800,color:"var(--staff-primary)"}}>PAWSPACE TEAM · AI BUSINESS CONFIGURATION</small><h1 style={{margin:"7px 0"}}>Assistant configuration & knowledge</h1><p style={{margin:0,color:"var(--staff-muted)"}}>Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate.</p></div>
+      <div><small style={{fontWeight:800,color:"var(--paw-link)"}}>PAWSPACE TEAM · AI BUSINESS CONFIGURATION</small><h1 style={{margin:"7px 0"}}>Assistant configuration & knowledge</h1><p style={{margin:0,color:"var(--staff-muted)"}}>Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate.</p></div>
       <div><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> <Link href="/team/ai" style={{marginLeft:10}}>AI review</Link> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
     </header>
     {error&&<div role="alert" style={{padding:12,background:"var(--staff-danger-bg)",borderRadius:"calc(10px * var(--paw-radius-scale))",marginBottom:12}}>{error}</div>}

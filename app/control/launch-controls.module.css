@@ -14,7 +14,7 @@
 }
 :global([data-staff-module]) .badge {
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #4d1a77) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .metrics article, :global([data-staff-module]) .panel {
@@ -30,7 +30,7 @@
 }
 :global([data-staff-module]) .button {
     background: var(--staff-raised, #f2ebf7) !important;
-    color: var(--staff-primary, #592283) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .primary {
     background: var(--staff-primary, #61249c) !important;
@@ -53,7 +53,7 @@
 :global([data-staff-module]) .chips span {
     font-size: 13px !important;
     background: var(--staff-raised, #f3edf7) !important;
-    color: var(--staff-primary, #5c2a7c) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .protected {
     color: var(--staff-danger, #8d5a00) !important;
@@ -92,7 +92,7 @@
 :global([data-staff-module]) .customerActions button {
     font-size: 13px !important;
     background: var(--staff-raised, #f0e8f5) !important;
-    color: var(--staff-primary, #55207c) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .search {
     border: 1px solid var(--staff-line, #ddd2e4) !important

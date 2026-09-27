@@ -11,7 +11,7 @@
 .surface button:not([style]){padding:10px 14px;background:var(--staff-primary);color:var(--staff-on-primary);border:1px solid var(--staff-primary);border-radius:calc(9px * var(--paw-radius-scale));font-weight:800}
 .surface button:disabled{opacity:.65}
 .surface h2{font-size:24px}.surface h3{font-size:20px}
-.surface a{color:var(--staff-primary)}
+.surface a{color:var(--paw-link)}
 .statGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0}
 .statGrid>*{min-width:0;background:var(--staff-surface);border-color:var(--staff-line)}
 @media(max-width:1250px){.statGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}

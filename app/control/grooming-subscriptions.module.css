@@ -38,7 +38,7 @@
 }
 :global([data-staff-module]) .tabs .activeTab {
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #6524a0) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .filters input, :global([data-staff-module]) .filters select {
     border: 1px solid var(--staff-line, #ded6e3) !important;
@@ -88,14 +88,14 @@
 :global([data-staff-module]) .actions button, :global([data-staff-module]) .rule button, :global([data-staff-module]) .channel button {
     border: 1px solid var(--staff-line, #ddd3e3) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #6524a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .rule {
     border-top: 1px solid var(--staff-line, #eee9f1) !important
 }
 :global([data-staff-module]) .rule p {
-    color: var(--staff-primary, #64249f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .rule>b {
@@ -149,7 +149,7 @@
 }
 :global([data-staff-module]) .footer span {
     font-size: 13px !important;
-    color: var(--staff-primary, #6b25a4) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .footer h3 {
     font-size: 13px !important
@@ -159,6 +159,6 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .footer button {
-    color: var(--staff-primary, #64249f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }

@@ -40,7 +40,7 @@
 }
 :global([data-staff-module]) .side nav b {
     background: var(--staff-danger, #f2a21c) !important;
-    color: var(--staff-primary, #16203a) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .layers p {
@@ -52,7 +52,7 @@
 }
 :global([data-staff-module]) .user>i {
     background: var(--staff-danger, #f2a21c) !important;
-    color: var(--staff-primary, #17203a) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .user strong {
@@ -111,7 +111,7 @@
 :global([data-staff-module]) .head button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .signal {
@@ -131,7 +131,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .signal>b {
-    color: var(--staff-primary, #263c69) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .bar span, :global([data-staff-module]) .bar strong {
@@ -148,7 +148,7 @@
     background: var(--staff-surface, white) !important
 }
 :global([data-staff-module]) .modules i {
-    color: var(--staff-primary, #2c4778) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .modules strong {
     font-size: 13px !important
@@ -158,11 +158,11 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .modules span {
-    color: var(--staff-primary, #285c97) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .modules button {
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .role {
@@ -218,7 +218,7 @@
 :global([data-staff-module]) .approval button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .approval button:last-child {
@@ -250,7 +250,7 @@
     border: 1px solid var(--staff-line, #e1dce4) !important
 }
 :global([data-staff-module]) .record span {
-    color: var(--staff-primary, #2d5c96) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .record strong, :global([data-staff-module]) .record small {
@@ -289,7 +289,7 @@
 :global([data-staff-module]) .purchase button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .case {
@@ -318,7 +318,7 @@
 :global([data-staff-module]) .health button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .flag {

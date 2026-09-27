@@ -23,7 +23,7 @@
 }
 :global([data-staff-module]) .hero button+button {
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #4f1a92) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .sourceBanner {
     border: 1px solid var(--staff-line, #d7c6ec) !important;
@@ -40,7 +40,7 @@
 :global([data-staff-module]) .sourceBanner button, :global([data-staff-module]) .filters button, :global([data-staff-module]) .panel header button, :global([data-staff-module]) .reportFormats button, :global([data-staff-module]) .customerActions button {
     border: 1px solid var(--staff-line, #ddd1ea) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .sourceBanner aside {
     border-top: 1px solid var(--staff-line, #e8dff1) !important;
@@ -48,7 +48,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .sourceBanner aside strong {
-    color: var(--staff-primary, #27143c) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .filters {
     border: 1px solid var(--staff-line, #e6deed) !important;
@@ -61,7 +61,7 @@
 :global([data-staff-module]) .filters select {
     border: 1px solid var(--staff-line, #e2d8eb) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #2c1a3f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .tabs {
     background: var(--staff-raised, #ebe4f2) !important
@@ -71,7 +71,7 @@
 }
 :global([data-staff-module]) .tabs .active {
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .metrics article {
     border: 1px solid var(--staff-line, #e7deef) !important;
@@ -82,7 +82,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .metrics strong {
-    color: var(--staff-primary, #32125f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .metrics small {
     color: var(--staff-muted, #817888) !important;
@@ -116,13 +116,13 @@
 }
 :global([data-staff-module]) .action i {
     background: var(--staff-raised, #f2eafb) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .action small {
     color: var(--staff-muted, #756c7d) !important
 }
 :global([data-staff-module]) .action b {
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .reconcile {
@@ -133,7 +133,7 @@
     background: var(--staff-surface, #fff) !important
 }
 :global([data-staff-module]) .reconcile>div span {
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .reconcile>div strong {
@@ -153,7 +153,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .table article strong {
-    color: var(--staff-primary, #31135d) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .table article b {
     color: var(--staff-success, #087a51) !important
@@ -165,7 +165,7 @@
 }
 :global([data-staff-module]) .ledger em {
     background: var(--staff-raised, #f4edf9) !important;
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .panel header input {
@@ -178,14 +178,14 @@
 }
 :global([data-staff-module]) .customerRow>i {
     background: var(--staff-raised, #f1e8fa) !important;
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerRow small {
     color: var(--staff-muted, #7b7282) !important
 }
 :global([data-staff-module]) .customerRow>b {
-    color: var(--staff-primary, #34106f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerRow em {
@@ -209,7 +209,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerMetrics strong {
-    color: var(--staff-primary, #351164) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .detail {
     border-bottom: 1px solid var(--staff-line, var(--ui-canvas)) !important;
@@ -233,7 +233,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .subscriptionGrid article>b {
-    color: var(--staff-primary, #351064) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .subscriptionGrid article small {
     color: var(--staff-muted, #6f6677) !important;
@@ -253,7 +253,7 @@
 }
 :global([data-staff-module]) .reportList i {
     background: var(--staff-raised, #f2eafb) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .reportList span {
     color: var(--staff-muted, #786f80) !important;
@@ -266,7 +266,7 @@
 :global([data-staff-module]) .reportList button {
     border: 1px solid var(--staff-line, #dfd5e7) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .reportSafety {
@@ -282,7 +282,7 @@
     background: var(--staff-surface, #fff) !important
 }
 :global([data-staff-module]) .reportBuilder header span {
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .reportBuilder p {
@@ -296,7 +296,7 @@
 :global([data-staff-module]) .builderGrid input, :global([data-staff-module]) .builderGrid select {
     border: 1px solid var(--staff-line, #e1d7e9) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #2c1a3f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .builderChecks {
     color: var(--staff-muted, #5f5568) !important;
@@ -335,11 +335,11 @@
     background: var(--staff-surface, #fff) !important
 }
 :global([data-staff-module]) .modal header span {
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .modal header h3 {
-    color: var(--staff-primary, #29133f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .modal header p {
     color: var(--staff-muted, #746a7d) !important;
@@ -348,12 +348,12 @@
 :global([data-staff-module]) .modal header>button {
     border: 1px solid var(--staff-line, #e1d7e9) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .quickRanges button {
     border: 1px solid var(--staff-line, var(--ui-brand-wash)) !important;
     background: var(--staff-surface, #faf7fc) !important;
-    color: var(--staff-primary, #5d22a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .modalGrid label {
@@ -363,7 +363,7 @@
 :global([data-staff-module]) .modalGrid input, :global([data-staff-module]) .modalGrid select {
     border: 1px solid var(--staff-line, #dfd4e7) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #2b173e) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .customerDateNote {
     border: 1px solid var(--staff-line, #cfe7db) !important;
@@ -386,7 +386,7 @@
 :global([data-staff-module]) .modal footer button {
     border: 1px solid var(--staff-line, #dacfe3) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #5d22a8) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .modal footer button:last-child {
     border-color: var(--staff-line, #5d22a8) !important;

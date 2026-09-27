@@ -5,7 +5,7 @@
 .nav a {
   display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 15px;
   border: 1px solid var(--line, var(--staff-line, #e6e1ef)); border-radius: 999px; background: var(--staff-surface, var(--ui-surface));
-  color: var(--purple, var(--staff-primary, #4c1d95)); font-size: 15px; font-weight: 700; text-decoration: none;
+  color: var(--purple, var(--paw-link)); font-size: 15px; font-weight: 700; text-decoration: none;
   transition: background .15s ease, border-color .15s ease, transform .15s ease;
 }
 .nav a:hover { background: var(--staff-raised, var(--ui-surface)); border-color: var(--staff-line, var(--ui-brand-line)); transform: translateY(-1px); }

@@ -472,7 +472,7 @@
 .page.page[data-v2-home] .serviceCopy>span,.page.page[data-v2-home] .serviceCopy>p,.page.page[data-v2-home] .serviceCard:not(.serviceDisabled) .serviceState { display:none; }
 .page.page[data-v2-home] .serviceDisabled { filter:none; border-style:dashed; }
 .page.page[data-v2-home] .serviceDisabled .serviceState { margin:3px 0 0; padding:0; font-size:10px !important; line-height:1.3; background:transparent !important; }
-.page.page[data-v2-home] .serviceIcon { order:0; width:28px; height:28px; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:var(--brand-primary); }
+.page.page[data-v2-home] .serviceIcon { order:0; width:28px; height:28px; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:var(--paw-link); }
 .page.page[data-v2-home] .serviceArt,.page.page[data-v2-home] .serviceHero .serviceArt { order:0; position:static; width:44px; height:32px; justify-content:center; align-items:center; }
 .page.page[data-v2-home] .serviceArt img { max-width:44px; max-height:32px; filter:none; }
 .page.page[data-v2-home] .familyStrip { order:4; margin:0; min-height:0; padding:12px; border-radius:calc(14px * var(--paw-radius-scale)); grid-template-columns:1fr; gap:8px; box-shadow:none; }
@@ -522,5 +522,5 @@
   .page.page[data-v2-home] .navCenter a { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .page.page[data-v2-home] .mobileDock b { font-size:11px !important; }
   .page.page[data-v2-home] .mobileDock a:first-child { background:var(--brand-raised); }
-  .page.page[data-v2-home] .mobileDock a:first-child :is(span,b) { color:var(--brand-primary) !important; }
+  .page.page[data-v2-home] .mobileDock a:first-child :is(span,b) { color:var(--paw-link) !important; }
 }

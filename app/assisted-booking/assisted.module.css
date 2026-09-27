@@ -26,7 +26,7 @@
 }
 :global([data-staff-module]) .shell nav a:hover, :global([data-staff-module]) .shell nav .active {
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #401574) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .access small {
     color: var(--staff-on-primary, #cdbce0) !important;
@@ -42,7 +42,7 @@
 :global([data-staff-module]) .headerMeta span, :global([data-staff-module]) .headerMeta button {
     border: 1px solid var(--staff-line, #dfd6e5) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #4c2a6d) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .stats article, :global([data-staff-module]) .customerPanel, :global([data-staff-module]) .workspace, :global([data-staff-module]) .automation, :global([data-staff-module]) .truth {
     background: var(--staff-surface, white) !important;
@@ -54,7 +54,7 @@
 }
 :global([data-staff-module]) .panelHead button, :global([data-staff-module]) .panelHead a {
     background: var(--staff-raised, #f1e7fa) !important;
-    color: var(--staff-primary, #551f88) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerPanel>input {
@@ -80,7 +80,7 @@
 }
 :global([data-staff-module]) .customerList>button>span, :global([data-staff-module]) .avatar {
     background: var(--staff-raised, #f0e6f9) !important;
-    color: var(--staff-primary, #5e2591) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .customerList small {
     color: var(--staff-muted, #7e7187) !important
@@ -98,7 +98,7 @@
 }
 :global([data-staff-module]) .new {
     background: var(--staff-raised, #e8effc) !important;
-    color: var(--staff-primary, #315d9a) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .customerList strong {
     font-size: 13px !important;
@@ -123,7 +123,7 @@
     border-bottom: 1px solid var(--staff-line, var(--ui-canvas)) !important
 }
 :global([data-staff-module]) .customerTabs .on {
-    color: var(--staff-primary, var(--ui-brand-primary)) !important;
+    color: var(--paw-link) !important;
     border-bottom: 2px solid var(--staff-line, var(--ui-brand-primary)) !important
 }
 :global([data-staff-module]) .steps button {
@@ -134,7 +134,7 @@
     background: var(--staff-raised, #e7e1ea) !important
 }
 :global([data-staff-module]) .steps .done {
-    color: var(--staff-primary, #552086) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .steps .done span {
     background: var(--staff-primary, #552086) !important;
@@ -150,14 +150,14 @@
     background: var(--staff-raised, #f8f1fe) !important
 }
 :global([data-staff-module]) .serviceGrid span {
-    color: var(--staff-primary, #67299e) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .serviceGrid small {
     color: var(--staff-success, #2f8053) !important
 }
 :global([data-staff-module]) .primary {
     background: var(--staff-danger, #ff9c1a) !important;
-    color: var(--staff-primary, #291342) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .two label {
     font-size: 13px !important
@@ -205,14 +205,14 @@
 :global([data-staff-module]) .confirmActions button {
     border: 1px solid var(--staff-line, #ddd3e4) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #5b248f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .automationGrid article {
     background: var(--staff-surface, #faf8fb) !important;
     border: 1px solid var(--staff-line, #eee8f1) !important
 }
 :global([data-staff-module]) .automationGrid span {
-    color: var(--staff-primary, #692aa0) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .automationGrid p {
     font-size: 13px !important;

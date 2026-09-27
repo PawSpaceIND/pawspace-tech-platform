@@ -40,7 +40,7 @@
 .shell .choice[aria-pressed="true"]::after { content:"✓"; position:absolute; top:13px; right:14px; display:grid; place-items:center; width:25px; height:25px; border-radius:50%; background:var(--brand-primary); color:var(--brand-on-primary); font-size:14px; font-weight:900; }
 .shell .choice strong { display:block; font-size:17px; line-height:1.35; }
 .shell .choice div { margin-top:5px; color:var(--brand-muted); line-height:1.5; }
-.shell .choice b { display:block; margin-top:10px; font-size:22px; line-height:1.2; color:var(--brand-primary); }
+.shell .choice b { display:block; margin-top:10px; font-size:22px; line-height:1.2; color:var(--paw-link); }
 .shell .choice small { margin-top:4px; color:var(--brand-muted); }
 .shell label { display:grid; gap:8px; color:var(--brand-text); font-weight:750; }
 .shell .input,.shell select { min-height:50px; padding:12px 14px; border-color:var(--brand-line); background:var(--brand-surface); }
@@ -49,7 +49,7 @@
 .shell .card > p { color:var(--brand-muted); line-height:1.65; }
 .shell .stickyCard { bottom:16px; z-index:8; padding:18px 20px; border:1px solid color-mix(in srgb,var(--brand-primary) 30%,var(--brand-line)); border-radius:calc(20px * var(--paw-radius-scale)); background:var(--brand-surface); box-shadow:0 18px 44px color-mix(in srgb,var(--brand-text) 16%,transparent); }
 .shell .stickyCard > div { min-width:0; }
-.shell .stickyCard > div > strong { display:block; margin-bottom:3px; font-size:30px; line-height:1.15; color:var(--brand-primary); }
+.shell .stickyCard > div > strong { display:block; margin-bottom:3px; font-size:30px; line-height:1.15; color:var(--paw-link); }
 .shell .stickyCard > div > div { font-size:16px; font-weight:750; line-height:1.45; }
 .shell .stickyCard > div > small { display:block; margin-top:4px; color:var(--brand-muted); }
 .shell .stickyCard > button { min-width:330px; min-height:54px; border:0; border-radius:999px; background:var(--brand-primary); color:var(--brand-on-primary); font-size:17px; font-weight:850; box-shadow:0 10px 24px color-mix(in srgb,var(--brand-primary) 20%,transparent); }

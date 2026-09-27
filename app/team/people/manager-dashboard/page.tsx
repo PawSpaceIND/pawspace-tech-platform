@@ -15,7 +15,7 @@ type Dashboard = {
 };
 
 const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
-const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 14, color: "var(--staff-primary)", fontWeight: 700, borderBottom: "2px solid var(--staff-line)" };
+const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 14, color: "var(--paw-link)", fontWeight: 700, borderBottom: "2px solid var(--staff-line)" };
 const td: React.CSSProperties = { padding: "8px 10px", fontSize: 15, borderBottom: "1px solid var(--staff-line)" };
 
 export default function ManagerDashboardPage() {
@@ -32,7 +32,7 @@ export default function ManagerDashboardPage() {
   return (
     <StaffModule><main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "inherit", color: "var(--staff-text)" }}>
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--staff-primary)" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--paw-link)" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Manager / Founder dashboard</h1>
         <p style={{ maxWidth: 900, color: "var(--staff-muted)" }}>
           A real, complete company view before your meeting - only the people who actually report to you (managers), or everyone across every vertical (founders, People, Payroll, Audit).

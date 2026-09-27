@@ -85,7 +85,7 @@ export default function EscalationRefundPanel({ bookingId }: { bookingId: string
   if (hidden) return null;
   const box: React.CSSProperties = { border: "1px solid var(--staff-line, #d9d9d9)", borderRadius: "calc(12px * var(--paw-radius-scale))", padding: 14, marginTop: 14, background: "var(--staff-surface, #fff)" };
   return <section style={box} aria-label="Refund after completion">
-    <header><small style={{ fontWeight: 800, letterSpacing: 1, color: "var(--staff-primary, #01261f)" }}>REFUND AFTER COMPLETION</small><h3 style={{ margin: "4px 0" }}>Refund part of what the customer paid</h3><p style={{ margin: 0, color: "var(--staff-muted, #555)" }}>Finance approves it, then it goes back to the customer&apos;s original payment method. The provider&apos;s share is taken off their payout.</p></header>
+    <header><small style={{ fontWeight: 800, letterSpacing: 1, color: "var(--paw-link)" }}>REFUND AFTER COMPLETION</small><h3 style={{ margin: "4px 0" }}>Refund part of what the customer paid</h3><p style={{ margin: 0, color: "var(--staff-muted, #555)" }}>Finance approves it, then it goes back to the customer&apos;s original payment method. The provider&apos;s share is taken off their payout.</p></header>
     {error && <p role="alert" style={{ color: "var(--staff-danger, #b3261e)" }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!position ? <p style={{ color: "var(--staff-muted, #555)" }}>Loading what this booking can refund…</p> : <>

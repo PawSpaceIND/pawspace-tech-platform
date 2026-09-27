@@ -194,7 +194,7 @@
 }
 :global([data-staff-module]) .completed {
     background: var(--staff-raised, #eaf0fb) !important;
-    color: var(--staff-primary, #395d99) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .campaign select {
     border: 1px solid var(--staff-line, #d5e3de) !important;

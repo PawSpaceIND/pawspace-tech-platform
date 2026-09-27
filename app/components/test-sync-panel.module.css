@@ -3,10 +3,10 @@
 /* STAFF CRM/CONTROL OPT-IN: original stylesheet above remains unchanged. */
 :global([data-staff-module]) .panel,:global([data-staff-module]) .empty { background:var(--staff-raised); color:var(--staff-text); border-color:var(--staff-line); font-family:var(--paw-font); padding:16px; }
 :global([data-staff-module]) .empty { gap:14px; flex-wrap:wrap; }
-:global([data-staff-module]) .empty span,:global([data-staff-module]) .top span { color:var(--staff-primary); font-size:13px; }
+:global([data-staff-module]) .empty span,:global([data-staff-module]) .top span { color:var(--paw-link); font-size:13px; }
 :global([data-staff-module]) .empty b,:global([data-staff-module]) .top b { font-size:15px; }
 :global([data-staff-module]) .empty small,:global([data-staff-module]) .top small,:global([data-staff-module]) .foot small,:global([data-staff-module]) .facts small,:global([data-staff-module]) .foot span { color:var(--staff-muted); font-size:13px; }
-:global([data-staff-module]) .empty a,:global([data-staff-module]) .actions a { color:var(--staff-primary); font-size:14px; padding:8px 0; }
+:global([data-staff-module]) .empty a,:global([data-staff-module]) .actions a { color:var(--paw-link); font-size:14px; padding:8px 0; }
 :global([data-staff-module]) .facts b { font-size:14px; }
 :global([data-staff-module]) .facts>span { background:var(--staff-surface); }
 :global([data-staff-module]) .actions button { min-height:42px; background:var(--staff-primary); color:var(--staff-on-primary); font-size:14px; }

@@ -30,7 +30,7 @@
   border-radius: calc(10px * var(--paw-radius-scale));
   border: 1px solid var(--staff-line, var(--ui-line));
   background: var(--staff-surface, var(--ui-surface));
-  color: var(--staff-primary, var(--ui-brand-deep));
+  color: var(--paw-link);
   font-weight: 700;
   font-size: 14px;
   text-decoration: none;
@@ -61,7 +61,7 @@
 
 .alertError { background: var(--staff-danger-bg, #fff1f1); color: var(--staff-danger, #b42318); border: 1px solid var(--staff-line, #f6c8c4); }
 .alertSuccess { background: var(--staff-success-bg, #eefaf1); color: var(--staff-success, #14663c); border: 1px solid var(--staff-line, #bfe6cd); }
-.alertInfo { background: var(--staff-raised, #f2f0fb); color: var(--staff-primary, #4b168c); border: 1px solid var(--staff-line, #ddd3ee); }
+.alertInfo { background: var(--staff-raised, #f2f0fb); color: var(--paw-link); border: 1px solid var(--staff-line, #ddd3ee); }
 
 .section {
   background: var(--staff-surface, var(--ui-surface));

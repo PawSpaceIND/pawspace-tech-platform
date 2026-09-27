@@ -25,7 +25,7 @@
 .shell .card:has(>label) > p { margin:0 0 2px; }
 .shell .card button { min-height:48px; border:1px solid var(--brand-primary); border-radius:calc(12px * var(--paw-radius-scale)); padding:11px 18px; background:var(--brand-primary); color:var(--brand-on-primary); font:800 16px/1.5 "PawSpaceNunito",system-ui,sans-serif; }
 .shell .card button:disabled { opacity:.6; cursor:not-allowed; }
-.shell .card a { color:var(--brand-primary); font-weight:750; text-underline-offset:4px; }
+.shell .card a { color:var(--paw-link); font-weight:750; text-underline-offset:4px; }
 .shell .row { padding:16px 0; border-bottom:1px solid var(--brand-line); overflow-wrap:anywhere; }
 .shell [role="alert"] { color:var(--brand-danger); }
 .shell > [role="alert"],.shell .card > [role="alert"] { padding:14px 16px; background:var(--brand-danger-bg); border:1px solid var(--brand-danger); border-radius:calc(12px * var(--paw-radius-scale)); margin-bottom:14px; }

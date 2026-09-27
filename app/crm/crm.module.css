@@ -36,7 +36,7 @@
 }
 :global([data-staff-module]) .brand span {
     background: var(--staff-danger, #f2a11d) !important;
-    color: var(--staff-primary, #2d103f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .workspace span, :global([data-staff-module]) .integrations>span {
@@ -71,7 +71,7 @@
 }
 :global([data-staff-module]) .user>span {
     background: var(--staff-danger, #f2a11d) !important;
-    color: var(--staff-primary, #2d103f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .user strong {
@@ -88,7 +88,7 @@
 :global([data-staff-module]) .main>header label {
     border: 1px solid var(--staff-line, #e0d9e5) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #765f87) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .main>header input {
     font-size: 13px !important
@@ -148,7 +148,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .panelHead button, :global([data-staff-module]) .panelHead select {
-    color: var(--staff-primary, #6524a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .signal {
@@ -166,7 +166,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .signal>b {
-    color: var(--staff-primary, #6725a3) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .urgent {
@@ -175,7 +175,7 @@
 }
 :global([data-staff-module]) .sales {
     background: var(--staff-raised, #e8f1ff) !important;
-    color: var(--staff-primary, #285aa1) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .renewal {
     background: var(--staff-raised, #fff0d7) !important;
@@ -187,7 +187,7 @@
 }
 :global([data-staff-module]) .payment {
     background: var(--staff-raised, #f0e8fb) !important;
-    color: var(--staff-primary, #6723a5) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .high {
     background: var(--staff-raised, #fff0d7) !important;
@@ -201,7 +201,7 @@
     border-bottom: 1px solid var(--staff-line, #eee9f1) !important
 }
 :global([data-staff-module]) .queue>strong {
-    color: var(--staff-primary, #6925a5) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .revenue span {
     font-size: 13px !important
@@ -231,7 +231,7 @@
 :global([data-staff-module]) .customerTools button {
     border: 1px solid var(--staff-line, #ddd4e4) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #63239e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerHead {
@@ -249,7 +249,7 @@
 }
 :global([data-staff-module]) .identity>i {
     background: var(--staff-raised, #ede4f5) !important;
-    color: var(--staff-primary, #6625a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .customerList strong {
@@ -272,11 +272,11 @@
 }
 :global([data-staff-module]) .vip {
     background: var(--staff-raised, #efe6f8) !important;
-    color: var(--staff-primary, #65249f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .newlead {
     background: var(--staff-raised, #e8f1ff) !important;
-    color: var(--staff-primary, #285aa1) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .atrisk {
     background: var(--staff-raised, #ffe5e7) !important;
@@ -284,7 +284,7 @@
 }
 :global([data-staff-module]) .trial {
     background: var(--staff-raised, #e7f4f6) !important;
-    color: var(--staff-primary, #146c75) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .profileHead>span {
     background: var(--staff-primary, #64249f) !important;
@@ -302,7 +302,7 @@
 :global([data-staff-module]) .quick button {
     border: 1px solid var(--staff-line, #ded5e5) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #63249e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .profileTabs {
@@ -314,7 +314,7 @@
 }
 :global([data-staff-module]) .profileTabs .activeTab {
     border-bottom-color: var(--staff-line, #6a25a6) !important;
-    color: var(--staff-primary, #64229f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .petCard {
     background: var(--staff-raised, #f7f2fa) !important
@@ -331,7 +331,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .petCard button {
-    color: var(--staff-primary, #62239e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .overview dl div {
@@ -400,7 +400,7 @@
 :global([data-staff-module]) .suggestions button {
     border: 1px solid var(--staff-line, #ded5e5) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #63249e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .suggestions button:first-of-type {
@@ -444,7 +444,7 @@
 }
 :global([data-staff-module]) .kanban footer i {
     background: var(--staff-raised, #eee5f5) !important;
-    color: var(--staff-primary, #6524a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .kanban footer b {
@@ -479,7 +479,7 @@
 }
 :global([data-staff-module]) .threads>button>i {
     background: var(--staff-raised, #ebe2f4) !important;
-    color: var(--staff-primary, #64249f) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .threads strong {
@@ -504,7 +504,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .chat>header button {
-    color: var(--staff-primary, #6524a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .messages {
@@ -550,7 +550,7 @@
 :global([data-staff-module]) .task>button {
     border: 1px solid var(--staff-line, #d8cedf) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #6725a3) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .sla {
     background: var(--staff-raised, #f6f2f8) !important
@@ -626,7 +626,7 @@
     color: var(--staff-success, #167550) !important
 }
 :global([data-staff-module]) .automationGrid footer button {
-    color: var(--staff-primary, #6524a0) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .campaign {
@@ -645,7 +645,7 @@
 :global([data-staff-module]) .campaign button {
     border: 1px solid var(--staff-line, #ddd4e4) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #63249e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .funnel span, :global([data-staff-module]) .leak span {

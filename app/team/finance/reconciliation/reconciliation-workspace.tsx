@@ -52,7 +52,7 @@ function Table({ title, headings, empty, children, count }: { title: string; hea
     <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}><thead><tr>{headings.map(h => <th key={h} style={{ ...cell, textAlign: "left", background: "var(--staff-raised)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
       <tbody>{count === 0 ? <tr><td colSpan={headings.length} style={{ padding: 24, textAlign: "center", color: "var(--staff-muted)" }}>{empty}</td></tr> : children}</tbody></table></div></section>;
 }
-const bookingLink = (bookingId: string | null) => bookingId ? <Link href={`/team/operations/bookings?bookingId=${encodeURIComponent(bookingId)}`} style={{ color: "var(--staff-primary)", fontWeight: 700 }}>{bookingId}</Link> : "—";
+const bookingLink = (bookingId: string | null) => bookingId ? <Link href={`/team/operations/bookings?bookingId=${encodeURIComponent(bookingId)}`} style={{ color: "var(--paw-link)", fontWeight: 700 }}>{bookingId}</Link> : "—";
 
 /** Read-only: what Finance has to clear, as GET /api/payment-reconciliation?view=overview reports it. */
 export function PaymentReconciliationView({ data, status, onStatus, loading, error }: { data: ReconciliationOverview | null; status: string; onStatus: (status: string) => void; loading: boolean; error: string }) {
@@ -98,7 +98,7 @@ export default function ReconciliationWorkspace() {
   return <main style={{ minHeight: "100vh", background: "var(--staff-bg)", padding: "32px", color: "var(--staff-text)" }}>
     <div style={{ maxWidth: 1420, margin: "0 auto" }}>
       <header style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 20, alignItems: "center", marginBottom: 24 }}>
-        <div><small style={{ fontWeight: 800, letterSpacing: 1.4, color: "var(--staff-primary)" }}>PAWSPACE TEAM · FINANCE</small><h1 style={{ fontSize: 32, margin: "8px 0" }}>Payment reconciliation &amp; exceptions</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>Over-collections, refund overages, captures no booking owns and captures stuck before they reached the books, for every service.</p></div>
+        <div><small style={{ fontWeight: 800, letterSpacing: 1.4, color: "var(--paw-link)" }}>PAWSPACE TEAM · FINANCE</small><h1 style={{ fontSize: 32, margin: "8px 0" }}>Payment reconciliation &amp; exceptions</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>Over-collections, refund overages, captures no booking owns and captures stuck before they reached the books, for every service.</p></div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><button type="button" disabled={loading} onClick={() => void load()} style={{ padding: "11px 16px", borderRadius: "calc(10px * var(--paw-radius-scale))", border: "1px solid var(--staff-line)", background: "var(--staff-surface)", fontWeight: 700 }}>Refresh</button><Link href="/team/finance" style={{ padding: "11px 16px", borderRadius: "calc(10px * var(--paw-radius-scale))", background: "var(--staff-primary)", color: "var(--staff-on-primary)", textDecoration: "none", fontWeight: 700 }}>Finance home</Link></div>
       </header>
       <PaymentReconciliationView data={data} status={status} onStatus={next => { setStatus(next); void load(next); }} loading={loading} error={error} />

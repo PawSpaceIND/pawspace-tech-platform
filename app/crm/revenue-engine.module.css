@@ -70,7 +70,7 @@
     background: var(--staff-surface, #fff) !important
 }
 :global([data-staff-module]) .workspace>header span, :global([data-staff-module]) .controlCard>header span {
-    color: var(--staff-primary, #6b299f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .workspace>header p, :global([data-staff-module]) .controlCard>p {
     color: var(--staff-muted, #807588) !important;
@@ -98,7 +98,7 @@
 }
 :global([data-staff-module]) .person>b {
     background: var(--staff-raised, #eee5f5) !important;
-    color: var(--staff-primary, #64249e) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .leadCard, :global([data-staff-module]) .ticket {
@@ -121,7 +121,7 @@
 }
 :global([data-staff-module]) .leadCard em {
     background: var(--staff-raised, #f1e8f8) !important;
-    color: var(--staff-primary, #6824a3) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .breached em {
@@ -144,12 +144,12 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .attemptProgress b {
-    color: var(--staff-primary, #6625a1) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .leadCard footer button:first-child, :global([data-staff-module]) .ticket footer button:first-child {
     border: 1px solid var(--staff-line, #d8cde0) !important;
     background: var(--staff-surface, #fff) !important;
-    color: var(--staff-primary, #63249f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .rnrList>article {
     border: 1px solid var(--staff-line, #e5dde9) !important
@@ -179,7 +179,7 @@
 }
 :global([data-staff-module]) .channel button {
     background: var(--staff-raised, #f2edf6) !important;
-    color: var(--staff-primary, #62239d) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .rnrActions button:first-child {
     background: var(--staff-success, #197553) !important
@@ -209,7 +209,7 @@
 }
 :global([data-staff-module]) .medium {
     background: var(--staff-raised, #e9effb) !important;
-    color: var(--staff-primary, #315a96) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .low {
     background: var(--staff-raised, #e7f5ee) !important;
@@ -253,7 +253,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .miniList em, :global([data-staff-module]) .deliveryList em {
-    color: var(--staff-primary, #67249f) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .checkList button {
     background: var(--staff-raised, #f4f0f6) !important;

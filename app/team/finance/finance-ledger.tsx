@@ -59,12 +59,12 @@ export function FinanceLedger({ data, loading, service, onService }: { data: Fin
           <article key={String(name)} style={card}><small style={{ color: "var(--staff-muted)" }}>{name}</small><strong style={{ display: "block", fontSize: 23, marginTop: 7 }}>{value}</strong></article>)}
       </section>
       {data.openExceptions > 0 && <section role="status" style={{ padding: 16, borderRadius: "calc(12px * var(--paw-radius-scale))", background: "var(--staff-warning-bg)", border: "1px solid var(--staff-line)", marginBottom: 18 }}>
-        <b>{data.openExceptions} open payment exception(s) need Finance review.</b> <Link href="/team/finance/reconciliation" style={{ color: "var(--staff-primary)", fontWeight: 700 }}>Open reconciliation &amp; exceptions</Link>
+        <b>{data.openExceptions} open payment exception(s) need Finance review.</b> <Link href="/team/finance/reconciliation" style={{ color: "var(--paw-link)", fontWeight: 700 }}>Open reconciliation &amp; exceptions</Link>
       </section>}
       <section style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--staff-line)" }}><b>By service</b></div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}><thead><tr>{["Service", "Bookings", "Paid", "Captured", "Refunded", "Need reconciliation"].map(h => <th key={h} style={{ ...cell, textAlign: "left", background: "var(--staff-raised)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>
-          {shown.map(row => <tr key={row.code}><td style={{ ...cell, fontWeight: 700 }}>{row.workspace ? <Link href={row.workspace} style={{ color: "var(--staff-primary)" }}>{row.label}</Link> : row.label}</td><td style={cell}>{row.bookings}</td><td style={cell}>{row.paidBookings}</td><td style={cell}>{money(row.captured)}</td><td style={cell}>{money(row.refunded)}</td><td style={cell}>{row.attention}</td></tr>)}
+          {shown.map(row => <tr key={row.code}><td style={{ ...cell, fontWeight: 700 }}>{row.workspace ? <Link href={row.workspace} style={{ color: "var(--paw-link)" }}>{row.label}</Link> : row.label}</td><td style={cell}>{row.bookings}</td><td style={cell}>{row.paidBookings}</td><td style={cell}>{money(row.captured)}</td><td style={cell}>{money(row.refunded)}</td><td style={cell}>{row.attention}</td></tr>)}
         </tbody></table></div>
       </section>
       <section style={{ ...card, padding: 0, overflow: "hidden" }}>
@@ -74,7 +74,7 @@ export function FinanceLedger({ data, loading, service, onService }: { data: Fin
           {data.items.map(item => {
             const href = bookingWorkspaceHref(item), flagged = ATTENTION.has(String(item.reconciliationStatus)) || item.openExceptions > 0;
             return <tr key={item.bookingId} data-booking-id={item.bookingId}>
-              <td style={{ ...cell, fontWeight: 700, whiteSpace: "nowrap" }}>{href ? <Link href={href} style={{ color: "var(--staff-primary)" }}>{item.bookingId}</Link> : item.bookingId}</td>
+              <td style={{ ...cell, fontWeight: 700, whiteSpace: "nowrap" }}>{href ? <Link href={href} style={{ color: "var(--paw-link)" }}>{item.bookingId}</Link> : item.bookingId}</td>
               <td style={cell}>{financeServiceLabel(item.serviceCode)}</td>
               <td style={cell}>{item.packageName}</td>
               <td style={cell}>{label(item.bookingStatus)}</td>

@@ -6,7 +6,7 @@
 .page.page * { box-sizing:border-box; }
 .page h1 { font-size:clamp(28px,4vw,38px); line-height:1.2; font-weight:850; margin:20px 0 12px; }
 .page > p { color:var(--brand-muted); }
-.page a { color:var(--brand-primary); font-weight:700; text-underline-offset:4px; }
+.page a { color:var(--paw-link); font-weight:700; text-underline-offset:4px; }
 .page .modes { gap:12px; }
 .page button { min-height:48px; padding:12px 18px; border:1px solid var(--brand-line); background:var(--brand-surface); color:var(--brand-text); font:750 16px/1.5 "PawSpaceNunito",system-ui,sans-serif; }
 .page button[aria-pressed="true"],.page form button { background:var(--brand-primary); color:var(--brand-on-primary); border-color:var(--brand-primary); }

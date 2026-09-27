@@ -57,7 +57,7 @@
 :global([data-staff-module]) .chips button.chipOn {
     border-color: var(--staff-line, #294776) !important;
     background: var(--staff-raised, #eaf0f8) !important;
-    color: var(--staff-primary, #213d69) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .offerRule footer {
     border-top: 1px solid var(--staff-line, #e9e4eb) !important
@@ -177,7 +177,7 @@
 :global([data-staff-module]) .rowActions button, :global([data-staff-module]) .builderHead button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #294776) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .empty {
@@ -204,7 +204,7 @@
 :global([data-staff-module]) .choiceGrid button.selectedChoice {
     border-color: var(--staff-line, #294776) !important;
     background: var(--staff-raised, #e9f0f8) !important;
-    color: var(--staff-primary, #213d69) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .choiceGrid button.crossChoice {
     border-color: var(--staff-line, #d89e36) !important;
@@ -257,7 +257,7 @@
     font-size: 13px !important
 }
 :global([data-staff-module]) .ledgerId {
-    color: var(--staff-primary, #294776) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .ledgerReward {
     color: var(--staff-success, #187253) !important
@@ -269,7 +269,7 @@
 :global([data-staff-module]) .ledgerFooter button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .controlRule, :global([data-staff-module]) .reviewItem {
@@ -285,7 +285,7 @@
 :global([data-staff-module]) .controlRule button, :global([data-staff-module]) .reviewItem button {
     border: 1px solid var(--staff-line, #ddd7df) !important;
     background: var(--staff-surface, white) !important;
-    color: var(--staff-primary, #253b68) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .reviewItem b {
