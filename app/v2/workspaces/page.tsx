@@ -11,6 +11,11 @@ const modules=[
  {href:"/v2/team/customer-experience",eyebrow:"CX",title:"Customer Experience",body:"Tickets, complaints, recovery, SLA and resolution evidence."},
  {href:"/v2/team/finance",eyebrow:"FINANCE",title:"Finance & Accounts",body:"Collections, reconciliation, refunds, GST and service finance."},
  {href:"/v2/team/operations",eyebrow:"OPS",title:"Operations",body:"Live tracking, canonical bookings and service exception queues."},
- {href:"/v2/team/marketing",eyebrow:"MARKETING",title:"Marketing",body:"Consent-safe campaigns, segments and communication operations."}
+ {href:"/v2/team/marketing",eyebrow:"MARKETING",title:"Marketing",body:"Consent-safe campaigns, segments and communication operations."},
+ {href:"/v2/team/people",eyebrow:"PEOPLE",title:"People & Workforce",body:"Employees, attendance, leave, incentives, payroll and people operations."},
+ {href:"/v2/team/scheduling",eyebrow:"SCHEDULING",title:"Scheduling",body:"Canonical provider capacity, automatic assignment and governed scheduling controls."},
+ {href:"/v2/control",eyebrow:"FOUNDER",title:"Platform Control",body:"Launch, pricing, access, approvals, finance, policies, cities, security and system health."},
+ {href:"/v2/system-integration",eyebrow:"SYSTEMS",title:"System Integration",body:"Release evidence and external-connection readiness across PawSpace systems."},
+ {href:"/v2/assisted-booking",eyebrow:"STAFF BOOKING",title:"Assisted Booking",body:"Consent-backed staff-assisted canonical booking for supported services."}
 ];
 export default function V2Workspaces(){return <main className={styles.page}><div className={styles.shell}><header className={styles.top}><Link href="/v2" className={styles.brand}><img src="/assets/pawspace-icon.jpeg" alt=""/><span>PawSpace V2</span></Link><Link href="/v2" className={styles.back}>← Customer home</Link></header><section className={styles.hero}><small>PAWSPACE OPERATING SYSTEM</small><h1>One build. Every workspace.</h1><p>These V2 entry points reuse the proven PawSpace customer, partner, CRM and operations modules. Permissions and canonical APIs remain unchanged.</p></section><section className={styles.grid}>{modules.map(m=><Link key={m.href} href={m.href} className={styles.card}><span>{m.eyebrow}</span><h2>{m.title}</h2><p>{m.body}</p><b>Open workspace →</b></Link>)}</section><div className={styles.note}><b>Access remains role-governed.</b> Partner and staff workspaces still depend on their existing authenticated sessions and API permissions; this hub does not grant access.</div></div></main>}

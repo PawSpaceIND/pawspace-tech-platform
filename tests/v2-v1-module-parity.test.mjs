@@ -42,7 +42,9 @@ test("V2 workspace hub exposes the restored primary staff workspaces", () => {
   ]) assert.match(hub, new RegExp(`href:\"${href.replaceAll("/", "\\/")}\"`));
 });
 
-test("known in-flight People/payroll/scheduling work remains outside this parity patch", () => {
-  for (const rel of ["app/v2/team/people/page.tsx", "app/v2/team/scheduling/page.tsx", "app/v2/team/people/payroll/page.tsx"])
-    assert.equal(fs.existsSync(new URL(`../${rel}`, import.meta.url)), false, rel);
+test("People, payroll and scheduling reuse canonical V1 surfaces through V2 bridges", () => {
+  for (const rel of ["app/v2/team/people/page.tsx", "app/v2/team/scheduling/page.tsx", "app/v2/team/people/payroll/page.tsx"]) {
+    assert.equal(fs.existsSync(new URL(`../${rel}`, import.meta.url)), true, rel);
+    assert.match(read(rel), /export \{ default \} from/);
+  }
 });
