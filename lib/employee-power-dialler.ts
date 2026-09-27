@@ -107,6 +107,10 @@ export async function claimAndDialNextHuman(db: Db, env: Env, input: { actorId: 
   const marketingLifecycle = ["grooming_renewal", "fresh_lead", "dormant_lead", "reactivation", "cross_sell"].includes(text(recipient.lifecycle_code));
   if (control && (["dnd", "wrong_number"].includes(text(control.control_type)) || (text(control.control_type) === "cooling_period" && marketingLifecycle))) { await db.prepare("UPDATE outbound_routing_queue SET status='suppressed',assigned_to=NULL,updated_at=? WHERE id=?").bind(asOf, queue.id).run(); return { status: "suppressed", reason: text(control.reason) || text(control.control_type), autoAdvanceAfterMs: POWER_DIALLER_AUTO_ADVANCE_MS }; }
   if (Number(recipient.opt_out || 0) === 1) { await db.prepare("UPDATE outbound_routing_queue SET status='suppressed',assigned_to=NULL,updated_at=? WHERE id=?").bind(asOf, queue.id).run(); return { status: "suppressed", reason: "Customer is opted out", autoAdvanceAfterMs: POWER_DIALLER_AUTO_ADVANCE_MS }; }
+  if (marketingLifecycle && Number(recipient.marketing_consent || 0) !== 1) {
+    await db.prepare("UPDATE outbound_routing_queue SET status='suppressed',assigned_to=NULL,updated_at=? WHERE id=?").bind(asOf, queue.id).run();
+    return { status: "suppressed", reason: "Marketing consent is no longer granted", autoAdvanceAfterMs: POWER_DIALLER_AUTO_ADVANCE_MS };
+  }
   const customerKey = normalisedDialKey(text(recipient.primary_phone));
   if (customerKey) { const voiceDnd = await db.prepare("SELECT source FROM voice_call_opt_outs WHERE phone_key=?").bind(customerKey).first<Row>(); if (voiceDnd) { await db.prepare("UPDATE outbound_routing_queue SET status='suppressed',assigned_to=NULL,updated_at=? WHERE id=?").bind(asOf, queue.id).run(); return { status: "suppressed", reason: "Number is on the voice do-not-call register", autoAdvanceAfterMs: POWER_DIALLER_AUTO_ADVANCE_MS }; } }
 
@@ -144,7 +148,7 @@ export async function applyEmployeePowerDiallerCallback(db: Db, env: Env, input:
   const terminal = ["completed", "busy", "no_answer", "failed"].includes(event.kind);
   const nextStatus = event.kind === "connected" ? "connected" : terminal ? "completed" : text(call.status);
   const failureDetail = terminal && event.kind !== "completed" ? event.kind : null;
-  await db.prepare("UPDATE employee_power_calls SET provider_call_id=COALESCE(provider_call_id,?),provider_status=?,status=?,duration_seconds=COALESCE(?,duration_seconds),recording_url=COALESCE(?,recording_url),failure_detail=COALESCE(?,failure_detail),ended_at=CASE WHEN ? THEN ? ELSE ended_at END,updated_at=? WHERE id=?")
+  await db.prepare("UPDATE employee_power_calls SET provider_call_id=COALESCE(provider_call_id,?),provider_status=CASE WHEN status IN ('completed','failed') THEN provider_status ELSE ? END,status=CASE WHEN status IN ('completed','failed') THEN status ELSE ? END,duration_seconds=COALESCE(?,duration_seconds),recording_url=COALESCE(?,recording_url),failure_detail=COALESCE(?,failure_detail),ended_at=CASE WHEN ? THEN ? ELSE ended_at END,updated_at=? WHERE id=?")
     .bind(event.providerCallId, event.providerStatus || event.kind, nextStatus, event.durationSeconds, event.recordingRef, failureDetail, terminal ? 1 : 0, asOf, asOf, call.id).run();
   const updated = await db.prepare("SELECT id,queue_id,status,provider_call_id,provider_status,duration_seconds,recording_url,ended_at FROM employee_power_calls WHERE id=?").bind(call.id).first<Row>();
   return { verifiedBy: verification.mechanism, call: updated };
