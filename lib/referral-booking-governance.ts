@@ -1,9 +1,11 @@
 import{ensureReferralTables,qualifyReferralClaim,reverseReferralReward,type ReferralService}from"./referral-governance";
+import{phoneMatchKey}from"./customer-phone";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-const normalizePhone=(value:unknown)=>String(value||"").replace(/\D/g,"");
+/** The number, however it was written: "+919000000001" and "9000000001" are one person (lib/customer-phone.ts). */
+const normalizePhone=(value:unknown)=>phoneMatchKey(value)??String(value||"").replace(/\D/g,"");
 const normalizeEmail=(value:unknown)=>String(value||"").trim().toLowerCase();
 const readSnapshot=(value:unknown)=>{try{return JSON.parse(String(value||"{}")) as Record<string,unknown>}catch{return{} as Record<string,unknown>}};
 

@@ -138,3 +138,79 @@ test("STAFF-01 the assisted booking screen shows a failed order as an alert with
   globalThis.fetch = async () => Response.json({ error: "Pet ownership denied" }, { status: 403 });
   await assert.rejects(client.createAssistedOrder(payload("uat-ui", customerA, [{ sourceId: "account-huadq1", name: "Bruno", species: "dog" }], 8)), /^Error: Pet ownership denied$/);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Pet Taxi panel on the same page (round-2 staging, 50-leads-crm). It reserved the ride itself with each pet's
+// canonicalId || sourceId, so a CRM lead's pet (its CRM name) was refused 403 "Pet ownership denied" (#1103 fixed only
+// the Grooming order), and it sent the Customer 360 copy of the contact details, which is masked ("+91 ••••••0841",
+// "•••@domain"), and /api/taxi-ride-bookings upserted canonical_customers with it: the customer's real phone was gone
+// and their next OTP sign-in no longer reached their account.
+// ---------------------------------------------------------------------------------------------------------------------
+const taxiRides = await import("../app/api/taxi-ride-bookings/route.ts");
+const taxiGovernance = await import("../lib/taxi-ride-governance.ts");
+const otp = await import("../lib/customer-otp.ts");
+const TAXI_LEAD = "CU-25310";
+
+async function post(route, path, body, headers = FOUNDER) {
+  const response = await route.POST(new Request(`https://uat.pawspace.in${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }));
+  return { status: response.status, body: await response.json() };
+}
+// A ride quote as /api/taxi-commercial freezes it (server-geocoded points), `days` ahead at 10:00 IST.
+async function rideQuote(db, days) {
+  const day = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  return taxiGovernance.createTaxiRideQuote(db, { originLabel: "100 Feet Road, Indiranagar, Bengaluru 560038", destinationLabel: "Koramangala 5th Block, Bengaluru 560095", origin: { latitude: 12.9719, longitude: 77.6412 }, destination: { latitude: 12.9352, longitude: 77.6245 }, passengerCount: 1, petCount: 1, luggageCount: 0, scheduledStart: `${day}T04:30:00.000Z`, tripType: "one_way", ridePurpose: "regular", waitingMinutes: 0, distanceKm: 6.1, estimatedDurationMinutes: 25, routeProvider: "google_routes_uat" });
+}
+// What the panel sends: the reservation (clientRequestId = the ride's key), then the payment-pending ride.
+const reserve = (key, customerId, petIds, quote) => post(scheduling, "/api/uat-scheduling", { clientRequestId: key, customerId, petIds, serviceCode: "pet_taxi", cityId: "blr", zoneId: "blr-east", scheduledStart: quote.scheduledStart, scheduledEnd: quote.scheduledEnd, occurrences: 1 });
+const ride = (key, customer, pets, quote, provider) => post(taxiRides, "/api/taxi-ride-bookings", { idempotencyKey: key, scheduleGroupId: key, taxiQuoteId: quote.quoteId, vehicleClass: "citroen_ec3", customer, pets, cityId: "blr", zoneId: "blr-east", scheduledStart: quote.scheduledStart, scheduledEnd: quote.scheduledEnd, provider, totalAmount: Number(quote.fareOptions.citroen_ec3.quotedTotal), amountDueNow: Number(quote.fareOptions.citroen_ec3.bookingFee), channel: "assisted_staff", assistedConsent: { method: "recorded_call", reference: `CALL-${key}` } });
+
+test("STAFF-02 a CRM lead's Pet Taxi: the lead is converted, the scheduler holds its pet, and the ride books on the lead", async (t) => {
+  const { sqlite, db } = await world(t);
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,pet_names,pet_summary,stage,owner,source,created_at,updated_at) VALUES (?,'Staff UAT Taxi Lead','9876597930','Bangalore','Coco','Profile incomplete','New lead','Unassigned','Manual CRM',?,?)").run(TAXI_LEAD, now, now);
+  const lead = await lifecycle.ensureInboundLead(db, { customerId: TAXI_LEAD, source: "Manual CRM", service: "Pet Taxi", owner: "Unassigned" });
+  const quote = await rideQuote(db, 8), key = `assisted-taxi-${TAXI_LEAD}-${quote.quoteId}`;
+  const coco = { sourceId: "Coco", name: "Coco", species: "dog" };
+  // What the panel sent before: the CRM pet name as a pet id.
+  const refused = await reserve(`${key}-by-name`, TAXI_LEAD, ["Coco"], quote);
+  assert.equal(refused.status, 403); assert.equal(refused.body.error, "Pet ownership denied");
+
+  // The panel's page holds Customer 360's masked contact; the server converts the lead from the CRM's stored one.
+  const prepared = await order({ action: "prepare_customer", idempotencyKey: key, customer: { id: TAXI_LEAD, name: "Staff UAT Taxi Lead", primaryPhone: "+91 ••••••7930" }, pets: [coco], cityId: "blr" });
+  assert.equal(prepared.status, 200, JSON.stringify(prepared.body));
+  const petId = sqlite.prepare("SELECT id FROM canonical_pets WHERE customer_id=? AND source_pet_id='Coco'").get(TAXI_LEAD)?.id;
+  assert.deepEqual(prepared.body.data, { customerId: TAXI_LEAD, petIds: [petId] });
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").get(TAXI_LEAD).primary_phone, "9876597930", "the lead's canonical customer carries the CRM's real phone");
+
+  const reserved = await reserve(key, TAXI_LEAD, prepared.body.data.petIds, quote);
+  assert.equal(reserved.status < 300, true, JSON.stringify(reserved.body));
+  const provider = reserved.body.data.provider;
+  const booked = await ride(key, { id: TAXI_LEAD, name: "Staff UAT Taxi Lead" }, [coco], quote, provider);
+  assert.equal(booked.status, 201, JSON.stringify(booked.body));
+  const booking = sqlite.prepare("SELECT customer_id,channel,pet_ids_json FROM canonical_bookings WHERE id=?").get(booked.body.data.bookingId);
+  assert.equal(booking.customer_id, TAXI_LEAD); assert.deepEqual(JSON.parse(booking.pet_ids_json), [petId], "the ride carries the saved pet, not a second one");
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").get(TAXI_LEAD).primary_phone, "9876597930");
+  assert.equal(sqlite.prepare("SELECT initiated_booking_id FROM lead_work_items WHERE id=?").get(lead.leadId).initiated_booking_id, booked.body.data.bookingId, "the Pet Taxi lead is linked; it converts when the booking fee is captured");
+  // An associate may book but may not create customer records, exactly as for a Grooming order.
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,pet_names,pet_summary,stage,owner,source,created_at,updated_at) VALUES ('CU-25311','Other Taxi Lead','9876597931','Bangalore','Pip','Profile incomplete','New lead','Unassigned','Manual CRM',?,?)").run(now, now);
+  const associate = await order({ action: "prepare_customer", idempotencyKey: `${key}-associate`, customer: { id: "CU-25311", name: "Other Taxi Lead", primaryPhone: "+91 ••••••7931" }, pets: [{ sourceId: "Pip", name: "Pip", species: "dog" }], cityId: "blr" }, ASSOCIATE);
+  assert.equal(associate.status, 403, JSON.stringify(associate.body)); assert.equal(associate.body.error, "Customer ownership denied");
+  assert.equal(rows(sqlite, "SELECT id FROM canonical_customers WHERE id='CU-25311'").length, 0, "nothing is written for the refused conversion");
+});
+
+test("STAFF-02 an assisted ride books the stored contact: the masked copy staff see never replaces the real phone or email", async (t) => {
+  const { sqlite, db } = await world(t);
+  const quote = await rideQuote(db, 9), key = `assisted-taxi-${CUSTOMER_A}-${quote.quoteId}`;
+  const reserved = await reserve(key, CUSTOMER_A, [BRUNO], quote);
+  assert.equal(reserved.status < 300, true, JSON.stringify(reserved.body));
+  // The payload the panel used to send: Customer 360's masked copy.
+  const booked = await ride(key, customerA, [{ sourceId: "account-huadq1", name: "Bruno", species: "dog", vaccinationStatus: "verified" }], quote, reserved.body.data.provider);
+  assert.equal(booked.status, 201, JSON.stringify(booked.body));
+  assert.deepEqual({ ...sqlite.prepare("SELECT name,primary_phone,email FROM canonical_customers WHERE id=?").get(CUSTOMER_A) }, { name: "UAT Audit Customer A", primary_phone: "+919876500841", email: "customer.a@pawspace.test" });
+  assert.equal(String((await otp.resolveOtpCustomer(db, "9876500841"))?.id), CUSTOMER_A, "her next sign-in still reaches her account");
+
+  // A customer PawSpace holds no real number for is refused before anything is written, never stored masked.
+  const unknown = await ride(`${key}-unknown`, { id: "CU-NO-CONTACT", name: "No Contact", primaryPhone: "+91 ••••••1111" }, [{ sourceId: "x", name: "X", species: "dog" }], quote, reserved.body.data.provider);
+  assert.equal(unknown.status, 400, JSON.stringify(unknown.body));
+  assert.equal(rows(sqlite, "SELECT id FROM canonical_customers WHERE id='CU-NO-CONTACT'").length, 0);
+});

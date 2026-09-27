@@ -5,6 +5,7 @@ import { quoteCoupon } from "../../../lib/coupon-governance";
 import { couponsLiveApproved } from "../../../lib/ai-sales-offers";
 import { ensureCustomerAccountTables, mutateCustomerAccount } from "../../../lib/customer-account";
 import { authError, database, requireCustomerOwnership, requirePermission, resolveActor, securityAudit, type AuthenticatedActor } from "../../../lib/server-auth";
+import { bookingCustomerContact } from "../../../lib/booking-customer-contact";
 
 type PetInput={sourceId:string;canonicalId?:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
 type Input={
@@ -55,8 +56,8 @@ async function internalPost(request:Request,path:string,body:unknown){
 // Customer 360 serves the page masked contact details, so the order books the stored identity, never the browser's copy.
 async function storedCustomer(db:Awaited<ReturnType<typeof database>>,submitted:Input["customer"]):Promise<Input["customer"]>{
   await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, primary_phone TEXT NOT NULL, secondary_phone TEXT, email TEXT, area TEXT, pet_names TEXT, pet_summary TEXT, stage TEXT NOT NULL DEFAULT 'New lead', owner TEXT DEFAULT 'Unassigned', source TEXT DEFAULT 'Website', lifetime_value REAL DEFAULT 0, next_action TEXT, opportunity TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
-  const row=await db.prepare("SELECT name,primary_phone,secondary_phone,email FROM canonical_customers WHERE id=?").bind(submitted.id).first<Row>()??await db.prepare("SELECT name,primary_phone,secondary_phone,email FROM crm_contacts WHERE id=?").bind(submitted.id).first<Row>();
-  return row?{id:submitted.id,name:String(row.name||submitted.name),primaryPhone:String(row.primary_phone??""),secondaryPhone:row.secondary_phone?String(row.secondary_phone):undefined,email:row.email?String(row.email):undefined}:submitted;
+  // The stored identity (canonical customer, else the CRM lead); with none, a masked copy is refused rather than booked.
+  return bookingCustomerContact(db,submitted,{staffAssisted:true});
 }
 // Scheduling holds capacity only for saved pets owned by the customer, so each pet goes by its canonical_pets id. A canonical id
 // passes through unchanged, so the scheduler still refuses another customer's pet. A pet with no saved record (a CRM lead's
@@ -71,6 +72,20 @@ async function schedulingPetIds(db:Awaited<ReturnType<typeof database>>,actor:Au
   for(const [index,pet] of input.pets.entries())if(!ids[index])ids[index]=String((await mutateCustomerAccount(db,{customerId:input.customer.id,action:"upsert_pet",idempotencyKey:`assisted:${input.idempotencyKey}:pet:${pet.sourceId}`,pet:{sourceId:pet.sourceId,name:pet.name,species:pet.species,breed:pet.breed,vaccinationStatus:pet.vaccinationStatus}}) as {entityId?:string}).entityId);
   return ids.map(String);
 }
+/*
+ * The Pet Taxi panel on the assisted booking page reserves the ride itself, and the scheduler holds a car only for saved
+ * pets owned by the customer, so a CRM lead's pet (its CRM name) was refused 403 "Pet ownership denied". The panel now
+ * converts the lead here first, exactly as a Grooming order does (STAFF-01): the canonical customer keeps the CRM id and
+ * the stored contact, the staff-confirmed pets are saved through the customer-account pet upsert, and the same check
+ * applies (creating customer records needs customers.manage or bookings.manage). It answers the canonical pet ids.
+ */
+async function prepareCustomer(actor:AuthenticatedActor,input:Input){
+  if(!input.idempotencyKey||!input.customer?.id||!input.pets?.length||input.pets.length>6)return json({error:"Customer, pets and request identity are required"},400);
+  const db=await database();await ensureCustomerAccountTables(db);input.customer=await storedCustomer(db,input.customer);
+  const petIds=await schedulingPetIds(db,actor,input);
+  await securityAudit(db,actor,"assisted_order.prepare_customer","customer",input.customer.id,"completed",{petCount:petIds.length,channel:"assisted_staff"});
+  return json({data:{customerId:input.customer.id,petIds}});
+}
 async function refusalText(response:Response){const text=await response.text();try{const body=JSON.parse(text) as {error?:unknown};if(typeof body?.error==="string")return body.error;}catch{/* plain-text refusal */}return text;}
 
 export async function GET(request:Request){try{
@@ -81,7 +96,7 @@ export async function GET(request:Request){try{
 
 export async function POST(request:Request){try{
   sameOrigin(request);const actor=requirePermission(await resolveActor(request),"scheduling.book");if(!staffRoles.has(actor.roleCode))return json({error:"Assisted Orders is staff-only"},403);
-  const input=await request.json() as Input;if(!input.idempotencyKey||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone||!input.packageCode||!input.scheduledStart||!input.scheduledEnd||!input.pets?.length)return json({error:"Complete customer, pet, package, schedule and request identity are required"},400);
+  const input=await request.json() as Input&{action?:string};if(input.action==="prepare_customer")return await prepareCustomer(actor,input);if(!input.idempotencyKey||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone||!input.packageCode||!input.scheduledStart||!input.scheduledEnd||!input.pets?.length)return json({error:"Complete customer, pet, package, schedule and request identity are required"},400);
   if(!input.consent?.captured||!input.consent.reference?.trim()||input.consent.reference.trim().length<5)return json({error:"Customer consent evidence is required before an assisted order can be created"},400);
   const db=await database();await ensureTable(db);const prior=await db.prepare("SELECT * FROM assisted_orders WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return json({data:{assistedOrderId:String(prior.id),bookingId:String(prior.booking_id||""),status:String(prior.status),duplicatePrevented:true,testOnly:true,liveMoney:false}});
   await ensureCustomerAccountTables(db);input.customer=await storedCustomer(db,input.customer);
