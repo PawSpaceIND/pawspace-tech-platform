@@ -191,3 +191,41 @@ test("two concurrent partial refunds retain both amounts in the canonical reconc
  assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(PAYMENT).status,"refunded");
  assert.equal(sqlite.prepare("SELECT SUM(amount) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n,AMOUNT);
 });
+
+/*
+ * Round-2 transactions audit, suspected from code: "completing a refund through app/api/booking-operations
+ * records no ledger reversal, and reconciliation keeps refunded_amount at 0". The completion transition
+ * writes no money of its own because it cannot run until the signature-verified refund.processed has been
+ * processed, and that webhook commits the reversal, reconciliation, payment status and timeline in one batch.
+ * Driven end to end through the real webhook route and the real booking-operations route.
+ */
+test("completing a refund through booking-operations leaves the refund in the books exactly once",async()=>{
+ const SECRET="whsec_refund_completion_chain";
+ const{sqlite,db}=world("__REFUND_CLOSE_DB__","__REFUND_CLOSE_ENV__",{PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",FORBID_PRODUCTION:"true",RAZORPAY_WEBHOOK_SECRET_SANDBOX:SECRET});
+ seedCanonical(sqlite);seedRefundCase(sqlite,{status:"processing",gatewayReference:"rfnd_TESTFIN",approvedBy:OPS});
+ const recon=await import("../lib/grooming-payment-reconciliation.ts");const{ensureCollectionLedgerTables}=await import("../lib/collection-ledger.ts");await ensureCollectionLedgerTables(db);await recon.ensurePaymentReconciliationTables(db);await recon.linkSandboxGatewayOrder(db,{bookingId:BOOKING,gatewayOrderId:"order_TESTFIN",actorId:OPS});
+ sqlite.prepare("UPDATE payment_reconciliation_records SET captured_amount=?,gateway_status='captured',reconciliation_status='matched' WHERE payment_id=?").run(AMOUNT,PAYMENT);
+ const books=()=>({postings:{...sqlite.prepare("SELECT COUNT(*) n,COALESCE(SUM(amount),0) total FROM collection_ledger_postings WHERE group_key='COLL-refund_completed-rfnd_TESTFIN'").get()},refunded:Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(PAYMENT).refunded_amount),payment:sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(PAYMENT).status,timeline:sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id=? AND event_type='refund_processed'").get(BOOKING).n});
+
+ const early=await refundTransition(sqlite,db,"completed","Marking the refund complete before the gateway confirms it");
+ assert.equal(early.status,409,"completion needs the signature-verified gateway refund first");
+ assert.deepEqual(books(),{postings:{n:0,total:0},refunded:0,payment:"captured",timeline:0});
+
+ const webhook=await import("../app/api/razorpay-webhook/route.ts");
+ const raw=JSON.stringify({event:"refund.processed",created_at:Math.floor(Date.now()/1000),payload:{refund:{entity:{id:"rfnd_TESTFIN",payment_id:"pay_TESTFIN",amount:AMOUNT*100,currency:"INR",status:"processed"}},payment:{entity:{id:"pay_TESTFIN",order_id:"order_TESTFIN",amount:AMOUNT*100,currency:"INR",notes:{booking_id:BOOKING}}}}});
+ const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(SECRET),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+ const signature=[...new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(raw)))].map(x=>x.toString(16).padStart(2,"0")).join("");
+ const delivered=await webhook.POST(new Request("https://app.pawspace.in/api/razorpay-webhook",{method:"POST",headers:{"x-razorpay-signature":signature,"x-razorpay-event-id":"evt_refund_completion_chain"},body:raw}));
+ assert.equal(delivered.status,200,await delivered.clone().text());
+
+ const completed=await refundTransition(sqlite,db,"completed","Gateway confirmed the refund to the customer");
+ assert.equal(completed.status,200,completed.body);
+ assert.equal(refundStatus(sqlite),"completed");
+ assert.deepEqual(books(),{postings:{n:1,total:AMOUNT},refunded:AMOUNT,payment:"refunded",timeline:1},"one reversal, reconciliation, payment status and timeline event");
+ const lines=sqlite.prepare("SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit FROM finance_journal_entries WHERE source_type='refund_completed' AND source_id='rfnd_TESTFIN'").get();
+ assert.deepEqual({debit:Number(lines.debit),credit:Number(lines.credit)},{debit:AMOUNT,credit:AMOUNT});
+
+ const replay=await recon.processGatewayEvent(db,refundEvent({eventId:"evt_refund_after_completion"}));
+ assert.equal(replay.ignored,true,"a later notification for the completed refund counts nothing again");
+ assert.deepEqual(books(),{postings:{n:1,total:AMOUNT},refunded:AMOUNT,payment:"refunded",timeline:1});
+});
