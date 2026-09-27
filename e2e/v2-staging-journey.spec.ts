@@ -323,6 +323,7 @@ const CARD_NUMBER = "#card_number, input[name='card[number]'], input[name='card.
 const CARD_EXPIRY = "#card_expiry, input[name='card[expiry]'], input[name='card.expiry'], input[autocomplete='cc-exp'], input[placeholder*='MM' i], input[placeholder*='expiry' i]";
 const CARD_CVV = "#card_cvv, input[name='card[cvv]'], input[name='card.cvv'], input[autocomplete='cc-csc'], input[placeholder*='CVV' i]";
 const CARD_NAME = "#card_name, input[name='card[name]'], input[name='card.name'], input[autocomplete='cc-name'], input[placeholder*='name on' i]";
+const CHECKOUT_EMAIL = 'input[type="email"]:visible, input[name="email"]:visible, input[placeholder="Enter Email"]:visible';
 const shown = (locator: Locator) => locator.isVisible().catch(() => false);
 
 async function fillIfEmpty(field: Locator, value: string) {
@@ -350,12 +351,13 @@ async function advanceRazorpay(page: Page, state: RazorpayState): Promise<Checko
   for (const frame of frames) {
     // Checkout asks for contact details first (PawSpace sends no prefill); complete it, never click past it.
     const overlay = frame.locator('[data-testid="contact-overlay-container"]').first();
-    if (await shown(overlay)) {
+    const contactContinue = overlay.getByRole("button", { name: /^(continue|proceed)/i }).first();
+    if ((await shown(overlay)) && (await shown(contactContinue))) {
       const mobile = overlay.locator(CONTACT).first();
       if (await shown(mobile)) await fillIfEmpty(mobile, PHONE);
       const email = overlay.locator('input[type="email"], input[name="email"]').first();
       if (await shown(email)) await fillIfEmpty(email, CUSTOMER_EMAIL);
-      await overlay.getByRole("button", { name: /^(continue|proceed)/i }).first().click(RZP_ACTION);
+      await contactContinue.click(RZP_ACTION);
       return "progress";
     }
     const legacyContact = frame.locator("#contact").first();
@@ -380,18 +382,28 @@ async function advanceRazorpay(page: Page, state: RazorpayState): Promise<Checko
       await frame.locator(CARD_CVV).first().fill(TEST_CVV, RZP_ACTION);
       const cardholder = frame.locator(CARD_NAME).first();
       if (await shown(cardholder)) await fillIfEmpty(cardholder, CUSTOMER_NAME);
+      const email = frame.locator(CHECKOUT_EMAIL).first();
+      if (await shown(email)) await fillIfEmpty(email, CUSTOMER_EMAIL);
       await submitCardForm(frame);
       state.card = true;
       log(`Razorpay: entered the test card 4111 1111 1111 1111 (expiry ${TEST_EXPIRY}) and submitted it`);
       return "progress";
     }
-    // Some checkouts ask for the cardholder name only after the first submit.
-    const holder = frame.locator(CARD_NAME).first();
-    if (state.card && state.resubmits < 2 && (await shown(holder)) && (await holder.inputValue(RZP_ACTION)) === "") {
-      await holder.fill(CUSTOMER_NAME, RZP_ACTION);
-      await submitCardForm(frame);
-      state.resubmits += 1;
-      return "progress";
+    // Required cardholder/email fields can appear after the first submit.
+    if (state.card && state.resubmits < 2) {
+      let completedRequiredField = false;
+      for (const [selector, value] of [[CARD_NAME, CUSTOMER_NAME], [CHECKOUT_EMAIL, CUSTOMER_EMAIL]]) {
+        const field = frame.locator(selector).first();
+        if ((await shown(field)) && (await field.inputValue(RZP_ACTION)) === "") {
+          await field.fill(value, RZP_ACTION);
+          completedRequiredField = true;
+        }
+      }
+      if (completedRequiredField) {
+        await submitCardForm(frame);
+        state.resubmits += 1;
+        return "progress";
+      }
     }
     if (!state.card && state.methodClicks < 2) {
       const cardMethod = frame.locator('[data-testid="card"], [data-value="card"], [method="card"]')
