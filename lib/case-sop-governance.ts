@@ -64,6 +64,19 @@ export async function listCaseSopRequirements(db:Db,caseId:string){
   return rows.results;
 }
 
+/** Read a directory's requirements with bounded queries instead of one schema check per case. */
+export async function listCaseSopRequirementsForCases(db:Db,caseIds:string[]){
+  await ensureCaseSopTables(db);
+  const grouped=new Map<string,Row[]>();
+  const ids=[...new Set(caseIds)];
+  for(let offset=0;offset<ids.length;offset+=80){
+    const chunk=ids.slice(offset,offset+80);
+    const rows=await db.prepare(`SELECT * FROM unified_case_sop_requirements WHERE case_id IN (${chunk.map(()=>"?").join(",")}) ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,created_at`).bind(...chunk).all<Row>();
+    for(const row of rows.results){const id=text(row.case_id);const entries=grouped.get(id)||[];entries.push(row);grouped.set(id,entries);}
+  }
+  return grouped;
+}
+
 export async function updateCaseSopRequirement(db:Db,input:{caseId:string;requirementId:string;action:"complete"|"waive";note:string;actorId:string}){
   await ensureCaseSopTables(db);
   const note=text(input.note);

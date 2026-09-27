@@ -1,5 +1,5 @@
 import{ensureD1Once}from"./d1-ensure-once.js";
-import{assertCaseSopClosureReady,listCaseSopRequirements,syncCaseSopRequirements}from"./case-sop-governance";
+import{assertCaseSopClosureReady,listCaseSopRequirementsForCases,syncCaseSopRequirements}from"./case-sop-governance";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export type CaseType="customer_complaint"|"refund"|"payment"|"provider_issue"|"safety_incident"|"lead_escalation"|"rebooking"|"reconciliation"|"operations";
@@ -93,6 +93,7 @@ export async function unifiedCaseDirectory(db:Db){
   db.prepare("SELECT * FROM case_policies ORDER BY updated_at DESC").all<Row>(),
  ]);
  const open=cases.results.filter(r=>!["resolved","closed"].includes(text(r.status))),now=Date.now();
+ const sopByCase=await listCaseSopRequirementsForCases(db,cases.results.map(r=>text(r.id)));
  const enriched=await Promise.all(cases.results.map(async r=>{
   const caseId=text(r.id);
   const timeline=[
@@ -101,7 +102,7 @@ export async function unifiedCaseDirectory(db:Db){
   ].sort((a,b)=>a.at-b.at);
   let sourceState:null|Record<string,unknown>=null;
   if(text(r.source_type)==="booking_refund_case"){const refund=await db.prepare("SELECT id,status,amount,gateway_reference,approved_by,updated_at FROM booking_refund_cases WHERE id=?").bind(r.source_id).first<Row>().catch(()=>null);if(refund)sourceState={kind:"refund",...refund};}
-  return{...r,sopRequirements:await listCaseSopRequirements(db,caseId),timeline,sourceState,links:{customerId:r.customer_id||null,bookingId:r.booking_id||null,paymentId:r.payment_id||null,leadId:r.lead_id||null,providerId:r.provider_id||null}};
+  return{...r,sopRequirements:sopByCase.get(caseId)||[],timeline,sourceState,links:{customerId:r.customer_id||null,bookingId:r.booking_id||null,paymentId:r.payment_id||null,leadId:r.lead_id||null,providerId:r.provider_id||null}};
  }));
  return{summary:{open:open.length,critical:open.filter(r=>text(r.severity)==="critical").length,unowned:open.filter(r=>!text(r.owner_email)).length,firstResponseOverdue:open.filter(r=>!r.first_responded_at&&r.first_response_due_at!=null&&Number(r.first_response_due_at)<now).length,resolutionOverdue:open.filter(r=>r.resolution_due_at!=null&&Number(r.resolution_due_at)<now).length},cases:enriched,events:events.results,comments:comments.results,policies:policies.results.map(policy),truth:{source:"unified_cases + native case adapters",productionReady:false,automaticExternalNotification:false}};
 }

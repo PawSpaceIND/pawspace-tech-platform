@@ -16,7 +16,7 @@ type Row = Record<string, unknown>;
 type Booking = Row & { pets: Row[]; lifecycle: Row[]; operations: Row[]; notifications: Row[]; rebooking: Row[]; refunds: Row[]; tickets: Row[]; adminActions: Row[]; rescheduleRequests?: Row[] };
 type Tab = "Overview" | "Journey" | "Payments" | "Communication" | "Tickets & refunds";
 
-const money = (value: unknown) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(value || 0));
+const money = (value: unknown) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 const pretty = (value: unknown) => String(value || "Not recorded").replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 /** A customer's paid reschedule, in words Ops can act on. */
 const rescheduleStatus = (value: unknown) => ({ quoted: "Price shown, not paid", awaiting_payment: "Customer paying, time held", paid: "Paid, moving", applying: "Paid, moving", applied: "Paid and moved", expired: "Hold lapsed, not paid", cancelled: "Booking cancelled", refund_requested: "Could not move, refund raised", refunded: "Could not move, refunded", move_failed: "Could not move, needs support" } as Record<string, string>)[String(value)] ?? pretty(value);

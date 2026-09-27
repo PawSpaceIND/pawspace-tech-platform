@@ -3,7 +3,7 @@
   "corrections": {
     "app/booking-command-center/page.tsx": {
       "beforeHash": "7326d05a3c3b64606453c5da3a9535f984f6869d6c28774f9ba0e51f7c19786d",
-      "afterHash": "cbabe91dd6fbeda90e37eda64bafc79a1dd7784af8a663c92d69b41258b37189",
+      "afterHash": "cd24cb1ad7a84b983e4da4d1f1e843ae2bf8dd6ca4712451c820cfe1c479d3f1",
       "changes": [
         [
           "import StaffWorkspace from \"../components/staff-workspace/StaffWorkspace\";",
@@ -76,6 +76,10 @@
         [
           "No refund or rebooking case linked.</p>}</section></div></div>}",
           "No refund or rebooking case linked.</p>}</section></div>{selected.status === \"completed\" && <EscalationRefundPanel key={String(selected.id)} bookingId={String(selected.id)} />}</div>}"
+        ],
+        [
+          "maximumFractionDigits: 0",
+          "minimumFractionDigits: 2, maximumFractionDigits: 2"
         ]
       ]
     },
@@ -313,7 +317,7 @@
     "app/api/food-subscriptions/route.ts": "095cd01bd65ec5e1650fc0bcbf3857d7e4edb022e06fe32c73946cb622fc973b",
     "app/api/food-supply-chain/route.ts": "10762ad572bee94dbb9487f70f1fb958832c81b742ea4ae399b6ca2318a3e54d",
     "app/api/funeral-manual-order/route.ts": "0433d04fa005f7ef6c0711faafa850db4c5956dbb430accdbbab8e02707cead7",
-    "app/api/funeral-memorial/route.ts": "576a3dfe78d0bcdf2592e5dda7cbb522e70034e988d5ccb2519f6b678f32f62b",
+    "app/api/funeral-memorial/route.ts": "8991375d5c326a09e29385ea8b568a3713f2a927ac1574a213a2e41458e6c6dc",
     "app/api/grooming-booking-change/route.ts": "fc3b3106a24ff77f38b75676d63aab9b5c5595207facbb3181f538707de8607e",
     "app/api/grooming-commercial-policy/route.ts": "ad7a5091787dc3da194de5f577f0941baedcb1c203907763f904edd618974d72",
     "app/api/grooming-finance/route.ts": "341c93e2f4bba5c54a36b9685a9212f7f6b99b6da295a91b0e17f76ea2dd4cd7",
@@ -626,7 +630,7 @@
     "app/food/subscription-invoice/page.tsx": "61fefc44df61dab01fd370cde0539d7190d1a4dbbd4e011d69d6eb5c1607ec39",
     "app/food/subscription-payment/page.tsx": "8d2cfb7449f12f35443e2d109593cd0980e3deb630fe58de30e3ef7e0d7e8216",
     "app/food/subscriptions/page.tsx": "969ff867c9aa3ac19900ccbe19ca0da2fd78ec82af3c3fe135ce4a68024b35a2",
-    "app/funeral-memorial/page.tsx": "e3140f4f5589021f6919a9cbac41a5808888658ce51262861ef371fdfcc86395",
+    "app/funeral-memorial/page.tsx": "0a705ed05bde21e622cdbbb969a1728c18b57cac54641a320932feb44bc12906",
     "app/global-error.tsx": "a02cf094133219d548d1cfca9d91ab559790964d1e9729f368531a7245a985ce",
     "app/globals.css": "f226ef85b7ad3591f17b139c670c1b597781e37a0b9bf3ae4e04c82fffec3340",
     "app/groomer/page.tsx": "7365c416a162b29191988f2fc1e3d6a05340ad51c59b2989941655d4fc3c53aa",
@@ -819,7 +823,7 @@
     "app/team/alerts/page.tsx": "19df1bff96837c2b67d33c527c171a156c3a6a9bbfc3403428d314a4c22e0820",
     "app/team/analytics/page.tsx": "bc08b297100d1f07cbab901b9c43354d2598117a6af8ea4741cb1e2fce0c7ad0",
     "app/team/bot-call-outcomes/page.tsx": "00ecdcd569f7feb02196257567ff233e48e04e2d6821c5d794b73eda9862e01f",
-    "app/team/cases/page.tsx": "630b97694ffe25c8f69caee719be51379fa26cfc4d69d1ea2db4eaf8fe10ce15",
+    "app/team/cases/page.tsx": "435ac1bb685f5e7f30be9383eebad009a51d1ae679f7e057bdb799105fede1af",
     "app/team/catalogue/page.tsx": "e5c7c69319283b675fda9c038bbd702fba815a8b796b29b9b8b91ce31c91ce3f",
     "app/team/customer-experience/page.tsx": "63a6db7ffcf216bae41b2e0c909716cedc5bad352c9f98467685a9d5735a9095",
     "app/team/customer-experience/template.tsx": "781e267fb61297057ba731a95d561e7b4430c40445b2be80afb9de7b959c35fc",
@@ -840,7 +844,7 @@
     "app/team/finance/statutory/service-invoice-ownership.tsx": "b71757c8c09451e717b3763f8acfc61360982028f87a640e9ea38357bce1cc9f",
     "app/team/finance/taxi/page.tsx": "118eaf89856bb80f6787ac21e680f2e3daef88258dee75630fdc118d89a05e32",
     "app/team/finance/taxi/taxi-finance-workspace.tsx": "98383c54be2b6ee70e75aa31a59d685314395f3a994ba0fbc5afcbe51fe4f81d",
-    "app/team/finance/training/page.tsx": "fd2ef70b0d886fa84b795cddb11892823777b89e3dd6bcdf016d36a93e83e8a0",
+    "app/team/finance/training/page.tsx": "57fce07c6005af749296826b72e5fd64f1dc668e81026d06f4f07715590bcd88",
     "app/team/finance/unit-economics/page.tsx": "768762cf849dfa07fa33de4757b1235c8d02530151f540c51d63080abd6f8677",
     "app/team/finance/walking/page.tsx": "7d0ce99ae4ce94520f1aa66c6ef21ff245fddcc9abdc2973332e1d3e0ad62b0a",
     "app/team/finance/walking/walking-finance-workspace.tsx": "d702fd2e817972f3a01788e289050babb0128991df5be0c30493d02a4d0b4351",
@@ -1012,7 +1016,7 @@
     "lib/ai-web-chat-adapter.ts": "7ef952fd9fa2f8df7a9f33b8af137229e9c61f82e7c83d204acdcbeb1a02f3ec",
     "lib/api-error-message.ts": "587ec81fb07e5d460594845930bf9b3582a7e2bc84a578fc064f0cb53a81516e",
     "lib/api-fetch.ts": "7f73fb6c6646f210e79a43f4c9b23522cbdc3b501df9a6b82feffa63a60f58b7",
-    "lib/api-gateway.ts": "01379e46ea109db614725a675b4e38834babee4a15d6e28616b6964cf004594c",
+    "lib/api-gateway.ts": "2d95cbccca6c9d68416000a422fe3f2d5ee313db43cb75a7ec74f5e639bb6485",
     "lib/api-security-headers.ts": "31d9d6bc1310881f2188e50305c82ef05828412e0aed76abb3249ed9adc3ff1c",
     "lib/app-to-revenue-funnel.ts": "c5a16495cba34ccbf2e10ef9cb915c88bd68ed9f440844c38f86c77802861f2e",
     "lib/assisted-orders-client.ts": "66fb2cd6c5f281be36e3b4d58b6373a0c3a7fe36277f35e791f04e0605ed22fd",
@@ -1063,7 +1067,7 @@
     "lib/canonical-recipient-ownership.ts": "6f7b807add94e084754863db8caefc9c1850e2f963b94aa4c7b306e21ef048aa",
     "lib/care-proof-photo-claims.ts": "0190879e13f3d8209c0b2c0456bc4d318f5eb8689d54f0b5a7f4b508abfd1db9",
     "lib/case-sla-defaults.ts": "6171c1752b647fbce54608facf7dd1b1d123db27ea884f7e6b25a3f59f4ef50d",
-    "lib/case-sop-governance.ts": "8e4d1c971ccb1e7c1cc06eaf70fcb783076d5c3c0b1924074df1904f5f261c36",
+    "lib/case-sop-governance.ts": "1c40a05011f9d81f832884472dd6416fc9f9707ede3d6b4397bbb42dd0dd1c4d",
     "lib/cash-flow-statement.ts": "28aa34e6b153f3d37c5b51bd3bec125a65c0d7367ecb6bbf1347d0e158c441a2",
     "lib/catalogue-governance.ts": "6ac69be4f9857ab1cf94a977b5a6b99cac64969395205bace1e6eca115d5c7e6",
     "lib/chart-of-accounts.ts": "42021d1f126116b24612fd1f2983ca2d567eb55c328ac5a718c7db180ee37102",
@@ -1178,8 +1182,8 @@
     "lib/food-subscription-governance.ts": "9de48c6e00855bf2c68f79e3b266ce3472a668bb76087739f8846dcb9e8d25f8",
     "lib/food-supply-chain.ts": "9bc566efe4b5aa37a75bbe874b6501b925487094fcbcbc5ecc6118571c998acc",
     "lib/funeral-manual-order.ts": "37e0f829b6cd7c65f0c1c72446d52715e7621f464a015cfaa387cf8d6f28de07",
-    "lib/funeral-memorial-client.ts": "1cb9864e97f80281a0ab88108f84cee66c32ad6ac083b9281ece5939372528c8",
-    "lib/funeral-memorial-governance.ts": "82c01505dd0e7c91e2ed4ef11b3283426214575840de78d52877b584bbcd3e19",
+    "lib/funeral-memorial-client.ts": "1acaa2c4c026183b629497350c0557f40714d159af2019353cb199bcb49dc165",
+    "lib/funeral-memorial-governance.ts": "652287a3ad7fcbc28e11ad25c5101a1ce5c3a80a5dd7c4734aab8dd0c3959874",
     "lib/gateway-inbound-queue.ts": "a0d8e9b4228898cb0eeb09dff85563edcdc0bcd650cbfacb4b3949ddfde18f5a",
     "lib/goal-context-engine.ts": "ca6d00936e6fbe99c62e3d30c9ea0f1facbc9f75b9d1b46e06182b7f4e613a50",
     "lib/google-ads-conversion-consent.ts": "37b4508b87021711873458f2e463c4b4bc0507e5e85b0d365378d4b6c2bc9215",
@@ -1588,7 +1592,7 @@
     "lib/uat-sandbox-readiness.ts": "5a9cbfceb481052172891b6a33da5a18b9116fc45d498fdf5d42ac6b66dbbd56",
     "lib/uat-scheduling-client.ts": "0d83d536d3f4ab2abfed9cd279316e46648be915e11d571d795314779a2c715b",
     "lib/uat-staging-auth.ts": "504dd41e4273bbd51bf4bbd3ef37ff38ec106eb1ac5799493ebe7d520e237ac2",
-    "lib/unified-case-center.ts": "1009f3b8fc5be5770b432c4407f468f49053c5215aac4e852a49092931873246",
+    "lib/unified-case-center.ts": "884052ce2bbd7861f5935ceae085c2f445f6b165d3fafefbe370253c4910f0b4",
     "lib/unit-economics.ts": "53391564e19fcc4a849b7c7f6e9ff16e13dc4b8ee7e31701d7cc262ecd0a0897",
     "lib/universal-location-recovery.ts": "f754e574523f4fd55279ddebc04e3540a567ebb2b2f46ea68995174baa412de2",
     "lib/universal-replacement-recovery.ts": "35e0c12da911c8964fc3dab3fef7e53c6f0acfa18f73e22012f05b6f3285c520",

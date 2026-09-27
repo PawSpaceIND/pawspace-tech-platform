@@ -4,5 +4,13 @@ const CLOSED_PAYMENT = new Set(["paid", "captured", "completed", "refunded", "re
 
 /** Bookings the Command Center counts as "Payment pending" and in "Open revenue". */
 export function awaitingPayment(booking: Record<string, unknown>) {
-  return !CLOSED_BOOKING.has(String(booking.status)) && !CLOSED_PAYMENT.has(String(booking.payment_status));
+  if (CLOSED_BOOKING.has(String(booking.status))) return false;
+  const status = String(booking.payment_status);
+  // A captured deposit is not a settled booking. Use the canonical stage's due-now amount,
+  // not the full outstanding balance: later instalments must not appear overdue early.
+  if (["paid", "captured", "completed"].includes(status)) {
+    const due = Number(booking.amount_due_now);
+    return Number.isFinite(due) && due > 0;
+  }
+  return !CLOSED_PAYMENT.has(status);
 }
