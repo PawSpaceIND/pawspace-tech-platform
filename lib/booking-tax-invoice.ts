@@ -220,19 +220,21 @@ async function issue(db:Db,done:Completed,actor:string,reason:string){
    notes,reverseCharge:false,amountInWords:rupeesInWords(order)}},actor);
 }
 
+/** One log field: the booking ID comes from the request, so it is never the format string, and CR/LF and other control
+ * characters are replaced (no forged log lines) and the length is capped. */
+const logValue=(value:unknown)=>String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g," ").slice(0,300);
+
 /** Completion's hook: issue the booking's invoice, never failing or blocking the completion. A refusal is logged and stays on
  * Finance's missing-invoices list with its reason. */
-/* A value from a booking or request, written to a log as one plain line (never a format string, never a new log line). */
-const logSafe=(value:unknown)=>String(value??"").replace(/[\r\n\u2028\u2029]+/g," ").slice(0,300);
 export async function issueBookingInvoiceAfterCompletion(db:Db,bookingId:string,actorId:string):Promise<BookingInvoiceOutcome>{
  try{
   // A database with no tax policy at all has no seller: nothing to issue, and nothing is created for it.
   if(!await tableExists(db,"tax_policy_versions"))return{status:"refused",bookingId,key:"active_policy_seller",message:bookingInvoiceRefusal("active_policy_seller")};
   const outcome=await issueBookingInvoice(db,{bookingId,actorId,reason:"Customer tax invoice issued at completion"});
   // A re-run of an old completion (a read-model refresh) is "too late" by design and is listed for Finance, not logged.
-  if(outcome.status==="refused"||outcome.status==="period_locked")console.warn("[booking-invoice] not issued at completion:",logSafe(bookingId),logSafe(outcome.message));
+  if(outcome.status==="refused"||outcome.status==="period_locked")console.warn("[booking-invoice] %s not issued at completion: %s",logValue(bookingId),logValue(outcome.message));
   return outcome;
- }catch(error){console.error("[booking-invoice] could not be issued at completion; it stays on Finance's missing-invoices list:",logSafe(bookingId),error);return{status:"refused",bookingId,key:"unexpected_error",message:error instanceof Error?error.message:String(error)};}
+ }catch(error){console.error("[booking-invoice] %s could not be issued at completion; it stays on Finance's missing-invoices list: %s",logValue(bookingId),logValue(error instanceof Error?`${error.name}: ${error.message}`:error));return{status:"refused",bookingId,key:"unexpected_error",message:error instanceof Error?error.message:String(error)};}
 }
 
 export type BacklogRow={bookingId:string;serviceCode:string;amountPaid:number;completedOn:string;daysSinceCompletion:number;status:"ready"|"too_late"|"period_locked"|"refused";key?:string;message:string};
@@ -272,7 +274,7 @@ export async function issueMissingBookingInvoices(db:Db,input:{actorId:string;re
  for(const row of backlog.rows)if(row.status==="ready"){
   // One booking's failure never stops the run or its audit row: it is listed as not issued, and the error is logged, not returned.
   try{outcomes.push(await issueBookingInvoice(db,{bookingId:row.bookingId,actorId:input.actorId,reason,asOf:input.asOf}));}
-  catch(error){console.error("[booking-invoice] could not be issued by Finance's run:",logSafe(row.bookingId),error);outcomes.push({status:"refused",bookingId:row.bookingId,completedOn:row.completedOn,key:"unexpected_error",message:"Could not be issued because of an unexpected error. Try again; if it repeats, report it."});}
+  catch(error){console.error("[booking-invoice] %s could not be issued by Finance's run: %s",logValue(row.bookingId),logValue(error instanceof Error?`${error.name}: ${error.message}`:error));outcomes.push({status:"refused",bookingId:row.bookingId,completedOn:row.completedOn,key:"unexpected_error",message:"Could not be issued because of an unexpected error. Try again; if it repeats, report it."});}
  }
  const issued=outcomes.filter(o=>o.status==="issued"),notIssued=[...backlog.rows.filter(r=>r.status!=="ready").map(r=>({bookingId:r.bookingId,status:r.status,message:r.message})),...outcomes.filter(o=>o.status!=="issued"&&o.status!=="existing").map(o=>({bookingId:o.bookingId,status:o.status,message:o.message??""}))];
  await audit(db,input.actorId,"booking_invoice_backfill",`backfill:${backlog.asOf}`,"issued_missing",{asOf:backlog.asOf,issued:issued.map(o=>({bookingId:o.bookingId,invoiceNumber:o.invoiceNumber})),notIssued:notIssued.slice(0,200)},reason);

@@ -32,8 +32,9 @@ export async function GET(request:Request){
    await requireCustomerOwnership(db,actor,session.subjectId);customerId=session.subjectId;
   }
   if(!/^[A-Za-z0-9_.:-]{1,160}$/.test(bookingId))return notFound(asJson);
+  // A cold D1 (fresh preview, rebuilt database) must answer "not found", never "no such table".
   await ensureCanonicalBookingCoreTables(db);
-  const bookings=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='canonical_bookings'").first<Record<string,unknown>>(),booking=bookings?await db.prepare("SELECT id,customer_id,city_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>():null;
+  const booking=await db.prepare("SELECT id,customer_id,city_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();
   if(!booking||(customerId&&text(booking.customer_id)!==customerId))return notFound(asJson);
   if(view==="operations"){const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);if(scope&&text(booking.city_id).toLowerCase()!==scope.cityId)return json({error:"Booking is outside the manager's city scope"},403);}
   const doc=await bookingInvoiceDocument(db,bookingId);
