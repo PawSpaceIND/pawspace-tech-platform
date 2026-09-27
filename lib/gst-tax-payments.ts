@@ -20,6 +20,7 @@ import{governedJsonError}from"./governed-http-error";
 import{ensureGstAccountingTables}from"./gst-accounting";
 import{ensureTcsTables,recordTcsDeposit}from"./tcs-governance";
 import{istMonthWindow,serviceVerticalOutputTax}from"./service-output-tax";
+import{applyCreditNotesToTaxPayables}from"./credit-notes";
 
 type Db=D1Database;type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -91,6 +92,9 @@ export async function taxPayableReconciliation(db:Db,input:{periodCode:string}){
   db.prepare("SELECT amount,challan_reference FROM tcs_deposits WHERE period=?").bind(period).first<Row>(),
   db.prepare("SELECT c.booking_id,c.tcs_total,COALESCE((SELECT SUM(j.credit-j.debit) FROM finance_journal_entries j WHERE j.account_code='2140-TCS Payable' AND j.source_type='service_completion' AND j.source_id=c.booking_id),0) posted FROM tcs_collections c WHERE c.period=?").bind(period).all<Row>(),
  ]);
+ // Package B hook (lib/credit-notes.ts): this month's credit notes and TCS reversals for refunds after completion net into
+ // what was filed and what the payables accrued (they are not payments); closing balances are unchanged.
+ await applyCreditNotesToTaxPayables(db,period,{gstAccount,tcsAccount,services,tcsRows:tcsByBooking.results});
  const paid=(kind:TaxKind)=>round2(num(payments.results.find(r=>text(r.tax_kind)===kind)?.amount));
  const filedGst=services.pawspaceOwnOutputTax,gstDifference=round2(gstAccount.accrued-filedGst),tcsCollections=round2(num(collections?.total));
  const tcsMismatches=tcsByBooking.results.map(r=>({bookingId:text(r.booking_id),gstr8Tcs:round2(num(r.tcs_total)),postedTcs:round2(num(r.posted))})).filter(r=>Math.abs(r.gstr8Tcs-r.postedTcs)>0.01).slice(0,50),tcsDifference=round2(tcsAccount.accrued-tcsCollections);

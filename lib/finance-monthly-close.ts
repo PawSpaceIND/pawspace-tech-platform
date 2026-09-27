@@ -17,6 +17,7 @@
 import{computeMonthlyTds}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
 import{canonicalInvoicesOnlySql,serviceVerticalOutputTax}from"./service-output-tax";
+import{applyCreditNotesToMonthlyClose}from"./credit-notes";
 import{governedJsonError}from"./governed-http-error";
 
 type Db=D1Database;
@@ -84,6 +85,8 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // row's provider-supply GST is a pass-through (s52 GST TCS / GSTR-8), disclosed but NOT net payable.
  const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
  const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,serviceNonGstValue:serviceOutput.nonGstValue,gstModel:serviceOutput.gstModel.label,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
+ // Package B hook (lib/credit-notes.ts): credit notes issued this month for refunds after completion reduce its own output tax.
+ await applyCreditNotesToMonthlyClose(db,input.period,gst);
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data (idempotent), then check the deposit.

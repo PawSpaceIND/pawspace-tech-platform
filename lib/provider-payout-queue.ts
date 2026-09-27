@@ -162,6 +162,9 @@ async function openDispute(db:Db,bookingId:string){
 async function openRefundRequest(db:Db,bookingId:string){
  const request=await one(db,"SELECT status,amount FROM booking_refund_cases WHERE booking_id=? AND status IN ('requested','approved') ORDER BY created_at DESC LIMIT 1",[bookingId]);
  if(request)return`Refund of Rs ${money(request.amount).toFixed(2)} is ${text(request.status)} and not yet processed`;
+ // A refund after completion waiting for Finance approval holds the payout too (lib/escalation-refunds.ts).
+ const escalation=await one(db,"SELECT amount FROM escalation_refund_requests WHERE booking_id=? AND status='requested' ORDER BY created_at DESC LIMIT 1",[bookingId]);
+ if(escalation)return`Refund after completion of Rs ${money(escalation.amount).toFixed(2)} is waiting for Finance approval`;
  const kase=await one(db,"SELECT title FROM unified_cases WHERE booking_id=? AND case_type='refund' AND status NOT IN ('resolved','closed') LIMIT 1",[bookingId]);
  return kase?`Open refund case: ${text(kase.title)}`:null;
 }
@@ -442,4 +445,45 @@ export async function getProviderPayoutQueueDashboard(db:Db,input:{asOf?:number;
  const upcoming=candidates.map(row=>{const block=text(row.reason) as ProviderPayoutBlock;return{...row,reasonLabel:PAYOUT_BLOCK_LABELS[block]?blockLabel(row,block):text(row.reason)};});
  const awaiting=queue.filter(row=>text(row.status)==="awaiting_release");
  return{holdDays:hold.holdDays,hold,queue,upcoming,recoveries,reconciliation,totals:{awaitingRelease:awaiting.length,awaitingAmount:round(awaiting.reduce((sum,row)=>sum+Number(row.amount||0),0)),releasable:queue.filter(row=>row.releasable).length,openRecoveryAmount:round(recoveries.reduce((sum,row)=>sum+Number(row.amount||0)-Number(row.recovered_amount||0),0))},policy:{holdDays:hold.holdDays,countedFrom:"service_completion",calendarDays:true,autoQueued:true,releaseClicks:1,paymentSource:"2110-Provider Payable in the finance journal",environment:"sandbox",livePayout:false,liveMoneyGate:"existing live-payout approvals",uatSelfHeal:selfHeal}};
+}
+
+/* ---- Refunds after completion (owner decision D, 27 Sept 2026; lib/escalation-refunds.ts). Additive: the rules above are
+ * reused as they are - the provider's share is reduced pro rata before the payout is released and recovered from the next
+ * payout after it - and nothing above changes. */
+export type ProviderPayoutRefundStage="no_provider_payout"|"before_queue"|"before_release"|"after_release"|"payout_cancelled";
+/* The payable completion recorded when its journal is not posted (yet): the provider's net payout less the TCS withheld, from
+ * the payout record the completion engine writes before it posts the journal. Completion writes both before the booking is
+ * marked completed, so this is a safety net for a completion cut short between the two, never the normal path. */
+async function recordedPayable(db:Db,bookingId:string){const row=await one(db,"SELECT provider_net_payout,tcs_withheld FROM provider_payout_computations WHERE booking_id=? AND finalized_at>0",[bookingId]);return row?money(Number(row.provider_net_payout||0)-Number(row.tcs_withheld||0)):null;}
+/** What a refund of `refund` does to this booking's provider payout. `alreadyCounted`: the refund is already in the booking's refunds. */
+export async function providerPayoutRefundImpact(db:Db,input:{bookingId:string;refund:number;alreadyCounted?:boolean}){
+ await ensureProviderPayoutQueueTables(db);
+ const bookingId=text(input.bookingId),refund=money(input.refund);
+ const[item,booking]=await Promise.all([one(db,"SELECT * FROM provider_payout_queue_items WHERE booking_id=?",[bookingId]),one(db,"SELECT id,status,service_code,total_amount,updated_at FROM canonical_bookings WHERE id=?",[bookingId])]);
+ const payee=item?{providerId:text(item.provider_id)}:booking?await payeeFor(db,booking):null;
+ const none={providerId:(payee?.providerId??null) as string|null,stage:"no_provider_payout" as ProviderPayoutRefundStage,providerShare:0,payable:0,orderAmount:0,refundedBefore:0,queueStatus:(item?text(item.status):null) as string|null};
+ const payable=item?money(item.payable_amount):payee?(await completionPayable(db,bookingId))??(await recordedPayable(db,bookingId))??0:0;
+ if(!payee||payable<=0)return none;
+ const orderAmount=item?money(item.order_amount):money(money(booking?.total_amount)-await refundedBeforeCompletion(db,bookingId))||payable;
+ const counted=await refundedForProviderPayout(db,bookingId),before=input.alreadyCounted?money(counted-refund):counted;
+ const providerShare=round(proRataProviderPayout(payable,orderAmount,before)-proRataProviderPayout(payable,orderAmount,before+refund));
+ const status=item?text(item.status):"";
+ const stage:ProviderPayoutRefundStage=!item?"before_queue":status==="released"?"after_release":status==="cancelled"?"payout_cancelled":"before_release";
+ return{...none,stage,providerShare,payable,orderAmount,refundedBefore:before};
+}
+/** Re-checks one booking's payout now that a refund was processed, instead of waiting for the hourly run. */
+export async function refreshProviderPayoutForBooking(db:Db,input:{bookingId:string;asOf?:number;actorId?:string}){
+ await ensureProviderPayoutQueueTables(db);
+ const bookingId=text(input.bookingId),asOf=input.asOf??Date.now(),actor=text(input.actorId)||"system:provider-payout-queue";
+ const item=await one(db,"SELECT * FROM provider_payout_queue_items WHERE booking_id=?",[bookingId]);
+ if(!item){
+  // Not queued yet: the refund is counted when it is. A booking held back only by the refund is looked at on the next run.
+  await db.prepare("UPDATE provider_payout_candidates SET next_check_at=? WHERE booking_id=? AND reason<>'not_due' AND next_check_at>?").bind(asOf,bookingId,asOf).run();
+  return{stage:"before_queue" as ProviderPayoutRefundStage,outcome:null as string|null,recovery:null as {recoveryId:string;amount:number}|null};
+ }
+ const status=text(item.status);
+ if(status==="awaiting_release"){const refreshed=await refreshQueuedItem(db,item,asOf,actor);return{stage:(refreshed.outcome==="cancelled"?"payout_cancelled":"before_release") as ProviderPayoutRefundStage,outcome:refreshed.outcome as string|null,recovery:null as {recoveryId:string;amount:number}|null};}
+ if(status==="released"){await postReleaseJournal(db,item,asOf);const recovery=await recoverAfterRelease(db,item,asOf,actor);return{stage:"after_release" as ProviderPayoutRefundStage,outcome:(recovery?"recovery_recorded":"nothing_owed") as string|null,recovery};}
+ const reopened=await reopenIfRefundReversed(db,item,asOf,actor);
+ return{stage:"payout_cancelled" as ProviderPayoutRefundStage,outcome:(reopened?"reopened":"unchanged") as string|null,recovery:null as {recoveryId:string;amount:number}|null};
 }

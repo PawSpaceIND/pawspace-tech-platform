@@ -97,6 +97,9 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/statutory-compliance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/pnl-reporting")return "finance.view";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
+  // Refunds after completion: Operations asks (bookings.manage), Finance decides (finance.manage) and reads the queue.
+  if(url.pathname==="/api/escalation-refunds"){if(method==="GET")return url.searchParams.get("bookingId")?"bookings.manage":"finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="request"?"bookings.manage":"finance.manage";}
+  if(url.pathname==="/api/credit-notes")return "finance.view";
   if(url.pathname==="/api/contractor-pay")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
   if(url.pathname==="/api/unit-economics")return "reports.view";
