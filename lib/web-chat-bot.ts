@@ -49,6 +49,8 @@ const BOT_STATE_VERSION=2;
 export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
  /** The CRM lead created for a visitor as soon as their number is known (web chat). */
  leadId?:string;
+ /** A visitor confirming their number in the chat (web chat): the code sent, and the enquiry it will let PawSpace AI book. */
+ verify?:{challengeId:string;phone:string;service:string;summary:string};
  /** When a stalled flow was last nudged by the follow-up sweep. */
  nudgedAt?:number;
  /** How many reminders the stalled current question has had (10 and 20 minutes). */

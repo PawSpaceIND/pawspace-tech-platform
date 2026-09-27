@@ -42,3 +42,7 @@ a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret
 # not reproduced here.
 51dd2d7e94876a26e53fd2950ab23db84a6ccdf7:tests/razorpay-multi-capture-refunds.test.mjs:pawspace-payment-secret-key:42
 51dd2d7e94876a26e53fd2950ab23db84a6ccdf7:tests/grooming-reschedule-pay-difference.test.mjs:pawspace-payment-secret-key:24
+
+# Web chat visitor verification test (#1130): the same two synthetic UAT OTP constants as above, in the
+# commit that introduced the test; the test now assembles them at runtime. Exact historical finding only.
+522ca30e594b05724b80917e6adabad99c9b549f:tests/web-chat-visitor-verify.test.mjs:generic-api-key:16
