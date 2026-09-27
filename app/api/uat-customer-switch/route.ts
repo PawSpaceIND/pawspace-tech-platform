@@ -45,6 +45,7 @@ export async function POST(request: Request) {
       reason: "Explicit staging test-customer selection; no real phone ownership asserted",
     });
     const issued = await issuePlatformSession(db, {
+      request,
       bindingId: String(binding?.id || ""), identitySource: "uat_persona", principalType: "identity_subject", principalKey,
       subjectType: "customer", subjectId: persona.id, ttlSeconds: 86_400, metadata: { synthetic: true, cityId: "blr" },
     });
