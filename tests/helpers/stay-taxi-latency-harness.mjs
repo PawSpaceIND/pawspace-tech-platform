@@ -161,14 +161,19 @@ async function dispatchViaWorker(world, request, handler) {
     const leaseCleanup = request.method === "POST" && (url.pathname === "/api/uat-scheduling" || url.pathname === "/api/canonical-bookings") ? m.leases.cleanupExpiredReservationLeases(env.DB) : null;
     leaseCleanup?.catch(() => undefined);
     const inspection = m.trusted.requestForAuthorization(request, env);
-    const sessionAccess = await m.session.authorizePlatformSessionRequest(inspection, env.DB).finally(() => leaseCleanup);
-    if (sessionAccess instanceof Response) return sessionAccess;
-    const access = sessionAccess ?? await m.api.authorizeApiRequest(inspection, env);
-    if (access instanceof Response) return access;
-    const block = await m.control.runtimeControlBlock(env.DB, inspection); if (block) return block;
-    const service = await m.service.blockDisabledServiceRequest(inspection, env.DB); if (service) return service;
-    await m.finance.ensureFinancialRuntimeSchema(env.DB);
-    return handler(request);
+    // The sanitized inspection request is itself cloned by each gate below; retain those clones too, or
+    // collecting one cancels the inspection body and the next gate's clone throws "unusable".
+    const authorize = async () => {
+      const sessionAccess = await m.session.authorizePlatformSessionRequest(inspection, env.DB).finally(() => leaseCleanup);
+      if (sessionAccess instanceof Response) return sessionAccess;
+      const access = sessionAccess ?? await m.api.authorizeApiRequest(inspection, env);
+      if (access instanceof Response) return access;
+      const block = await m.control.runtimeControlBlock(env.DB, inspection); if (block) return block;
+      const service = await m.service.blockDisabledServiceRequest(inspection, env.DB); if (service) return service;
+      await m.finance.ensureFinancialRuntimeSchema(env.DB);
+      return handler(request);
+    };
+    return inspection === request ? authorize() : withScopedRequestClones(inspection, authorize);
   };
   if (request.method === "POST" && COUNTED_POST_PATHS.has(url.pathname)) {
     const metrics = m.metrics.createRequestD1Metrics(request, true);
