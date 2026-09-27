@@ -4,8 +4,8 @@
  * package, monthly close, GSTR-1 and GSTR-3B, and checked against ledger account 2130-GST Payable.
  *
  *   Commission job, Rs 1,000 at 70/30: PawSpace files 54 GST on a 300 taxable value (its commission).
- *   Own supply, Rs 1,000: 180 on 820 under "percent_of_base"; 152.54 on 847.46 under "extract_inclusive".
- *   Funeral / memorial: 0 GST, reported as an exempt supply (GSTR-1 nil, GSTR-3B 3.1(c)).
+ *   Own supply, Rs 1,000: 180 on 1,000 under "percent_of_base" (owner decision A, 27 Sept 2026: GST on the amount PawSpace makes); 152.54 on 847.46 under "extract_inclusive".
+ *   Funeral / memorial: 0 GST, reported outside GST under Schedule III by default (GSTR-1 Table 8 non-GST, GSTR-3B 3.1(e)).
  *   Boarding, sitting, walking, training and the Pet Taxi owner vehicle file exactly like grooming.
  *
  * Before this change the returns read the customer invoice's tax: a completion Finance never invoiced by hand
@@ -152,7 +152,7 @@ test("boarding, sitting, walking, training and the taxi owner vehicle file like 
   assert.equal(pkg.summary.serviceSupplies.commission.count, 7);
 });
 
-test("own supply files 180 on 820 under percent_of_base, and 152.54 on 847.46 when Finance switches to extract_inclusive", async () => {
+test("own supply files 180 on 1,000 under percent_of_base, and 152.54 on 847.46 when Finance switches to extract_inclusive", async () => {
   const { sqlite, db } = await filingWorld();
   await activeTerm(db, { service: "grooming", model: "commission_groomer", share: 0.70 });
   sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-FT','full_time')").run();
@@ -160,10 +160,10 @@ test("own supply files 180 on 820 under percent_of_base, and 152.54 on 847.46 wh
   assert.equal((await complete(db, "BK-OWN")).gstLiability, 180);
   await assignSeptember(db);
   const { pkg, gstr1, gstr3b } = await fileSeptember(db);
-  assert.deepEqual([pkg.summary.serviceOutputTax, pkg.summary.serviceTaxableValue], [180, 820], "180 on 820");
-  assert.deepEqual(gstr1.payload.b2cs.find((b) => b.pos === "29"), { sply_ty: "INTRA", pos: "29", typ: "OE", rt: 18, txval: 820, iamt: 0, camt: 90, samt: 90, csamt: 0 });
-  assert.ok(gstr1.payload.hsn.data.some((h) => h.hsn_sc === "999799" && h.txval === 820), "own supply is filed under the service's own SAC, not the commission SAC");
-  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: 820, iamt: 0, camt: 90, samt: 90, csamt: 0 });
+  assert.deepEqual([pkg.summary.serviceOutputTax, pkg.summary.serviceTaxableValue], [180, 1000], "180 on 1,000");
+  assert.deepEqual(gstr1.payload.b2cs.find((b) => b.pos === "29"), { sply_ty: "INTRA", pos: "29", typ: "OE", rt: 18, txval: 1000, iamt: 0, camt: 90, samt: 90, csamt: 0 });
+  assert.ok(gstr1.payload.hsn.data.some((h) => h.hsn_sc === "998612" && h.txval === 1000), "own supply is filed under the service's own SAC, not the commission SAC");
+  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: 1000, iamt: 0, camt: 90, samt: 90, csamt: 0 });
   assert.equal(ledgerGst(sqlite, ["BK-OWN"]), 180);
 
   const inclusive = await filingWorld();
@@ -181,23 +181,23 @@ test("own supply files 180 on 820 under percent_of_base, and 152.54 on 847.46 wh
   assert.equal(ledgerGst(inclusive.sqlite, ["BK-OWN"]), 152.54);
 });
 
-test("a funeral booking files 0 GST as an exempt supply: GSTR-1 nil and GSTR-3B 3.1(c)", async () => {
+test("a funeral booking files 0 GST outside GST (Schedule III): GSTR-1 Table 8 non-GST and GSTR-3B 3.1(e)", async () => {
   const { sqlite, db } = await filingWorld();
   await activeTerm(db, { service: "funeral_memorial", model: "commission_standard", share: 0.70 });
   booking(sqlite, "BK-FUN", { service: "funeral_memorial", provider: "PRV-VENDOR" });
   assert.equal((await complete(db, "BK-FUN")).gstLiability, 0);
-  // A manual funeral order is PawSpace's own supply, exempt too.
+  // A manual funeral order is PawSpace's own supply, outside GST too.
   const funeralOrders = await import("../lib/funeral-manual-order.ts");
   await funeralOrders.recordFuneralConvertedOrder(db, { customerName: "Asha", phone: "9000000000", paymentMethod: "upi", orderValue: 5000, orderDate: "2026-09-20", actorId: FINANCE });
   await assignSeptember(db);
   const { pkg, view, gstr1, gstr3b } = await fileSeptember(db);
   assert.equal(pkg.summary.serviceOutputTax, 0);
-  assert.equal(pkg.summary.serviceExemptValue, 5300, "PawSpace's 300 funeral commission plus the 5,000 manual order, both exempt");
+  assert.equal(pkg.summary.serviceNonGstValue, 5300, "PawSpace's 300 funeral commission plus the 5,000 manual order, both outside GST");
   assert.equal(view.gst.outputTax, 0);
-  assert.equal(view.gst.serviceExemptValue, 5300);
-  assert.deepEqual(gstr1.payload.nil, { inv: [{ sply_ty: "INTRAB2C", expt_amt: 5300, nil_amt: 0, ngsup_amt: 0 }] });
-  assert.deepEqual(gstr1.payload.b2cs, [], "an exempt supply is not a taxable b2cs line");
-  assert.deepEqual(gstr3b.payload.sup_details.osup_nil_exmp, { txval: 5300 });
+  assert.equal(view.gst.serviceNonGstValue, 5300);
+  assert.deepEqual(gstr1.payload.nil, { inv: [{ sply_ty: "INTRAB2C", expt_amt: 0, nil_amt: 0, ngsup_amt: 5300 }] });
+  assert.deepEqual(gstr1.payload.b2cs, [], "a non-GST supply is not a taxable b2cs line");
+  assert.deepEqual(gstr3b.payload.sup_details.osup_nongst, { txval: 5300 });
   assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
   assert.equal(ledgerGst(sqlite, ["BK-FUN"]), 0);
 });

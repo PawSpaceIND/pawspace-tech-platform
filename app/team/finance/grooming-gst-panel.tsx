@@ -14,7 +14,8 @@ const methodName = (method: GstMethod, rate: number) => method === "extract_incl
  * The ONE GST setting for every PawSpace service (owner decision 1, 26 Sept 2026): a rate and a method, per city with an
  * all-cities default, effective from a date. Commission jobs pay it on PawSpace's commission, own supply on the whole amount
  * paid, funeral and memorial pay none. Publishing needs finance.manage and a reason, and is audited server-side.
- * Grooming quotes keep showing GST as included in the price (owner decision 9: not decided yet) at the rate published here.
+ * The returns file the amount PawSpace makes as the taxable value (owner-approved method, 27 Sept 2026). Customers pay the
+ * quoted price with GST included; their tax invoice shows it.
  */
 export default function GstSettingPanel() {
   const [directory, setDirectory] = useState<Directory | null>(null);
@@ -55,8 +56,8 @@ export default function GstSettingPanel() {
       <label>Applies to<br /><select value={cityId} onChange={event => setCityId(event.target.value)}>{cities.map(city => <option key={city} value={city}>{cityName(city)}</option>)}</select></label>
       <label>GST rate (%)<br /><input type="number" min="0" max="40" step="0.01" value={rate} onChange={event => setRate(event.target.value)} style={{ width: 90 }} /></label>
       <fieldset style={{ border: "1px solid var(--staff-line)", borderRadius: 10, padding: "6px 10px" }}><legend>How GST is worked out</legend>
-        <label style={{ display: "block" }}><input type="radio" name="gst-method" value="percent_of_base" checked={method === "percent_of_base"} onChange={() => setMethod("percent_of_base")} /> The rate applied to the amount (owner&apos;s choice)</label>
-        <label style={{ display: "block" }}><input type="radio" name="gst-method" value="extract_inclusive" checked={method === "extract_inclusive"} onChange={() => setMethod("extract_inclusive")} /> Taken out of an amount that already includes GST (only if the CA says so)</label>
+        <label style={{ display: "block" }}><input type="radio" name="gst-method" value="percent_of_base" checked={method === "percent_of_base"} onChange={() => setMethod("percent_of_base")} /> The rate applied to the amount PawSpace makes (owner-approved method, 27 Sept 2026)</label>
+        <label style={{ display: "block" }}><input type="radio" name="gst-method" value="extract_inclusive" checked={method === "extract_inclusive"} onChange={() => setMethod("extract_inclusive")} /> Taken out of an amount that already includes GST</label>
       </fieldset>
       <label>Effective from<br /><input type="date" value={effectiveFrom} onChange={event => setEffectiveFrom(event.target.value)} /></label>
       <label style={{ flex: "1 1 260px" }}>Reason (at least 8 characters)<br /><input value={reason} onChange={event => setReason(event.target.value)} placeholder="e.g. Confirmed by our CA for FY 26-27" style={{ width: "100%" }} /></label>
@@ -67,10 +68,11 @@ export default function GstSettingPanel() {
       <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
         <li>Commission job at 70/30 (every service except funeral): provider gets Rs 700, PawSpace&apos;s commission is Rs 300, GST {rupees(commissionGst)}, PawSpace keeps {rupees(300 - commissionGst)}.</li>
         <li>Own supply (full-time provider or company vehicle): GST {rupees(ownSupplyGst)} on the whole Rs 1,000, PawSpace keeps {rupees(1000 - ownSupplyGst)}.</li>
-        <li>Funeral and memorial: no GST (exempt).</li>
+        <li>Funeral and memorial: no GST (outside GST by default; Finance sets the treatment on the GST screen).</li>
+        <li>The returns file what PawSpace makes as the taxable value: Rs 300 on the commission job, Rs 1,000 on own supply.</li>
         <li>TCS of 0.5% (Rs 5) is held back from the provider only if they have given us a GSTIN.</li>
       </ul>
-      <small style={{ display: "block", marginTop: 6, color: "var(--staff-muted)" }}>Grooming quotes still show GST as included in the price, at this rate, until the owner decides how GST is shown to customers.</small>
+      <small style={{ display: "block", marginTop: 6, color: "var(--staff-muted)" }}>Customers pay the quoted price with GST included; the customer&apos;s tax invoice shows the GST.</small>
     </div>
     {directory && directory.history.length > 0 && <details style={{ marginTop: 12 }}><summary>Earlier versions</summary><ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>{directory.history.slice(0, 10).map(row => <li key={row.id}>{cityName(row.city_id)} v{row.version}: {methodName(row.method, row.rate_percent)} from {row.effective_from}, by {row.created_by} ({row.reason})</li>)}</ul></details>}
     {message && <p role="status" style={{ margin: "10px 0 0" }}>{message}</p>}

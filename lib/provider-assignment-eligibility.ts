@@ -49,6 +49,14 @@ async function governedUatSeedFixture(db:Db,providerId:string,known?:Row|null){
 /** Ids that only the UAT roster SQL (uatcap_*) and the runtime founder_seed defaults ever create. */
 const UAT_RUNTIME_DEFAULT_PROVIDER_IDS=new Set(["groom_arun","groom_kiran","groom_sanjay","train_kiran","train_ramesh","train_meera"]);
 export function isUatRosterProviderId(providerId:string){return /^uatcap_[a-z0-9_]+$/.test(providerId)||UAT_RUNTIME_DEFAULT_PROVIDER_IDS.has(providerId);}
+/**
+ * The vertical the UAT payout seed (lib/uat-payout-beneficiaries.ts) gives the onboarding application it creates for a
+ * seeded roster provider. That application exists only so the payout beneficiary check has a row to hang the bank_kyc
+ * on; it is not an onboarding verification record, so the provider stays the roster fixture it was and is not held to
+ * an identity mandate it was never taken through. Nothing else ever writes this vertical.
+ */
+export const UAT_PAYOUT_SEED_VERTICAL="uat_payout_seed";
+export const isUatPayoutSeedApplication=(application:Row|null|undefined)=>text(application?.vertical_key)===UAT_PAYOUT_SEED_VERTICAL;
 
 /** A provider may receive NEW work only when current mandatory verification can be proved. */
 export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.now()):Promise<AssignmentBlock>{
@@ -60,7 +68,8 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
     const profileRead=db.prepare("SELECT services_json,updated_by FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>();profileRead.catch(()=>undefined);
     const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>()
       .catch((error:unknown)=>{if(/no such table/i.test(error instanceof Error?error.message:String(error)))return null;throw error;});
-    if(!application){
+    // A UAT payout seed application is not an onboarding record (see UAT_PAYOUT_SEED_VERTICAL): the provider is judged as before.
+    if(!application||isUatPayoutSeedApplication(application)){
       const rawProfile=await profileRead.catch(()=>null);
       let services:string[]=[];try{services=JSON.parse(text(rawProfile?.services_json)||"[]") as string[];}catch{}
       if(services.includes("vet_consult"))return block(id,"vet_requires_verified_vci_onboarding");
