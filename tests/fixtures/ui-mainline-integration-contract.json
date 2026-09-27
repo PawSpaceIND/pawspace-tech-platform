@@ -147,7 +147,7 @@
     "app/api/crm/chat/route.ts": "1e6d14d518221b2333d8d84f8fd89c21d2dd7093fee3a98ed32ab87b37e8f140",
     "app/api/crm/route.ts": "31dfcfa46c82d04c6e08b507283221c751039540587dc9137b587aeab911cf90",
     "app/api/cron/dpdp-retention/route.ts": "ca5050ef861e45c711639426dcd129531aa2db2ef843311175c3221f1ca96646",
-    "app/api/customer-360/route.ts": "0d5be28f06655a4a701d812bd92af69c30e676085c70fbee70824f63d385a429",
+    "app/api/customer-360/route.ts": "b4d864c087c20caee412f3ca3bf1d1af3456f2fb0724cd968a1148a431cde395",
     "app/api/customer-account/route.ts": "53c61a2527582d29736cffb023da0522e04aebfef4c132b1af7d0a7e0736c66a",
     "app/api/customer-billing/route.ts": "bdfd62d75827d58b68ddd97e5907e7fc562d809c74c1b8e5ed67f046749bd554",
     "app/api/customer-business-view/route.ts": "d39847618c22f582e1807e743d8311c6f35e2396079c7b2d0d98a64939024b29",

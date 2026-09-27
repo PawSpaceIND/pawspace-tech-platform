@@ -1,3 +1,4 @@
+import{matchesCustomerSearch}from"../../../lib/customer-search";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import{buildCustomer360,ensureCustomer360Tables}from"../../../lib/customer-360";
@@ -27,7 +28,7 @@ function hasAuthenticationMaterial(request:Request){if(isDevelopmentPreviewReque
  * customer_data_reveals row. The area survives here so an associate arranging a home visit can still
  * recognise where they are going.
  */
-export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const built=await buildCustomer360(db,id);
+export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const query=new URL(request.url).searchParams.get("q")?.slice(0,200)||"";const built=(await buildCustomer360(db,id)).filter(record=>matchesCustomerSearch(record,query));
   // One customer's detail carries each booking's payment state (the /team/sales booking list). The list
   // read does not: payment for every booking of every customer would break its fan-out budget.
   const payments=id?await customerBookingPayments(db,built.flatMap(record=>record.bookings)):null;
