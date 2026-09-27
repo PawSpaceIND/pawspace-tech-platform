@@ -8,10 +8,12 @@ import { enterWorkersDbScope } from "./helpers/module-hooks.mjs";
 for (const scenario of [
   {name:"percentage with extras",base:1899,extras:["Tick & flea treatment"],rate:10,gross:2398,discount:239.8,final:2158.2},
   {name:"half-paise percentage rounding",base:1899,extras:[],rate:12.5,gross:1899,discount:237.38,final:1661.62},
+  ...[2,3,4].map(pets=>({name:`${pets} pets bind the exact priced bundle`,pets,base:1600*pets,extras:[],rate:10,gross:1600*pets,discount:160*pets,final:1440*pets})),
 ]) test(`V2 real coupon integration: ${scenario.name}`,async t=>{
   const ctx=await setupJourney();t.after(ctx.close);enterWorkersDbScope(ctx.db);
   const {db,sqlite}=ctx;
-  await seedOwnedPet(db,"CUST-V2-COUPON","PET-V2-COUPON","Bruno");
+  const pets=Array.from({length:scenario.pets||1},(_,index)=>({id:`PET-V2-COUPON-${index}`,sourceId:`PET-V2-COUPON-${index}`,name:`Bruno ${index+1}`,species:"dog",vaccinationStatus:"verified"}));
+  for(const pet of pets)await seedOwnedPet(db,"CUST-V2-COUPON",pet.id,pet.name);
   const cookie=await sessionCookie(db,"customer","CUST-V2-COUPON","customer:CUST-V2-COUPON");
   const routes={
     "/api/v2/grooming-catalogue":"../app/api/v2/grooming-catalogue/route.ts",
@@ -32,19 +34,21 @@ for (const scenario of [
   const care=await import("../lib/v2/grooming-client.ts");
   const checkout=await import("../lib/v2/grooming-checkout-client.ts");
   await care.loadV2GroomingCatalogue();
-  sqlite.prepare("UPDATE service_packages SET active=1,base_price=? WHERE package_code='dog-basic'").run(scenario.base);
-  const pkg=(await care.loadV2GroomingCatalogue()).packages[0],bundle=pkg.bundles[0];
+  const priceCode=pets.length===1?"dog-basic":`dog-basic__${pets.length}_pets`;
+  sqlite.exec("UPDATE service_packages SET active=1 WHERE package_code='dog-basic'");
+  sqlite.prepare("UPDATE service_packages SET active=1,base_price=? WHERE package_code=?").run(scenario.base,priceCode);
+  const pkg=(await care.loadV2GroomingCatalogue()).packages[0],bundle=pkg.bundles.find(b=>b.petCount===pets.length);
+  assert.ok(bundle,"published pet-count bundle must exist");
   const {saveCouponCampaign}=await import("../lib/coupon-governance.ts");
   const now=Date.now();
-  await saveCouponCampaign(db,{id:"v2-coupon",code:"V2EXACT",name:"V2 exact basket test",status:"active",serviceCodes:["grooming"],cityIds:["blr"],channels:["website"],customerKinds:["new","existing"],packageScope:"selected",packageCodes:["dog-basic"],crossSellFromServices:[],firstOrderOnly:false,minOrder:1,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:true,discountType:"percent",discountValue:scenario.rate,maxDiscount:500,perCustomerLimit:5,totalLimit:10,validFrom:now-60000,validUntil:now+3600000,customerIds:["CUST-V2-COUPON"]});
+  await saveCouponCampaign(db,{id:"v2-coupon",code:"V2EXACT",name:"V2 exact basket test",status:"active",serviceCodes:["grooming"],cityIds:["blr"],channels:["website"],customerKinds:["new","existing"],packageScope:"selected",packageCodes:[priceCode],crossSellFromServices:[],firstOrderOnly:false,minOrder:1,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:true,discountType:"percent",discountValue:scenario.rate,maxDiscount:2000,perCustomerLimit:5,totalLimit:10,validFrom:now-60000,validUntil:now+3600000,customerIds:["CUST-V2-COUPON"]});
   const coverage=await care.resolveV2GroomingCoverage("560038"),isoDate=new Date(now+7*86400000).toISOString().slice(0,10);
   const priced=await care.quoteV2Grooming({bundle,isoDate,slotIndex:1,cityId:coverage.cityId,zoneId:coverage.zoneId});
   assert.equal(priced.quote.price,scenario.base,"test must use the actual governed package price");
   const address="21 Indiranagar Main Road, Bengaluru";
-  const preview=await care.previewV2Groomers({customerId:"CUST-V2-COUPON",petIds:["PET-V2-COUPON"],cityId:coverage.cityId,zoneId:coverage.zoneId,serviceAddress:address,servicePincode:coverage.pincode,scheduledStart:priced.scheduledStart,scheduledEnd:priced.scheduledEnd});
+  const preview=await care.previewV2Groomers({customerId:"CUST-V2-COUPON",petIds:pets.map(p=>p.id),cityId:coverage.cityId,zoneId:coverage.zoneId,serviceAddress:address,servicePincode:coverage.pincode,scheduledStart:priced.scheduledStart,scheduledEnd:priced.scheduledEnd});
   assert.ok(preview.providers.length);
-  const pet={id:"PET-V2-COUPON",sourceId:"PET-V2-COUPON",name:"Bruno",species:"dog",vaccinationStatus:"verified"};
-  const input={account:{customerId:"CUST-V2-COUPON",name:"V2 Coupon QA",primaryPhone:"9000000982",pets:[pet]},selectedPets:[pet],pkg,bundle,quote:priced.quote,provider:preview.providers[0],address,pincode:coverage.pincode,cityId:coverage.cityId,zoneId:coverage.zoneId,scheduledStart:priced.scheduledStart,scheduledEnd:priced.scheduledEnd,addOns:scenario.extras,coupon:{quoteId:"requote-before-reserving",code:"V2EXACT",discount:999}};
+  const input={account:{customerId:"CUST-V2-COUPON",name:"V2 Coupon QA",primaryPhone:"9000000982",pets},selectedPets:pets,pkg,bundle,quote:priced.quote,provider:preview.providers[0],address,pincode:coverage.pincode,cityId:coverage.cityId,zoneId:coverage.zoneId,scheduledStart:priced.scheduledStart,scheduledEnd:priced.scheduledEnd,addOns:scenario.extras,coupon:{quoteId:"requote-before-reserving",code:"V2EXACT",discount:999}};
   const booked=await checkout.createV2GroomingBooking(input);
   const booking=sqlite.prepare("SELECT total_amount,pricing_json FROM canonical_bookings WHERE id=?").get(booked.bookingId);
   const payment=sqlite.prepare("SELECT amount,amount_due_now FROM booking_payments WHERE booking_id=?").get(booked.bookingId);
@@ -53,6 +57,11 @@ for (const scenario of [
   const coupon=sqlite.prepare("SELECT order_value,discount_amount,final_amount,status FROM coupon_quotes WHERE id=?").get(pricing.couponQuoteId);
   assert.deepEqual({...coupon},{order_value:scenario.gross,discount_amount:scenario.discount,final_amount:scenario.final,status:"consumed"});
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions WHERE booking_id=?").get(booked.bookingId).n,1);
+  if(pets.length>1){
+    const {prepareCouponBooking}=await import("../lib/coupon-governance.ts");
+    await assert.rejects(prepareCouponBooking(db,{quoteId:pricing.couponQuoteId,bookingId:"other",customerId:"CUST-V2-COUPON",serviceCode:"grooming",cityId:"blr",packageCode:"dog-basic",petCount:1,submittedTotal:scenario.final,submittedDiscount:scenario.discount,idempotencyKey:"wrong-pet-count",now:Date.now()}),/does not match this booking/);
+  }
+
   assert.equal((await checkout.createV2GroomingBooking(input)).bookingId,booked.bookingId);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id='CUST-V2-COUPON'").get().n,1);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions WHERE customer_id='CUST-V2-COUPON'").get().n,1);

@@ -675,10 +675,13 @@ test("a chat enquirer who signs in is the enquiry's customer, and their paid boo
   // Their own Boarding booking reaches the chat lead, and its captured payment converts it.
   const { attributeBookingToOpenLead, convertLeadOnPaymentCaptured } = await import("../lib/lead-conversion-attribution.ts");
   const now = Date.now(), bookingId = "PS-CHAT-BOARDING-1";
-  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR')");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL,updated_at INTEGER NOT NULL)");
-  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,total_amount) VALUES (?,?,?,?)").run(bookingId, signedIn.customerId, "boarding", 1998);
-  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,updated_at) VALUES (?,?,?,?,?,?)").run("PAY-CHAT-1", bookingId, signedIn.customerId, 1998, "created", now);
+  // Use the real schema: the preceding coupon offer read may already have created it.
+  const { ensureCanonicalBookingCoreTables } = await import("../lib/canonical-booking-core-schema.ts");
+  await ensureCanonicalBookingCoreTables(db);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,total_amount,created_by,created_at,updated_at) VALUES (?,?,?,'[]','[]','blr','blr-east','boarding','boarding-24h','Boarding',?,'PRV-CHAT-TEST',?,?,1998,'chat-attribution-fixture',?,?)")
+    .run(bookingId, `booking:${bookingId}`, signedIn.customerId, `schedule:${bookingId}`, new Date(now).toISOString(), new Date(now + 86400000).toISOString(), now, now);
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES ('PAY-CHAT-1',?,?,1998,1998,'upi','prepaid','created',?,?,?)")
+    .run(bookingId, signedIn.customerId, `payment:${bookingId}`, now, now);
   const attributed = await attributeBookingToOpenLead(db, { customerId: signedIn.customerId, bookingId });
   assert.deepEqual({ ...attributed }, { leadId: lead.id, converted: false, attribution: "lead" });
   sqlite.prepare("UPDATE booking_payments SET status='captured',updated_at=? WHERE id='PAY-CHAT-1'").run(now + 1);

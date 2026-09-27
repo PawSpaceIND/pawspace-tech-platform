@@ -36,7 +36,7 @@ test("V2 re-quotes the coupon before reserving and books the server's fresh disc
   const calls = network(t);
   await client.createV2GroomingBooking(input({ quoteId: "CPQ-1", code: "GROOM200", discount: 999 }));
   assert.deepEqual(calls.map((call) => call.url), ["/api/coupon-governance", "/api/uat-scheduling", "/api/canonical-bookings", "/api/grooming-service-location"]);
-  assert.deepEqual(calls[0].body.input, { code: "GROOM200", customerId: "C1", serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
+  assert.deepEqual(calls[0].body.input, { code: "GROOM200", customerId: "C1", serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false, bookingKey: await client.v2GroomingIdempotencyKey(input({quoteId:"CPQ-1",code:"GROOM200",discount:999})) });
   const sent = calls.find((call) => call.url === "/api/canonical-bookings").body;
   assert.equal(sent.totalAmount, 1699, "the client's shown discount is never trusted"); assert.equal(sent.amountDueNow, 1699);
   assert.deepEqual(sent.pricing, { discount: 200, couponCode: "GROOM200", couponQuoteId: "CPQ-FRESH" });
