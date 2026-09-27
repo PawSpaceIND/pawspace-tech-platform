@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { MetricBars, TargetProgress, VisualGrid, reportDate } from "../../components/ui/ReportVisuals";
 import TrendChart from "../../components/ui/TrendChart";
-import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
+import { Badge, StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
 
 /**
  * Revenue Mission Command Center.
@@ -90,7 +90,7 @@ export default function RevenueMissionPage() {
         <StatCard label="Critical blockers" value={data ? blockers : "—"} meta={blockers > 0 ? "must be resolved before the mission is trustworthy" : "no critical blockers"} trend={blockers > 0 ? "down" : "up"} />
       </TeamStatGrid>
 
-      {revenue && <MetricBars title="From booked to net collected" note="Independent amounts from this mission’s ledger; these bars must not be added together." format={money} items={[
+      {revenue && <MetricBars title="From booked to net collected" note="Booked is sold value; net collected is collections minus refunds. These ledger amounts must not be added together." format={money} items={[
         { label: "Booked", value: revenue.booked, tone: "gold" }, { label: "Collected", value: revenue.collected },
         { label: "Refunded", value: revenue.refunded, tone: "warning" }, { label: "Net collected", value: revenue.netCollected },
       ]} />}
@@ -100,44 +100,17 @@ export default function RevenueMissionPage() {
         </TeamSection>
         <MetricBars title="Net collected by city" note="Revenue attributed to each city in this mission." format={money} items={data.breakdowns.city.map(row => ({ label: row.cityId || "Unattributed", value: row.netCollected }))} />
       </VisualGrid>}
-      <TeamSection title="Revenue truth" note="Achieved counts only what the payment records prove. Booked is what was sold; Net collected is collected less refunds.">
-        <TeamFigures items={[
-          { label: "Booked", value: money(revenue?.booked) },
-          { label: "Collected", value: money(revenue?.collected), tone: "good" },
-          { label: "Refunded", value: money(revenue?.refunded), tone: Number(revenue?.refunded || 0) > 0 ? "bad" : "default" },
-          { label: "Net collected", value: money(revenue?.netCollected), tone: "good" },
-        ]} />
-      </TeamSection>
 
       {pipeline && <VisualGrid>
         <MetricBars title="Pipeline value" note="Potential value only; review-required opportunities are included in this pipeline." format={money} items={[{ label: "Unweighted", value: pipeline.unweightedPipeline, tone: "gold" }, { label: "Probability weighted", value: pipeline.weightedPipeline }]} />
         <MetricBars title="Opportunity status" note="Counts of opportunities, separate from revenue." items={[{ label: "Ready", value: pipeline.ready }, { label: "Review required", value: pipeline.reviewRequired, tone: "gold" }, { label: "Suppressed", value: pipeline.suppressed, tone: "warning" }]} />
       </VisualGrid>}
-      <TeamSection title="Pipeline — not achieved revenue" note="Weighted applies each opportunity's own probability. Pipeline includes ready and review-required opportunities; it never counts toward achieved revenue.">
-        <TeamFigures items={[
-          { label: "Weighted", value: money(pipeline?.weightedPipeline) },
-          { label: "Unweighted", value: money(pipeline?.unweightedPipeline) },
-          { label: "Ready", value: pipeline?.ready ?? "—" },
-          { label: "Suppressed", value: pipeline?.suppressed ?? "—" },
-          { label: "Review required", value: pipeline?.reviewRequired ?? "—" },
-        ]} />
-      </TeamSection>
 
       {queue && <MetricBars title="Lead execution pressure" note="Current queue snapshot. Status counts can overlap; they are not a conversion funnel." items={[
         { label: "Current assignments", value: queue.currentAssignments }, { label: "Unassigned", value: queue.unassigned, tone: "warning" },
         { label: "Unacknowledged", value: queue.unacknowledged, tone: "gold" }, { label: "SLA breached", value: queue.slaBreached, tone: "warning" },
         { label: "Manager escalation due", value: queue.managerEscalationDue, tone: "warning" }, { label: "Reassignment due", value: queue.reassignmentDue, tone: "gold" },
       ]} />}
-      <TeamSection title="Lead execution" note="The queue behind the pipeline. An SLA breach or an unacknowledged assignment is why revenue stalls before it reaches the pipeline at all.">
-        <TeamFigures items={[
-          { label: "Current assignments", value: queue?.currentAssignments ?? "—" },
-          { label: "Unassigned", value: queue?.unassigned ?? "—", tone: Number(queue?.unassigned || 0) > 0 ? "bad" : "default" },
-          { label: "Unacknowledged", value: queue?.unacknowledged ?? "—", tone: Number(queue?.unacknowledged || 0) > 0 ? "bad" : "default" },
-          { label: "SLA breached", value: queue?.slaBreached ?? "—", tone: Number(queue?.slaBreached || 0) > 0 ? "bad" : "default" },
-          { label: "Manager escalation due", value: queue?.managerEscalationDue ?? "—" },
-          { label: "Reassignment due", value: queue?.reassignmentDue ?? "—" },
-        ]} />
-      </TeamSection>
 
       <TeamSection title="Warnings & blockers" note="Ranked by severity. A critical entry means the mission figures above cannot yet be relied on.">
         <TeamTable
