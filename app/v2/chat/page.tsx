@@ -3,6 +3,7 @@ import Link from "next/link";
 import {useCallback,useEffect,useRef,useState} from "react";
 import WatiConversation,{type WatiChoice,type WatiMessage} from "../../components/wati-chat/WatiConversation";
 import styles from "./page.module.css";
+import {createTranscriptPoll} from "../../../lib/v2/transcript-poll";
 
 /*
  * PawSpace web chat, WATI-style: the bot opens with service buttons and a short questionnaire, PawSpace
@@ -29,15 +30,17 @@ let sequence=0;const localId=()=>`local-${++sequence}`;
 export default function V2Chat(){
  const[mode,setMode]=useState<"public"|"authenticated">("public"),[identity,setIdentity]=useState<Identity>("checking"),[draft,setDraft]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
  const[publicSessionKey]=useState(()=>crypto.randomUUID().replace(/-/g,"")),[publicMessages,setPublicMessages]=useState<WatiMessage[]>([]),[publicHint,setPublicHint]=useState<string|null>(null);
+ const[pollError,setPollError]=useState("");
  const[transcript,setTranscript]=useState<Transcript|null>(null);
  const pending=useRef<{text:string;choiceId:string|null;mode:string;key:string}|null>(null);
  useEffect(()=>{let active=true;const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);fetch("/api/identity-session",{cache:"no-store",signal:controller.signal}).then(async r=>{if(r.status===401){if(active)setIdentity("guest");return;}if(!r.ok)throw new Error("Session unavailable");const b=await r.json();if(active)setIdentity(b.data?.subjectType==="customer"?"customer":"guest");}).catch(()=>{if(active)setIdentity("unavailable");}).finally(()=>clearTimeout(timer));return()=>{active=false;controller.abort();clearTimeout(timer);};},[]);
 
- async function post(body:Record<string,unknown>){
+ async function post(body:Record<string,unknown>,signal?:AbortSignal){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),REPLY_TIMEOUT_MS);
+  const abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener("abort",abort,{once:true});
   try{const r=await fetch("/api/ai-web-chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),signal:controller.signal});const payload=await r.json().catch(()=>null);if(!r.ok){if(r.status===401)setIdentity("guest");throw new Error(payload?.error||"Chat is temporarily unavailable.");}return payload;}
   catch(cause){throw controller.signal.aborted?new Error("The reply is taking too long. Send the same message again and we will show the reply as soon as it is ready."):cause;}
-  finally{clearTimeout(timer);}
+  finally{clearTimeout(timer);signal?.removeEventListener("abort",abort);}
  }
 
  /* Ask PawSpace AI (not signed in): the bot greets with the service buttons as soon as the page opens. */
@@ -54,14 +57,15 @@ export default function V2Chat(){
   * reply, the customer's own message) is dropped instead of putting an older conversation back. */
  const shownVersion=useRef(0);
  const showTranscript=useCallback((next:Transcript|((current:Transcript|null)=>Transcript|null))=>{shownVersion.current+=1;setTranscript(next);},[]);
- const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const startedAt=shownVersion.current;const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(r.status===401){setIdentity("guest");return null;}if(!r.ok)return null;const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(payload?.data&&shownVersion.current===startedAt)showTranscript(payload.data);return payload?.data||null;},[showTranscript]);
+ const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const startedAt=shownVersion.current;const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(signal?.aborted)return null;if(r.status===401){setIdentity("guest");return null;}if(!r.ok)throw new Error("Chat updates are temporarily unavailable");const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(!payload||!("data" in payload))throw new Error("Invalid chat update");if(signal?.aborted)return null;if(payload?.data&&shownVersion.current===startedAt)showTranscript(payload.data);return payload?.data||null;},[showTranscript]);
  const withTeam=Boolean(transcript?.handoff.active);
  useEffect(()=>{if(mode!=="authenticated"||identity!=="customer")return;let active=true;const controller=new AbortController();
   /* One request opens the chat: start is a no-op for a conversation that already exists, and it returns
    * the conversation either way. */
-  const open=()=>{void post({mode:"authenticated",bot:true,start:true}).then(async payload=>{const data=(payload as {data?:{transcript?:Transcript|null}}|null)?.data?.transcript;if(!active)return;if(data)showTranscript(data);else await loadTranscript(controller.signal);}).catch(()=>{if(active)void loadTranscript(controller.signal).catch(()=>{});});};open();
-  const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void loadTranscript(controller.signal).catch(()=>{});},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
-  return()=>{active=false;controller.abort();clearInterval(timer);};
+  const open=()=>{const startedAt=shownVersion.current;void post({mode:"authenticated",bot:true,start:true},controller.signal).then(async payload=>{const data=(payload as {data?:{transcript?:Transcript|null}}|null)?.data?.transcript;if(!active||shownVersion.current!==startedAt)return;if(data)showTranscript(data);else await loadTranscript(controller.signal);}).catch(()=>{if(active)void loadTranscript(controller.signal).catch(()=>{});});};open();
+  const poll=createTranscriptPoll(loadTranscript,10000,setPollError);
+  const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void poll.tick();},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
+  return()=>{active=false;controller.abort();poll.stop();clearInterval(timer);};
  },[mode,identity,withTeam,loadTranscript,showTranscript]);
 
  function choose(next:"public"|"authenticated"){setMode(next);setError("");setDraft("");pending.current=null;}
@@ -114,7 +118,7 @@ export default function V2Chat(){
    {mode==="authenticated"&&identity!=="customer"?<section className={styles.notice} role="status"><h1>Ask PawSpace anything.</h1>{identity==="checking"?<p>Checking your PawSpace sign-in...</p>:identity==="unavailable"?<><p>We could not check your sign-in.</p><button onClick={()=>window.location.reload()}>Check again</button></>:<><p>Sign in from the V2 home to discuss bookings and account details.</p><Link href="/v2">Open V2 home</Link></>}</section>
    :<WatiConversation name="PawSpace" presence={presence} status={withTeam&&authenticatedReady?"With our team":"Open"} avatarSrc={AVATAR} serviceArt={SERVICE_ART} menuBanner={MENU_BANNER}
      intro={<h1 className={styles.watiIntro}>Ask PawSpace anything.</h1>}
-     messages={messages} busy={busy} error={error} draft={draft} onDraft={setDraft}
+     messages={messages} busy={busy} error={error||(authenticatedReady?pollError:"")} draft={draft} onDraft={setDraft}
      onSend={text=>void send(text)} onChoice={choice=>void send(choice.label,choice)} placeholder={placeholder}/>}
   </div>
   <nav className={styles.dock} aria-label="PawSpace V2 navigation"><Link href="/v2"><strong>Home</strong></Link><Link href="/v2/grooming"><strong>Book</strong></Link><Link href="/v2/chat" className={styles.active}><strong>AI</strong></Link><Link href="/v2/activity"><strong>Activity</strong></Link></nav>

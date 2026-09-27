@@ -44,18 +44,18 @@
       "conditions": 33
     },
     "app/v2/chat/page.tsx": {
-      "sha256": "17b9d277e9f5139d7abe371ce683819766e8a34b5916d649609bcbbdcecc2b9e",
+      "sha256": "c8515606b6ff3af815b9ca210523aece16c91dc80e1d6f23367ab1c794720b27",
       "functions": 41,
-      "declarations": 61,
+      "declarations": 65,
       "interactionProps": 15,
-      "conditions": 27
+      "conditions": 31
     },
     "app/v2/page.tsx": {
-      "sha256": "c1d4c908c98ae90c33bb83cdb354942a740c804c6b076a50960145401a2d47d0",
-      "functions": 24,
-      "declarations": 34,
+      "sha256": "78778fb1f97009d6ac91b1e9678caf7a33b92492a8776bbaf2e6d9f8cf569a8c",
+      "functions": 30,
+      "declarations": 35,
       "interactionProps": 30,
-      "conditions": 8
+      "conditions": 5
     },
     "app/v2/service-bridge-shell.tsx": {
       "sha256": "31e8ed403feb187b7e9b13e1fb78a3c810fdb2dc1305a121a2a3b59e542013f7",
@@ -97,11 +97,11 @@
         "conditions": 7
       },
       "app/v2/page.tsx": {
-        "sha256": "70a011e9f3838e18667ea1cc0438158289649b22e70b26770d3dfffe7b056b0e",
-        "functions": 24,
-        "declarations": 34,
+        "sha256": "c3c588b9e5d2b048a3ea26f1ece02cf404a5cb1183608ca67f77e878e5e0d64d",
+        "functions": 30,
+        "declarations": 35,
         "interactionProps": 16,
-        "conditions": 8
+        "conditions": 5
       }
     },
     "logoSha256": "88bc7b6f6634739e64da2931ab456f0d0c5c650da3a945ec84d274e60c199bd2"

@@ -15,7 +15,7 @@
 export const D1_IN_CHUNK = 80;
 
 export function idChunks<T>(ids: readonly T[], size = D1_IN_CHUNK): T[][] {
-  if (size < 1) throw new Error("Chunk size must be at least 1");
+  if (!Number.isSafeInteger(size) || size < 1) throw new Error("Chunk size must be at least 1");
   const chunks: T[][] = [];
   for (let index = 0; index < ids.length; index += size) chunks.push(ids.slice(index, index + size));
   return chunks;
@@ -31,6 +31,16 @@ export async function chunkedIn<T, R>(
   size = D1_IN_CHUNK,
 ): Promise<R[]> {
   if (!ids.length) return [];
-  const results = await Promise.all(idChunks(ids, size).map((chunk) => read(chunk, chunk.map(() => "?").join(","))));
+  const chunks = idChunks(ids, size);
+  const results: R[][] = new Array(chunks.length);
+  // Bound each fan-out instead of opening hundreds of D1 requests at once. Keep source order.
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, chunks.length) }, async () => {
+    while (cursor < chunks.length) {
+      const index = cursor++;
+      const chunk = chunks[index];
+      results[index] = await read(chunk, chunk.map(() => "?").join(","));
+    }
+  }));
   return results.flat();
 }
