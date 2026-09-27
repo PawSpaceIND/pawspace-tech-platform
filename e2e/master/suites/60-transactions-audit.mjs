@@ -320,12 +320,13 @@ try {
           const shot = await staff.shot(`bcc-payments-${service}`);
           uiDefects({ ...view, shot }, "Operations");
           const fact = target.fact;
-          const status = fact?.paymentStatus ?? row?.payment_status, amount = fact?.b?.payment_amount ?? row?.payment_amount, due = fact?.b?.amount_due_now ?? row?.amount_due_now;
+          const status = fact?.paymentStatus ?? row?.payment_status, amount = fact?.b?.payment_amount ?? row?.payment_amount;
+          const due = row?.amount_due_now ?? fact?.b?.amount_due_now;
           const refundCount = fact ? fact.refundCases.length : (row?.refunds || []).length;
           const checks = [
             [`PAYMENT STATUS ${A.pretty(status)}`, new RegExp(`PAYMENT STATUS\\s+${A.pretty(status).replace(/ /g, "\\s+")}`, "i")],
             [`amount ${A.inr0(amount)}`, new RegExp(A.inr0(amount).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
-            [`Due now ${A.inr0(due)}`, new RegExp(`Due now\\s+${A.inr0(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
+            [`Available to collect ${A.inr0(due)}`, new RegExp(`Available to collect\\s+${A.inr0(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
             [`Refund cases ${refundCount}`, new RegExp(`Refund cases\\s+${refundCount}\\b`, "i")],
           ];
           const missing = checks.filter(([, pattern]) => !pattern.test(text)).map(([expectedText]) => expectedText);

@@ -305,7 +305,8 @@ async function laneA(browser) {
     await fillTrip(flow, { ...base, pickup: OUTSIDE, drop: DROP, date: isoDay(wrapDay(DAY + 5)), time: "10:00" }, { typeAddresses: false });
     const priced = await priceRide(flow, { shotLabel: "T6d-outside-area" });
     let ok = false, detail = priced.ok ? "" : `quote refused: ${priced.error}`, evidence = priced.evidence;
-    if (priced.ok) {
+    if (!priced.ok && /outside|service area|picks up only within Bengaluru/i.test(priced.error || "")) { ok = true; detail = `quote correctly refused: ${priced.error}`; }
+    else if (priced.ok) {
       await chooseVehicle(flow, "xuv");
       const r = await reserveRide(flow, { pin: "570001", shotLabel: "T6d-outside-area" });
       ok = !r.ok && /outside|not currently serving|Zone not found|service area/i.test(r.error || "");
@@ -316,15 +317,26 @@ async function laneA(browser) {
     }
     rec({ journey: "T6 validation", combo: "pickup outside the service area (Mysuru, PIN 570001)", result: ok ? "PASS" : "FAIL", detail, evidence });
   } catch (e) { rec({ journey: "T6 validation", combo: "pickup outside the service area", result: "BLOCKED", detail: harness(e), evidence: [] }); }
-  // (e) the same Mysuru pickup with a Bengaluru PIN: the reserve call the screen makes (no booking is created; an
-  // unbooked driver hold is released by the 5-minute reservation lease).
+  // (e) the same Mysuru pickup with a Bengaluru PIN. Exercise the complete screen path because service-area
+  // authority belongs to /api/taxi-ride-bookings, which validates the quote's server-geocoded pickup coordinates;
+  // /api/uat-scheduling only allocates provisional capacity and must not be treated as the area verdict.
   try {
-    const day = isoDay(wrapDay(DAY + 3)), s = new Date(istMs(day, "19:00")), e = new Date(s.getTime() + 180 * 60_000);
-    const r = await api(flow.context, "POST", "/api/uat-scheduling", { clientRequestId: `taxi40-area-${flow.customer.phone}-${Date.now()}`, customerId: account.customerId, petIds: [dog.id], serviceCode: "pet_taxi", scheduledStart: s.toISOString(), scheduledEnd: e.toISOString(), occurrences: 1, serviceAddress: "Mysore Palace, Mysuru", servicePincode: "560038" }, { timeout: 150_000 });
-    const accepted = r.status === 200 && r.body?.data?.status === "assigned";
-    const inconclusive = r.status === 409 && /NO_SCHEDULE_AVAILABLE|SLOT_TAKEN/.test(JSON.stringify(r.body));
-    rec({ journey: "T6 validation", combo: "Mysuru pickup typed with Bengaluru PIN 560038 (reserve call)", result: accepted ? "FAIL" : inconclusive ? "BLOCKED" : "PASS", detail: `HTTP ${r.status} ${JSON.stringify(accepted ? { status: r.body.data.status, provider: r.body.data.provider?.id, addressAuthority: r.body.data.addressAuthority } : r.body).slice(0, 350)}`, evidence: [] });
-    if (accepted) findingOnce("area-by-pin", { severity: "P2", area: "Pet Taxi service area", persona: "Customer", flow: "T6 outside the service area", title: "A pickup 147 km outside Bengaluru is accepted when the customer types a Bengaluru PIN: the area check uses the typed PIN, not the quoted pickup", steps: "Quote 'Mysore Palace, Mysuru' → Koramangala (the quote geocodes the pickup to 12.31, 76.66), enter PIN 560038, Reserve (POST /api/uat-scheduling serviceAddress 'Mysore Palace, Mysuru', servicePincode 560038)", expected: "Refused: the pickup is outside the PawSpace Pet Taxi service area", actual: `HTTP 200 assigned driver ${r.body.data.provider?.id} in zone ${r.body.data.addressAuthority?.zoneId}; POST /api/taxi-ride-bookings has no area check, so the ride can be booked and paid`, evidence: [] });
+    await openTaxi(flow); await fillParty(flow, base);
+    await flow.page.getByRole("button", { name: "Continue to trip details" }).click();
+    await fillTrip(flow, { ...base, pickup: OUTSIDE, drop: DROP, date: isoDay(wrapDay(DAY + 3)), time: "19:00" }, { typeAddresses: false });
+    const priced = await priceRide(flow, { shotLabel: "T6e-outside-area-bengaluru-pin" });
+    if (!priced.ok) {
+      const areaRefused = /outside|service area|picks up only within Bengaluru/i.test(priced.error || "");
+      rec({ journey: "T6 validation", combo: "Mysuru pickup typed with Bengaluru PIN 560038 (full reserve path)", result: areaRefused ? "PASS" : "BLOCKED", detail: `${areaRefused ? "quote correctly refused before reserve" : "quote did not complete"}: HTTP ${priced.status} "${priced.error}"`, evidence: priced.evidence });
+    } else {
+      await chooseVehicle(flow, "xuv");
+      const r = await reserveRide(flow, { pin: "560038", shotLabel: "T6e-outside-area-bengaluru-pin" });
+      const a = r.attempts.at(-1) || {}, bookingBody = JSON.stringify(a.bookingError || {}), schedulingBody = JSON.stringify(a.schedulingError || {});
+      const refusedByAreaGuard = !r.ok && Number(a.bookingStatus) >= 400 && /outside|service area|pickup/i.test(`${r.error || ""} ${bookingBody}`);
+      const inconclusive = !r.ok && (Number(a.schedulingStatus) === 409 || CAPACITY.test(`${r.error || ""} ${schedulingBody}`));
+      rec({ journey: "T6 validation", combo: "Mysuru pickup typed with Bengaluru PIN 560038 (full reserve path)", result: refusedByAreaGuard ? "PASS" : r.ok ? "FAIL" : inconclusive ? "BLOCKED" : "FAIL", detail: `quote pickup ${JSON.stringify(priced.q.origin || priced.q.originCoordinates || null)}; scheduling HTTP ${a.schedulingStatus}; booking HTTP ${a.bookingStatus}; alert "${r.error || ""}"; booking ${bookingBody.slice(0, 350)}`, evidence: [...priced.evidence, ...r.evidence] });
+      if (r.ok) findingOnce("area-by-pin", { severity: "P2", area: "Pet Taxi service area", persona: "Customer", flow: "T6 outside the service area", title: "A pickup 147 km outside Bengaluru can still be booked when the customer types a Bengaluru PIN", steps: "On /v2/taxi quote Mysore Palace, Mysuru → Koramangala, enter PIN 560038, then Reserve through the full screen path", expected: "The booking call refuses the ride using the quote's server-geocoded pickup coordinates", actual: `booked ${r.bookingId}; scheduling HTTP ${a.schedulingStatus}; booking HTTP ${a.bookingStatus}`, evidence: r.evidence });
+    }
   } catch (e) { rec({ journey: "T6 validation", combo: "Mysuru pickup with Bengaluru PIN", result: "BLOCKED", detail: harness(e), evidence: [] }); }
   finally { auditFlow(flow, "T6 validation"); await flow.close(); }
   })().catch(e => rec({ journey: "Customer sign-in", combo: "journey start", result: "BLOCKED", detail: harness(e), evidence: [] }));
@@ -346,7 +358,7 @@ async function laneB(browser) {
     const captured = feeRecords("T2 round trip + 90 min wait (Pixel 7)", ride, pay);
     save(ride);
     if (captured) {
-      const confirmedOnScreen = /TAXI CONFIRMED/.test(pay.step5 || "") && /Payment verified/.test(pay.step5 || "");
+      const confirmedOnScreen = /(?:TAXI|BOOKING) CONFIRMED/.test(pay.step5 || "") && /Payment verified/.test(pay.step5 || "");
       rec({ journey: "T2 round trip + 90 min wait (Pixel 7)", combo: "step 5 after the fee", result: confirmedOnScreen ? "PASS" : "PARTIAL", detail: (pay.step5 || "").slice(Math.max(0, (pay.step5 || "").indexOf("Open saved ride")), Math.max(0, (pay.step5 || "").indexOf("Open saved ride")) + 400), evidence: pay.evidence.slice(-1) });
       await pay05(flow, "T2 round trip + 90 min wait (Pixel 7)", ride);
     }
@@ -380,9 +392,12 @@ async function laneB(browser) {
     const before = await readManagePage(flow, t4.bookingId, "T7-before");
     const lifecycle = async () => { const r = await api(flow.context, "GET", `/api/taxi-lifecycle?scope=customer&bookingId=${encodeURIComponent(t4.bookingId)}`, undefined, { timeout: 150_000 }); const x = r.body?.data?.[0] || {}; return { http: r.status, status: x.status, trip: x.trip_status, reservedVehicle: x.reserved_vehicle_id || null, payment: x.payment_status }; };
     const held = await lifecycle();
-    const page = flow.page, button = page.getByRole("button", { name: "Request cancellation review" });
-    const offered = { cancelNow: await page.getByRole("button", { name: /^Cancel (ride|booking)/i }).count(), review: await button.count() };
-    await page.locator("section").filter({ hasText: "Request cancellation" }).locator("input").first().fill("Master E2E: plans changed, releasing an unpaid test ride");
+    const page = flow.page;
+    const immediate = page.getByRole("button", { name: /Cancel ride · release the car/i });
+    const reviewButton = page.getByRole("button", { name: "Request cancellation review" });
+    const button = (await immediate.isVisible().catch(() => false)) ? immediate : reviewButton;
+    const offered = { cancelNow: await immediate.count(), review: await reviewButton.count() };
+    await page.getByLabel("Reason for cancelling").fill("Master E2E: plans changed, releasing an unpaid test ride");
     const [resp] = await Promise.all([page.waitForResponse(r => r.url().includes("/api/taxi-finance") && r.request().method() === "POST", { timeout: 150_000 }).catch(() => null), button.click()]);
     let resp2 = resp;
     // A lost answer (local proxy) or a 5xx makes the customer press again; the request is idempotent.
@@ -532,7 +547,7 @@ async function staffPart(browser) {
       await page.getByText("Booking value").first().waitFor({ timeout: 60_000 }).catch(() => {});
       await settle(page, 1500);
       const t = await text(page), shot = await flow.shot("taxi-finance-workspace");
-      const value = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(t1.total);
+      const value = inr(t1.total);
       const ok = api1.status === 200 && /Taxi payment & reconciliation/.test(t) && t.includes(`Booking value | ${value}`) && !/Unable to load|role=alert/.test(t);
       rec({ journey: "Staff: Taxi finance workspace (/team/finance/taxi)", combo: `founder@pawspace.in, ${t1.bookingId}`, result: ok ? "PASS" : "FAIL", detail: `API ${api1.status} booking ${api1.body?.data?.booking?.status} payment ${api1.body?.data?.booking?.payment_status}; page "${t.slice(t.indexOf("Taxi payment"), t.indexOf("Taxi payment") + 300)}" (Finance accounts such as anjali.finance33 need MFA on staging, so the founder account is used)`, evidence: [shot] });
     }
