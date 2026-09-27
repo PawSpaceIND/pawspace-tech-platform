@@ -33,6 +33,7 @@ export default function TeamFinance(){
       <GroomingGstPanel />
       {error&&<section role="alert" style={{padding:18,borderRadius:12,background:"var(--staff-danger-bg)",border:"1px solid var(--staff-line)",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       <VisualAnalytics title="Revenue trends" />
+      {data&&!loading&&!error&&<p role="note">Totals below cover every booking of the selected services; the table lists the newest {data.limit} by last update. The revenue chart above has its own date range; its filters do not change this ledger.</p>}
       {!error&&<FinanceLedger data={data} loading={loading} service={service} onService={chooseService} />}
       <p style={{fontSize:14,color:"var(--staff-muted)",marginTop:12}}>UAT/sandbox only. Razorpay production credentials, live refunds, RazorpayX payouts, GST filing and accounting export are not activated by this screen.</p>
     </div>

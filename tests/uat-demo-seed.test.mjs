@@ -65,6 +65,12 @@ function makeD1(sqlite) {
   function statement(sql, args) {
     return {
       bind: (...boundArgs) => statement(sql, boundArgs),
+      // D1 batch returns SELECT rows as well as mutation metadata.
+      batchResult: async () => {
+        if (/^\s*(SELECT|WITH)\b/i.test(sql)) return { success: true, results: sqlite.prepare(sql).all(...args) };
+        const info = sqlite.prepare(sql).run(...args);
+        return { success: true, results: [], meta: { changes: Number(info.changes) } };
+      },
       first: async () => {
         const row = sqlite.prepare(sql).get(...args);
         return row === undefined ? null : row;
@@ -80,7 +86,7 @@ function makeD1(sqlite) {
     prepare: (sql) => statement(sql, []),
     batch: async (statements) => {
       const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
+      for (const stmt of statements) results.push(await stmt.batchResult());
       return results;
     },
     exec: async (sql) => {
