@@ -188,6 +188,20 @@ export function processedRefundStatements(db:Db,input:{bookingId:string;paymentI
  ];
 }
 
+/**
+ * A signed capture the webhook refuses to settle is still money Razorpay has taken: no booking payment owns
+ * its order, or its notes name a different booking than the one the order was opened for. The webhook answers
+ * 409 so Razorpay keeps retrying, but that left the money visible only in the webhook inbox, FAILED for good
+ * once the retries stopped. Finance gets one open critical exception per event, the same one across retries.
+ */
+export async function recordRefusedGatewayCapture(db:Db,input:{event:GatewayEvent;type:"unmatched_gateway_capture"|"gateway_order_booking_mismatch";bookingId?:string|null;paymentId?:string|null;detail?:Record<string,unknown>}){
+  await ensurePaymentReconciliationTables(db);
+  const{event}=input;
+  await db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES (?,?,?,?,?,'critical','open',?,?)")
+    .bind(`PAYEX-refused-${event.environment}-${event.eventId}`,input.bookingId??null,input.paymentId??null,event.eventId,input.type,
+      JSON.stringify({eventType:event.eventType,gatewayOrderId:event.gatewayOrderId??null,gatewayPaymentId:event.gatewayPaymentId??null,amount:round2(Number(event.amountSubunits||0)/100),currency:event.currency??null,claimedBookingId:event.bookingId??null,...(input.detail??{})}),Date.now()).run();
+}
+
 async function addException(db:Db,input:{bookingId?:string;paymentId?:string;eventId?:string;type:string;severity?:"warning"|"critical";detail:unknown}){await db.prepare("INSERT INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES (?,?,?,?,?,?,'open',?,?)").bind(`PAYEX-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.bookingId??null,input.paymentId??null,input.eventId??null,input.type,input.severity??"critical",JSON.stringify(input.detail),Date.now()).run();}
 async function lifecycle(db:Db,bookingId:string,eventType:string,detail:unknown){const now=Date.now();await db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)").run();await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"payment",bookingId,"razorpay_webhook",JSON.stringify(detail),now).run();}
 
