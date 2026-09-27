@@ -47,9 +47,13 @@ export async function GET(request:Request){try{
     const ids=contacts.map(row=>String(row.id));
     const totals=new Map<string,number>();
     const latestBookings=new Map<string,string>();
+    // The open lead the detail panel's call / callback controls act on (newest first).
+    const openLeads=new Map<string,string>();
     const read=new Set<string>();
     for(let index=0;index<ids.length;index+=50){
       const slice=ids.slice(index,index+50);
+      const leadRows=await db.prepare(`SELECT customer_id,id FROM lead_work_items WHERE customer_id IN (${slice.map(()=>"?").join(",")}) AND status NOT IN ('closed','converted','cold_exhausted') ORDER BY created_at DESC`).bind(...slice).all<Record<string,unknown>>().catch(()=>null);
+      if(leadRows)for(const row of leadRows.results){const customerId=String(row.customer_id);if(!openLeads.has(customerId))openLeads.set(customerId,String(row.id));}
       const rows=await db.prepare(`SELECT customer_id,COALESCE(SUM(total_amount),0) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slice.map(()=>"?").join(",")}) GROUP BY customer_id`)
         .bind(...slice).all<Record<string,unknown>>().catch(()=>null);
       if(!rows)continue;
@@ -64,6 +68,7 @@ export async function GET(request:Request){try{
       contact.lifetime_value=known?booked:null;
       contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
       contact.latest_booking_id=latestBookings.get(String(contact.id))??null;
+      contact.open_lead_id=openLeads.get(String(contact.id))??null;
     }
   }
   const access=await customerDataAccessResolver(db);

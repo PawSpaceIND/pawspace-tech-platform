@@ -1,6 +1,7 @@
 import{ensureCustomerAccountTables}from"./customer-account";
 import{ensureCustomer360Tables}from"./customer-360";
 import{ensureOutboundOrchestratorTables}from"./outbound-schema";
+import{ensureD1Once}from"./d1-ensure-once.js";
 
 type Db=D1Database;type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -8,10 +9,13 @@ const phoneKey=(value:unknown)=>text(value).replace(/\D/g,"").slice(-10);
 
 export type PublicLeadIdentityPlan={customerId:string;newCanonicalCustomer:boolean;identityReview:boolean;candidateCustomerIds:string[];serviceContactAllowed:boolean};
 
-export async function ensurePublicLeadOutboundTables(db:Db){
+/* Once per isolate (lib/d1-ensure-once.js). Every public enquiry plans its identity, and this set-up was
+ * six sequential D1 round trips of DDL on each of them - part of why /api/public-contact took 10-20 s
+ * while D1 was busy with other traffic. */
+export async function ensurePublicLeadOutboundTables(db:Db){return ensureD1Once(db,"public_lead_outbound_tables",async()=>{
  await Promise.all([ensureCustomerAccountTables(db),ensureCustomer360Tables(db),ensureOutboundOrchestratorTables(db)]);
  await db.prepare("CREATE TABLE IF NOT EXISTS public_contact_identity_reviews (id TEXT PRIMARY KEY,contact_id TEXT NOT NULL,lead_id TEXT NOT NULL,phone_last4 TEXT NOT NULL,candidate_customer_ids_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',reason TEXT NOT NULL,created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)").run();
-}
+});}
 
 /** Resolve an enquiry to one canonical recipient. Ambiguity is recorded for staff review, never guessed. */
 export async function planPublicLeadIdentity(db:Db,input:{proposedCustomerId:string;phone:string}) : Promise<PublicLeadIdentityPlan>{

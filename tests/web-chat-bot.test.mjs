@@ -324,6 +324,33 @@ test("a visitor's lead exists as soon as they give their number, and one that st
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM crm_activities WHERE type='web_chat_bot'").get().n), 1);
 });
 
+// Round-2 staging: "Request a call" told the visitor "A PawSpace team member will get in touch with you
+// shortly" while the lead stayed owned by "AI Orchestrator" with no SLA clock and nobody tasked to call.
+test("a signed-out visitor's 'Request a call' is owned by a sales rep with a first-response clock, and nothing is sent on WhatsApp", async () => {
+  const { sqlite, db } = await world();
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U-REP-CALL','rep.calls@pawspace.test','Rep Calls','associate','active',?,?)").run(now, now);
+  const { saveLeadAssignmentMember } = await import("../lib/lead-assignment-governance.ts");
+  await saveLeadAssignmentMember(db, { employeeEmail: "rep.calls@pawspace.test", teamCode: "sales", serviceCodes: ["boarding"], cityIds: ["blr"], active: true, actorId: "qa@pawspace.test" });
+  const sessionKey = "botvisitor0000000031";
+  const call = async (body) => (await (await callEndpoint(post({ mode: "public", bot: true, sessionKey, ...body }, IP))).response.json()).data;
+  await call({ start: true });
+  await call({ choiceId: "request_call", message: "" });
+  await call({ message: "Ravi Kumar" });
+  const consent = await call({ message: "9876543219" });
+  const noWhatsApp = consent.bot.choices.find((choice) => /call me instead/i.test(choice.label));
+  assert.ok(noWhatsApp, JSON.stringify(consent.bot));
+  const last = await call({ choiceId: noWhatsApp.id, message: "" });
+  assert.equal(last.event, "completed");
+  const lead = sqlite.prepare("SELECT id,owner,service FROM lead_work_items").get();
+  assert.equal(lead.owner, "rep.calls@pawspace.test", "a person owns the call request, not the AI");
+  assert.equal(sqlite.prepare("SELECT owner FROM crm_contacts").get().owner, "rep.calls@pawspace.test", "and the CRM shows them as the relationship owner");
+  const clock = sqlite.prepare("SELECT clock_type,status FROM lead_sla_clocks WHERE lead_id=?").get(lead.id);
+  assert.deepEqual({ ...clock }, { clock_type: "first_response", status: "running" }, "the first-response clock is running");
+  assert.equal(sqlite.prepare("SELECT status FROM whatsapp_ai_lead_triggers WHERE lead_id=?").get(lead.id).status, "blocked", "the visitor declined WhatsApp");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE channel='whatsapp'").get()?.n ?? 0), 0, "and nothing was queued on WhatsApp");
+});
+
 test("a signed-in customer who stops mid-flow is reminded at 10 minutes, PawSpace AI takes over at 20, then a person", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-STALL", "+919900000203");
