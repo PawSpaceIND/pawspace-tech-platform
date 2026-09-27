@@ -1,6 +1,7 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
+import { ensureCanonicalBookingCoreTables } from "../../../lib/canonical-booking-core-schema";
 import{bookingInvoiceDocument,renderBookingInvoiceHtml}from"../../../lib/booking-tax-invoice";
 
 /**
@@ -31,6 +32,7 @@ export async function GET(request:Request){
    await requireCustomerOwnership(db,actor,session.subjectId);customerId=session.subjectId;
   }
   if(!/^[A-Za-z0-9_.:-]{1,160}$/.test(bookingId))return notFound(asJson);
+  await ensureCanonicalBookingCoreTables(db);
   const bookings=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='canonical_bookings'").first<Record<string,unknown>>(),booking=bookings?await db.prepare("SELECT id,customer_id,city_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>():null;
   if(!booking||(customerId&&text(booking.customer_id)!==customerId))return notFound(asJson);
   if(view==="operations"){const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);if(scope&&text(booking.city_id).toLowerCase()!==scope.cityId)return json({error:"Booking is outside the manager's city scope"},403);}

@@ -2,6 +2,7 @@ import{authError,authFailure,database,requirePermission,resolveActor,type Authen
 import{hasPermission}from"../../../lib/platform-security";
 import{governedJsonError}from"../../../lib/governed-http-error";
 import{OPERATIONS_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
+import { ensureCanonicalBookingCoreTables } from "../../../lib/canonical-booking-core-schema";
 import{decideEscalationRefund,escalationRefundPosition,escalationRefundQueue,escalationRefundsForBooking,requestEscalationRefund}from"../../../lib/escalation-refunds";
 
 /*
@@ -21,6 +22,7 @@ function sameOrigin(request:Request){const origin=request.headers.get("origin");
 async function requireBookingInScope(db:Db,actor:AuthenticatedActor,bookingId:string){
  const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,OPERATIONS_MANAGER_DOMAIN);
  if(!scope)return;
+ await ensureCanonicalBookingCoreTables(db);
  const booking=await db.prepare("SELECT city_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();
  if(booking&&String(booking.city_id).toLowerCase()!==scope.cityId)throw authFailure("Booking is outside the manager's city scope",403);
 }
