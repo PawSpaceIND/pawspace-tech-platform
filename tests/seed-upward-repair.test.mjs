@@ -173,7 +173,7 @@ test("after the repair, the real leave module accepts the request the /me form o
   assert.equal(blocked.status, 409);
 
   // Now run the seed's own leave statements over that same database, exactly as a redeploy would.
-  for (const statement of seed.split(";\n").map((line) => line.trim()).filter((line) => /leave_policies|employee_leave_balances/.test(line))) {
+  for (const statement of seed.split(";\n").map((line) => line.trim()).filter((line) => /leave_policies|employee_leave_balances|shift_policies|employee_shift_assignments/.test(line))) {
     if (/^CREATE /i.test(statement)) continue;
     sqlite.exec(`${statement};`);
   }
@@ -207,4 +207,20 @@ test("a redeploy never hands back leave somebody already took", () => {
 
   assert.equal(spent.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id=? AND leave_code='CL'").get(employeeId).balance, 7,
     "five days taken stay taken; a seed must never credit leave back");
+});
+
+test("synthetic employee calendar seeds once and never replaces an operator assignment",()=>{
+ const seed=read("scripts/employee-seed.sql");
+ const statements=seed.split(";\n").map(s=>s.trim()).filter(s=>/shift_policies|employee_shift_assignments/.test(s));
+ const db=new DatabaseSync(":memory:");
+ try{
+  for(const sql of statements.filter(s=>/(^|\n)\s*CREATE\s/i.test(s)))db.exec(sql);
+  db.prepare("INSERT INTO shift_policies (id,name,version,status,timezone,start_time,end_time,weekly_off_json,approval_reference,effective_from,created_by,created_at) VALUES ('HUMAN-SHIFT','Approved operator schedule',1,'active_uat','Asia/Kolkata','12:00','20:00','[\"1\"]','HR-REVIEWED',1,'hr@pawspace.test',1)").run();
+  db.prepare("INSERT INTO employee_shift_assignments (id,employee_id,shift_policy_id,effective_from,reason,actor_id,created_at) VALUES ('HUMAN-ASSIGNMENT','SEEDEMP-EMP001','HUMAN-SHIFT',1,'Operator reviewed schedule','hr@pawspace.test',1)").run();
+  const writes=statements.filter(s=>!/(^|\n)\s*CREATE\s/i.test(s));for(const sql of writes)db.exec(sql);for(const sql of writes)db.exec(sql);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM employee_shift_assignments").get().n,40);
+  assert.equal(db.prepare("SELECT shift_policy_id FROM employee_shift_assignments WHERE employee_id='SEEDEMP-EMP001'").get().shift_policy_id,'HUMAN-SHIFT');
+  const owned=db.prepare("SELECT s.approval_reference,s.timezone FROM employee_shift_assignments a JOIN shift_policies s ON s.id=a.shift_policy_id WHERE a.employee_id='SEEDEMP-EMP002'").get();
+  assert.equal(owned.approval_reference,'UAT-ONLY-NOT-PRODUCTION');assert.equal(owned.timezone,'Asia/Kolkata');
+ }finally{db.close();}
 });

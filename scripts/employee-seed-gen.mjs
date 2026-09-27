@@ -99,6 +99,11 @@ s.push("CREATE TABLE IF NOT EXISTS finance_document_series (id TEXT PRIMARY KEY,
 s.push("CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number TEXT NOT NULL UNIQUE,entity_id TEXT NOT NULL,customer_id TEXT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_event_key TEXT NOT NULL UNIQUE,policy_id TEXT NOT NULL,registration_id TEXT NOT NULL,issue_date TEXT NOT NULL,currency TEXT NOT NULL,subtotal REAL NOT NULL,tax_total REAL NOT NULL,total REAL NOT NULL,status TEXT NOT NULL DEFAULT 'issued',tax_snapshot_json TEXT NOT NULL,document_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(source_type,source_id));");
 s.push("CREATE TABLE IF NOT EXISTS finance_invoice_lines (id TEXT PRIMARY KEY,invoice_id TEXT NOT NULL,line_key TEXT NOT NULL,description TEXT NOT NULL,service_code TEXT NOT NULL,taxable_amount REAL NOT NULL,tax_amount REAL NOT NULL,tax_snapshot_json TEXT NOT NULL,UNIQUE(invoice_id,line_key));");
 
+// ---- Explicit synthetic working calendar for employee UAT, never production HR policy. ----
+s.push("CREATE TABLE IF NOT EXISTS shift_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',timezone TEXT NOT NULL,start_time TEXT,end_time TEXT,weekly_off_json TEXT NOT NULL DEFAULT '[]',location_rule TEXT NOT NULL DEFAULT 'not_required',approval_reference TEXT,effective_from INTEGER NOT NULL,effective_until INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(name,version));");
+s.push("CREATE TABLE IF NOT EXISTS employee_shift_assignments (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,shift_policy_id TEXT NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL);");
+s.push(`INSERT OR IGNORE INTO shift_policies (id,name,version,status,timezone,start_time,end_time,weekly_off_json,location_rule,approval_reference,effective_from,created_by,created_at) VALUES ('SEED-SHIFT-EMPLOYEE-UAT','Synthetic employee work calendar',1,'active_uat','Asia/Kolkata','09:00','18:00','["0","6"]','not_required','UAT-ONLY-NOT-PRODUCTION',${JOINED},'employee_uat_seed',${BASE});`);
+
 // ---- Platform-owner identity for UAT sign-in ----
 // founder@pawspace.in is offered as the "Founder (full access)" identity on /staging-login and in
 // docs/UAT-TESTER-GUIDE.md, but it is the OWNER identity, not an employee on a payroll band, so the
@@ -170,6 +175,9 @@ for (const e of employees) {
     s.push(`INSERT OR IGNORE INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES (${q(e.id)},${q(lp.code)},${lp.units},${BASE});`);
     s.push(`UPDATE employee_leave_balances SET balance=${lp.units},updated_at=${BASE} WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)} AND balance<${lp.units} AND NOT EXISTS (SELECT 1 FROM leave_ledger_events WHERE employee_id=${q(e.id)} AND leave_code=${q(lp.code)});`);
   }
+  // Assign only the seed-owned synthetic employees that have NO existing shift history. Never
+  // replace a calendar assigned by an operator, or resurrect a retired/replaced schedule.
+  s.push(`INSERT OR IGNORE INTO employee_shift_assignments (id,employee_id,shift_policy_id,effective_from,reason,actor_id,created_at) SELECT ${q("SEEDSHIFT-"+e.code)},${q(e.id)},'SEED-SHIFT-EMPLOYEE-UAT',${JOINED},'UAT-ONLY-NOT-PRODUCTION','employee_uat_seed',${BASE} WHERE NOT EXISTS (SELECT 1 FROM employee_shift_assignments WHERE employee_id=${q(e.id)}) AND EXISTS (SELECT 1 FROM shift_policies WHERE id='SEED-SHIFT-EMPLOYEE-UAT' AND created_by='employee_uat_seed' AND approval_reference='UAT-ONLY-NOT-PRODUCTION' AND status='active_uat');`);
   const st = structures[e.band];
   s.push(`INSERT OR IGNORE INTO employee_compensation_assignments (id,employee_id,structure_id,effective_from,reason,actor_id,created_at) VALUES (${q("SEEDECA-" + e.code)},${q(e.id)},${q(st.id)},${JOINED},'Seeded standard band compensation for UAT',${q("hr@pawspace.in")},${BASE});`);
   const c = st.comp, net = money(c.gross - c.deductions);
