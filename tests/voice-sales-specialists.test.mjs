@@ -161,3 +161,17 @@ test("Training refuses an invented cadence and a schedule beyond programme valid
  const offer=await prepare(w,"chosen-cadence",actions(w,"training-2-starter"));assert.match(offer.summary,/every 7 day/);assert.match(offer.summary,/Last planned session/);
  const quote=JSON.parse(w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id).quote_json);assert.equal(quote.occurrences.length,2);
 });
+
+test('voice quote repairs an incomplete model checkout proposal before preparing an unconfirmed offer',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'fake-key-for-test'};
+ let requests=0;globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const body=JSON.parse(init.body);requests++;if(requests===2)assert.match(body.instructions,/previous checkout proposal had an invalid action sequence/);return Response.json({status:'completed',output_text:JSON.stringify({reply:'Here is the proposed quote',actions:requests===1?actions(w).slice(0,1):actions(w)}),usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ const r=await turn(w,'Please show the grooming quote before booking','repair-proposal',provider);
+ assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/Total INR|reserve/i);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);
+});
