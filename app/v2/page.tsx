@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CustomerAccountRecord } from "../../lib/customer-account";
 import {
   endV2CustomerSession,
@@ -14,6 +14,7 @@ import {
   type V2OtpChallenge,
   type V2ServiceAvailability,
 } from "../../lib/v2/customer-experience-client";
+import { bootstrapHome } from "../../lib/v2/home-bootstrap";
 import styles from "./v2.module.css";
 import { AdditionalCareTiles, HomePets } from "./home-care-extras";
 import V2ServiceIcon from "./service-icon";
@@ -66,35 +67,34 @@ export default function PawSpaceV2() {
   const [authBusy, setAuthBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
+  const bootstrapGeneration = useRef(0);
   const bootstrap = useCallback(async () => {
+    const generation = ++bootstrapGeneration.current;
     setLoading(true);
     setLoadError("");
     setServiceError("");
-    try {
-      const [sessionResult, availabilityResult] = await Promise.allSettled([
-        loadV2CustomerSession(),
-        loadV2ServiceAvailability(),
-      ]);
-      if (availabilityResult.status === "fulfilled") setAvailability(availabilityResult.value);
-      else {
+    // Publish each independent section as soon as it is ready. Account loading depends only
+    // on identity, never on service availability (and service links never wait for identity).
+    await bootstrapHome({
+      isCurrent: () => generation === bootstrapGeneration.current,
+      session: loadV2CustomerSession,
+      account: () => loadV2CustomerAccount(),
+      availability: loadV2ServiceAvailability,
+      onAvailability: setAvailability,
+      onAccount: setAccount,
+      onAvailabilityError: (problem) => {
         setAvailability(null);
-        setServiceError(availabilityResult.reason instanceof Error ? availabilityResult.reason.message : "Availability is temporarily unavailable");
-      }
-      if (sessionResult.status === "rejected") throw sessionResult.reason;
-      if (!sessionResult.value) {
+        setServiceError(problem instanceof Error ? problem.message : "Availability is temporarily unavailable");
+      },
+      onAccountError: (problem) => {
         setAccount(null);
-        return;
-      }
-      setAccount(await loadV2CustomerAccount());
-    } catch (problem) {
-      setAccount(null);
-      setLoadError(problem instanceof Error ? problem.message : "PawSpace could not load your family right now.");
-    } finally {
-      setLoading(false);
-    }
+        setLoadError(problem instanceof Error ? problem.message : "PawSpace could not load your family right now.");
+      },
+      onAccountSettled: () => setLoading(false),
+    });
   }, []);
 
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+  useEffect(() => { void bootstrap(); return () => { bootstrapGeneration.current += 1; }; }, [bootstrap]);
 
   const enabledByCode = useMemo(() => new Map((availability || []).map(item => [item.code, item.enabled])), [availability]);
   const upcoming = useMemo(() => {
@@ -142,6 +142,8 @@ export default function PawSpaceV2() {
   const signOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
+    bootstrapGeneration.current += 1;
+    setLoading(false);
     try {
       await endV2CustomerSession();
       setAccount(null);
