@@ -18,10 +18,13 @@ export async function resolveStaffLeadCustomer(db: D1Database, input: { proposed
   const phone = storedCustomerPhone(input.phone);
   const plan = await planPublicLeadIdentity(db, { proposedCustomerId: input.proposedCustomerId, phone });
   if (plan.identityReview) return { customerId: input.proposedCustomerId, newCanonicalCustomer: false, existingCustomer: false, identityReview: true, candidateCustomerIds: plan.candidateCustomerIds };
-  // A plain insert: a freshly proposed id that is somehow taken must fail loudly, never adopt another person's record.
+  let customerId = plan.customerId;
   if (plan.newCanonicalCustomer) {
+    // The CRM's 5-digit id can already belong to another person's contact: the new customer never adopts it.
+    const taken = await db.prepare("SELECT id FROM crm_contacts WHERE id=? UNION ALL SELECT id FROM canonical_customers WHERE id=? LIMIT 1").bind(customerId, customerId).first().catch(() => null);
+    if (taken) customerId = `CU-${crypto.randomUUID()}`;
     await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,?,'staff_crm','{}',?,?)")
-      .bind(plan.customerId, input.cityId || "blr", input.name, phone, input.email || null, input.now, input.now).run();
+      .bind(customerId, input.cityId || "blr", input.name, phone, input.email || null, input.now, input.now).run();
   }
-  return { customerId: plan.customerId, newCanonicalCustomer: plan.newCanonicalCustomer, existingCustomer: !plan.newCanonicalCustomer, identityReview: false, candidateCustomerIds: plan.candidateCustomerIds };
+  return { customerId, newCanonicalCustomer: plan.newCanonicalCustomer, existingCustomer: !plan.newCanonicalCustomer, identityReview: false, candidateCustomerIds: plan.candidateCustomerIds };
 }

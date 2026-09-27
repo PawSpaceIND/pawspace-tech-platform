@@ -102,6 +102,20 @@ test("a staff lead for a number already on two customers is not guessed: it stay
   assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM canonical_customers").get().n), 2, "no third customer is minted");
 });
 
+test("a new staff lead never adopts another person's CRM id: a taken 5-digit id gets a fresh customer id instead", async () => {
+  const { sqlite, db } = await staffWorld();
+  const now = Date.now();
+  sqlite.exec(crmDdl);
+  // Another person's CRM-only contact from before this fix, holding the id the route happened to propose.
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,stage,owner,source,created_at,updated_at) VALUES ('CU-25555','Someone Else','9000000899','Bangalore','New lead','Unassigned','Manual CRM',?,?)").run(now, now);
+  const { resolveStaffLeadCustomer } = await import("../lib/lead-customer-identity.ts");
+  const resolved = await resolveStaffLeadCustomer(db, { proposedCustomerId: "CU-25555", name: "New Person", phone: "9000000815", cityId: "blr", now });
+  assert.notEqual(resolved.customerId, "CU-25555");
+  assert.equal(resolved.newCanonicalCustomer, true);
+  assert.deepEqual({ ...sqlite.prepare("SELECT name,primary_phone FROM canonical_customers WHERE id=?").get(resolved.customerId) }, { name: "New Person", primary_phone: "9000000815" });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_customers WHERE id='CU-25555'").get().n, 0, "the other person's id gains no canonical record");
+});
+
 async function renderLinks(props) {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const React = await import("react");
