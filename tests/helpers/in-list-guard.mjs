@@ -36,10 +36,15 @@ export const BOUNDED_IN_LISTS = {
   "meet-and-greet.ts": [{ expression: 'rule.from.map(()=>"?")', why: "the literal statuses a transition may come from" }],
   "ops-work-queue.ts": [{ expression: 'allowedFrom.map(()=>"?")', why: "the literal statuses a task may be claimed from" }],
   "pricing-control-runtime.ts": [{ expression: 'ids.map(()=>"?")', why: "the compile-time canonical pricing seed catalogue, currently about 56 rows" }],
+  "payment-reconciliation-overview.ts": [
+    { expression: 'names.map(()=>"?")', why: "the five compile-time table names the Finance views read" },
+    { expression: 'services.map(()=>"?")', why: "the platform's service codes (SERVICE_CODES), or the one service asked for" },
+  ],
   "scheduling-reservation-leases.ts": [{ expression: 'groupIds.map(()=>"?")', why: "groupIds comes from the immediately preceding lease-cleanup SELECT capped at LIMIT 8" }],
   "staff-alert-center.ts": [{ expression: 'check.types.map(()=>"?")', why: "the literal alert types the sweep owns" }],
   "statutory-compliance.ts": [{ expression: 'obligations.map(()=>"?")', why: "the obligations of one month" }],
   "subscription-wallet.ts": [{ expression: 'planCodes.map(()=>"?")', why: "the grooming plan catalogue" }],
+  "taxi-unpaid-hold-expiry.ts": [{ expression: 'names.map(()=>"?")', why: "the four compile-time table names the hold expiry checks" }],
   "tds-governance.ts": [
     { expression: 'fyMonths.map(()=>"?")', why: "the months of one financial year" },
     { expression: 'months.map(()=>"?")', why: "the months of one financial year" },
