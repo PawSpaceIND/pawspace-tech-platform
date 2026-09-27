@@ -42,3 +42,11 @@ Remote Desktop Commander returned no available device during this work, so deplo
 ## Scope limitation
 
 Tabs in one browser profile still share the same canonical identity cookie. Switching between customer and provider identities on the same origin is not simultaneous dual-role login; use separate browser profiles for that test. Role-separated cookies or a multi-account browser architecture are outside this patch.
+
+## Continuation: Mac verification and CI repair
+
+The Mac reconnected. An isolated checkout of exact PR head `0703b685b2ad7081cd61e2c5a0ae005331a3b4e2` was used; other worktrees were not modified.
+
+Initial CI exposed three failures: the staging customer test represented repeat login without sending the prior cookie, and two presentation contracts retained pre-fix source hashes. The route test now sends the prior cookie for same-browser re-login and retains its old-token refusal assertion. Two further executed route tests require independent browser sessions, profile/account reads, and re-login isolation to work. Ten fingerprint entries in two manifests are updated only for the six authentication source files already changed by this PR; assertions and unrelated entries remain unchanged.
+
+Executed on Mac Node 24.19.0: 70 session/ownership/route tests passed, then 27 OTP/security/presentation tests passed; zero failures or skips in either run. `npm run typecheck` passed. These are focused local results, not the full repository CI result or live-browser acceptance. Exact-head CI and staging verification still must complete.
