@@ -492,3 +492,24 @@ test("engine: a Pet Sitting visit reserves exactly its 60-minute slot (SIT-04)",
   const overnight = await schedule(memoryRepo({ providers: sitters }), sittingNight("2026-10-12T06:30:00.000Z", "2026-10-13T06:30:00.000Z"));
   assert.equal(overnight.provider?.id, "sa", "overnight Sitting keeps its own window rules");
 });
+
+
+for (const service of ["grooming","dog_training"]) test(`route: ${service} auto selection reuses the engine while explicit choice cannot substitute`,async()=>{
+ freshDb();const start=istInstant(6,10),end=new Date(start.getTime()+(service==="grooming"?120:60)*60000);
+ const input=reserve({clientRequestId:`choice-${service}`,serviceCode:service,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerSelection:"auto"});
+ const first=await post(input);assert.equal(first.status,200,JSON.stringify(first.body));assert.ok(first.body.data.provider.id);
+ const chosen=first.body.data.provider.id;
+ const strict=await post({...input,clientRequestId:`strict-${service}`,providerSelection:"specific",preferredProviderId:chosen});
+ assert.equal(strict.status,409,JSON.stringify(strict.body));assert.equal(strict.body.error,"SELECTED_PROVIDER_UNAVAILABLE");
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE group_id=?").get(`strict-${service}`).n,0);
+ const automatic=await post({...input,clientRequestId:`alternative-${service}`});assert.equal(automatic.status,200,JSON.stringify(automatic.body));assert.notEqual(automatic.body.data.provider.id,chosen);
+ const replay=await post(input);assert.equal(replay.status,200);assert.equal(replay.body.data.provider.id,chosen);
+ const changed=await post({...input,providerSelection:"specific",preferredProviderId:chosen});assert.equal(changed.status,409);assert.equal(changed.body.code,"scheduling_group_provider_choice_conflict");
+});
+test("route: automatic request cannot bypass customer selection or Operations policy",async()=>{
+ for(const mode of ["customer_select","ops_select"]){freshDb();await writeServicePolicy(globalThis.__SCHED_DB__,{domain:"provider_assignment_policy",serviceCode:"dog_training",cityId:"*",config:{assignmentMode:mode}},"founder@pawspace.test","Keep explicit operator policy");
+ const start=istInstant(6,10);const result=await post(reserve({clientRequestId:`override-${mode}`,serviceCode:"dog_training",scheduledStart:start.toISOString(),scheduledEnd:new Date(start.getTime()+3600000).toISOString(),providerSelection:"auto"}));
+ if(mode==="customer_select"){assert.equal(result.status,409);assert.equal(result.body.error,"provider_selection_required");}else{assert.equal(result.status,200);assert.equal(result.body.data.status,"awaiting_admin");}
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations").get().n,0);
+ }
+});

@@ -52,13 +52,12 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
  * module cannot reveal, because the failing query only runs against a cold database. */
 /* Lowered from 165 once the helper clause above stopped counting eleven harness-driven suites as
  * static and the launch-pass tests that only read source were converted to execute their modules. */
-/* 160, not 156: resume-voice-uat, verify-voice-sale, voice-uat-evidence and voice-substantive-reply
- * run the voice UAT scripts they cover (scripts/*.mjs), not lib/ or app/ modules, so this ratchet counts them as static
- * even though they execute the code under test. */
-const STATIC_FILE_BUDGET = 160;
+/* Imported runnable scripts are runtime code, not source-only assertions.
+ * Correct the classification and tighten the measured staging budget; never raise it. */
+const STATIC_FILE_BUDGET = 151;
 
 /*
- * A file "executes" if it loads a lib/ or app/ module.
+ * A file "executes" if it loads a lib/, app/ or runtime scripts/ module.
  *
  * The naive version of this - look for `from "../lib/` or `import("../lib/` - produced FALSE
  * POSITIVES and I nearly enforced a wrong number. tests/refund-cap-collected-funds.test.mjs holds
@@ -68,10 +67,10 @@ const STATIC_FILE_BUDGET = 160;
  * So: a static import, OR any dynamic import in a file that references a lib/app path, OR use of
  * installWorkersHooks, which only exists to wire the D1 execution harness.
  */
-const STATIC_IMPORT = /from\s*["'`]\.\.\/(lib|app)\//;
+const STATIC_IMPORT = /from\s*["'`]\.\.\/(lib|app|scripts)\//;
 const HARNESS       = /installWorkersHooks/;
 const LOADER        = /import\s*\(|pathToFileURL|createRequire/;
-const PRODUCT_PATH  = /["'`][^"'`]*\b(lib|app)\/[a-z0-9/-]+(\.(ts|tsx))?["'`]/;
+const PRODUCT_PATH  = /["'`][^"'`]*\b(lib|app|scripts)\/[a-z0-9/-]+(\.(ts|tsx|js|mjs))?["'`]/;
 const TRANSPILE     = /typescript|transpile/;
 /*
  * A HEURISTIC, not ground truth. The naive version - `from "../lib/` or `import("../lib/` - produced
@@ -170,7 +169,7 @@ test("the number of test files that never execute code does not grow", () => {
   const staticFiles = staticTestFiles();
   assert.ok(
     staticFiles.length <= STATIC_FILE_BUDGET,
-    `${staticFiles.length} test files execute no lib/ or app/ code, over the budget of ${STATIC_FILE_BUDGET}.\n` +
+    `${staticFiles.length} test files execute no runtime module code, over the budget of ${STATIC_FILE_BUDGET}.\n` +
     `A test that only regex-matches source cannot detect a broken module.\n` +
     `Newly added or newly static:\n  ${staticFiles.slice(-8).join("\n  ")}`,
   );
@@ -186,4 +185,11 @@ test("the budget is kept honest - lower it when files are converted", () => {
     `only ${actual} static test files remain but the budget still says ${STATIC_FILE_BUDGET}. ` +
     `Lower STATIC_FILE_BUDGET to ${actual} so the ratchet keeps its teeth.`,
   );
+});
+
+
+test("runtime script imports count as execution, but merely reading their source does not", () => {
+  assert.equal(executes(`import {check} from "../scripts/voice-spoken-sale-guards.mjs"; check();`), true);
+  assert.equal(executes(`const runner = await import("../scripts/verify-voice-sale.mjs"); runner.verify();`), true);
+  assert.equal(executes(`const source = readFileSync("../scripts/voice-spoken-sale-guards.mjs", "utf8"); assert.match(source, /guard/);`), false);
 });

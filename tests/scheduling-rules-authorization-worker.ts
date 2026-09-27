@@ -3,7 +3,7 @@ import{ensureSecurityTables}from"../lib/server-auth";
 import{upsertIdentityBinding}from"../lib/identity-binding";
 import{issuePlatformSession,platformSessionCookie}from"../lib/platform-session";
 
-type Env={DB:D1Database};
+type Env={DB:D1Database;NODE_ENV?:string};
 type Rule={id:string;name:string;priority:number;active:number;created_by:string};
 const baseUrl="https://api.pawspace.test/api/scheduling-rules";
 const validCondition={code:"quality-floor",field:"qualityScore",operator:"gte",value:80};
@@ -46,4 +46,4 @@ async function run(db:D1Database){
  const managerDelete=await deleteRule(req("DELETE",undefined,managerHeaders,`?id=${createdId}&reason=manager%20retires%20rule`));if(managerDelete.status!==200)throw new Error(`manager DELETE failed: ${managerDelete.status}`);if(await row(db,createdId))throw new Error("manager DELETE did not remove rule");
  return{ok:true,readPermission:"scheduling.view",writePermission:"scheduling.manage",anonymousReadDenied:true,providerReadAllowed:true,customerReadDenied:true,managerReadAllowed:true,anonymousWritesDeniedAndUnchanged:true,providerWritesDeniedAndUnchanged:true,customerWritesDeniedAndUnchanged:true,managerWritesAllowed:true,creatorAttributedToActor:true,malformedConditionsDeniedAndUnchanged:true,nonBooleanActiveDeniedAndUnchanged:true};
 }
-export default{async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==="/health")return Response.json({ok:true});if(path!=="/run")return new Response("Not found",{status:404});try{return Response.json(await run(env.DB));}catch(error){return Response.json({ok:false,error:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:null},{status:500});}}};
+export default{async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(env.NODE_ENV!=="test")return new Response("Local test worker only",{status:403});if(path==="/health")return Response.json({ok:true});if(path!=="/run")return new Response("Not found",{status:404});try{return Response.json(await run(env.DB));}catch(error){return Response.json({ok:false,error:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:null},{status:500});}}};

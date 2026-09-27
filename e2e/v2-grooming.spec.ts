@@ -5,6 +5,7 @@ type Fixture = {
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
   couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean; couponDiscount?: number; couponFinalOverride?: number; couponInputs: Array<{code:string;orderValue:number}>;
+  assignedProvider?: { id: string; name: string; model: string; rating: number }; reserveRefusal?: string;
   captured: boolean; confirmed: boolean; locationReady: boolean; unauthorized: boolean; quoteSource: string;
   previewGate?: Promise<void>; coverageGate?: Promise<void>; previewStarted: boolean; coverageStarted: boolean;
   booking: Record<string, unknown> | null; reservation: Record<string, unknown> | null;
@@ -51,7 +52,7 @@ async function fixture(page: Page) {
         return reply({ providers: state.providers || [provider], availabilityChecked: true, reserved: false, cityId: body.cityId, zoneId: body.zoneId,
           scheduledStart: body.scheduledStart, scheduledEnd: body.scheduledEnd });
       }
-      state.reservation = body; return reply({ groupId: body.clientRequestId, provider });
+      state.reservation = body; if(state.reserveRefusal)return route.fulfill({status:409,json:{error:state.reserveRefusal}}); return reply({ groupId: body.clientRequestId, provider:state.assignedProvider||provider });
     }
     if (path === "/api/customer-offers") {
       if(state.offersUnavailable)return route.fulfill({status:503,json:{error:"Available offers are temporarily unavailable"}});
@@ -325,7 +326,8 @@ test("G03: several eligible groomers no longer require manual selection, but cus
   await previewCare(page);
   const first = page.getByRole("button", { name: /First Ranked Groomer/ });
   const second = page.getByRole("button", { name: /Second Ranked Groomer/ });
-  await expect(first).toContainText("✓"); await expect(second).toContainText("Choose");
+  await expect(page.getByRole("button",{name:"PawSpace chooses the best available groomer"})).toHaveAttribute("aria-pressed","true");
+  await expect(first).toContainText("Choose"); await expect(second).toContainText("Choose");
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
   await second.click(); await expect(second).toContainText("✓"); await expect(first).toContainText("Choose");
   expect(state.bookingWrites).toBe(0); expect(state.reservation).toBeNull();
@@ -454,4 +456,47 @@ test("G11: offer lookup failure stays honest and supports retry without applying
   await expect(box.getByRole("button",{name:"Apply NORMAL"})).toHaveCount(0);state.offersUnavailable=false;
   await box.getByRole("button",{name:"Retry offers"}).click();await expect(box.getByRole("button",{name:"Apply NORMAL"})).toBeVisible();
   expect(state.couponStarted).toBe(false);expect(state.bookingWrites).toBe(0);
+});
+
+test("V2 auto groomer choice accepts a new server match and names that person on the booking",async({page})=>{
+ const state=await fixture(page);await previewCare(page);
+ state.assignedProvider={id:"PRV-REPLACEMENT",name:"Replacement Groomer",model:"commission",rating:4.8};
+ await page.getByRole("button",{name:/Reserve & review payment/}).click();
+ await expect(page).toHaveURL(/bookingId=B1/);
+ expect(state.reservation?.providerSelection).toBe("auto");expect(state.reservation?.preferredProviderId).toBeUndefined();
+ expect(state.booking?.provider).toMatchObject({id:"PRV-REPLACEMENT",name:"Replacement Groomer"});
+ expect(state.bookingWrites).toBe(1);expect(state.orderWrites).toBe(0);
+});
+test("V2 specific groomer selection never silently uses a replacement",async({page})=>{
+ const state=await fixture(page);await previewCare(page);
+ await page.getByRole("button",{name:/Arjun - PawSpace Care/}).click();
+ state.reserveRefusal="SELECTED_PROVIDER_UNAVAILABLE";
+ await page.getByRole("button",{name:/Reserve & review payment/}).click();
+ await expect(page.getByRole("alert")).toContainText("selected provider");
+ expect(state.reservation?.providerSelection).toBe("specific");expect(state.reservation?.preferredProviderId).toBe("PRV1");
+ expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
+ await expect(page.getByRole("button",{name:/Arjun - PawSpace Care/})).toHaveAttribute("aria-pressed","true");
+});
+
+test("V2 automatic matching preserves the staged extras and coupon payable", async ({page}) => {
+  const state = await fixture(page); state.couponDiscount = 239.8;
+  await openCare(page);
+  await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
+  await page.getByRole("button", {name:"Check service area"}).click();
+  await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
+  await page.getByRole("button", {name:/Check live price & groomers/}).click();
+  const coupon = page.getByRole("group", {name:"Coupon code", exact:true});
+  await coupon.getByText("Have a special code?",{exact:true}).click();
+  await coupon.getByRole("textbox").fill("EXTRAS10");
+  await coupon.getByRole("button", {name:"Apply", exact:true}).click();
+  await expect(page.getByText("₹2,158.2", {exact:true})).toBeVisible();
+  state.assignedProvider = {id:"PRV-CURRENT",name:"Current Eligible Groomer",model:"commission",rating:4.8};
+  await page.getByRole("button", {name:/Reserve & review payment/}).click();
+  await expect(page).toHaveURL(/bookingId=B1/);
+  expect(state.reservation?.providerSelection).toBe("auto");
+  expect(state.reservation?.preferredProviderId).toBeUndefined();
+  expect(state.booking?.provider).toMatchObject({id:"PRV-CURRENT"});
+  expect(state.couponInputs.map(input=>input.orderValue)).toEqual([2398,2398]);
+  expect(state.booking?.totalAmount).toBe(2158.2);
+  expect(state.bookingWrites).toBe(1); expect(state.orderWrites).toBe(0);
 });

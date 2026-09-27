@@ -19,6 +19,8 @@ export type V2GroomingCheckoutInput = {
   bundle: V2GroomingBundle;
   quote: V2GroomingQuote;
   provider: ProviderPreview["providers"][number];
+  /** Omitted by older callers: preserve their exact-provider behavior and retry key. */
+  providerSelection?: "auto" | "specific";
   address: string;
   pincode: string;
   cityName?: string;
@@ -64,7 +66,7 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     ...(input.addOns ?? []).slice().sort(),
     input.comfort ?? "",
     (input.specialInstructions ?? "").trim(),
-    input.provider.id,
+    input.providerSelection === "auto" ? "pawspace:automatic-choice" : input.provider.id,
     ...input.selectedPets.map(pet => pet.id).sort(),
     // The code, not its quote: a retry re-quotes the coupon but must keep the same booking.
     ...(input.coupon ? [`coupon:${input.coupon.code}`] : []),
@@ -132,9 +134,10 @@ export async function createV2GroomingBooking(
     servicePincode: input.pincode,
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
-    preferredProviderId: input.provider.id,
+    providerSelection: input.providerSelection ?? "specific",
+    ...(input.providerSelection === "auto" ? {} : { preferredProviderId: input.provider.id }),
   });
-  if (!decision.provider || decision.groupId !== idempotencyKey || decision.provider.id !== input.provider.id) throw new Error("The selected groomer changed before reservation. Refresh availability and choose again.");
+  if (!decision.provider || decision.groupId !== idempotencyKey || (input.providerSelection !== "auto" && decision.provider.id !== input.provider.id)) throw new Error("The selected groomer changed before reservation. Refresh availability and choose again.");
 
   const canonical = await createCanonicalLifecycle({
     idempotencyKey,
