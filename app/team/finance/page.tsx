@@ -1,4 +1,5 @@
 "use client";
+import {MetricBars, TargetProgress, VisualGrid} from "../../components/ui/ReportVisuals";
 import VisualAnalytics from "../../components/ui/VisualAnalytics";
 
 import Link from"next/link";
@@ -30,7 +31,7 @@ export default function TeamFinance(){
       {error&&<section style={{padding:18,borderRadius:12,background:"var(--staff-danger-bg)",border:"1px solid var(--staff-line)",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
       {loading&&<section style={{padding:24,background:"var(--staff-surface)",borderRadius:14}}>Loading canonical Grooming ledger…</section>}
       <VisualAnalytics serviceCode="grooming" title="Grooming revenue trends" />
-      {data&&!loading&&!error&&<>
+      {data&&!loading&&!error&&<><VisualGrid><TargetProgress title="Reconciliation coverage" percent={data.summary.reconciled+data.summary.unreconciled>0?100*data.summary.reconciled/(data.summary.reconciled+data.summary.unreconciled):null} note={`${data.summary.reconciled} reconciled · ${data.summary.unreconciled} unreconciled. All-records ledger snapshot; trend dates above apply only to the trend explorer.`}/><MetricBars title="Collection and refund balances" note="Independent ledger totals; receivable and invoice amounts are not additional collections." format={money} items={[{label:"Invoiced",value:data.summary.invoiced},{label:"Captured",value:data.summary.collected},{label:"Refunded",value:data.summary.refunded,tone:"warning"},{label:"Receivable",value:data.summary.receivable,tone:"gold"}]}/></VisualGrid>
         <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}} data-staff-grid="stats">
           {[["Bookings",data.summary.bookings],["Reconciled",data.summary.reconciled],["Unreconciled",data.summary.unreconciled],["Open exceptions",data.summary.exceptions]].map(([name,value])=><article key={String(name)} style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:14,padding:18}}><small style={{color:"var(--staff-muted)"}}>{name}</small><strong style={{display:"block",fontSize:25,marginTop:7}}>{value}</strong></article>)}
         </section>
