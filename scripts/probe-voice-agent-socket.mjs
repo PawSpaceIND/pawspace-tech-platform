@@ -1,4 +1,5 @@
 import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
+import {isHandoffReply} from './voice-audio-proof.mjs';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 await verifyVoiceSale(); // Confirms the allowlisted tester and isolated staging context; never captures.
 const key=process.env.ELEVENLABS_API_KEY,agentId=process.env.GROOMING_AGENT_ID,callId=process.env.UAT_VOICE_CALL_ID;
@@ -16,7 +17,7 @@ await new Promise((resolve,reject)=>{
   if(d.type==='agent_response'){
    const reply=String(d.agent_response_event?.agent_response||'');console.log('VOICE_SOCKET_REPLY='+JSON.stringify({ms:Date.now()-started,afterUser:sent,text:reply.slice(0,600)}));
    if(!sent){sent=true;started=Date.now();socket.send(JSON.stringify({type:'user_message',text:String(process.env.PROBE_INPUT||'Hi, I want to book a grooming service for tomorrow at 11 AM for my pet Bruno.')}));}
-   else if(/waiting for a PawSpace team member|cannot continue the booking while it is with the team|routing this to a PawSpace team member/i.test(reply))finish(Error('Agent is in staff handoff; sales flow did not pass'));
+   else if(isHandoffReply(reply))finish(Error('Agent is in staff handoff; sales flow did not pass'));
    else if(isSubstantiveVoiceReply(reply))finish();
   }else if(d.type==='error'){console.log('VOICE_SOCKET_ERROR='+JSON.stringify({type:d.type,keys:Object.keys(d),code:d.code??null}));finish(Error('Agent socket returned error'));}
  });
