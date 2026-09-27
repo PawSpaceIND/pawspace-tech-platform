@@ -525,7 +525,7 @@
     "app/v2/walking/manage/page.tsx": "1c4086501f154155f08581569f40b45517c902759a2d3956dba8ee8092090041",
     "app/v2/walking/page.tsx": "55b6ba1bd72da0040d7369e13c7f3cbeb90677b069caefcb7255e71337810d11",
     "app/v2/workspaces/page.module.css": "f3160162a7edddac7d8ce399c2a88d9c03a9532a3f188b133bc1a1fe46082426",
-    "app/v2/workspaces/page.tsx": "92f4607df57b9adae554cec48d5c336e518cb318b8ca06d69e1adf416023e142",
+    "app/v2/workspaces/page.tsx": "2e6329b82fb0770b03bf84486e1ca97542c07853a26a88cdd0a8b74d073015bb",
     "db/index.ts": "dc7610b00b918e0ffff1360a63626f16655ced3064b2eaf96095a4101fb14bcd",
     "db/schema-escrow-attribution.ts": "2c01200890ac42818a97cb96d796516b12b4c3d40a2e897bcce403183e74ee25",
     "db/schema.ts": "d5468fff9b54ba51118ecd225d3c40d8b325722be45efbdb4a0acd8ea259c58e",
