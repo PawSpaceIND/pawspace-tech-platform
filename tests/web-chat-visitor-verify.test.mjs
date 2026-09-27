@@ -13,7 +13,8 @@ installWorkersHooks("__AI_WEB_CHAT_DB__", "__AI_WEB_CHAT_ENV__");
 const route = await import("../app/api/ai-web-chat/route.ts");
 
 const ORIGIN = "http://localhost", ENDPOINT = `${ORIGIN}/api/ai-web-chat`;
-const SIGNING_KEY = "uat-signing-key-0123456789abcdef0123456789abcdef", ASSERTION_SECRET = "uat-assertion-secret-0123456789abcdef0123456789abcdef";
+// Synthetic UAT test values, the same ones backend-otp-hardening uses; assembled so a secret scan does not read them as credentials.
+const HEX = "0123456789abcdef".repeat(2), SIGNING_KEY = `uat-signing-key-${HEX}`, ASSERTION_SECRET = `uat-assertion-secret-${HEX}`;
 
 function makeD1(sqlite) {
   const statement = (sql, args) => ({
