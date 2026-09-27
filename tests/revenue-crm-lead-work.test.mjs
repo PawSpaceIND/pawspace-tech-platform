@@ -65,3 +65,49 @@ test("an untouched routed lead does breach, escalate and move on - the clock is 
   const events = w.sqlite.prepare("SELECT event_type FROM lead_sla_events WHERE lead_id=?").all(leadId).map((row) => row.event_type);
   assert.ok(events.includes("breached") && events.includes("manager_escalation_due"), JSON.stringify(events));
 });
+
+const get = (email, query = "") => engine.GET(asActor(email, `/api/revenue-crm${query}`));
+
+/** Older leads straight into the tables the engine reads, the way months of enquiries accumulate. */
+function seedOlderLeads(w, count, { status = "active", prefix = "LEAD-OLD" } = {}) {
+  const now = Date.now();
+  const contact = w.sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,stage,owner,created_at,updated_at) VALUES (?,?,?,'New lead',?,?,?)");
+  const lead = w.sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES (?,?,'Website','Boarding',?, 'Sales Manager',?,'day_1',1,?,?,?,?,?)");
+  for (let index = 0; index < count; index++) {
+    const created = now - 30 * DAY + index * 60_000, id = `${prefix}-${String(index).padStart(3, "0")}`;
+    contact.run(`CU-${id}`, `Older ${id}`, `90000${String(index).padStart(5, "0")}`, REP, created, created);
+    lead.run(id, `CU-${id}`, REP, status, created, created + 10 * 60_000, created + 30 * 60_000, created, created);
+  }
+}
+
+// Round-2 staging: the engine listed `ORDER BY manager_alert_at LIMIT 80` over every lead ever made, so
+// once 80 older leads existed a new lead could not appear there at all.
+test("a new lead is on the first page of the Revenue & CX engine however many older leads exist; closed leads are not listed and every open lead is reachable", async () => {
+  const w = await salesWorld();
+  await get(MANAGER); // the engine's own tables
+  seedOlderLeads(w, 90);
+  seedOlderLeads(w, 6, { status: "closed", prefix: "LEAD-DONE" });
+  const leadId = await publicEnquiry("9000000941");
+
+  const first = await read(await get(MANAGER));
+  assert.equal(first.status, 200, JSON.stringify(first.body).slice(0, 300));
+  assert.equal(first.body.leads[0].id, leadId, "newest first: the new enquiry leads the worklist");
+  assert.equal(first.body.leads.length, 80);
+  assert.deepEqual(first.body.leadsPage, { sort: "newest", page: 0, limit: 80, total: 91, hasMore: true });
+  assert.equal(first.body.stats.openLeads, 91);
+  assert.ok(first.body.leads.every((lead) => !["closed", "converted", "cold_exhausted"].includes(lead.status)), "closed leads need no action and take no slot");
+  assert.ok(first.body.leads.every((lead) => !("primary_phone" in lead)), "the worklist carries no contact number");
+
+  const second = await read(await get(MANAGER, "?leadPage=1"));
+  assert.equal(second.body.leads.length, 11);
+  assert.equal(second.body.leadsPage.hasMore, false);
+  const everyOpen = new Set([...first.body.leads, ...second.body.leads].map((lead) => lead.id));
+  assert.equal(everyOpen.size, 91, "every open lead is reachable by paging");
+
+  // "SLA due first": a breached lead leads, then the earliest due.
+  w.sqlite.prepare("UPDATE lead_work_items SET status='sla_breached' WHERE id='LEAD-OLD-050'").run();
+  const due = await read(await get(MANAGER, "?leadSort=due"));
+  assert.equal(due.body.leads[0].id, "LEAD-OLD-050");
+  assert.equal(due.body.leads[1].id, "LEAD-OLD-000", "then the lead whose first response has been due longest");
+  assert.equal(due.body.stats.slaBreaches, 1, "counted over all open leads, not just the page");
+});
