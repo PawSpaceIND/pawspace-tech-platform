@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import {customerScopedHref,isV2CustomerPath} from "../lib/v2/route-scope.ts";
 
 const root=new URL("../",import.meta.url);
 const appPath=(rel)=>new URL(rel,root);
@@ -34,3 +35,4 @@ test("workspace hub exposes People, Scheduling, Founder Control, Systems and Ass
   for(const href of ["/v2/team/people","/v2/team/scheduling","/v2/control","/v2/system-integration","/v2/assisted-booking"])
     assert.ok(hub.includes(`href:\"${href}\"`),href);
 });
+test("V2 routing module executes for parity coverage",()=>{assert.equal(isV2CustomerPath("/v2/team/people"),true);assert.equal(customerScopedHref("/v2/training","/training"),"/v2/training");});

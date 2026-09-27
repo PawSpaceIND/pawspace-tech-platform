@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import {customerScopedHref,isV2CustomerPath} from "../lib/v2/route-scope.ts";
 
 const read = (rel) => fs.readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
@@ -48,3 +49,4 @@ test("People, payroll and scheduling reuse canonical V1 surfaces through V2 brid
     assert.match(read(rel), /export \{ default \} from/);
   }
 });
+test("V2 routing module executes for parity coverage",()=>{assert.equal(isV2CustomerPath("/v2/team/people"),true);assert.equal(customerScopedHref("/v2/training","/training"),"/v2/training");});
