@@ -109,6 +109,8 @@ test("every return files the amount PawSpace makes: 300 / 54 on commission, 1,00
   assert.deepEqual(services, { grooming: [300, 54, 246], boarding: [1000, 180, 820], funeral_memorial: [300, 0, 300] }, "amount made, GST and net income per service: the books keep 246 and 820");
   assert.deepEqual([view.gst.outputTax, view.gst.serviceTaxableValue, view.gst.serviceNonGstValue, view.gst.gstModel], [234, 1300, 300, "GST @18% on the amount PawSpace makes"]);
   assert.deepEqual(gstr1.payload.b2cs, [{ sply_ty: "INTRA", pos: "29", typ: "OE", rt: 18, txval: 1300, iamt: 0, camt: 117, samt: 117, csamt: 0 }]);
+  assert.equal(gstr1.payload.gt, 1300, "turnover counts the service supplies filed (Schedule III funeral is not a supply)");
+  assert.equal(gstr1.payload.cur_gt, 1300);
   const hsn = Object.fromEntries(gstr1.payload.hsn.data.map((h) => [h.hsn_sc, [h.txval, h.camt, h.samt]]));
   assert.deepEqual(hsn, { "998599": [300, 27, 27], "998612": [1000, 90, 90] }, "the fee under 998599, the stay under 998612; nothing outside GST in the HSN summary");
   assert.deepEqual(gstr1.payload.nil, { inv: [{ sply_ty: "INTRAB2C", expt_amt: 0, nil_amt: 0, ngsup_amt: 300 }] });

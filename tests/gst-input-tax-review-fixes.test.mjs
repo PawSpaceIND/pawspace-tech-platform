@@ -15,6 +15,7 @@ const gstAccounting = await import("../lib/gst-accounting.ts");
 const returns = await import("../lib/gst-returns.ts");
 const inputTax = await import("../lib/gst-input-tax.ts");
 const closeout = await import("../lib/finance-filing-closeout.ts");
+const payoutGate = await import("../lib/uat-payout-beneficiaries.ts");
 const monthlyClose = await import("../lib/finance-monthly-close.ts");
 
 const ENTITY = "pawspace_india", REG = "REG-KA", GSTIN = "29AAICT7352F1Z0"; // TK Petcare, Karnataka
@@ -113,6 +114,10 @@ test("the statutory package, the monthly close and GSTR-9C use a month's saved I
   assert.equal(threeB.summary.eligibleInputTax, 1800);
   assert.equal((await pkg()).summary.eligibleInputTax, 1800, "the package agrees with GSTR-3B");
   assert.equal((await close()).gst.eligibleInputTax, 1800, "so does the monthly close");
+  // Another entity's older reviewed credit for the month stays: one entity's saved computation replaces only its own figure.
+  sqlite.prepare("INSERT INTO finance_bills (id,entity_id,vendor_id,bill_number,bill_date,due_date,cost_centre,vertical,taxable_amount,gst_amount,tds_amount,total_amount,status,purchase_order_id,attachment_reference,created_by,created_at,updated_at) VALUES ('bill_other','other_entity',?,'OT-1','2026-07-12','2026-08-12','Ops','All',1000,180,0,1180,'approved',NULL,NULL,'finance',1,1)").run(NET.id);
+  sqlite.prepare("INSERT INTO finance_vendor_tax_reviews (id,vendor_id,bill_id,supplier_invoice_number,eligible_tax_amount,review_status,created_at,updated_at) VALUES ('vr2',?,'bill_other','OT-1',700,'eligible',1,1)").run(NET.id);
+  assert.equal((await close()).gst.eligibleInputTax, 2500, "1,800 saved for this entity plus 700 reviewed for the other");
   const nineC = await returns.generateGstr9c(db, { ...scope, financialYear: "2026-27", reason: "FY 2026-27 reconciliation" }, MAKER);
   assert.equal(nineC.summary.booksItc, 1800, "and GSTR-9C's books figure");
 });
@@ -165,4 +170,39 @@ test("an import that stopped part-way is refused while fresh and redone once it 
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_gstr2b_lines").get().n, 1, "the stopped import's lines are gone");
   assert.equal(sqlite.prepare("SELECT gstr2b_status FROM finance_bills WHERE id=?").get(billId).gstr2b_status, "matched");
   assert.ok(balanced(sqlite));
+});
+
+test("the UAT payout self-heal needs sandbox customer payments too", () => {
+  const uat = { PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_DEPLOYMENT_ENV: "staging", PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_RAZORPAYX_ENV: "sandbox", PAWSPACE_RAZORPAYX_LIVE_APPROVED: "false", RAZORPAYX_KEY_ID_SANDBOX: "rzp_test_uat" };
+  assert.equal(payoutGate.uatPayoutBeneficiaryGate(uat), true);
+  assert.equal(payoutGate.uatPayoutBeneficiaryGate({ ...uat, PAWSPACE_PAYMENT_ENV: "live" }), false);
+  assert.equal(payoutGate.uatPayoutBeneficiaryGate({ ...uat, PAWSPACE_PAYMENT_ENV: undefined }), false);
+});
+
+test("a GST payment is refused, and writes nothing, when another payment for the month took its place at the same moment", async () => {
+  const { sqlite, db } = await itcWorld();
+  await approvedInternetBill(sqlite);
+  await gst(MAKER, { action: "import_gstr2b", ...scope, reason: "July GSTR-2B from the portal", gstr2b: gstr2b(PERIOD, [{ ctin: NET.gstin, inum: "inv001", dt: "10-07-2026", txval: 10000, igst: 0, cgst: 900, sgst: 900 }]) });
+  assert.equal((await gst(MAKER, { action: "save_itc_computation", ...scope, periodCode: PERIOD, reason: "July input tax credit" })).status, 200);
+  await returns.generateGstr3b(db, { ...scope, periodCode: PERIOD }, MAKER);
+  // As if a second session recorded the month's first payment between this one's checks and its write.
+  sqlite.prepare("INSERT INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) VALUES ('gst_setoff_sequence',?,'other-session',1)").run(`${ENTITY}:${REG}:${PERIOD}:1`);
+  const paid = await gst(MAKER, { action: "record_gst_setoff_payment", ...scope, periodCode: PERIOD, challanReference: "ARN-NIL-JULY", paidOn: "2026-08-18", reason: "July GST: nothing to pay in cash" });
+  assert.equal(paid.status, 409, JSON.stringify(paid.body));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_gst_setoff_payments").get().n, 0, "nothing recorded");
+  // Without the other session's place taken, the same payment goes through: the refusal was the sequence claim.
+  sqlite.prepare("DELETE FROM finance_journal_posting_claims WHERE source_type='gst_setoff_sequence'").run();
+  const retried = await gst(MAKER, { action: "record_gst_setoff_payment", ...scope, periodCode: PERIOD, challanReference: "ARN-NIL-JULY", paidOn: "2026-08-18", reason: "July GST: nothing to pay in cash" });
+  assert.equal(retried.status, 200, JSON.stringify(retried.body));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_gst_setoff_payments").get().n, 1);
+});
+
+test("Rule 42 turnover counts a booking's customer tax invoice once (it is already in the service register), and hand-issued invoices in full", async () => {
+  const { sqlite, db } = await itcWorld();
+  await returns.generateGstr3b(db, { ...scope, periodCode: PERIOD }, MAKER); // makes sure the invoice tables exist
+  const invoice = (id, key, subtotal) => sqlite.prepare("INSERT INTO finance_invoices (id,invoice_number,entity_id,customer_id,source_type,source_id,source_event_key,policy_id,registration_id,issue_date,currency,subtotal,tax_total,total,status,tax_snapshot_json,created_by,created_at) VALUES (?,?,?,'C-1',?,?,?,'pol',?,'2026-07-20','INR',?,0,?,'issued','{}','finance',1)").run(id, `INV-${id}`, ENTITY, key.startsWith("booking-invoice:") ? "booking" : "b2b", id, key, REG, subtotal, subtotal);
+  invoice("B2B-1", "b2b:1", 5400);
+  invoice("BK-1", "booking-invoice:BK-1", 300);
+  const turnover = await inputTax.rule42Turnover(db, scope, PERIOD, PERIOD);
+  assert.equal(turnover.canonicalInvoices, 5400, "the booking's own invoice is not added again");
 });

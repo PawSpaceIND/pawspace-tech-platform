@@ -54,7 +54,7 @@ const isPerson=(provenance:string)=>provenance.length>0&&!SEED_PROVENANCE.test(p
 export function uatPayoutBeneficiaryGate(env:Env){
  try{
   const runtime=env??{};
-  return uatRosterSeedingEnabled(runtime)&&text(runtime.PAWSPACE_RAZORPAYX_ENV).toLowerCase()==="sandbox"&&text(runtime.PAWSPACE_RAZORPAYX_LIVE_APPROVED).toLowerCase()==="false"&&text(runtime.RAZORPAYX_KEY_ID_SANDBOX).startsWith("rzp_test_")&&text(runtime.PAWSPACE_DEPLOYMENT_ENV).toLowerCase()!=="production";
+  return uatRosterSeedingEnabled(runtime)&&text(runtime.PAWSPACE_PAYMENT_ENV).toLowerCase()==="sandbox"&&text(runtime.PAWSPACE_RAZORPAYX_ENV).toLowerCase()==="sandbox"&&text(runtime.PAWSPACE_RAZORPAYX_LIVE_APPROVED).toLowerCase()==="false"&&text(runtime.RAZORPAYX_KEY_ID_SANDBOX).startsWith("rzp_test_")&&text(runtime.PAWSPACE_DEPLOYMENT_ENV).toLowerCase()!=="production";
  }catch{return false;}
 }
 
@@ -147,6 +147,14 @@ export type UatBeneficiaryHeal={enabled:boolean;reason:string|null;providers:str
  * records the payout beneficiary check needs, when it does not pass already. Idempotent: a second run finds every
  * provider unchanged and writes nothing. Never throws for one provider's failure; it is named in errors.
  */
+/* One "seeded" event per healed application, whatever run writes it. */
+const seedEventId=(applicationId:string)=>`uat-payout-seed:${applicationId}`;
+/* A heal whose event was not written (the run stopped after the beneficiary rows) gets it on a later run, once. */
+async function recordMissingSeedEvent(db:Db,providerId:string,now:number){
+ const seeded=await db.prepare("SELECT v.application_id FROM provider_verifications v JOIN provider_onboarding_applications a ON a.id=v.application_id WHERE a.provider_id=? AND v.verification_type='bank_kyc' AND v.status='verified' AND v.updated_by=? LIMIT 1").bind(providerId,UAT_SEED_ACTOR).first<Row>();
+ if(!seeded)return;
+ await db.prepare("INSERT OR IGNORE INTO provider_onboarding_events (id,application_id,event_type,from_status,to_status,actor_id,detail_json,created_at) VALUES (?,?,'uat_payout_beneficiary_seeded',NULL,'verified',?,?,?)").bind(seedEventId(text(seeded.application_id)),text(seeded.application_id),UAT_SEED_ACTOR,JSON.stringify({providerId,recordedLater:true,environment:"sandbox",liveMoney:false}),now).run();
+}
 export async function ensureUatPayoutBeneficiaries(db:Db,env:Env,input:{providerIds?:string[];now?:number;limit?:number}={}):Promise<UatBeneficiaryHeal>{
  const result:UatBeneficiaryHeal={enabled:false,reason:null,providers:[],healed:[],unchanged:[],skipped:[],errors:[]};
  if(!uatPayoutBeneficiaryGate(env)){result.reason="not_uat_test_runtime";return result;}
@@ -159,14 +167,14 @@ export async function ensureUatPayoutBeneficiaries(db:Db,env:Env,input:{provider
  result.providers=named.length?named.filter(isUatRosterProviderId):await rosterProviderIds(db,map,limit);
  for(const providerId of result.providers){
   try{
-   if(!await beneficiaryProblem(db,providerId,now)){result.unchanged.push(providerId);continue;}
+   if(!await beneficiaryProblem(db,providerId,now)){await recordMissingSeedEvent(db,providerId,now);result.unchanged.push(providerId);continue;}
    const seed=uatBeneficiaryFor(map,providerId);
    if(!seed){result.skipped.push({providerId,reason:"RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX names no RazorpayX TEST fund account"});continue;}
    const profile=await healProfile(db,providerId,seed,now),application=await healApplication(db,providerId,now),verification=await healVerification(db,application.id,now);
    const problem=await beneficiaryProblem(db,providerId,now);
    if(problem){result.skipped.push({providerId,reason:profile==="kept_person"?`A person saved this provider's bank details, so they were left alone: ${problem}`:problem});continue;}
    if(![profile,application.outcome,verification].some(outcome=>outcome==="created"||outcome==="updated")){result.unchanged.push(providerId);continue;}
-   await db.prepare("INSERT INTO provider_onboarding_events (id,application_id,event_type,from_status,to_status,actor_id,detail_json,created_at) VALUES (?,?,'uat_payout_beneficiary_seeded',NULL,'verified',?,?,?)").bind(crypto.randomUUID(),application.id,UAT_SEED_ACTOR,JSON.stringify({providerId,profile,application:application.outcome,verification,fundAccountBound:true,contactBound:true,source:"RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX",environment:"sandbox",liveMoney:false}),now).run();
+   await db.prepare("INSERT OR IGNORE INTO provider_onboarding_events (id,application_id,event_type,from_status,to_status,actor_id,detail_json,created_at) VALUES (?,?,'uat_payout_beneficiary_seeded',NULL,'verified',?,?,?)").bind(seedEventId(application.id),application.id,UAT_SEED_ACTOR,JSON.stringify({providerId,profile,application:application.outcome,verification,fundAccountBound:true,contactBound:true,source:"RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX",environment:"sandbox",liveMoney:false}),now).run();
    result.healed.push(providerId);
   }catch(error){result.errors.push(`${providerId}: ${error instanceof Error?error.message:String(error)}`);}
  }
