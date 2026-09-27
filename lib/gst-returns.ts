@@ -32,7 +32,9 @@ import{ConfigurationRequired}from"./gst-accounting";
 import{ensureFinanceEntityScope}from"./finance-filing-closeout";
 import{canonicalInvoicesOnlySql,serviceVerticalOutputTax,supplySac,supplyTaxComponents,type BookingInvoiceFiling}from"./service-output-tax";
 import{normaliseSac,sacDescription}from"./service-sac-defaults";
-import{applyCreditNotesToGstr1,applyCreditNotesToGstr3b}from"./credit-notes";
+import{applyCreditNotesToGstr1,applyCreditNotesToGstr3b,creditNoteFilingAdjustments}from"./credit-notes";
+import{gstr3bInputTax}from"./gst-setoff";
+import{reportItc}from"./gst-input-tax";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -204,23 +206,30 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  const outputTaxLedger=round2(iamt0.iamt+iamt0.camt+iamt0.samt+iamt0.csamt),serviceByComponent={iamt:0,camt:0,samt:0,csamt:0};
  for(const l of svc.lines){if(l.section!=="taxable")continue;const c=supplyTaxComponents(l,homeState);serviceByComponent.iamt=round2(serviceByComponent.iamt+c.iamt);serviceByComponent.camt=round2(serviceByComponent.camt+c.camt);serviceByComponent.samt=round2(serviceByComponent.samt+c.samt);}
  const osup={iamt:round2(iamt0.iamt+serviceByComponent.iamt),camt:round2(iamt0.camt+serviceByComponent.camt),samt:round2(iamt0.samt+serviceByComponent.samt),csamt:round2(iamt0.csamt)};
- // Eligible ITC only from approved vendor reviews (never claim unreviewed credit).
- const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7)=?",[entityId,period]);
- const eligibleItc=round2(num(itc?.total));
+ // --- Package C hook (input tax credit and payment; logic in lib/gst-setoff.ts and lib/gst-input-tax.ts) ---------------------
+ // Table 4 by head (CGST / SGST / IGST / cess) from the saved monthly ITC computation: only bills in GSTR-2B or confirmed by
+ // Finance, reverse charge in 4(A)(2)/(3), Rule 42 / 17(5) in 4(B)(1), Rules 37 / 37A in 4(B)(2). 3.1(d) is the reverse-charge
+ // liability; Table 6.1 is the Rule 88A set-off of this draft's own 3.1(a) tax. netTaxPayable is the cash to pay.
+ // Credit notes first (package B): they reduce this month's 3.1(a) by head, so the Rule 88A set-off pays the net liability.
+ const creditNotes=await creditNoteFilingAdjustments(db,{entityId,registrationId:regId,periodCode:period}),cn=creditNotes.gstr3b.osup_det;
+ const outwardNet=creditNotes.totals.count?{iamt:round2(osup.iamt-num(cn.iamt)),camt:round2(osup.camt-num(cn.camt)),samt:round2(osup.samt-num(cn.samt)),csamt:osup.csamt}:osup;
+ const inputTax=await gstr3bInputTax(db,{entityId,registrationId:regId,period,outward:outwardNet});
+ const eligibleItc=inputTax.eligibleInputTax;
  const totalOutputTax=round2(outputTaxLedger+serviceTax);
- const netTaxPayable=round2(Math.max(0,totalOutputTax-eligibleItc));
- // Portal 3B shape: 3.1(a) outward taxable supplies; 3.1(c) nil-rated and exempt; 3.1(e) non-GST (Schedule III funeral by
- // default); 4 eligible ITC; 5.1 interest/late (0 in UAT).
+ const netTaxPayable=inputTax.netTaxPayable;
+ // Portal 3B shape: 3.1(a) outward taxable supplies; 3.1(c) nil-rated and exempt; 3.1(d) inward reverse charge; 3.1(e) non-GST
+ // (Schedule III funeral by default); 4 ITC by head; 5.1 interest/late (0 in UAT); 6.1 payment of tax (Rule 88A set-off).
  const payload={gstin,ret_period:returnPeriod(period),
-  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),...osup},osup_nil_exmp:{txval:svc.exemptValue},osup_nongst:{txval:svc.nonGstValue}},
-  itc_elg:{itc_avl:[{ty:"OTH",iamt:eligibleItc,camt:0,samt:0,csamt:0}],itc_net:{iamt:eligibleItc,camt:0,samt:0,csamt:0}},
-  intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}}};
+  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),...osup},osup_nil_exmp:{txval:svc.exemptValue},osup_nongst:{txval:svc.nonGstValue},isup_rev:inputTax.isup_rev},
+  itc_elg:inputTax.itc_elg,
+  intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}},tx_pmt:inputTax.tx_pmt};
  const summary={returnType:"GSTR-3B",period,gstin,gstModel:svc.gstModel,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:osup,serviceTaxByComponent:serviceByComponent,
   serviceTaxableValue:serviceTaxable,serviceExemptValue:svc.exemptValue,serviceNonGstValue:svc.nonGstValue,serviceSupplies:svc.byTreatment,byService:svc.byService,bookingInvoices:svc.bookingInvoices,invoiceVariances:svc.invoiceVariances,rateCheck:svc.rateCheck,notYetClassified:svc.notYetClassified,ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
-  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
- // Package B hook (lib/credit-notes.ts): 3.1(a) value and tax by component, 3.1(c) and the output tax / net payable are
- // net of this month's credit notes for refunds after completion. (Net payable = output tax - eligible ITC, as above.)
- await applyCreditNotesToGstr3b(db,{entityId,registrationId:regId,periodCode:period},payload,summary);
+  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability.",
+  ...inputTax.summary};
+ // Package B hook (lib/credit-notes.ts): 3.1(a) value and tax by component, 3.1(c)/(e) and the output tax are net of this month's
+ // credit notes for refunds after completion. The set-off above already settled the net liability.
+ await applyCreditNotesToGstr3b(db,{entityId,registrationId:regId,periodCode:period},payload,summary,creditNotes);
  return persist(db,entityId,regId,"GSTR-3B",period,payload,summary,actor,reason);
 }
 
@@ -247,8 +256,10 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
  const returnOutputTax=annualSummary?round2(num(annualSummary.totalOutputTax)):null;
  const returnItc=annualSummary?round2(num(annualSummary.totalEligibleItc)):null;
  // Eligible ITC per books (approved vendor reviews) for the FY.
- const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ?",[entityId,fromPeriod,toPeriod]);
- const booksItc=round2(num(itc?.total));
+ const legacyTables=num((await db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name IN ('finance_vendor_tax_reviews','finance_bills')").first<Row>())?.n)===2;
+ const itc=legacyTables?(await db.prepare("SELECT substr(b.bill_date,1,7) month,COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ? GROUP BY month").bind(entityId,fromPeriod,toPeriod).all<Row>()).results:[];
+ // Months whose ITC computation Finance saved (the purchase register) use it, as each month's GSTR-3B did.
+ const booksItc=(await reportItc(db,{entityId,registrationId:regId,fromPeriod,toPeriod,legacyByMonth:new Map(itc.map(r=>[text(r.month),num(r.total)]))})).total;
  const outputTaxDelta=returnOutputTax===null?null:round2(booksOutputTax-returnOutputTax);
  const itcDelta=returnItc===null?null:round2(booksItc-returnItc);
  const reconciled=annualSummary!==null&&outputTaxDelta===0&&itcDelta===0;

@@ -71,6 +71,9 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // Invoices issued by hand only: a booking's customer tax invoice is filed through the service supply register below.
  const output=await safeFirst(db,`SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`,[startDate,endDate]);
  const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
+ // A month whose ITC computation Finance saved (the purchase register) uses it, so the close agrees with GSTR-3B.
+ const{reportItc}=await import("./gst-input-tax");
+ const inputCredit=await reportItc(db,{fromPeriod:input.period,toPeriod:input.period,legacyByMonth:new Map([[input.period,Number(input_?.tax||0)]])});
  // Output tax has TWO sources and the close only ever read one. finance_invoices is written solely by
  // the B2B module (lib/gst-accounting.ts); all five service invoice modules - sitting, boarding,
  // walking, taxi, grooming - write their tax into booking_invoices.tax_amount. Reading only the first
@@ -84,7 +87,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // from, so this figure, the statutory package, GSTR-1/3B and ledger account 2130 agree. A legacy carve
  // row's provider-supply GST is a pass-through (s52 GST TCS / GSTR-8), disclosed but NOT net payable.
  const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
- const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,serviceNonGstValue:serviceOutput.nonGstValue,gstModel:serviceOutput.gstModel.label,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
+ const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:inputCredit.total,netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,serviceNonGstValue:serviceOutput.nonGstValue,gstModel:serviceOutput.gstModel.label,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
  // Package B hook (lib/credit-notes.ts): credit notes issued this month for refunds after completion reduce its own output tax.
  await applyCreditNotesToMonthlyClose(db,input.period,gst);
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));

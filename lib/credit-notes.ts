@@ -437,8 +437,8 @@ export async function applyCreditNotesToGstr1(db:Db,scope:{entityId:string;regis
  * GSTR-3B hook: 3.1(a) value and tax by component, 3.1(c) exempt and 3.1(e) non-GST values are net of this month's credit notes, and the
  * output tax and net payable follow (net payable = output tax - eligible ITC, the formula the draft uses).
  */
-export async function applyCreditNotesToGstr3b(db:Db,scope:{entityId:string;registrationId:string;periodCode:string},payload:Row,summary:Row){
- const f=await creditNoteFilingAdjustments(db,scope);
+export async function applyCreditNotesToGstr3b(db:Db,scope:{entityId:string;registrationId:string;periodCode:string},payload:Row,summary:Row,precomputed?:CreditNoteFiling){
+ const f=precomputed??await creditNoteFilingAdjustments(db,scope);
  if(!f.totals.count)return f;
  const sup=(payload.sup_details&&typeof payload.sup_details==="object"?payload.sup_details:(payload.sup_details={})) as Row;
  const osup=(sup.osup_det&&typeof sup.osup_det==="object"?sup.osup_det:(sup.osup_det={...zero()})) as Row;minus(osup,f.gstr3b.osup_det);
@@ -447,7 +447,7 @@ export async function applyCreditNotesToGstr3b(db:Db,scope:{entityId:string;regi
  const byComponent=summary.outputTaxByComponent&&typeof summary.outputTaxByComponent==="object"?summary.outputTaxByComponent as Row:null;
  if(byComponent)minus(byComponent,{iamt:f.gstr3b.osup_det.iamt,camt:f.gstr3b.osup_det.camt,samt:f.gstr3b.osup_det.samt});
  summary.totalOutputTax=round2(num(summary.totalOutputTax)-f.totals.tax);
- summary.netTaxPayable=round2(Math.max(0,num(summary.totalOutputTax)-num(summary.eligibleInputTax)));
+ // Net payable is the cash due after the Rule 88A set-off of the net liability (lib/gst-setoff.ts), computed by the caller.
  summary.creditNotes=summaryOf(f);
  return f;
 }

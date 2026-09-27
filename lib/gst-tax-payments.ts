@@ -54,6 +54,8 @@ export async function recordTaxPayment(db:Db,input:{taxKind:string;periodCode:st
  if(reason.length<8)throw governedJsonError({error:"A clear reason of at least 8 characters is required"},400);
  const account=TAX_PAYABLE_ACCOUNTS[kind],prior=await db.prepare("SELECT * FROM statutory_tax_payments WHERE tax_kind=? AND challan_reference=?").bind(kind,challan).first<Row>();
  if(prior){if(text(prior.period_code)===period&&round2(num(prior.amount))===amount)return{...prior,duplicatePrevented:true};throw governedJsonError({error:`Challan ${challan} is already recorded for ${text(prior.period_code)} (${num(prior.amount)}); a challan is recorded once`},409);}
+ // A month whose GST was recorded with its credit set-off (lib/gst-setoff.ts) is paid there, never twice.
+ if(kind==="gst"&&await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='finance_gst_setoff_payments'").first<Row>()){const setoff=await db.prepare("SELECT challan_reference FROM finance_gst_setoff_payments WHERE period_code=? LIMIT 1").bind(period).first<Row>();if(setoff)throw governedJsonError({error:`The GST for ${period} is already recorded with its credit set-off (challan ${text(setoff.challan_reference)}); record any further GST payment for that month there`},409);}
  const owed=await outstanding(db,account,period);
  if(amount>owed+0.01)throw governedJsonError({error:`${KIND_LABEL[kind]} payable up to ${period} is ${owed}; a payment of ${amount} is more than the books owe`},409);
  // TCS: every check runs BEFORE the journal is posted, so a refused payment never leaves a debit or a payment row behind.
@@ -96,13 +98,17 @@ export async function taxPayableReconciliation(db:Db,input:{periodCode:string}){
  // what was filed and what the payables accrued (they are not payments); closing balances are unchanged.
  await applyCreditNotesToTaxPayables(db,period,{gstAccount,tcsAccount,services,tcsRows:tcsByBooking.results});
  const paid=(kind:TaxKind)=>round2(num(payments.results.find(r=>text(r.tax_kind)===kind)?.amount));
+ // Output GST settled through the credit set-off and its cash (lib/gst-setoff.ts) counts as paid for the month too.
+ let setoffSettled=0;
+ if(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='finance_gst_setoff_payments'").first<Row>()){for(const r of(await db.prepare("SELECT settlement_json FROM finance_gst_setoff_payments WHERE period_code=?").bind(period).all<Row>()).results){let settlement:Row={};try{settlement=JSON.parse(text(r.settlement_json)||"{}") as Row;}catch{settlement={};}const output=(settlement.outputSettled??{}) as Row;setoffSettled+=num(output.igst)+num(output.cgst)+num(output.sgst)+num(output.cess);}}
+ setoffSettled=round2(setoffSettled);
  const filedGst=services.pawspaceOwnOutputTax,gstDifference=round2(gstAccount.accrued-filedGst),tcsCollections=round2(num(collections?.total));
  const tcsMismatches=tcsByBooking.results.map(r=>({bookingId:text(r.booking_id),gstr8Tcs:round2(num(r.tcs_total)),postedTcs:round2(num(r.posted))})).filter(r=>Math.abs(r.gstr8Tcs-r.postedTcs)>0.01).slice(0,50),tcsDifference=round2(tcsAccount.accrued-tcsCollections);
  // The month's filing in the owner's words ("GST @18% on the amount PawSpace makes") and, per service, what PawSpace made, the GST
  // on it and the net income the books keep (amount made - GST).
  const gst={...gstAccount,gstModel:services.gstModel,byService:services.byService,filedServiceGst:filedGst,serviceTaxableValue:services.pawspaceOwnTaxableValue,serviceExemptValue:services.exemptValue,serviceNonGstValue:services.nonGstValue,bookingInvoices:services.bookingInvoices,invoiceVariances:services.invoiceVariances,notYetClassifiedGst:services.notYetClassified.gst,
   latestGstr3bServiceGst:gstr3b?round2(num(gstr3b.serviceVerticalTax)):null,latestStatutoryPackageServiceGst:pkg?round2(num(pkg.serviceOutputTax)):null,
-  sameBookings:services.ledgerCheck,paymentsRecordedForPeriod:paid("gst"),unpaidForPeriod:round2(Math.max(0,filedGst-paid("gst"))),difference:gstDifference,
+  sameBookings:services.ledgerCheck,paymentsRecordedForPeriod:paid("gst"),settledThroughSetoffForPeriod:setoffSettled,unpaidForPeriod:round2(Math.max(0,filedGst-paid("gst")-setoffSettled)),difference:gstDifference,
   explanation:Math.abs(gstDifference)<=0.01?"The GST accrued in the ledger this month equals the service GST filed for it.":"The ledger dates a completion by its UTC date and the returns use IST months; supplies invoiced before completion are filed in the invoice month; rows completed before 26 Sept 2026 filed their carve differently. The same-booking comparison shows the exact per-booking agreement."};
  const tcs={...tcsAccount,tcsCollections,tcsCollectionLines:num(collections?.n),gstr8PreparedTcs:statement?round2(num(statement.total_tcs)):null,deposit:deposit?{amount:round2(num(deposit.amount)),challanReference:text(deposit.challan_reference)}:null,
   paymentsRecordedForPeriod:paid("tcs"),sameBookings:{bookings:tcsByBooking.results.length,mismatches:tcsMismatches},difference:tcsDifference,

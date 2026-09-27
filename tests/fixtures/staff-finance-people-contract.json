@@ -18,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "1819327d89bf717007e2fdf53c7e97d456a52c7abd13cc721ffa3fb93460988f",
+      "semantic": "5ee5ca1e096610d76674b9cc5c2a2d9d6265b8e7cf20309a6bf17cf024fbdf66",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
@@ -34,7 +34,7 @@
       "mainRoots": 1
     },
     "app/team/finance/statutory/page.tsx": {
-      "semantic": "e50356ef064e36f3d601be078e8a23dfcb481e5ef5834d7040de5fbacd05300f",
+      "semantic": "fce36e3bd48c0aeccbdf58fdd80f95c898e67d97c9c9a8f1e344ee1ab0adfed8",
       "mainRoots": 1
     },
     "app/team/finance/statutory/service-invoice-ownership.tsx": {
