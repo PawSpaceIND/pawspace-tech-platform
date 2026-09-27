@@ -53,12 +53,13 @@ export async function issueGroomingInvoice(db:Db,input:{bookingId:string;reason:
   if(!input.bookingId||input.reason.trim().length<8)throw new Response("Booking and clear invoice issue reason are required",{status:400});
   const existing=await db.prepare("SELECT * FROM booking_invoices WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(existing)return{bookingId:input.bookingId,invoiceNumber:String(existing.invoice_number),status:String(existing.status),duplicatePrevented:true,liveTaxFiling:false};
-  // Owner decision, 27 Sept 2026: this per-vertical numbering is retired wherever the TK Petcare tax invoice already
-  // covers the booking (it is issued automatically at completion). One customer-facing invoice per booking, not two.
-  const canonical=await originalInvoiceFor(db,input.bookingId);
-  if(canonical?.kind==="finance_invoice")throw new Response(`This booking already has TK Petcare tax invoice ${canonical.number}. A separate grooming invoice is not issued alongside it.`,{status:409});
   const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();
   if(!booking)throw new Response("Canonical Grooming booking not found",{status:404});
+  // Owner decision, 27 Sept 2026: this per-vertical numbering is retired wherever the TK Petcare tax invoice already
+  // covers the booking (it is issued automatically at completion). One customer-facing invoice per booking, not two.
+  // Checked only once the booking is confirmed to be a Grooming one, so another service's invoice never leaks here.
+  const canonical=await originalInvoiceFor(db,input.bookingId);
+  if(canonical?.kind==="finance_invoice")throw new Response(`This booking already has TK Petcare tax invoice ${canonical.number}. A separate grooming invoice is not issued alongside it.`,{status:409});
   const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(!payment||String(payment.status)!=="captured")throw new Response("Grooming invoice cannot be issued until the sandbox payment is captured",{status:409});
   const cityId=String(booking.city_id);

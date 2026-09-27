@@ -920,6 +920,9 @@ test("with no customer tax invoice, the booking's own service invoice is the ori
 test("owner decision, 27 Sept 2026: a booking completed before the 26 Sept 2026 model is allowed with a manual note, no credit note", async (t) => {
   const f = await refundWorld(t);
   await completedBooking(f, "BK-LEGACY");
+  // The code's own gate is not a date check: it is the presence or absence of a completion tax record
+  // (payoutRecordForCreditNote). completedAt here is the suite's usual relative fixture date, not literally
+  // before 26 Sept 2026; deleting the record below is what actually puts this booking on the legacy path.
   // Simulate a booking that predates the 26 Sept 2026 model: it has no completion tax record at all.
   f.sqlite.prepare("DELETE FROM provider_payout_computations WHERE booking_id='BK-LEGACY'").run();
 
