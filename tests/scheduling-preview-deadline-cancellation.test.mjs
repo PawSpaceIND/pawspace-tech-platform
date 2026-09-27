@@ -198,3 +198,43 @@ test("the booking conversation set-up still fails, and is tried again, while can
   assert.equal(state.calls, calls, "then remembered");
   sqlite.close();
 });
+
+// The lease cleanup worker/index.ts runs (and waits for) before every Reserve and canonical booking handed a pass in
+// progress to every concurrent request on the isolate. A request cancelled mid-cleanup never settles its pass, so the
+// next Reserve and booking waited on it for ever. Driven through the gateway exactly as worker/index.ts runs it
+// (tests/helpers/stay-taxi-latency-harness.mjs viaWorker): Boarding price, reserve and canonical booking.
+test("a request whose lease cleanup never finished (a cancelled request) does not block the next Reserve or canonical booking", async () => {
+  const h = await import("./helpers/stay-taxi-latency-harness.mjs");
+  const boarding = await import("../app/api/boarding-commercial/route.ts");
+  const canonical = await import("../app/api/canonical-bookings/route.ts");
+  const w = await h.stayWorld({ dbGlobal: "__SCHED_DEADLINE_DB__", envGlobal: "__SCHED_DEADLINE_ENV__", ownRoster: true });
+  // The binding the gateway and the routes use: while `state.cancelled` is set, its calls never settle.
+  const { db: gate, state } = cancellable(w.sqlite);
+  state.cancelled = false;
+  const binding = h.counted(gate);
+  Object.assign(w, { db: binding.db, log: binding.log, env: { ...w.env, DB: binding.db } });
+  const customer = { id: h.CUSTOMER, name: "Stay Latency", primaryPhone: "9000099001" }, host = "stay_host_large";
+  const within = (answer) => Promise.race([answer, sleep(3_000).then(() => "blocked")]);
+  const reserveRequest = (group, window) => h.schedulingRequest(w, { clientRequestId: group, petIds: [h.PETS.dog], serviceCode: "boarding", careMode: "visit", preferredProviderId: host, ...window });
+  async function stay(day, group) {
+    const window = { scheduledStart: h.ist(day, 10), scheduledEnd: h.ist(day, 14) };
+    const q = (await (await h.viaWorker(w, h.boardingQuoteRequest(w, { packageCode: "boarding-4h", petCount: 1, ...window, providerId: host }), boarding.POST)).json()).data;
+    const reserve = await within(h.viaWorker(w, reserveRequest(group, window), route.POST));
+    if (reserve === "blocked") return { reserve, booking: null };
+    const provider = (await reserve.clone().json()).data?.provider;
+    const booking = await within(h.viaWorker(w, h.canonicalBookingRequest(w, { idempotencyKey: group, scheduleGroupId: group, customer, pets: [{ sourceId: h.PETS.dog, name: "Bruno", species: "dog", vaccinationStatus: "verified" }], cityId: "blr", zoneId: "blr-east", serviceCode: "boarding", packageCode: q.packageCode, packageName: q.packageName, ...window, provider: provider && { id: provider.id, name: provider.name, model: provider.model }, totalAmount: q.totalAmount, amountDueNow: q.amountDueNow, payment: { method: "upi", mode: q.paymentMode, status: "created", detail: "Awaiting" }, pricing: { discount: 0, boardingQuoteId: q.quoteId } }), canonical.POST));
+    return { reserve, booking };
+  }
+  const warm = await stay(3, "stay:lease-warm");
+  assert.deepEqual([warm.reserve.status, warm.booking.status], [200, 201], "the isolate is warm and healthy");
+  // The cancelled request: its lease cleanup (and everything else it asks D1) never hears back.
+  state.cancelled = true;
+  h.viaWorker(w, reserveRequest("stay:lease-cancelled", { scheduledStart: h.ist(4, 10), scheduledEnd: h.ist(4, 14) }), route.POST).catch(() => undefined);
+  await sleep(5);
+  state.cancelled = false;
+  const next = await stay(5, "stay:lease-next");
+  assert.notEqual(next.reserve, "blocked", "the next Reserve must not wait on the cancelled request's lease cleanup");
+  assert.equal(next.reserve.status, 200, JSON.stringify(await next.reserve.clone().json()));
+  assert.notEqual(next.booking, "blocked", "the next canonical booking must not wait on it either");
+  assert.equal(next.booking.status, 201, JSON.stringify(await next.booking.clone().json()));
+});

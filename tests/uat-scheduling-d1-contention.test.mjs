@@ -69,7 +69,11 @@ test("Track 3 scheduling writes remain bounded, retrying and attempt-atomic afte
   assert.match(scheduling,/attempt_id TEXT\)/);
   assert.match(scheduling,/scheduling_dispatch_assertions/);
   assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);
-  assert.match(leases,/cleanupRunning=new WeakMap/);
+  // One bounded pass per request, never an in-flight pass shared across requests (a cancelled request's pass never
+  // settles); concurrent passes release a group once through the released_at marker (executed in
+  // tests/scheduling-reservation-leases.test.mjs and tests/scheduling-preview-deadline-cancellation.test.mjs).
+  assert.match(leases,/const result=await releaseExpiredReservationLeases\(db,now\);\s*markRequestFlag\(RESERVATION_LEASE_CLEANUP_FLAG\);/);
+  assert.doesNotMatch(leases,/new WeakMap<Db,Promise/);
   assert.match(leases,/SELECT DISTINCT r\.group_id/);
   assert.match(leases,/LIMIT 8/);
   assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);
