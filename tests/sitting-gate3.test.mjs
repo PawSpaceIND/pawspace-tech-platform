@@ -214,8 +214,10 @@ test("Pet Sitting Gate 3 date changes need a fresh quote, a fresh group and a re
 // ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 3 applies a governed date change with the same booking/payment identity and no reschedule fee", async () => {
   const world = await financeWorld({ amount: 399, amountDueNow: 399 });
-  const requestedStart = new Date(Date.now() + 72 * 3_600_000).toISOString();
-  const requestedEnd = new Date(Date.now() + 73 * 3_600_000).toISOString(); // one 60-minute Home Visit (SIT-04)
+  // Use one clock reading: a tick between two Date.now() calls exceeds the strict 60-minute limit.
+  const requestedStartMs = Date.now() + 72 * 3_600_000;
+  const requestedStart = new Date(requestedStartMs).toISOString();
+  const requestedEnd = new Date(requestedStartMs + 3_600_000).toISOString(); // one 60-minute Home Visit (SIT-04)
   const requested = await world.act("request_date_change", {
     reason: "customer needs a later visit", requestedStart, requestedEnd,
   });
