@@ -43,3 +43,19 @@ These are module/database integration checks, not a full repository build, full-
 - [ ] Confirm customers/partners remain denied and explicit role-switch recovery is visible.
 
 Do not mark the user's deployed issue resolved until the final browser gates pass.
+
+## CI follow-up: presentation fingerprints
+
+The first CI run failed nine presentation-source checks in Web tests and Pre-UAT, plus the two overlapping Inbox checks in the hook-path job. The assertions still expected the pre-fix bytes of `lib/api-gateway.ts` and `lib/uat-staging-auth.ts`. These were fingerprint mismatches, not failing Founder behavioral scenarios. Release CI run `36318970089` and Pre-UAT run `36318970140` supplied the failure evidence.
+
+After reviewing the two intentional runtime diffs, refreshed exactly their two `protected` entries in each of nine existing presentation contracts (18 values). All other JSON values, stylesheet normalization, assertions and runtime sources are unchanged. Old fingerprints were verified against original base `e930ae46916bc905bc9757b2d5067091db01e7eb`; new fingerprints are computed from the reviewed files. This does not remove or relax a guard.
+
+Executed on the isolated Mac checkout with Node **22.16.0**:
+
+- Before snapshot repair: the Founder suite plus eight affected presentation suites ran **206 tests: 197 pass, 9 fail, 0 skipped**.
+- After snapshot repair: the same **206/206 pass**, 0 skipped, on the normal loader.
+- Forced compatibility loader: the same **206/206 pass**, 0 skipped; not 206 additional unique scenarios.
+- Twelve related auth/session/bootstrap/navigation suites: **73/73 pass**, 0 skipped.
+- `git diff --check`: clean. This follow-up changes nine snapshot JSON files and this evidence note only.
+
+Full hosted CI on the follow-up commit and actual deployed Founder browser acceptance remain separate closure gates. No merge or deployment is claimed by these local results.
