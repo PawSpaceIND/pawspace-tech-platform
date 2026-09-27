@@ -2,6 +2,7 @@
 
 This change addresses gaps left uncovered after checking open PRs #1130 (web chat speed/OTP), #1123 (voice sales), #1125 (training payment return) and #1126 (reporting presentation). It does not claim production certification or matching Uber/Swiggy.
 
+- Chat transcript polling is single-flight with a 10-second abort deadline and unmount cancellation. This specific gap is outside #1130's provider/OTP changes.
 - Home publishes availability independently of identity/account reads.
 - Company analytics uses the existing scheduled-start index while retaining inclusive date-prefix semantics. IN-list reads retain all results with four concurrent chunks per invocation.
 - AI analytics batches nine reads in one round trip and caches successful schema initialization per binding. Booking-linked threads share the turn filters. Independent operational ledgers remain explicitly labeled all-time/all-channels. Latency shows its recorded sample count, and previous-filter data is hidden during refresh/error.

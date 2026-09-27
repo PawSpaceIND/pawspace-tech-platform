@@ -3,6 +3,7 @@ import Link from "next/link";
 import {useCallback,useEffect,useRef,useState} from "react";
 import WatiConversation,{type WatiChoice,type WatiMessage} from "../../components/wati-chat/WatiConversation";
 import styles from "./page.module.css";
+import {createTranscriptPoll} from "../../../lib/v2/transcript-poll";
 
 /*
  * PawSpace web chat, WATI-style: the bot opens with service buttons and a short questionnaire, PawSpace
@@ -60,8 +61,9 @@ export default function V2Chat(){
   /* One request opens the chat: start is a no-op for a conversation that already exists, and it returns
    * the conversation either way. */
   const open=()=>{void post({mode:"authenticated",bot:true,start:true}).then(async payload=>{const data=(payload as {data?:{transcript?:Transcript|null}}|null)?.data?.transcript;if(!active)return;if(data)showTranscript(data);else await loadTranscript(controller.signal);}).catch(()=>{if(active)void loadTranscript(controller.signal).catch(()=>{});});};open();
-  const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void loadTranscript(controller.signal).catch(()=>{});},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
-  return()=>{active=false;controller.abort();clearInterval(timer);};
+  const poll=createTranscriptPoll(loadTranscript);
+  const timer=setInterval(()=>{if(active&&document.visibilityState==="visible")void poll.tick();},withTeam?TEAM_POLL_MS:IDLE_POLL_MS);
+  return()=>{active=false;controller.abort();poll.stop();clearInterval(timer);};
  },[mode,identity,withTeam,loadTranscript,showTranscript]);
 
  function choose(next:"public"|"authenticated"){setMode(next);setError("");setDraft("");pending.current=null;}
