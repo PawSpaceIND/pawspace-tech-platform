@@ -7,7 +7,7 @@ import{loadCustomerAccount}from"../../lib/customer-account-client";
 // The customer is the SIGNED-IN one, read from the platform session — never a fixture. This page used
 // to hardcode customer TST-101, which on a public host is refused for every real customer.
 // [PTJA-P1-F37]
-const box={background:"white",border:"1px solid #e4e4e4",borderRadius:16,padding:18} as const;
+const box={background:"white",border:"1px solid #e4e4e4",borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18} as const;
 const label=(value:unknown)=>String(value||"—").replaceAll("_"," ");
 const money=(value:unknown)=>`₹${Number(value||0).toLocaleString("en-IN")}`;
 
