@@ -5,6 +5,7 @@ import{ensureCustomerAccountTables}from"./customer-account";
 import{ensureCustomer360Tables}from"./customer-360";
 import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,type WhatsAppUatProvider}from"./whatsapp-uat-adapter";
 import{ensureAiSalesGoalTables}from"./ai-sales-goal-orchestrator";
+import{ensureD1Once}from"./d1-ensure-once.js";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -26,7 +27,9 @@ export type WhatsAppAiLeadInput={
  provider?:WhatsAppUatProvider;
 };
 
-export async function ensureWhatsAppAiLeadTables(db:D1Database){
+/* Once per isolate (lib/d1-ensure-once.js): every new CRM lead - staff "Add lead" and each public enquiry -
+ * starts this workflow, and the set-up alone was nine sequential D1 calls, most of them DDL. */
+export async function ensureWhatsAppAiLeadTables(db:D1Database){return ensureD1Once(db,"whatsapp_ai_lead_tables",async()=>{
  await ensureCustomerAccountTables(db);await ensureCustomer360Tables(db);await ensureWhatsAppUatTables(db);
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS whatsapp_ai_lead_triggers (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,owner_token TEXT NOT NULL,lead_id TEXT NOT NULL UNIQUE,contact_id TEXT NOT NULL,customer_id TEXT,thread_id TEXT,message_id TEXT,status TEXT NOT NULL,reason TEXT,template_key TEXT NOT NULL,consent_evidence_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -37,7 +40,7 @@ export async function ensureWhatsAppAiLeadTables(db:D1Database){
   // the exact template is approved in the connected WhatsApp Business Account.
   db.prepare("INSERT OR IGNORE INTO whatsapp_uat_templates (template_key,status,category,approved_language,updated_by,updated_at) VALUES (?,'pending_approval','utility','en','system',?)").bind(WHATSAPP_AI_LEAD_TEMPLATE,Date.now()),
  ]);
-}
+});}
 
 /** Binds an inbound WhatsApp thread to the server-created sales dispatch, never to message text. */
 export async function salesDispatchItemForWhatsAppThread(db:D1Database,input:{threadId:string;customerId:string}){await ensureWhatsAppAiLeadTables(db);await ensureAiSalesGoalTables(db);const trigger=await db.prepare("SELECT detail_json FROM whatsapp_ai_lead_triggers WHERE thread_id=? AND customer_id=? ORDER BY updated_at DESC LIMIT 1").bind(input.threadId,input.customerId).first<Row>();try{const id=text((JSON.parse(text(trigger?.detail_json)||"{}")as Row).aiSalesDispatchItemId);if(id)return id;}catch{}const item=await db.prepare("SELECT id FROM ai_sales_dispatch_items WHERE customer_id=? AND channel='whatsapp' AND status='queued' ORDER BY updated_at DESC LIMIT 1").bind(input.customerId).first<Row>();return text(item?.id)||null;}

@@ -7,6 +7,7 @@ import { assignLead, reassignLead } from "./lead-assignment-governance";
 import {governedRefusal} from "./governed-http-error";
 import {leadCityCovers} from "./lead-assignment-governance";
 import { normalizeLeadServiceCode } from "./lead-lifecycle-governance";
+import{ensureD1Once}from"./d1-ensure-once.js";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -17,13 +18,14 @@ const json=(value:unknown)=>{if(value&&typeof value==="object")return value as R
 const stringList=(value:unknown)=>{if(Array.isArray(value))return value.map(text).filter(Boolean);try{return JSON.parse(String(value||"[]")) as string[]}catch{return[] as string[]}};
 const weekdayMap:Record<string,string>={Sun:"0",Mon:"1",Tue:"2",Wed:"3",Thu:"4",Fri:"5",Sat:"6"};
 
-export async function ensureLeadSlaTables(db:Db){await db.batch([
+/* Once per isolate (lib/d1-ensure-once.js): every clock start, action and sweep called this. */
+export async function ensureLeadSlaTables(db:Db){return ensureD1Once(db,"lead_sla_tables",async()=>{await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS lead_sla_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,timezone TEXT NOT NULL,business_hours_json TEXT NOT NULL,first_response_minutes INTEGER,follow_up_minutes INTEGER,quote_follow_up_minutes INTEGER,high_intent_minutes INTEGER,manager_escalation_after_minutes INTEGER,reassignment_after_minutes INTEGER,require_next_action INTEGER NOT NULL DEFAULT 1,terminal_outcomes_json TEXT NOT NULL DEFAULT '[]',effective_from INTEGER NOT NULL,effective_until INTEGER,approval_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_sla_policy_versions (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_sla_clocks (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,lead_id TEXT NOT NULL,assignment_id TEXT NOT NULL,policy_id TEXT NOT NULL,policy_version INTEGER NOT NULL,clock_type TEXT NOT NULL,cycle INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'running',started_at INTEGER NOT NULL,due_at INTEGER NOT NULL,manager_escalation_due_at INTEGER NOT NULL,reassignment_due_at INTEGER NOT NULL,met_at INTEGER,breached_at INTEGER,paused_at INTEGER,pause_reason TEXT,paused_remaining_minutes INTEGER,last_action_at INTEGER,next_action_at INTEGER,detail_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(lead_id,clock_type,cycle))"),
  db.prepare("CREATE INDEX IF NOT EXISTS lead_sla_clocks_due_idx ON lead_sla_clocks(status,due_at,manager_escalation_due_at,reassignment_due_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_sla_events (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,clock_id TEXT NOT NULL,lead_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);});}
 
 function parseBusinessHours(value:unknown):LeadBusinessHours{const raw=json(value),mode=text(raw.mode) as LeadBusinessHours["mode"];if(!["elapsed","windowed"].includes(mode))throw governedRefusal("Business hours mode must be elapsed or windowed");if(mode==="elapsed")return{mode:"elapsed"};const weekdays=(raw.weekdays&&typeof raw.weekdays==="object"?raw.weekdays:{}) as Record<string,{startMinute?:unknown;endMinute?:unknown}>;const normalized:Record<string,{startMinute:number;endMinute:number}>={};for(const[key,window]of Object.entries(weekdays)){if(!/^[0-6]$/.test(key))throw governedRefusal("Business-hours weekday keys must be 0-6");const start=Number(window.startMinute),end=Number(window.endMinute);if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end>1440||end<=start)throw governedRefusal("Business-hours windows require valid minute-of-day start/end");normalized[key]={startMinute:start,endMinute:end};}if(!Object.keys(normalized).length)throw governedRefusal("Windowed business hours require at least one weekday window");return{mode:"windowed",weekdays:normalized};}
 function localMinute(value:number,timezone:string){const parts=new Intl.DateTimeFormat("en-US",{timeZone:timezone,weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(value));const get=(type:string)=>parts.find(part=>part.type===type)?.value||"";const weekday=weekdayMap[get("weekday")],hour=Number(get("hour"))%24,minute=Number(get("minute"));return{weekday,minuteOfDay:hour*60+minute};}

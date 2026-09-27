@@ -1,6 +1,7 @@
 import {governedRefusal} from "./governed-http-error";
 import{ensureLeadWorkItemsTable}from"./lead-conversion-attribution";
 import{normalizeLeadServiceCode}from"./lead-lifecycle-governance";
+import{ensureD1Once}from"./d1-ensure-once.js";
 export type LeadAssignmentPolicyStatus="draft"|"active_uat"|"retired";
 export type LeadAssignmentReason="new_lead"|"continuity"|"reassignment"|"reopened"|"manager_override"|"auto_workload";
 
@@ -11,7 +12,8 @@ const list=(value:unknown)=>{if(Array.isArray(value))return value.map(text).filt
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const positiveInt=(value:unknown,name:string)=>{const n=Number(value);if(!Number.isInteger(n)||n<1)throw governedRefusal(`${name} must be a positive integer`);return n;};
 
-export async function ensureLeadAssignmentTables(db:Db){await ensureLeadWorkItemsTable(db);await db.batch([
+/* Once per isolate (lib/d1-ensure-once.js): every assignment, rotation and roster read called this. */
+export async function ensureLeadAssignmentTables(db:Db){return ensureD1Once(db,"lead_assignment_tables",async()=>{await ensureLeadWorkItemsTable(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,max_active_workload INTEGER NOT NULL,continuity_enabled INTEGER NOT NULL DEFAULT 1,require_shift INTEGER NOT NULL DEFAULT 0,fallback_queue TEXT NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,approval_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policy_versions (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_memberships (id TEXT PRIMARY KEY,employee_email TEXT NOT NULL,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,workload_cap_override INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(employee_email,team_code))"),
@@ -20,7 +22,7 @@ export async function ensureLeadAssignmentTables(db:Db){await ensureLeadWorkItem
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignments (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,lead_id TEXT NOT NULL,employee_email TEXT,team_code TEXT NOT NULL,policy_id TEXT NOT NULL,policy_version INTEGER NOT NULL,assignment_reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'current',fallback_queue TEXT,assigned_at INTEGER NOT NULL,accepted_at INTEGER,ended_at INTEGER,ended_reason TEXT,previous_assignment_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS lead_assignments_one_current_idx ON lead_assignments(lead_id) WHERE status='current'"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_events (id TEXT PRIMARY KEY,assignment_id TEXT NOT NULL,lead_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);});}
 
 function policySnapshot(row:Row){return{id:text(row.id),name:text(row.name),status:text(row.status) as LeadAssignmentPolicyStatus,version:Number(row.version||1),teamCode:text(row.team_code),serviceCodes:list(row.service_codes_json),cityIds:list(row.city_ids_json),languageCodes:list(row.language_codes_json),maxActiveWorkload:Number(row.max_active_workload),continuityEnabled:Number(row.continuity_enabled)===1,requireShift:Number(row.require_shift)===1,fallbackQueue:text(row.fallback_queue),effectiveFrom:Number(row.effective_from),effectiveUntil:row.effective_until==null?null:Number(row.effective_until),approvalReference:row.approval_reference?text(row.approval_reference):null,createdBy:text(row.created_by),createdAt:Number(row.created_at),updatedBy:text(row.updated_by),updatedAt:Number(row.updated_at)};}
 function validatePolicy(input:{name:string;teamCode:string;serviceCodes:string[];cityIds:string[];languageCodes:string[];maxActiveWorkload:number;fallbackQueue:string;effectiveFrom:number;effectiveUntil?:number|null}){if(input.name.trim().length<3)throw governedRefusal("Lead assignment policy name is required");if(!input.teamCode.trim())throw governedRefusal("Lead assignment team is required");if(!input.serviceCodes.length)throw governedRefusal("At least one service is required");if(!input.cityIds.length)throw governedRefusal("At least one city is required");positiveInt(input.maxActiveWorkload,"Max active workload");if(!input.fallbackQueue.trim())throw governedRefusal("Fallback queue is required");if(!Number.isFinite(input.effectiveFrom)||input.effectiveFrom<=0)throw governedRefusal("Policy effective-from is required");if(input.effectiveUntil!=null&&input.effectiveUntil<=input.effectiveFrom)throw governedRefusal("Policy effective-until must be after effective-from");}
