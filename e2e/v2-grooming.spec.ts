@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 type Fixture = {
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
-  couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean; couponDiscount?: number;
+  couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean; couponDiscount?: number; couponFinalOverride?: number; couponInputs: Array<{code:string;orderValue:number}>;
   captured: boolean; confirmed: boolean; locationReady: boolean; unauthorized: boolean; quoteSource: string;
   previewGate?: Promise<void>; coverageGate?: Promise<void>; previewStarted: boolean; coverageStarted: boolean;
   booking: Record<string, unknown> | null; reservation: Record<string, unknown> | null;
@@ -11,7 +11,7 @@ type Fixture = {
 async function fixture(page: Page) {
   const state: Fixture = { bookingWrites: 0, orderWrites: 0, locationWrites: 0, locationFailures: 0,
     captured: false, confirmed: false, locationReady: false, unauthorized: false, quoteSource: "pricing_control",
-    previewStarted: false, coverageStarted: false, couponStarted: false, booking: null, reservation: null };
+    previewStarted: false, coverageStarted: false, couponStarted: false, couponInputs: [], booking: null, reservation: null };
   const provider = { id: "PRV1", name: "Arjun - PawSpace Care", model: "full_time", rating: 4.9 };
   const bundle = { petCount: 1, packageCode: "dog-basic", price: 1899, currency: "INR", slotMinutes: 120,
     blockingMinutes: 150, effectiveFrom: "2020-01-01", effectiveTo: null };
@@ -54,10 +54,10 @@ async function fixture(page: Page) {
     }
     if (path === "/api/coupon-governance") {
       const input = body.input as { code: string; orderValue: number }, valid = state.couponValid !== false;
-      state.couponStarted = true;
+      state.couponStarted = true; state.couponInputs.push(input);
       if (state.couponGate) await state.couponGate;
       const discount = state.couponDiscount ?? 200;
-      return reply(valid ? { valid: true, code: input.code, discount, quoteId: `CPQ-${input.code}`, finalAmount: input.orderValue - discount }
+      return reply(valid ? { valid: true, code: input.code, discount, quoteId: `CPQ-${input.code}`, finalAmount: state.couponFinalOverride ?? (Math.round(input.orderValue * 100) - Math.round(discount * 100)) / 100 }
         : { valid: false, discount: 0, error: "The previous coupon is no longer available" });
     }
     if (path === "/api/canonical-bookings") {
@@ -364,4 +364,34 @@ test("G08: V2 review preserves paise in the discount and payable total", async (
   await expect(page.getByText("₹1,709.1", { exact: true })).toBeVisible();
   await expect(page.getByText("₹1,709", { exact: true })).toHaveCount(0);
   expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+});
+
+test("G08: V2 coupon preview and booking refresh use the same basket including extras", async ({page}) => {
+  const state = await fixture(page); state.couponDiscount = 239.8;
+  await openCare(page);
+  await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
+  await page.getByRole("button", {name:"Check service area"}).click();
+  await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
+  await page.getByRole("button", {name:/Check live price & groomers/}).click();
+  const box=page.getByRole("group", {name:"Coupon code", exact:true});
+  await box.getByRole("textbox").fill("EXTRAS10");
+  await box.getByRole("button", {name:"Apply",exact:true}).click();
+  await expect(page.getByText("₹2,158.2",{exact:true})).toBeVisible();
+  expect(state.couponInputs.map(input=>input.orderValue)).toEqual([2398]);
+  await page.getByRole("button",{name:/Reserve & review payment/}).click();
+  await expect(page).toHaveURL(/bookingId=B1/);
+  expect(state.couponInputs.map(input=>input.orderValue)).toEqual([2398,2398]);
+  expect(state.booking?.totalAmount).toBe(2158.2); expect(state.booking?.amountDueNow).toBe(2158.2);
+  expect(state.bookingWrites).toBe(1); expect(state.orderWrites).toBe(0);
+});
+
+for (const bad of [{discount:100.001,final:1798.999},{discount:100,final:1700}]) test(`G08: malformed coupon money never appears applied: ${bad.discount}/${bad.final}`,async({page})=>{
+  const state=await fixture(page); state.couponDiscount=bad.discount; state.couponFinalOverride=bad.final;
+  await previewCare(page);
+  const box=page.getByRole("group",{name:"Coupon code",exact:true});
+  await box.getByRole("textbox").fill("MALFORMED");
+  await box.getByRole("button",{name:"Apply",exact:true}).click();
+  await expect(box.getByRole("alert")).toHaveText("Reapply the coupon before booking.");
+  await expect(page.getByText(/Coupon MALFORMED/)).toHaveCount(0);
+  expect(state.bookingWrites).toBe(0); expect(state.reservation).toBeNull();
 });

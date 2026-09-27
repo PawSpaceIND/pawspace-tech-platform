@@ -69,8 +69,34 @@ test("a coupon still waiting for its quote, or a server discount above the price
 test("the V2 page quotes coupons through its own box and blocks checkout while a code awaits its quote", async () => {
   const page = await readFile(new URL("../app/v2/grooming/page.tsx", import.meta.url), "utf8");
   const box = await readFile(new URL("../app/v2/grooming/coupon-box.tsx", import.meta.url), "utf8");
-  assert.match(page, /<V2GroomingCouponBox key=\{`\$\{quote\.price\}\|\$\{bundle\.packageCode\}\|\$\{scheduledStart\}\|\$\{coverage\.cityId\}\|\$\{coverage\.zoneId\}`\}/);
+  assert.match(page, /<V2GroomingCouponBox key=\{`\$\{basketTotal\}\|\$\{bundle\.packageCode\}\|\$\{scheduledStart\}\|\$\{coverage\.cityId\}\|\$\{coverage\.zoneId\}`\}/);
   assert.match(page, /couponNeedsReapply\(coupon\.code, coupon\.quoteId\)/);
   assert.match(box, /quoteGovernedCoupon\(\{ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue/);
   assert.doesNotMatch(page + box, /from ["'][^"']*mobile-app\//);
 });
+
+
+test("V2 coupon refresh includes selected extras in the same basket as the canonical booking", async t => {
+  const calls = network(t, { valid: true, quoteId: "CPQ-EXTRAS", code: "EXTRAS10", discount: 239.8, finalAmount: 2158.2 });
+  const request = input({ quoteId: "CPQ-OLD", code: "EXTRAS10", discount: 100 });
+  request.addOns = ["Tick & flea treatment"];
+  await client.createV2GroomingBooking(request);
+  assert.equal(calls[0].body.input.orderValue, 2398);
+  const booking = calls.find(call => call.url === "/api/canonical-bookings").body;
+  assert.equal(booking.totalAmount, 2158.2); assert.equal(booking.amountDueNow, 2158.2);
+  assert.equal(booking.pricing.discount, 239.8); assert.deepEqual(booking.pricing.addOns, ["Tick & flea treatment"]);
+});
+test("V2 never sends a floating-point remainder as the payable amount", async t => {
+  const calls = network(t, { valid: true, quoteId: "CPQ-PAISE", code: "PRECISE", discount: 0.12, finalAmount: 1899.87 });
+  const request = input({ quoteId: "CPQ-OLD", code: "PRECISE", discount: 0.12 }); request.quote.price = 1899.99;
+  await client.createV2GroomingBooking(request);
+  const booking = calls.find(call => call.url === "/api/canonical-bookings").body;
+  assert.equal(booking.totalAmount, 1899.87); assert.equal(booking.amountDueNow, 1899.87);
+});
+for (const response of [{ discount: 100.001, finalAmount: 1798.999 }, { discount: 100, finalAmount: 1700 }]) {
+  test(`V2 refuses an inconsistent or sub-paise coupon response before reserving: ${JSON.stringify(response)}`, async t => {
+    const calls = network(t, { valid: true, quoteId: "CPQ-INVALID", code: "INVALID", ...response });
+    await assert.rejects(client.createV2GroomingBooking(input({ quoteId: "CPQ-OLD", code: "INVALID", discount: 100 })), /Reapply the coupon/);
+    assert.deepEqual(calls.map(call => call.url), ["/api/coupon-governance"]);
+  });
+}
