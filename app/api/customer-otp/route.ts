@@ -1,4 +1,4 @@
-import { database } from "../../../lib/server-auth";
+import { authError, database } from "../../../lib/server-auth";
 import { CustomerOtpUnavailableError, CustomerOtpVerificationError, exchangeCustomerOtp, startCustomerOtp } from "../../../lib/customer-otp-exchange";
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers });
@@ -7,10 +7,10 @@ function sameOriginWrite(request: Request) {
   if (origin && origin !== new URL(request.url).origin) throw new Response("Cross-origin write blocked", { status: 403 });
 }
 function failure(error: unknown) {
-  if (error instanceof Response) return error;
+  // The OTP exchange's own refusals explain themselves; anything else goes through the shared redacting boundary.
   if(error instanceof CustomerOtpVerificationError||error instanceof CustomerOtpUnavailableError)return json({error:error.message},error.status,{"cache-control":"no-store"});
   if(error instanceof Error&&/PAWSPACE_IDENTITY_ASSERTION_SECRET/.test(error.message))return json({ error: "OTP delivery is not configured for this environment" }, 503, { "cache-control": "no-store" });
-  return json({ error: error instanceof Error ? error.message : "Request failed" }, 500);
+  return authError(error, "Unable to process the verification code");
 }
 
 export async function POST(request: Request) {
