@@ -19,8 +19,8 @@ function fresh(t, overrides = {}) { const runtime = { ...env(), ...overrides }; 
 const request = (body = { code, persona: 'customer-a' }, host = origin, headers = {}) => new Request(host + '/api/uat-customer-switch', {
   method: 'POST', headers: { 'content-type': 'application/json', origin: host, ...headers }, body: JSON.stringify(body),
 });
-async function login(persona = 'customer-a') {
-  const response = await POST(request({ code, persona })); assert.equal(response.status, 200, await response.clone().text());
+async function login(persona = 'customer-a', previousCookie = '') {
+  const response = await POST(request({ code, persona }, origin, previousCookie ? { cookie: previousCookie } : {})); assert.equal(response.status, 200, await response.clone().text());
   const cookie = response.headers.getSetCookie().find(value => value.startsWith('pawspace_identity_session=')).split(';')[0];
   return { response, cookie, req: new Request(origin + '/api/customer-account', { headers: { cookie } }) };
 }
@@ -74,9 +74,30 @@ test('switching test access off immediately denies both session and profile read
   w.runtime.PAWSPACE_UAT_PERSONAS = 'off'; assert.equal(await resolvePlatformSession(w.db, req), null); assert.equal((await profile.GET(req)).status, 401);
 });
 test('expired test session is refused', async t => { const w = fresh(t), { req } = await login(); w.sqlite.prepare('UPDATE platform_identity_sessions SET expires_at=?').run(Date.now() - 1); assert.equal(await resolvePlatformSession(w.db, req), null); });
-test('repeat login supersedes the old session without duplicating customer', async t => {
-  const w = fresh(t), a = await login(), b = await login(); assert.equal(await resolvePlatformSession(w.db, a.req), null); assert.ok(await resolvePlatformSession(w.db, b.req));
+test('same-browser repeat login supersedes its old session without duplicating customer', async t => {
+  const w = fresh(t), a = await login(), b = await login('customer-a', a.cookie); assert.equal(await resolvePlatformSession(w.db, a.req), null); assert.ok(await resolvePlatformSession(w.db, b.req));
   assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_customers').get().n, 1);
+});
+test('independent browser login keeps both sessions and their profile reads valid', async t => {
+  const w = fresh(t), a = await login(), b = await login();
+  assert.notEqual(a.cookie, b.cookie);
+  for (const browser of [a, b]) {
+    assert.equal((await resolvePlatformSession(w.db, browser.req)).subjectId, 'UAT-AUDIT-CUSTOMER-A');
+    const response = await profile.GET(browser.req);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.customerId, 'UAT-AUDIT-CUSTOMER-A');
+    assert.equal((await account.GET(browser.req)).status, 200);
+  }
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_customers').get().n, 1);
+});
+test('same-browser re-login does not eject an independent browser', async t => {
+  const w = fresh(t), a = await login(), other = await login(), replacement = await login('customer-a', a.cookie);
+  assert.equal(await resolvePlatformSession(w.db, a.req), null);
+  assert.equal((await profile.GET(a.req)).status, 401);
+  for (const browser of [other, replacement]) {
+    assert.equal((await resolvePlatformSession(w.db, browser.req)).subjectId, 'UAT-AUDIT-CUSTOMER-A');
+    assert.equal((await account.GET(browser.req)).status, 200);
+  }
 });
 test('test session cannot resolve on a production host with matching DB', async t => {
   const w = fresh(t), { cookie } = await login(); assert.equal(await resolvePlatformSession(w.db, new Request('https://app.pawspace.in/api/customer-account', { headers: { cookie } })), null);

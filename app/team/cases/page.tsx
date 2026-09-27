@@ -1,4 +1,5 @@
 "use client";
+import{staffReadJson}from"../../../lib/staff-read-json";
 import{useCallback,useEffect,useMemo,useState}from"react";
 import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
@@ -17,6 +18,7 @@ const statusTone=(status:string)=>["resolved","closed"].includes(status)?"succes
 const FILTERS=[["open","Open"],["critical","Critical"],["unowned","Unowned"],["all","All"]] as const;
 
 async function request(body?:Record<string,unknown>){
+ if(!body)return staffReadJson<Record<string,unknown>>("/api/unified-cases");
  const response=await fetch("/api/unified-cases",body?{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}:{cache:"no-store"});
  const payload=await response.json().catch(()=>({}) as Record<string,unknown>);
  if(!response.ok)throw new Error(String(payload.error||`Case Center request failed (HTTP ${response.status})`));
@@ -55,7 +57,7 @@ export default function CasesPage(){
     eyebrow="PAWSPACE · CASE & ESCALATION CENTER"
     title="One queue for issues that need ownership"
     description="Refunds, lead escalations, payment exceptions, provider problems, complaints and operational incidents converge here. The native specialist modules remain the source of money and safety truth."
-    actions={<Badge tone={data?.summary.critical?"danger":"success"} dot>{data?.summary.critical||0} critical</Badge>}
+    actions={<Badge tone={!data?"neutral":data.summary.critical?"danger":"success"} dot>{data?.summary.critical??"—"} critical</Badge>}
     >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
@@ -67,11 +69,11 @@ export default function CasesPage(){
   </div>:null}
 
   <section className={styles.tiles}>
-   <StatCard label="Open" value={data?.summary.open||0} />
-   <StatCard label="Critical" value={data?.summary.critical||0} />
-   <StatCard label="Unowned" value={data?.summary.unowned||0} />
-   <StatCard label="Response overdue" value={data?.summary.firstResponseOverdue||0} />
-   <StatCard label="Resolution overdue" value={data?.summary.resolutionOverdue||0} />
+   <StatCard label="Open" value={data?.summary.open??"—"} />
+   <StatCard label="Critical" value={data?.summary.critical??"—"} />
+   <StatCard label="Unowned" value={data?.summary.unowned??"—"} />
+   <StatCard label="Response overdue" value={data?.summary.firstResponseOverdue??"—"} />
+   <StatCard label="Resolution overdue" value={data?.summary.resolutionOverdue??"—"} />
   </section>
 
   <section className={styles.controls}>
@@ -82,8 +84,8 @@ export default function CasesPage(){
   </section>
 
   {rows.length===0?<EmptyState
-    title={data?`Nothing in the ${filter} queue`:"Loading the case queue"}
-    body={data?"Cases arrive from refunds, lead escalations, payment exceptions, provider problems and complaints. An empty queue here means none of those are currently waiting on an owner.":"Reading canonical cases…"}
+    title={data?`Nothing in the ${filter} queue`:error?"Case queue unavailable":"Loading the case queue"}
+    body={data?"Cases arrive from refunds, lead escalations, payment exceptions, provider problems and complaints. An empty queue here means none of those are currently waiting on an owner.":error?"Use Refresh to retry. Queue counts are unavailable until the request succeeds.":"Reading canonical cases…"}
   />:<div className={styles.caseList}>{rows.map(row=><article key={row.id} className={styles.caseCard}>
    <div className={styles.caseHead}>
     <div className={styles.stack}>

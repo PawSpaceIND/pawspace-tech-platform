@@ -51,6 +51,7 @@ export default function GstSettingPanel() {
   return <section style={box} aria-label="GST setting">
     <h2 style={{ margin: "0 0 6px", fontSize: 18 }}>GST setting · all services</h2>
     <p style={{ margin: "0 0 6px", color: "var(--staff-muted)" }}>{!loaded ? "Loading the current setting…" : current ? `All cities: GST is ${methodName(current.method, current.ratePercent)}${current.scope === "built_in_default" ? " (the owner's default; nothing has been published yet)" : `, from ${current.effectiveFrom} (version ${current.version})`}.` : "The current setting could not be read."}</p>
+    <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--staff-warning,#8a5a00)" }}>This publishes GST for grooming and the other services on this engine. Training keeps a separate tax policy on Finance → Training, and the entity/registration setup on GST, Accounting &amp; Statutory Control is separate too: check those if a number here looks wrong.</p>
     {directory && directory.cities.length > 0 && <p style={{ margin: "0 0 6px", color: "var(--staff-muted)" }}>{directory.cities.map(item => `${cityName(item.cityId)}: ${methodName(item.method, item.ratePercent)} from ${item.effectiveFrom}`).join(" · ")}</p>}
     <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end", marginTop: 12 }}>
       <label>Applies to<br /><select value={cityId} onChange={event => setCityId(event.target.value)}>{cities.map(city => <option key={city} value={city}>{cityName(city)}</option>)}</select></label>

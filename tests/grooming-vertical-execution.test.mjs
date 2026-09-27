@@ -598,6 +598,31 @@ test("GRM-16 GST: with a policy configured, an invoice is issued for the booking
   stage("GST invoice", "PASS", `issued: ${JSON.stringify(issued.value).slice(0, 90)}`);
 });
 
+test("GRM-16b GST: retired - a booking that already has its TK Petcare tax invoice never gets a second, grooming-numbered one", async () => {
+  const { sqlite, db } = groomWorld();
+  seedCanonical(sqlite);
+  sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(BOOKING);
+  const inv = await import("../lib/grooming-invoice.ts");
+  const creditNotes = await import("../lib/credit-notes.ts");
+  await inv.ensureGroomingInvoiceTables(db);
+  await creditNotes.ensureCreditNoteTables(db);
+  await attempt(() => inv.saveGroomingTaxPolicy(db, {
+    cityId: CITY, taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-04-01",
+    actorId: "finance@pawspace.test", reason: "grooming vertical execution test",
+  }));
+  sqlite.prepare("INSERT INTO finance_invoices (id,invoice_number,entity_id,customer_id,source_type,source_id,source_event_key,policy_id,registration_id,issue_date,currency,subtotal,tax_total,total,status,tax_snapshot_json,created_by,created_at) VALUES ('fi-grm-16b','TKP/26-27/00002','ENT-1',?,'booking',?,?,'POL-1','REG-1','2026-09-15','INR',820,180,1000,'issued','{}','finance',?)")
+    .run(CUSTOMER, BOOKING, `booking-invoice:${BOOKING}`, NOW);
+  const blocked = await attempt(() => inv.issueGroomingInvoice(db, {
+    bookingId: BOOKING, reason: "attempted duplicate issue", actorId: "finance@pawspace.test",
+  }));
+  assert.equal(blocked.ok, false, "a booking with a TK Petcare invoice must refuse the old per-vertical numbering");
+  assert.equal(blocked.status, 409);
+  assert.match(String(blocked.body ?? ""), /already has TK Petcare tax invoice TKP\/26-27\/00002/i);
+  const invoices = sqlite.prepare("SELECT COUNT(*) n FROM booking_invoices WHERE booking_id=?").get(BOOKING).n;
+  assert.equal(invoices, 0, "no grooming-numbered invoice may be created once the TK Petcare one exists");
+  stage("GST invoice retirement", "PASS", "refused a duplicate against the TK Petcare invoice");
+});
+
 test("GRM-17 filing: grooming commission payouts carry 194H TDS at the governed FY threshold and rate", async () => {
   /* My first version only asserted that the computation RAN, over an empty month - it could not
    * tell a correct number from a zero. This drives the path a commission groomer actually takes:

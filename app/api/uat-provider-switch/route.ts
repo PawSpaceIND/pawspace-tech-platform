@@ -32,7 +32,7 @@ export async function POST(request:Request){
   if(!provider||!provider.live)return json({error:"That provider is not active in the UAT roster"},404);
   const principalKey=`uat-provider:${provider.id}`,actorId="uat-provider-switch";
   const binding=await upsertIdentityBinding(db,{identitySource:"partner_otp",principalType:"identity_subject",principalKey,subjectType:"provider",subjectId:provider.id,cityId:provider.cityId,verificationState:"verified",expiresAt:null,metadata:{uatProviderSwitch:true},actorId,reason:"UAT-only provider identity switch"});
-  const issued=await issuePlatformSession(db,{bindingId:String(binding?.id||""),identitySource:"partner_otp",principalType:"identity_subject",principalKey,subjectType:"provider",subjectId:provider.id,ttlSeconds:28_800,metadata:{uatProviderSwitch:true}});
+  const issued=await issuePlatformSession(db,{request,bindingId:String(binding?.id||""),identitySource:"partner_otp",principalType:"identity_subject",principalKey,subjectType:"provider",subjectId:provider.id,ttlSeconds:28_800,metadata:{uatProviderSwitch:true}});
   // Clear the staff staging-login cookie in the same response. Leaving both set makes actor
   // resolution depend on which cookie the request happens to carry; one credential at a time keeps
   // the partner session deterministic for the rest of the UAT run.

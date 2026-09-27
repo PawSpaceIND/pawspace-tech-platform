@@ -91,8 +91,8 @@ export async function approveTrainingCommissionMilestone(db:D1Database,input:{bo
  return{bookingId:input.bookingId,milestoneCode:input.milestoneCode,amount:Number(row.payout_amount),status:"instruction_ready_sandbox",dueAt:Number(row.due_at),livePayout:false,duplicatePrevented:false};
 }
 
-export async function listTrainingCommissionMilestones(db:D1Database){
- await syncTrainingCommissionPayoutMilestones(db);
+export async function listTrainingCommissionMilestones(db:D1Database,options:{refresh?:boolean}={}){
+ if(options.refresh!==false)await syncTrainingCommissionPayoutMilestones(db);
  const result=await db.prepare("SELECT * FROM training_commission_payout_milestones ORDER BY due_at DESC,booking_id,milestone_code").all<Row>();
  return result.results;
 }

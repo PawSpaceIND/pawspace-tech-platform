@@ -803,8 +803,9 @@ export async function itcSummary(db:Db,input:Scope&{period:string}){
 /**
  * Rule 42(2) annual true-up: C2 of the financial year x E / F of the year (+ D2 where it applied), against the monthly reversals
  * already made. The difference is posted now and reported in the month Finance chooses: more reversal in 4(B)(1), with interest
- * from 1 April (Rule 42(2)(a)); less reversal credited back in 4(A)(5). The rule's text says the September return after the
- * year; the research notes a 30 November reading, so October is also accepted and flagged (CA question). One per year.
+ * from 1 April (Rule 42(2)(a)); less reversal credited back in 4(A)(5). The rule's text once tied this to the September return
+ * after the year; since the Finance Act 2022 aligned it with the amended section 16(4), the standard is the October return,
+ * filed by 30 November after the year. One per year.
  */
 export async function rule42AnnualTrueUp(db:Db,input:Scope&{financialYear:string;applyInPeriod:string;reason:string},actor:string){
  await ensureInputTaxTables(db);
@@ -812,7 +813,7 @@ export async function rule42AnnualTrueUp(db:Db,input:Scope&{financialYear:string
  if(!Number.isInteger(startYear)||startYear<2017||startYear>2100)throw refuse("Choose the financial year (for example 2026 for 2026-27)",400);
  if(reason.length<8)throw refuse("A clear reason of at least 8 characters is required",400);
  const fy=`${startYear}-${String((startYear+1)%100).padStart(2,"0")}`,from=`${startYear}-04`,to=`${startYear+1}-03`;
- if(!isPeriod(apply)||apply<`${startYear+1}-04`||apply>`${startYear+1}-10`)throw refuse(`The true-up for ${fy} is reported in a month from April to September ${startYear+1} (October is accepted while the 30 November reading is confirmed)`,400);
+ if(!isPeriod(apply)||apply<`${startYear+1}-04`||apply>`${startYear+1}-10`)throw refuse(`The true-up for ${fy} is reported in a month from April to October ${startYear+1} (the October return, due 30 November, is the standard deadline)`,400);
  if(apply>istToday().slice(0,7))throw refuse(`${apply} has not started yet`,400);
  await activeRegistration(db,scope,lastDayOf(apply));
  if(await periodLocked(db,apply))throw refuse(`${apply} is closed and locked`);
@@ -823,8 +824,10 @@ export async function rule42AnnualTrueUp(db:Db,input:Scope&{financialYear:string
  let commonCredit=zeroHeads(),monthly=zeroHeads(),annualD2=zeroHeads();const months:string[]=[];
  for(const[p,row]of saved)if(p>=from&&p<=to){const f=computationFigures(row);if(!f)continue;commonCredit=addHeads(commonCredit,readHeads(f.rule42.commonCredit));monthly=addHeads(monthly,readHeads(f.rule42.reversal));annualD2=addHeads(annualD2,readHeads(f.rule42.d2));months.push(p);}
  const turnover=await rule42Turnover(db,scope,from,to),ratio=turnover.total>0?turnover.exempt/turnover.total:0,annual=addHeads(scaleHeads(commonCredit,ratio),annualD2),difference=subHeads(annual,monthly);
+ // deadlineNote: kept in the shape for compatibility, always null now that 30 November (the October return) is the
+ // confirmed standard and the window check above already refuses anything reported later than that.
  const figures={financialYear:fy,commonCredit,exemptTurnover:turnover.exempt,totalTurnover:turnover.total,funeralGstTreatment:turnover.funeralGstTreatment,ratio:Math.round(ratio*1e6)/1e6,annualReversal:annual,monthlyReversals:monthly,difference,monthsSaved:months,applyInPeriod:apply,
-  interestNote:headsTotal(difference)>0?`Interest under section 50 runs on the extra reversal from 1 April ${startYear+1} until it is paid (Rule 42(2)(a)); the GST payment for ${apply} shows it.`:null,deadlineNote:apply>`${startYear+1}-09`?"Reported after September: the rule's text says the September return; confirm the 30 November reading with the CA.":null};
+  interestNote:headsTotal(difference)>0?`Interest under section 50 runs on the extra reversal from 1 April ${startYear+1} until it is paid (Rule 42(2)(a)); the GST payment for ${apply} shows it.`:null,deadlineNote:null as string|null};
  const prior=await db.prepare("SELECT * FROM finance_itc_rule42_trueups WHERE entity_id=? AND registration_id=? AND financial_year=?").bind(scope.entityId,scope.registrationId,fy).first<Row>();
  if(prior){const before=JSON.parse(text(prior.figures_json)||"{}") as Row;if(text(prior.apply_period)===apply&&JSON.stringify(readHeads(before.difference))===JSON.stringify(difference))return{id:text(prior.id),...figures,journalGroup:text(prior.journal_group)||null,duplicatePrevented:true};throw refuse(`The Rule 42 true-up for ${fy} is already posted (reported in ${text(prior.apply_period)}); correct it through a later month`);}
  const id=idOf("r42tu"),lines:PostingLine[]=[];
