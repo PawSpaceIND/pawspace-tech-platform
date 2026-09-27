@@ -1,4 +1,4 @@
 Synthetic informational caller fixture: “What grooming services do you offer for my dog Bruno?”
-Generated with macOS system speech (say); not a recording of a customer or a cloned voice.
-Format: raw signed 16-bit little-endian mono PCM, 16000 Hz.
+Generated in the audio-probe workflow using eSpeak NG and FFmpeg; not customer audio or a cloned voice.
+Format: raw signed 16-bit little-endian mono PCM, 16000 Hz. Generated PCM is not checked in.
 Purpose: exercise real agent ASR and returned speech without carrier calls or standalone TTS API permission.

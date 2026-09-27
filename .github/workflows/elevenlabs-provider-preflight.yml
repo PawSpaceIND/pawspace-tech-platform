@@ -925,6 +925,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Generate synthetic caller audio locally (no provider TTS permission)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+          espeak-ng -s 150 -w /tmp/amaya-caller.wav "What grooming services do you offer for my dog Bruno?"
+          ffmpeg -loglevel error -y -i /tmp/amaya-caller.wav -ar 16000 -ac 1 -f s16le scripts/fixtures/amaya-caller.pcm
+          test -s scripts/fixtures/amaya-caller.pcm
       - name: Probe actual speech recognition and returned audio without dialing
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
