@@ -186,7 +186,10 @@ export async function issueBookingInvoice(db:Db,input:{bookingId:string;actorId:
    const replay=await invoiceRowFor(db,bookingId);if(replay)return{status:"existing",bookingId,invoiceId:text(replay.id),invoiceNumber:text(replay.invoice_number)};lastError=error;
   }
  }
- throw lastError;
+ // Still colliding after the retries: the series' next number is already on another invoice (for example one issued by hand
+ // under that number), so taking it again cannot succeed. Refuse with the reason; the booking stays on the missing-invoices list.
+ const taken=/finance_invoices\.invoice_number/i.test(String(lastError instanceof Error?lastError.message:lastError));
+ return{status:"refused",bookingId,completedOn:issueDate,key:taken?"invoice_number_taken":"invoice_series_busy",message:taken?"The next number in this invoice series is already on another invoice. Finance must check the series before this invoice can be issued.":"The invoice series was busy with other invoices. Try again."};
 }
 
 async function issue(db:Db,done:Completed,actor:string,reason:string){
@@ -264,7 +267,11 @@ export async function issueMissingBookingInvoices(db:Db,input:{actorId:string;re
  const reason=text(input.reason);if(reason.length<8)throw governedJsonError({error:"A clear reason of at least 8 characters is required"},400);
  await ensureGstAccountingTables(db);
  const backlog=await bookingInvoiceBacklog(db,{asOf:input.asOf,limit:input.limit}),outcomes:BookingInvoiceOutcome[]=[];
- for(const row of backlog.rows)if(row.status==="ready")outcomes.push(await issueBookingInvoice(db,{bookingId:row.bookingId,actorId:input.actorId,reason,asOf:input.asOf}));
+ for(const row of backlog.rows)if(row.status==="ready"){
+  // One booking's failure never stops the run or its audit row: it is listed as not issued, and the error is logged, not returned.
+  try{outcomes.push(await issueBookingInvoice(db,{bookingId:row.bookingId,actorId:input.actorId,reason,asOf:input.asOf}));}
+  catch(error){console.error(`[booking-invoice] ${row.bookingId} could not be issued by Finance's run`,error);outcomes.push({status:"refused",bookingId:row.bookingId,completedOn:row.completedOn,key:"unexpected_error",message:"Could not be issued because of an unexpected error. Try again; if it repeats, report it."});}
+ }
  const issued=outcomes.filter(o=>o.status==="issued"),notIssued=[...backlog.rows.filter(r=>r.status!=="ready").map(r=>({bookingId:r.bookingId,status:r.status,message:r.message})),...outcomes.filter(o=>o.status!=="issued"&&o.status!=="existing").map(o=>({bookingId:o.bookingId,status:o.status,message:o.message??""}))];
  await audit(db,input.actorId,"booking_invoice_backfill",`backfill:${backlog.asOf}`,"issued_missing",{asOf:backlog.asOf,issued:issued.map(o=>({bookingId:o.bookingId,invoiceNumber:o.invoiceNumber})),notIssued:notIssued.slice(0,200)},reason);
  return{asOf:backlog.asOf,issued,notIssued,counts:{issued:issued.length,notIssued:notIssued.length}};
