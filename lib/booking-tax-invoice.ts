@@ -220,9 +220,9 @@ async function issue(db:Db,done:Completed,actor:string,reason:string){
    notes,reverseCharge:false,amountInWords:rupeesInWords(order)}},actor);
 }
 
-/** One log field: the booking ID comes from the request, so it is never the format string, and CR/LF and other control
- * characters are replaced (no forged log lines) and the length is capped. */
-const logValue=(value:unknown)=>String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g," ").slice(0,300);
+/** One log field: the booking ID comes from the request, so it is never the format string. CR/LF are removed first, other
+ * control characters are replaced (no forged log lines) and the length is capped. */
+const logValue=(value:unknown)=>String(value).replace(/\r|\n/g,"").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g," ").slice(0,300);
 
 /** Completion's hook: issue the booking's invoice, never failing or blocking the completion. A refusal is logged and stays on
  * Finance's missing-invoices list with its reason. */
