@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{partnerServiceTime}from"../../../lib/partner-job-time";
 import{partnerJobWorkspaceHref}from"../../../lib/partner-job-workspace";
 import{acceptAvailable,describeProviderOffer}from"../../../lib/provider-offer-copy";
 
@@ -10,7 +11,7 @@ type Feed={providerId:string;needsAction:Job[];today:Job[];upcoming:Job[];comple
 const nounFor=(service:string)=>service==="boarding"?"stay":service==="pet_taxi"?"trip":"booking";
 
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e",red:"#ff9a9a"};
-const when=(v:string)=>v?v.slice(0,16).replace("T"," "):"—";
+const when=partnerServiceTime;
 const statusColor=(s:string)=>s==="completed"?C.green:s==="awaiting_host_acceptance"?C.orange:["cancelled","host_unavailable"].includes(s)?C.red:C.gold;
 const safetyLabel=(value:string)=>value.startsWith("grooming_safety:")?value.slice("grooming_safety:".length).replace(/_/g," "):value.replace(/_/g," ");
 
@@ -81,7 +82,7 @@ export default function PartnerJobsPage(){
 
       {feed?<>
         {section("Needs action",feed.needsAction,"Nothing needs your action right now.",true)}
-        {section("Today",feed.today,"No jobs today.")}
+        {section("Today & overdue",feed.today,"No jobs due today or overdue.")}
         {section("Upcoming",feed.upcoming,"Nothing scheduled yet.")}
         {section("Completed (last 14 days)",feed.completed,"No recently completed jobs.")}
         {feed.needsOperations?.length?section("Needs Operations",feed.needsOperations,"",true):null}

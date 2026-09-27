@@ -28,6 +28,7 @@ export type AtomicRazorpayCaptureInput = {
   paymentId: string;
   gatewayOrderId?: string | null;
   gatewayPaymentId?: string | null;
+  gatewayMethod?: string | null;
   amountPaise: number;
   currency: string;
   payloadHash: string;
@@ -96,6 +97,8 @@ function captureTimelineStatement(db: Db, input: { environment: string; paymentI
 export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayCaptureInput) {
   await ensureFinancialRuntimeTables(db);
   const authority=captureAuthority(input);
+  const rawMethod=text(input.gatewayMethod).toLowerCase();
+  const gatewayMethod=/^[a-z][a-z0-9_]{0,31}$/.test(rawMethod)?rawMethod:null;
   if (!input.eventId || !input.bookingId || !input.paymentId) throw new Error("Atomic capture identity is incomplete");
   if (authority==="webhook_signature"&&!input.inboxId) throw new Error("Signed webhook capture requires a durable webhook inbox identity");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Captured Razorpay amount must be positive integer paise");
@@ -195,7 +198,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   const journalId = `JT-${crypto.randomUUID()}`;
   const journalEventId = `razorpay:capture:${captureKey(input)}`;
   const gatewayEventId = `PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-  const eventDetail = JSON.stringify({ ...(input.detail || {}), atomicCapture: true, captureAuthority: authority });
+  const eventDetail = JSON.stringify({ ...(input.detail || {}), atomicCapture: true, captureAuthority: authority, gatewayMethod });
   const signatureVerified=authority==="webhook_signature"?1:0;
   const effectsPayload = JSON.stringify({
     inboxId: input.inboxId,
@@ -209,6 +212,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     currency: input.currency,
     captureKey: captureKey(input),
     captureAuthority: authority,
+    gatewayMethod,
     collectedInFull,
     scheduleKind,
   });
@@ -223,8 +227,8 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     // capture stays recorded on its own payment_gateway_events row (and on its intent), which is what the
     // refund sweep splits a refund across.
     db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=? AND payment_id=?").bind(input.gatewayPaymentId || null, now, input.bookingId, input.paymentId),
-    db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(COALESCE(detail_json,'{}'),'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?,'$.atomicCapture',1),updated_at=? WHERE id=? AND booking_id=?")
-      .bind(gateway, input.gatewayPaymentId || null, input.gatewayOrderId || null, input.eventId, now, input.paymentId, input.bookingId),
+    db.prepare("UPDATE booking_payments SET status='captured',gateway=?,method=COALESCE(?,method),detail_json=json_set(COALESCE(detail_json,'{}'),'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?,'$.atomicCapture',1),updated_at=? WHERE id=? AND booking_id=?")
+      .bind(gateway, gatewayMethod, input.gatewayPaymentId || null, input.gatewayOrderId || null, input.eventId, now, input.paymentId, input.bookingId),
     db.prepare(`INSERT INTO payment_reconciliation_records
       (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at)
       VALUES (?,?,?,?,?,0,?,?,'captured','partially_captured',0,?,?)
@@ -383,7 +387,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       paymentId,
       settlementId: captureReference,
       amount: Number(payload.amountPaise || 0) / 100,
-      paymentMethod: text(payment.method) || "razorpay",
+      paymentMethod: text(payload.gatewayMethod) || text(payment.method) || "razorpay",
       entryDate: new Date().toISOString().slice(0, 10),
       transactionAt: now,
       actorId: "razorpay_capture_saga",
