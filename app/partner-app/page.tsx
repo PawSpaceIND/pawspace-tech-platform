@@ -160,7 +160,7 @@ function PartnerMobileAppContent() {
   const pathname = usePathname();
   const inV2Partner = pathname.startsWith("/v2/partner");
   const requestedBookingId = searchParams.get("bookingId") || "";
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>(requestedBookingId?"jobs":"home");
   const [identity, setIdentity] = useState<Identity | null>(null);
   // The dashboard is gated on the SERVER's answer only. "checking" avoids flashing the sign-in form at
   // a partner whose session is still being resolved; "unauthenticated" mounts the OTP sign-in in place

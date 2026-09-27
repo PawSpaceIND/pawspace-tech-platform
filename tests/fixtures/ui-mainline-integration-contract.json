@@ -697,7 +697,7 @@
     "lib/outbound-schema.ts": "2baa4d7c01d6331777135006df1d91b41ae0962171ba476b0f3163ac50b81284",
     "lib/outbound-sweep.ts": "4e92619426129b69b13f27a5f9546efb697ba34784a26fa03afd2da37192b4a4",
     "lib/partner-job-checklists.ts": "cd7d93d4950a6b9dc0dfd262700c3f759e127f4473321c8d9d3b4ac5416fa75e",
-    "lib/partner-job-feed.ts": "2c2b91567381b9bf9cff5965729ecfe7564a9982616b86177979f56bf13a992d",
+    "lib/partner-job-feed.ts": "b85f6f9163706c6d6597bcc6ae28a7e723bc991f5e45c92fd6e91af87d272110",
     "lib/partner-job-heartbeat.ts": "e8d6ed7f98d4a9df21610d343484ca99dbcf733d23459cbdc083ec5a7a0020c8",
     "lib/partner-job-selection.ts": "2bf3c95fdd15a9b419236911ab409b9ceec0e30198d97c558bbbe940aba268a0",
     "lib/partner-job-workspace.ts": "d95184deece4a8e5f973e10aa8bcd58bc228b95ea2e507f223026c6ea43479a0",
