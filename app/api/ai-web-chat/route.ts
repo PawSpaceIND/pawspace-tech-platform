@@ -48,12 +48,13 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
   /* Every signed-in bot answer carries the conversation back, so the page shows the reply from this one
    * request instead of reading the thread again (each extra request costs the customer seconds). */
   // The turn itself is stored; if reading it back fails, the page reads the thread instead (transcript null).
-  const withTranscript=async()=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true}).catch((error:unknown)=>{console.error("ai-web-chat: reply transcript read failed",error instanceof Error?error.message:String(error));return null;});
+  // known: the thread this request just wrote to, and its handoff state when the turn established it, so the transcript skips those reads.
+  const withTranscript=async(known:{threadId?:string|null;handoff?:{active:boolean;status:"queued"|"staff_active"|null}}={})=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true,...(known.threadId?{threadId:known.threadId,threadVerified:true}:{}),...(known.handoff?{handoff:known.handoff}:{})}).catch((error:unknown)=>{console.error("ai-web-chat: reply transcript read failed",error instanceof Error?error.message:String(error));return null;});
   if(body.start===true){const bot=await startCustomerWebChatBot(db,{actor,customerId});return json({data:{mode:"authenticated",bot,transcript:await withTranscript()}});}
   if(!(body.message||body.choiceId)||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
-  const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey});
-  await securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
+  const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey,ownershipVerified:true});
   if(result.path==="call"){
+   await securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
    /* The customer tapped "Request a call": PawSpace's governed callback places it (consent, quiet hours
     * and the voice policy engine decide). When it cannot, the team is asked to call instead. */
    const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:"Please call me back",idempotencyKey:`${body.idempotencyKey}:call`});
@@ -61,7 +62,10 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
    await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,surface:"web_chat_bot"});
    return json({data:{mode:"authenticated",...result,callback,transcript:await withTranscript()}},callback.matched?201:200);
   }
-  return json({data:{mode:"authenticated",...result,transcript:await withTranscript()}});
+  const{handoff,...shown}="handoff"in result?result:{...result,handoff:undefined};
+  // The audit write and the transcript read are independent: one round trip.
+  const[transcript]=await Promise.all([withTranscript({threadId:result.threadId,handoff}),securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false})]);
+  return json({data:{mode:"authenticated",...shown,transcript}});
  }
  if(!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay

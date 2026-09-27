@@ -106,14 +106,16 @@ export async function completeAiProviderRequest(db:D1Database,env:Env,input:{res
   const costPer1k=integer(env,"PAWSPACE_AI_ESTIMATED_COST_MICROS_PER_1K_TOKENS",0,0,1_000_000_000);
   const actualCost=actualTokens!=null&&costPer1k>0?Math.ceil((actualTokens/1000)*costPer1k):null;
   const status=input.failureClass?"failed":"completed";
-  await db.prepare("UPDATE ai_provider_runtime_requests SET status=?,failure_class=?,actual_tokens=?,actual_cost_micros=?,updated_at=? WHERE id=?")
-   .bind(status,input.failureClass||null,actualTokens,actualCost,now,input.reservation.id).run();
+  const completion=db.prepare("UPDATE ai_provider_runtime_requests SET status=?,failure_class=?,actual_tokens=?,actual_cost_micros=?,updated_at=? WHERE id=?")
+   .bind(status,input.failureClass||null,actualTokens,actualCost,now,input.reservation.id);
 
   if(!input.failureClass){
-   await db.prepare("INSERT INTO ai_provider_runtime_circuit (provider,model_ref,consecutive_failures,open_until,updated_at) VALUES (?,?,0,NULL,?) ON CONFLICT(provider,model_ref) DO UPDATE SET consecutive_failures=0,open_until=NULL,updated_at=excluded.updated_at")
-    .bind(input.provider,input.modelRef,now).run();
+   // The completion and the circuit reset share one round trip.
+   await db.batch([completion,db.prepare("INSERT INTO ai_provider_runtime_circuit (provider,model_ref,consecutive_failures,open_until,updated_at) VALUES (?,?,0,NULL,?) ON CONFLICT(provider,model_ref) DO UPDATE SET consecutive_failures=0,open_until=NULL,updated_at=excluded.updated_at")
+    .bind(input.provider,input.modelRef,now)]);
    return;
   }
+  await completion.run();
   if(!input.retryableFailure)return;
   const threshold=integer(env,"PAWSPACE_AI_CIRCUIT_FAILURE_THRESHOLD",5,1,100);
   const cooldown=integer(env,"PAWSPACE_AI_CIRCUIT_COOLDOWN_MS",60_000,1_000,3_600_000);

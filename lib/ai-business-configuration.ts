@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 type Row=Record<string,unknown>;
 export type AiConfigEntityType="profile"|"intent"|"knowledge"|"prompt";
 export type AiConfigLifecycleAction="submit_review"|"approve"|"activate"|"rollback";
@@ -17,7 +18,7 @@ const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value
 async function hashValue(value:unknown){const bytes=new TextEncoder().encode(JSON.stringify(value)),digest=await crypto.subtle.digest("SHA-256",bytes);return[...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,"0")).join("");}
 async function audit(db:D1Database,actorEmail:string,action:string,entityType:string,entityId:string|null,detail:unknown){await db.prepare("INSERT INTO ai_config_audit_events (id,actor_email,action,entity_type,entity_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),actorEmail,action,entityType,entityId,JSON.stringify(detail??{}),Date.now()).run();}
 
-export async function ensureAiBusinessConfiguration(db:D1Database){await db.batch([
+export async function ensureAiBusinessConfiguration(db:D1Database){return ensureD1Once(db,"ai_business_configuration",async()=>{await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ai_assistant_profile_versions (id TEXT PRIMARY KEY,profile_key TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,brand_voice TEXT NOT NULL,supported_languages_json TEXT NOT NULL,greeting_text TEXT NOT NULL,fallback_text TEXT NOT NULL,provider_ref TEXT,model_ref TEXT,effective_from INTEGER,effective_to INTEGER,immutable_hash TEXT NOT NULL,created_by TEXT NOT NULL,reviewed_by TEXT,reviewed_at INTEGER,approved_by TEXT,approved_at INTEGER,activated_by TEXT,activated_at INTEGER,retired_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(profile_key,version))"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_intent_versions (id TEXT PRIMARY KEY,intent_code TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,business_owner TEXT NOT NULL,enabled INTEGER NOT NULL,confidence_threshold REAL NOT NULL,required_fields_json TEXT NOT NULL,workflow_mapping TEXT NOT NULL,escalation_rule TEXT NOT NULL,effective_from INTEGER,effective_to INTEGER,immutable_hash TEXT NOT NULL,created_by TEXT NOT NULL,reviewed_by TEXT,reviewed_at INTEGER,approved_by TEXT,approved_at INTEGER,activated_by TEXT,activated_at INTEGER,retired_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(intent_code,version))"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_knowledge_source_versions (id TEXT PRIMARY KEY,source_key TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,title TEXT NOT NULL,source_type TEXT NOT NULL,content_text TEXT NOT NULL,visibility_scope_json TEXT NOT NULL,effective_from INTEGER,effective_to INTEGER,immutable_hash TEXT NOT NULL,created_by TEXT NOT NULL,reviewed_by TEXT,reviewed_at INTEGER,approved_by TEXT,approved_at INTEGER,activated_by TEXT,activated_at INTEGER,retired_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(source_key,version))"),
@@ -25,7 +26,7 @@ export async function ensureAiBusinessConfiguration(db:D1Database){await db.batc
  db.prepare("CREATE TABLE IF NOT EXISTS ai_kill_switches (scope_type TEXT NOT NULL,scope_key TEXT NOT NULL,disabled INTEGER NOT NULL,reason TEXT NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(scope_type,scope_key))"),
  db.prepare("CREATE TABLE IF NOT EXISTS ai_config_audit_events (id TEXT PRIMARY KEY,actor_email TEXT NOT NULL,action TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT,detail_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS ai_config_audit_created_idx ON ai_config_audit_events(created_at)"),
-]);}
+]);});}
 
 async function nextVersion(db:D1Database,entityType:AiConfigEntityType,key:string){const meta=entityMeta[entityType],row=await db.prepare(`SELECT MAX(version) version FROM ${meta.table} WHERE ${meta.keyColumn}=?`).bind(key).first<Row>();return Number(row?.version||0)+1;}
 
