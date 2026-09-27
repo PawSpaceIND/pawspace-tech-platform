@@ -135,7 +135,9 @@ test("Pet Sitting Gate 2 enforces the check-in geofence against the customer's d
   const farAway = await refusal(world.act("check_in", { ...metresNorth(world.doorstep, 1_200) }));
   assert.equal(farAway?.status, 409);
   assert.match(farAway.message, new RegExp(`check-in requires <=${GEOFENCE_METRES}m`));
-  assert.match(farAway.message, /^Sitter is \d+m from the customer doorstep/);
+  // A governed refusal (R2-P03): the reason is the JSON body's error, so it reaches the sitter through the route.
+  assert.match(JSON.parse(farAway.message).error, /^Sitter is \d+m from the customer doorstep/);
+  assert.equal(JSON.parse(farAway.message).code, "sitting_outside_geofence");
   assert.equal((await world.bookingRow()).status, "assigned", "a refused check-in must not start the visit");
 
   const atTheDoor = await world.act("check_in", { ...metresNorth(world.doorstep, 20) });
