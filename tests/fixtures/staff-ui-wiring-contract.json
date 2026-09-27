@@ -13,7 +13,7 @@
     ]
   },
   "app/team/sales/page.tsx": {
-    "logicHash": "4f01e631108bf01ff3409f1c4a0f6f37de5c7a06750d5070131df19ff97d0722",
+    "logicHash": "e796047787da69bfaf46de2cb2f94c39efb90be766bd26e5146f030e46fd855c",
     "bindings": [
       "disabled={busy===a.id}",
       "disabled={busy===a.id}",
@@ -22,6 +22,8 @@
       "onClick={()=>revenue(\"complete\",a.id)}",
       "onClick={()=>setSelected(c.customerId)}",
       "onClick={()=>setShown(shown+PAGE)}",
+      "onClick={()=>{setStage(\"\");setShown(PAGE)}}",
+      "onClick={()=>{setStage(label);setShown(PAGE)}}",
       "value={listSearch}",
       "value={v}"
     ],

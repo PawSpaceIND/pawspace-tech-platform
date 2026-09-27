@@ -321,7 +321,9 @@ test("team pages render only API data — no residual demo arrays, interactions 
   const dailyPage = fs.readFileSync("app/team/daily-revenue/page.tsx", "utf8");
   // Every number on the mission page maps to an API field.
   assert.match(missionPage, /fetch\("\/api\/revenue-mission-command-center"/);
-  for (const token of ["revenue?.target", "revenue?.achieved", "revenue?.gap", "pipeline?.weightedPipeline", "queue?.slaBreached"]) assert.ok(missionPage.includes(token), `mission page renders ${token} from the API`);
+  for (const token of ["revenue?.target", "revenue?.achieved", "revenue?.gap", "pipeline.weightedPipeline", "queue.slaBreached"]) assert.ok(missionPage.includes(token), `mission page renders ${token} from the API`);
+  assert.match(missionPage, /pipeline && <VisualGrid>/);
+  assert.match(missionPage, /queue && <MetricBars/);
   // Sales page: worklist buttons follow the server state machine (ready→Claim, claimed→Complete).
   assert.match(salesPage, /fetch\("\/api\/revenue-intelligence"/);
   assert.match(salesPage, /String\(a\.status\)==="ready"&&/, "Claim renders only for ready actions");
