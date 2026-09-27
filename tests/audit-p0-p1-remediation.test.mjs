@@ -7,7 +7,8 @@ const {productionOtpEnabled} = await import("../lib/otp-production-runtime.ts");
 
 // This source-contract suite is the stable regression surface for the finalized P0/P1 guards.
 const read=(path)=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
-const customerOtp=read("app/api/customer-otp/route.ts");
+// The customer route delegates its delivery and exchange to lib/customer-otp-exchange.ts (shared with web chat verification).
+const customerOtp=read("app/api/customer-otp/route.ts")+read("lib/customer-otp-exchange.ts");
 const partnerOtp=read("app/api/partner-otp/route.ts");
 const gateway=read("lib/api-gateway.ts");
 const balance=read("app/api/stay-balance/route.ts");
