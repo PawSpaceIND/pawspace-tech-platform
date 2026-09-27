@@ -27,6 +27,7 @@ import {useInitialBookingReference} from "../../lib/use-initial-booking-referenc
 import {indiaDateOffset,rememberBookingReference,sameReviewedStayQuote} from "../../lib/customer-booking-safety";
 import {boardingPetNote,boardingVaccinationProblem,stayBookingWindowRule,stayDateBounds,stayWindowCheckNow,stayWindowProblem} from "../../lib/stay-plan-checks";
 import {HOST_REQUESTS_NOTE,HOST_REQUESTS_NOT_INCLUDED,HOST_REQUESTS_TITLE,hostRequestsExcludedNote,hostRequestsReviewValue} from "../../lib/boarding-host-requests";
+import {stayMoney} from "../../lib/stay-money";
 import {plainErrorMessage} from "../../lib/safe-json-response";
 
 type Mode = "boarding" | "sitting";
@@ -71,13 +72,8 @@ const careBenefits = [
   "Grooming add-on",
   "Training add-on",
 ];
-const money = (n: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(n);
+/** Whole rupees stay short; a split's paise are shown in full (lib/stay-money.ts). */
+const money = stayMoney;
 const dateOffset = indiaDateOffset;
 const boardingPlaceholder: Caregiver = {
   providerId: "",

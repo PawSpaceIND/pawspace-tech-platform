@@ -11,6 +11,7 @@ const { default: GroomingPetList } = await import("../app/mobile-app/grooming-pe
 const { default: StayFlow } = await import("../app/mobile-app/stay-flow.tsx");
 const { stayWindowProblem, stayDateBounds, boardingVaccinationProblem, boardingPetNote } = await import("../lib/stay-plan-checks.ts");
 const { indiaDateOffset } = await import("../lib/customer-booking-safety.ts");
+const { stayMoney } = await import("../lib/stay-money.ts");
 
 test("seven-night stay preserves both customer times in IST and the visible duration", () => {
   const window = stayCareWindow("2026-09-15", "2026-09-22", "10:00", "10:00");
@@ -123,4 +124,15 @@ for (const mode of ["boarding", "sitting"]) test(`${mode}: the check-in picker s
   const bounds = [input.match(/ min="([^"]+)"/)?.[1], input.match(/ max="([^"]+)"/)?.[1]];
   assert.ok([before, after].some((expected) => expected[0] === bounds[0] && expected[1] === bounds[1]), `check-in ${input}`);
   assert.match(html, /Book at least 24 hours ahead\. You can book up to 180 days ahead\./);
+});
+
+// Round-2 staging (BRD-05): the Review of a 5-night split stay read "₹1,747.5 now · ₹1,747.5 due 24 hours before
+// check-in" and "₹1,747.5 will be collected".
+test("stay amounts show paise to the paisa and whole rupees without them", () => {
+  assert.equal(stayMoney(1747.5), "₹1,747.50");
+  assert.equal(stayMoney(3495), "₹3,495");
+  assert.equal(stayMoney(399.5), "₹399.50");
+  assert.equal(stayMoney(999.99), "₹999.99");
+  assert.equal(stayMoney(Math.round(3495 * 50) / 100), "₹1,747.50", "the Review's own half of the total");
+  assert.equal(stayMoney(0), "₹0");
 });
