@@ -1,22 +1,21 @@
 name: V2 shared scheduler choice
 on:
   pull_request:
+    # Cover transitive shared engines, fixtures and browser/server configuration.
     paths:
-      - 'app/api/uat-scheduling/**'
-      - 'app/training/**'
-      - 'app/v2/grooming/**'
-      - 'lib/scheduling-provider-choice.ts'
-      - 'lib/provider-assignment-policy.ts'
-      - 'lib/training-availability-client.ts'
-      - 'lib/uat-scheduling-client.ts'
-      - 'lib/v2/grooming-checkout-client.ts'
-      - 'tests/scheduler-provider-choice.test.mjs'
-      - 'tests/scheduling-hardening.test.mjs'
-      - 'e2e/v2-grooming.spec.ts'
-      - 'e2e/v2-training-choice.spec.ts'
-      - 'playwright.scheduler-choice.config.ts'
+      - 'app/**'
+      - 'lib/**'
+      - 'backend/**'
+      - 'worker/**'
+      - 'tests/**'
+      - 'e2e/**'
+      - 'scripts/**'
+      - 'playwright*.config.ts'
+      - 'vite.config.*'
+      - 'tsconfig*.json'
+      - 'wrangler*'
+      - 'package*.json'
       - '.github/workflows/v2-scheduler-choice.yml'
-      - 'package-lock.json'
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,7 +44,7 @@ jobs:
         env:
           NODE_ENV: test
           PAWSPACE_LOCAL_PREVIEW: 'on'
-        run: node --experimental-strip-types --test --test-concurrency=1 tests/scheduler-provider-choice.test.mjs tests/scheduling-hardening.test.mjs tests/training-availability-preview.test.mjs tests/provider-assignment-execution.test.mjs tests/v2-grooming-checkout.test.mjs tests/training-booking-guards.test.mjs tests/training-mobile-trainer-alternatives.test.mjs
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/scheduler-choice-ci-coverage.test.mjs tests/scheduler-provider-choice.test.mjs tests/scheduling-hardening.test.mjs tests/training-availability-preview.test.mjs tests/provider-assignment-execution.test.mjs tests/v2-grooming-checkout.test.mjs tests/training-booking-guards.test.mjs tests/training-mobile-trainer-alternatives.test.mjs
       - run: node node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
       - name: V2 automatic and explicit choice journeys
         run: node node_modules/@playwright/test/cli.js test --config playwright.scheduler-choice.config.ts
