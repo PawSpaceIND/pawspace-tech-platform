@@ -18,7 +18,7 @@
     "app/food/canonical-food-page.tsx": "036cab1200923f9adbb9f8b1b7f30c4e92652b236bbc094c26fd041dcef4478b",
     "app/food/manage/food-customer-management.tsx": "d8914e4ef63621c5629061df71a696b48cbd678d230d97fef690fcacb6b80138",
     "app/mobile-app/booking-confirmation/booking-confirmation-view.tsx": "d33ccb559de928a3b1d6280f52734a7fd3516b9c83107cb0578e3762b7eefc53",
-    "app/mobile-app/booking-payment-page.tsx": "5de6d323c7c90e8044de227790b9c39d8ed4d338c75aba9dca14de532adc5472",
+    "app/mobile-app/booking-payment-page.tsx": "7de34da30d6be5c74200423da1c561e8fbbf412c438d34b6af82e77a2739c588",
     "app/mobile-app/food-flow.tsx": "ede21fae14764a01968da0719d7a36ab58ea36b968c03dea6d7f4e59d722abcf",
     "app/mobile-app/grooming-flow.tsx": "ae2402945cfb9d2728af206c7318df0c494fe490d3b6a0b3a5dcb92e49f8cb9b",
     "app/mobile-app/pet-manager.tsx": "498d4a1f5c7c633abfdf7c54329ad868f78971e627d77a858b08fccdaa49c591",
@@ -84,7 +84,7 @@
     "tests/pet-manager.test.mjs": "d0adfef582717f7fc4c9da0d912875d75d79c66fbc44f6f34f74f145c5ed68eb",
     "tests/premium-customer-service-parity.test.mjs": "d183fa0a96eec30048531fa0dc053c82ec2631d7cb0ea88b3713e88468696573",
     "tests/ptja-p1-04-governed-grooming-entry.test.mjs": "94c7543cc8d5d1a69018e309f3adf116401e759184c1145543b90ab50068927b",
-    "tests/rendered-html.test.mjs": "13fe226d0cac1eea002fa9627bc2f4a2f831b89f2131c29bb89fbbed2414f72e",
+    "tests/rendered-html.test.mjs": "d562efc77a483178354efe120cc2aadd626e609edabffcd27256a056dc98ce9c",
     "tests/service-discovery-capacity.test.mjs": "fd5d574bbcb7bd4847c592ec620144a61fcde5a026a341ecbcafce899e0f84dd",
     "tests/staging-certification.test.mjs": "60e319a4767e1738aa7b6c4a42d5f21413dd77df6aadbd42493c748c3bfc0e14",
     "tests/training-availability-preview.test.mjs": "ad6a743ad3bf28108734dcaff5d7018306043cd77b18ce3431695022daa08000",
@@ -1038,7 +1038,7 @@
     },
     "app/team/ai/page.tsx": {
       "upstreamHash": "5e8c65aa401cfa51f3ac6e4273b203f647a7c9a12494b479777f98a99ab4680f",
-      "semantic": "c0cd9d0f3374e82e30bc59b1103c48b195aadbafda674c613283de502f9cc88c"
+      "semantic": "03a3232f85af568e2a56618cb42fd170923b13c355ac8e9e8011c3199135faa0"
     }
   }
 }

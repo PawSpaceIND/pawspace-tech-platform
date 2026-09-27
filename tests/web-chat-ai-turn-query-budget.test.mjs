@@ -90,7 +90,7 @@ test("a warm AI reply stays within its D1 round-trip and sequential-wave budget"
     assert.equal((await call({ choiceId: "grooming", message: "", idempotencyKey: "m-1" })).status, 200);
     await call({ message: "what does grooming include for a big dog", idempotencyKey: "m-warm" });
     const log = globalThis.__QLOG__; log.splice(0);
-    globalThis.__WAVES__.count = 0; globalThis.__WAVE_OF__ = []; 
+    globalThis.__WAVES__.count = 0; globalThis.__WAVE_OF__ = [];
     const res = await call({ message: "can i book a grooming session now", idempotencyKey: "m-2" });
     const body = await res.json();
     assert.equal(res.status, 200);

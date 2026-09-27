@@ -1,5 +1,6 @@
 "use client";
 import {FormEvent,useCallback,useEffect,useMemo,useState} from "react";
+import {MetricBars, VisualGrid, statusCounts} from "../components/ui/ReportVisuals";
 import styles from "./revenue-engine.module.css";
 
 type Tab="revenue"|"leads"|"rnr"|"tickets"|"leaderboard"|"command";
@@ -43,6 +44,7 @@ export default function RevenueEnginePanel({notify}:{notify:(message:string)=>vo
       <article><span>Team eligible revenue</span><strong>{money(data.stats.teamRevenue)}</strong><small>{money(data.stats.teamIncentive)} incentive</small></article>
       <article className={data.stats.opsBlocked?styles.risk:""}><span>Ops awaiting closure</span><strong>{data.stats.opsBlocked}</strong><small>{data.stats.openTickets} open CX tickets</small></article>
     </section>
+    <VisualGrid><MetricBars title="Lead lifecycle" note="Current loaded lead states. These are counts, not conversion rates." items={statusCounts(data.leads)}/><MetricBars title="Opportunity worklist" note="Current opportunity states; expected value is not collected revenue." items={statusCounts(data.opportunities)}/></VisualGrid>
     <nav className={styles.tabs}>{tabs.map(item=><button key={item[0]} className={tab===item[0]?styles.active:""} onClick={()=>setTab(item[0])}>{item[1]}</button>)}</nav>
     {error&&<div className={styles.error}>{error}</div>}
     {tab==="revenue"&&<section className={styles.workspace}>
@@ -65,6 +67,7 @@ export default function RevenueEnginePanel({notify}:{notify:(message:string)=>vo
     </section>}
     {tab==="leaderboard"&&<section className={styles.workspace}>
       <header><div><span>COMPANY-WIDE VISIBILITY</span><h3>Sales incentives and live leaderboard</h3><p>Only collected, service-completed revenue qualifies. Refunds are deducted and SLA/RNR compliance remain visible guardrails.</p></div></header>
+      <VisualGrid><MetricBars title="Eligible revenue by salesperson" note="Recorded incentive-eligible revenue. Targets and collection values remain visible in the table." format={money} items={data.leaderboard.map(person=>({label:person.employee_name,value:person.eligible_revenue}))}/><MetricBars title="Sales conversions" note="Recorded conversion counts for the leaderboard snapshot." items={data.leaderboard.map(person=>({label:person.employee_name,value:person.conversions}))}/></VisualGrid>
       <div className={styles.podium}>{data.leaderboard.slice(0,3).map(person=><article key={person.id} className={person.rank===1?styles.winner:""}><span>#{person.rank}</span><h4>{person.employee_name}</h4><strong>{money(person.eligible_revenue)}</strong><small>{money(person.incentive_amount)} incentive</small></article>)}</div>
       <div className={styles.leaderTable}><div><b>Rank</b><b>Employee</b><b>Eligible revenue</b><b>Collections</b><b>Conversion</b><b>SLA / RNR</b><b>Incentive</b></div>{data.leaderboard.map(person=><div key={person.id}><span>#{person.rank}</span><strong>{person.employee_name}</strong><span>{money(person.eligible_revenue)} / {money(person.target_revenue)}</span><span>{money(person.collections)}</span><span>{person.conversions} sales · {person.renewals} renewals</span><span>{person.sla_percent}% / {person.rnr_percent}%</span><strong>{money(person.incentive_amount)}</strong></div>)}</div>
     </section>}

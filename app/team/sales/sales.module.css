@@ -21,3 +21,5 @@
 .statGrid>div>span{font-size:13px;color:var(--staff-muted);letter-spacing:.04em}
 .statGrid>div>strong{color:var(--staff-text)}
 .surface input{min-height:44px;background:var(--staff-surface);color:var(--staff-text);font-family:inherit;font-size:15px}
+
+.stageFilters{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.surface .stageFilters button{border:1px solid var(--staff-line);background:var(--staff-surface);color:var(--staff-text);padding:10px 14px;border-radius:24px;font:inherit;cursor:pointer}.surface .stageFilters button[aria-pressed="true"]{background:var(--staff-primary);color:var(--staff-on-primary)}.stageFilters button:focus-visible{outline:3px solid var(--staff-gold);outline-offset:3px}
