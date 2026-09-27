@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{postCollectionEvent,prepareCollectionEventPosting}from"./collection-ledger";
 import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
 import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
@@ -27,8 +28,6 @@ function canonicalGatewayEventType(value:string):SupportedGatewayEventType|null{
 }
 
 const reconciliationSchemaObjects=["booking_lifecycle_events","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link"] as const;
-const reconciliationTablesReady=new WeakSet<Db>();
-const reconciliationTablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function reconciliationSchemaReady(db:Db){
   try{const rows=await db.prepare(`SELECT name FROM sqlite_master WHERE name IN (${reconciliationSchemaObjects.map(()=>"?").join(",")})`).bind(...reconciliationSchemaObjects).all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===reconciliationSchemaObjects.length;}catch{return false;}
 }
@@ -43,7 +42,11 @@ async function ensurePaymentReconciliationTablesUncached(db:Db){if(await reconci
   db.prepare("CREATE TABLE IF NOT EXISTS payment_reconciliation_exceptions (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,event_id TEXT,exception_type TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
   db.prepare("CREATE TABLE IF NOT EXISTS post_service_payment_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL,provider_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'awaiting_payment',payment_path TEXT NOT NULL,qr_payload TEXT NOT NULL,expires_at INTEGER NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);await ensurePaymentLinkColumn(db);}
-export async function ensurePaymentReconciliationTables(db:Db){if(reconciliationTablesReady.has(db))return;const running=reconciliationTablesEnsuring.get(db);if(running)return running;const pending=ensurePaymentReconciliationTablesUncached(db).then(()=>{reconciliationTablesReady.add(db);});reconciliationTablesEnsuring.set(db,pending);try{await pending;}finally{if(reconciliationTablesEnsuring.get(db)===pending)reconciliationTablesEnsuring.delete(db);}}
+/* Once per isolate, ready-set only (lib/d1-ensure-once.js). Every customer checkout reaches this before the Razorpay
+ * order; the guard used to hand a cold isolate's in-flight setup to every concurrent caller, and a checkout cancelled
+ * mid-setup left that promise unsettled for ever, so each later checkout on the isolate waited on it. The setup is
+ * idempotent (existence check, CREATE IF NOT EXISTS, guarded ALTER), so a concurrent first caller simply runs it too. */
+export async function ensurePaymentReconciliationTables(db:Db){await ensureD1Once(db,"payment_reconciliation_tables",()=>ensurePaymentReconciliationTablesUncached(db));}
 
 
 async function ensurePaymentLinkColumn(db:Db){const columns=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!columns.results.some(row=>String(row.name)==="gateway_payment_link_id")){try{await db.prepare("ALTER TABLE payment_gateway_links ADD COLUMN gateway_payment_link_id TEXT").run();}catch(error){const refreshed=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!refreshed.results.some(row=>String(row.name)==="gateway_payment_link_id"))throw error;}}await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_gateway_links_payment_link ON payment_gateway_links(gateway_payment_link_id)").run();}

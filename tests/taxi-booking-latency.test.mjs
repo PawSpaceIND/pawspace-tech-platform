@@ -248,6 +248,13 @@ test("a warm Reserve press - driver reservation and ride booking - answers insid
   assert.ok(press < 20 * LATENCY_MS + CPU_SLACK_MS, `the Reserve press took ${Math.round(press)} ms at ${LATENCY_MS} ms per D1 call (limit 20 round trips)`);
 });
 
+// Before: a first Pay press made 23 D1 calls in 21 round trips (5.3 s at 250 ms, before Razorpay), a repeated one 14 in 14.
+test("a warm checkout reads the booking and the amount due once, and a repeated Pay press reuses the order", async () => {
+  const last = await warmRide(await world(), { pay: true });
+  assert.deepEqual([last.start.status, last.again.status, last.again.body.data.orderId], [201, 201, last.start.body.data.orderId]);
+  for (const budget of [["checkout", last.start, 21, 17], ["checkout again", last.again, 12, 10]]) withinBudget(budget);
+});
+
 test("the Pet Taxi ride and fleet tables are set up once per isolate; the first fare and booking still create everything", async () => {
   const w = await world();
   const first = await ride(w, "setup-first");
@@ -264,6 +271,7 @@ const within = (promise, ms = 500) => Promise.race([promise.then(() => "settled"
 for (const [label, load, table] of [
   ["the Pet Taxi ride tables", async () => (await import("../lib/taxi-ride-governance.ts")).ensureTaxiRideTables, "taxi_ride_quotes"],
   ["the Pet Taxi fleet tables", async () => (await import("../lib/taxi-fleet-governance.ts")).ensureTaxiFleetTables, "taxi_fleet_reservations"],
+  ["the checkout's payment reconciliation tables", async () => (await import("../lib/grooming-payment-reconciliation.ts")).ensurePaymentReconciliationTables, "payment_gateway_links"],
 ]) {
   test(`${label}: a set-up cut off mid-way (a cancelled request) never leaves the next request waiting, and a finished one is remembered`, async () => {
     const { DatabaseSync } = await import("node:sqlite");
