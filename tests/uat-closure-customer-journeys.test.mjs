@@ -252,10 +252,8 @@ test("the embedded Sitting screen offers no coupon field, because the governed q
 // ---------------------------------------------------------------------------------------------
 test("the governed Sitting quote is the only source of a Sitting price", async () => {
   const { db } = await journeyWorld();
-  // One clock read: two Date.now() calls made the 60-minute Home Visit window a few milliseconds too long.
-  const now = Date.now();
-  const start = new Date(now + 86_400_000).toISOString();
-  const visitEnd = new Date(now + 86_400_000 + 3_600_000).toISOString();
+  const start = new Date(Date.now() + 86_400_000).toISOString();
+  const visitEnd = new Date(Date.parse(start) + 3_600_000).toISOString();
   const quoteFor = (overrides = {}) => sitting.createSittingQuote(db, {
     packageCode: "sitting-visit-60", petCount: 1, cityId: "blr", zoneId: "blr-east",
     scheduledStart: start, scheduledEnd: visitEnd, paymentMode: "prepaid", ...overrides,
@@ -296,9 +294,8 @@ test("the governed Sitting quote is the only source of a Sitting price", async (
 // ---------------------------------------------------------------------------------------------
 test("a Sitting booking is governed against its server quote and consumes it exactly once", async () => {
   const { db } = await journeyWorld();
-  const now = Date.now();
-  const start = new Date(now + 86_400_000).toISOString();
-  const end = new Date(now + 86_400_000 + 3_600_000).toISOString();
+  const start = new Date(Date.now() + 86_400_000).toISOString();
+  const end = new Date(Date.parse(start) + 3_600_000).toISOString();
   const quote = await sitting.createSittingQuote(db, { packageCode: "sitting-visit-60", petCount: 2, cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, paymentMode: "prepaid" });
   assert.equal(quote.totalAmount, 399 + 149);
   const submit = (overrides = {}) => sitting.governSittingBooking(db, {

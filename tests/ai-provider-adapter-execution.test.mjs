@@ -359,3 +359,16 @@ for(const [message,status,failure] of [
  withEnv();const stub=stubFetch(()=>jsonResponse({error:{message}},status));
  try{const result=await adapter.requestAiDraft({systemPrompt:"sys",userPrompt:"hi"});assert.equal(result.connected,false);assert.equal(result.failure,failure);assert.ok(!JSON.stringify(result).includes(message));}finally{stub.restore();}
 });
+
+
+test("buffered voice generation recovers from one transient provider error",async()=>{
+ withEnv();let attempt=0;
+ const stub=stubFetch(()=>++attempt===1?jsonResponse({error:{message:"temporary"}},503):jsonResponse(textBody("Which package would you like?")));
+ try{const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"Welcome",channel:"voice",timeoutMs:10000});assert.equal(result.connected,true);assert.equal(stub.calls.length,2);}finally{stub.restore();}
+});
+test("voice recovery is bounded and never retries client errors or a streaming request",async()=>{
+ for(const config of [{status:503,onDelta:undefined,expected:2},{status:400,onDelta:undefined,expected:1},{status:503,onDelta:()=>{},expected:1}]){
+ withEnv();const stub=stubFetch(()=>jsonResponse({error:{message:"error"}},config.status));
+ try{const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"hello",channel:"voice",timeoutMs:10000,onDelta:config.onDelta});assert.equal(result.connected,false);assert.equal(stub.calls.length,config.expected);}finally{stub.restore();}
+ }
+});
