@@ -422,9 +422,8 @@ body:has(nav[aria-label="Partner mobile navigation"]) .cookie-consent {
 /* Consent can be taller than the mobile dock clearance. Keep the independent appearance control
    in the top-right utility lane while consent is undecided so neither control can intercept the other. */
 @media (max-width:820px) {
-  body:has(.cookie-consent):has(nav[aria-label="Customer navigation"]) .paw-appearance-trigger,
-  body:has(.cookie-consent):has(nav[aria-label="Partner mobile navigation"]) .paw-appearance-trigger {
-    top:14px !important; right:14px !important; bottom:auto !important;
+  body:has(.cookie-consent) .paw-appearance-trigger {
+    top:14px !important; right:14px !important; bottom:auto !important; z-index:101 !important;
   }
 }
 .cookie-consent__actions { flex-wrap:wrap; }
