@@ -19,8 +19,8 @@ type Props={
  onRefresh:()=>void;
 };
 
-function formatDateTime(value:string|number){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(date):String(value);}
-function statusLabel(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
+export function formatDateTime(value:string|number){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(date):String(value);}
+export function statusLabel(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
 
 /**
  * Every stay the host has work on: each checked-in stay until checkout, and each accepted stay whose window
@@ -59,6 +59,6 @@ export function HostTodayStay({stay,hostBase,focused,isBusy,onCheckIn,onCare,onC
 
 /** The Today tab's stays: each due or active stay with its own check-in, care and check-out controls. */
 export default function HostTodayStays({stays,focusBookingId,...rest}:Props){
- if(!stays.length)return <section className={styles.todayGrid}><div className={styles.panel}><div className={styles.panelHead}><div><span>NO ACTIVE STAY</span><h2>No accepted stay</h2></div></div><p>No canonical accepted or active Boarding stay is assigned to this host.</p></div></section>;
+ if(!stays.length)return <section className={styles.todayGrid}><div className={styles.panel}><div className={styles.panelHead}><div><span>NO ACTIVE STAY</span><h2>No accepted stay</h2></div></div><p>No canonical accepted or active Boarding stay is assigned to this host.</p></div><aside className={styles.panel}><div className={styles.panelHead}><div><span>CANONICAL EVENT HISTORY</span><h2>Stay timeline</h2></div></div><p>No stay events yet.</p></aside></section>;
  return <div className={styles.todayStays}>{stays.map(stay=><HostTodayStay key={stay.id} stay={stay} focused={Boolean(focusBookingId)&&stay.booking_id===focusBookingId} {...rest}/>)}</div>;
 }

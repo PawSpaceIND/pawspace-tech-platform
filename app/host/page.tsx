@@ -7,7 +7,7 @@ import {usePathname,useSearchParams} from "next/navigation";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
 import {loadOwnBoardingStays,updateBoardingStay,type BoardingStay,type BoardingStayAction} from "../../lib/boarding-stay-client";
 import HostStayCare,{petSummary} from "./host-stay-care";
-import HostTodayStays,{todayStays} from "./host-today-stays";
+import HostTodayStays,{formatDateTime,statusLabel,todayStays} from "./host-today-stays";
 import styles from "./host.module.css";
 import {acceptAvailable,describeProviderOffer,windowEnded} from "../../lib/provider-offer-copy";
 
@@ -20,9 +20,7 @@ type Workspace={stays:BoardingStay[];providerId:string|null;cityId:string|null;z
 const terminalStatuses=new Set(["completed","cancelled"]);
 
 function formatDate(value:string){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",year:"numeric"}).format(date):value;}
-function formatDateTime(value:string|number){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(date):String(value);}
 function stayWindow(stay:BoardingStay){return `${formatDateTime(stay.check_in_at)} → ${formatDateTime(stay.check_out_at)}`;}
-function statusLabel(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
 function initials(value:string){return value.split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]?.toUpperCase()).join("")||"PH";}
 
 async function loadWorkspace():Promise<Workspace>{const scoped=await loadOwnBoardingStays();let profile:BoardingHost|null=null;if(scoped.providerId&&scoped.cityId&&scoped.zoneId){const commercial=await loadBoardingCommercial({cityId:scoped.cityId,zoneId:scoped.zoneId});profile=commercial.hosts.find(item=>item.providerId===scoped.providerId)??null;}return{...scoped,profile};}
