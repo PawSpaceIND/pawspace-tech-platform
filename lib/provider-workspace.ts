@@ -18,6 +18,8 @@ import{ensureProviderCommissionTables}from"./provider-commission-governance";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 import{PHOTO_PROOF_PURPOSE,MEDIA_REF_PREFIX}from"./care-proof-photo-claims";
 import{bookingPaymentBalances}from"./booking-payment-balances";
+import{chunkedIn}from"./d1-chunked-in";
+import{boardingMedicationInstruction,sittingMedicationInstruction}from"./care-card-medication";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -35,6 +37,53 @@ export const PROOF_REQUIREMENTS:Record<string,string[]>={
  dog_walking:["walk_route","completed"],
  pet_taxi:["reached","completed"],
 };
+
+/**
+ * Where each governed lifecycle records the proof PROOF_REQUIREMENTS names. Only submitJobProof below
+ * writes provider_job_proofs. Training, Boarding, Pet Sitting and Pet Taxi record proof in their own event
+ * logs, so reading provider_job_proofs alone reported "Service proof still outstanding" on every stay,
+ * visit and trip completed through its workflow, however complete its proof.
+ *   events   - the workflow's event type -> the requirement it meets
+ *   started  - the booking statuses from which the workflow can record proof at all (after check-in or
+ *              trip start). A job the partner never started has nothing to evidence, so it owes nothing.
+ *   carePlan - medication proof is owed only when the Care Card asks for medication, by the rule the
+ *              service's own proof workflow applies before it accepts medication evidence.
+ * Grooming records its two photos as columns of grooming_service_proof, read separately below.
+ */
+const STARTED=["in_progress","completed"] as const;
+const LIFECYCLE_PROOF:Record<string,{table:string;events:Record<string,string>;started?:readonly string[];carePlan?:{table:string;instruction:(plan:unknown)=>string|null}}>={
+ dog_training:{table:"training_session_events",events:{arrive:"reached",complete:"completed"}},
+ boarding:{table:"boarding_stay_events",events:{care_meal:"food",proof_daily_update:"daily_photo",medication_evidenced:"medication"},started:STARTED,carePlan:{table:"boarding_care_plan_snapshots",instruction:boardingMedicationInstruction}},
+ pet_sitting:{table:"sitting_care_events",events:{care_meal:"food",proof_update:"visit_photo",medication_evidenced:"medication"},started:STARTED,carePlan:{table:"sitting_care_plan_snapshots",instruction:sittingMedicationInstruction}},
+ pet_taxi:{table:"taxi_trip_events",events:{arrived_dropoff:"reached",trip_completed:"completed"},started:STARTED},
+};
+const parsedJson=(value:unknown):unknown=>{try{return JSON.parse(text(value));}catch{return null;}};
+
+/**
+ * The requirements each booking has already met, read with one IN query per table instead of one query
+ * per booking. Grooming reads the photo columns its completion gate reads (a grooming proof never reaches
+ * provider_job_proofs); every other service reads provider_job_proofs plus its own lifecycle log. An
+ * absent table reads as no records.
+ */
+async function proofOnRecord(db:Db,bookings:Array<{bookingId:string;serviceCode:string}>){
+ const met=new Map(bookings.map(b=>[b.bookingId,new Set<string>()]));
+ const mark=(bookingId:unknown,requirement:string)=>{met.get(text(bookingId))?.add(requirement);};
+ const idsFor=(match:(serviceCode:string)=>boolean)=>bookings.filter(b=>match(b.serviceCode)).map(b=>b.bookingId);
+ const read=(ids:string[],sql:(placeholders:string)=>string)=>chunkedIn(ids,async(chunk,placeholders)=>(await db.prepare(sql(placeholders)).bind(...chunk).all<Row>()).results??[]).catch(()=>[] as Row[]);
+ const reads:Promise<void>[]=[
+  read(idsFor(code=>code==="grooming"),p=>`SELECT booking_id,before_photo_ref,after_photo_ref FROM grooming_service_proof WHERE booking_id IN (${p})`).then(rows=>{for(const row of rows){if(row.before_photo_ref)mark(row.booking_id,"before_photo");if(row.after_photo_ref)mark(row.booking_id,"after_photo");}}),
+  read(idsFor(code=>code!=="grooming"),p=>`SELECT booking_id,proof_type FROM provider_job_proofs WHERE booking_id IN (${p})`).then(rows=>{for(const row of rows)mark(row.booking_id,text(row.proof_type));}),
+ ];
+ for(const[serviceCode,source]of Object.entries(LIFECYCLE_PROOF)){
+  const ids=idsFor(code=>code===serviceCode);if(!ids.length)continue;
+  const eventTypes=Object.keys(source.events).map(type=>`'${type}'`).join(",");
+  reads.push(read(ids,p=>`SELECT DISTINCT booking_id,event_type FROM ${source.table} WHERE booking_id IN (${p}) AND event_type IN (${eventTypes})`).then(rows=>{for(const row of rows){const requirement=source.events[text(row.event_type)];if(requirement)mark(row.booking_id,requirement);}}));
+  const carePlan=source.carePlan;
+  if(carePlan)reads.push(read(ids,p=>`SELECT booking_id,plan_json FROM ${carePlan.table} WHERE booking_id IN (${p}) AND status='ready'`).then(rows=>{const asksForMedication=new Set(rows.filter(row=>carePlan.instruction(parsedJson(row.plan_json))).map(row=>text(row.booking_id)));for(const id of ids)if(!asksForMedication.has(id))mark(id,"medication");}));
+ }
+ await Promise.all(reads);
+ return met;
+}
 
 
 /**
@@ -218,40 +267,11 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
   db.prepare("SELECT id,booking_id,amount,status,due_at,provider_reference,created_at,updated_at FROM provider_order_payouts WHERE provider_id=? ORDER BY created_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT id,period_code,earned_amount,adjustment_amount,payable_amount,status,policy_status,source_json,updated_at FROM partner_settlement_statements WHERE provider_id=? ORDER BY period_code DESC LIMIT 24").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
- const pendingProof:Array<{bookingId:string;serviceCode:string;missing:string[]}>=[];
- for(const b of bookings.past.slice(0,40)){
-  // Nothing was delivered on a cancelled or never-paid booking, so no service proof is owed.
-  if(b.status==="cancelled"||b.status==="payment_pending")continue;
-  const required=PROOF_REQUIREMENTS[b.serviceCode]||[];if(!required.length)continue;
-  let have:Set<string>;
-  /*
-   * [LP-D02] Grooming's Partner-app "Add service proof" (grooming-lifecycle add_proof) writes straight
-   * to grooming_service_proof.before_photo_ref/after_photo_ref, never to the generic provider_job_proofs
-   * staging table that submitJobProof above writes for the other verticals. Reading provider_job_proofs
-   * for grooming reported "missing before photo, after photo" forever, even once Ops approved both and
-   * the booking had already settled. This reads the SAME table the completion gate itself reads.
-   */
-  if(b.serviceCode==="grooming"){
-   const proof=await db.prepare("SELECT before_photo_ref,after_photo_ref FROM grooming_service_proof WHERE booking_id=?").bind(b.bookingId).first<Row>().catch(()=>null);
-   have=new Set<string>();
-   if(proof?.before_photo_ref)have.add("before_photo");
-   if(proof?.after_photo_ref)have.add("after_photo");
-  }else{
-   const done=await db.prepare("SELECT proof_type FROM provider_job_proofs WHERE booking_id=?").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
-   have=new Set(done.results.map(r=>text(r.proof_type)));
-   /*
-    * Training sessions record arrival and completion in training_session_events (the 250 m geofenced
-    * arrive and the exactly-once complete), not in provider_job_proofs. Reading only the generic table
-    * warned "Service proof still outstanding" on every completed Training programme.
-    */
-   if(b.serviceCode==="dog_training"){
-    const events=await db.prepare("SELECT DISTINCT event_type FROM training_session_events WHERE booking_id=? AND event_type IN ('arrive','complete')").bind(b.bookingId).all<Row>().catch(()=>({results:[] as Row[]}));
-    for(const row of events.results)have.add(text(row.event_type)==="arrive"?"reached":"completed");
-   }
-  }
-  const missing=required.filter(r=>!have.has(r));
-  if(missing.length)pendingProof.push({bookingId:b.bookingId,serviceCode:b.serviceCode,missing});
- }
+ // Nothing was delivered on a cancelled or never-paid booking, and a governed workflow records proof only
+ // once the partner has started the job (LIFECYCLE_PROOF.started), so neither owes proof.
+ const owesProof=bookings.past.slice(0,40).filter(b=>b.status!=="cancelled"&&b.status!=="payment_pending"&&(PROOF_REQUIREMENTS[b.serviceCode]??[]).length>0&&(LIFECYCLE_PROOF[b.serviceCode]?.started?.includes(b.status)??true));
+ const proofMet=await proofOnRecord(db,owesProof);
+ const pendingProof=owesProof.flatMap(b=>{const missing=PROOF_REQUIREMENTS[b.serviceCode].filter(requirement=>!proofMet.get(b.bookingId)?.has(requirement));return missing.length?[{bookingId:b.bookingId,serviceCode:b.serviceCode,missing}]:[];});
   // Training session earnings live in their own governed ledger (training_session_earnings), the one the
  // Trainer workspace shows; the generic payout computations never carry them, so a contract trainer saw ₹0.
  // Read-only here: the Trainer earnings endpoint owns recalculating that ledger.
