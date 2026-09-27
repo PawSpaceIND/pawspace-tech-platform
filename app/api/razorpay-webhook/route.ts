@@ -1,5 +1,5 @@
 import{authError,database}from"../../../lib/server-auth";
-import{ensurePaymentReconciliationTables,processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
+import{ensurePaymentReconciliationTables,processGatewayEvent,recordRefusedGatewayCapture,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
 import{enforcePilotBooking}from"../../../lib/payment-pilot-guard";
 import{acceptRazorpayWebhook,advancePaymentState,type PaymentState}from"../../../lib/financial-lifecycle";
@@ -185,8 +185,9 @@ export async function POST(request:Request){
       if(target==="CAPTURED"){
         await ensurePaymentReconciliationTables(db);
         const linked=intent?{bookingId:String(intent.booking_id),paymentId:String(intent.payment_id)}:await linkedPayment(db,event);
-        if(!linked){await markInbox(db,accepted.row,"FAILED",eventType,"capture_has_no_canonical_payment_link");return json({error:"Razorpay capture has no canonical payment link",code:"capture_atomic_link_missing"},409);}
-        if(event.bookingId&&event.bookingId!==linked.bookingId){await markInbox(db,accepted.row,"FAILED",eventType,"gateway_order_booking_mismatch");return json({error:"Razorpay capture booking does not own its gateway reference",code:"gateway_order_booking_mismatch"},409);}
+        // Refused captures stay retryable (409) and are also a Finance exception: the money is at Razorpay either way.
+        if(!linked){await recordRefusedGatewayCapture(db,{event,type:"unmatched_gateway_capture",detail:{refusal:"capture_has_no_canonical_payment_link"}});await markInbox(db,accepted.row,"FAILED",eventType,"capture_has_no_canonical_payment_link");return json({error:"Razorpay capture has no canonical payment link",code:"capture_atomic_link_missing"},409);}
+        if(event.bookingId&&event.bookingId!==linked.bookingId){await recordRefusedGatewayCapture(db,{event,type:"gateway_order_booking_mismatch",bookingId:linked.bookingId,paymentId:linked.paymentId,detail:{refusal:"gateway_order_booking_mismatch",linkedBookingId:linked.bookingId}});await markInbox(db,accepted.row,"FAILED",eventType,"gateway_order_booking_mismatch");return json({error:"Razorpay capture booking does not own its gateway reference",code:"gateway_order_booking_mismatch"},409);}
         const amountPaise=Number(event.amountSubunits||0);if(!Number.isSafeInteger(amountPaise)||amountPaise<=0){await markInbox(db,accepted.row,"FAILED",eventType,"invalid_capture_amount");return json({error:"Captured Razorpay amount must be positive integer paise"},400);}
         let atomic;
         try{

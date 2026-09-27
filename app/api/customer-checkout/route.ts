@@ -2,7 +2,7 @@ import { authError, database, requireCustomerOwnership, resolveActor } from "../
 import { resolvePlatformSession } from "../../../lib/platform-session";
 import { paymentStageAmount } from "../../../lib/payment-stage-amount";
 import { outstandingBalanceWindow } from "../../../lib/payment-balance-window";
-import { createBookingPaymentOrder } from "../../../lib/payment-order-intent";
+import { createBookingPaymentOrder, startBookingPaymentOrderReads } from "../../../lib/payment-order-intent";
 import { resolvePaymentWebhookGate } from "../../../lib/payment-webhook-gate";
 import { assertCustomerCheckoutBooking, customerCheckoutEnvironment, CustomerCheckoutError, readCustomerCheckoutConfirmation, verifyCustomerCheckoutReceipt } from "../../../lib/customer-checkout-server";
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
@@ -43,8 +43,11 @@ export async function POST(request: Request) {
       // V2 "View booking & payment" page and the training recovery screen both read this via
       // loadCustomerConfirmationProjection({action:"status"}) and got a 503 instead of the booking.
       const locks = customerCheckoutEnvironment(runtime);
+      // The booking check, the amount due and the order's own booking read start together (reads only; each is
+      // still answered in the original order), and the order reuses them instead of reading the same rows again.
+      const reads = bookingId && bookingId.length <= 160 ? startBookingPaymentOrderReads(db, bookingId) : null;
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);
-      const stage = await paymentStageAmount(db, bookingId);
+      const stage = await (reads?.stage ?? paymentStageAmount(db, bookingId));
       if (!stage) return json({ error: "Payment record was not found." }, 404);
       if (stage.stage === "settled" || stage.dueNow <= 0) return json({ data: { connected: false, status: "nothing_due", bookingId, environment: "sandbox", locks } });
       // A Pet Taxi final balance is only known (and payable) once trip completion has raised it.
@@ -60,7 +63,7 @@ export async function POST(request: Request) {
         error: "Payment confirmation is not configured. Contact billing support before paying.",
         code: "checkout_webhook_unconfigured",
       }, 503);
-      const data = await createBookingPaymentOrder(db, runtime, { bookingId, customerId: session.subjectId, actorId: session.subjectId });
+      const data = await createBookingPaymentOrder(db, runtime, { bookingId, customerId: session.subjectId, actorId: session.subjectId, reads: reads ?? undefined });
       if (!data.connected) return json({ error: "Secure checkout is unavailable or needs reconciliation. Contact billing support before retrying." }, 503);
       await assertCustomerCheckoutBooking(db, session.subjectId, bookingId);
       return json({ data: { ...data, razorpay_order_id: data.orderId, RAZORPAY_KEY_ID: data.keyId, locks } }, 201);

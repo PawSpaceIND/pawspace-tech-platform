@@ -157,9 +157,9 @@ test("createBoardingQuote with split_50_50 halves amountDueNow using the server 
   const { ensureBoardingGovernanceTables, createBoardingQuote } = await import("../lib/boarding-governance.ts");
   const db = makeD1(new DatabaseSync(":memory:"));
   await ensureBoardingGovernanceTables(db);
-  const start = new Date(Date.now() + 5 * 86400000), end = new Date(start.getTime() + 3 * 86400000);
+  const start = new Date(Date.now() + 5 * 86400000), end = new Date(start.getTime() + 5 * 86400000);
   const quote = await createBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), paymentMode: "split_50_50" });
-  assert.equal(quote.totalAmount, 699 * 2 * 3);
+  assert.equal(quote.totalAmount, 699 * 2 * 5);
   assert.equal(quote.amountDueNow, Math.round((quote.totalAmount / 2) * 100) / 100);
   const prepaid = await createBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), paymentMode: "prepaid" });
   assert.equal(prepaid.amountDueNow, prepaid.totalAmount);
@@ -188,16 +188,72 @@ test("live pricing preserves the governed 50/50 deposit for Boarding and Sitting
   sqlite.prepare("UPDATE service_packages SET active=1,base_price=800 WHERE package_code='boarding-24h'").run();
   sqlite.prepare("UPDATE service_packages SET active=1,base_price=900 WHERE package_code='sitting-overnight'").run();
   sqlite.prepare("UPDATE service_packages SET active=1,base_price=300 WHERE package_code='sitting-overnight__extra_pet'").run();
-  const boardingStart = new Date(Date.now() + 7 * 86400000), boardingEnd = new Date(boardingStart.getTime() + 2 * 86400000);
+  const boardingStart = new Date(Date.now() + 7 * 86400000), boardingEnd = new Date(boardingStart.getTime() + 5 * 86400000);
   const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });
-  assert.equal(boarding.totalAmount, 800 * 2 * 2);
+  assert.equal(boarding.totalAmount, 800 * 2 * 5);
   assert.equal(boarding.amountDueNow, boarding.totalAmount / 2);
   assert.equal(sqlite.prepare("SELECT amount_due_now FROM boarding_commercial_quotes WHERE id=?").get(boarding.quoteId).amount_due_now, boarding.totalAmount / 2);
-  const sittingStart = new Date(Date.now() + 8 * 86400000), sittingEnd = new Date(sittingStart.getTime() + 2 * 86400000);
+  const sittingStart = new Date(Date.now() + 8 * 86400000), sittingEnd = new Date(sittingStart.getTime() + 5 * 86400000);
   const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });
-  assert.equal(sitting.totalAmount, (900 + 300) * 2);
+  assert.equal(sitting.totalAmount, (900 + 300) * 5);
   assert.equal(sitting.amountDueNow, sitting.totalAmount / 2);
   assert.equal(sqlite.prepare("SELECT amount_due_now FROM sitting_commercial_quotes WHERE id=?").get(sitting.quoteId).amount_due_now, sitting.totalAmount / 2);
+});
+
+// Round-1 SIT-05, still open in round 2: POST /api/sitting-commercial with split_50_50 for ONE night answered
+// 201 {total:799, amountDueNow:399.5, paymentMode:"split_50_50"}. The split is only for overnight stays longer than
+// four nights, and the server now says so for Pet Sitting and Boarding alike.
+const IST = (day, time) => new Date(`${day}T${time}:00+05:30`).toISOString();
+const istDay = (offset) => new Date(Date.now() + offset * 86400000 + 330 * 60000).toISOString().slice(0, 10);
+test("a 50/50 split is refused (409) for stays of four nights or fewer, and for daycare, on both stay services", async () => {
+  const sqlite = new DatabaseSync(":memory:"), db = makeD1(sqlite);
+  const sitting = await import("../lib/sitting-governance.ts"), boarding = await import("../lib/boarding-governance.ts");
+  const { SPLIT_LONG_STAY_ONLY } = await lib();
+  const refusal = (promise) => promise.then(() => null, async (error) => error instanceof Response ? { status: error.status, text: await error.clone().text() } : { status: 0, text: String(error) });
+  const window = (nights, from = "19:00", to = "09:00") => ({ scheduledStart: IST(istDay(10), from), scheduledEnd: IST(istDay(10 + nights), to) });
+  // Pet Sitting: 1 night (the staging case) and 4 nights are refused with the reason; 5 nights may split.
+  for (const nights of [1, 4]) {
+    const refused = await refusal(sitting.createSittingQuote(db, { packageCode: "sitting-overnight", petCount: 1, paymentMode: "split_50_50", ...window(nights) }));
+    assert.equal(refused?.status, 409, `${nights}-night Sitting split`);
+    assert.deepEqual(JSON.parse(refused.text), { error: SPLIT_LONG_STAY_ONLY, code: "split_payment_not_eligible" });
+    const prepaid = await sitting.createSittingQuote(db, { packageCode: "sitting-overnight", petCount: 1, paymentMode: "prepaid", ...window(nights) });
+    assert.equal(prepaid.amountDueNow, prepaid.totalAmount, `${nights} nights still quote in full`);
+  }
+  const five = await sitting.createSittingQuote(db, { packageCode: "sitting-overnight", petCount: 1, paymentMode: "split_50_50", ...window(5) });
+  assert.equal(five.billableUnits, 5);
+  assert.equal(five.amountDueNow, five.totalAmount / 2);
+  // Boarding: the same rule, and never for a daycare package.
+  for (const nights of [1, 4]) {
+    const refused = await refusal(boarding.createBoardingQuote(db, { packageCode: "boarding-24h", petCount: 1, paymentMode: "split_50_50", ...window(nights, "10:00", "10:00") }));
+    assert.deepEqual(refused, { status: 409, text: SPLIT_LONG_STAY_ONLY }, `${nights}-night Boarding split`);
+  }
+  const daycare = await refusal(boarding.createBoardingQuote(db, { packageCode: "boarding-4h", petCount: 1, paymentMode: "split_50_50", scheduledStart: IST(istDay(10), "10:00"), scheduledEnd: IST(istDay(10), "14:00") }));
+  assert.deepEqual(daycare, { status: 409, text: SPLIT_LONG_STAY_ONLY });
+  const longStay = await boarding.createBoardingQuote(db, { packageCode: "boarding-24h", petCount: 1, paymentMode: "split_50_50", ...window(5, "10:00", "10:00") });
+  assert.equal(longStay.amountDueNow, longStay.totalAmount / 2);
+  // No refused split left a priced quote behind.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM sitting_commercial_quotes WHERE payment_mode='split_50_50'").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_commercial_quotes WHERE payment_mode='split_50_50'").get().n, 1);
+});
+
+test("the server's split rule is the Plan step's rule: overnight and more than four IST calendar nights", async () => {
+  // app/mobile-app/stay-flow.tsx offers the split when careWindow is "24 hours" (more than 10 hours) and
+  // stayCareWindow(...).nights > 4. The server must agree on every window, or a split the screen offers is refused.
+  const { splitPaymentEligible, stayCalendarNights } = await lib();
+  const { stayCareWindow } = await import("../lib/stay-care-window.ts");
+  const times = ["00:30", "09:00", "10:00", "19:00", "23:30"];
+  let offered = 0;
+  for (const nights of [0, 1, 3, 4, 5, 6, 12])
+    for (const from of times) for (const to of times) {
+      const start = istDay(10), end = istDay(10 + nights), ui = stayCareWindow(start, end, from, to);
+      if (!ui.valid) continue;
+      const screen = ui.overnight && ui.nights > 4;
+      offered += Number(screen);
+      const iso = { scheduledStart: ui.scheduledStart.toISOString(), scheduledEnd: ui.scheduledEnd.toISOString() };
+      assert.equal(stayCalendarNights(iso.scheduledStart, iso.scheduledEnd), ui.nights, `${start} ${from} -> ${end} ${to}`);
+      assert.equal(splitPaymentEligible({ overnight: ui.overnight, ...iso }), screen, `${start} ${from} -> ${end} ${to}`);
+    }
+  assert.ok(offered > 20, "the grid covers windows the screen does offer a split for");
 });
 
 test("concurrent quote-table upgrades recheck schema after a duplicate-column race", async () => {

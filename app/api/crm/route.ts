@@ -7,6 +7,7 @@ import{assignLeadOwner}from"../../../lib/lead-owner-identity";
 import{startWhatsAppAiLead}from"../../../lib/whatsapp-ai-lead-orchestration";
 import{ensureLeadIntakeAdAttribution,normalizeLeadAdAttribution,recordLeadIntakeAdAttribution}from"../../../lib/lead-intake-ad-attribution";
 import{CRM_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
+import{resolveStaffLeadCustomer}from"../../../lib/lead-customer-identity";
 
 async function getDatabase(){
   const { env } = await import("cloudflare:workers");
@@ -46,9 +47,13 @@ export async function GET(request:Request){try{
     const ids=contacts.map(row=>String(row.id));
     const totals=new Map<string,number>();
     const latestBookings=new Map<string,string>();
+    // The open lead the detail panel's call / callback controls act on (newest first).
+    const openLeads=new Map<string,string>();
     const read=new Set<string>();
     for(let index=0;index<ids.length;index+=50){
       const slice=ids.slice(index,index+50);
+      const leadRows=await db.prepare(`SELECT customer_id,id FROM lead_work_items WHERE customer_id IN (${slice.map(()=>"?").join(",")}) AND status NOT IN ('closed','converted','cold_exhausted') ORDER BY created_at DESC`).bind(...slice).all<Record<string,unknown>>().catch(()=>null);
+      if(leadRows)for(const row of leadRows.results){const customerId=String(row.customer_id);if(!openLeads.has(customerId))openLeads.set(customerId,String(row.id));}
       const rows=await db.prepare(`SELECT customer_id,COALESCE(SUM(total_amount),0) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slice.map(()=>"?").join(",")}) GROUP BY customer_id`)
         .bind(...slice).all<Record<string,unknown>>().catch(()=>null);
       if(!rows)continue;
@@ -63,6 +68,7 @@ export async function GET(request:Request){try{
       contact.lifetime_value=known?booked:null;
       contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
       contact.latest_booking_id=latestBookings.get(String(contact.id))??null;
+      contact.open_lead_id=openLeads.get(String(contact.id))??null;
     }
   }
   const access=await customerDataAccessResolver(db);
@@ -78,16 +84,20 @@ export async function GET(request:Request){try{
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){
-  try{const actor=await authorize(request,"customers.manage"); const body=await request.json().catch(()=>null) as Record<string,unknown>;const validated=validateCrmLead(body);if(!validated.ok)return Response.json({error:validated.error},{status:400});body.name=validated.name;body.primaryPhone=validated.phone;await ensureTables(); const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
+  try{const actor=await authorize(request,"customers.manage"); const body=await request.json().catch(()=>null) as Record<string,unknown>;const validated=validateCrmLead(body);if(!validated.ok)return Response.json({error:validated.error},{status:400});body.name=validated.name;body.primaryPhone=validated.phone;await ensureTables(); const now=Date.now(); let id=`CU-${Math.floor(10000+Math.random()*89999)}`;
   const db=await database();const scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,CRM_MANAGER_DOMAIN);
   const cityId=scope?.cityId??normaliseOrg(body.cityId,"blr"),teamCode=scope?.teamCode??normaliseOrg(body.teamCode,"sales"),departmentCode=scope?.departmentCode??normaliseOrg(body.departmentCode,"cc-sales");
+  // The lead joins the canonical customer its number already belongs to, or that customer is created now under this
+  // CRM id, so the person's sign-in and booking land on the lead's customer (lib/lead-customer-identity.ts).
+  const leadCustomer=await resolveStaffLeadCustomer(db,{proposedCustomerId:id,name:String(body.name),phone:String(body.primaryPhone),email:body.email?String(body.email):null,cityId,now});id=leadCustomer.customerId;
   const ownership=await assignLeadOwner(db,{customerId:id,service:String(body.service||body.opportunity||""),preferred:String(body.owner||"")});
   const assignedOwner=ownership.owner;
   const leadId=`LEAD-${now}`;
   const nested=body.attribution&&typeof body.attribution==="object"&&!Array.isArray(body.attribution)?body.attribution as Record<string,unknown>:{};
   const value=(camel:string,snake:string)=>body[camel]??body[snake]??nested[snake]??nested[camel];
   const attribution=normalizeLeadAdAttribution({gclid:clean(value("gclid","gclid"),180),fbclid:clean(value("fbclid","fbclid"),180),wbraid:clean(value("wbraid","wbraid"),180),gbraid:clean(value("gbraid","gbraid"),180),utmSource:clean(value("utmSource","utm_source"),120),utmMedium:clean(value("utmMedium","utm_medium"),120),utmCampaign:clean(value("utmCampaign","utm_campaign"),180),utmContent:clean(value("utmContent","utm_content"),180),utmTerm:clean(value("utmTerm","utm_term"),180),campaignId:clean(value("campaignId","campaign_id"),180),adId:clean(value("adId","ad_id"),180),landingUrl:clean(value("landingUrl","landing_url"),500)});
-  await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,city_id,team_code,department_code,gclid,fbclid,wbraid,gbraid,utm_source,utm_medium,utm_campaign,utm_content,utm_term,campaign_id,ad_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  // A known customer keeps their contact row (name, number, area, stage): the new lead brings only its pet, owner, service and scope.
+  await (leadCustomer.existingCustomer?db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,city_id,team_code,department_code,gclid,fbclid,wbraid,gbraid,utm_source,utm_medium,utm_campaign,utm_content,utm_term,campaign_id,ad_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET secondary_phone=COALESCE(excluded.secondary_phone,crm_contacts.secondary_phone),email=COALESCE(excluded.email,crm_contacts.email),pet_names=CASE WHEN excluded.pet_names IN ('','Pet') THEN crm_contacts.pet_names ELSE excluded.pet_names END,owner=excluded.owner,source=excluded.source,next_action=excluded.next_action,opportunity=excluded.opportunity,city_id=excluded.city_id,team_code=excluded.team_code,department_code=excluded.department_code,updated_at=excluded.updated_at"):db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,city_id,team_code,department_code,gclid,fbclid,wbraid,gbraid,utm_source,utm_medium,utm_campaign,utm_content,utm_term,campaign_id,ad_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"))
     .bind(id,String(body.name||"New customer"),String(body.primaryPhone||""),body.secondaryPhone?String(body.secondaryPhone):null,body.email?String(body.email):null,String(body.area||"Bangalore"),String(body.petNames||"Pet"),String(body.petSummary||"Profile incomplete"),String(body.stage||"New lead"),assignedOwner,String(body.source||"Staff CRM"),0,String(body.nextAction||"Call within 10 minutes"),String(body.opportunity||body.service||"Discover requirement"),cityId,teamCode,departmentCode,attribution.gclid,attribution.fbclid,attribution.wbraid,attribution.gbraid,attribution.utmSource,attribution.utmMedium,attribution.utmCampaign,attribution.utmContent,attribution.utmTerm,attribution.campaignId,attribution.adId,now,now).run();
   await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${now}`,id,"lead_created","Lead created",JSON.stringify({source:String(body.source||"Staff CRM"),attributionBound:attribution.hasAttribution,organizationalScope:{cityId,teamCode,departmentCode}}),now).run();
   await db.batch([
@@ -97,5 +107,5 @@ export async function POST(request:Request){
   await securityAudit(db,actor,"create","crm_contact",id,"completed",{source:body.source||"Staff CRM",assignedOwner,firstResponseMinutes:10,managerAlertMinutes:30,cityId,teamCode,departmentCode,attributionBound:attribution.hasAttribution});
   let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:String(body.whatsappConsentSource||"manual_crm"),consentEvidenceRef:String(body.whatsappConsentEvidence||""),actorId:actor.email,assignedTo:assignedOwner,cityId});}catch(error){whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};await securityAudit(db,actor,"whatsapp_ai.lead_trigger","lead",leadId,"rejected",{reason:error instanceof Error?error.message:"unknown"});}
   if(attribution.hasAttribution)await recordLeadIntakeAdAttribution(db,{contactId:id,leadId,threadId:clean(whatsappAi.thread_id,120)||null,origin:"staff_crm",gclid:attribution.gclid,fbclid:attribution.fbclid,wbraid:attribution.wbraid,gbraid:attribution.gbraid,utmSource:attribution.utmSource,utmMedium:attribution.utmMedium,utmCampaign:attribution.utmCampaign,utmContent:attribution.utmContent,utmTerm:attribution.utmTerm,campaignId:attribution.campaignId,adId:attribution.adId,landingUrl:attribution.landingUrl,now});
-  return Response.json({ok:true,id,leadId,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason,attributionBound:attribution.hasAttribution,organizationalScope:{cityId,teamCode,departmentCode},whatsappAi},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
+  return Response.json({ok:true,id,leadId,existingCustomer:leadCustomer.existingCustomer,identityReview:leadCustomer.identityReview,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason,attributionBound:attribution.hasAttribution,organizationalScope:{cityId,teamCode,departmentCode},whatsappAi},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
 }

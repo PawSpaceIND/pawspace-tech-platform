@@ -94,9 +94,14 @@ test("SIT-02 quote: units, extra pets and the care window are all governed", asy
   assert.equal(overnight.value.billableUnits, 2, "a 48-hour overnight is 2 nights");
   assert.equal(overnight.value.totalAmount, 799 * 2);
 
-  const split = await quote({ paymentMode: "split_50_50", packageCode: OVERNIGHT, scheduledEnd: new Date(new Date(start).getTime() + 2 * DAY).toISOString() });
+  // The 50/50 split is only for overnight stays longer than four nights (SIT-05): a 2-night split is refused.
+  const shortSplit = await quote({ paymentMode: "split_50_50", packageCode: OVERNIGHT, scheduledEnd: new Date(new Date(start).getTime() + 2 * DAY).toISOString() });
+  assert.equal(shortSplit.ok, false, "a 2-night overnight must pay in full");
+  assert.equal(shortSplit.status, 409);
+  assert.match(String(shortSplit.body ?? ""), /only for overnight stays longer than 4 nights/);
+  const split = await quote({ paymentMode: "split_50_50", packageCode: OVERNIGHT, scheduledEnd: new Date(new Date(start).getTime() + 5 * DAY).toISOString() });
   assert.equal(split.ok, true);
-  assert.equal(split.value.amountDueNow, (799 * 2) / 2, "the 50/50 split takes exactly half up front");
+  assert.equal(split.value.amountDueNow, (799 * 5) / 2, "the 50/50 split takes exactly half up front");
 
   // Window rules.
   /* A one-hour window that has already been and gone. Keeping it inside the Home Visit's 24-hour
@@ -126,8 +131,9 @@ async function openQuote(db, over = {}) {
   const gov = await import("../lib/sitting-governance.ts");
   const start = over.start ?? futureStart();
   const q = await gov.createSittingQuote(db, {
+    // Five nights: the 50/50 split is only for overnight stays longer than four (SIT-05).
     packageCode: OVERNIGHT, petCount: 1, scheduledStart: start,
-    scheduledEnd: new Date(new Date(start).getTime() + 2 * DAY).toISOString(),
+    scheduledEnd: new Date(new Date(start).getTime() + 5 * DAY).toISOString(),
     paymentMode: over.paymentMode ?? "split_50_50", cityId: CITY, zoneId: ZONE,
   });
   return q;

@@ -13,6 +13,8 @@ export type ReviewedQuote={totalAmount:number;amountDueNow:number;paymentMode:st
 export function sameReviewedStayQuote(reviewed:ReviewedQuote,fresh:ReviewedQuote){
  return ['totalAmount','amountDueNow','petCount','paymentMode'].every(k=>reviewed[k as keyof ReviewedQuote]===fresh[k as keyof ReviewedQuote])&&['scheduledStart','scheduledEnd'].every(k=>Date.parse(String(reviewed[k as keyof ReviewedQuote]))===Date.parse(String(fresh[k as keyof ReviewedQuote])));
 }
+/** The booking's own page: its status and, while payment is due, its payment step (resumed on the legacy route). */
+export function bookingPaymentHref(bookingId:string,v2=true,pay=false){const id=encodeURIComponent(bookingId);return v2?`/v2/booking?bookingId=${id}`:`/mobile-app/booking-confirmation?bookingId=${id}${pay?'&payment=resume':''}`;}
 export function scopedBookingHref(service:'boarding'|'sitting'|'taxi',bookingId:string,v2=true){return `${v2?'/v2':''}/${service}/manage?bookingId=${encodeURIComponent(bookingId)}`;}
 export function rememberBookingReference(bookingId:string){
  if(!bookingId.trim())throw new Error('A saved booking reference is required.');

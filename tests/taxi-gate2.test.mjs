@@ -319,3 +319,57 @@ test("Driver workspace uses canonical Taxi lifecycle without claiming live-money
   const paid = await db.prepare("SELECT COUNT(*) AS c FROM taxi_trip_payment_events WHERE booking_id=? AND status='sandbox_paid'").bind(trip.bookingId).first();
   assert.equal(Number(paid.c), 0, "completing a trip must not mark it paid — Finance records payment separately");
 });
+
+// ---------------------------------------------------------------------------------------------
+// ROUND 2 VERIFY (local run 70-localrun-4, P0): "Pet Taxi balance the customer is asked for differs from the
+// balance the booking owes" - UATD-BK-TAXI-2 (₹1499, payment captured) completed with a trip payment DUE of
+// ₹1499 while the customer's checkout said nothing was due (stage settled). The customer's checkout asks
+// for paymentStageAmount(...).dueNow (once lib/payment-balance-window.ts allows it); the trip's ledger says
+// what is owed with taxi_trip_payment_events. They must agree after completion, for every payment model.
+async function completedTrip({ paymentStatus = "pending", amountDueNow = 0, rideV2 = null } = {}) {
+  const w = await tripWorld();
+  const { sqlite, db, trip } = w;
+  sqlite.prepare("UPDATE booking_payments SET status=?,amount_due_now=? WHERE booking_id=?").run(paymentStatus, amountDueNow, trip.bookingId);
+  if (rideV2) {
+    const rides = await import("../lib/taxi-ride-governance.ts");
+    await rides.ensureTaxiRideTables(db);
+    const now = Date.now();
+    sqlite.prepare("INSERT INTO taxi_ride_booking_details (booking_id,quote_id,vehicle_class,passenger_count,pet_count,luggage_count,trip_type,ride_purpose,waiting_minutes,distance_km,estimated_duration_minutes,initial_total,final_total,booking_fee_amount,created_at,updated_at) VALUES (?,?,'citroen_ec3',1,1,0,'one_way','regular',0,8,25,?,?,?,?,?)").run(trip.bookingId, `TRQ-${trip.bookingId}`, trip.amount, trip.amount, rideV2.fee, now, now);
+    sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,booking_fee_paid_at,created_at,updated_at) VALUES (?,?,?,?,?,'pending_balance',?,?,?)").run(trip.bookingId, trip.customerId, trip.amount, rideV2.fee, trip.amount - rideV2.fee, now, now, now);
+    sqlite.prepare("UPDATE booking_payments SET mode='split_50_50' WHERE booking_id=?").run(trip.bookingId);
+  } else {
+    await seedActiveCommercialTerm(db);
+  }
+  await accepted(db, sqlite, trip);
+  await act(db, trip, "confirm_pickup", { handoverMethod: "owner" });
+  await act(db, trip, "start_trip");
+  await recordRouteSamples(db, trip);
+  await act(db, trip, "arrive_dropoff");
+  await act(db, trip, "confirm_dropoff", { handoverMethod: "owner" });
+  const completed = await act(db, trip, "complete_trip");
+  const { paymentStageAmount } = await import("../lib/payment-stage-amount.ts");
+  const { outstandingBalanceWindow } = await import("../lib/payment-balance-window.ts");
+  const stage = await paymentStageAmount(db, trip.bookingId), window = await outstandingBalanceWindow(db, trip.bookingId);
+  const event = await db.prepare("SELECT amount,status FROM taxi_trip_payment_events WHERE booking_id=?").bind(trip.bookingId).first();
+  return { ...w, completed, event, askedNow: window.payable ? stage.dueNow : 0, owed: String(event.status) === "due" ? Number(event.amount) : 0 };
+}
+
+test("round 2 verify: a Taxi v2 ride asks the customer for exactly the balance its completion recorded", async () => {
+  const { askedNow, owed, event, trip } = await completedTrip({ paymentStatus: "captured", amountDueNow: 224.5, rideV2: { fee: 224.5 } });
+  assert.deepEqual({ amount: Number(event.amount), status: String(event.status) }, { amount: trip.amount - 224.5, status: "due" });
+  assert.equal(askedNow, owed, `asked ₹${askedNow}, owed ₹${owed}`);
+});
+
+test("round 2 verify: a prepaid trip (the UATD-BK-TAXI-2 shape) owes nothing after completion, and says so everywhere", async () => {
+  const { askedNow, owed, event, completed, trip } = await completedTrip({ paymentStatus: "captured", amountDueNow: 449 });
+  assert.equal(askedNow, 0, "the customer paid in full, so the checkout asks for nothing");
+  assert.equal(owed, askedNow, `the trip ledger must agree with the checkout: owed ₹${owed}, asked ₹${askedNow}`);
+  assert.deepEqual({ amount: Number(event.amount), status: String(event.status) }, { amount: trip.amount, status: "gateway_paid" }, "the trip's value is recorded as already collected");
+  assert.deepEqual([completed.paymentStatus, completed.amount], ["gateway_paid", 0]);
+});
+
+test("round 2 verify: a pay-after-trip booking asks the customer for the trip payment its completion recorded", async () => {
+  const { askedNow, owed, event, trip } = await completedTrip({ paymentStatus: "pending", amountDueNow: 0 });
+  assert.deepEqual({ amount: Number(event.amount), status: String(event.status) }, { amount: trip.amount, status: "due" });
+  assert.equal(askedNow, owed, `asked ₹${askedNow}, owed ₹${owed}`);
+});

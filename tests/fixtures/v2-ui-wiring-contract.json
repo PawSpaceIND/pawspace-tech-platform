@@ -65,7 +65,7 @@
       "conditions": 0
     },
     "app/v2/stay-experience.tsx": {
-      "sha256": "e9e92fb2600169e487f07dac8008d0ccd778e741f702dc8cf43a085f2d81f362",
+      "sha256": "06c6cd63998a40a6cab419cb0b8ba567911a614ccb6bfb9a5adbe5a8ea7d4e1e",
       "functions": 11,
       "declarations": 11,
       "interactionProps": 11,

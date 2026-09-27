@@ -1,3 +1,6 @@
+// @ts-expect-error Node 22 strip-types requires the explicit .ts extension at runtime.
+import { fetchOrExplain, readJsonBody, unreadableAnswerMessage } from "./safe-json-response.ts";
+
 export type ResolvedServiceZone = {
   zoneId: string;
   zoneName: string;
@@ -35,14 +38,16 @@ export async function resolveServiceCoverage(pincodeInput: string, signal?: Abor
   const pincode = pincodeInput.replace(/\D/g, "").slice(0, 6);
   if (pincode.length !== 6) throw new Error("Enter a valid six-digit service PIN code.");
 
-  const response = await fetch(`/api/service-zone?pincode=${encodeURIComponent(pincode)}`, { cache: "no-store", signal });
-  const body = await response.json() as {
+  const response = await fetchOrExplain(`/api/service-zone?pincode=${encodeURIComponent(pincode)}`, { cache: "no-store", signal }, "check this PIN");
+  const body = await readJsonBody<{
     data?: {
       zone?: { zoneId?: string; zoneName?: string; description?: string; color?: string; serviceAvailable?: boolean };
       assignment?: { pincode?: string; zoneId?: string; cityId?: string; city?: string; area?: string };
     };
     error?: string;
-  };
+  }>(response);
+  // A gateway page or an empty body is "could not check", never a JSON parse error and never "not served".
+  if (!body) throw new Error(unreadableAnswerMessage(response.status, "check this PIN"));
   const assignment = body.data?.assignment;
   const zone = body.data?.zone;
   if (!response.ok || !assignment?.zoneId || !zone?.serviceAvailable) {

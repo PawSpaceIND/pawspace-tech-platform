@@ -271,7 +271,7 @@ async function laneA(browser) {
       let detail = priced.ok ? "" : `quote refused: ${priced.error}`, ok = false, evidence = priced.evidence;
       if (priced.ok) {
         const r = await reserveRide(flow, { shotLabel: "T6b-short-notice" });
-        ok = !r.ok && /at least 120 minutes' notice/.test(r.error || "");
+        ok = !r.ok && /at least 120 minutes' notice|at least 2 hours ahead/i.test(r.error || "");
         detail = r.ok ? `BOOKED ${r.bookingId} for ${today} ${slot}` : `"${r.error}"`; evidence = [...evidence, ...r.evidence];
         if (r.ok) { const ride = { label: "T6b", bookingId: r.bookingId, customer: flow.customer.id, phone: flow.customer.phone, providerId: r.providerId, vehicle: "citroen_ec3", scheduledStart: priced.q.scheduledStart, total: priced.q.fareOptions.citroen_ec3.quotedTotal, fee: priced.q.fareOptions.citroen_ec3.bookingFee, paid: false }; save(ride); findingOnce("lead-time", { severity: "P1", area: "Pet Taxi booking rules", persona: "Customer", flow: "T6 short notice", title: "A Pet Taxi ride with less than 2 hours' notice was reserved", steps: `${today} ${slot} IST on /v2/taxi`, expected: "Refused: at least 120 minutes' notice", actual: `booked ${r.bookingId}`, evidence }); }
       }

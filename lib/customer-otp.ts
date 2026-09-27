@@ -3,6 +3,8 @@ import { identifyInstall } from "./app-to-revenue-funnel";
 import { resolveOtpAssertionSecret } from "./otp-sandbox-runtime";
 import { ensureCustomerAccountTables } from "./customer-account";
 import {constantTimeEqual,randomVerifierSalt,secureSixDigitOtp} from "./security-crypto";
+import { ensureIdentityBindingTables } from "./identity-binding";
+import { samePhoneForms, samePhoneSql } from "./customer-phone";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -56,7 +58,15 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
 }
 
 export async function discardCustomerOtpChallenge(db:Db,challengeId:string){await db.prepare("DELETE FROM customer_otp_challenges WHERE id=?").bind(challengeId).run();}
-export async function resolveOtpCustomer(db:D1Database,phone:string){return db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? ORDER BY created_at ASC LIMIT 1").bind(phone).first<Row>();}
+/*
+ * The customer a verified number signs in to. Only primary_phone counts (a secondary number is self-asserted
+ * contact data, never a login), but in any written form: the web chat stored "+919876543210" and the website
+ * form whatever the visitor typed, and an exact match on "9876543210" missed those customers, so the enquirer
+ * got a second customer and their booking never reached the enquiry's lead. Where one number is already on
+ * two customers, the one this number has signed in to before wins (it holds their bookings), then the oldest.
+ */
+const OTP_CUSTOMER_SQL=`SELECT c.id,c.name,c.primary_phone,c.city_id FROM canonical_customers c WHERE ${samePhoneSql("c.primary_phone")} ORDER BY CASE WHEN EXISTS (SELECT 1 FROM identity_bindings b WHERE b.identity_source='customer_otp' AND b.principal_type='identity_subject' AND b.principal_key=? AND b.subject_type='customer' AND b.subject_id=c.id AND b.status='active') THEN 0 ELSE 1 END,c.created_at ASC,c.id ASC LIMIT 1`;
+export async function resolveOtpCustomer(db:D1Database,phone:string){const key=normalizePhone(phone);if(key.length!==10)return null;await ensureIdentityBindingTables(db);return db.prepare(OTP_CUSTOMER_SQL).bind(...samePhoneForms(key),key).first<Row>();}
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);await purgeCustomerOtpChallenges(db);await ensureCustomerAccountTables(db);

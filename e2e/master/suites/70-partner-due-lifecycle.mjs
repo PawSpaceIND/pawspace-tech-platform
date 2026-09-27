@@ -401,7 +401,7 @@ async function partnerEarnings(t, flow, { hostSettlementTab = false } = {}) {
   if (!listed && data.engagement === "contract" && b.service === "pet_taxi") why = `the driver is a salaried (full-time/contract) partner: lib/taxi-completion-finance.ts books the ride's payout for the vehicle owner ${payoutRow?.provider_id || "?"}, not the driver, so the driver's Earnings never list rides`;
   else if (!listed && data.engagement === "commission") why = "commission earnings list provider_order_commissions rows, which only syncCompletedCommissionOrders() creates when Finance opens /api/partner-finance";
   rec({ journey: `${LABEL[b.service]} partner earnings after completion`, combo: `${b.bookingId} · ${b.providerId} (${data.engagement || "?"})`, result: ws.status !== 200 ? "FAIL" : listed ? "PASS" : "PARTIAL", detail: `${why ? `${why}. ` : ""}${JSON.stringify(detail)}`.slice(0, 1800), evidence: [shot, hostShot].filter(Boolean) });
-  if (pending) fnd({ severity: "P2", area: "Partner earnings", persona: "Partner", flow: "Partner app → Earnings after a governed completion", title: `Partner Earnings says service proof is still outstanding for a ${LABEL[b.service]} job completed with governed proof`, steps: `Complete ${b.bookingId} in the ${LABEL[b.service]} partner workspace (staff-verified proof recorded), open /v2/partner → Earnings`, expected: "no outstanding-proof warning for a job whose lifecycle already enforced its proof", actual: `"Service proof still outstanding … missing ${pending.missing.join(", ")} … holds up the settlement" (lib/provider-workspace.ts PROOF_REQUIREMENTS reads provider_job_proofs, which the ${LABEL[b.service]} workflow never writes)`, evidence: [shot] });
+  if (pending) fnd({ severity: "P2", area: "Partner earnings", persona: "Partner", flow: "Partner app → Earnings after a governed completion", title: `Partner Earnings says service proof is still outstanding for a ${LABEL[b.service]} job completed with governed proof`, steps: `Complete ${b.bookingId} in the ${LABEL[b.service]} partner workspace (staff-verified proof recorded), open /v2/partner → Earnings`, expected: "no outstanding-proof warning for a job whose lifecycle already enforced its proof", actual: `"Service proof still outstanding … missing ${pending.missing.join(", ")} … holds up the settlement" (lib/provider-workspace.ts proofOnRecord reads the ${LABEL[b.service]} workflow's own event log: compare it with what was recorded)`, evidence: [shot] });
   if (!listed && data.engagement === "commission" && payoutRow && commissionRows && !commissionRows.length) fnd({ severity: "P2", area: "Partner earnings", persona: "Partner", flow: "Partner app → Earnings after completion", title: `A completed ${LABEL[b.service]} job is missing from the commission partner's Earnings`, steps: `Complete ${b.bookingId} as ${b.providerId}; open /v2/partner → Earnings`, expected: "the job listed with its commission (pending confirmation)", actual: `not in commissionOrders; no provider_order_commissions row (created only when Finance opens /api/partner-finance) although provider_payout_computations holds net ₹${payoutRow.provider_net_payout}`, evidence: [shot] });
 }
 async function readBackBooks(t, { pollMs = 0 } = {}) {
@@ -648,18 +648,19 @@ async function runBoarding(b, t) {
     t.evidence.push(await host.shot("host-workspace"));
     const read = async () => { const r = await api(context, "GET", `/api/boarding-stays?bookingId=${enc(b.bookingId)}`); return Array.isArray(r.body?.data) ? r.body.data[0] || null : null; };
     const tab = async (name) => { await page.locator("aside nav button").filter({ hasText: name }).first().click({ timeout: 8000 }).catch(e => t.uiIssues.push(`${name} tab: ${oneLine(e.message, 80)}`)); await settle(page, 900); };
-    /** The Today tab acts on ONE stay (the in-progress one, else the earliest accepted one): is it ours? */
+    /** Today lists every due or active stay in its own card (section "Stay <booking id>"): this stay's card, or null. */
     const todayIsOurs = async () => {
       await tab("Today");
-      const ours = await page.getByText(new RegExp(`STAY · ${escRe(b.bookingId)}`)).first().isVisible().catch(() => false);
+      const card = page.locator(`section[aria-label="Stay ${b.bookingId}"]`).first();
+      const ours = await card.getByText(new RegExp(`STAY · ${escRe(b.bookingId)}`)).first().isVisible().catch(() => false);
       if (!ours && !t.todayMismatch) {
         t.todayMismatch = true;
-        const other = oneLine(await page.getByText(/(LIVE|ACCEPTED) STAY · /).first().innerText().catch(() => "NO ACTIVE STAY"), 80);
-        const shot = await host.shot("host-today-shows-another-stay");
-        t.uiIssues.push(`Today tab shows "${other}" instead of ${b.bookingId}`);
-        fnd({ severity: "P2", area: "Boarding host workspace", persona: "Host", flow: "Host Today tab", title: "Host Today tab can act on only one stay, so a host with another accepted stay cannot check in / log care for this one", steps: `As ${b.providerId}: /v2/partner/host?bookingId=${b.bookingId} → Today`, expected: `check-in / meal / play / check-out controls for ${b.bookingId} (due now)`, actual: `Today shows "${other}" (app/host/page.tsx liveStay = the in-progress stay, else the earliest accepted one); the due stay has no controls there`, evidence: [shot] });
+        const listed = (await page.getByText(/(LIVE|ACCEPTED) STAY · /).allInnerTexts().catch(() => [])).map(x => oneLine(x, 60));
+        const shot = await host.shot("host-today-missing-this-stay");
+        t.uiIssues.push(`Today tab has no card for ${b.bookingId} (lists ${listed.join(", ") || "no stay"})`);
+        fnd({ severity: "P2", area: "Boarding host workspace", persona: "Host", flow: "Host Today tab", title: "Host Today tab has no card for a due stay, so the host cannot check in / log care for it", steps: `As ${b.providerId}: /v2/partner/host?bookingId=${b.bookingId} → Today`, expected: `a "Stay ${b.bookingId}" card with its own check-in / meal / play / check-out controls (due now)`, actual: `Today lists ${listed.join(", ") || "no stay"}`, evidence: [shot] });
       }
-      return ours;
+      return ours ? card : null;
     };
     const act = (step, locator, action, extra = {}, why) => press(t, host, { step, locator, why, path: "/api/boarding-stays", match: x => x.includes(`"action":"${action}"`) && (!extra.careEventType || x.includes(extra.careEventType)), fallback: async () => api(context, "POST", "/api/boarding-stays", { stayId, action, idempotencyKey: key(b, `${action}${extra.careEventType ? `-${extra.careEventType}-${istDate(Date.now())}` : ""}`), ...extra }) });
     const eventDay = (e) => istDate(Number(e.createdAt ?? e.created_at));
@@ -685,14 +686,14 @@ async function runBoarding(b, t) {
         if (b.balance && b.balance.status !== "paid" && !balanceTried) { balanceTried = true; await guarded(t, "Boarding split balance paid before check-in", async () => recordPayment(t, await payFromBookingPage(t, cust, "boarding-balance"), { journeyName: "Boarding split balance paid before check-in", expected: b.balance.amount })); await goto(host, workspace); continue; }
         if (Date.now() >= checkOutAt) { t.info("check-in window", false, `stay window ended ${b.stay.checkOutAt}`); t.outcome = { harness: true, note: `stay window ended ${b.stay.checkOutAt} before check-in could run` }; break; }
         const ours = await todayIsOurs();
-        res = await act("check in", ours ? page.getByRole("button", { name: /✓\s*Check in/ }).first() : null, "check_in", {}, "Today tab shows another stay");
+        res = await act("check in", ours ? ours.getByRole("button", { name: /✓\s*Check in/ }) : null, "check_in", {}, "Today tab has no card for this stay");
       } else if (status === "in_progress") {
         const now = Date.now(), today = istDate(now), open = now < checkOutAt;
-        if (open && !has(stay, "care_meal", today) && !tried.has(`meal-${today}`)) { tried.add(`meal-${today}`); const ours = await todayIsOurs(); await act("log meal", ours ? page.getByRole("button", { name: /Log meal/ }).first() : null, "care_event", { careEventType: "meal", detail: { source: "host_workspace" } }, "Today tab shows another stay"); continue; }
-        if (open && !has(stay, "care_play", today) && !tried.has(`play-${today}`)) { tried.add(`play-${today}`); const ours = await todayIsOurs(); await act("log play", ours ? page.getByRole("button", { name: /Log play/ }).first() : null, "care_event", { careEventType: "play", detail: { source: "host_workspace" } }, "Today tab shows another stay"); continue; }
+        if (open && !has(stay, "care_meal", today) && !tried.has(`meal-${today}`)) { tried.add(`meal-${today}`); const ours = await todayIsOurs(); await act("log meal", ours ? ours.getByRole("button", { name: /Log meal/ }) : null, "care_event", { careEventType: "meal", detail: { source: "host_workspace" } }, "Today tab has no card for this stay"); continue; }
+        if (open && !has(stay, "care_play", today) && !tried.has(`play-${today}`)) { tried.add(`play-${today}`); const ours = await todayIsOurs(); await act("log play", ours ? ours.getByRole("button", { name: /Log play/ }) : null, "care_event", { careEventType: "play", detail: { source: "host_workspace" } }, "Today tab has no card for this stay"); continue; }
         if (open && !has(stay, "proof_daily_update", today) && !proofTried) {
           proofTried = true;
-          const ours = await todayIsOurs(), link = page.getByRole("link", { name: /Proof · medication · incident/ }).first();
+          const ours = await todayIsOurs(), link = ours ? ours.getByRole("link", { name: /Proof · medication · incident/ }) : null;
           if (ours && await link.isVisible().catch(() => false)) { await link.click(); await page.waitForURL(u => String(u).includes("/host/proof"), { timeout: 15_000 }).catch(() => {}); }
           if (!page.url().includes("/host/proof")) { if (ours) t.uiIssues.push("Proof · medication · incident link not usable"); await goto(host, `/v2/partner/host/proof?stayId=${enc(stayId)}`); }
           await settle(page, 1500);
@@ -716,7 +717,7 @@ async function runBoarding(b, t) {
         }
         const ours = await todayIsOurs();
         t.evidence.push(await host.shot("host-before-check-out"));
-        res = await act("check out", ours ? page.getByRole("button", { name: /✓\s*Check out/ }).first() : null, "check_out", {}, "Today tab shows another stay");
+        res = await act("check out", ours ? ours.getByRole("button", { name: /✓\s*Check out/ }) : null, "check_out", {}, "Today tab has no card for this stay");
       } else if (status === "completed") { t.outcome.completed = true; break; }
       else { t.info("unexpected stay state", false, status); t.outcome = { harness: true, note: `unexpected stay state ${status}` }; break; }
       if (res && res.status === 0 && (t.unobserved = (t.unobserved || 0) + 1) <= 2) continue;

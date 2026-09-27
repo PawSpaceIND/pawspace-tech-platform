@@ -18,7 +18,7 @@
       "mainRoots": 1
     },
     "app/team/finance/page.tsx": {
-      "semantic": "aae5352aed8fe6cb023aff3b91c978f4d229bfe8f474829d6165ae70cc9cd5c5",
+      "semantic": "4a3fd272ea8b1f4c0de1f434606c08e219d313d221eb0a17247681c8fc588d83",
       "mainRoots": 1
     },
     "app/team/finance/partners/page.tsx": {
@@ -42,7 +42,7 @@
       "mainRoots": 0
     },
     "app/team/finance/taxi/taxi-finance-workspace.tsx": {
-      "semantic": "a8dbbf9e6484a9afc178db4a3a6fe87f2139bd7ec4a6a371033f3fc3d0a1c23b",
+      "semantic": "bee12f6820a0c84b0fb99da0abb3ee90820908c0f09d2acb55cdc8890d559c75",
       "mainRoots": 1
     },
     "app/team/finance/training/page.tsx": {

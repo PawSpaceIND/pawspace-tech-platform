@@ -6,6 +6,7 @@ import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig,
 import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 import AssistedTaxiPanel from "./assisted-taxi-panel";
+import StayBookingLinks from "./stay-booking-links";
 import StaffModule from "../components/staff-workspace/StaffModule";
 import {assistedPetKey,selectAssistedPets} from "../../lib/assisted-pet-selection";
 
@@ -105,6 +106,7 @@ export default function AssistedBooking(){
             <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><label><small>Coupon (optional)</small><input value={couponCode} onChange={e=>setCouponCode(e.target.value.toUpperCase())} placeholder="GROOM200" aria-label="Coupon code" /></label><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!selectedPets.length||!consentCaptured||consentReference.trim().length<5||(crmNeedsSpecies&&!crmSpecies)}>{busy?"Creating canonical test order…":requestedCustomerId?"Create CRM-assisted UAT order":"Create UAT assisted order"}</button></div>{error&&<div role="alert" style={{marginTop:12}}>{error}</div>}</div>
           </form>
           <AssistedTaxiPanel customer={customer} consentCaptured={consentCaptured} consentMethod={consentMethod} consentReference={consentReference} />
+          {customer&&<StayBookingLinks name={customer.name} phone={customer.primaryPhone}/>}
           {result&&<div className={styles.stage}><small>CANONICAL RESULT</small><h3>{result.bookingId}</h3><div className={styles.review}><div><small>Assisted order</small><b>{result.assistedOrderId}</b></div><div><small>Provider</small><b>{result.provider.name}</b></div><div><small>Governed total</small><b>{money(result.totalAmount)}</b></div>{result.couponCode&&<div><small>Coupon</small><b>{result.couponCode} · −{money(result.discount??0)}</b></div>}<div><small>Due now</small><b>{money(result.amountDueNow)}</b></div><div><small>Duplicate safe</small><b>{result.duplicatePrevented?"Existing order reused":"New order"}</b></div><div><small>Live money</small><b>{result.liveMoney?"Unexpected":"No"}</b></div></div></div>}
         </section>
       </div>

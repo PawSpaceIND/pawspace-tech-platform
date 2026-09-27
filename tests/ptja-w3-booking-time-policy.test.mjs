@@ -156,6 +156,29 @@ test("BT-08: a recurring calendar whose LAST occurrence falls beyond the horizon
   assert.equal(refused.ok, false, `the whole calendar must sit inside the horizon: ${JSON.stringify(refused).slice(0, 250)}`);
 });
 
+test("BT-08b: the lead-time and horizon refusals say the rule a customer can act on, never minutes", async () => {
+  // Round-1 SIT-12 and round-2 staging: the Pet Sitting search showed "This service needs at least 1440 minutes'
+  // notice", and every service that shows this refusal as it is read the same minutes. The machine code stays.
+  const { db, policy } = await world();
+  const now = Date.now();
+  const cases = [
+    ["boarding", now + 20 * HOUR, "Book at least 24 hours ahead.", "below_minimum_lead_time"],
+    ["pet_sitting", now + 23 * HOUR, "Book at least 24 hours ahead.", "below_minimum_lead_time"],
+    ["pet_taxi", now + 90 * 60_000, "Book at least 2 hours ahead.", "below_minimum_lead_time"],
+    ["boarding", now + 185 * DAY, "You can book up to 180 days ahead.", "beyond_booking_horizon"],
+  ];
+  for (const [serviceCode, startMs, sentence, code] of cases) {
+    const refused = await check(policy, db, serviceCode, startMs, startMs + 4 * HOUR);
+    assert.equal(refused.ok, false, serviceCode);
+    const body = JSON.parse(refused.message);
+    assert.equal(body.error, sentence, `${serviceCode}: ${refused.message}`);
+    assert.equal(body.code, code);
+    assert.doesNotMatch(body.error, /minutes' notice|1440/);
+  }
+  const { noticePeriod } = await import("../lib/booking-time-copy.ts");
+  assert.deepEqual([30, 60, 90, 120, 1440, 2880].map(noticePeriod), ["30 minutes", "1 hour", "90 minutes", "2 hours", "24 hours", "48 hours"]);
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Maximum stay duration
 // ---------------------------------------------------------------------------------------------------
