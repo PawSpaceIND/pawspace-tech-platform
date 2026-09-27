@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 type Db=D1Database;
 
 const THREADS_TABLE="CREATE TABLE IF NOT EXISTS communication_threads (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT,lead_id TEXT,ticket_id TEXT,status TEXT NOT NULL DEFAULT 'open',assigned_to TEXT,sla_due_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)";
@@ -10,19 +11,18 @@ const PARTICIPANTS_TABLE="CREATE TABLE IF NOT EXISTS communication_participants 
  * rolls the booking, thread and participant back together. Existing bookings are
  * deliberately not backfilled by this helper.
  */
-const bookingConversationReady=new WeakSet<Db>();
-const bookingConversationEnsuring=new WeakMap<Db,Promise<void>>();
 async function bookingConversationSchemaReady(db:Db){
   const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('communication_threads','idx_communication_threads_customer','communication_participants','trg_canonical_booking_customer_conversation')").all<Record<string,unknown>>();
   const names=new Set(rows.results.map(row=>String(row.name)));
   return names.size===4;
 }
 
-export async function ensureBookingConversationOnInsert(db:Db){
-  if(bookingConversationReady.has(db))return;
-  const active=bookingConversationEnsuring.get(db);if(active)return active;
-  const work=(async()=>{
-    if(await bookingConversationSchemaReady(db)){bookingConversationReady.add(db);return;}
+/* Once per isolate, ready-set only (lib/d1-ensure-once.js): a booking cancelled mid-setup never leaves its unsettled
+ * promise for later bookings to join. Without canonical_bookings the trigger cannot be created, the setup throws and
+ * the next call tries again, as before. */
+export async function ensureBookingConversationOnInsert(db:Db){await ensureD1Once(db,"booking_conversation_on_insert",()=>ensureBookingConversationOnInsertUncached(db));}
+async function ensureBookingConversationOnInsertUncached(db:Db){
+    if(await bookingConversationSchemaReady(db))return;
     await db.batch([
       db.prepare(THREADS_TABLE),
       db.prepare(THREADS_INDEX),
@@ -61,8 +61,4 @@ export async function ensureBookingConversationOnInsert(db:Db){
       ORDER BY t.updated_at DESC,t.id DESC
       LIMIT 1;
     END`).run();
-    bookingConversationReady.add(db);
-  })().finally(()=>{bookingConversationEnsuring.delete(db);});
-  bookingConversationEnsuring.set(db,work);
-  return work;
 }
