@@ -9,7 +9,10 @@ async function request(path, cookie='', body) {
  const start=performance.now();
  const r=await fetch(origin+path,{method:body?'POST':'GET',headers:{origin,...(cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(20000)});
  const data=await r.json();
- return {data,response:r,ms:Math.round((performance.now()-start)*100)/100};
+ const header=r.headers.get('server-timing')||'';
+ const duration=name=>{const match=header.match(new RegExp('(?:^|,\\s*)'+name+';dur=([0-9.]+)'));return match?Number(match[1]):null;};
+ const calls=header.match(/(?:^|,\s*)d1;dur=[0-9.]+;desc="(\d+) calls"/);
+ return {data,response:r,timing:{appMs:duration('app'),d1TotalMs:duration('d1'),d1Calls:calls?Number(calls[1]):null},ms:Math.round((performance.now()-start)*100)/100};
 }
 const login=await request('/api/staging-login','',{action:'login',code:access,email:'founder@pawspace.in'});
 const cookie=(login.response.headers.get('set-cookie')||'').split(';')[0];
@@ -22,8 +25,8 @@ const routes=[
  {name:'grooming-finance',path:'/api/grooming-finance',verify:x=>x.scope?.limit===200&&x.scope?.dateFiltered===false&&Array.isArray(x.items)},
 ];
 const report={sha,origin,from,to,method:'10 sequential full JSON response observations per route from one CI runner; no concurrency, CWV or production percentile claim',operations:{},failures:[]};
-for(const route of routes){const samples=[];for(let i=0;i<10;i++){try{const r=await request(route.path,cookie);samples.push(r.ms);if(!r.response.ok||!route.verify(r.data))report.failures.push({operation:route.name,status:r.response.status,kind:'response_contract'});}catch{report.failures.push({operation:route.name,kind:'request_failed'});}}
- const sorted=[...samples].sort((a,b)=>a-b);report.operations[route.name]={samplesMs:samples,medianMs:sorted[Math.floor(sorted.length/2)]??null,p95Ms:sorted[Math.ceil(sorted.length*.95)-1]??null};
+for(const route of routes){const samples=[],serverTiming=[];for(let i=0;i<10;i++){try{const r=await request(route.path,cookie);samples.push(r.ms);serverTiming.push(r.timing);if(!r.response.ok||!route.verify(r.data))report.failures.push({operation:route.name,status:r.response.status,kind:'response_contract'});}catch{report.failures.push({operation:route.name,kind:'request_failed'});}}
+ const sorted=[...samples].sort((a,b)=>a-b);report.operations[route.name]={samplesMs:samples,serverTiming,medianMs:sorted[Math.floor(sorted.length/2)]??null,p95Ms:sorted[Math.ceil(sorted.length*.95)-1]??null};
 }
 await writeFile('staging-read-performance.json',JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify(report,null,2));
