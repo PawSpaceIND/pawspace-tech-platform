@@ -6,15 +6,31 @@ import {createServer} from "node:http";
 
 const provider="launch-offline-provider";
 const job={bookingId:"launch-offline-booking",workOrderId:"launch-offline-work",providerId:provider,providerName:"Offline test partner",providerModel:"contract",status:"arrived",workOrderStatus:"arrived",serviceCode:"grooming",packageName:"Test grooming",packageCode:"uat",zoneId:"blr-central",cityId:"blr",scheduledStart:new Date().toISOString(),scheduledEnd:new Date(Date.now()+3600000).toISOString(),totalAmount:1000,currency:"INR",occurrenceCount:1,customer:{id:"fixture-customer",name:"Fixture Customer",maskedPhone:"******0000"},pets:[{id:"fixture-pet",name:"Maya",species:"dog",breed:"Labrador",vaccinationStatus:"verified",safetyNotes:["Sensitive left paw"]}],payment:{method:"sandbox",mode:"prepaid",status:"captured",amount:1000,amountDueNow:0},subscription:null,addOns:[],safetyRequirements:[],events:[],proof:null};
-async function fixture(context:BrowserContext,initialStatus:string,useUploadReceiver=false) {
- const state={status:initialStatus,blocked:false,posts:0,registrations:0,uploads:0,sha:"",bytes:0,uploadErrors:[] as string[]};
+async function fixture(context:BrowserContext,initialStatus:string,baseURL:string|undefined,useUploadReceiver=false) {
+ if(!baseURL)throw new Error("The offline test receiver requires an explicit local application URL");
+ const appUrl=new URL(baseURL);
+ if(appUrl.protocol!=="http:"||!["localhost","127.0.0.1","[::1]"].includes(appUrl.hostname)||appUrl.username||appUrl.password)
+  throw new Error("The offline test receiver accepts only a loopback HTTP application origin");
+ // Configuration, never an incoming Origin header, is the authority for this single test origin.
+ const allowedOrigin=appUrl.origin;
+ const allowedHeaders=new Set(["content-type","x-pawspace-media-id","x-pawspace-upload-token"]);
+ const state={status:initialStatus,blocked:false,posts:0,registrations:0,uploads:0,sha:"",bytes:0,uploadUrl:"",uploadErrors:[] as string[]};
  // Receive the real binary request over loopback: WebKit's route.postDataBuffer() omits Blob bodies.
  // Assertions belong at the receiving server, not in an inspector that may not expose those bytes.
  const sink=createServer(async(req,res)=>{
-  res.setHeader("access-control-allow-origin",req.headers.origin||"*");
-  res.setHeader("access-control-allow-credentials","true");
-  res.setHeader("access-control-allow-methods","PUT,POST,OPTIONS");
-  res.setHeader("access-control-allow-headers",req.headers["access-control-request-headers"]||"*");
+  if(req.url!=="/api/service-media/upload"){res.writeHead(404);res.end();return;}
+  if(req.headers.origin!==allowedOrigin){res.writeHead(403);res.end("Untrusted test origin");return;}
+  if(req.method!=="PUT"&&req.method!=="OPTIONS"){res.writeHead(405);res.end();return;}
+  if(req.method==="OPTIONS"){
+   const requestedHeaders=String(req.headers["access-control-request-headers"]||"").split(",").map(value=>value.trim().toLowerCase()).filter(Boolean);
+   if(req.headers["access-control-request-method"]!=="PUT"||requestedHeaders.some(value=>!allowedHeaders.has(value))){res.writeHead(403);res.end("Unsupported test preflight");return;}
+  }
+  res.setHeader("vary","Origin");
+  res.setHeader("cache-control","no-store");
+  res.setHeader("access-control-allow-origin",allowedOrigin);
+  // The synthetic receipt does not need cross-origin cookies or HTTP credentials.
+  res.setHeader("access-control-allow-methods","PUT,OPTIONS");
+  res.setHeader("access-control-allow-headers","content-type,x-pawspace-media-id,x-pawspace-upload-token");
   if(req.method==="OPTIONS"){res.writeHead(204);res.end();return;}
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const bytes=Buffer.concat(chunks);
   if(bytes.length!==state.bytes)state.uploadErrors.push(`Received ${bytes.length} bytes; expected ${state.bytes}`);
@@ -24,7 +40,7 @@ async function fixture(context:BrowserContext,initialStatus:string,useUploadRece
  });
  await new Promise<void>((resolve,reject)=>{sink.once("error",reject);sink.listen(0,"127.0.0.1",()=>resolve());});
  const address=sink.address();if(!address||typeof address==="string")throw new Error("Local upload sink did not bind");
- const uploadUrl=`http://127.0.0.1:${address.port}/api/service-media/upload`;
+ const uploadUrl=`http://127.0.0.1:${address.port}/api/service-media/upload`;state.uploadUrl=uploadUrl;
  context.on("close",()=>{sink.closeAllConnections();sink.close();});
  await context.route("**/api/**",async route=>{
   const request=route.request(),path=new URL(request.url()).pathname;
@@ -56,8 +72,8 @@ async function fixture(context:BrowserContext,initialStatus:string,useUploadRece
  return state;
 }
 
-test("V2 partner UI: offline service update survives an unavailable API and automatically replays",async({page,context})=>{
- const state=await fixture(context,"arrived");await page.goto("/v2/partner");
+test("V2 partner UI: offline service update survives an unavailable API and automatically replays",async({page,context,baseURL})=>{
+ const state=await fixture(context,"arrived",baseURL);await page.goto("/v2/partner");
  await expect(page.getByRole("heading",{name:"Your active job"})).toBeVisible();
  const start=page.getByRole("button",{name:"Start service",exact:true}).first();await expect(start).toBeDisabled();
  for(const label of ["I verified the pet and booked service","I reviewed behaviour, medical and handling notes with the customer","The pet and equipment are safe to begin"])await page.getByRole("checkbox",{name:label}).check();
@@ -72,8 +88,8 @@ test("V2 partner UI: offline service update survives an unavailable API and auto
  await expect.poll(()=>page.evaluate(p=>JSON.parse(localStorage.getItem(`pawspace:partner-status:v1:${p}`)||"[]").length,provider)).toBe(0);
 });
 
-test("V2 partner UI: offline photo automatically uploads the exact bytes once after reconnect",async({page,context,browserName},info)=>{
- const state=await fixture(context,"in_service",browserName==="webkit");await page.goto("/v2/partner");
+test("V2 partner UI: offline photo automatically uploads the exact bytes once after reconnect",async({page,context,browserName,baseURL},info)=>{
+ const state=await fixture(context,"in_service",baseURL,browserName==="webkit");await page.goto("/v2/partner");
  await expect(page.getByLabel("Before photo",{exact:true})).toBeVisible();
  state.blocked=true;
  // Playwright WebKit's setOffline also breaks local Blob/File reads (even new Blob(["x"]).text()).
@@ -97,4 +113,31 @@ test("V2 partner UI: offline photo automatically uploads the exact bytes once af
  expect(state.registrations).toBe(1);
  await page.reload();await expect(page.getByRole("heading",{name:"Your active job"})).toBeVisible();
  expect(state.uploads).toBe(1);expect(state.registrations).toBe(1);
+});
+
+
+test("V2 offline receiver: reject foreign origins and unsupported preflights before accepting bytes",async({context,baseURL})=>{
+ const state=await fixture(context,"in_service",baseURL,true),origin=new URL(baseURL!).origin;
+ const preflight={"access-control-request-method":"PUT","access-control-request-headers":"content-type,x-pawspace-media-id,x-pawspace-upload-token"};
+ for(const candidate of ["https://attacker.example","null","*",`${origin}.attacker.example`,"http://127.0.0.1:1",""]){
+  for(const method of ["OPTIONS","PUT"]){
+   const response=await fetch(state.uploadUrl,{method,headers:{...preflight,...(candidate?{origin:candidate}:{})},...(method==="PUT"?{body:"must not be received"}:{})});
+   expect(response.status).toBe(403);expect(response.headers.get("access-control-allow-origin")).toBeNull();
+   expect(response.headers.get("access-control-allow-credentials")).toBeNull();await response.text();
+  }
+ }
+ for(const invalid of [{...preflight,"access-control-request-method":"DELETE"},{...preflight,"access-control-request-headers":"authorization"}]){
+  const response=await fetch(state.uploadUrl,{method:"OPTIONS",headers:{origin,...invalid}});
+  expect(response.status).toBe(403);expect(response.headers.get("access-control-allow-origin")).toBeNull();await response.text();
+ }
+ const allowed=await fetch(state.uploadUrl,{method:"OPTIONS",headers:{origin,...preflight}});
+ expect(allowed.status).toBe(204);expect(allowed.headers.get("access-control-allow-origin")).toBe(origin);
+ expect(allowed.headers.get("access-control-allow-credentials")).toBeNull();
+ expect(allowed.headers.get("access-control-allow-headers")).not.toContain("*");
+ expect(state.uploads).toBe(0);
+ const bytes=Buffer.from("synthetic-allowed-photo");state.bytes=bytes.length;state.sha=createHash("sha256").update(bytes).digest("hex");
+ const receipt=await fetch(state.uploadUrl,{method:"PUT",headers:{origin,"content-type":"image/png"},body:bytes});
+ expect(receipt.status).toBe(200);expect(receipt.headers.get("access-control-allow-origin")).toBe(origin);
+ expect(receipt.headers.get("access-control-allow-credentials")).toBeNull();
+ expect(await receipt.json()).toEqual({data:{objectStored:true}});expect(state.uploads).toBe(1);expect(state.uploadErrors).toEqual([]);
 });
