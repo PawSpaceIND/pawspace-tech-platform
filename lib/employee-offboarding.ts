@@ -8,6 +8,7 @@ type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim(), email=(v:unknown)=>text(v).toLowerCase();
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID()}`;
 const refuse=(message:string,status=409)=>governedJsonError({error:message},status);
+function humanReviewer(actorId:string){if(!/^[^@\s:]+@[^@\s:]+$/.test(email(actorId)))throw refuse("Employee exit approval and settlement require an authenticated human staff identity");}
 export async function ensureEmployeeExitTables(db:D1Database){
  await ensurePeopleTables(db);await ensurePayrollTables(db);await ensureSecurityTables(db);await ensureAdminMfaTables(db);
  await db.batch([
@@ -36,6 +37,7 @@ async function activeIdentity(db:D1Database,employeeId:string){
 }
 function identityGuard(db:D1Database,writes:D1PreparedStatement[],identity:Awaited<ReturnType<typeof activeIdentity>>){const {employee:e,user:u,employment:v}=identity;appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM employees WHERE id=? AND employment_status='active' AND lower(work_email)=? AND lower(COALESCE(user_email,''))=? AND joined_at IS ? AND ended_at IS ?) AND EXISTS(SELECT 1 FROM app_users WHERE id=? AND lower(email)=? AND status='active' AND role_code=?) AND EXISTS(SELECT 1 FROM employee_employment_versions WHERE id=? AND employee_id=? AND employment_type=? AND effective_until IS NULL)",[e.id,email(e.work_email),email(e.user_email),e.joined_at,e.ended_at,u.id,email(u.email),u.role_code,v.id,e.id,v.employment_type]);}
 export async function requestEmployeeExit(db:D1Database,input:{employeeId:string;accessEndsAt:number;reason:string;idempotencyKey:string;actorId:string}){
+ humanReviewer(input.actorId);
  await ensureEmployeeExitTables(db);const now=Date.now();
  if(!text(input.employeeId)||!text(input.idempotencyKey)||text(input.reason).length<8||!email(input.actorId)||!Number.isSafeInteger(input.accessEndsAt)||input.accessEndsAt<=0||!Number.isFinite(new Date(input.accessEndsAt).getTime()))throw refuse("Employee, explicit access cutoff, request key and a clear reason are required",400);
  const prior=await db.prepare("SELECT * FROM employee_exit_cases WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
@@ -49,6 +51,7 @@ export async function requestEmployeeExit(db:D1Database,input:{employeeId:string
  await transaction(db,writes);return{case:await exitCase(db,id),duplicatePrevented:false};
 }
 export async function approveEmployeeExit(db:D1Database,input:{caseId:string;actorId:string}){
+ humanReviewer(input.actorId);
  await ensureEmployeeExitTables(db);const row=await exitCase(db,input.caseId);
  if(!email(input.actorId)||[email(row.requested_by),email(row.identity_email)].includes(email(input.actorId)))throw refuse("Exit approval requires an independent authorized staff member");
  if(row.status==="approved")return{case:row,duplicatePrevented:true};if(row.status!=="pending")throw refuse("Only a pending exit can be approved");
@@ -57,6 +60,7 @@ export async function approveEmployeeExit(db:D1Database,input:{caseId:string;act
  writes.push(db.prepare("UPDATE employee_exit_cases SET status='approved',approved_by=?,approved_at=?,updated_at=? WHERE id=?").bind(email(input.actorId),now,now,row.id),event(db,text(row.id),"approved",email(input.actorId),{accessEndsAt:row.access_ends_at},now));await transaction(db,writes);return{case:await exitCase(db,input.caseId),duplicatePrevented:false};
 }
 export async function cancelEmployeeExit(db:D1Database,input:{caseId:string;actorId:string;reason:string}){
+ humanReviewer(input.actorId);
  await ensureEmployeeExitTables(db);const row=await exitCase(db,input.caseId),now=Date.now();
  if(text(input.reason).length<8||!email(input.actorId)||email(input.actorId)===email(row.identity_email))throw refuse("A clear cancellation reason and another authorized actor are required",400);
  if(!["pending","approved"].includes(text(row.status))||(row.status==="approved"&&Number(row.access_ends_at)<=now))throw refuse("A due or executed exit cannot be cancelled; use a governed rehire review");
@@ -102,15 +106,17 @@ export async function employeeExitSettlement(db:D1Database,caseId:string){
   if(!verifiedRuns.has(text(result.run_id))){verifiedRuns.add(text(result.run_id));try{await completePayrollResults(db,(await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(result.run_id).first<Row>())!);}catch(error){if(!(error instanceof Response))throw error;blockers.push("payroll_evidence_requires_review");}}
   if(Number(result.net_pay)>0&&!instructions.some(i=>i.result_id===result.id&&i.status==="paid_sandbox"&&i.environment==="sandbox"&&Number(i.amount_paise)===Math.round(Number(result.net_pay)*100)&&/^pout_[A-Za-z0-9]+$/.test(text(i.provider_payout_id))))blockers.push("sandbox_salary_confirmation_required");
  }
- const incentives=await optionalRows(db,"employee_incentive_results","SELECT r.id,r.status,r.approved_amount FROM employee_incentive_results r WHERE r.employee_id=? AND r.status IN ('calculated','approved','held') AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_result' AND l.source_id=r.id) ORDER BY r.id",[employeeId]);
- const sales=await optionalRows(db,"sales_incentive_period_results","SELECT r.id,r.status,r.approved_total FROM sales_incentive_period_results r WHERE r.employee_id IN (?,?) AND r.status IN ('draft','approved') AND NOT EXISTS(SELECT 1 FROM sales_incentive_payroll_links l WHERE l.result_id=r.id) ORDER BY r.id",[employeeId,identityEmail]);
+ const incentives=await optionalRows(db,"employee_incentive_results","SELECT r.id,r.status,r.approved_amount FROM employee_incentive_results r WHERE r.employee_id=? AND (r.status IN ('calculated','held','disputed') OR (r.status='approved' AND r.approved_amount<>0)) AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_result' AND l.source_id=r.id) ORDER BY r.id",[employeeId]);
+ const sales=await optionalRows(db,"sales_incentive_period_results","SELECT r.id,r.status,r.approved_total FROM sales_incentive_period_results r WHERE r.employee_id IN (?,?) AND (r.status='draft' OR (r.status='approved' AND r.approved_total<>0)) AND NOT EXISTS(SELECT 1 FROM sales_incentive_payroll_links l WHERE l.result_id=r.id) ORDER BY r.id",[employeeId,identityEmail]);
+ const reversals=await optionalRows(db,"incentive_reversals","SELECT v.id,v.result_id,v.amount,v.status FROM incentive_reversals v JOIN employee_incentive_results r ON r.id=v.result_id WHERE r.employee_id=? AND v.status='approved' AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_reversal' AND l.source_id=v.id) ORDER BY v.id",[employeeId]);
  const advances=await optionalRows(db,"salary_advances","SELECT id,status,amount FROM salary_advances WHERE employee_id=? AND status IN ('pending','active') ORDER BY id",[employeeId]);
- if(incentives.length||sales.length)blockers.push("outstanding_incentive_review");if(advances.length)blockers.push("outstanding_advance_review");
- const sources={employeeId,cutoff,payroll,instructions,incentives,sales,advances,handover};
+ if(incentives.length||sales.length||reversals.length)blockers.push("outstanding_incentive_review");if(advances.length)blockers.push("outstanding_advance_review");
+ const sources={employeeId,cutoff,payroll,instructions,incentives,sales,reversals,advances,handover};
  const serialized=JSON.stringify(sources),bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(serialized)),revision=Array.from(new Uint8Array(bytes),v=>v.toString(16).padStart(2,"0")).join("");
  return{caseId,employeeId,caseStatus:text(row.status),accessEndsAt:cutoff,blockers:[...new Set(blockers)],ready:!blockers.length,revision,sources,settledEvidenceCurrent:row.status==="settled_sandbox"&&row.settlement_snapshot_json===serialized&&!blockers.length,livePaymentConfirmed:false,policyReviewRequired:true,environment:"sandbox" as const};
 }
 export async function closeEmployeeExitSandbox(db:D1Database,input:{caseId:string;revision:string;clearanceReference:string;policyReviewReference:string;actorId:string;confirmSandbox:boolean}){
+ humanReviewer(input.actorId);
  await ensureEmployeeExitTables(db);const row=await exitCase(db,input.caseId);
  if(input.confirmSandbox!==true||text(input.clearanceReference).length<8||text(input.policyReviewReference).length<8||!email(input.actorId))throw refuse("Explicit sandbox confirmation, handover/assets clearance and Finance policy-review references are required",400);
  if([email(row.identity_email),email(row.requested_by)].includes(email(input.actorId)))throw refuse("Final settlement review requires an independent authorized Finance actor");
@@ -126,12 +132,13 @@ export async function closeEmployeeExitSandbox(db:D1Database,input:{caseId:strin
  if(await tableExists(db,"unified_cases"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM unified_cases WHERE lower(owner_email)=? AND status NOT IN ('resolved','closed','cancelled'))",[row.identity_email]);
  appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id WHERE e.employment_status='active' AND v.manager_employee_id=? AND v.effective_until IS NULL)",[row.employee_id]);
  if(await tableExists(db,"salary_advances"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM salary_advances WHERE employee_id=? AND status IN ('pending','active'))",[row.employee_id]);
- if(await tableExists(db,"employee_incentive_results"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM employee_incentive_results r WHERE r.employee_id=? AND r.status IN ('calculated','approved','held') AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_result' AND l.source_id=r.id))",[row.employee_id]);
- if(await tableExists(db,"sales_incentive_period_results"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM sales_incentive_period_results r WHERE r.employee_id IN (?,?) AND r.status IN ('draft','approved') AND NOT EXISTS(SELECT 1 FROM sales_incentive_payroll_links l WHERE l.result_id=r.id))",[row.employee_id,row.identity_email]);
+ if(await tableExists(db,"employee_incentive_results"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM employee_incentive_results r WHERE r.employee_id=? AND (r.status IN ('calculated','held','disputed') OR (r.status='approved' AND r.approved_amount<>0)) AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_result' AND l.source_id=r.id))",[row.employee_id]);
+ if(await tableExists(db,"sales_incentive_period_results"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM sales_incentive_period_results r WHERE r.employee_id IN (?,?) AND (r.status='draft' OR (r.status='approved' AND r.approved_total<>0)) AND NOT EXISTS(SELECT 1 FROM sales_incentive_payroll_links l WHERE l.result_id=r.id))",[row.employee_id,row.identity_email]);
+ if(await tableExists(db,"incentive_reversals"))appendPayrollCheck(db,writes,"NOT EXISTS(SELECT 1 FROM incentive_reversals v JOIN employee_incentive_results r ON r.id=v.result_id WHERE r.employee_id=? AND v.status='approved' AND NOT EXISTS(SELECT 1 FROM incentive_payroll_links l WHERE l.source_type='incentive_reversal' AND l.source_id=v.id))",[row.employee_id]);
  writes.push(db.prepare("UPDATE employee_exit_cases SET status='settled_sandbox',clearance_reference=?,settlement_reference=?,settlement_snapshot_json=?,settled_by=?,settled_at=?,updated_at=? WHERE id=?").bind(input.clearanceReference.trim(),input.policyReviewReference.trim(),JSON.stringify(review.sources),email(input.actorId),now,now,row.id),event(db,text(row.id),"sandbox_review_closed",email(input.actorId),{revision:review.revision,livePaymentConfirmed:false},now));
  await transaction(db,writes);return{review:await employeeExitSettlement(db,input.caseId),duplicatePrevented:false};
 }
-export async function employeeExitDirectory(db:D1Database){await ensureEmployeeExitTables(db);const rows=(await db.prepare("SELECT id,employee_id,identity_email,access_ends_at,reason,status,requested_by,approved_by,created_at,revoked_at,settled_at FROM employee_exit_cases ORDER BY created_at DESC,id LIMIT 201").all<Row>()).results;return{cases:rows.slice(0,200),hasMore:rows.length>200,livePaymentEnabled:false};}
+export async function employeeExitDirectory(db:D1Database){await ensureEmployeeExitTables(db);const rows=(await db.prepare("SELECT id,employee_id,identity_email,access_ends_at,reason,status,requested_by,approved_by,created_at,revoked_at,settled_at FROM employee_exit_cases ORDER BY created_at DESC,id LIMIT 201").all<Row>()).results;return{asOf:Date.now(),cases:rows.slice(0,200),hasMore:rows.length>200,livePaymentEnabled:false};}
 export async function runApprovedEmployeeExitSweep(db:D1Database,asOf=Date.now()){
  if(!await tableExists(db,"employee_exit_cases"))return{processed:0,reviewRequired:[],enabled:false};
  const due=(await db.prepare("SELECT id FROM employee_exit_cases WHERE status='approved' AND access_ends_at<=? ORDER BY access_ends_at,id LIMIT 20").bind(asOf).all<Row>()).results;

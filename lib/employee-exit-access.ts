@@ -5,5 +5,5 @@ type Row = Record<string, unknown>;
 export async function employeeAccessHasEnded(db:D1Database,email:string,asOf=Date.now()) {
   const exists=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='employee_exit_cases'").first<Row>();
   if(!exists)return false;
-  return Boolean(await db.prepare("SELECT id FROM employee_exit_cases WHERE identity_email=? AND status IN ('approved','access_revoked','settled_sandbox') AND access_ends_at<=? LIMIT 1").bind(email.trim().toLowerCase(),asOf).first<Row>());
+  return Boolean(await db.prepare("SELECT id FROM employee_exit_cases WHERE (identity_email=? OR user_id IN (SELECT id FROM app_users WHERE lower(email)=?)) AND status IN ('approved','access_revoked','settled_sandbox') AND access_ends_at<=? LIMIT 1").bind(email.trim().toLowerCase(),email.trim().toLowerCase(),asOf).first<Row>());
 }

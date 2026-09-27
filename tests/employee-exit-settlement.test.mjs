@@ -83,3 +83,48 @@ test('manager handover must be resolved in the existing People records before fi
  review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.equal(review.ready,true);
 });
 test('ordinary onboarding cannot silently reactivate a completed exit',async t=>{const w=await world(t);await executed(w);const {onboardEmployeeJourney}=await import('../lib/employee-journey-onboarding.ts');await assert.rejects(()=>onboardEmployeeJourney(w.db,{employeeCode:'EXIT-QA',displayName:'Synthetic Exit Employee',workEmail:'employee@exit.test',joinedAt:START,structureId:w.structureId,roleCode:'associate',reason:'Must not bypass rehire',actorId:'hr@exit.test'}),/explicit rehire/);assert.equal(w.sqlite.prepare("SELECT status FROM app_users WHERE id='EXIT-USER'").get().status,'disabled');});
+
+test('automated actor strings cannot approve an exit or sign off settlement',async t=>{
+ const w=await world(t),pending=await request(w);
+ await assert.rejects(()=>exit.approveEmployeeExit(w.db,{caseId:pending.case.id,actorId:'system:employee-exit'}));
+ const proof=await paidExit(w),review=await exit.employeeExitSettlement(w.db,proof.caseId);
+ await assert.rejects(()=>settle(w,review,{actorId:'system:settlement'}));
+});
+function incentiveFixture(w,id='INC-EXIT',amount=0,status='approved'){
+ w.sqlite.prepare("INSERT INTO employee_incentive_results (id,period_id,employee_id,employee_email,source_fact_run_id,metric_value,calculated_amount,approved_amount,status,evidence_json,approved_by,approved_at) VALUES (?,'PERIOD-TEST',?,'employee@exit.test','FACT-TEST',0,?,?,?,'{}','finance@exit.test',1)").run(id,w.employeeId,amount,amount,status);
+}
+test('approved zero-value incentives need no fabricated payroll payment',async t=>{
+ const w=await world(t),proof=await paidExit(w);incentiveFixture(w);
+ w.sqlite.prepare("INSERT INTO sales_incentive_period_results (id,employee_id,month_start,daily_accrued_total,monthly_achieved_value,monthly_bonus,approved_total,status,generated_by,generated_at,approved_by,approved_at) VALUES ('ZERO-SALES','employee@exit.test','2026-09-01',0,0,0,0,'approved','maker@exit.test',1,'finance@exit.test',2)").run();
+ const review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.equal(review.ready,true,JSON.stringify(review.blockers));
+});
+test('an unconsumed approved incentive reversal blocks final settlement',async t=>{
+ const w=await world(t),proof=await paidExit(w);incentiveFixture(w,'INC-REVERSED',100,'reversed');
+ w.sqlite.prepare("INSERT INTO incentive_reversals (id,result_id,amount,reason,status,effective_at,actor_id,created_at) VALUES ('REV-EXIT','INC-REVERSED',100,'Synthetic adjustment','approved',?,'finance@exit.test',1)").run(CUTOFF-1);
+ const review=await exit.employeeExitSettlement(w.db,proof.caseId);assert.equal(review.ready,false);assert.ok(review.blockers.includes('outstanding_incentive_review'));
+ await assert.rejects(()=>settle(w,review));
+});
+test('renaming a login cannot escape an approved exit bound to the same user id',async t=>{
+ const w=await world(t);await approved(w);w.sqlite.prepare("UPDATE app_users SET email='renamed@exit.test' WHERE id='EXIT-USER'").run();
+ assert.equal(await access.employeeAccessHasEnded(w.db,'renamed@exit.test'),true);
+});
+
+async function leadFixture(w){
+ const lead=await import('../lib/lead-assignment-governance.ts');await lead.ensureLeadAssignmentTables(w.db);
+ w.sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,area TEXT,email TEXT)");
+ w.sqlite.prepare("INSERT INTO crm_contacts VALUES ('EXIT-CUSTOMER','Synthetic customer','9000000000','Bengaluru','customer@exit.test')").run();
+ w.sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,recycle_cycle,opt_out,created_at,updated_at,lifecycle_state) VALUES ('EXIT-LEAD','EXIT-CUSTOMER','Website','Grooming','Unassigned','Manager','active','day_1',1,?,?,?,0,0,?,?,'new')").run(CUTOFF,CUTOFF+600000,CUTOFF+1800000,CUTOFF,CUTOFF);
+ const policy=await lead.saveLeadAssignmentPolicy(w.db,{name:'Synthetic exit routing',teamCode:'sales',serviceCodes:['grooming'],cityIds:['Bengaluru'],maxActiveWorkload:10,continuityEnabled:true,requireShift:false,fallbackQueue:'exit-review',effectiveFrom:START,reason:'Synthetic assignment test',actorId:'manager@exit.test'});
+ await lead.activateLeadAssignmentPolicy(w.db,{policyId:policy.id,approvalReference:'TEST-ONLY',reason:'Synthetic routing approval',actorId:'manager@exit.test'});
+ await lead.saveLeadAssignmentMember(w.db,{employeeEmail:'employee@exit.test',teamCode:'sales',serviceCodes:['grooming'],cityIds:['Bengaluru'],active:true,actorId:'manager@exit.test'});
+ return()=>lead.assignLead(w.db,{leadId:'EXIT-LEAD',idempotencyKey:'EXIT-ASSIGN',reason:'new_lead',actorId:'system:lead-routing',asOf:CUTOFF});
+}
+test('lead selection respects approved exit cutoff before the employee row is disabled',async t=>{
+ const w=await world(t),assign=await leadFixture(w);await approved(w);const r=await assign();assert.equal(r.assignment.employee_email,null);assert.equal(r.assignment.fallback_queue,'exit-review');
+});
+test('exit approved during lead selection blocks the assignment write atomically',async t=>{
+ const w=await world(t),assign=await leadFixture(w),pending=await request(w),original=w.db.prepare;let injected=0;
+ w.db.prepare=sql=>{const statement=original(sql);if(!/^INSERT INTO lead_assignments /.test(sql))return statement;
+  const wrap=s=>new Proxy(s,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='run')return async()=>{if(!injected++){await exit.approveEmployeeExit(w.db,{caseId:pending.case.id,actorId:'manager@exit.test'});}return target.run();};return Reflect.get(target,key);}});return wrap(statement);};
+ await assert.rejects(assign);assert.equal(injected,1);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM lead_assignments').get().n,0);assert.equal(w.sqlite.prepare("SELECT owner FROM lead_work_items WHERE id='EXIT-LEAD'").get().owner,'Unassigned');
+});

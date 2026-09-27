@@ -3,7 +3,7 @@ import {approveEmployeeExit,cancelEmployeeExit,closeEmployeeExitSandbox,employee
 const text=(v:unknown)=>typeof v==="string"?v.trim():"";
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{"cache-control":"no-store"}});
 export async function GET(request:Request){
- try{const actor=await authorize(request,"people.manage"),db=await database(),id=new URL(request.url).searchParams.get("caseId");
+ try{const actor=await authorize(request,"people.manage"),db=await database(),id=new URL(request.url).searchParams.get("caseId");requirePermission(actor,"users.manage");
   if(id){requirePermission(actor,"payroll.view");return json({data:await employeeExitSettlement(db,id)});}
   const data=await employeeExitDirectory(db);return json({data:{...data,capabilities:{identity:actor.permissions.includes("*")||actor.permissions.includes("users.manage"),settlement:actor.permissions.includes("*")||actor.permissions.includes("payroll.approve"),salaryView:actor.permissions.includes("*")||actor.permissions.includes("payroll.view")}}});
  }catch(error){return authError(error,"Unable to load employee exit review");}
@@ -13,6 +13,7 @@ export async function POST(request:Request){
   const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)return json({error:"Cross-origin employee exit write blocked"},403);
   const actor=await authorize(request,"people.manage"),body=await request.json().catch(()=>null);
   if(!body||typeof body!=="object"||Array.isArray(body))return json({error:"An employee exit action is required"},400);
+  requirePermission(actor,"users.manage");
   const db=await database(),action=text(body.action),caseId=text(body.caseId),actorId=actor.email;
   if(action==="settle_sandbox"){
    requirePermission(actor,"payroll.approve");requirePermission(actor,"payroll.view");
