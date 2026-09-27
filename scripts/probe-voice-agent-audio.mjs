@@ -1,13 +1,11 @@
 // Synthetic caller audio through real agent ASR/LLM/TTS; never uses a telephony dial API.
 import {setTimeout as delay} from 'node:timers/promises';
+import {readFile} from 'node:fs/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 import {audioFormat,audioProof} from './voice-audio-proof.mjs';
 const before=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'probe-agent-socket'});
 const key=process.env.ELEVENLABS_API_KEY,agentId=process.env.GROOMING_AGENT_ID,callId=process.env.UAT_VOICE_CALL_ID;
 const headers={'xi-api-key':key};
-const ar=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers,signal:AbortSignal.timeout(30000)});
-const agent=await ar.json();if(!ar.ok)throw Error('Agent configuration unavailable');
-const voice=agent.conversation_config?.tts?.voice_id;if(!voice)throw Error('Agent voice is not configured');
 const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(agentId),{headers,signal:AbortSignal.timeout(30000)});
 const signed=await sr.json();if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
 console.log('::add-mask::'+signed.signed_url);
@@ -20,10 +18,8 @@ await new Promise((resolve,reject)=>{
  async function sendAudio(){
   if(sending||!format||!greeting)return;sending=true;
   // Fixed informational utterance: this probe cannot confirm or create a sale.
-  const text='What grooming services do you offer for my dog Bruno?';
-  const r=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'?output_format='+encodeURIComponent(format),{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({text,model_id:'eleven_multilingual_v2'}),signal:AbortSignal.timeout(30000)});
-  if(!r.ok)throw Error('Synthetic caller speech generation failed: '+r.status);
-  const audio=Buffer.from(await r.arrayBuffer()),f=audioFormat(format);
+  if(format!=='pcm_16000')throw Error('Caller fixture requires negotiated pcm_16000 input');
+  const audio=await readFile(new URL('./fixtures/amaya-caller.pcm',import.meta.url)),f=audioFormat(format);
   if(audio.length<1000||audio.length>f.rate*f.bytesPerSample*30)throw Error('Invalid synthetic caller audio size');
   await delay(1500);started=Date.now();
   const chunk=Math.floor(f.rate*f.bytesPerSample/10),input=Buffer.concat([audio,Buffer.alloc(f.rate*f.bytesPerSample*2,f.silence)]);
