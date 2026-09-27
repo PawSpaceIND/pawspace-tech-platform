@@ -40,6 +40,7 @@ const DDL_SOURCES = [
   read("lib/lead-callback-governance.ts"),
   read("lib/daily-revenue-opportunity-governance.ts"),
   read("lib/grooming-payment-reconciliation.ts"), // payment_reconciliation_records (leaderboard collections/refunds)
+  read("lib/lead-assignment-governance.ts"), // lead_assignments (an associate's own-lead worklist and lead-work check)
 ];
 
 // crm_contacts is extended after its legacy CREATE TABLE statement. Keep this SQLite fixture in
@@ -277,7 +278,7 @@ test("real execution: revenue-crm lead list joins CRM contact names and log_atte
   );
   db.prepare(findStatement(crmRoute, "INSERT INTO lead_work_items")).run("LEAD-9001", "CRM-R9001", "Website", "Grooming", "Neha", "Sales Manager", now, now + 600000, now + 1800000, 0, 0, now + 600000, now, now);
 
-  const leads = db.prepare(findStatement(revenueRoute, "FROM lead_work_items l LEFT JOIN crm_contacts c")).all("newest", "newest", 80, 0);
+  const leads = db.prepare(findStatement(revenueRoute, "FROM lead_work_items l LEFT JOIN crm_contacts c")).all("", "", "", "newest", "newest", 80, 0);
   assert.equal(leads.length, 1);
   assert.equal(leads[0].customer_name, "Join Test", "the staff list shows the real joined customer name");
 

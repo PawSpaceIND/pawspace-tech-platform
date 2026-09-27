@@ -68,6 +68,57 @@ test("an untouched routed lead does breach, escalate and move on - the clock is 
 
 const get = (email, query = "") => engine.GET(asActor(email, `/api/revenue-crm${query}`));
 
+const OTHER_REP = "rep.other@pawspace.test";
+function leadOwnedBy(w, leadId, owner) {
+  const now = Date.now();
+  w.sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,stage,owner,created_at,updated_at) VALUES (?,?,?,'New lead',?,?,?)").run(`CU-${leadId}`, "Someone Else's Lead", "9000000999", owner, now, now);
+  w.sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES (?,?,'Website','Boarding',?,'Sales Manager','active','day_1',1,?,?,?,?,?)").run(leadId, `CU-${leadId}`, owner, now, now + 600_000, now + 1_800_000, now, now);
+}
+
+// Round-2 staging (P1): the seeded sales executives are role `associate`, and every lead action in the
+// Revenue & CX engine required customers.manage - "Log RNR call", "Connected" and callbacks all 403.
+test("a sales associate logs calls and callbacks on the leads assigned to them - past the gateway too - and not on anyone else's", async () => {
+  const w = await salesWorld();
+  await seedActors(w.sqlite, w.db, [{ id: "U-OTHER", email: OTHER_REP, role: "associate" }]);
+  const mine = await publicEnquiry("9000000951");
+  assert.equal(w.sqlite.prepare("SELECT owner FROM lead_work_items WHERE id=?").get(mine).owner, REP);
+  leadOwnedBy(w, "LEAD-OTHER-1", OTHER_REP);
+
+  const { requiredPermission } = await import("../lib/api-gateway.ts");
+  const gate = (body) => requiredPermission(asActor(REP, "/api/revenue-crm", { method: "POST", body: JSON.stringify(body) }));
+  for (const action of ["log_attempt", "schedule_callback", "complete_callback"]) assert.equal(await gate({ action, leadId: mine }), "customers.view", action);
+  for (const action of ["advance_day", "run_sla", "mark_cold", "generate_daily_100", "create_ticket"]) assert.equal(await gate({ action, leadId: mine }), "customers.manage", action);
+
+  const logged = await read(await post(REP, { action: "log_attempt", leadId: mine, channel: "call", outcome: "Connected", note: "Spoke to the customer" }));
+  assert.equal(logged.status, 200, JSON.stringify(logged.body));
+  assert.equal(logged.body.sla, "met", "the associate's own call meets the first-response clock");
+  const scheduled = await read(await post(REP, { action: "schedule_callback", leadId: mine, requestedAt: Date.now() + 3_600_000, reason: "Customer asked for a call after work" }));
+  assert.equal(scheduled.status, 200, JSON.stringify(scheduled.body));
+  const completed = await read(await post(REP, { action: "complete_callback", callbackId: scheduled.body.callback.id, outcome: "connected" }));
+  assert.equal(completed.status, 200, JSON.stringify(completed.body));
+
+  const refused = await read(await post(REP, { action: "log_attempt", leadId: "LEAD-OTHER-1", channel: "call", outcome: "Opt-out" }));
+  assert.equal(refused.status, 403, "not their lead");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM lead_attempts WHERE lead_id='LEAD-OTHER-1'").get().n, 0, "and nothing was written");
+  assert.equal((await post(REP, { action: "schedule_callback", leadId: "LEAD-OTHER-1", requestedAt: Date.now() + 3_600_000, reason: "Not my lead to promise a call on" })).status, 403);
+  for (const body of [{ action: "advance_day", leadId: mine }, { action: "run_sla" }, { action: "mark_cold", leadId: mine }]) assert.equal((await post(REP, body)).status, 403, `${body.action} stays a manager action`);
+
+  assert.equal((await post(MANAGER, { action: "log_attempt", leadId: "LEAD-OTHER-1", channel: "call", outcome: "RNR" })).status, 200, "a manager works any lead");
+});
+
+test("an associate's worklist is the leads assigned to them; a manager sees every open lead", async () => {
+  const w = await salesWorld();
+  await seedActors(w.sqlite, w.db, [{ id: "U-OTHER", email: OTHER_REP, role: "associate" }]);
+  const mine = await publicEnquiry("9000000952");
+  leadOwnedBy(w, "LEAD-OTHER-2", OTHER_REP);
+  const own = await read(await get(REP));
+  assert.equal(own.status, 200);
+  assert.deepEqual(own.body.leads.map((lead) => lead.id), [mine]);
+  assert.equal(own.body.leadsPage.total, 1);
+  const everyone = await read(await get(MANAGER));
+  assert.deepEqual(new Set(everyone.body.leads.map((lead) => lead.id)), new Set([mine, "LEAD-OTHER-2"]));
+});
+
 /** Older leads straight into the tables the engine reads, the way months of enquiries accumulate. */
 function seedOlderLeads(w, count, { status = "active", prefix = "LEAD-OLD" } = {}) {
   const now = Date.now();

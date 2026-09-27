@@ -1,9 +1,10 @@
 import {recordLeadAttempt} from "../../../lib/lead-attempt";
 import{governedJsonError}from"../../../lib/governed-http-error";
 import{salesIncentivePeriodTruth}from"../../../lib/daily-incentive-accrual";
-import { authError, authorize, database } from "../../../lib/server-auth";
+import { authError, authFailure, authorize, database } from "../../../lib/server-auth";
+import{hasPermission}from"../../../lib/platform-security";
 import { scheduleLeadCallback, completeLeadCallback, dueLeadCallbacks, ensureLeadCallbackTables ,LeadCallbackRefusal} from "../../../lib/lead-callback-governance";
-import { checkRnrAutoReassignment } from "../../../lib/lead-assignment-governance";
+import { checkRnrAutoReassignment, ensureLeadAssignmentTables } from "../../../lib/lead-assignment-governance";
 import { leadSlaPerformanceForOwner, recordLeadSlaAction, rotateLeadAssignmentAndSla, runLeadSlaGovernance } from "../../../lib/lead-sla-governance";
 import { generateRealDailyOpportunities, currentDailyRevenueTarget, setDailyRevenueTarget } from "../../../lib/daily-revenue-opportunity-governance";
 import{assignLeadOwner}from"../../../lib/lead-owner-identity";
@@ -122,6 +123,34 @@ async function seedUat(db:Db){
 }
 
 /**
+ * Sales associates work the leads assigned to them. [round-2 L1: an associate got 403 on every lead action]
+ *
+ * The seeded sales executives hold the `associate` role ("Handles assigned customers and bookings with
+ * masked contact data"), the roster assigns leads to them and this screen already lists their own due
+ * callbacks - yet every write here required customers.manage, so they could not log the call they had
+ * just made. The per-lead work actions now follow the rule this platform already applies to an assigned
+ * rep's own lead (lead-sla-governance record_action, lead-assignment accept_assignment): customers.view
+ * plus the lead being assigned to the actor right now (lead_work_items.owner or the current canonical
+ * assignment). Everything else - Rotate day, SLA and reopening runs, targets, opportunities, tickets,
+ * the accounts close and ops - still requires customers.manage, and creating a CRM lead (POST /api/crm)
+ * is unchanged.
+ */
+const LEAD_WORK_ACTIONS=new Set(["log_attempt","schedule_callback","complete_callback"]);
+async function leadAssignedTo(db:Db,leadId:string,email:string){
+ await ensureLeadAssignmentTables(db);
+ const row=await db.prepare("SELECT l.owner,a.employee_email FROM lead_work_items l LEFT JOIN lead_assignments a ON a.lead_id=l.id AND a.status='current' WHERE l.id=?").bind(leadId).first<Row>();
+ const actor=email.trim().toLowerCase();
+ return Boolean(row)&&[row?.owner,row?.employee_email].some(value=>String(value??"").trim().toLowerCase()===actor);
+}
+async function leadWorkActor(request:Request,db:Db,body:Row,action:string){
+ const actor=await authorize(request,"customers.view");
+ if(hasPermission(actor.permissions,"customers.manage"))return actor;
+ const leadId=action==="complete_callback"?String((await db.prepare("SELECT lead_id FROM lead_callbacks WHERE id=?").bind(String(body.callbackId||"")).first<Row>().catch(()=>null))?.lead_id||""):String(body.leadId||"");
+ if(!leadId||!(await leadAssignedTo(db,leadId,actor.email)))throw authFailure("Only the lead's assigned owner or a sales manager can work this lead",403);
+ return actor;
+}
+
+/**
  * The lead worklist. [round-2: new leads missing from the Revenue & CX engine]
  *
  * It used to be `ORDER BY breached first, manager_alert_at LIMIT 80` over every lead ever created: the 80
@@ -134,16 +163,17 @@ async function seedUat(db:Db){
 const LEAD_PAGE_DEFAULT=80,LEAD_PAGE_MAX=100;
 function leadWorklistQuery(url:URL){const sort=url.searchParams.get("leadSort")==="due"?"due" as const:"newest" as const;const limit=Math.min(LEAD_PAGE_MAX,Math.max(1,Math.trunc(Number(url.searchParams.get("leadLimit")||LEAD_PAGE_DEFAULT))||LEAD_PAGE_DEFAULT));const page=Math.max(0,Math.trunc(Number(url.searchParams.get("leadPage")||0))||0);return{sort,limit,page};}
 
-export async function GET(request:Request){try{const actor=await authorize(request,"customers.view"),db=await database();await ensureTables(db);await ensureLeadCallbackTables(db);const canSeeAllCallbacks=["founder","superuser","admin","manager"].includes(actor.roleCode);const dueCallbacks=await dueLeadCallbacks(db,{ownerEmail:canSeeAllCallbacks?undefined:actor.email,lookAheadMinutes:120});const worklist=leadWorklistQuery(new URL(request.url));const date=dayKey(),dailyTarget=await currentDailyRevenueTarget(db,date),[opportunities,leads,leadTotals,tickets,leaderboard,reopens,deliveries,reports,closure,ops]=await Promise.all([
+export async function GET(request:Request){try{const actor=await authorize(request,"customers.view"),db=await database();await ensureTables(db);await ensureLeadCallbackTables(db);const canSeeAllCallbacks=["founder","superuser","admin","manager"].includes(actor.roleCode);const dueCallbacks=await dueLeadCallbacks(db,{ownerEmail:canSeeAllCallbacks?undefined:actor.email,lookAheadMinutes:120});const worklist=leadWorklistQuery(new URL(request.url)),ownLeadsOnly=hasPermission(actor.permissions,"customers.manage")?"":actor.email.trim().toLowerCase();await ensureLeadAssignmentTables(db);const date=dayKey(),dailyTarget=await currentDailyRevenueTarget(db,date),[opportunities,leads,leadTotals,tickets,leaderboard,reopens,deliveries,reports,closure,ops]=await Promise.all([
   db.prepare("SELECT o.*,c.name customer_name,c.pet_names FROM revenue_opportunities o LEFT JOIN crm_contacts c ON c.id=o.customer_id WHERE o.opportunity_date=? ORDER BY o.rank LIMIT 100").bind(date).all(),
   // No contact number: the cards never show one, and the list is readable by every customers.view role.
-  db.prepare("SELECT l.*,c.name customer_name,c.pet_names FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.status NOT IN ('closed','converted','cold_exhausted') ORDER BY CASE WHEN ?='due' THEN CASE l.status WHEN 'sla_breached' THEN 0 WHEN 'cold' THEN 2 ELSE 1 END ELSE 0 END,CASE WHEN ?='due' THEN CASE WHEN l.first_action_at IS NULL THEN l.first_action_due_at ELSE COALESCE(l.next_action_at,l.manager_alert_at) END ELSE 0 END,l.created_at DESC,l.id LIMIT ? OFFSET ?").bind(worklist.sort,worklist.sort,worklist.limit,worklist.page*worklist.limit).all(),
-  db.prepare("SELECT COUNT(*) open_leads,COALESCE(SUM(CASE WHEN status='sla_breached' THEN 1 ELSE 0 END),0) breaches,COALESCE(SUM(CASE WHEN call_attempts>=4 AND whatsapp_attempts>=4 THEN 1 ELSE 0 END),0) rnr_complete FROM lead_work_items WHERE status NOT IN ('closed','converted','cold_exhausted')").first<Row>(),
+  // An associate's worklist is the leads assigned to them - the only ones they may work (LEAD_WORK_ACTIONS).
+  db.prepare("SELECT l.*,c.name customer_name,c.pet_names FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.status NOT IN ('closed','converted','cold_exhausted') AND (?='' OR lower(l.owner)=? OR EXISTS (SELECT 1 FROM lead_assignments a WHERE a.lead_id=l.id AND a.status='current' AND lower(a.employee_email)=?)) ORDER BY CASE WHEN ?='due' THEN CASE l.status WHEN 'sla_breached' THEN 0 WHEN 'cold' THEN 2 ELSE 1 END ELSE 0 END,CASE WHEN ?='due' THEN CASE WHEN l.first_action_at IS NULL THEN l.first_action_due_at ELSE COALESCE(l.next_action_at,l.manager_alert_at) END ELSE 0 END,l.created_at DESC,l.id LIMIT ? OFFSET ?").bind(ownLeadsOnly,ownLeadsOnly,ownLeadsOnly,worklist.sort,worklist.sort,worklist.limit,worklist.page*worklist.limit).all(),
+  db.prepare("SELECT COUNT(*) open_leads,COALESCE(SUM(CASE WHEN l.status='sla_breached' THEN 1 ELSE 0 END),0) breaches,COALESCE(SUM(CASE WHEN l.call_attempts>=4 AND l.whatsapp_attempts>=4 THEN 1 ELSE 0 END),0) rnr_complete FROM lead_work_items l WHERE l.status NOT IN ('closed','converted','cold_exhausted') AND (?='' OR lower(l.owner)=? OR EXISTS (SELECT 1 FROM lead_assignments a WHERE a.lead_id=l.id AND a.status='current' AND lower(a.employee_email)=?))").bind(ownLeadsOnly,ownLeadsOnly,ownLeadsOnly).first<Row>(),
   db.prepare("SELECT t.*,c.name customer_name FROM customer_experience_tickets t LEFT JOIN crm_contacts c ON c.id=t.customer_id ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,t.sla_due_at LIMIT 80").all(),
   db.prepare("SELECT * FROM sales_performance_daily WHERE performance_date=? ORDER BY rank").bind(date).all(),db.prepare("SELECT * FROM lead_reopen_events ORDER BY reopened_at DESC LIMIT 30").all(),db.prepare("SELECT * FROM communication_delivery_events ORDER BY created_at DESC LIMIT 30").all(),db.prepare("SELECT * FROM command_report_runs ORDER BY generated_at DESC LIMIT 12").all(),db.prepare("SELECT * FROM finance_day_closures WHERE closure_date=?").bind(date).first<Row>(),db.prepare("SELECT * FROM ops_completion_controls ORDER BY escalation_level DESC,scheduled_end_at").all()]);
   const opp=rows(opportunities),leadRows=rows(leads),ticketRows=rows(tickets),leaderRows=rows(leaderboard),opsRows=rows(ops),close=closure||{closure_date:date,status:"open",checklist_json:"{}",variance_amount:0,escalation_level:0};return Response.json({current:{name:actor.name,email:actor.email,role:actor.roleCode},sourceStatus:{records:"persistent UAT database",wati:"adapter ready · credentials locked",sms:"adapter ready · credentials locked",telephony:"adapter ready · credentials locked",automation:"active in UAT"},stats:{revenue100:opp.length,expectedRevenue:opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0),dailyTarget,targetProgressPercent:dailyTarget>0?Math.round((opp.reduce((sum,row)=>sum+Number(row.expected_revenue||0),0)/dailyTarget)*100):0,slaBreaches:Number(leadTotals?.breaches||0),rnrComplete:Number(leadTotals?.rnr_complete||0),openLeads:Number(leadTotals?.open_leads||0),openTickets:ticketRows.filter(row=>row.status!=="resolved").length,escalatedTickets:ticketRows.filter(row=>Number(row.escalation_level)>0&&row.status!=="resolved").length,reopened:rows(reopens).length,overdueCallbacks:dueCallbacks.filter(c=>c.overdue).length,teamRevenue:leaderRows.reduce((sum,row)=>sum+Number(row.eligible_revenue||0),0),teamIncentive:leaderRows.reduce((sum,row)=>sum+Number(row.incentive_amount||0),0),opsBlocked:opsRows.filter(row=>row.status!=="completed").length},opportunities:opp,leads:leadRows,leadsPage:{sort:worklist.sort,page:worklist.page,limit:worklist.limit,total:Number(leadTotals?.open_leads||0),hasMore:(worklist.page+1)*worklist.limit<Number(leadTotals?.open_leads||0)},tickets:ticketRows,leaderboard:leaderRows,reopens:rows(reopens),deliveries:rows(deliveries),reports:rows(reports),dueCallbacks,closure:{...close,checklist:JSON.parse(String(close.checklist_json||"{}"))},ops:opsRows});}catch(error){return authError(error,"Unable to load Revenue CRM engine")}}
 
-export async function POST(request:Request){try{const actor=await authorize(request,"customers.manage"),db=await database();await ensureTables(db);const body=await request.json() as Row,action=String(body.action||""),now=Date.now();
+export async function POST(request:Request){try{const db=await database(),body=await request.json().catch(()=>({})) as Row,action=String(body.action||""),now=Date.now();const actor=LEAD_WORK_ACTIONS.has(action)?await leadWorkActor(request,db,body,action):await authorize(request,"customers.manage");await ensureTables(db);
   if(action==="seed_uat"){const{env}=await import("cloudflare:workers");const runtime=env as unknown as{PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};if(String(runtime.PAWSPACE_UAT_LOGIN||"")!=="on"||String(runtime.PAWSPACE_UAT_SIGNING_KEY||"").length<32)return Response.json({error:"UAT seed is unavailable"},{status:404});await seedUat(db);return Response.json({ok:true,seeded:true,uatOnly:true})}
   if(action==="refresh_leaderboard"){await refreshLeaderboard(db);return Response.json({ok:true,refreshed:true})}
   if(action==="generate_daily_100")return Response.json({ok:true,...await generateDaily100(db,actor.email)});
