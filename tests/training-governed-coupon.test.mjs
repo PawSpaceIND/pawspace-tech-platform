@@ -276,3 +276,25 @@ test("the Training review step quotes the coupon for the programme and forwards 
   assert.match(confirm, /couponQuoteId:quote\.couponQuoteId\|\|undefined/, "the booking redeems the coupon quote the server quote bound");
   assert.doesNotMatch(confirm, /couponCode:couponCode\|\|undefined/, "the booking records the server quote's coupon, not screen state");
 });
+
+
+test("coupon API refuses unreadable customer history with safe 503 and no quote", async t => {
+  const ctx = await customerWorld(t);
+  const positive = await couponQuote(ctx, "UATCARE100");
+  assert.equal(positive.status, 200, JSON.stringify(positive.body));
+  const before = count(ctx, "SELECT COUNT(*) n FROM coupon_quotes");
+  const prepare = ctx.db.prepare.bind(ctx.db);
+  t.mock.method(ctx.db, "prepare", sql => {
+    const wrap = statement => new Proxy(statement, { get(target, key) {
+      if (key === "bind") return (...args) => wrap(target.bind(...args));
+      if (key === "first" && sql.includes("SELECT COUNT(*) count FROM canonical_bookings")) return async () => { throw new Error("private-customer-history-db-detail"); };
+      return target[key];
+    }});
+    return wrap(prepare(sql));
+  });
+  const response = await couponQuote(ctx, "UATCARE100");
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error, "Coupon customer eligibility is temporarily unavailable");
+  assert.doesNotMatch(JSON.stringify(response.body), /private-customer-history|SELECT|SQLITE/);
+  assert.equal(count(ctx, "SELECT COUNT(*) n FROM coupon_quotes"), before);
+});
