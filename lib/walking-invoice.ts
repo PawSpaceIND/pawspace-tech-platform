@@ -1,4 +1,5 @@
 import{gstOn}from"./gst-method";
+import{originalInvoiceFor}from"./credit-notes";
 type Row=Record<string,unknown>;
 
 export async function ensureWalkingInvoiceTables(db:D1Database){await db.batch([
@@ -34,6 +35,11 @@ export async function issueWalkingInvoice(db:D1Database,input:{bookingId:string;
   if(existing)return{bookingId:input.bookingId,invoiceNumber:String(existing.invoice_number),status:String(existing.status),duplicatePrevented:true,liveTaxFiling:false};
   const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='dog_walking'").bind(input.bookingId).first<Row>();
   if(!booking)throw new Response("Canonical Dog Walking booking not found",{status:404});
+  // Owner decision, 27 Sept 2026: this per-vertical numbering is retired wherever the TK Petcare tax invoice already
+  // covers the booking (it is issued automatically at completion). One customer-facing invoice per booking, not two.
+  // Checked only once the booking is confirmed to be a Dog Walking one, so another service's invoice never leaks here.
+  const canonical=await originalInvoiceFor(db,input.bookingId);
+  if(canonical?.kind==="finance_invoice")throw new Response(`This booking already has TK Petcare tax invoice ${canonical.number}. A separate Dog Walking invoice is not issued alongside it.`,{status:409});
   const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
   if(!payment||String(payment.status)!=="paid")throw new Response("Dog Walking invoice cannot be issued until every session is sandbox-paid",{status:409});
   const cityId=String(booking.city_id),policy=await db.prepare("SELECT * FROM walking_tax_policies WHERE city_id=?").bind(cityId).first<Row>();

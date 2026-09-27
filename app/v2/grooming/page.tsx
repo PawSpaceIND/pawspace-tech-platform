@@ -268,7 +268,7 @@ export default function V2GroomingPage() {
 
 
   return (
-    <main className={styles.page} aria-busy={checkoutBusy}>
+    <main className={styles.page} aria-busy={checkoutBusy} data-v2-hero-page="true">
       <div className={styles.ambient} />
       <header className={styles.nav}>
         <Link href="/v2" className={styles.brand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /></Link>

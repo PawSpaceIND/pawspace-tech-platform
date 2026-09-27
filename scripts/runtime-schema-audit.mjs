@@ -30,8 +30,13 @@ function sqlArguments(source) {
 }
 
 function createdTables(sql) {
-  return [...sql.matchAll(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"\[]?([A-Za-z_][A-Za-z0-9_]*)/gi)]
+  const created = [...sql.matchAll(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"\[]?([A-Za-z_][A-Za-z0-9_]*)/gi)]
     .map((match) => match[1].toLowerCase());
+  // A migration that renames a table into a new name (to rebuild it under a loosened constraint, e.g.) brings
+  // that name into existence just as surely as CREATE TABLE does - the renamed-to name inherits its consumer's schema.
+  const renamedTo = [...sql.matchAll(/\bALTER\s+TABLE\s+[`"\[]?[A-Za-z_][A-Za-z0-9_]*[`"\]]?\s+RENAME\s+TO\s+[`"\[]?([A-Za-z_][A-Za-z0-9_]*)/gi)]
+    .map((match) => match[1].toLowerCase());
+  return [...created, ...renamedTo];
 }
 
 function cteNames(sql) {
