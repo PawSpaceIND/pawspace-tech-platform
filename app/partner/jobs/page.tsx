@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import{partnerServiceTime}from"../../../lib/partner-job-time";
 import{partnerJobWorkspaceHref}from"../../../lib/partner-job-workspace";
 import{acceptAvailable,describeProviderOffer}from"../../../lib/provider-offer-copy";
 
@@ -10,7 +11,7 @@ type Feed={providerId:string;needsAction:Job[];today:Job[];upcoming:Job[];comple
 const nounFor=(service:string)=>service==="boarding"?"stay":service==="pet_taxi"?"trip":"booking";
 
 const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",line:"var(--paw-line)",orange:"var(--paw-gold)",gold:"var(--paw-gold)",green:"#3ecf8e",red:"#ff9a9a"};
-const when=(v:string)=>v?v.slice(0,16).replace("T"," "):"—";
+const when=partnerServiceTime;
 const statusColor=(s:string)=>s==="completed"?C.green:s==="awaiting_host_acceptance"?C.orange:["cancelled","host_unavailable"].includes(s)?C.red:C.gold;
 const safetyLabel=(value:string)=>value.startsWith("grooming_safety:")?value.slice("grooming_safety:".length).replace(/_/g," "):value.replace(/_/g," ");
 
@@ -35,9 +36,9 @@ export default function PartnerJobsPage(){
     finally{setBusy(false);}
   }
 
-  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18,marginTop:14};
+  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18,marginTop:14};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:C.gold,margin:"24px 0 0"};
-  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:"calc(9px * var(--paw-radius-scale))",border:"none",background:C.green,color:"var(--paw-link)",fontWeight:700,cursor:"pointer"};
+  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.green,color:"#01261F",fontWeight:700,cursor:"pointer"};
   const chip=(color:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:"rgba(255,255,255,0.06)",color});
 
   const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
@@ -69,7 +70,7 @@ export default function PartnerJobsPage(){
     </div>
   </>;
 
-  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"var(--paw-font, system-ui)"}}>
+  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif"}}>
     <div style={{maxWidth:1000,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/partner/workspace" style={{color:C.dim,textDecoration:"none"}}>← Partner workspace</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · PARTNER JOB FEED</p>
@@ -81,7 +82,7 @@ export default function PartnerJobsPage(){
 
       {feed?<>
         {section("Needs action",feed.needsAction,"Nothing needs your action right now.",true)}
-        {section("Today",feed.today,"No jobs today.")}
+        {section("Today & overdue",feed.today,"No jobs due today or overdue.")}
         {section("Upcoming",feed.upcoming,"Nothing scheduled yet.")}
         {section("Completed (last 14 days)",feed.completed,"No recently completed jobs.")}
         {feed.needsOperations?.length?section("Needs Operations",feed.needsOperations,"",true):null}

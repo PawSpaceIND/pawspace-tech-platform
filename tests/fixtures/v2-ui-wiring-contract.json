@@ -90,11 +90,11 @@
         "conditions": 6
       },
       "app/funeral-memorial/page.tsx": {
-        "sha256": "78ae3e74f3367899e5dad92585f2d0ec4b8e44846279a31daf99d997a44a7aef",
-        "functions": 32,
-        "declarations": 23,
+        "sha256": "ae201391a60876327c8edecf740895f094fae9f7023a4fa696aa016038799818",
+        "functions": 38,
+        "declarations": 26,
         "interactionProps": 35,
-        "conditions": 7
+        "conditions": 9
       },
       "app/v2/page.tsx": {
         "sha256": "0318d6c582f37f3239c8f99f104314597d374470a6ae6b8dd4f103f56085757e",

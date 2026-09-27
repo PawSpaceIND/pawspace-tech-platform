@@ -24,7 +24,7 @@ function world() {
   );`);
   const now = Date.now() - 10 * 60_000;
   h.sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BOOK-RECON','CUS-RECON','confirmed','blr','grooming',1,'INR',?)").run(now);
-  h.sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-RECON','BOOK-RECON','CUS-RECON',1,'INR','netbanking','prepaid','created','uat_sandbox','{}',?,?)").run(now, now);
+  h.sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-RECON','BOOK-RECON','CUS-RECON',1,'INR','upi','prepaid','created','uat_sandbox','{}',?,?)").run(now, now);
   h.sqlite.prepare(`INSERT INTO payment_intents
     (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,gateway_order_id,
      gross_service_value_paise,platform_fee_paise,partner_earning_paise,tds_paise,gst_paise,commission_rate_bps,commission_rate_version,tax_rule_version,commercial_snapshot_json,version,created_at,updated_at)
@@ -50,7 +50,7 @@ test("provider API capture reconciliation closes a missing-webhook capture witho
     assert.match(String(url), /\/v1\/orders\/order_reconcile_1\/payments$/);
     return new Response(JSON.stringify({ items: [{
       id: "pay_reconcile_1", order_id: "order_reconcile_1", status: "captured", captured: true,
-      amount: 100, currency: "INR", notes: { booking_id: "BOOK-RECON", payment_id: "PAY-RECON" },
+      amount: 100, currency: "INR", method: "netbanking", notes: { booking_id: "BOOK-RECON", payment_id: "PAY-RECON" },
     }] }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
@@ -60,6 +60,7 @@ test("provider API capture reconciliation closes a missing-webhook capture witho
     assert.equal(sweep.failed, 0);
     assert.equal(h.row("SELECT state,gateway_payment_id FROM payment_intents WHERE id='PI-RECON'")?.state, "CAPTURED");
     assert.equal(h.row("SELECT status FROM booking_payments WHERE id='PAY-RECON'")?.status, "captured");
+    assert.equal(h.row("SELECT method FROM booking_payments WHERE id='PAY-RECON'")?.method,"netbanking","verified provider method replaces the checkout preference");
     const event = h.row("SELECT signature_verified,processing_status,detail_json FROM payment_gateway_events WHERE gateway_payment_id='pay_reconcile_1'");
     assert.equal(Number(event?.signature_verified), 0, "provider API evidence must never masquerade as a signed webhook");
     assert.equal(event?.processing_status, "processed");
@@ -69,7 +70,8 @@ test("provider API capture reconciliation closes a missing-webhook capture witho
     assert.equal(outbox?.status, "SUCCEEDED", "provider reconciliation must complete the existing post-commit saga in the same run");
     assert.equal(h.scalar("SELECT COUNT(*) value FROM booking_lifecycle_events WHERE booking_id='BOOK-RECON' AND event_type='payment_captured'"), 1);
     assert.equal(h.row("SELECT actor_id FROM booking_lifecycle_events WHERE booking_id='BOOK-RECON' AND event_type='payment_captured'")?.actor_id, "razorpay_provider_api");
-    const collectionJournal = h.sqlite.prepare("SELECT account_code,debit,credit,payment_id FROM finance_journal_entries WHERE source_type='online_payment_captured' AND payment_id='PAY-RECON' ORDER BY id").all();
+    const collectionJournal = h.sqlite.prepare("SELECT account_code,debit,credit,payment_id,payment_method FROM finance_journal_entries WHERE source_type='online_payment_captured' AND payment_id='PAY-RECON' ORDER BY id").all();
+    assert.ok(collectionJournal.every(row=>row.payment_method==="netbanking"));
     assert.equal(collectionJournal.length, 2, "a verified capture must create exactly two finance journal lines");
     assert.equal(collectionJournal.reduce((n, row) => n + Number(row.debit || 0), 0), 1);
     assert.equal(collectionJournal.reduce((n, row) => n + Number(row.credit || 0), 0), 1);
