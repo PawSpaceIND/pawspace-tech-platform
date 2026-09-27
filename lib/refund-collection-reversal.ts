@@ -66,7 +66,7 @@ export async function postBookingRefundCollectionReversal(db:Db,input:BookingRef
 const refundCaseTableReady=new WeakSet<Db>();
 /**
  * booking_refund_cases with the columns an approved service refund writes. The DDL the Boarding module has
- * always run, shared so Pet Sitting and Pet Taxi can open the same canonical cases.
+ * always run, shared so Pet Sitting, Pet Taxi and Training can open the same canonical cases.
  */
 export async function ensureCanonicalRefundCaseTable(db:Db){
   if(refundCaseTableReady.has(db))return;
@@ -76,7 +76,7 @@ export async function ensureCanonicalRefundCaseTable(db:Db){
 }
 
 /**
- * An approved service refund (Boarding, Pet Sitting, Pet Taxi) is also a canonical refund case, so BCC, the
+ * An approved service refund (Boarding, Pet Sitting, Pet Taxi, Training) is also a canonical refund case, so BCC, the
  * Finance queues, P&L and the refund webhook see it (STAFF-05). Staff approval already happened, so the case
  * is approved, but it is not automatic: nothing is sent to the gateway on its own. Same id as the service's
  * refund ledger row.
@@ -143,6 +143,10 @@ export async function recordStaffConfirmedRefund(db:Db,input:{refundCaseId:strin
   const paymentId=text(row.payment_id)||text(row.canonical_payment_id),bookingId=text(row.booking_id),amount=money(row.amount);
   if(!paymentId)throw new Error("Refund recording requires the canonical payment");
   if(amount<=0)throw new Error("Refund recording requires a positive refund amount");
+  // One reference is one refund, across every service: the reversal is keyed by it, so a second refund recorded
+  // under the same reference would be counted as already posted and never reach the books.
+  const reused=await db.prepare("SELECT id FROM booking_refund_cases WHERE gateway_reference=? AND id<>? LIMIT 1").bind(reference,text(row.id)).first<Row>();
+  if(reused)throw new Error("Refund reference was already used for another refund");
   const now=Date.now();
   // A booking paid outside the gateway has no reconciliation row yet; its collected cash still bounds the refund.
   const capturedCurrent=row.captured_amount!=null?money(row.captured_amount):Number.isFinite(input.collected)?money(input.collected):await collectedForBooking(db,bookingId);

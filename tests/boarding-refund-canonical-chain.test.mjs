@@ -10,14 +10,18 @@
  * These tests drive the real Boarding finance module and the real refund webhook against one database.
  *
  * Pet Sitting and Pet Taxi had the same gap after the Boarding fix (round-2 transactions audit): their
- * record_refund only flipped the service ledger row to sandbox_recorded. The last section drives the real
+ * record_refund only flipped the service ledger row to sandbox_recorded. The later sections drive the real
  * Sitting and Taxi finance modules through the same canonical chain.
+ *
+ * Training had it too: a completed sandbox refund only moved training_refund_instructions and the
+ * cancellation case. The last section drives the real Training cancellation module through the chain, and
+ * pins that one refund reference is one refund across every service.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { seedSittingBooking } from "./helpers/stay-harness.mjs";
+import { seedCanonicalStayBooking, seedSittingBooking } from "./helpers/stay-harness.mjs";
 import { seedCanonicalTrip } from "./helpers/taxi-harness.mjs";
 
 installWorkersHooks("__BOARDING_REFUND_DB__", "__BOARDING_REFUND_ENV__");
@@ -305,4 +309,132 @@ test("a Pet Taxi ride paid through the sandbox trip ledger refunds against what 
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='refund_overage'").get().n, 0);
   const reconciled = await act("reconcile", APPROVER);
   assert.deepEqual({ paid: reconciled.paidTotal, refund: reconciled.refundTotal, net: reconciled.netPaidTotal }, { paid: 449, refund: 149, net: 300 }, "the Taxi reconciliation is unchanged");
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Training: a completed sandbox refund reaches the same books.
+
+const TRAINING_REFUND = 12000; // 6 undelivered sessions of a ₹20000, 10-session package
+
+/**
+ * A 10-session Training programme paid in full (₹20000 captured through Razorpay) with 4 sessions delivered,
+ * and the customer's cancellation calculated under the published no-fee policy. Seeded into `world` when
+ * given, so two services' refunds share one set of books.
+ */
+async function paidTraining(world = null, { bookingId = "BK-TRAIN-R", customerId = "CUS-TRAIN-R" } = {}) {
+  const sqlite = world?.sqlite ?? new DatabaseSync(":memory:");
+  const db = world?.db ?? makeD1(sqlite);
+  if (!world) {
+    globalThis.__BOARDING_REFUND_DB__ = db;
+    sqlite.exec(STAGING_REFUND_CASES);
+  }
+  // The Training finance read model the approval refreshes reads the payment environment.
+  globalThis.__BOARDING_REFUND_ENV__ = { APP_ENV: "staging", PAWSPACE_PAYMENT_ENV: "sandbox" };
+  const programmeId = `PRG-${bookingId}`, paymentId = `PAY-${bookingId}`, now = Date.now();
+  seedCanonicalStayBooking(sqlite, { bookingId, customerId, providerId: "trainer-1", serviceCode: "dog_training", packageCode: "plan-10", packageName: "10 Session Doorstep Obedience",
+    groupId: `GRP-${bookingId}`, reservationId: `RES-${bookingId}`, amount: 20000, amountDueNow: 20000, status: "in_progress" });
+  const cancel = await import("../lib/training-cancellation.ts");
+  await (await import("../lib/training-programme.ts")).ensureTrainingProgrammeTables(db);
+  await cancel.ensureTrainingCancellationTables(db);
+  const reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
+  await reconciliation.ensurePaymentReconciliationTables(db);
+  sqlite.prepare("UPDATE booking_payments SET gateway='razorpay_sandbox' WHERE id=?").run(paymentId);
+  sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,'razorpay','sandbox',20000,20000,0,'INR','captured','matched',0,?,?)").run(paymentId, bookingId, `evt-capture-${bookingId}`, now);
+  sqlite.prepare("INSERT INTO training_programmes (id,booking_id,customer_id,provider_id,city_id,zone_id,plan_code,plan_name,pet_ids_json,status,total_sessions,completed_sessions,created_at,updated_at) VALUES (?,?,?,'trainer-1','blr','blr-east','plan-10','10 Session Doorstep Obedience','[\"PET-1\"]','scheduled',10,4,?,?)")
+    .run(programmeId, bookingId, customerId, now, now);
+  for (let session = 1; session <= 10; session++) {
+    sqlite.prepare("INSERT INTO training_sessions (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,'trainer-1',?,?,?,?,?)")
+      .run(`SES-${bookingId}-${session}`, programmeId, bookingId, `RES-${bookingId}-${session}`, session, new Date(now + session * 86_400_000).toISOString(), new Date(now + session * 86_400_000 + 3_600_000).toISOString(), session <= 4 ? "completed" : "locked", now, now);
+  }
+  await cancel.saveTrainingCancellationPolicy(db, { cityId: "blr", feeType: "none", feeValue: 0, noShowTreatment: "refundable", effectiveFrom: "2026-01-01", reason: "Published no-fee Training policy", actorId: APPROVER });
+  const requested = await cancel.requestTrainingCancellation(db, { bookingId, reason: "Customer relocating out of the city", idempotencyKey: `cancel-${bookingId}`, actorId: REQUESTER });
+  const approve = () => cancel.approveTrainingCancellation(db, { caseId: requested.caseId, reason: "Relocation confirmed by Finance", actorId: APPROVER });
+  const refund = (nextStatus, providerReference) => cancel.updateTrainingRefundSandbox(db, { caseId: requested.caseId, nextStatus, providerReference, reason: `Sandbox refund ${nextStatus}`, actorId: APPROVER });
+  const instruction = () => sqlite.prepare("SELECT id,status,provider_reference FROM training_refund_instructions WHERE case_id=?").get(requested.caseId);
+  return { sqlite, db, reconciliation, bookingId, paymentId, caseId: requested.caseId, approve, refund, instruction };
+}
+
+test("an approved Training refund opens its canonical case and completing it reaches the books", async () => {
+  const { sqlite, bookingId, paymentId, caseId, approve, refund, instruction } = await paidTraining();
+  const approved = await approve();
+  assert.equal(approved.approvedRefund, TRAINING_REFUND);
+  const refundId = instruction().id;
+  const refundCase = sqlite.prepare("SELECT status,amount,payment_id,requested_by,approved_by,policy_json FROM booking_refund_cases WHERE id=?").get(refundId);
+  assert.ok(refundCase, "approval must open the canonical refund case with the Training refund instruction's id");
+  assert.deepEqual({ status: refundCase.status, amount: Number(refundCase.amount), paymentId: refundCase.payment_id, requestedBy: refundCase.requested_by, approvedBy: refundCase.approved_by },
+    { status: "approved", amount: TRAINING_REFUND, paymentId, requestedBy: REQUESTER, approvedBy: APPROVER });
+  const policy = JSON.parse(refundCase.policy_json);
+  assert.deepEqual({ service: policy.service, automatic: policy.automatic, cancellationRequestId: policy.cancellationRequestId }, { service: "dog_training", automatic: false, cancellationRequestId: caseId },
+    "nothing sends it to the gateway on its own");
+
+  await refund("processing_sandbox");
+  assert.equal(sqlite.prepare("SELECT status FROM booking_refund_cases WHERE id=?").get(refundId).status, "approved", "a refund still processing is not in the books");
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), 0);
+  const completed = await refund("completed_sandbox", "rfnd_training_1");
+  assert.equal(completed.status, "refund_completed_sandbox");
+  assert.deepEqual({ ...instruction() }, { id: refundId, status: "completed_sandbox", provider_reference: "rfnd_training_1" });
+  assert.equal(sqlite.prepare("SELECT status FROM training_cancellation_cases WHERE id=?").get(caseId).status, "refund_completed_sandbox");
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId, reference: "rfnd_training_1", amount: TRAINING_REFUND, paymentStatus: "partially_refunded", service: "dog_training" });
+});
+
+test("a Training refund approved before canonical cases existed still reaches the books, once", async () => {
+  const { sqlite, db, reconciliation, bookingId, paymentId, approve, refund, instruction } = await paidTraining();
+  await approve();
+  const refundId = instruction().id;
+  sqlite.prepare("DELETE FROM booking_refund_cases WHERE id=?").run(refundId); // approved by the previous build
+  await refund("processing_sandbox");
+  await refund("completed_sandbox", "rfnd_training_2");
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId, reference: "rfnd_training_2", amount: TRAINING_REFUND, paymentStatus: "partially_refunded", service: "dog_training" });
+
+  await assert.rejects(() => refund("completed_sandbox", "rfnd_training_2"), (error) => { assert.equal(error.status, 409, "a completed refund cannot complete again"); return true; });
+  const late = await reconciliation.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-training-refund-late", eventType: "refund.processed", bookingId,
+    amountSubunits: TRAINING_REFUND * 100, gatewayRefundId: "rfnd_training_2", payloadHash: "sha256:train-late", signatureVerified: true,
+  });
+  assert.equal(late.ignored, true, `the gateway's own refund.processed is recognised as already counted: ${JSON.stringify(late)}`);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n, 1, "one reversal");
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), TRAINING_REFUND);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions").get().n, 0, "no orphan refund, no overage");
+});
+
+test("a Training refund the gateway already settled is marked completed without a second reversal", async () => {
+  const { sqlite, db, reconciliation, bookingId, paymentId, approve, refund, instruction } = await paidTraining();
+  await approve();
+  await refund("processing_sandbox");
+  const settled = await reconciliation.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-training-dashboard", eventType: "refund.processed", bookingId,
+    amountSubunits: TRAINING_REFUND * 100, gatewayRefundId: "rfnd_training_dash", payloadHash: "sha256:train-dash", signatureVerified: true,
+  });
+  assert.equal(settled.status, "processed", "the gateway refund settles the approved Training case");
+  await refund("completed_sandbox", "rfnd_training_dash");
+  assert.equal(instruction().status, "completed_sandbox", "the Training instruction must say completed, not stay behind the canonical case");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n, 1, "one reversal");
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), TRAINING_REFUND);
+});
+
+test("one refund reference is one refund across services: reusing a Pet Sitting refund's reference for Training is refused and nothing moves", async () => {
+  const sitting = await paidSitting();
+  await sitting.act("approve_cancel", APPROVER, { approvedRefundAmount: 1500 });
+  await sitting.act("record_refund", APPROVER, { refundReference: "rfnd_shared" });
+  const { sqlite, bookingId, paymentId, caseId, approve, refund, instruction } = await paidTraining(sitting, { bookingId: "BK-TRAIN-S", customerId: "CUS-TRAIN-S" });
+  await approve();
+  await refund("processing_sandbox");
+  const refundId = instruction().id;
+
+  // The reversal is keyed by the reference: under a reused one it would count as already posted and the
+  // Training refund would never reach the books.
+  await assert.rejects(() => refund("completed_sandbox", "rfnd_shared"), (error) => {
+    assert.equal(error.status, 409, "a reference another refund already used is refused");
+    return true;
+  });
+  assert.equal(instruction().status, "processing_sandbox", "the Training instruction does not move");
+  assert.equal(sqlite.prepare("SELECT status FROM training_cancellation_cases WHERE id=?").get(caseId).status, "refund_processing_sandbox");
+  assert.deepEqual({ ...sqlite.prepare("SELECT status,gateway_reference FROM booking_refund_cases WHERE id=?").get(refundId) }, { status: "approved", gateway_reference: null });
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), 0);
+  assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(paymentId).status, "captured");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n, 1, "only the Sitting refund is in the books");
+
+  await refund("completed_sandbox", "rfnd_training_3");
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId, reference: "rfnd_training_3", amount: TRAINING_REFUND, paymentStatus: "partially_refunded", service: "dog_training" });
+  assertRefundInBooks(sqlite, { bookingId: sitting.bookingId, paymentId: sitting.paymentId, refundId: sitting.sqlite.prepare("SELECT id FROM sitting_refund_ledger").get().id, reference: "rfnd_shared", amount: 1500, paymentStatus: "partially_refunded", service: "pet_sitting" });
 });
