@@ -10,6 +10,7 @@
  * Browser-safe.
  */
 import type {BoardingStay} from "./boarding-stay-client";
+import {bookingPaymentHref} from "./customer-booking-safety";
 
 type StayView=Pick<BoardingStay,"status"|"booking_id"|"events"|"payment_status"|"booking_status"|"amount_due_now">;
 
@@ -23,8 +24,7 @@ export function inr(amount:number){return new Intl.NumberFormat("en-IN",{style:"
 
 /** The booking's own page: its status, and its payment step while payment is due. */
 export function boardingBookingHref(bookingId:string,routeScope:"legacy"|"v2"="legacy",pay=false){
- const id=encodeURIComponent(bookingId);
- return routeScope==="v2"?`/v2/booking?bookingId=${id}`:`/mobile-app/booking-confirmation?bookingId=${id}${pay?"&payment=resume":""}`;
+ return bookingPaymentHref(bookingId,routeScope==="v2",pay);
 }
 
 /** The amount still to pay before the host can accept, or null when this stay is not waiting for a payment. */

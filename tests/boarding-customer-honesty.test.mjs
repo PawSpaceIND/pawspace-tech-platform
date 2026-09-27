@@ -25,6 +25,7 @@ const requests = await import("../lib/boarding-host-requests.ts");
 const view = await import("../lib/boarding-customer-stay-view.ts");
 const { BoardingStaySummary, BoardingHostRequests } = await import("../app/mobile-app/boarding-customer-stay-panel.tsx");
 const { default: StayCarePaymentGate } = await import("../app/mobile-app/stay-care-payment-gate.tsx");
+const { SittingBookingStatus } = await import("../app/mobile-app/sitting-customer-panel.tsx");
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;|&#39;/g, "'").replace(/\s+/g, " ").trim();
 const JARGON = /canonical|governed|Awaiting Host Acceptance|tracked separately|commercial quote required/i;
@@ -120,4 +121,13 @@ test("BRD-10: Request extension says why it is closed before the host accepts", 
   assert.match(panel, /extensionClosed=boardingExtensionClosedReason\(stay\)/);
   assert.match(panel, /<span>STAY EXTENSION<\/span><h4>No automatic charge or date change<\/h4>\{extensionClosed&&<p className=\{styles\.hint\}>\{extensionClosed\}<\/p>\}/);
   assert.match(panel, /disabled=\{busy==="extension"\|\|!requestedEnd\|\|Boolean\(extensionClosed\)\}/);
+});
+
+test("an unpaid Pet Sitting booking's manage page also says Payment pending and links to its payment step", () => {
+  const status = (props) => renderToStaticMarkup(React.createElement(SittingBookingStatus, { bookingId: "PS-UAT-SIT-1", ...props }));
+  const unpaid = status({ status: "payment_pending", routeScope: "v2" });
+  assert.equal(text(unpaid), "Payment pending Complete the payment to send this booking to your sitter. Complete payment");
+  assert.match(unpaid, /<a[^>]*href="\/v2\/booking\?bookingId=PS-UAT-SIT-1"[^>]*>Complete payment<\/a>/);
+  assert.match(status({ status: "payment_pending" }), /href="\/mobile-app\/booking-confirmation\?bookingId=PS-UAT-SIT-1&amp;payment=resume"/);
+  assert.equal(status({ status: "assigned", routeScope: "v2" }), "<p>assigned</p>", "a paid booking keeps its status and no payment link");
 });
