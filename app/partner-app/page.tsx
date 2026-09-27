@@ -827,5 +827,3 @@ function PartnerMobileAppContent() {
     </section>
   </main>;
 }
-
-[executed on device: Karthikeyans-Laptop.local (659a160b-d7d3-43ad-8a1c-18339671c5e2)]
