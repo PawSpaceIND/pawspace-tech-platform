@@ -102,7 +102,7 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
  if(!String(body.message||"").trim()&&!String(body.choiceId||"").trim())return json({error:"Message is required"},400);
  // A visitor confirming their number: the code they typed is exchanged for a signed-in session, and the AI books.
  const pending=await loadWebChatBotState(db,ref);
- if(pending.verify&&!String(body.choiceId||"").trim())return verifyVisitor(db,request,ref,pending,String(body.message||"").trim());
+ if(pending.verify)return verifyVisitor(db,request,ref,pending,{message:String(body.message||"").trim(),tapped:String(body.choiceId||"").trim()});
  // "Start over" resets the flow, not the visitor: the lead created for their number stays theirs.
  const crossSell=await activeCrossSell(db,{channel:"website"});
  const turn=await advanceBotSession(db,ref,previous=>{const result=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false,crossSell});return previous.leadId&&!result.state.leadId?{...result,state:{...result.state,leadId:previous.leadId}}:result;});
@@ -167,13 +167,14 @@ async function offerVisitorVerification(db:D1Database,request:Request,ref:string
  * session; the response carries the session cookie and the AI's booking turn, and the page continues as
  * the customer. A code that no longer works gets a fresh one; anything else steps out of verification.
  */
-async function verifyVisitor(db:D1Database,request:Request,ref:string,state:Awaited<ReturnType<typeof loadWebChatBotState>>,message:string){
- const verify=state.verify!,sessionKey=ref.slice("public:".length);
+async function verifyVisitor(db:D1Database,request:Request,ref:string,state:Awaited<ReturnType<typeof loadWebChatBotState>>,reply:{message:string;tapped:string}){
+ const verify=state.verify!,sessionKey=ref.slice("public:".length),message=reply.message||reply.tapped;
  const leave=async(text:string)=>{await advanceBotSession(db,ref,current=>({state:{...current,verify:undefined}}));return json({data:{mode:"public",sessionKey,display:message,bot:{text,choices:[{id:"start_over",label:"Start over"}],inputHint:"Type a message"},event:"none",ai:null,lead:null}});};
  if(!message)return json({error:"Message is required"},400);
- const code=message.replace(/\s+/g,"");
+ // A button tap (Start over, a service) is never a code: it steps out of verification.
+ const code=reply.tapped?"":reply.message.replace(/\s+/g,"");
  if(!/^\d{6}$/.test(code)){
-  if(/^(resend|new code|send again)$/i.test(message)){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`Sent again. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
+  if(!reply.tapped&&/^(resend|new code|send again)$/i.test(message)){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`Sent again. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
   return leave("No problem - your enquiry is with the PawSpace team, who will contact you shortly. Ask me anything else, or start over.");
  }
  const{env}=await import("cloudflare:workers");

@@ -99,6 +99,15 @@ test("a visitor who finishes the bot's questions is sent a code and, typing it, 
   assert.equal(again.data.verified, undefined);
 });
 
+test("a button tap while a code is pending steps out of verification instead of being read as a code", async () => {
+  await world();
+  const sessionKey = "visitor-verify-session-0003";
+  await completeGroomingFlow(sessionKey);
+  const out = await (await call({ sessionKey, choiceId: "start_over", message: "" })).json();
+  assert.equal(out.data.verified, undefined);
+  assert.match(out.data.bot.text, /with the PawSpace team/);
+});
+
 test("a visitor who answers something else steps out of verification and keeps the lead", async () => {
   await world();
   const sessionKey = "visitor-verify-session-0002";
