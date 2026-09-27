@@ -63,6 +63,54 @@ export async function postBookingRefundCollectionReversal(db:Db,input:BookingRef
   return{handled:true as const,refundCaseId:text(row.refund_case_id),posted};
 }
 
+const refundCaseTableReady=new WeakSet<Db>();
+/**
+ * booking_refund_cases with the columns an approved service refund writes. The DDL the Boarding module has
+ * always run, shared so Pet Sitting and Pet Taxi can open the same canonical cases.
+ */
+export async function ensureCanonicalRefundCaseTable(db:Db){
+  if(refundCaseTableReady.has(db))return;
+  await db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  for(const column of["approved_by TEXT","policy_json TEXT NOT NULL DEFAULT '{}'"])await db.prepare(`ALTER TABLE booking_refund_cases ADD COLUMN ${column}`).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+  refundCaseTableReady.add(db);
+}
+
+/**
+ * An approved service refund (Boarding, Pet Sitting, Pet Taxi) is also a canonical refund case, so BCC, the
+ * Finance queues, P&L and the refund webhook see it (STAFF-05). Staff approval already happened, so the case
+ * is approved, but it is not automatic: nothing is sent to the gateway on its own. Same id as the service's
+ * refund ledger row.
+ */
+export function approvedServiceRefundCase(db:Db,input:{refundId:string;bookingId:string;amount:number;reason:string;requestedBy:string;approvedBy:string;service:string;cancellationRequestId:string;policySource:string;now:number}){
+  return db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,policy_json,created_at,updated_at) VALUES (?,?,(SELECT id FROM booking_payments WHERE booking_id=?),?,?,'approved',?,?,?,?,?)")
+    .bind(input.refundId,input.bookingId,input.bookingId,input.amount,input.reason,input.requestedBy,input.approvedBy,JSON.stringify({automatic:false,requiresApproval:false,policySource:input.policySource,service:input.service,cancellationRequestId:input.cancellationRequestId}),input.now,input.now);
+}
+
+/** The service refund ledgers whose staff-typed reference records a refund. */
+export type ServiceRefundLedger="boarding_refund_ledger"|"sitting_refund_ledger"|"taxi_refund_ledger";
+const SERVICE_REFUND_LEDGERS:ReadonlySet<string>=new Set<ServiceRefundLedger>(["boarding_refund_ledger","sitting_refund_ledger","taxi_refund_ledger"]);
+
+/**
+ * Records a service's pending refund under the reference Finance typed, through the same canonical chain for
+ * every service: the canonical case (opened now for a refund approved before cases existed) is processed,
+ * the collection ledger reverses the collection, reconciliation, the booking payment and the timeline
+ * follow, and the service ledger row turns sandbox_recorded in the same batch. Pet Sitting and Pet Taxi
+ * refunds used to stop at their own ledger, so the books, reconciliation and the payment status never
+ * saw them. `collected` is the service's own collected figure for a booking with no reconciliation row.
+ */
+export async function recordServiceLedgerRefund(db:Db,input:{ledger:ServiceRefundLedger;service:string;refund:Row;cancellation:Row|null;reference:string;actorId:string;policySource:string;fallbackReason:string;collected?:number;now:number}){
+  if(!SERVICE_REFUND_LEDGERS.has(input.ledger))throw new Error("Unknown service refund ledger");
+  await ensureCanonicalRefundCaseTable(db);
+  const refundId=text(input.refund.id),createdBy=text(input.refund.created_by);
+  await approvedServiceRefundCase(db,{refundId,bookingId:text(input.refund.booking_id),amount:Number(input.refund.amount),reason:text(input.cancellation?.decision_reason)||input.fallbackReason,
+    requestedBy:text(input.cancellation?.requested_by)||createdBy,approvedBy:text(input.cancellation?.decision_by)||createdBy,service:input.service,
+    cancellationRequestId:text(input.refund.cancellation_request_id),policySource:input.policySource,now:input.now}).run();
+  try{
+    return await recordStaffConfirmedRefund(db,{refundCaseId:refundId,reference:input.reference,actorId:input.actorId,collected:input.collected,
+      statements:[db.prepare(`UPDATE ${input.ledger} SET status='sandbox_recorded',reference=?,updated_at=? WHERE id=? AND status='sandbox_pending'`).bind(input.reference,input.now,refundId)]});
+  }catch(error){if(error instanceof Response)throw error;throw new Response(`The refund could not be recorded: ${error instanceof Error?error.message:String(error)}`,{status:409});}
+}
+
 /**
  * A refund that Finance paid back outside the gateway webhook (Boarding records its refund reference by
  * hand) commits the same facts a refund.processed webhook does, in one batch with the service's own ledger
@@ -72,7 +120,7 @@ export async function postBookingRefundCollectionReversal(db:Db,input:BookingRef
  * as already counted instead of posting twice. Without this, an approved and recorded Boarding refund never
  * reached the finance journal, payment reconciliation, the booking payment status, BCC or the customer.
  */
-export async function recordStaffConfirmedRefund(db:Db,input:{refundCaseId:string;reference:string;actorId:string;statements?:D1PreparedStatement[]}){
+export async function recordStaffConfirmedRefund(db:Db,input:{refundCaseId:string;reference:string;actorId:string;statements?:D1PreparedStatement[];collected?:number}){
   const reference=text(input.reference);
   if(!reference)throw new Error("A refund reference is required");
   await ensurePaymentReconciliationTables(db);
@@ -86,15 +134,18 @@ export async function recordStaffConfirmedRefund(db:Db,input:{refundCaseId:strin
     WHERE r.id=?`).bind(input.refundCaseId).first<Row>();
   if(!row)throw new Error("Canonical refund case not found");
   if(["processed","completed"].includes(text(row.status))){
-    if(text(row.gateway_reference)===reference)return{duplicate:true as const,refundCaseId:text(row.id)};
-    throw new Error("This refund was already processed under another reference");
+    if(text(row.gateway_reference)!==reference)throw new Error("This refund was already processed under another reference");
+    // Already in the books (the gateway's refund.processed settled the case first): only the service's own
+    // ledger still has to say so. Its statements are guarded, so a replay changes nothing.
+    if(input.statements?.length)await db.batch(input.statements);
+    return{duplicate:true as const,refundCaseId:text(row.id)};
   }
   const paymentId=text(row.payment_id)||text(row.canonical_payment_id),bookingId=text(row.booking_id),amount=money(row.amount);
   if(!paymentId)throw new Error("Refund recording requires the canonical payment");
   if(amount<=0)throw new Error("Refund recording requires a positive refund amount");
   const now=Date.now();
   // A booking paid outside the gateway has no reconciliation row yet; its collected cash still bounds the refund.
-  const capturedCurrent=row.captured_amount==null?await collectedForBooking(db,bookingId):money(row.captured_amount);
+  const capturedCurrent=row.captured_amount!=null?money(row.captured_amount):Number.isFinite(input.collected)?money(input.collected):await collectedForBooking(db,bookingId);
   const ledger=await prepareCollectionEventPosting(db,{
     event:"refund_completed",bookingId,customerId:text(row.payment_customer_id)||text(row.customer_id)||null,
     cityId:text(row.city_id)||null,serviceCode:text(row.service_code)||null,paymentId,refundReference:reference,amount,

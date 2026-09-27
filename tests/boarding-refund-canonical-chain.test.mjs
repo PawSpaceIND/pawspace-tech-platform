@@ -8,11 +8,17 @@
  * instead found no canonical refund case and became an orphan_gateway_refund exception.
  *
  * These tests drive the real Boarding finance module and the real refund webhook against one database.
+ *
+ * Pet Sitting and Pet Taxi had the same gap after the Boarding fix (round-2 transactions audit): their
+ * record_refund only flipped the service ledger row to sandbox_recorded. The last section drives the real
+ * Sitting and Taxi finance modules through the same canonical chain.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { seedSittingBooking } from "./helpers/stay-harness.mjs";
+import { seedCanonicalTrip } from "./helpers/taxi-harness.mjs";
 
 installWorkersHooks("__BOARDING_REFUND_DB__", "__BOARDING_REFUND_ENV__");
 
@@ -140,4 +146,163 @@ test("a refund above the booking value on an over-collected booking is allowed b
   const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 600 });
   assert.equal(approved.status, "cancelled");
   assert.match(String(approved.warning || ""), /more than the booking value of ₹499 because ₹998 was collected/);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Pet Sitting and Pet Taxi go through the same canonical chain.
+
+/** The canonical facts one recorded refund must leave behind, whichever service recorded it. */
+function assertRefundInBooks(sqlite, { bookingId, paymentId, refundId, reference, amount, paymentStatus, service }) {
+  const refundCase = sqlite.prepare("SELECT status,gateway_reference,amount,payment_id,policy_json FROM booking_refund_cases WHERE id=?").get(refundId);
+  assert.ok(refundCase, `${service}: the recorded refund must be a canonical refund case`);
+  assert.deepEqual({ status: refundCase.status, reference: refundCase.gateway_reference, amount: Number(refundCase.amount), paymentId: refundCase.payment_id },
+    { status: "processed", reference, amount, paymentId }, `${service}: the case is processed under the typed reference`);
+  assert.equal(JSON.parse(refundCase.policy_json).service, service);
+
+  const rec = sqlite.prepare("SELECT refunded_amount,gateway_status,reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId);
+  assert.ok(rec, `${service}: reconciliation must hold the refund`);
+  assert.equal(Number(rec.refunded_amount), amount, `${service}: reconciliation refunded_amount`);
+  assert.equal(rec.gateway_status, paymentStatus);
+  assert.equal(rec.reconciliation_status, "matched", `${service}: a refund within the money collected is no overage`);
+  assert.equal(Number(rec.variance_amount), 0);
+  assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(paymentId).status, paymentStatus, `${service}: the booking payment follows the refund`);
+
+  const posting = sqlite.prepare("SELECT event,amount,reversal_reference FROM collection_ledger_postings WHERE group_key=?").get(`COLL-refund_completed-${reference}`);
+  assert.ok(posting, `${service}: the collection ledger must reverse the collection under the refund reference`);
+  assert.equal(Number(posting.amount), amount);
+  assert.equal(posting.reversal_reference, reference);
+  const journal = sqlite.prepare("SELECT COUNT(*) lines,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit FROM finance_journal_entries WHERE source_type='refund_completed' AND source_id=?").get(reference);
+  assert.deepEqual({ lines: Number(journal.lines), debit: Number(journal.debit), credit: Number(journal.credit) }, { lines: 2, debit: amount, credit: amount }, `${service}: a balanced refund journal`);
+
+  const events = sqlite.prepare("SELECT detail_json FROM booking_lifecycle_events WHERE booking_id=? AND event_type='refund_processed'").all(bookingId);
+  assert.equal(events.length, 1, `${service}: one refund_processed timeline event`);
+  assert.equal(JSON.parse(events[0].detail_json).gatewayRefundId, reference);
+}
+
+/** booking_refund_cases as staging already has it: drizzle 0012 plus the policy column the Boarding module added. */
+const STAGING_REFUND_CASES = "CREATE TABLE booking_refund_cases (id TEXT PRIMARY KEY NOT NULL,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL DEFAULT 0 NOT NULL,reason TEXT NOT NULL,status TEXT DEFAULT 'requested' NOT NULL,requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,policy_json TEXT NOT NULL DEFAULT '{}')";
+
+/** A paid Pet Sitting booking (₹total captured through Razorpay) with a cancellation awaiting policy review. */
+async function paidSitting({ total = 2000 } = {}) {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__BOARDING_REFUND_DB__ = db;
+  globalThis.__BOARDING_REFUND_ENV__ = {};
+  sqlite.exec(STAGING_REFUND_CASES);
+  const seeded = await seedSittingBooking(db, sqlite, { bookingId: "BK-SIT-R", customerId: "CUS-SIT-R", amount: total, amountDueNow: total });
+  const paymentId = `PAY-${seeded.bookingId}`;
+  const reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
+  await reconciliation.ensurePaymentReconciliationTables(db);
+  sqlite.prepare("UPDATE booking_payments SET gateway='razorpay_sandbox' WHERE id=?").run(paymentId);
+  sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,'razorpay','sandbox',?,?,0,'INR','captured','matched',0,'evt-capture',?)").run(paymentId, seeded.bookingId, total, total, Date.now());
+  const finance = await import("../lib/sitting-finance-governance.ts");
+  let seq = 0;
+  const act = (action, actorId, extra = {}) => finance.mutateSittingFinance(db, { bookingId: seeded.bookingId, action, actorId, idempotencyKey: `sit-${action}-${++seq}`, reason: "Customer cannot host the sitter", ...extra });
+  await act("request_cancel", REQUESTER);
+  return { sqlite, db, act, reconciliation, bookingId: seeded.bookingId, paymentId };
+}
+
+test("an approved Pet Sitting refund opens its canonical case and recording it reaches the books", async () => {
+  const { sqlite, act, bookingId, paymentId } = await paidSitting();
+  const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 1500 });
+  const refundCase = sqlite.prepare("SELECT status,amount,payment_id,requested_by,approved_by,policy_json FROM booking_refund_cases WHERE id=?").get(approved.refundId);
+  assert.ok(refundCase, "approve_cancel must open the canonical refund case with the Sitting ledger row's id");
+  assert.deepEqual({ status: refundCase.status, amount: Number(refundCase.amount), paymentId: refundCase.payment_id, requestedBy: refundCase.requested_by, approvedBy: refundCase.approved_by },
+    { status: "approved", amount: 1500, paymentId, requestedBy: REQUESTER, approvedBy: APPROVER });
+  assert.equal(JSON.parse(refundCase.policy_json).automatic, false, "nothing sends it to the gateway on its own");
+
+  const recorded = await act("record_refund", APPROVER, { refundReference: "rfnd_sitting_1" });
+  assert.equal(recorded.status, "sandbox_recorded");
+  assert.equal(recorded.refundPosted, true);
+  assert.equal(sqlite.prepare("SELECT status,reference FROM sitting_refund_ledger WHERE id=?").get(approved.refundId).status, "sandbox_recorded");
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId: approved.refundId, reference: "rfnd_sitting_1", amount: 1500, paymentStatus: "partially_refunded", service: "pet_sitting" });
+});
+
+test("a Pet Sitting refund approved before canonical cases existed still reaches the books, once", async () => {
+  const { sqlite, db, act, reconciliation, bookingId, paymentId } = await paidSitting();
+  const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 2000 });
+  sqlite.prepare("DELETE FROM booking_refund_cases WHERE id=?").run(approved.refundId); // approved by the previous build
+  await act("record_refund", APPROVER, { refundReference: "rfnd_sitting_2" });
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId: approved.refundId, reference: "rfnd_sitting_2", amount: 2000, paymentStatus: "refunded", service: "pet_sitting" });
+
+  const late = await reconciliation.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-sitting-refund-late", eventType: "refund.processed", bookingId,
+    amountSubunits: 200000, gatewayRefundId: "rfnd_sitting_2", payloadHash: "sha256:sit-late", signatureVerified: true,
+  });
+  assert.equal(late.ignored, true, `the gateway's own refund.processed is recognised as already counted: ${JSON.stringify(late)}`);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n, 1);
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), 2000);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions").get().n, 0, "no orphan refund, no overage");
+});
+
+test("a refund Finance already made in the Razorpay dashboard is recorded against the Sitting ledger without a second reversal", async () => {
+  const { sqlite, db, act, reconciliation, bookingId, paymentId } = await paidSitting();
+  const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 800 });
+  const settled = await reconciliation.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId: "evt-sitting-dashboard", eventType: "refund.processed", bookingId,
+    amountSubunits: 80000, gatewayRefundId: "rfnd_sitting_dash", payloadHash: "sha256:sit-dash", signatureVerified: true,
+  });
+  assert.equal(settled.status, "processed", "the gateway refund settles the approved Sitting case");
+  const recorded = await act("record_refund", APPROVER, { refundReference: "rfnd_sitting_dash" });
+  assert.equal(recorded.status, "sandbox_recorded");
+  assert.equal(sqlite.prepare("SELECT status,reference FROM sitting_refund_ledger WHERE id=?").get(approved.refundId).status, "sandbox_recorded",
+    "the Sitting ledger must say recorded, not stay pending behind the canonical case");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM collection_ledger_postings WHERE event='refund_completed'").get().n, 1, "one reversal");
+  assert.equal(Number(sqlite.prepare("SELECT refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).refunded_amount), 800);
+});
+
+/** A Pet Taxi ride. `captured` = the Razorpay booking fee on its schedule; otherwise paid through the sandbox trip ledger. */
+async function paidRide({ total = 1000, captured = null } = {}) {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__BOARDING_REFUND_DB__ = db;
+  globalThis.__BOARDING_REFUND_ENV__ = {};
+  sqlite.exec(STAGING_REFUND_CASES);
+  const seeded = seedCanonicalTrip(sqlite, { bookingId: "BK-TAXI-R", tripId: "TRIP-R", customerId: "CUS-TAXI-R", amount: total });
+  const paymentId = `PAY-${seeded.bookingId}`, now = Date.now();
+  const finance = await import("../lib/taxi-finance-governance.ts");
+  await finance.ensureTaxiFinanceTables(db);
+  const reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
+  await reconciliation.ensurePaymentReconciliationTables(db);
+  if (captured != null) {
+    const { ensureTaxiRideTables } = await import("../lib/taxi-ride-governance.ts");
+    await ensureTaxiRideTables(db);
+    sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,booking_fee_paid_at,booking_fee_reference,created_at,updated_at) VALUES (?,?,?,?,?,'pending_balance',?,'pay_fee',?,?)").run(seeded.bookingId, seeded.customerId, total, captured, total - captured, now, now, now);
+    sqlite.prepare("UPDATE booking_payments SET status='captured',gateway='razorpay_sandbox',amount_due_now=?,mode='split_50_50' WHERE id=?").run(captured, paymentId);
+    sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,'razorpay','sandbox',?,?,0,'INR','captured','partially_captured',0,'evt-fee',?)").run(paymentId, seeded.bookingId, captured, captured, now);
+  } else {
+    sqlite.prepare("INSERT INTO taxi_trip_payment_events (id,booking_id,trip_id,amount,currency,status,gateway,reference,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_paid','uat_sandbox','SBX-PAID-R',?,?)").run(`TPAY-${seeded.bookingId}`, seeded.bookingId, seeded.tripId, total, now, now);
+  }
+  let seq = 0;
+  const act = (action, actorId, extra = {}) => finance.mutateTaxiFinance(db, { bookingId: seeded.bookingId, action, actorId, idempotencyKey: `taxi-${action}-${++seq}`, reason: "Customer cancelled the ride", ...extra });
+  await act("request_cancel", REQUESTER);
+  return { sqlite, db, act, reconciliation, bookingId: seeded.bookingId, paymentId };
+}
+
+test("an approved Pet Taxi refund of a Razorpay booking fee opens its canonical case and recording it reaches the books", async () => {
+  const { sqlite, act, bookingId, paymentId } = await paidRide({ total: 1000, captured: 500 });
+  const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 500 });
+  const refundCase = sqlite.prepare("SELECT status,amount,payment_id,requested_by,approved_by,policy_json FROM booking_refund_cases WHERE id=?").get(approved.refundId);
+  assert.ok(refundCase, "approve_cancel must open the canonical refund case with the Taxi ledger row's id");
+  assert.deepEqual({ status: refundCase.status, amount: Number(refundCase.amount), paymentId: refundCase.payment_id, requestedBy: refundCase.requested_by, approvedBy: refundCase.approved_by },
+    { status: "approved", amount: 500, paymentId, requestedBy: REQUESTER, approvedBy: APPROVER });
+  assert.equal(JSON.parse(refundCase.policy_json).service, "pet_taxi");
+
+  const recorded = await act("record_refund", APPROVER, { refundReference: "rfnd_taxi_1" });
+  assert.equal(recorded.status, "sandbox_recorded");
+  assert.equal(recorded.refundPosted, true);
+  assert.equal(sqlite.prepare("SELECT status FROM taxi_refund_ledger WHERE id=?").get(approved.refundId).status, "sandbox_recorded");
+  // expected_amount is the booking-fee order, so refunding all of it reads as refunded.
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId: approved.refundId, reference: "rfnd_taxi_1", amount: 500, paymentStatus: "refunded", service: "pet_taxi" });
+});
+
+test("a Pet Taxi ride paid through the sandbox trip ledger refunds against what that ledger collected, not as an overage", async () => {
+  const { sqlite, act, bookingId, paymentId } = await paidRide({ total: 449 });
+  const approved = await act("approve_cancel", APPROVER, { approvedRefundAmount: 149 });
+  await act("record_refund", APPROVER, { refundReference: "rfnd_taxi_2" });
+  assertRefundInBooks(sqlite, { bookingId, paymentId, refundId: approved.refundId, reference: "rfnd_taxi_2", amount: 149, paymentStatus: "partially_refunded", service: "pet_taxi" });
+  assert.equal(Number(sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId).captured_amount), 449, "collected is the ₹449 the trip ledger holds");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='refund_overage'").get().n, 0);
+  const reconciled = await act("reconcile", APPROVER);
+  assert.deepEqual({ paid: reconciled.paidTotal, refund: reconciled.refundTotal, net: reconciled.netPaidTotal }, { paid: 449, refund: 149, net: 300 }, "the Taxi reconciliation is unchanged");
 });
