@@ -404,8 +404,17 @@ body:has(nav[aria-label="Customer navigation"]) .ps-order-fab { bottom: calc(104
 .legal-document th, .legal-document td { padding:12px; border:1px solid color-mix(in srgb, var(--ui-primary) 14%, transparent); text-align:left; vertical-align:top; }
 @media (max-width:720px) { .cookie-consent { align-items:stretch; flex-direction:column; } .cookie-consent__actions { width:100%; } .cookie-consent button { flex:1; } .legal-header { flex-direction:column; } }
 
-/* Keep consent actions clear of customer/partner bottom bars, including iOS safe areas. */
-.cookie-consent { position:relative; z-index:100; margin-bottom:calc(104px + env(safe-area-inset-bottom, 0px)); box-sizing:border-box; }
+/* Keep consent actions clear of customer/partner bottom bars at every scroll position.
+   The prior in-flow margin only protected the document end; service navigation could retain a
+   scroll position where the banner physically covered the fixed dock and intercepted Home/Jobs. */
+.cookie-consent {
+  position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+  z-index:100; margin:0; box-sizing:border-box;
+}
+body:has(nav[aria-label="Customer navigation"]) .cookie-consent,
+body:has(nav[aria-label="Partner mobile navigation"]) .cookie-consent {
+  bottom:calc(104px + env(safe-area-inset-bottom, 0px));
+}
 .cookie-consent__actions { flex-wrap:wrap; }
 .cookie-consent button { min-height:44px; }
 @media (max-width:380px) { .cookie-consent { padding:12px; gap:12px; } .cookie-consent__actions { gap:8px; } }
