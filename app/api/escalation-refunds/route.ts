@@ -11,11 +11,13 @@ import{decideEscalationRefund,escalationRefundPosition,escalationRefundQueue,esc
  * provider payout are handled by lib/escalation-refunds.ts; this route only authorises and hands over.
  *   GET ?bookingId=&percent=  bookings.manage  what can be refunded on the booking and the rupee preview
  *   GET                       finance.view     the Finance queue, recent decisions and the credit notes
- *   POST request              bookings.manage  { bookingId, percent, reason, customerNote?, idempotencyKey? }
+ *   POST request              bookings.manage  { bookingId, percent, reason, customerNote?, manualNote?, idempotencyKey? }
+ *     manualNote is required, at least 10 characters, only when the booking was completed before the 26 Sept 2026
+ *     model (position.legacyModel from the GET preview): no completion tax record means no credit note is issued.
  *   POST approve | reject     finance.manage   { requestId, reason }
  */
 type Db=Awaited<ReturnType<typeof database>>;
-type Body={action?:string;bookingId?:string;percent?:unknown;reason?:string;customerNote?:string;idempotencyKey?:string;requestId?:string};
+type Body={action?:string;bookingId?:string;percent?:unknown;reason?:string;customerNote?:string;manualNote?:string;idempotencyKey?:string;requestId?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw governedJsonError({error:"Cross-origin refund write blocked"},403);}
 /** An Operations manager acts only on bookings in their own city, exactly as in the Booking Command Center. */
@@ -53,7 +55,7 @@ export async function POST(request:Request){
    requirePermission(actor,"bookings.manage");
    const bookingId=String(body.bookingId||"").trim();
    await requireBookingInScope(db,actor,bookingId);
-   const data=await requestEscalationRefund(db,{bookingId,percent:body.percent,reason:String(body.reason||""),customerNote:body.customerNote==null?null:String(body.customerNote),idempotencyKey:body.idempotencyKey==null?null:String(body.idempotencyKey)},actor);
+   const data=await requestEscalationRefund(db,{bookingId,percent:body.percent,reason:String(body.reason||""),customerNote:body.customerNote==null?null:String(body.customerNote),manualNote:body.manualNote==null?null:String(body.manualNote),idempotencyKey:body.idempotencyKey==null?null:String(body.idempotencyKey)},actor);
    return json({data},data.duplicatePrevented?200:201);
   }
   if(action==="approve"||action==="reject"){

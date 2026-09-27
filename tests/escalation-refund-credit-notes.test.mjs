@@ -916,3 +916,42 @@ test("with no customer tax invoice, the booking's own service invoice is the ori
   assert.deepEqual([cn.original_invoice_kind, cn.original_invoice_number, cn.original_invoice_date, cn.taxable_value, cn.tax_total, cn.gstr1_section, cn.sac], ["booking_invoice", "INV/BK-VERT", istDate(COMPLETED), 60, 10.8, "b2cs", "998599"], "the vertical's invoice, the SAC the returns file the commission under");
   assert.equal(JSON.parse(cn.snapshot_json).seller.legalName, SELLER.legalName, "the seller from the active tax policy");
 });
+
+test("owner decision, 27 Sept 2026: a booking completed before the 26 Sept 2026 model is allowed with a manual note, no credit note", async (t) => {
+  const f = await refundWorld(t);
+  await completedBooking(f, "BK-LEGACY");
+  // Simulate a booking that predates the 26 Sept 2026 model: it has no completion tax record at all.
+  f.sqlite.prepare("DELETE FROM provider_payout_computations WHERE booking_id='BK-LEGACY'").run();
+
+  const preview = await callRefunds("GET", OPS, {}, "?bookingId=BK-LEGACY&percent=20");
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body.data.position.legacyModel, true);
+  assert.equal(preview.body.data.position.preview.creditNote, null);
+  assert.equal(preview.body.data.position.refusal, null, "no longer refused outright");
+
+  const withoutNote = await callRefunds("POST", OPS, { action: "request", bookingId: "BK-LEGACY", percent: 20, reason: "Customer escalation after the visit" });
+  assert.equal(withoutNote.status, 400);
+  assert.match(withoutNote.body.error, /pre-26-Sept-2026 model/);
+  assert.match(withoutNote.body.error, /manual note/);
+
+  const tooShortNote = await callRefunds("POST", OPS, { action: "request", bookingId: "BK-LEGACY", percent: 20, reason: "Customer escalation after the visit", manualNote: "too short" });
+  assert.equal(tooShortNote.status, 400);
+
+  const asked = await callRefunds("POST", OPS, { action: "request", bookingId: "BK-LEGACY", percent: 20, reason: "Customer escalation after the visit", manualNote: "Approved by hand: no TK Petcare invoice exists for this older booking." });
+  assert.equal(asked.status, 201, JSON.stringify(asked.body));
+  const approved = await callRefunds("POST", FINANCE, { action: "approve", requestId: asked.body.data.request.id });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  const gatewayRefund = f.refunds.find((refund) => refund.notes?.booking_id === "BK-LEGACY");
+  assert.ok(gatewayRefund, "a sandbox refund was sent for the legacy booking");
+  const hook = await refundProcessedWebhook(f, "BK-LEGACY", gatewayRefund);
+  assert.equal(hook.status, 200, JSON.stringify(hook.body));
+
+  assert.equal(note(f, "BK-LEGACY"), undefined, "no credit note is ever issued for this booking");
+  const settlement = f.row("SELECT * FROM escalation_refund_settlements WHERE booking_id='BK-LEGACY'");
+  assert.equal(settlement.status, "settled");
+  assert.equal(settlement.credit_note_id, null);
+  assert.match(settlement.credit_note_error, /^legacy_model:/);
+  assert.match(settlement.credit_note_error, /manual note/);
+  assert.equal(f.row("SELECT status FROM escalation_refund_requests WHERE booking_id='BK-LEGACY'").status, "processed");
+  assert.equal(f.row("SELECT legacy_manual_note FROM escalation_refund_requests WHERE booking_id='BK-LEGACY'").legacy_manual_note, "Approved by hand: no TK Petcare invoice exists for this older booking.");
+});

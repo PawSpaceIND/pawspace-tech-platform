@@ -67,6 +67,10 @@ export async function ensureEscalationRefundTables(db:Db){
   if(columns.has(name))continue;
   await db.prepare(ddl).run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
  }
+ // The mandatory manual note for a booking completed before the 26 Sept 2026 model (owner decision, 27 Sept 2026):
+ // present only on that path, and is what tells settleCase to skip the credit note rather than retry it forever.
+ const requestColumns=new Set((await db.prepare("PRAGMA table_info(escalation_refund_requests)").all<Row>()).results.map(r=>text(r.name)));
+ if(!requestColumns.has("legacy_manual_note"))await db.prepare("ALTER TABLE escalation_refund_requests ADD COLUMN legacy_manual_note TEXT").run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
  await ensureBookingRefundCaseTargets(db);
  ready.add(db);
 }
@@ -110,14 +114,17 @@ export async function escalationRefundPosition(db:Db,input:{bookingId:string;per
  const pendingRequests=money(waiting?.amount),refundable=round2(Math.max(0,captured-refundedSoFar-pendingRequests));
  const gatewayPayments=paymentId?await capturedGatewayPayments(db,paymentId):[];
  const payout=await payoutRecordForCreditNote(db,bookingId),invoice=await originalInvoiceFor(db,bookingId),funeral=payout?await noGstTreatmentForSupply(db,invoice,istDate(num(payout.computed_at)||Date.now())):"schedule_iii";
+ // A booking completed before the 26 Sept 2026 model has no completion tax record to work a credit note out from.
+ // [Owner decision, 27 Sept 2026] that no longer refuses the refund outright: it is allowed with a mandatory manual
+ // note (see requestEscalationRefund), settles with no credit note, and is flagged here so the requester can see why.
+ const legacyModel=!payout;
  const status=text(booking.status);
  const refusal=status!=="completed"?{text:`Only a completed booking can get a refund after completion; this booking is ${status.replaceAll("_"," ")||"not completed"}.`,status:409}
   :!payment||amountPaid<=0?{text:"This booking has no captured payment, so there is nothing to refund.",status:409}
   :!gatewayPayments.length?{text:"The customer's payment was not captured online, so it cannot go back to their original payment method.",status:409}
-  :!payout?{text:"This booking has no completion tax record under the 26 Sept 2026 model, so its credit note cannot be worked out. Finance must handle it by hand.",status:409}
   :refundable<=0.009?{text:`Nothing is left to refund: ${rs(captured)} was captured and ${rs(round2(refundedSoFar+pendingRequests))} is already refunded or waiting.`,status:409}
   :null;
- const base={found:true as const,bookingId,
+ const base={found:true as const,bookingId,legacyModel,
   booking:{id:bookingId,status,serviceCode:text(booking.service_code),packageName:text(booking.package_name),customerId:text(booking.customer_id),customerName:text(customer?.name),providerId:text(booking.provider_id),providerName:text(work?.provider_name),providerModel:text(work?.provider_model),scheduledStart:text(booking.scheduled_start)},
   payment:{paymentId,status:text(payment?.status),amountPaid,captured,refundedSoFar,pendingRequests,refundable,gatewayPayments},
   refunds:refunds.map(r=>({id:text(r.id),amount:money(r.amount),status:text(r.status),purpose:text(r.purpose)||null,reason:text(r.reason),gatewayReference:text(r.gateway_reference)||null,createdAt:num(r.created_at)})),
@@ -125,23 +132,26 @@ export async function escalationRefundPosition(db:Db,input:{bookingId:string;per
   invoice:invoice?{kind:invoice.kind,number:invoice.number,date:invoice.date}:null,
   refusal:refusal?.text??null,refusalStatus:refusal?.status??200};
  const percent=input.percent==null?null:validPercent(input.percent);
- if(percent==null||!payout)return{...base,preview:null};
+ if(percent==null)return{...base,preview:null};
  const asked=round2(amountPaid*percent/100),amount=round2(Math.min(asked,refundable));
  if(!(amount>0))return{...base,preview:null};
- const value=valueFromPayoutRecord(payout,amount,funeral),impact=await providerPayoutRefundImpact(db,{bookingId,refund:amount});
+ const impact=await providerPayoutRefundImpact(db,{bookingId,refund:amount});
+ if(!payout)return{...base,preview:{percent,asked,amount,capped:amount<asked-0.009,creditNote:null,providerImpact:{...impact,label:providerImpactLabel(impact.stage,impact.providerShare)}}};
+ const value=valueFromPayoutRecord(payout,amount,funeral);
  return{...base,preview:{percent,asked,amount,capped:amount<asked-0.009,creditNote:{...value,invoice:base.invoice,pendingInvoice:!invoice},providerImpact:{...impact,label:providerImpactLabel(impact.stage,impact.providerShare)}}};
 }
 
 async function assertMonthOpen(db:Db,asOf:number){const period=istDate(asOf).slice(0,7);if(await periodLocked(db,period))throw refuse(`period_locked: ${period} is closed and locked; a refund after completion cannot be raised or approved in it`,409,"period_locked");}
 
 /** Operations asks for a refund after completion. Idempotent on the idempotency key, and on an identical waiting request. */
-export async function requestEscalationRefund(db:Db,input:{bookingId:string;percent:unknown;reason:string;customerNote?:string|null;idempotencyKey?:string|null;asOf?:number},actor:EscalationActor){
+export async function requestEscalationRefund(db:Db,input:{bookingId:string;percent:unknown;reason:string;customerNote?:string|null;manualNote?:string|null;idempotencyKey?:string|null;asOf?:number},actor:EscalationActor){
  await ensureEscalationRefundTables(db);
- const bookingId=text(input.bookingId),percent=validPercent(input.percent),reason=text(input.reason),note=text(input.customerNote),key=text(input.idempotencyKey),asOf=input.asOf??Date.now();
+ const bookingId=text(input.bookingId),percent=validPercent(input.percent),reason=text(input.reason),note=text(input.customerNote),manualNote=text(input.manualNote),key=text(input.idempotencyKey),asOf=input.asOf??Date.now();
  if(!bookingId)throw refuse("A booking is required",400);
  if(percent==null)throw refuse("The refund percentage must be between 1 and 100, with at most two decimals",400);
  if(reason.length<ESCALATION_REASON_MIN)throw refuse(`A reason of at least ${ESCALATION_REASON_MIN} characters is required`,400);
  if(note.length>500)throw refuse("The note for the customer can be at most 500 characters",400);
+ if(manualNote.length>500)throw refuse("The manual note can be at most 500 characters",400);
  if(key.length>120)throw refuse("The idempotency key is too long",400);
  const same=(row:Row)=>text(row.booking_id)===bookingId&&Math.abs(num(row.percent)-percent)<0.001&&text(row.reason)===reason&&sameActor(row.requested_by,actor.email);
  if(key){const prior=await db.prepare("SELECT * FROM escalation_refund_requests WHERE idempotency_key=?").bind(key).first<Row>();if(prior){if(text(prior.booking_id)!==bookingId)throw refuse("This idempotency key belongs to a different booking's refund request",409);return{request:prior,duplicatePrevented:true};}}
@@ -150,14 +160,17 @@ export async function requestEscalationRefund(db:Db,input:{bookingId:string;perc
  await assertMonthOpen(db,asOf);
  const position=await escalationRefundPosition(db,{bookingId,percent});
  if(!position.found||position.refusal)throw refuse(position.refusal??"Booking not found",position.refusalStatus||409);
+ // [Owner decision, 27 Sept 2026] A booking completed before the 26 Sept 2026 model has no completion tax record, so
+ // there is no credit note to work out; it is allowed, but only with an explicit manual note explaining the refund.
+ if(position.legacyModel&&manualNote.length<ESCALATION_REASON_MIN)throw refuse(`This booking was completed under the older, pre-26-Sept-2026 model. A manual note of at least ${ESCALATION_REASON_MIN} characters is required, and no credit note will be issued.`,400,"escalation_refund_manual_note_required");
  const preview=position.preview;
  if(!preview)throw refuse("Nothing is left to refund on this booking",409);
- const id=`ESC-${crypto.randomUUID().replaceAll("-","").slice(0,16).toUpperCase()}`,now=Date.now(),idempotencyKey=key||`escalation:${id}`;
- const detail={bookingId,percent,amount:preview.amount,asked:preview.asked,capped:preview.capped,amountPaid:position.payment.amountPaid,refundedSoFar:position.payment.refundedSoFar,refundable:position.payment.refundable,reason,customerNote:note||null};
+ const id=`ESC-${crypto.randomUUID().replaceAll("-","").slice(0,16).toUpperCase()}`,now=Date.now(),idempotencyKey=key||`escalation:${id}`,legacyNote=position.legacyModel?manualNote:null;
+ const detail={bookingId,percent,amount:preview.amount,asked:preview.asked,capped:preview.capped,amountPaid:position.payment.amountPaid,refundedSoFar:position.payment.refundedSoFar,refundable:position.payment.refundable,reason,customerNote:note||null,legacyModel:position.legacyModel,manualNote:legacyNote};
  try{
   await db.batch([
-   db.prepare("INSERT INTO escalation_refund_requests (id,idempotency_key,booking_id,payment_id,customer_id,provider_id,service_code,percent,amount,amount_paid,refunded_before,refundable_before,capped,reason,customer_note,status,requested_by,requested_at,preview_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'requested',?,?,?,?,?)")
-    .bind(id,idempotencyKey,bookingId,position.payment.paymentId,position.booking.customerId||null,position.booking.providerId||null,position.booking.serviceCode,percent,preview.amount,position.payment.amountPaid,position.payment.refundedSoFar,position.payment.refundable,preview.capped?1:0,reason,note||null,text(actor.email),now,JSON.stringify({creditNote:preview.creditNote,providerImpact:preview.providerImpact}),now,now),
+   db.prepare("INSERT INTO escalation_refund_requests (id,idempotency_key,booking_id,payment_id,customer_id,provider_id,service_code,percent,amount,amount_paid,refunded_before,refundable_before,capped,reason,customer_note,legacy_manual_note,status,requested_by,requested_at,preview_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'requested',?,?,?,?,?)")
+    .bind(id,idempotencyKey,bookingId,position.payment.paymentId,position.booking.customerId||null,position.booking.providerId||null,position.booking.serviceCode,percent,preview.amount,position.payment.amountPaid,position.payment.refundedSoFar,position.payment.refundable,preview.capped?1:0,reason,note||null,legacyNote,text(actor.email),now,JSON.stringify({creditNote:preview.creditNote,providerImpact:preview.providerImpact,legacyModel:position.legacyModel}),now,now),
    auditStatement(db,actor,"escalation_refund.request",id,"completed",detail),
    lifecycleStatement(db,`ESCREQ-${id}`,bookingId,"escalation_refund.requested",text(actor.email),detail,now),
   ]);
@@ -269,9 +282,16 @@ async function settleCase(db:Db,row:Row,asOf:number,actorId:string){
  const reasonOf=(error:unknown)=>error instanceof Response?"governed refusal":error instanceof Error?error.message:String(error);
  const governedText=async(error:unknown)=>error instanceof Response?text(((await error.clone().json().catch(()=>({}))) as Row).error)||`HTTP ${error.status}`:reasonOf(error);
  // 1. The Section 34 credit note. Past the s.34(2) time limit it can no longer be issued: that is recorded and final.
+ // Same for a booking allowed under the pre-26-Sept-2026 model with a manual note (owner decision, 27 Sept 2026): it
+ // has no completion tax record to work a note out from, so none is ever issued - recorded once, and final too.
  let creditNoteId=text(settlement.credit_note_id)||null,creditNoteError:string|null=text(settlement.credit_note_error)||null;
  const timeBarred=()=>/^time_barred:/.test(text(creditNoteError));
- if(!creditNoteId&&!timeBarred()){creditNoteError=null;try{const issued=await issueEscalationCreditNote(db,{refundCaseId:caseId,requestId,bookingId,refundAmount:amount,issueDate,periodCode,reason:`Refund after completion: ${text(row.reason)}`,gatewayReference,processedAt,actorId,asOf});creditNoteId=text(issued.note.id);}catch(error){creditNoteError=await governedText(error);if(!timeBarred())errors.push(`credit note: ${creditNoteError}`);}}
+ const legacyManualNote=text(row.legacy_manual_note);
+ const creditNoteFinal=()=>timeBarred()||/^legacy_model:/.test(text(creditNoteError));
+ if(!creditNoteId&&!creditNoteFinal()){
+  if(legacyManualNote)creditNoteError=`legacy_model: refund allowed under the pre-26-Sept-2026 model with a manual note ("${legacyManualNote}"); no completion tax record, so no credit note is issued`;
+  else{creditNoteError=null;try{const issued=await issueEscalationCreditNote(db,{refundCaseId:caseId,requestId,bookingId,refundAmount:amount,issueDate,periodCode,reason:`Refund after completion: ${text(row.reason)}`,gatewayReference,processedAt,actorId,asOf});creditNoteId=text(issued.note.id);}catch(error){creditNoteError=await governedText(error);if(!timeBarred())errors.push(`credit note: ${creditNoteError}`);}}
+ }
  // 2. The s.52 TCS base (GST-registered commission providers only).
  let tcsOutcome=text(settlement.tcs_outcome)||null,tcsId=text(settlement.tcs_adjustment_id)||null;
  if(!tcsOutcome){try{const tcs=await recordEscalationTcsAdjustment(db,{refundCaseId:caseId,bookingId,refundAmount:amount,issueDate,periodCode,creditNoteId,actorId});tcsOutcome=tcs.applicable?"tcs_base_reduced":tcs.reason;tcsId=tcs.applicable?text(tcs.adjustment.id):null;}catch(error){errors.push(`TCS: ${await governedText(error)}`);}}
@@ -288,7 +308,7 @@ async function settleCase(db:Db,row:Row,asOf:number,actorId:string){
   const message=(PROVIDER_NOTICE[payoutStage]??PROVIDER_NOTICE.default)(share,amount,bookingId);
   await db.prepare("INSERT OR IGNORE INTO provider_payout_notices (id,idempotency_key,provider_id,booking_id,kind,amount,message,channel,status,created_at) VALUES (?,?,?,?,?,?,?,'in_app','queued',?)").bind(noticeId,`payout-adjusted:${caseId}`,providerId,bookingId,payoutStage==="after_release"?"recovery_from_next_payout":"payout_reduced",share,message,Date.now()).run();
  }
- const settled=Boolean((creditNoteId||timeBarred())&&tcsOutcome&&payoutStage),now=Date.now();
+ const settled=Boolean((creditNoteId||creditNoteFinal())&&tcsOutcome&&payoutStage),now=Date.now();
  await db.prepare("UPDATE escalation_refund_settlements SET status=?,credit_note_id=?,credit_note_error=?,tcs_outcome=?,tcs_adjustment_id=?,payout_stage=?,provider_id=?,provider_share=?,payout_detail_json=?,customer_message=?,provider_notice_id=?,attempts=attempts+1,last_error=?,next_attempt_at=?,settled_at=CASE WHEN ?='settled' THEN COALESCE(settled_at,?) ELSE settled_at END,updated_at=? WHERE refund_case_id=?")
   .bind(settled?"settled":"pending",creditNoteId,creditNoteError,tcsOutcome,tcsId,payoutStage,providerId,share,payoutDetail,customer.status==="not_queued"?null:customer.status,noticeId,errors.length?errors.join(" | "):null,settled?0:asOf+60*60_000,settled?"settled":"pending",now,now,caseId).run();
  if(settled){
