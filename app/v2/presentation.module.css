@@ -67,6 +67,12 @@
   :global(body:has([data-pawspace-v2]) .ps-order-fab) { right: 16px !important; }
   :global(body:has([data-pawspace-v2]) .ps-order-fab > button) { width: 44px !important; height: 44px !important; }
   :global(body:has([data-pawspace-v2]) .ps-order-fab [role="dialog"]) { max-height: 55dvh !important; }
+  /* L13: on a vertical's booking page (a tall hero photo/card, short step cards right below it on phones) the
+     buttons at 112px clearance still land on the hero's chip or the first step's heading. Extra headroom. */
+  :global(body:has([data-pawspace-v2]):has(main[data-v2-hero-page]) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(main[data-v2-hero-page]) .ps-order-fab) {
+    bottom: calc(148px + env(safe-area-inset-bottom, 0px)) !important;
+  }
 }
 /* Chat utilities belong in document flow: fixed offsets overlap the composer when
    viewport height, zoom or footer wrapping changes. Home retains the floating controls. */
