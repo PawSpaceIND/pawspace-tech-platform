@@ -130,8 +130,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
       <button onClick={reloadSources}>↻ Refresh snapshots</button>
     </section>
 
-    <VisualAnalytics key={refresh} serviceCode={serviceCodeByVertical[service]} title="Revenue, trends & comparisons" />
-    <nav className={css.tabs}>{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
+    <nav className={css.tabs} aria-label="Company report sections">{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} aria-pressed={view === item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
+    {(view === "Overview" || view === "Reports") && <VisualAnalytics key={refresh} serviceCode={serviceCodeByVertical[service]} title="Revenue, trends & comparisons" />}
 
     {view === "Overview" && liveDataLoaded && !liveDataError && <>
       {!liveDataLoaded && <p style={{ padding: 12, color: "var(--staff-primary, #6c39a8)" }}>Loading live company data…</p>}
