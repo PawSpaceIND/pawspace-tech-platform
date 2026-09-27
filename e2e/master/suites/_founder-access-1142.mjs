@@ -28,8 +28,12 @@ async function login(page,label,expectedRole){
  await page.goto('/staging-login',{waitUntil:'domcontentloaded'});
  await page.getByPlaceholder('shared UAT access code').fill(code);
  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/staging-login'&&r.request().method()==='POST');
- await page.getByRole('button',{name:label}).click();const r=await response;const b=await r.json();assert.equal(r.status(),200,`Sign-in HTTP ${r.status()}: ${b.error||'no error text'}`);assert.equal(b.role,expectedRole);
+ await page.getByRole('button',{name:label}).click();const r=await response;assert.equal(r.status(),200,`Sign-in HTTP ${r.status()}`);
+ // The page performs a full navigation on success; Chromium may discard that POST's body.
+ // Verify the new browser session from the server instead of reading a destroyed response body.
  await page.waitForURL(u=>u.pathname!=='/staging-login');
+ const session=await page.context().request.get('/api/staging-login');assert.equal(session.status(),200);
+ const signedIn=await session.json();assert.equal(signedIn.signedInAs?.role,expectedRole);
  return{status:200,role:expectedRole,destination:new URL(page.url()).pathname};
 }
 const staffPaths=['/api/team-overview','/api/crm','/api/customer-360'];
