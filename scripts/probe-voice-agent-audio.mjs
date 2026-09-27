@@ -3,6 +3,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {readFile} from 'node:fs/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 import {audioFormat,audioProof} from './voice-audio-proof.mjs';
+// Remote values are stripped of CR/LF/control characters and capped before reaching workflow logs.
+const logSafe=(value,max=128)=>String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,'').slice(0,max);
 const before=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'probe-agent-socket'});
 const key=process.env.ELEVENLABS_API_KEY,agentId=process.env.GROOMING_AGENT_ID,callId=process.env.UAT_VOICE_CALL_ID;
 const headers={'xi-api-key':key};
@@ -31,7 +33,7 @@ await new Promise((resolve,reject)=>{
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
   if(d.type==='conversation_initiation_metadata'){
    const m=d.conversation_initiation_metadata_event;format=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(format);audioFormat(outputFormat);
-   if(m.conversation_id)console.log('::add-mask::'+m.conversation_id);
+   if(m.conversation_id)console.log('::add-mask::'+logSafe(m.conversation_id));
    console.log('VOICE_AUDIO_FORMATS='+JSON.stringify({input:format,output:outputFormat}));void sendAudio().catch(finish);
   }
   if(d.type==='user_transcript'&&started){transcript=String(d.user_transcription_event?.user_transcript||'');console.log('VOICE_AUDIO_TRANSCRIPT='+JSON.stringify({text:transcript,ms:Date.now()-started}));}
