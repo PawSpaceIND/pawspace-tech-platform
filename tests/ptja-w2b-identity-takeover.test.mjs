@@ -84,7 +84,7 @@ async function identityWorld() {
 // =====================================================================================================
 
 test("W2B-C05: a planted secondary phone does not capture its real owner's login", async () => {
-  const { sqlite, db, customer } = await identityWorld();
+  const { db, customer } = await identityWorld();
   const otp = await import("../lib/customer-otp.ts");
   customer("CUST-ATTACKER", "Mallory", "9700000001", "9845012345"); // the number planted on the attacker's row
 
@@ -136,4 +136,71 @@ test("W2B-C05: an ordinary profile update still works", async () => {
   const row = sqlite.prepare("SELECT name,secondary_phone FROM canonical_customers WHERE id='CUST-1'").get();
   assert.equal(String(row.secondary_phone), "9711111111", "and it is stored");
   assert.equal(String(row.name), "Ritu Malhotra", "along with the rest of the profile");
+});
+
+// =====================================================================================================
+// Round-2 staging (50-leads-crm, P1): one number, several written forms, several customers.
+//
+// The web chat stored "+919845012345", the website form whatever the visitor typed, and OTP sign-in matched
+// primary_phone EXACTLY on "9845012345". An enquirer stored in another form was not found at sign-in and got a second
+// customer, so their booking never reached their lead. Sign-in now treats the forms of one Indian number as that
+// number - still on primary_phone only - and a profile claim is refused when another customer holds the number in
+// ANY form, or "+91..." could be planted beside a customer holding "98...".
+// =====================================================================================================
+
+test("round-2: a customer stored in another written form (+91 98450 12345, 09845012346) still signs in to that customer", async () => {
+  const { customer, db } = await identityWorld();
+  const otp = await import("../lib/customer-otp.ts");
+  customer("CU-CHAT", "Chat Enquirer", "+919845012345");
+  customer("CU-FORM", "Form Enquirer", "+91 98450 12346");
+  customer("CU-ZERO", "Zero Enquirer", "09845012347");
+  for (const [phone, id] of [["9845012345", "CU-CHAT"], ["9845012346", "CU-FORM"], ["9845012347", "CU-ZERO"]]) {
+    const resolved = await otp.resolveOtpCustomer(db, phone);
+    assert.equal(String(resolved?.id), id, `${phone} must reach the customer stored as another form of it`);
+  }
+  const request = await otp.requestCustomerOtp(db, { phone: "9845012345" });
+  assert.equal(request.existingCustomer, true, "the OTP request knows the customer, so no name is asked and no second customer is made");
+});
+
+test("round-2: forms of a number are matched exactly, never a different number sharing its last digits", async () => {
+  const { customer, db } = await identityWorld();
+  const otp = await import("../lib/customer-otp.ts");
+  customer("CU-US", "Different Number", "+1 (984) 501-2345"); // 19845012345: not an Indian form of 9845012345
+  customer("CU-SECONDARY", "Only Secondary", "9700000009", "9845012345"); // a secondary is never a login
+  assert.equal(await otp.resolveOtpCustomer(db, "9845012345"), null);
+});
+
+test("round-2: where one number is already on two customers, sign-in keeps the customer it signed in to before", async () => {
+  const { sqlite, customer, db } = await identityWorld();
+  const otp = await import("../lib/customer-otp.ts");
+  const bindings = await import("../lib/identity-binding.ts");
+  const now = Date.now();
+  // The staging state: the chat enquiry's customer (older) and the CUS-OTP customer sign-in created beside it.
+  customer("CU-CHAT", "Chat Enquirer", "+919845012345");
+  sqlite.prepare("UPDATE canonical_customers SET created_at=? WHERE id='CU-CHAT'").run(now - 60_000);
+  customer("CUS-OTP-SPLIT", "Chat Enquirer", "9845012345");
+  assert.equal(String((await otp.resolveOtpCustomer(db, "9845012345")).id), "CU-CHAT", "never signed in: the oldest (the enquiry's) customer");
+  await bindings.upsertIdentityBinding(db, { identitySource: "customer_otp", principalType: "identity_subject", principalKey: "9845012345", subjectType: "customer", subjectId: "CUS-OTP-SPLIT", actorId: "test", reason: "earlier sign-in" });
+  assert.equal(String((await otp.resolveOtpCustomer(db, "9845012345")).id), "CUS-OTP-SPLIT", "signed in before: that account, which holds their bookings");
+});
+
+test("round-2: a profile claim of another customer's number in a different written form is refused", async () => {
+  const { db, account, customer } = await identityWorld();
+  customer("CUST-ATTACKER", "Mallory", "9700000001");
+  customer("CUST-OWNER", "Meera Owner", "9845012345");
+  for (const [field, planted] of [["secondaryPhone", "+91 98450 12345"], ["primaryPhone", "+919845012345"], ["secondaryPhone", "09845012345"]]) {
+    const attempt = await account.mutateCustomerAccount(db, { customerId: "CUST-ATTACKER", action: "update_profile", idempotencyKey: `variant-${field}-${planted}`, profile: { [field]: planted } })
+      .then(() => ({ ok: true }), async (error) => ({ ok: false, status: error instanceof Response ? error.status : null }));
+    assert.deepEqual(attempt, { ok: false, status: 409 }, `${field} ${planted} is 9845012345 and must not be claimable`);
+  }
+});
+
+test("round-2: a customer whose own number also sits on a split duplicate can still edit their profile", async () => {
+  const { sqlite, db, account, customer } = await identityWorld();
+  customer("CU-CHAT", "Chat Enquirer", "+919845012345");
+  customer("CUS-OTP-SPLIT", "Chat Enquirer", "9845012345");
+  const saved = await account.mutateCustomerAccount(db, { customerId: "CUS-OTP-SPLIT", action: "update_profile", idempotencyKey: "rename-1", profile: { name: "Asha Rao" } })
+    .then(() => true, async (error) => (error instanceof Response ? `${error.status} ${await error.clone().text()}` : String(error)));
+  assert.equal(saved, true, "re-saving the number already on their own record claims nothing");
+  assert.equal(sqlite.prepare("SELECT name FROM canonical_customers WHERE id='CUS-OTP-SPLIT'").get().name, "Asha Rao");
 });
