@@ -264,6 +264,21 @@ test("R2-P03 an expired host offer is refused in the host's own words", async ()
   assert.equal(late.body.code, "boarding_offer_expired");
 });
 
+test("R2-P03 a one-family host accepting an overlapping stay is told the home is already taken", async () => {
+  const w = world();
+  const window = hoursFromNow(48, 52);
+  const first = await seedBoardingStay(w.db, w.sqlite, { bookingId: "BKG-BOARD-FIRST", window });
+  await stays.mutateBoardingStay(w.db, { stayId: first.stayId, action: "accept", actorId: HOST, idempotencyKey: nextKey("first") });
+  const second = await seedBoardingStay(w.db, w.sqlite, { bookingId: "BKG-BOARD-SECOND", customerId: "CUST-BOARD-2", window });
+  const host = await customerSessionCookie(w.db, { principalKey: HOST_PRINCIPAL, customerId: HOST, subjectType: "provider" });
+  const refused = await postAs(stayRoute, "/api/boarding-stays", host.cookie, { stayId: second.stayId, action: "accept", idempotencyKey: nextKey("second") });
+  assert.equal(refused.status, 409, "host_maya_rohan takes one family at a time, and that rule is unchanged");
+  assert.notEqual(refused.body.error, "Unable to update Boarding stay");
+  assert.match(String(refused.body.error), /only one family at a time/);
+  assert.equal(refused.body.code, "boarding_host_capacity_unavailable");
+  assert.equal(String(w.sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(second.stayId).status), "awaiting_host_acceptance");
+});
+
 test("R2-P03 a Sitting check-in outside the doorstep geofence tells the sitter how far away they are", async () => {
   const w = world();
   const seeded = await seedSittingBooking(w.db, w.sqlite, { providerId: SITTER, window: hoursFromNow(-1, 2) });
