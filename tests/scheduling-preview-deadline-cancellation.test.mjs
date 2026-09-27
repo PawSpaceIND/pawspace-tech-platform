@@ -125,3 +125,76 @@ test("worker/index.ts gives the scheduling request scope the request's ctx.waitU
   const worker = fs.readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
   assert.match(worker, /runWithRequestD1Metrics\(createRequestD1Metrics\(request,true,promise=>ctx\.waitUntil\(promise\)\),/);
 });
+
+// The Reserve and booking paths' remaining schema guards shared a cold isolate's in-flight set-up promise across
+// requests in the same way; they now keep only a ready set (lib/d1-ensure-once.js). Same model as above, one test
+// per guard, plus the two guards whose set-up depends on a table another module creates.
+const leases = await import("../lib/scheduling-reservation-leases.ts");
+const servicePolicy = await import("../lib/service-policy-governance.ts");
+const capacity = await import("../lib/provider-capacity-governance.ts");
+const conversation = await import("../lib/booking-conversation.ts");
+/** A D1 binding whose calls never settle while `state.cancelled` is set (a cancelled request's I/O); every call is counted. */
+function cancellable(sqlite) {
+  const live = d1(sqlite), never = new Promise(() => {}), state = { cancelled: true, calls: 0 };
+  const gate = (work) => { state.calls++; return state.cancelled ? never : work(); };
+  const statement = (inner) => ({ __raw: inner, bind: (...values) => statement(inner.bind(...values)),
+    first: (...args) => gate(() => inner.first(...args)), all: () => gate(() => inner.all()), run: () => gate(() => inner.run()), raw: () => gate(() => inner.raw()) });
+  return { state, db: { prepare: (sql) => statement(live.prepare(sql)), batch: (list) => gate(() => live.batch(list.map((item) => item.__raw ?? item))), exec: (sql) => gate(() => live.exec(sql)) } };
+}
+// An existing reservations table from before the lease columns, and the bookings table the conversation trigger sits on.
+const RESERVATIONS = "CREATE TABLE scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,care_mode TEXT,status TEXT NOT NULL)";
+const BOOKINGS = "CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,created_at INTEGER NOT NULL)";
+const present = (sqlite, name) => Boolean(sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?").get(name));
+for (const [name, ensure, prerequisite, objects] of [
+  ["ensureSchedulingReservationLeaseGovernance", leases.ensureSchedulingReservationLeaseGovernance, RESERVATIONS, ["scheduling_reservation_lease_cleanup", "block_expired_reservation_booking", "uq_scheduling_reservations_active_provider_window"]],
+  ["ensureServicePolicyTables", servicePolicy.ensureServicePolicyTables, null, ["service_policy_configs", "service_policy_audit"]],
+  ["ensureProviderCapacityTables", capacity.ensureProviderCapacityTables, null, ["provider_capacity_profiles", "provider_unavailability", "provider_assignment_offers"]],
+  ["ensureProviderBookingGuard", capacity.ensureProviderBookingGuard, null, ["provider_booking_confirmation_guards", "block_unavailable_provider_booking"]],
+  ["ensureBookingConversationOnInsert", conversation.ensureBookingConversationOnInsert, BOOKINGS, ["communication_threads", "communication_participants", "trg_canonical_booking_customer_conversation"]],
+]) {
+  test(`${name}: a set-up whose first caller was cancelled mid-flight never leaves a later caller waiting, and a finished one is remembered`, async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    if (prerequisite) sqlite.exec(prerequisite);
+    const { db, state } = cancellable(sqlite);
+    ensure(db).catch(() => undefined); // the cancelled request: its set-up never settles
+    await sleep(5);
+    state.cancelled = false;
+    const outcome = await Promise.race([ensure(db).then(() => "done"), sleep(1_000).then(() => "blocked")]);
+    assert.equal(outcome, "done", `${name}: a later request must not wait on a cancelled request's set-up`);
+    for (const object of objects) assert.ok(present(sqlite, object), `${name}: ${object} was set up`);
+    const calls = state.calls;
+    await ensure(db);
+    assert.equal(state.calls, calls, `${name}: once a set-up has finished, the isolate does not run it again`);
+    sqlite.close();
+  });
+}
+
+test("the lease set-up still answers false and keeps checking until scheduling_reservations exists, then applies once and answers true", async () => {
+  const sqlite = new DatabaseSync(":memory:"), { db, state } = cancellable(sqlite);
+  state.cancelled = false;
+  assert.equal(await leases.ensureSchedulingReservationLeaseGovernance(db), false, "no reservations table yet");
+  const checked = state.calls;
+  assert.equal(await leases.ensureSchedulingReservationLeaseGovernance(db), false);
+  assert.ok(state.calls > checked, "a missing dependency is checked again, never remembered");
+  sqlite.exec(RESERVATIONS);
+  assert.equal(await leases.ensureSchedulingReservationLeaseGovernance(db), true, "applied once another module created the table");
+  const columns = sqlite.prepare("PRAGMA table_info(scheduling_reservations)").all().map((column) => column.name);
+  assert.ok(columns.includes("lease_expires_at") && columns.includes("customer_session_id"), "the lease columns were added");
+  const applied = state.calls;
+  assert.equal(await leases.ensureSchedulingReservationLeaseGovernance(db), true);
+  assert.equal(state.calls, applied, "then remembered");
+  sqlite.close();
+});
+
+test("the booking conversation set-up still fails, and is tried again, while canonical_bookings does not exist", async () => {
+  const sqlite = new DatabaseSync(":memory:"), { db, state } = cancellable(sqlite);
+  state.cancelled = false;
+  await assert.rejects(conversation.ensureBookingConversationOnInsert(db), /canonical_bookings/, "the trigger needs the bookings table");
+  sqlite.exec(BOOKINGS);
+  await conversation.ensureBookingConversationOnInsert(db);
+  assert.ok(present(sqlite, "trg_canonical_booking_customer_conversation"), "set up once the table exists");
+  const calls = state.calls;
+  await conversation.ensureBookingConversationOnInsert(db);
+  assert.equal(state.calls, calls, "then remembered");
+  sqlite.close();
+});

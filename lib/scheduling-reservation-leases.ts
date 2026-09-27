@@ -1,6 +1,7 @@
 import {ensurePlatformSessionTables,resolvePlatformSession} from "./platform-session";
 import {markRequestFlag} from "./request-d1-metrics";
 import {uatRosterSeedingEnabled} from "./scheduling-roster-authority";
+import {ensureD1OnceApplied} from "./d1-ensure-once.js";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -12,8 +13,6 @@ export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,sc
 // predicate above must stay identical to the unique index already deployed (the reserve upsert names it), so overlap
 // checks that decide whether a provider is free add overnight Sitting with this predicate.
 export const SCHEDULING_RESERVATION_OVERNIGHT_SITTING_PREDICATE="status!='cancelled' AND service_code='pet_sitting' AND care_mode='overnight'";
-const leaseTablesEnsured=new WeakSet<Db>();
-const leaseTablesEnsuring=new WeakMap<Db,Promise<boolean>>();
 const cleanupRunning=new WeakMap<Db,Promise<{groups:number;reservations:number}>>();
 
 async function tableExists(db:Db,name:string){
@@ -21,16 +20,23 @@ async function tableExists(db:Db,name:string){
   return Boolean(row);
 }
 
+/*
+ * Once per isolate, ready-set only (lib/d1-ensure-once.js): a reserve cancelled mid-setup never leaves its
+ * unsettled promise for later reserves to join, as the shared in-flight promise did. Until another module has
+ * created scheduling_reservations the setup reports false and is checked again on the next call, as before.
+ */
 export async function ensureSchedulingReservationLeaseGovernance(db:Db){
-  if(leaseTablesEnsured.has(db))return true;
-  const running=leaseTablesEnsuring.get(db);if(running)return running;
-  const pending=(async()=>{
+  let applied=true;
+  await ensureD1OnceApplied(db,"scheduling_reservation_lease_governance",async()=>(applied=await ensureSchedulingReservationLeaseGovernanceUncached(db)));
+  return applied;
+}
+async function ensureSchedulingReservationLeaseGovernanceUncached(db:Db){
     const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('scheduling_reservations','uq_scheduling_reservations_active_provider_window','idx_scheduling_reservations_lease','scheduling_reservation_lease_cleanup','booking_reservation_confirmation_guards','block_expired_reservation_booking')").all<Row>();
     const names=new Set(schema.results.map(row=>String(row.name)));
     if(!names.has("scheduling_reservations"))return false;
     const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();
     const hasLease=columns.results.some(row=>String(row.name)==="lease_expires_at"),hasSession=columns.results.some(row=>String(row.name)==="customer_session_id");
-    if(hasLease&&hasSession&&names.has("uq_scheduling_reservations_active_provider_window")&&names.has("idx_scheduling_reservations_lease")&&names.has("scheduling_reservation_lease_cleanup")&&names.has("booking_reservation_confirmation_guards")&&names.has("block_expired_reservation_booking")){leaseTablesEnsured.add(db);return true;}
+    if(hasLease&&hasSession&&names.has("uq_scheduling_reservations_active_provider_window")&&names.has("idx_scheduling_reservations_lease")&&names.has("scheduling_reservation_lease_cleanup")&&names.has("booking_reservation_confirmation_guards")&&names.has("block_expired_reservation_booking"))return true;
     await ensurePlatformSessionTables(db);
     if(!hasLease)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN lease_expires_at INTEGER").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
     if(!hasSession)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN customer_session_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
@@ -44,10 +50,7 @@ export async function ensureSchedulingReservationLeaseGovernance(db:Db){
       // booking-first creates canonical truth and makes the cleanup predicate ineligible.
       db.prepare("CREATE TRIGGER IF NOT EXISTS block_expired_reservation_booking BEFORE INSERT ON booking_reservation_confirmation_guards WHEN NOT EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled') OR EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled' AND ((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=NEW.checked_at) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>NEW.checked_at)))) BEGIN SELECT RAISE(ABORT,'reservation_lease_expired_before_booking'); END"),
     ]);
-    leaseTablesEnsured.add(db);return true;
-  })();
-  leaseTablesEnsuring.set(db,pending);
-  try{return await pending;}finally{if(leaseTablesEnsuring.get(db)===pending)leaseTablesEnsuring.delete(db);}
+    return true;
 }
 
 export async function reservationLeaseForRequest(db:Db,request:Request,customerId:string,now=Date.now()){

@@ -35,6 +35,7 @@
  * into something weaker than the operator believed they had saved.
  */
 import type{Permission}from"./platform-security";
+import{ensureD1Once}from"./d1-ensure-once.js";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -79,8 +80,6 @@ export function registerServicePolicyDomain<T extends Record<string,unknown>>(sp
 export function servicePolicyDomain(domain:string){return registry.get(domain)??null;}
 export function servicePolicyDomains(){return [...registry.values()].map(spec=>({domain:spec.domain,label:spec.label,managePermission:spec.managePermission,defaults:spec.defaults}));}
 
-const tablesEnsured=new WeakSet<Db>();
-const tablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function servicePolicySchemaReady(db:Db){
   try{const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('service_policy_configs','idx_service_policy_lookup','service_policy_audit','idx_service_policy_audit_domain')").all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===4;}catch{return false;}
 }
@@ -93,11 +92,8 @@ async function ensureServicePolicyTablesUncached(db:Db){
     db.prepare("CREATE INDEX IF NOT EXISTS idx_service_policy_audit_domain ON service_policy_audit(policy_domain,created_at)"),
   ]);
 }
-export async function ensureServicePolicyTables(db:Db){
-  if(tablesEnsured.has(db))return;const running=tablesEnsuring.get(db);if(running)return running;
-  const pending=ensureServicePolicyTablesUncached(db).then(()=>{tablesEnsured.add(db);});tablesEnsuring.set(db,pending);
-  try{await pending;}finally{if(tablesEnsuring.get(db)===pending)tablesEnsuring.delete(db);}
-}
+/* Once per isolate, ready-set only (lib/d1-ensure-once.js): a request cancelled mid-setup never leaves its unsettled promise for later requests to join. */
+export async function ensureServicePolicyTables(db:Db){await ensureD1Once(db,"service_policy_tables",()=>ensureServicePolicyTablesUncached(db));}
 
 const normalise=(value:unknown)=>{const text=String(value??"").trim().toLowerCase();return text||POLICY_ANY;};
 function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??""))as T;}catch{return fallback;}}
