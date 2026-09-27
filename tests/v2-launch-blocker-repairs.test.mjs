@@ -169,7 +169,7 @@ test('every leave code the /me form suggests has a seeded UAT policy and a balan
 
     const created = await leave.requestLeave(db, {
       employeeId: employee, leaveCode: code, startDate: '2026-10-01', endDate: '2026-10-02',
-      units: 1, reason: `UAT ${code} request`, actorId: employee,
+      units: 2, reason: `UAT ${code} request`, actorId: employee,
     });
     assert.ok(created?.id, `${code} must produce a leave request, not a refusal`);
   }

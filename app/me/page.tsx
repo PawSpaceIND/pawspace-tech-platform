@@ -87,13 +87,14 @@ export default function MyPortalPage(){
         </div>
 
         <h2 style={h2}>My payslips</h2>
+        <p>Only approved payroll is shown. Approval or sandbox preparation does not confirm a bank salary transfer.</p>
         <div style={card}>
           {data.payslips?.latest?<>
             <p style={{marginTop:0}}><b>Latest:</b> {day(data.payslips.latest.periodStart)} → {day(data.payslips.latest.periodEnd)} · <span style={{color:`var(--staff-primary, ${C.gold})`}}>{data.payslips.latest.status}</span> · net {INR(data.payslips.latest.net)}</p>
             <div style={{display:"grid",gap:5,margin:"8px 0 14px"}}>{data.payslips.latestLines.map((l,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:14,flexWrap:"wrap"}}><span style={{color:l.kind==="deduction"?"var(--staff-danger)":`var(--staff-text, ${C.ink})`}}>{l.label}</span><span style={{fontVariantNumeric:"tabular-nums"}}>{l.kind==="deduction"?"− ":""}{INR(l.amount)}</span></div>)}</div>
             <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:15}}><thead><tr style={{color:`var(--staff-muted, ${C.dim})`,textAlign:"left"}}><th style={{padding:"6px 8px"}}>Period</th><th>Status</th><th style={{textAlign:"right"}}>Gross</th><th style={{textAlign:"right"}}>Deductions</th><th style={{textAlign:"right",padding:"6px 8px"}}>Net</th></tr></thead>
               <tbody>{data.payslips.list.map(p=><tr key={p.resultId} style={{borderTop:`1px solid ${`var(--staff-line, ${C.line})`}`}}><td style={{padding:"6px 8px"}}>{day(p.periodStart)} → {day(p.periodEnd)}</td><td>{p.status}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.gross)}</td><td style={{textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{INR(p.deductions)}</td><td style={{textAlign:"right",padding:"6px 8px",fontVariantNumeric:"tabular-nums"}}>{INR(p.net)}</td></tr>)}</tbody></table></div>
-          </>:<p style={{margin:0,color:`var(--staff-muted, ${C.dim})`}}>No payslips generated yet.</p>}
+          </>:<p style={{margin:0,color:`var(--staff-muted, ${C.dim})`}}>No approved payslips available yet. Draft calculations are not released payslips.</p>}
         </div>
         </>:null}
 
