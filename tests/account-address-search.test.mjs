@@ -95,7 +95,12 @@ test("a coverage refusal is told apart from a check that failed, with the messag
     assert.equal((await resolveServiceCoverage("560038")).zoneName, "East Bengaluru");
     const unzoned = await outcome("110001");
     assert.ok(unzoned instanceof ServiceCoverageRefusal, "404: no zone for the PIN is a refusal");
-    assert.equal(unzoned.message, "Zone not found for this pincode");
+    // Round-2 staging (Boarding B4b, Taxi T6d): the refusal read "Zone not found for this pincode". It is a customer
+    // sentence at the source now, with the machine-readable code kept for API callers.
+    assert.equal(unzoned.message, "PawSpace doesn't serve PIN 110001 yet. It's outside our current service area.");
+    const mysuru = await route.GET(new Request(`${OPS_ORIGIN}/api/service-zone?pincode=570001`));
+    assert.equal(mysuru.status, 404);
+    assert.deepEqual(await mysuru.json(), { error: "PawSpace doesn't serve PIN 570001 yet. It's outside our current service area.", code: "zone_not_found", pincode: "570001" });
     const now = Date.now();
     await db.prepare("CREATE TABLE IF NOT EXISTS city_launch_configs (id TEXT PRIMARY KEY,city_code TEXT NOT NULL UNIQUE,city TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Draft',centre TEXT NOT NULL DEFAULT '',radius_km REAL NOT NULL DEFAULT 15,pincodes TEXT NOT NULL DEFAULT '',gst_included INTEGER NOT NULL DEFAULT 1,services_json TEXT NOT NULL DEFAULT '{}',version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
     await db.prepare("INSERT OR REPLACE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,updated_by,created_at,updated_at) VALUES ('CLC-BLR','blr','Bengaluru','Karnataka','Paused','MG Road',15,'560038',?,?,?)").bind("ops@pawspace.test", now, now).run();
