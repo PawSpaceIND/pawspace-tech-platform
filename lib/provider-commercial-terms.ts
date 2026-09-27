@@ -49,6 +49,7 @@
 
 import{gstBreakdown,type GstMethod,type GstPolicy}from"./gst-method";
 import{resolveGstPolicy}from"./gst-setting";
+import{resolveFuneralGstTreatment}from"./funeral-gst-treatment";
 import{GovernedRefusal}from"./governed-http-error";
 import{PAWSPACE_COMMISSION_DEFAULT_PERCENT,PAWSPACE_COMMISSION_MAX_PERCENT,PAWSPACE_COMMISSION_MIN_PERCENT,RANGE_GOVERNED_MODELS,commissionFromProviderShare,providerShareRangeProblem}from"./commission-range";
 
@@ -344,7 +345,8 @@ export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:s
  const providerSharePct=engagementModel==="direct_employee"?0:override?.provider_share_pct!=null?num(override.provider_share_pct):num(term.provider_share_pct);
  const storedGstMode=(text(override?.gst_mode)||text(term.gst_mode)||"none") as GstMode;
  validate(engagementModel,providerSharePct,storedGstMode);
- const gstExempt=engagementModel==="funeral_exempt"||FUNERAL_SERVICE_CODES.has(serviceCode);
+ // Funeral / memorial carries no GST unless Finance's funeral GST treatment makes it taxable (lib/funeral-gst-treatment.ts).
+ const gstExempt=(engagementModel==="funeral_exempt"||FUNERAL_SERVICE_CODES.has(serviceCode))&&(await resolveFuneralGstTreatment(db,atDate)).treatment!=="taxable_18";
  const gst=await resolveGstPolicy(db,{cityId:text(place?.city_id),atDate});
  const split=splitServiceOrder({paidAmount:orderValue,providerSharePct,ownSupply:engagementModel==="direct_employee",gstExempt,gstPolicy:gst,standardReferencePrice:gstExempt?input.standardReferencePrice:null});
  const cashAllowed=num(term.cash_allowed)===1,gstRatePercent=gstExempt?0:gst.ratePercent;

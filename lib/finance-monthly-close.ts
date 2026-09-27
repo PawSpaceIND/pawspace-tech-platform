@@ -16,7 +16,7 @@
 
 import{computeMonthlyTds}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
-import{serviceVerticalOutputTax}from"./service-output-tax";
+import{canonicalInvoicesOnlySql,serviceVerticalOutputTax}from"./service-output-tax";
 import{governedJsonError}from"./governed-http-error";
 
 type Db=D1Database;
@@ -46,7 +46,7 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
 }
 
 export type CloseChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number;serviceOutputTax?:number;serviceTaxableValue?:number;serviceExemptValue?:number;notYetClassifiedTax?:number;unassignedServiceSupplies?:number;serviceGstMatchesLedger?:boolean};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
+export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number;serviceOutputTax?:number;serviceTaxableValue?:number;serviceExemptValue?:number;serviceNonGstValue?:number;gstModel?:string;notYetClassifiedTax?:number;unassignedServiceSupplies?:number;serviceGstMatchesLedger?:boolean};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
 
 /** Build (or rebuild) the month's close view from real data. Never mutates a locked close. */
 export async function monthlyCloseView(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<MonthlyCloseView>{
@@ -67,7 +67,8 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
 
  // GST: output tax from issued invoices in the month; input tax only where the vendor review
  // approved eligibility (never claim unreviewed input credit).
- const output=await safeFirst(db,"SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'",[startDate,endDate]);
+ // Invoices issued by hand only: a booking's customer tax invoice is filed through the service supply register below.
+ const output=await safeFirst(db,`SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`,[startDate,endDate]);
  const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
  // Output tax has TWO sources and the close only ever read one. finance_invoices is written solely by
  // the B2B module (lib/gst-accounting.ts); all five service invoice modules - sitting, boarding,
@@ -82,7 +83,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // from, so this figure, the statutory package, GSTR-1/3B and ledger account 2130 agree. A legacy carve
  // row's provider-supply GST is a pass-through (s52 GST TCS / GSTR-8), disclosed but NOT net payable.
  const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
- const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
+ const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf,serviceOutputTax:serviceOutput.pawspaceOwnOutputTax,serviceTaxableValue:serviceOutput.pawspaceOwnTaxableValue,serviceExemptValue:serviceOutput.exemptValue,serviceNonGstValue:serviceOutput.nonGstValue,gstModel:serviceOutput.gstModel.label,notYetClassifiedTax:serviceOutput.notYetClassified.gst,unassignedServiceSupplies:serviceOutput.unassignedCount,serviceGstMatchesLedger:serviceOutput.ledgerCheck.agrees};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data (idempotent), then check the deposit.

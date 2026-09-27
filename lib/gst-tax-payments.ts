@@ -94,7 +94,9 @@ export async function taxPayableReconciliation(db:Db,input:{periodCode:string}){
  const paid=(kind:TaxKind)=>round2(num(payments.results.find(r=>text(r.tax_kind)===kind)?.amount));
  const filedGst=services.pawspaceOwnOutputTax,gstDifference=round2(gstAccount.accrued-filedGst),tcsCollections=round2(num(collections?.total));
  const tcsMismatches=tcsByBooking.results.map(r=>({bookingId:text(r.booking_id),gstr8Tcs:round2(num(r.tcs_total)),postedTcs:round2(num(r.posted))})).filter(r=>Math.abs(r.gstr8Tcs-r.postedTcs)>0.01).slice(0,50),tcsDifference=round2(tcsAccount.accrued-tcsCollections);
- const gst={...gstAccount,filedServiceGst:filedGst,serviceTaxableValue:services.pawspaceOwnTaxableValue,serviceExemptValue:services.exemptValue,notYetClassifiedGst:services.notYetClassified.gst,
+ // The month's filing in the owner's words ("GST @18% on the amount PawSpace makes") and, per service, what PawSpace made, the GST
+ // on it and the net income the books keep (amount made - GST).
+ const gst={...gstAccount,gstModel:services.gstModel,byService:services.byService,filedServiceGst:filedGst,serviceTaxableValue:services.pawspaceOwnTaxableValue,serviceExemptValue:services.exemptValue,serviceNonGstValue:services.nonGstValue,bookingInvoices:services.bookingInvoices,invoiceVariances:services.invoiceVariances,notYetClassifiedGst:services.notYetClassified.gst,
   latestGstr3bServiceGst:gstr3b?round2(num(gstr3b.serviceVerticalTax)):null,latestStatutoryPackageServiceGst:pkg?round2(num(pkg.serviceOutputTax)):null,
   sameBookings:services.ledgerCheck,paymentsRecordedForPeriod:paid("gst"),unpaidForPeriod:round2(Math.max(0,filedGst-paid("gst"))),difference:gstDifference,
   explanation:Math.abs(gstDifference)<=0.01?"The GST accrued in the ledger this month equals the service GST filed for it.":"The ledger dates a completion by its UTC date and the returns use IST months; supplies invoiced before completion are filed in the invoice month; rows completed before 26 Sept 2026 filed their carve differently. The same-booking comparison shows the exact per-booking agreement."};

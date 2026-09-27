@@ -6,12 +6,14 @@ import{approveGstReturn,generateGstr1,generateGstr3b,generateGstr9c,getGstReturn
 import{saveStatutorySeries,voidInvoiceSerial}from"../../../lib/statutory-invoicing";
 import{assignPeriodServiceOwnership,assignServiceSupplyOwnership,serviceSupplyOwnershipSnapshot}from"../../../lib/service-output-tax";
 import{recordTaxPayment,taxPayableReconciliation}from"../../../lib/gst-tax-payments";
+import{bookingInvoiceBacklog,issueMissingBookingInvoices,serviceSacTable,updateServiceSac}from"../../../lib/booking-tax-invoice";
+import{FUNERAL_GST_TREATMENT_LABELS,funeralGstTreatmentVersions,resolveFuneralGstTreatment,saveFuneralGstTreatment}from"../../../lib/funeral-gst-treatment";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const text=(value:unknown)=>String(value??"").trim();
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 
-export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();const url=new URL(request.url);if(url.searchParams.get("view")==="tax_reconciliation")return json({data:await taxPayableReconciliation(db,{periodCode:text(url.searchParams.get("period"))}),productionReady:false,liveFilingEnabled:false});const returnsFilter={returnType:url.searchParams.get("returnType")||undefined,period:url.searchParams.get("period")||undefined};return json({data:{...await getGstAccountingSnapshot(db),serviceInvoices:[...await serviceInvoiceOwnershipSnapshot(db),...await serviceSupplyOwnershipSnapshot(db)]},returns:await getGstReturnsSnapshot(db,returnsFilter),actor:{email:actor.email,roleCode:actor.roleCode},productionReady:false});}catch(error){return authError(error,"Unable to load GST/accounting control");}}
+export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();const url=new URL(request.url);if(url.searchParams.get("view")==="tax_reconciliation")return json({data:await taxPayableReconciliation(db,{periodCode:text(url.searchParams.get("period"))}),productionReady:false,liveFilingEnabled:false});const returnsFilter={returnType:url.searchParams.get("returnType")||undefined,period:url.searchParams.get("period")||undefined};return json({data:{...await getGstAccountingSnapshot(db),serviceInvoices:[...await serviceInvoiceOwnershipSnapshot(db),...await serviceSupplyOwnershipSnapshot(db)],bookingInvoices:await bookingInvoiceBacklog(db),serviceSacs:await serviceSacTable(db),funeralGstTreatment:{current:await resolveFuneralGstTreatment(db),versions:(await funeralGstTreatmentVersions(db)).slice(0,10),labels:FUNERAL_GST_TREATMENT_LABELS}},returns:await getGstReturnsSnapshot(db,returnsFilter),actor:{email:actor.email,roleCode:actor.roleCode},productionReady:false});}catch(error){return authError(error,"Unable to load GST/accounting control");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database(),body=await request.json() as Record<string,unknown>,action=String(body.action||"");let data:unknown;
  // A completed service with no invoice is listed as "SUPPLY:<key>" and assigned as a supply (lib/service-output-tax.ts).
@@ -34,6 +36,10 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
  else if(action==="generate_gstr3b")data=await generateGstr3b(db,body,actor.email);
  else if(action==="generate_gstr9c")data=await generateGstr9c(db,body,actor.email);
  else if(action==="approve_gst_return")data=await approveGstReturn(db,body,actor.email);
+ // Customer tax invoices (owner decision B): issue the missing ones of open months, a service's SAC, and how funeral is taxed.
+ else if(action==="issue_missing_booking_invoices")data=await issueMissingBookingInvoices(db,{actorId:actor.email,reason:text(body.reason)});
+ else if(action==="update_service_sac")data=await updateServiceSac(db,{serviceCode:text(body.serviceCode),sac:text(body.sac),reason:text(body.reason)},actor.email);
+ else if(action==="save_funeral_gst_treatment")data=await saveFuneralGstTreatment(db,{treatment:text(body.treatment),effectiveFrom:text(body.effectiveFrom),reason:text(body.reason),actorId:actor.email});
  else data=await saveConfiguration(db,body,actor.email);
  await securityAudit(db,actor,`gst.accounting.${action||"configuration"}`,"gst_accounting",String((data as Record<string,unknown>)?.id||(data as Record<string,unknown>)?.entityId||"configuration"),"completed",{productionReady:false,liveFiling:false,liveAccountingPost:false});
  return json({data,productionReady:false,liveFilingEnabled:false,liveAccountingPostEnabled:false});

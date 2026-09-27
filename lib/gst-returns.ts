@@ -3,27 +3,35 @@
 // portal JSON section shapes; they NEVER file. Every artifact is a versioned, maker/checker DRAFT
 // with liveFilingEnabled:false, exactly like lib/gst-accounting.ts's monthly package and GSTR-9.
 //
+// The model every return files (owner decision A, 27 Sept 2026, owner-approved with the CA): "PawSpace pays 18% GST on the
+// amount it makes". Taxable value = the amount PawSpace makes - its commission on a commission booking, the full amount the
+// customer paid on its own supply - and tax = the rate on it, so rate x value holds on every line: Rs 1,000 at 70/30 files
+// 54 on 300; an own supply of Rs 1,000 files 180 on 1,000. Funeral / memorial files no GST, in the section Finance's funeral
+// GST treatment sets (outside GST under Schedule III by default: GSTR-1 Table 8 non-GST, GSTR-3B 3.1(e); or exempt: 3.1(c)).
+//
 // Output tax is read from two disjoint sources (same rule as lib/finance-monthly-close.ts):
-//   1. finance_invoices / finance_invoice_lines  - the canonical, component-split, POS/HSN-aware path
-//      (this is what becomes line-level b2b / b2cs / cdnr / hsn in GSTR-1).
-//   2. the service supply register (lib/service-output-tax.ts) - every completed or invoiced service booking,
-//      funeral case and order, with PawSpace's own GST and taxable value taken from the payout record the
-//      completion journal was posted from (owner decisions of 26 Sept 2026): 54 on a 300 commission, 180 on an
-//      820 own supply under "percent_of_base", funeral as exempt. These become GSTR-1 b2cs (by place of supply
-//      and rate), hsn (by SAC) and nil/exempt lines, and GSTR-3B 3.1(a) (value AND tax) and 3.1(c).
+//   1. finance_invoices / finance_invoice_lines issued BY HAND - the canonical, component-split, POS/HSN-aware path
+//      (line-level b2b / b2cs / cdnr / hsn in GSTR-1). A booking's customer tax invoice is not read here.
+//   2. the service supply register (lib/service-output-tax.ts) - every completed or invoiced service booking, funeral case
+//      and order, with PawSpace's own GST and taxable value. A booking whose customer tax invoice the seller in the tax policy
+//      issued (lib/booking-tax-invoice.ts) files that INVOICE: b2b invoice by invoice when the customer gave a GSTIN, b2cs by
+//      place of supply and rate otherwise, the HSN/SAC summary from its lines - once, never also from the payout record; a
+//      difference between the two of more than 1 paisa is reported as a variance with both numbers. Other completed bookings
+//      file from the payout record: b2cs (by place of supply and rate), hsn (by SAC) and Table 8 lines.
 // What cannot become line detail stays aggregate and is disclosed in the reconciliation block, never fabricated
 // into invoice rows: service invoices with no payout record or completed before 26 Sept (their invoice tax, as
 // before) and the verticals the owner has not classified (relocation, vet, food - reported as computed today).
 // The provider-supply GST of a legacy carve row goes to s52 GST TCS / GSTR-8, not PawSpace's outward tax.
 //
 // No tax rate is decided here: rates/components come from the tax_snapshot the issuing module already
-// computed, or from the payout record's GST setting. SAC codes come from Finance's tax_classifications, with
-// labelled defaults until the CA confirms them. Missing Finance/CA-approved configuration throws
+// computed, or from the payout record's GST setting. SAC codes come from the invoice lines or Finance's tax_classifications,
+// else the one SAC table (lib/service-sac-defaults.ts). Missing Finance-approved configuration throws
 // ConfigurationRequired (HTTP 409). Import-safe for `node --experimental-strip-types` (no TS parameter properties).
 
 import{ConfigurationRequired}from"./gst-accounting";
 import{ensureFinanceEntityScope}from"./finance-filing-closeout";
-import{serviceVerticalOutputTax,supplySac,supplyTaxComponents}from"./service-output-tax";
+import{canonicalInvoicesOnlySql,serviceVerticalOutputTax,supplySac,supplyTaxComponents,type BookingInvoiceFiling}from"./service-output-tax";
+import{normaliseSac,sacDescription}from"./service-sac-defaults";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -75,17 +83,17 @@ const returnPeriod=(period:string)=>{const[y,m]=period.split("-");return`${m}${y
 /** Finance's SAC per service code (and "platform_commission") under the entity's active tax policy on a date. */
 async function serviceClassifications(db:Db,entityId:string,onDate:string){
  const rows=await db.prepare("SELECT c.service_code,c.classification_code FROM tax_classifications c JOIN tax_policy_versions p ON p.id=c.policy_id WHERE p.entity_id=? AND p.status='active' AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?) ORDER BY p.version DESC").bind(entityId,onDate,onDate).all<Row>().catch(()=>({results:[] as Row[]}));
- const map=new Map<string,string>();for(const r of rows.results){const code=text(r.classification_code).replace(/^SAC/i,"");if(code&&!map.has(text(r.service_code)))map.set(text(r.service_code),code);}return map;
+ const map=new Map<string,string>();for(const r of rows.results){const code=normaliseSac(r.classification_code);if(/^99\d{2}(\d{2})?$/.test(code)&&!map.has(text(r.service_code)))map.set(text(r.service_code),code);}return map;
 }
 
-type LineTax={txval:number;rt:number;iamt:number;camt:number;samt:number;csamt:number;hsn:string;desc:string;pos:string};
+type LineTax={txval:number;rt:number;iamt:number;camt:number;samt:number;csamt:number;hsn:string;desc:string;pos:string;role:string;noGstValue:number};
 /** Decompose one invoice line's snapshot into portal tax fields, splitting by component code. */
 function lineTaxFromSnapshot(snapshotJson:unknown,fallbackHsn:string,fallbackPos:string):LineTax{
  const snap=(()=>{try{return typeof snapshotJson==="string"?JSON.parse(snapshotJson):snapshotJson;}catch{return{};}})() as Row;
  const components=Array.isArray(snap.components)?snap.components as Array<{code?:string;rate?:number}>:[];
  const txval=round2(num(snap.taxableAmount));let rt=0,iamt=0,camt=0,samt=0,csamt=0;
  for(const c of components){const code=text(c.code).toLowerCase(),rate=num(c.rate),amt=round2(txval*(rate/100));rt+=rate;if(code.includes("igst"))iamt+=amt;else if(code.includes("cgst"))camt+=amt;else if(code.includes("sgst")||code.includes("utgst"))samt+=amt;else if(code.includes("cess"))csamt+=amt;}
- return{txval,rt:round2(rt),iamt:round2(iamt),camt:round2(camt),samt:round2(samt),csamt:round2(csamt),hsn:text(snap.classificationCode)||fallbackHsn,desc:text(snap.description)||"",pos:fallbackPos};
+ return{txval,rt:round2(rt),iamt:round2(iamt),camt:round2(camt),samt:round2(samt),csamt:round2(csamt),hsn:text(snap.classificationCode)||fallbackHsn,desc:text(snap.description)||"",pos:fallbackPos,role:text(snap.role)||"taxable",noGstValue:round2(num(snap.exemptValue))};
 }
 
 async function persist(db:Db,entityId:string,regId:string,returnType:string,period:string,payload:Row,summary:Row,actor:string,reason:string){
@@ -107,10 +115,17 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
  if(!entityId||!/^\d{4}-\d{2}$/.test(period))throw new Error("gstr1_scope_required");
  const reg=await registration(db,entityId,regId,`${period}-28`);
  const gstin=text(reg.registration_reference),homeState=stateCode(gstin);
- const invoices=await db.prepare("SELECT * FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled' ORDER BY issue_date,invoice_number").bind(entityId,regId,period).all<Row>();
- const b2b=new Map<string,Row>();const b2csMap=new Map<string,{sply_ty:string;pos:string;typ:string;rt:number;txval:number;iamt:number;camt:number;samt:number;csamt:number}>();
- const hsnMap=new Map<string,{hsn_sc:string;desc:string;txval:number;iamt:number;camt:number;samt:number;csamt:number;num:number}>();
+ type Tax={txval:number;iamt:number;camt:number;samt:number;csamt:number};
+ const b2b=new Map<string,Row>();const b2csMap=new Map<string,{sply_ty:string;pos:string;typ:string;rt:number}&Tax>();
+ const hsnMap=new Map<string,{hsn_sc:string;desc:string;num:number}&Tax>(),nilMap=new Map<string,{sply_ty:string;expt_amt:number;nil_amt:number;ngsup_amt:number}>();
+ const addB2cs=(sply_ty:string,pos:string,rt:number,d:Tax)=>{const key=`${sply_ty}:${pos}:${rt}`,b=b2csMap.get(key)||{sply_ty,pos,typ:"OE",rt,txval:0,iamt:0,camt:0,samt:0,csamt:0};b.txval=round2(b.txval+d.txval);b.iamt=round2(b.iamt+d.iamt);b.camt=round2(b.camt+d.camt);b.samt=round2(b.samt+d.samt);b.csamt=round2(b.csamt+d.csamt);b2csMap.set(key,b);};
+ const addHsn=(hsn:string,desc:string,rt:number,d:Tax)=>{const key=`${hsn}:${rt}`,h=hsnMap.get(key)||{hsn_sc:hsn,desc,txval:0,iamt:0,camt:0,samt:0,csamt:0,num:0};h.txval=round2(h.txval+d.txval);h.iamt=round2(h.iamt+d.iamt);h.camt=round2(h.camt+d.camt);h.samt=round2(h.samt+d.samt);h.csamt=round2(h.csamt+d.csamt);h.num+=1;hsnMap.set(key,h);};
+ // Table 8: exempt and non-GST (Schedule III) values, by intra/inter-state and registered/unregistered recipient.
+ const addNil=(intra:boolean,registered:boolean,kind:"expt_amt"|"ngsup_amt",value:number)=>{const sply_ty=`${intra?"INTRA":"INTR"}${registered?"B2B":"B2C"}`,n=nilMap.get(sply_ty)||{sply_ty,expt_amt:0,nil_amt:0,ngsup_amt:0};n[kind]=round2(n[kind]+value);nilMap.set(sply_ty,n);};
+ const addB2b=(ctin:string,invoice:Row)=>{const entry=(b2b.get(ctin)||{ctin,inv:[]}) as Row;(entry.inv as Row[]).push(invoice);b2b.set(ctin,entry);};
  let canonicalTaxable=0,canonicalTax=0,b2bCount=0,b2cCount=0;
+ // 1. Invoices issued by hand. A booking's customer tax invoice is filed through the register below, so it is left out here.
+ const invoices=await db.prepare(`SELECT * FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)} ORDER BY issue_date,invoice_number`).bind(entityId,regId,period).all<Row>();
  for(const inv of invoices.results){
   const profile=await safeFirst(db,"SELECT registration_reference,customer_type,place_of_supply FROM finance_customer_tax_profiles WHERE customer_id=?",[text(inv.customer_id)]);
   const customerGstin=text(profile?.registration_reference);
@@ -118,39 +133,48 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
   const isB2b=Boolean(customerGstin)&&text(profile?.customer_type)!=="consumer";
   const lines=await db.prepare("SELECT description,service_code,taxable_amount,tax_amount,tax_snapshot_json,hsn_sac FROM finance_invoice_lines WHERE invoice_id=?").bind(text(inv.id)).all<Row>();
   const itms:Row[]=[];let invTaxable=0,invTax=0;
-  for(let i=0;i<lines.results.length;i++){const l=lines.results[i];const t=lineTaxFromSnapshot(l.tax_snapshot_json,text(l.hsn_sac),pos);invTaxable+=t.txval;invTax+=t.iamt+t.camt+t.samt+t.csamt;
-   itms.push({num:i+1,itm_det:{txval:t.txval,rt:t.rt,iamt:t.iamt,camt:t.camt,samt:t.samt,csamt:t.csamt}});
-   const hkey=`${t.hsn||text(l.service_code)}:${t.rt}`;const h=hsnMap.get(hkey)||{hsn_sc:t.hsn||text(l.service_code),desc:t.desc||text(l.description),txval:0,iamt:0,camt:0,samt:0,csamt:0,num:0};
-   h.txval=round2(h.txval+t.txval);h.iamt=round2(h.iamt+t.iamt);h.camt=round2(h.camt+t.camt);h.samt=round2(h.samt+t.samt);h.csamt=round2(h.csamt+t.csamt);h.num+=1;hsnMap.set(hkey,h);}
-  canonicalTaxable+=invTaxable;canonicalTax+=invTax;
-  if(isB2b){b2bCount+=1;const entry=(b2b.get(customerGstin)||{ctin:customerGstin,inv:[]}) as Row;(entry.inv as Row[]).push({inum:text(inv.invoice_number),idt:text(inv.issue_date),val:round2(num(inv.total)),pos,rchrg:"N",inv_typ:"R",itms});b2b.set(customerGstin,entry);}
-  else{b2cCount+=1;const sply_ty=pos===homeState?"INTRA":"INTER";for(const it of itms){const d=it.itm_det as Row;const rt=num(d.rt);const key=`${sply_ty}:${pos}:${rt}`;const bucket=b2csMap.get(key)||{sply_ty,pos,typ:"OE",rt,txval:0,iamt:0,camt:0,samt:0,csamt:0};bucket.txval=round2(bucket.txval+num(d.txval));bucket.iamt=round2(bucket.iamt+num(d.iamt));bucket.camt=round2(bucket.camt+num(d.camt));bucket.samt=round2(bucket.samt+num(d.samt));bucket.csamt=round2(bucket.csamt+num(d.csamt));b2csMap.set(key,bucket);}}
+  for(const l of lines.results){const t=lineTaxFromSnapshot(l.tax_snapshot_json,text(l.hsn_sac),pos),hsn=t.hsn||text(l.service_code),desc=t.desc||text(l.description);
+   // A line collected for someone else's supply is on the document, not in the seller's return.
+   if(t.role==="collected_on_behalf")continue;
+   if(t.role==="exempt"||t.role==="non_gst"){addNil(pos===homeState,isB2b,t.role==="exempt"?"expt_amt":"ngsup_amt",t.noGstValue);if(t.role==="exempt")addHsn(hsn,desc,0,{txval:t.noGstValue,iamt:0,camt:0,samt:0,csamt:0});continue;}
+   invTaxable+=t.txval;invTax+=t.iamt+t.camt+t.samt+t.csamt;
+   itms.push({num:itms.length+1,itm_det:{txval:t.txval,rt:t.rt,iamt:t.iamt,camt:t.camt,samt:t.samt,csamt:t.csamt}});addHsn(hsn,desc,t.rt,t);}
+  canonicalTaxable+=invTaxable;canonicalTax+=invTax;if(!itms.length)continue;
+  if(isB2b){b2bCount+=1;addB2b(customerGstin,{inum:text(inv.invoice_number),idt:text(inv.issue_date),val:round2(num(inv.total)),pos,rchrg:"N",inv_typ:"R",itms});}
+  else{b2cCount+=1;const sply_ty=pos===homeState?"INTRA":"INTER";for(const it of itms){const d=it.itm_det as Row;addB2cs(sply_ty,pos,num(d.rt),{txval:num(d.txval),iamt:num(d.iamt),camt:num(d.camt),samt:num(d.samt),csamt:num(d.csamt)});}}
  }
  // Credit/debit notes against B2B registered counterparties -> cdnr; against consumers -> cdnur.
  const notes=await db.prepare("SELECT a.document_number,a.kind,a.amount,a.tax_amount,a.created_at,i.invoice_number,i.issue_date,i.total,i.customer_id FROM finance_adjustment_documents a JOIN finance_invoices i ON i.id=a.invoice_id WHERE i.entity_id=? AND i.registration_id=? AND substr(i.issue_date,1,7)=? AND a.status='issued'").bind(entityId,regId,period).all<Row>();
  const cdnr:Row[]=[],cdnur:Row[]=[];
  for(const n of notes.results){const profile=await safeFirst(db,"SELECT registration_reference,customer_type FROM finance_customer_tax_profiles WHERE customer_id=?",[text(n.customer_id)]);const cgstin=text(profile?.registration_reference);const ntty=text(n.kind)==="credit_note"?"C":"D";const nt_det={ntty,nt_num:text(n.document_number),nt_dt:text(n.issue_date),val:round2(num(n.amount)+num(n.tax_amount)),itms:[{num:1,itm_det:{txval:round2(num(n.amount)),iamt:round2(num(n.tax_amount))}}]};if(cgstin&&text(profile?.customer_type)!=="consumer")cdnr.push({ctin:cgstin,...nt_det});else cdnur.push(nt_det);}
- // Service supplies (lib/service-output-tax.ts): PawSpace's OWN output GST per booking, from the payout record. Owner-model
- // and funeral supplies become b2cs (by place of supply and rate), hsn (by SAC) and nil/exempt lines; legacy invoices and
- // verticals the owner has not classified stay aggregate. A legacy carve row's provider-supply GST goes to GSTR-8.
+ // 2. Service supplies (lib/service-output-tax.ts): PawSpace's OWN output GST per booking. A booking with a customer tax invoice
+ // files the invoice; the rest file from the payout record. Legacy invoices and the verticals the owner has not classified stay
+ // aggregate. A legacy carve row's provider-supply GST goes to GSTR-8.
  const{startMs,endMs}=periodMs(period);
  const svc=await serviceVerticalOutputTax(db,startMs,endMs,{entityId,registrationId:regId});
  const serviceTax=svc.pawspaceOwnOutputTax,serviceGross=svc.grossTotal,serviceCount=svc.invoiceCount;
- const classifications=await serviceClassifications(db,entityId,`${period}-28`),sacCodes=new Map<string,string>(),nilMap=new Map<string,{sply_ty:string;expt_amt:number;nil_amt:number;ngsup_amt:number}>();
- for(const l of svc.lines){if(!l.lineDetail)continue;const c=supplyTaxComponents(l,homeState),s=supplySac(l,classifications),exempt=l.section==="exempt",rt=exempt?0:round2(l.ratePercent),txval=exempt?l.exemptValue:l.taxableValue;sacCodes.set(s.sac,s.source);
-  if(exempt){const sply=c.supplyType==="INTRA"?"INTRAB2C":"INTRB2C",n=nilMap.get(sply)||{sply_ty:sply,expt_amt:0,nil_amt:0,ngsup_amt:0};n.expt_amt=round2(n.expt_amt+txval);nilMap.set(sply,n);}
-  else{const key=`${c.supplyType}:${c.pos}:${rt}`,bucket=b2csMap.get(key)||{sply_ty:c.supplyType,pos:c.pos,typ:"OE",rt,txval:0,iamt:0,camt:0,samt:0,csamt:0};bucket.txval=round2(bucket.txval+txval);bucket.iamt=round2(bucket.iamt+c.iamt);bucket.camt=round2(bucket.camt+c.camt);bucket.samt=round2(bucket.samt+c.samt);b2csMap.set(key,bucket);}
-  const hkey=`${s.sac}:${rt}`,h=hsnMap.get(hkey)||{hsn_sc:s.sac,desc:l.treatment==="commission"?"PawSpace commission on pet care services":exempt?"Pet funeral and memorial services (exempt)":"Pet care services",txval:0,iamt:0,camt:0,samt:0,csamt:0,num:0};
-  h.txval=round2(h.txval+txval);h.iamt=round2(h.iamt+c.iamt);h.camt=round2(h.camt+c.camt);h.samt=round2(h.samt+c.samt);h.num+=1;hsnMap.set(hkey,h);}
+ const classifications=await serviceClassifications(db,entityId,`${period}-28`),sacCodes=new Map<string,string>();
+ const fileBookingInvoice=(inv:BookingInvoiceFiling)=>{const pos=inv.placeOfSupply??homeState,intra=pos===homeState,registered=Boolean(inv.customerGstin),itms:Row[]=[];
+  for(const line of inv.lines){if(line.role==="collected_on_behalf")continue;const sac=line.sac,desc=sacDescription(sac)||line.description;if(sac)sacCodes.set(sac,"invoice");
+   if(line.role==="exempt"||line.role==="non_gst"){addNil(intra,registered,line.role==="exempt"?"expt_amt":"ngsup_amt",line.exemptValue);if(line.role==="exempt")addHsn(sac,desc,0,{txval:line.exemptValue,iamt:0,camt:0,samt:0,csamt:0});continue;}
+   const d={txval:line.taxableValue,iamt:line.iamt,camt:line.camt,samt:line.samt,csamt:line.csamt};itms.push({num:itms.length+1,itm_det:{...d,rt:line.ratePercent}});addHsn(sac,desc,line.ratePercent,d);if(!registered)addB2cs(intra?"INTRA":"INTER",pos,line.ratePercent,d);}
+  if(!itms.length)return;if(registered){b2bCount+=1;addB2b(inv.customerGstin as string,{inum:inv.invoiceNumber,idt:inv.issueDate,val:inv.amountReceived,pos,rchrg:"N",inv_typ:"R",itms});}else b2cCount+=1;};
+ for(const l of svc.lines){if(!l.lineDetail)continue;
+  if(l.invoice){fileBookingInvoice(l.invoice);continue;}
+  const c=supplyTaxComponents(l,homeState),s=supplySac(l,classifications),untaxed=l.section==="exempt"||l.section==="non_gst",rt=untaxed?0:round2(l.ratePercent),txval=untaxed?l.exemptValue:l.taxableValue;sacCodes.set(s.sac,s.source);
+  if(untaxed){addNil(c.supplyType==="INTRA",false,l.section==="exempt"?"expt_amt":"ngsup_amt",txval);if(l.section==="non_gst")continue;}
+  else addB2cs(c.supplyType,c.pos,rt,{txval,iamt:c.iamt,camt:c.camt,samt:c.samt,csamt:0});
+  addHsn(s.sac,l.treatment==="commission"?"PawSpace commission on pet care services":untaxed?"Pet funeral and memorial services (exempt)":sacDescription(s.sac)||"Pet care services",rt,{txval,iamt:untaxed?0:c.iamt,camt:untaxed?0:c.camt,samt:untaxed?0:c.samt,csamt:0});}
  const payload={gstin,fp:returnPeriod(period),gt:round2(canonicalTaxable),cur_gt:round2(canonicalTaxable),
   b2b:[...b2b.values()],b2cs:[...b2csMap.values()],cdnr,cdnur,hsn:{data:[...hsnMap.values()]},...(nilMap.size?{nil:{inv:[...nilMap.values()]}}:{})};
- const summary={returnType:"GSTR-1",period,gstin,b2bInvoices:b2bCount,b2cInvoices:b2cCount,cdnrCount:cdnr.length,cdnurCount:cdnur.length,hsnLines:hsnMap.size,
+ const summary={returnType:"GSTR-1",period,gstin,gstModel:svc.gstModel,b2bInvoices:b2bCount,b2cInvoices:b2cCount,cdnrCount:cdnr.length,cdnurCount:cdnur.length,hsnLines:hsnMap.size,
   canonicalTaxableValue:round2(canonicalTaxable),canonicalOutputTax:round2(canonicalTax),
   serviceVerticalTax:serviceTax,serviceVerticalGross:serviceGross,serviceVerticalInvoices:serviceCount,totalOutputTax:round2(canonicalTax+serviceTax),
-  serviceSectionTaxableValue:svc.lineDetailTaxableValue,serviceSectionTax:svc.lineDetailTax,serviceExemptValue:svc.exemptValue,serviceSupplies:svc.byTreatment,notYetClassified:svc.notYetClassified,
+  serviceSectionTaxableValue:svc.lineDetailTaxableValue,serviceSectionTax:svc.lineDetailTax,serviceExemptValue:svc.exemptValue,serviceNonGstValue:svc.nonGstValue,serviceSupplies:svc.byTreatment,byService:svc.byService,notYetClassified:svc.notYetClassified,
+  bookingInvoices:svc.bookingInvoices,invoiceVariances:svc.invoiceVariances,rateCheck:svc.rateCheck,
   sacCodes:[...sacCodes].map(([sac,source])=>({sac,source})),ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
   taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,
-  reconciliation:{note:svc.taxNotInLineDetail>0||svc.notYetClassified.count>0?"Service supplies completed under the owner's model are in b2cs, hsn and nil. Service invoices with no payout record or completed before 26 Sept 2026, and the verticals the owner has not classified yet (relocation, vet, food), have no line-level rate, place of supply or SAC, so their tax is counted in totalOutputTax but NOT in the GSTR-1 sections. A legacy carve row's provider-supply GST goes to s52 GST TCS / GSTR-8.":serviceCount>0?"Every service supply this period is in the GSTR-1 sections.":"No service supplies this period.",serviceVerticalTaxExcludedFromSections:svc.taxNotInLineDetail,providerSupplyGstToGstr8:svc.providerSupplyGstOnBehalf,sacDefaultsUsed:[...sacCodes.values()].includes("default")}};
+  reconciliation:{note:svc.taxNotInLineDetail>0||svc.notYetClassified.count>0?"Service supplies completed under the owner's model are in b2b, b2cs, hsn and Table 8. Service invoices with no payout record or completed before 26 Sept 2026, and the verticals the owner has not classified yet (relocation, vet, food), have no line-level rate, place of supply or SAC, so their tax is counted in totalOutputTax but NOT in the GSTR-1 sections. A legacy carve row's provider-supply GST goes to s52 GST TCS / GSTR-8.":serviceCount>0?"Every service supply this period is in the GSTR-1 sections.":"No service supplies this period.",serviceVerticalTaxExcludedFromSections:svc.taxNotInLineDetail,providerSupplyGstToGstr8:svc.providerSupplyGstOnBehalf,sacDefaultsUsed:[...sacCodes.values()].includes("default")}};
  return persist(db,entityId,regId,"GSTR-1",period,payload,summary,actor,reason);
 }
 
@@ -165,7 +189,9 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  // Output tax by component from the canonical ledger (B2B), plus the service supply register below.
  const components=await db.prepare("SELECT component,COALESCE(SUM(amount),0) total FROM finance_tax_ledger WHERE entity_id=? AND registration_id=? AND period_code=? AND ledger_type='output' GROUP BY component").bind(entityId,regId,period).all<Row>();
  let ledgerTaxable=0;const iamt0={iamt:0,camt:0,samt:0,csamt:0};for(const c of components.results){const code=text(c.component).toLowerCase(),amt=round2(num(c.total));if(code.includes("igst"))iamt0.iamt+=amt;else if(code.includes("cgst"))iamt0.camt+=amt;else if(code.includes("sgst")||code.includes("utgst"))iamt0.samt+=amt;else if(code.includes("cess"))iamt0.csamt+=amt;else iamt0.iamt+=amt;}
- const taxableRow=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'",[entityId,regId,period]);ledgerTaxable=round2(num(taxableRow?.txval));
+ // Invoices issued by hand only: a booking's customer tax invoice is filed through the register below (its tax ledger rows are
+ // "booking_output", which the component read above leaves out too).
+ const taxableRow=await safeFirst(db,`SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`,[entityId,regId,period]);ledgerTaxable=round2(num(taxableRow?.txval));
  const{startMs,endMs}=periodMs(period);
  // Only PawSpace's OWN service output GST (commission / own supply, from the payout record) is its 3B liability, value AND
  // tax in 3.1(a), split into CGST+SGST or IGST by place of supply; exempt funeral supplies go to 3.1(c). A legacy carve row's
@@ -180,13 +206,14 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  const eligibleItc=round2(num(itc?.total));
  const totalOutputTax=round2(outputTaxLedger+serviceTax);
  const netTaxPayable=round2(Math.max(0,totalOutputTax-eligibleItc));
- // Portal 3B shape: 3.1(a) outward taxable supplies; 3.1(c) nil-rated and exempt; 4 eligible ITC; 5.1 interest/late (0 in UAT).
+ // Portal 3B shape: 3.1(a) outward taxable supplies; 3.1(c) nil-rated and exempt; 3.1(e) non-GST (Schedule III funeral by
+ // default); 4 eligible ITC; 5.1 interest/late (0 in UAT).
  const payload={gstin,ret_period:returnPeriod(period),
-  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),...osup},osup_nil_exmp:{txval:svc.exemptValue}},
+  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),...osup},osup_nil_exmp:{txval:svc.exemptValue},osup_nongst:{txval:svc.nonGstValue}},
   itc_elg:{itc_avl:[{ty:"OTH",iamt:eligibleItc,camt:0,samt:0,csamt:0}],itc_net:{iamt:eligibleItc,camt:0,samt:0,csamt:0}},
   intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}}};
- const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:osup,serviceTaxByComponent:serviceByComponent,
-  serviceTaxableValue:serviceTaxable,serviceExemptValue:svc.exemptValue,serviceSupplies:svc.byTreatment,notYetClassified:svc.notYetClassified,ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
+ const summary={returnType:"GSTR-3B",period,gstin,gstModel:svc.gstModel,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:osup,serviceTaxByComponent:serviceByComponent,
+  serviceTaxableValue:serviceTaxable,serviceExemptValue:svc.exemptValue,serviceNonGstValue:svc.nonGstValue,serviceSupplies:svc.byTreatment,byService:svc.byService,bookingInvoices:svc.bookingInvoices,invoiceVariances:svc.invoiceVariances,rateCheck:svc.rateCheck,notYetClassified:svc.notYetClassified,ledgerCheck:svc.ledgerCheck,unassignedInClosedMonths:svc.unassignedInClosedMonths,alsoOnCanonicalInvoice:svc.alsoOnCanonicalInvoice,
   taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
  return persist(db,entityId,regId,"GSTR-3B",period,payload,summary,actor,reason);
 }
@@ -203,7 +230,7 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
  // Books turnover + tax: canonical invoices (accrual) + service verticals; the same two sources. Only
  // PawSpace's OWN service output GST is its liability (commission/principal); the provider-supply GST is
  // reconciled separately (routed to s52 GST TCS / GSTR-8), never in PawSpace's own books output tax.
- const canonical=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval,COALESCE(SUM(tax_total),0) tax FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'",[entityId,regId,fromPeriod,toPeriod]);
+ const canonical=await safeFirst(db,`SELECT COALESCE(SUM(subtotal),0) txval,COALESCE(SUM(tax_total),0) tax FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`,[entityId,regId,fromPeriod,toPeriod]);
  const fyStartMs=Date.UTC(startYear,3,1)-330*60_000,fyEndMs=Date.UTC(startYear+1,3,1)-330*60_000;
  const svc=await serviceVerticalOutputTax(db,fyStartMs,fyEndMs,{entityId,registrationId:regId});
  const booksTaxable=round2(num(canonical?.txval)+svc.pawspaceOwnTaxableValue);

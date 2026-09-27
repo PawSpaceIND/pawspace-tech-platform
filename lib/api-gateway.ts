@@ -28,6 +28,9 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
     ||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
   if(url.pathname==="/api/admin/sales-targets")return "settings.manage";
   if(url.pathname==="/api/customer-billing"||url.pathname==="/api/customer-notifications"||url.pathname==="/api/order-notifications")return "scheduling.book";
+  // The printable customer tax invoice: the booking's own customer (ownership is checked by the route), Finance (?view=finance)
+  // or the Booking Command Center (?view=operations). Each audience needs its own permission here and again in the route.
+  if(url.pathname==="/api/booking-invoice"){const view=url.searchParams.get("view");return view==="finance"?"finance.view":view==="operations"?"bookings.manage":"scheduling.book";}
 
   if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname))return ["GET","POST"].includes(method)?"scheduling.book":"settings.manage";
   if(url.pathname==="/api/customer-offers")return "scheduling.book";
