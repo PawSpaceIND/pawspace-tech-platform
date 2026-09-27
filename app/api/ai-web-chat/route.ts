@@ -153,7 +153,7 @@ async function submitBotLead(request:Request,sessionKey:string,event:{service:st
 }
 
 const VERIFY_HINT="Enter the 6-digit code";
-const verifyText=(phone:string)=>`To book this for you right now, I just need to confirm your number. I've sent a 6-digit code to ${phone} - type it here. (Or leave it, and the team will contact you.)`;
+const verifyText=(phone:string)=>`To book this for you right now, I just need to confirm your number. I've sent a 6-digit code to ${phone} - type it here. (Or reply with anything else, and the team will contact you.)`;
 /** Sends the code and remembers the enquiry it unlocks. Returns null where no OTP can be sent, so the lead stands alone. */
 async function offerVisitorVerification(db:D1Database,request:Request,ref:string,input:{phone:string;service:string;summary:string}){
  const{env}=await import("cloudflare:workers");
@@ -174,14 +174,14 @@ async function verifyVisitor(db:D1Database,request:Request,ref:string,state:Awai
  // A button tap (Start over, a service) is never a code: it steps out of verification.
  const code=reply.tapped?"":reply.message.replace(/\s+/g,"");
  if(!/^\d{6}$/.test(code)){
-  if(!reply.tapped&&/^(resend|new code|send again)$/i.test(message)){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`Sent again. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
+  // Anything but a code steps out; a new code is sent only when the server finds the last one expired or used.
   return leave("No problem - your enquiry is with the PawSpace team, who will contact you shortly. Ask me anything else, or start over.");
  }
  const{env}=await import("cloudflare:workers");
  let exchanged;
  try{exchanged=await exchangeCustomerOtp(db,request,env as unknown as Record<string,unknown>,{challengeId:verify.challengeId,code,name:state.answers.name});}
  catch(error){
-  if(error instanceof CustomerOtpVerificationError&&error.status===401)return json({data:{mode:"public",sessionKey,display:message,bot:{text:"That code didn't match. Please check the SMS and type the 6-digit code again, or type 'resend' for a new one.",choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null}});
+  if(error instanceof CustomerOtpVerificationError&&error.status===401)return json({data:{mode:"public",sessionKey,display:message,bot:{text:"That code didn't match. Please check the SMS and type the 6-digit code again.",choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null}});
   if(error instanceof CustomerOtpVerificationError){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`That code is no longer valid. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
   return leave("I couldn't confirm your number just now. Your enquiry is with the PawSpace team, who will contact you shortly.");
  }
