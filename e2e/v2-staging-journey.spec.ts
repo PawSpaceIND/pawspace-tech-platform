@@ -261,7 +261,7 @@ async function chooseFirstGroomer(page: Page) {
   const groomer = oneLine(await first.locator("b").first().innerText());
   await first.click();
   await expect(first).toContainText("✓");
-  const summary = page.locator("aside");
+  const summary = page.locator("aside").filter({ hasText: "Your care plan" });
   await expect(summary).toContainText(groomer);
   await expect(summary).toContainText("Verified live price");
   const price = /Verified live price\s*(₹\s?[\d,]+)/.exec(await summary.innerText())?.[1] ?? "shown";
@@ -279,7 +279,7 @@ async function reserve(page: Page) {
   const started = Date.now();
   await reserveButton.click();
   const checkout = page.getByRole("region", { name: "Grooming checkout" });
-  const reserveError = page.locator("aside").getByRole("alert").first();
+  const reserveError = page.locator("aside").filter({ hasText: "Your care plan" }).getByRole("alert").first();
   await expect(checkout.or(reserveError).first()).toBeVisible({ timeout: 150_000 });
   if (!(await checkout.isVisible())) throw new Error(`Reservation failed: ${oneLine(await reserveError.innerText())}`);
   await expect(page).toHaveURL(/[?&]bookingId=/, { timeout: 30_000 });
