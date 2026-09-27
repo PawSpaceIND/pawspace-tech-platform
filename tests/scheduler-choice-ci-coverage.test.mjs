@@ -21,3 +21,8 @@ test("scheduler CI triggers for every executed regression and its shared fixture
   for (const path of [...executed, "tests/helpers/module-hooks.mjs", "tests/helpers/execution-harness.mjs", "tests/fixtures/v2-ui-wiring-contract.json", "tests/scheduler-choice-ci-coverage.test.mjs"])
     assert.ok(covered(path), `Missing scheduler CI trigger: ${path}`);
 });
+
+test("scheduler CI watches transitive engine, capacity, identity and application-shell changes", () => {
+  for (const path of ["backend/src/scheduling.ts", "lib/provider-capacity-governance.ts", "lib/platform-session.ts", "worker/index.ts", "app/v2/layout.tsx", "vite.config.ts", "wrangler.toml"])
+    assert.ok(covered(path), `Missing transitive scheduler CI trigger: ${path}`);
+});
