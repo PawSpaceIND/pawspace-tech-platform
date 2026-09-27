@@ -83,6 +83,9 @@ test("app: a refused trainer leads to a preview of the same calendar, never to a
   assert.match(reserveBlock, /previewUatProviders\(\{\.\.\.schedule,clientRequestId:`\$\{requestId\}:alternatives`\},\{timeoutMs:60_000\}\)/, "the preview describes the exact calendar that was refused");
   assert.match(reserveBlock, /trainer&&trainer\.id!==selectedTrainer\.id\?\[trainer\]:\[\]/, "the refused trainer is not offered again");
   assert.match(reserveBlock, /setCalendarAlternatives\(\{key:calendarKey,trainers:free\}\)/);
+  // A preview that timed out or failed is not an answer: the customer is told to try again, not only that the trainer is busy.
+  assert.match(reserveBlock, /could not check the other trainers just now\. Try again in a moment, or change the time or days\./);
+  assert.doesNotMatch(reserveBlock, /:problem;/, "a failed preview never ends on the bare refusal");
   assert.match(flow, /weekdays:weekdayMap\[frequency\]\};/, "preview and reservation share the weekday calendar");
 });
 
