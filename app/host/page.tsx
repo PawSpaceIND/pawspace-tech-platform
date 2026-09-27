@@ -7,6 +7,7 @@ import {usePathname,useSearchParams} from "next/navigation";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
 import {loadOwnBoardingStays,updateBoardingStay,type BoardingStay,type BoardingStayAction} from "../../lib/boarding-stay-client";
 import HostStayCare,{petSummary} from "./host-stay-care";
+import HostTodayStays,{formatDateTime,statusLabel,todayStays} from "./host-today-stays";
 import styles from "./host.module.css";
 import {acceptAvailable,describeProviderOffer,windowEnded} from "../../lib/provider-offer-copy";
 
@@ -19,9 +20,7 @@ type Workspace={stays:BoardingStay[];providerId:string|null;cityId:string|null;z
 const terminalStatuses=new Set(["completed","cancelled"]);
 
 function formatDate(value:string){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",year:"numeric"}).format(date):value;}
-function formatDateTime(value:string|number){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(date):String(value);}
 function stayWindow(stay:BoardingStay){return `${formatDateTime(stay.check_in_at)} → ${formatDateTime(stay.check_out_at)}`;}
-function statusLabel(value:string){return value.replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());}
 function initials(value:string){return value.split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]?.toUpperCase()).join("")||"PH";}
 
 async function loadWorkspace():Promise<Workspace>{const scoped=await loadOwnBoardingStays();let profile:BoardingHost|null=null;if(scoped.providerId&&scoped.cityId&&scoped.zoneId){const commercial=await loadBoardingCommercial({cityId:scoped.cityId,zoneId:scoped.zoneId});profile=commercial.hosts.find(item=>item.providerId===scoped.providerId)??null;}return{...scoped,profile};}
@@ -37,6 +36,8 @@ function HostPageContent(){
  // in the client value after hydration.
  const today=useSyncExternalStore(()=>()=>{},()=>new Intl.DateTimeFormat("en-IN",{weekday:"long",day:"numeric",month:"long"}).format(new Date()),()=>"");
  useEffect(()=>{let active=true;void loadWorkspace().then(data=>{if(!active)return;setStays(data.stays);setProfile(data.profile);setProviderId(data.providerId);setSelectedId(current=>current&&data.stays.some(item=>item.id===current)?current:data.stays.find(item=>item.booking_id===requestedBookingId)?.id??data.stays.find(item=>item.status==="awaiting_host_acceptance")?.id??data.stays[0]?.id??"");setError("");}).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load Boarding workspace");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[requestedBookingId]);
+ // Opened from a job link (?bookingId=): once the stays load, bring that stay's own card into view.
+ useEffect(()=>{if(loading||!requestedBookingId)return;document.querySelector(`[data-booking-id="${CSS.escape(requestedBookingId)}"]`)?.scrollIntoView({block:"start"});},[loading,requestedBookingId]);
  const refresh=async()=>{const data=await loadWorkspace();setStays(data.stays);setProfile(data.profile);setProviderId(data.providerId);setSelectedId(current=>current&&data.stays.some(item=>item.id===current)?current:data.stays.find(item=>item.booking_id===requestedBookingId)?.id??data.stays.find(item=>item.status==="awaiting_host_acceptance")?.id??data.stays[0]?.id??"");};
  const notify=(message:string)=>{setToast(message);window.setTimeout(()=>setToast(""),2400);};
  const act=async(stay:BoardingStay,action:BoardingStayAction,input:Partial<{reason:string;careEventType:string;detail:Record<string,unknown>}>= {})=>{const key=action==="care_event"?`boarding:${stay.id}:${action}:${crypto.randomUUID()}`:`boarding:${stay.id}:${action}:${stay.host_provider_id}:${stay.status}:${stay.updated_at}`;setBusy(`${stay.id}:${action}`);setError("");try{const result=await updateBoardingStay({stayId:stay.id,action,idempotencyKey:key,...input});notify(String(result.status||action).replaceAll("_"," "));await refresh();}catch(problem){setError(problem instanceof Error?problem.message:"Boarding action failed");}finally{setBusy("");}};
@@ -46,12 +47,12 @@ function HostPageContent(){
  const needsOperations=useMemo(()=>stays.filter(item=>awaitingStatuses.includes(item.status)&&requestBucket(item)==="needs_operations"),[stays]);
  const pastRequests=useMemo(()=>stays.filter(item=>awaitingStatuses.includes(item.status)&&requestBucket(item)==="past"),[stays]);
  // A checked-in stay stays active until checkout; an accepted stay whose window has already ended without a check-in is not current work.
- const active=useMemo(()=>stays.filter(item=>item.status==="in_progress"||item.status==="confirmed"&&!windowEnded(item.check_out_at,item.check_in_at)).sort((a,b)=>new Date(a.check_in_at).getTime()-new Date(b.check_in_at).getTime()),[stays]);
+ // Today shows every one of them with its own controls, earliest check-in first.
+ const active=useMemo(()=>todayStays(stays),[stays]);
  const recovery=useMemo(()=>stays.filter(item=>item.status==="recovery_pending"),[stays]);
  const completed=useMemo(()=>stays.filter(item=>item.status==="completed"),[stays]);
  const upcoming=useMemo(()=>stays.filter(item=>!terminalStatuses.has(item.status)).sort((a,b)=>new Date(a.check_in_at).getTime()-new Date(b.check_in_at).getTime()),[stays]);
  const selected=stays.find(item=>item.id===selectedId)??pending[0]??active[0]??stays[0];
- const liveStay=active.find(item=>item.status==="in_progress")??active[0];
  const currentGuests=active.filter(item=>item.status==="in_progress").reduce((sum,item)=>sum+Number(item.pet_count||0),0);
  const hostName=profile?.name||selected?.provider_name||"Boarding host",hostInitials=initials(hostName);
  const isBusy=(stay:BoardingStay,action:BoardingStayAction)=>busy===`${stay.id}:${action}`;
@@ -79,28 +80,10 @@ function HostPageContent(){
      <article><span>Home capacity</span><strong>{profile?.capacity??"—"}</strong><small>{profile?.oneFamilyOnly?"One family at a time":"Governed pet capacity"}</small></article>
      <article><span>Recovery queue</span><strong>{recovery.length}</strong><small>Ops escalation when non-zero</small></article>
     </section>
-    <section className={styles.todayGrid}>
-     <div className={styles.panel}>
-      <div className={styles.panelHead}><div><span>{liveStay?`${liveStay.status==="in_progress"?"LIVE STAY":"ACCEPTED STAY"} · ${liveStay.booking_id}`:"NO ACTIVE STAY"}</span><h2>{liveStay?"Canonical Care Card":"No accepted stay"}</h2></div>{liveStay&&<button onClick={()=>refresh().catch(problem=>setError(problem instanceof Error?problem.message:"Refresh failed"))}>↻ Refresh</button>}</div>
-      {liveStay?<>
-       <div className={styles.petHero}><span>{liveStay.pet_count}</span><div><h3>{petSummary(liveStay)}</h3><p>{stayWindow(liveStay)}</p></div><button onClick={()=>notify("Live customer messaging is not connected in Boarding UAT")}>Messaging status</button></div>
-       <div className={styles.tasks}>
-        <button onClick={()=>notify(`Care plan status: ${statusLabel(liveStay.care_plan_status)}. The customer's pets and care plan are shown below.`)}><i>{liveStay.care_plan_status==="ready"?"✓":"!"}</i><div><strong>Care plan</strong><small>{statusLabel(liveStay.care_plan_status)}</small></div><span>›</span></button>
-        <button onClick={()=>notify(`Check-in status: ${statusLabel(liveStay.check_in_status)}. Use the quick actions below to update it.`)}><i>{liveStay.check_in_status==="complete"?"✓":"○"}</i><div><strong>Check-in</strong><small>{statusLabel(liveStay.check_in_status)}</small></div><span>›</span></button>
-        <button onClick={()=>notify(`Extension status: ${statusLabel(liveStay.extension_status)}.`)}><i>{liveStay.extension_status==="none"?"○":"!"}</i><div><strong>Extension</strong><small>{statusLabel(liveStay.extension_status)}</small></div><span>›</span></button>
-        <button onClick={()=>notify(`Check-out status: ${statusLabel(liveStay.check_out_status)}. Use the quick actions below to update it.`)}><i>{liveStay.check_out_status==="complete"?"✓":"○"}</i><div><strong>Check-out</strong><small>{statusLabel(liveStay.check_out_status)}</small></div><span>›</span></button>
-       </div>
-       <HostStayCare stay={liveStay}/>
-       <div className={styles.quick}>
-        {liveStay.status==="confirmed"&&<button disabled={liveStay.care_plan_status!=="ready"||isBusy(liveStay,"check_in")} onClick={()=>act(liveStay,"check_in")}>✓ Check in</button>}
-        {liveStay.status==="in_progress"&&<><button onClick={()=>care(liveStay,"meal")}>🍲 Log meal</button><button onClick={()=>care(liveStay,"play")}>🎾 Log play</button><button onClick={()=>care(liveStay,"walk")}>🦮 Log walk</button><Link href={`${hostBase}/proof?stayId=${encodeURIComponent(liveStay.id)}`}>📷 Proof · medication · incident</Link><button disabled={isBusy(liveStay,"check_out")} onClick={()=>window.confirm("Complete checkout for this stay?")&&void act(liveStay,"check_out")}>✓ Check out</button></>}
-       </div>
-       {liveStay.status==="in_progress"&&<div className={styles.marketSync}><b>Evidence workflow</b><span>Medication, photo proof and incidents use the secure Gate 4 proof workspace. Generic care events cannot bypass evidence, scan or incident governance.</span></div>}
-       {liveStay.extension&&<div className={styles.marketSync}><b>Extension request</b><span>Requested checkout: {formatDateTime(liveStay.extension.requested_end)}. Status: {statusLabel(liveStay.extension.status)}. The paid stay window is unchanged until a governed quote is approved.</span></div>}
-      </>:<p>No canonical accepted or active Boarding stay is assigned to this host.</p>}
-     </div>
-     <aside className={styles.panel}><div className={styles.panelHead}><div><span>CANONICAL EVENT HISTORY</span><h2>Stay timeline</h2></div></div>{liveStay?.events.length?liveStay.events.map(item=><article className={styles.timeline} key={item.id}><b>{formatDateTime(item.created_at)}</b><div><strong>{statusLabel(item.event_type)}</strong><small>{item.actor_id}</small></div></article>):<p>No stay events yet.</p>}</aside>
-    </section>
+    <HostTodayStays stays={active} hostBase={hostBase} focusBookingId={requestedBookingId} isBusy={isBusy}
+     onCheckIn={stay=>void act(stay,"check_in")} onCare={(stay,eventType)=>void care(stay,eventType)}
+     onCheckOut={stay=>{if(window.confirm(`Complete checkout for ${stay.booking_id}?`))void act(stay,"check_out");}}
+     onNotify={notify} onRefresh={()=>refresh().catch(problem=>setError(problem instanceof Error?problem.message:"Refresh failed"))}/>
    </>}
    {!loading&&tab==="requests"&&<section className={styles.requestLayout}>
     <div className={styles.panel}><div className={styles.panelHead}><div><span>SERVER-OWNED ASSIGNMENT OFFERS</span><h2>Awaiting host response</h2></div></div>{pending.length?pending.map(stay=><button key={stay.id} className={`${styles.request} ${selected?.id===stay.id?styles.selected:""}`} onClick={()=>setSelectedId(stay.id)}><span>{stay.pet_count}</span><div><strong>{stay.package_name||stay.package_code}</strong><small>{stayWindow(stay)}<br/>{petSummary(stay)} · {stay.booking_id}</small></div><b>{describeProviderOffer(stay.offer,{noun:"stay"}).label}</b></button>):<p>No pending Boarding requests.</p>}{needsOperations.length>0&&<><h3>Needs Operations</h3>{needsOperations.map(stay=><button key={stay.id} className={`${styles.request} ${selected?.id===stay.id?styles.selected:""}`} onClick={()=>setSelectedId(stay.id)}><span>{stay.pet_count}</span><div><strong>{stay.package_name||stay.package_code}</strong><small>{stayWindow(stay)}<br/>{petSummary(stay)} · {stay.booking_id}</small></div><b>{describeProviderOffer(stay.offer,{noun:"stay"}).label}</b></button>)}</>}{pastRequests.length>0&&<><h3>Past</h3>{pastRequests.map(stay=><button key={stay.id} className={`${styles.request} ${selected?.id===stay.id?styles.selected:""}`} onClick={()=>setSelectedId(stay.id)}><span>{stay.pet_count}</span><div><strong>{stay.package_name||stay.package_code}</strong><small>{stayWindow(stay)}<br/>{stay.booking_id}</small></div><b>Past</b></button>)}</>}{recovery.length>0&&<div className={styles.marketSync}><b>{recovery.length} stay{recovery.length===1?"":"s"} in recovery</b><span>Operations owns replacement after host decline, unavailability or no-show. The original booking is preserved.</span></div>}</div>

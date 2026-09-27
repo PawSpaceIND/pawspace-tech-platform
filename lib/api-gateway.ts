@@ -79,7 +79,8 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["save_plan","approve_plan"].includes(action)?"pricing.manage":"finance.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/customer-360")return method==="GET"?"customers.view":"customers.manage";
-  if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
+  // An assigned rep's own-lead work (call/WhatsApp attempt, callbacks) is checked against the lead in the route.
+  if(url.pathname==="/api/revenue-crm"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["log_attempt","schedule_callback","complete_callback"].includes(String(body.action||""))?"customers.view":"customers.manage";}
   if(url.pathname==="/api/revenue-intelligence")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-mission-control")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/lead-assignment-governance"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="accept_assignment"?"customers.view":"customers.manage";}

@@ -27,17 +27,22 @@ test.before(async () => {
   reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
 });
 
-/** One Boarding booking worth `amount`, with one payment intent per checkout order in `orders`. */
-async function world({ amount = 499, orders = [["PI-A", "order_A", 49900], ["PI-B", "order_B", 49900]], schedule = null } = {}) {
+/**
+ * One booking of `service` worth `amount`, with one payment intent per checkout order in `orders`. `schedule` is a
+ * 50/50 stay split; `taxiFee` gives a Pet Taxi booking its booking-fee / balance schedule.
+ */
+async function world({ amount = 499, orders = [["PI-A", "order_A", 49900], ["PI-B", "order_B", 49900]], schedule = null, service = "boarding", taxiFee = null } = {}) {
   const h = createTransactionalChaosD1();
   installFinancialLifecycleSchema(h.sqlite);
   h.sqlite.exec(`CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,status TEXT NOT NULL,city_id TEXT,service_code TEXT,total_amount REAL,currency TEXT,updated_at INTEGER);
     CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,currency TEXT NOT NULL,method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER,updated_at INTEGER);
-    CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY,service_code TEXT,customer_id TEXT,total_amount REAL,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT,paid_at INTEGER,payment_ref TEXT,created_at INTEGER,updated_at INTEGER);`);
+    CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY,service_code TEXT,customer_id TEXT,total_amount REAL,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT,paid_at INTEGER,payment_ref TEXT,created_at INTEGER,updated_at INTEGER);
+    CREATE TABLE taxi_payment_schedules (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,total_amount REAL NOT NULL,booking_fee_amount REAL NOT NULL,balance_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'booking_fee_pending',booking_fee_paid_at INTEGER,booking_fee_reference TEXT,final_paid_at INTEGER,final_payment_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);`);
   const now = Date.now() - 10 * 60_000;
-  h.sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-OC','CUS-OC','confirmed','blr','boarding',?,'INR',?)").run(amount, now);
-  h.sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-OC','BK-OC','CUS-OC',?,'INR','netbanking','prepaid','created','uat_sandbox','{}',?,?)").run(amount, now, now);
-  if (schedule) h.sqlite.prepare("INSERT INTO stay_payment_schedules VALUES ('BK-OC','boarding','CUS-OC',?,?,?,?,'pending_balance',NULL,NULL,?,?)").run(amount, schedule.paidNow, schedule.balance, now + 86_400_000, now, now);
+  h.sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-OC','CUS-OC','confirmed','blr',?,?,'INR',?)").run(service, amount, now);
+  h.sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-OC','BK-OC','CUS-OC',?,'INR','netbanking',?,'created','uat_sandbox','{}',?,?)").run(amount, schedule || taxiFee ? "split_50_50" : "prepaid", now, now);
+  if (schedule) h.sqlite.prepare("INSERT INTO stay_payment_schedules VALUES ('BK-OC',?,'CUS-OC',?,?,?,?,'pending_balance',NULL,NULL,?,?)").run(service, amount, schedule.paidNow, schedule.balance, now + 86_400_000, now, now);
+  if (taxiFee) h.sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,created_at,updated_at) VALUES ('BK-OC','CUS-OC',?,?,?,'booking_fee_pending',?,?)").run(amount, taxiFee, amount - taxiFee, now, now);
   for (const [id, order, paise] of orders) {
     h.sqlite.prepare(`INSERT INTO payment_intents
       (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,gateway_order_id,
@@ -130,6 +135,74 @@ test("a split stay's deposit and balance add up to a match, not an over-collecti
     assert.equal(Number(row.variance_amount), 0);
     assert.equal(overCollectionExceptions(h).length, 0);
   } finally { h.close(); }
+});
+
+/*
+ * PAY-02 for every service (round-2 transactions audit). The audit read PS-UAT-MUHXOQ48-2348 (₹998 captured on a
+ * ₹499 Boarding booking) as 'matched' with variance 0: that row was written by the round-1 build, before the fix.
+ * Whatever the service, money taken beyond the booking's stages ends over_collected with the excess as its
+ * variance, one open over_collection exception and a payment_over_collected timeline event.
+ */
+function assertOverCollected(h, { captured, excess, label }) {
+  const row = rec(h);
+  assert.equal(Number(row.captured_amount), captured, `${label}: every rupee captured is recorded`);
+  assert.equal(row.reconciliation_status, "over_collected", `${label}: never a clean match`);
+  assert.equal(Number(row.variance_amount), excess, `${label}: the excess is the variance`);
+  const exceptions = overCollectionExceptions(h);
+  assert.equal(exceptions.length, 1, `${label}: one Finance exception`);
+  assert.equal(exceptions[0].status, "open");
+  assert.equal(Number(JSON.parse(exceptions[0].detail_json).excessAmount), excess);
+  assert.equal(h.scalar("SELECT COUNT(*) value FROM booking_lifecycle_events WHERE booking_id='BK-OC' AND event_type='payment_over_collected'"), 1, `${label}: on the booking timeline`);
+}
+
+for (const [service, label, amount] of [["boarding", "Boarding", 499], ["pet_sitting", "Pet Sitting", 699], ["grooming", "Grooming", 1349], ["dog_training", "Dog Training", 1500]]) {
+  test(`PAY-02 ${label}: a booking payable in one stage captured twice is over_collected with an open exception`, async () => {
+    const paise = Math.round(amount * 100);
+    const h = await world({ amount, service, orders: [["PI-A", "order_A", paise], ["PI-B", "order_B", paise]] });
+    try {
+      assert.equal((await capture(h.db, { intentId: "PI-A", order: "order_A", pay: "pay_A", paise, eventId: "evt_A" })).reconciliationStatus, "matched");
+      const second = await capture(h.db, { intentId: "PI-B", order: "order_B", pay: "pay_B", paise, eventId: "evt_B" });
+      assert.equal(second.duplicateCapture, false);
+      assertOverCollected(h, { captured: amount * 2, excess: amount, label });
+    } finally { h.close(); }
+  });
+}
+
+test("PAY-02 Pet Taxi: a capture beyond the booking fee and the balance is over_collected with an open exception", async () => {
+  const h = await world({ amount: 1000, service: "pet_taxi", taxiFee: 500, orders: [["PI-FEE", "order_fee", 50000], ["PI-BAL", "order_bal", 50000], ["PI-BAL2", "order_bal2", 50000]] });
+  try {
+    assert.equal((await capture(h.db, { intentId: "PI-FEE", order: "order_fee", pay: "pay_fee", paise: 50000, eventId: "evt_fee" })).reconciliationStatus, "partially_captured");
+    assert.equal((await capture(h.db, { intentId: "PI-BAL", order: "order_bal", pay: "pay_bal", paise: 50000, eventId: "evt_bal" })).reconciliationStatus, "matched");
+    assert.equal(overCollectionExceptions(h).length, 0, "booking fee plus balance is the ride, not an over-collection");
+    await capture(h.db, { intentId: "PI-BAL2", order: "order_bal2", pay: "pay_bal2", paise: 50000, eventId: "evt_bal2" });
+    assertOverCollected(h, { captured: 1500, excess: 500, label: "Pet Taxi" });
+  } finally { h.close(); }
+});
+
+test("PAY-02 the round-1 shape: two signed captures on orders with no payment intent, linked by the booking note", async () => {
+  // PS-UAT-MUHXOQ48-2348: ₹499 Boarding, both captures arrived as signed payment.captured webhooks for orders the
+  // booking link did not know, resolved through notes.booking_id.
+  const SECRET = "whsec_over_collection_round1";
+  const h = await world({ amount: 499, orders: [] });
+  globalThis.__OVER_COLLECTION_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: SECRET };
+  const webhook = await import("../app/api/razorpay-webhook/route.ts");
+  const deliver = async (eventId, pay, order) => {
+    const raw = JSON.stringify({ event: "payment.captured", created_at: Math.floor(Date.now() / 1000), payload: { payment: { entity: { id: pay, order_id: order, amount: 49900, currency: "INR", status: "captured", notes: { booking_id: "BK-OC" } } } } });
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)))].map((x) => x.toString(16).padStart(2, "0")).join("");
+    const response = await webhook.POST(new Request("https://app.pawspace.in/api/razorpay-webhook", { method: "POST", headers: { "x-razorpay-signature": signature, "x-razorpay-event-id": eventId }, body: raw }));
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  try {
+    const first = await deliver("evt_7cb1a6a3-4b2", "pay_88c115b2691c44", "order_bb03865cbe8244");
+    assert.equal(first.status, 200, JSON.stringify(first));
+    assert.equal(rec(h).reconciliation_status, "matched");
+    const second = await deliver("evt_rep_ce272dbe", "pay_2ec7206bda6", "order_cb2927ffd6a");
+    assert.equal(second.status, 200, JSON.stringify(second));
+    assert.equal(second.body?.duplicateCapture, false, "a distinct gateway payment is real money");
+    assertOverCollected(h, { captured: 998, excess: 499, label: "round-1 Boarding" });
+    assert.deepEqual(h.sqlite.prepare("SELECT processing_status FROM gateway_webhook_events ORDER BY received_at").all().map((row) => row.processing_status), ["PROCESSED", "PROCESSED"]);
+  } finally { globalThis.__OVER_COLLECTION_ENV__ = {}; h.close(); }
 });
 
 function refundWorld({ expected, captured, refund }) {

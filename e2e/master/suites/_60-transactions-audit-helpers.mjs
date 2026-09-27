@@ -143,14 +143,25 @@ export const GLOBAL_SQL = {
       ORDER BY r.updated_at DESC LIMIT 50`,
   },
   /** One per service refund ledger; a missing table (never used on staging) is simply empty. */
-  serviceRefundsNotInBooks: ["boarding_refund_ledger", "sitting_refund_ledger", "taxi_refund_ledger"].map(table => ({
-    table,
-    params: (since, until) => [since, until],
-    sql: `SELECT '${table}' ledger,l.id,l.booking_id,l.amount,l.status,l.reference,l.updated_at FROM ${table} l
-      WHERE l.status='sandbox_recorded' AND l.updated_at>=? AND l.updated_at<?
-        AND NOT EXISTS (SELECT 1 FROM booking_refund_cases r WHERE r.booking_id=l.booking_id AND r.gateway_reference=l.reference AND r.status IN ('processed','completed'))
-      ORDER BY l.updated_at DESC LIMIT 50`,
-  })),
+  serviceRefundsNotInBooks: [
+    ...["boarding_refund_ledger", "sitting_refund_ledger", "taxi_refund_ledger"].map(table => ({
+      table,
+      params: (since, until) => [since, until],
+      sql: `SELECT '${table}' ledger,l.id,l.booking_id,l.amount,l.status,l.reference,l.updated_at FROM ${table} l
+        WHERE l.status='sandbox_recorded' AND l.updated_at>=? AND l.updated_at<?
+          AND NOT EXISTS (SELECT 1 FROM booking_refund_cases r WHERE r.booking_id=l.booking_id AND r.gateway_reference=l.reference AND r.status IN ('processed','completed'))
+        ORDER BY l.updated_at DESC LIMIT 50`,
+    })),
+    // Training's refund instruction says completed_sandbox and keeps the reference as provider_reference.
+    {
+      table: "training_refund_instructions",
+      params: (since, until) => [since, until],
+      sql: `SELECT 'training_refund_instructions' ledger,l.id,l.booking_id,l.amount,l.status,l.provider_reference reference,l.updated_at FROM training_refund_instructions l
+        WHERE l.status='completed_sandbox' AND l.updated_at>=? AND l.updated_at<?
+          AND NOT EXISTS (SELECT 1 FROM booking_refund_cases r WHERE r.booking_id=l.booking_id AND r.gateway_reference=l.provider_reference AND r.status IN ('processed','completed'))
+        ORDER BY l.updated_at DESC LIMIT 50`,
+    },
+  ],
   captureEffectsPending: {
     settleMs: EFFECTS_GRACE_MS,
     params: (since, until) => [since, until],

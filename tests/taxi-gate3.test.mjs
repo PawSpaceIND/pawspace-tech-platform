@@ -517,3 +517,129 @@ test("Gate 3: Razorpay booking-fee and final-balance captures preserve Taxi sche
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE booking_id=? AND event_type='payment_captured'").get(bookingId).n, 2);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM journal_transactions WHERE source_type='razorpay_capture' AND status='POSTED'").get().n, 2);
 });
+
+// ---------------------------------------------------------------------------------------------
+// ROUND 2 (26 Sep 2026 staging). A customer's cancellation of an UNPAID ride hold only filed a Finance
+// review ("taxi-finance -> null"): the booking stayed payment_pending with car TXF-CITROEN-9179 and its
+// driver reserved, although the flow says the car is "held for 3 hours". And a cancellation request
+// answered HTTP 500 although it had been recorded.
+
+/** Turns a financeWorld trip into a Taxi v2 ride hold: fee unpaid, car and driver reserved for the window. */
+async function unpaidRideHold(world) {
+  const { sqlite, db, bookingId, customerId, providerId, scheduledStart, scheduledEnd, groupId } = world;
+  const now = Date.now();
+  const { ensureTaxiRideTables } = await import("../lib/taxi-ride-governance.ts");
+  await ensureTaxiRideTables(db);
+  sqlite.prepare("UPDATE canonical_bookings SET status='payment_pending' WHERE id=?").run(bookingId);
+  sqlite.prepare("UPDATE provider_work_orders SET status='payment_pending' WHERE booking_id=?").run(bookingId);
+  sqlite.prepare("UPDATE booking_payments SET status='created',mode='split_50_50',amount_due_now=224.5 WHERE booking_id=?").run(bookingId);
+  sqlite.prepare("UPDATE scheduling_reservations SET status='assigned' WHERE group_id=?").run(groupId);
+  sqlite.prepare("INSERT INTO taxi_payment_schedules (booking_id,customer_id,total_amount,booking_fee_amount,balance_amount,status,created_at,updated_at) VALUES (?,?,449,224.5,224.5,'booking_fee_pending',?,?)").run(bookingId, customerId, now, now);
+  sqlite.prepare("INSERT INTO taxi_fleet_reservations (id,vehicle_id,provider_id,quote_id,booking_id,scheduled_start,scheduled_end,status,created_at,updated_at,city_id) VALUES (?,'TXF-CITROEN-9179',?,?,?,?,?,'confirmed',?,?,'blr')")
+    .run(`TFR-${bookingId}`, providerId, `TRQ-${bookingId}`, bookingId, scheduledStart, scheduledEnd, now, now);
+  return world;
+}
+const statusOf = (sqlite, sql, id) => String(sqlite.prepare(sql).get(id)?.status);
+const pendingRequests = (sqlite, bookingId) => Number(sqlite.prepare("SELECT COUNT(*) c FROM taxi_cancellation_requests WHERE booking_id=? AND status='policy_review_required'").get(bookingId).c);
+
+test("round 2: an unpaid ride hold is cancelled at once, with no Finance review, and its car and driver are released", async () => {
+  const world = await unpaidRideHold(await financeWorld());
+  const { sqlite, db, bookingId, groupId, providerId } = world;
+  const fleet = await import("../lib/taxi-fleet-governance.ts");
+  const window = { vehicleClass: "citroen_ec3", providerId, cityId: "blr", scheduledStart: world.scheduledStart, scheduledEnd: world.scheduledEnd };
+  const freeCars = async () => (await fleet.availableTaxiFleet(db, window)).map((car) => String(car.id));
+  assert.ok(!(await freeCars()).includes("TXF-CITROEN-9179"), "precondition: the unpaid hold keeps its car");
+
+  const owner = await customerSessionCookie(db, { principalKey: CUSTOMER_PRINCIPAL, customerId: world.customerId });
+  const body = { bookingId, action: "request_cancel", idempotencyKey: `taxi-cancel:${bookingId}:plans changed`, reason: "Plans changed" };
+  const cancelled = await post("", body, { cookie: owner.cookie });
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled));
+  assert.equal(cancelled.body.data.status, "cancelled", "an unpaid hold is cancelled, not sent to Finance");
+  assert.equal(cancelled.body.data.capacityReleased, true);
+  assert.equal(cancelled.body.data.refundStatus, "not_required");
+
+  assert.equal(statusOf(sqlite, "SELECT status FROM canonical_bookings WHERE id=?", bookingId), "cancelled");
+  assert.equal(statusOf(sqlite, "SELECT status FROM taxi_trips WHERE booking_id=?", bookingId), "cancelled");
+  assert.equal(statusOf(sqlite, "SELECT status FROM provider_work_orders WHERE booking_id=?", bookingId), "cancelled");
+  assert.equal(statusOf(sqlite, "SELECT status FROM scheduling_reservations WHERE group_id=?", groupId), "cancelled", "the driver is released");
+  assert.equal(statusOf(sqlite, "SELECT status FROM taxi_fleet_reservations WHERE booking_id=?", bookingId), "released", "the car is released");
+  assert.equal(statusOf(sqlite, "SELECT status FROM booking_payments WHERE booking_id=?", bookingId), "cancelled", "the unpaid payment cannot be opened again");
+  assert.equal(statusOf(sqlite, "SELECT status FROM taxi_payment_schedules WHERE booking_id=?", bookingId), "cancelled");
+  assert.ok((await freeCars()).includes("TXF-CITROEN-9179"), "the same car is free for the same window again");
+  assert.ok((await fleet.taxiDriversWithFreeCar(db, { providerIds: [providerId], cityId: "blr", scheduledStart: world.scheduledStart, scheduledEnd: world.scheduledEnd, vehicleClass: "citroen_ec3" })).has(providerId), "and the driver can take a car again");
+  assert.deepEqual(refundRows(sqlite, bookingId), [], "no money was taken, so there is nothing to refund");
+  const request = cancellationRow(sqlite, bookingId);
+  assert.deepEqual({ status: String(request.status), refund: Number(request.approved_refund_amount) }, { status: "cancelled", refund: 0 });
+  assert.ok(sqlite.prepare("SELECT event_type FROM taxi_trip_events WHERE booking_id=?").all(bookingId).some((row) => row.event_type === "ride_hold_cancelled_by_customer"), "the ride timeline records it");
+
+  // A lost answer and a second press replays the SAME result rather than an error.
+  const again = await post("", body, { cookie: owner.cookie });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.data.duplicatePrevented, true);
+  assert.equal(again.body.data.requestId, cancelled.body.data.requestId);
+  // A new reason on a cancelled ride is refused in plain words, not the redacted "Unable to update Pet Taxi finance".
+  const late = await post("", { ...body, idempotencyKey: nextKey("late"), reason: "Changed my mind again" }, { cookie: owner.cookie });
+  assert.equal(late.status, 409);
+  assert.match(late.body.error, /already cancelled/);
+});
+
+test("round 2: a hold whose fee was captured keeps the Finance review path and keeps its car", async () => {
+  const world = await unpaidRideHold(await financeWorld());
+  const { sqlite, db, bookingId } = world;
+  // The capture landed (money collected) but the booking has not flipped to confirmed yet.
+  sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE booking_id=?").run(bookingId);
+  const requested = await act(db, bookingId, "request_cancel", { actorId: "customer@pawspace.test", reason: "plans changed after paying" });
+  assert.equal(requested.status, "policy_review_required", "money was collected, so Finance reviews the refund");
+  assert.equal(statusOf(sqlite, "SELECT status FROM canonical_bookings WHERE id=?", bookingId), "payment_pending");
+  assert.equal(statusOf(sqlite, "SELECT status FROM taxi_fleet_reservations WHERE booking_id=?", bookingId), "confirmed", "a paid ride keeps its car");
+  assert.equal(pendingRequests(sqlite, bookingId), 1);
+});
+
+test("round 2: a failure while recording a cancellation leaves nothing half-written and the retry is answered", async () => {
+  const world = await financeWorld();
+  const { sqlite, db, bookingId } = world;
+  const owner = await customerSessionCookie(db, { principalKey: CUSTOMER_PRINCIPAL, customerId: world.customerId });
+  const body = { bookingId, action: "request_cancel", idempotencyKey: `taxi-cancel:${bookingId}:travel plan changed`, reason: "Travel plan changed" };
+  // D1 drops the connection on the idempotency record: the request row before it must not survive alone.
+  db.onSql("INSERT INTO taxi_finance_action_keys", () => { throw new Error("D1_ERROR: Network connection lost."); });
+  const failed = await post("", body, { cookie: owner.cookie });
+  assert.equal(failed.status, 503, `a governed retry answer, not a 500: ${JSON.stringify(failed)}`);
+  assert.equal(failed.body.code, "TAXI_CANCEL_RETRY");
+  assert.doesNotMatch(failed.body.error, /D1_ERROR|Unable to update/);
+  assert.equal(pendingRequests(sqlite, bookingId), 0, "nothing was recorded by the failed attempt");
+
+  const retried = await post("", body, { cookie: owner.cookie });
+  assert.equal(retried.status, 200, JSON.stringify(retried));
+  assert.equal(retried.body.data.status, "policy_review_required");
+  assert.equal(pendingRequests(sqlite, bookingId), 1);
+  const replay = await post("", body, { cookie: owner.cookie });
+  assert.deepEqual([replay.status, replay.body.data.duplicatePrevented, replay.body.data.requestId], [200, true, retried.body.data.requestId]);
+});
+
+test("round 2: two identical cancellation requests in flight give one request and one replayed answer, never a 500", async () => {
+  const world = await financeWorld();
+  const { sqlite, db, bookingId } = world;
+  const owner = await customerSessionCookie(db, { principalKey: CUSTOMER_PRINCIPAL, customerId: world.customerId });
+  const body = { bookingId, action: "request_cancel", idempotencyKey: `taxi-cancel:${bookingId}:vet visit moved`, reason: "Vet visit moved" };
+  // The second press lands in the gap after the first has checked for a pending request and before it writes.
+  let second = null;
+  db.onSql("INSERT INTO taxi_cancellation_requests", async () => { second = await post("", body, { cookie: owner.cookie }); });
+  const first = await post("", body, { cookie: owner.cookie });
+  assert.equal(second?.status, 200, JSON.stringify(second));
+  assert.equal(first.status, 200, `the request that lost the race replays the winner: ${JSON.stringify(first)}`);
+  assert.equal(first.body.data.duplicatePrevented, true);
+  assert.equal(first.body.data.requestId, second.body.data.requestId);
+  assert.equal(pendingRequests(sqlite, bookingId), 1, "exactly one review request exists");
+});
+
+test("round 2: a security-audit failure after the cancellation committed does not turn the recorded answer into a 500", async () => {
+  const world = await financeWorld();
+  const { sqlite, db, bookingId } = world;
+  const owner = await customerSessionCookie(db, { principalKey: CUSTOMER_PRINCIPAL, customerId: world.customerId });
+  // Once the idempotency record is written, the NEXT audit insert (the route's post-commit audit) fails.
+  db.onSql("INSERT INTO taxi_finance_action_keys", () => { db.onSql("INSERT INTO security_audit_events", () => { throw new Error("D1_ERROR: Currently processing a long-running import."); }); });
+  const answered = await post("", { bookingId, action: "request_cancel", idempotencyKey: nextKey("audit"), reason: "Plans changed" }, { cookie: owner.cookie });
+  assert.equal(answered.status, 200, JSON.stringify(answered));
+  assert.equal(answered.body.data.status, "policy_review_required");
+  assert.equal(pendingRequests(sqlite, bookingId), 1);
+});

@@ -12,13 +12,14 @@ export default function TeamRelocationEnquiries(){
   const[rows,setRows]=useState<Enquiry[]>([]);
   const[error,setError]=useState("");
   const[loading,setLoading]=useState(true);
+  const[contactMasked,setContactMasked]=useState(false);
 
   useEffect(()=>{
     let live=true;
     fetch("/api/relocation-enquiry",{cache:"no-store"}).then(r=>r.json()).then(body=>{
       if(!live)return;
       if(body.error)setError(String(body.error));
-      else setRows((body.data??[]) as Enquiry[]);
+      else{setRows((body.data??[]) as Enquiry[]);setContactMasked(body.contactMasked===true);}
     }).catch(e=>{if(live)setError(e instanceof Error?e.message:"Unable to load relocation enquiries");}).finally(()=>{if(live)setLoading(false);});
     return()=>{live=false;};
   },[]);
@@ -26,6 +27,7 @@ export default function TeamRelocationEnquiries(){
   return <StaffModule><main style={{maxWidth:1100,margin:"0 auto",padding:28,fontFamily:"inherit",display:"grid",gap:16}}>
     <header><Link href="/team">← Team</Link><p style={{color:"var(--ds-primary-500)",letterSpacing:1,fontSize:14}}>PET RELOCATION · ENQUIRIES</p><h1 style={{margin:0}}>Submitted relocation enquiries</h1><p>Customer-submitted pickup/drop enquiries, newest first. Sandbox/UAT — no live money.</p></header>
     {error&&<p role="alert" style={{color:"var(--ds-danger-500)"}}>{error}</p>}
+    {contactMasked&&<p style={{margin:0,color:"var(--ds-text-muted)",fontSize:14}}>Phone numbers and email are masked for your role.</p>}
     <section style={box}>
       <div style={{...row,fontWeight:700,color:"var(--ds-text-muted)"}}><span>Customer</span><span>Contact</span><span>Pet</span><span>Pickup</span><span>Drop → Travel</span></div>
       {loading&&<p>Loading…</p>}

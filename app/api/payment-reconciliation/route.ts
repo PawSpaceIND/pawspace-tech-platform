@@ -1,13 +1,28 @@
 import{authError,completeReservedSecurityAudit,database,requirePermission,reserveSecurityAudit,resolveActor}from"../../../lib/server-auth";
 import{listPaymentExceptions,resolvePaymentException}from"../../../lib/grooming-payment-reconciliation";
+import{financeServiceCode}from"../../../lib/finance-services";
+import{listFinanceBookingPayments,paymentReconciliationOverview}from"../../../lib/payment-reconciliation-overview";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin reconciliation write blocked",{status:403});}
 
+/**
+ * Read-only, finance.view. No view: the payment exceptions (unchanged). view=bookings: every service's bookings with their
+ * payment state (the Finance home). view=overview: exceptions, records needing attention and stuck captures
+ * (/team/finance/reconciliation).
+ */
 export async function GET(request:Request){
   try{
     const url=new URL(request.url),db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.view");
-    return json({data:{exceptions:await listPaymentExceptions(db,{status:url.searchParams.get("status")||undefined})}});
+    const view=url.searchParams.get("view"),status=url.searchParams.get("status")||undefined;
+    if(view==="bookings"){
+      const requested=url.searchParams.get("service"),service=financeServiceCode(requested);
+      if(requested&&!service)return json({error:"Unknown service"},400);
+      return json({data:await listFinanceBookingPayments(db,{service})});
+    }
+    if(view==="overview")return json({data:await paymentReconciliationOverview(db,{status})});
+    if(view)return json({error:"Unknown reconciliation view"},400);
+    return json({data:{exceptions:await listPaymentExceptions(db,{status})}});
   }catch(error){return authError(error,"Unable to load payment exceptions");}
 }
 

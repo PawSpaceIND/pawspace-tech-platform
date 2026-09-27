@@ -296,3 +296,9 @@
 :global([data-staff-module]) .connectorNote span {
     font-size: 13px !important
 }
+.leadPager{margin:0 0 12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.leadPager>span{margin-right:auto;color:#807588;font-size:8px;font-weight:800}
+.leadPager button{padding:7px 10px;border:1px solid #d8cde0;border-radius:8px;background:#fff;color:#63249f;font-size:7px;font-weight:900}
+.leadPager button[aria-pressed="true"]{background:#6524a0;color:#fff}
+:global([data-staff-module]) .leadPager>span{color:var(--staff-muted, #807588) !important;font-size:13px !important}
+:global([data-staff-module]) .leadPager button{font-size:13px !important}

@@ -202,11 +202,102 @@ test("a stay whose customer has not shared the plan says so, and still names the
   assert.match(text, /No extras requested/);
 });
 
-test("the host page shows that card for the live stay and for the request being decided, and the jobs list shows Boarding extras", () => {
+test("the host page shows that card for every stay on Today and for the request being decided, and the jobs list shows Boarding extras", () => {
   const host = readFileSync(new URL("../app/host/page.tsx", import.meta.url), "utf8");
-  assert.match(host, /<HostStayCare stay=\{liveStay\}\/>/);
+  const today = readFileSync(new URL("../app/host/host-today-stays.tsx", import.meta.url), "utf8");
+  assert.match(host, /<HostTodayStays stays=\{active\}/);
+  assert.match(today, /<HostStayCare stay=\{stay\}\/>/);
   assert.match(host, /<HostStayCare stay=\{selected\}\/>/);
-  assert.match(host, /petSummary\(liveStay\)/);
+  assert.match(today, /petSummary\(stay\)/);
   const jobs = readFileSync(new URL("../app/partner/jobs/page.tsx", import.meta.url), "utf8");
   assert.match(jobs, /job\.serviceCode==="boarding"&&job\.addOns\.length\?/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// R2-P02: the Today tab acted on ONE stay (the in-progress one, else the earliest accepted one), so a host
+// holding the seeded UATD-BK-BOARD-1 could not check in, feed, play with or check out the stay that was
+// actually due (PS-UAT-MUHXPHOZ-DFD0). Every due or active stay now has its own card and controls.
+
+const HOUR = 3_600_000;
+function hostStay(id, bookingId, status, startOffsetHours, endOffsetHours, extra = {}) {
+  const start = new Date(Date.now() + startOffsetHours * HOUR).toISOString(), end = new Date(Date.now() + endOffsetHours * HOUR).toISOString();
+  return {
+    id, booking_id: bookingId, customer_id: "c1", host_provider_id: "host_maya_rohan", city_id: "blr", zone_id: "blr-east", package_code: "boarding-24h",
+    check_in_at: start, check_out_at: end, billed_units: 1, pet_count: 1, status, updated_at: 1, care_plan_status: "ready",
+    check_in_status: status === "in_progress" ? "complete" : "pending", check_out_status: "pending", extension_status: "none",
+    pets: [{ name: `Pet of ${bookingId}`, species: "dog", breed: null }], carePlan: null, events: [], extension: null, offer: null, ...extra,
+  };
+}
+// The staging shape: the seeded stay has been in progress since August (its window long over, still awaiting
+// check-out), and a newer accepted stay is due now.
+const SEEDED = hostStay("S-SEED", "UATD-BK-BOARD-1", "in_progress", -45 * 24, -44 * 24);
+const DUE = hostStay("S-DUE", "PS-UAT-MUHXPHOZ-DFD0", "confirmed", -0.5, 3);
+const LATER = hostStay("S-LATER", "PS-UAT-LATER", "confirmed", 30, 34);
+const LAPSED = hostStay("S-LAPSED", "PS-UAT-LAPSED", "confirmed", -30, -26);
+const REQUESTED = hostStay("S-REQ", "PS-UAT-REQUEST", "awaiting_host_acceptance", 5, 9);
+const DONE = hostStay("S-DONE", "PS-UAT-DONE", "completed", -10, -6);
+
+/** Expands the Today tree the way React would render it, keeping each stay's buttons with that stay. */
+function stayButtons(tree, HostTodayStay) {
+  const byStay = new Map();
+  const walk = (node, stayId) => {
+    if (node == null || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const child of node) walk(child, stayId); return; }
+    if (node.type === HostTodayStay) { const id = node.props.stay.id; byStay.set(id, []); walk(HostTodayStay(node.props), id); return; }
+    if (node.type === "button" && stayId) byStay.get(stayId).push({ text: [node.props.children].flat().join(""), props: node.props });
+    walk(node.props?.children, stayId);
+  };
+  walk(tree, null);
+  return byStay;
+}
+
+test("R2-P02 Today lists every due or active stay, earliest check-in first", async () => {
+  const { todayStays } = await import("../app/host/host-today-stays.tsx");
+  const listed = todayStays([LATER, DONE, DUE, REQUESTED, LAPSED, SEEDED]).map(stay => stay.booking_id);
+  assert.deepEqual(listed, ["UATD-BK-BOARD-1", "PS-UAT-MUHXPHOZ-DFD0", "PS-UAT-LATER"],
+    "the stay still in progress, the stay due now and the accepted stay ahead; not a request, a finished stay or an accepted stay whose window passed unstarted");
+});
+
+test("R2-P02 each stay on Today has its own check-in, meal, play and check-out, acting on that stay only", async () => {
+  const React = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { default: HostTodayStays, HostTodayStay } = await import("../app/host/host-today-stays.tsx");
+  const calls = [];
+  const props = {
+    stays: [SEEDED, DUE], hostBase: "/v2/partner/host", focusBookingId: "PS-UAT-MUHXPHOZ-DFD0", isBusy: () => false,
+    onCheckIn: stay => calls.push(["check_in", stay.id]), onCare: (stay, type) => calls.push([`care:${type}`, stay.id]),
+    onCheckOut: stay => calls.push(["check_out", stay.id]), onNotify: () => {}, onRefresh: () => {},
+  };
+
+  const html = renderToStaticMarkup(React.createElement(HostTodayStays, props));
+  assert.match(html, /aria-label="Stay UATD-BK-BOARD-1"/);
+  assert.match(html, /aria-label="Stay PS-UAT-MUHXPHOZ-DFD0"/);
+  assert.match(html, /LIVE STAY · UATD-BK-BOARD-1/);
+  assert.match(html, /ACCEPTED STAY · PS-UAT-MUHXPHOZ-DFD0/);
+  assert.match(html, /href="\/v2\/partner\/host\/proof\?stayId=S-SEED"/, "the proof link is the live stay's own");
+
+  const buttons = stayButtons(HostTodayStays(props), HostTodayStay);
+  const press = (stayId, label) => {
+    const button = buttons.get(stayId).find(item => item.text.includes(label));
+    assert.ok(button, `${stayId} has its own "${label}" control`);
+    assert.equal(button.props.disabled ?? false, false, `${stayId}'s "${label}" is usable`);
+    button.props.onClick();
+  };
+  press("S-DUE", "Check in");
+  press("S-SEED", "Log meal");
+  press("S-SEED", "Log play");
+  press("S-SEED", "Check out");
+  assert.deepEqual(calls, [["check_in", "S-DUE"], ["care:meal", "S-SEED"], ["care:play", "S-SEED"], ["check_out", "S-SEED"]]);
+  assert.ok(!buttons.get("S-DUE").some(item => /Check out|Log meal/.test(item.text)), "the stay not yet checked in offers check-in, not care or check-out");
+  assert.ok(!buttons.get("S-SEED").some(item => /Check in/.test(item.text)), "the checked-in stay offers no second check-in");
+});
+
+test("R2-P02 once the due stay is checked in it has its own meal, play and check-out too", async () => {
+  const { default: HostTodayStays, HostTodayStay } = await import("../app/host/host-today-stays.tsx");
+  const calls = [];
+  const both = [SEEDED, { ...DUE, status: "in_progress", check_in_status: "complete" }];
+  const props = { stays: both, hostBase: "/host", isBusy: () => false, onCheckIn: () => {}, onCare: (stay, type) => calls.push([type, stay.id]), onCheckOut: stay => calls.push(["check_out", stay.id]), onNotify: () => {}, onRefresh: () => {} };
+  const buttons = stayButtons(HostTodayStays(props), HostTodayStay);
+  for (const stayId of ["S-SEED", "S-DUE"]) for (const label of ["Log meal", "Log play", "Check out"]) buttons.get(stayId).find(item => item.text.includes(label)).props.onClick();
+  assert.deepEqual(calls, [["meal", "S-SEED"], ["play", "S-SEED"], ["check_out", "S-SEED"], ["meal", "S-DUE"], ["play", "S-DUE"], ["check_out", "S-DUE"]]);
 });

@@ -97,17 +97,32 @@ export async function openPaymentIntentOrder(db: Db, env: Record<string, unknown
   return { connected: true as const, environment, intentId, orderId, amountPaise: input.amountPaise, currency: input.currency };
 }
 
-export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
+const BOOKING_PAYMENT_ROW = "SELECT b.customer_id customer_id,b.status booking_status,p.id payment_id,p.status payment_status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?";
+/**
+ * The two reads createBookingPaymentOrder decides on - the booking/payment row and the amount due now. The customer
+ * checkout needs the amount itself before it may open an order, so it starts both beside its own booking check and
+ * hands them over: one Pay press reads them once, not twice, and beside its other checks. Reads only; every decision
+ * is still taken in the original order.
+ */
+export type BookingPaymentOrderReads = { bookingId: string; booking: Promise<Row | null>; stage: ReturnType<typeof paymentStageAmount> };
+export function startBookingPaymentOrderReads(db: Db, bookingId: string): BookingPaymentOrderReads {
+  const booking = db.prepare(BOOKING_PAYMENT_ROW).bind(bookingId).first<Row>(), stage = paymentStageAmount(db, bookingId);
+  booking.catch(() => undefined); stage.catch(() => undefined);
+  return { bookingId, booking, stage };
+}
+
+export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string; reads?: BookingPaymentOrderReads }) {
   const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
   if (!bookingId || !customerId) throw new Error("A booking and customer are required");
-  const row = await db.prepare("SELECT b.customer_id customer_id,b.status booking_status,p.id payment_id,p.status payment_status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
+  const reads = input.reads?.bookingId === bookingId ? input.reads : null;
+  const row = await (reads?.booking ?? db.prepare(BOOKING_PAYMENT_ROW).bind(bookingId).first<Row>());
   if (!row) throw new Error("Booking or its payment record was not found");
   if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
   if (NOT_PAYABLE_BOOKING_STATUSES.has(String(row.booking_status)) || NOT_PAYABLE_PAYMENT_STATUSES.has(String(row.payment_status))) {
     throw governedJsonError({ error: "This booking cannot accept a new payment. Contact billing support.", code: "booking_not_payable" }, 409);
   }
 
-  const stage = await paymentStageAmount(db, bookingId);
+  const stage = await (reads?.stage ?? paymentStageAmount(db, bookingId));
   if (!stage) throw new Error("Booking or its payment record was not found");
   if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
 

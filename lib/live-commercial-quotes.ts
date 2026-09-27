@@ -3,11 +3,18 @@ import{createSittingQuote,listSittingPackages,type SittingPaymentMode}from"./sit
 import{resolveLivePrice}from"./live-pricing-resolver";
 import{splitPaymentPlan}from"./stay-split-payments";
 import{resolveProviderServiceRate}from"./provider-service-pricing";
+import{governedJsonError}from"./governed-http-error";
 
+/*
+ * Governed refusals, so every quote route answers with the reason. They were plain `new Response(...)`
+ * throws, which lib/server-auth.ts authError() redacts to the route's fallback: POST /api/sitting-commercial
+ * without cityId/zoneId answered 400 {"error":"Sitting commercial request failed"} on round-2 staging.
+ */
 function requiredLocationScope(input:{cityId?:string;zoneId?:string}){
   const cityId=String(input.cityId||"").trim().toLowerCase(),zoneId=String(input.zoneId||"").trim().toLowerCase();
-  if(!cityId||!zoneId)throw new Response("City and zone are required for a live commercial quote",{status:400});
-  if(!zoneId.startsWith(`${cityId}-`))throw new Response("Quote city and zone do not match",{status:409});
+  const missingFields=[cityId?"":"cityId",zoneId?"":"zoneId"].filter(Boolean);
+  if(missingFields.length)throw governedJsonError({error:`City and zone are required for a live commercial quote (missing: ${missingFields.join(", ")})`,code:"quote_location_required",missingFields},400);
+  if(!zoneId.startsWith(`${cityId}-`))throw governedJsonError({error:"Quote city and zone do not match",code:"quote_location_mismatch"},409);
   return{cityId,zoneId};
 }
 

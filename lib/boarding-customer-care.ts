@@ -2,7 +2,8 @@ import type {BoardingStay} from './boarding-stay-client';
 import type {BoardingCarePlan} from './boarding-stay-lifecycle';
 async function request(url:string,input?:Record<string,unknown>):Promise<unknown>{
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
- try{const response=await fetch(url,{cache:'no-store',signal:controller.signal,...(input?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}:{})});const payload=await response.json();if(!response.ok||payload?.data==null)throw new Error(payload?.error||'Boarding request was not confirmed.');return payload.data;}
+ // A request that never reached PawSpace reads as a sentence, not the browser's "Failed to fetch".
+ try{const response=await fetch(url,{cache:'no-store',signal:controller.signal,...(input?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}:{})}).catch(error=>{if(controller.signal.aborted)throw error;throw new Error("We couldn't reach PawSpace. Check your connection and retry.");});const payload=await response.json();if(!response.ok||payload?.data==null)throw new Error(payload?.error||'Boarding request was not confirmed.');return payload.data;}
  catch(problem){if(controller.signal.aborted)throw new Error('Boarding request timed out. Please retry.');if(problem instanceof SyntaxError)throw new Error('Boarding response could not be read. Please retry.');throw problem;}finally{clearTimeout(timer);}
 }
 export async function loadOwnedBoardingStay(bookingId:string):Promise<BoardingStay|null>{

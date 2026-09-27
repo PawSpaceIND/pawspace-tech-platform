@@ -170,8 +170,9 @@ test("BRD-04 split payment: 50/50 takes half now and schedules the balance befor
   const gov = await import("../lib/boarding-governance.ts");
   const split = await import("../lib/stay-split-payments.ts");
 
+  // The split is only for overnight stays longer than four nights (SIT-05): this one is five.
   const quote = await attempt(() => gov.createBoardingQuote(db, {
-    packageCode: PACKAGE, petCount: 2, scheduledStart: startAt(), scheduledEnd: endAt(),
+    packageCode: PACKAGE, petCount: 2, scheduledStart: startAt(), scheduledEnd: new Date(fixtureNow + 12 * DAY).toISOString(),
     paymentMode: "split_50_50", cityId: CITY, zoneId: ZONE,
   }));
   assert.equal(quote.ok, true, `a split quote must be priced: ${String(quote.body ?? "").slice(0, 160)}`);

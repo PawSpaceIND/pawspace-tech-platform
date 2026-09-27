@@ -166,6 +166,14 @@
   grid-template-columns: 1.55fr 0.85fr;
   gap: 13px;
 }
+.todayStays {
+  display: grid;
+  gap: 18px;
+}
+.focusedStay > .panel:first-child {
+  border-color: #5b2494;
+  box-shadow: 0 0 0 2px rgba(91, 36, 148, 0.18);
+}
 .panel {
   padding: 20px;
   border: 1px solid #e5dce9;

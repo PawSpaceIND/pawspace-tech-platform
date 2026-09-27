@@ -96,6 +96,14 @@ async function ensureServiceZonesTablesUncached(db:Db){await db.batch([db.prepar
 const serviceZonesTablesReady=new WeakSet<object>();
 export async function ensureServiceZonesTables(db:Db){if(serviceZonesTablesReady.has(db))return;await ensureServiceZonesTablesUncached(db);serviceZonesTablesReady.add(db);}
 
+/**
+ * What a customer reads when no PawSpace service zone covers a PIN (Delhi 110001, Mysuru 570001). /api/service-zone
+ * answers it beside the machine-readable code `zone_not_found`, and every address step - Boarding, Pet Sitting,
+ * Pet Taxi and the rest - shows that answer as it is, so the sentence is written once, here.
+ */
+export function unservedPincodeMessage(pincode:string){
+  return`PawSpace doesn't serve PIN ${pincode} yet. It's outside our current service area.`;
+}
 export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:ServiceZone;assignment:ZoneAssignment}|null>{
   await ensureServiceZonesTables(db);
   const parsed=validateIndianPincode(pincode);if(!parsed.ok)return null;const normalized=parsed.pincode;

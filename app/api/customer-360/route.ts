@@ -1,6 +1,7 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import{buildCustomer360,ensureCustomer360Tables}from"../../../lib/customer-360";
+import{customerBookingPayments}from"../../../lib/customer-booking-payments";
 import{isDevelopmentPreviewRequest}from"../../../lib/development-preview";
 
 type Body={action?:string;customerId?:string;duplicateCustomerId?:string;matchReason?:string;marketing?:boolean;service?:boolean;whatsapp?:boolean;sms?:boolean;email?:boolean;reviewId?:string;status?:string};
@@ -27,6 +28,9 @@ function hasAuthenticationMaterial(request:Request){if(isDevelopmentPreviewReque
  * recognise where they are going.
  */
 export async function GET(request:Request){if(!hasAuthenticationMaterial(request))return json({error:"Authentication required"},401);try{const actor=await authorize(request,"customers.view");const db=await database();const id=new URL(request.url).searchParams.get("customerId")||undefined;const built=await buildCustomer360(db,id);
+  // One customer's detail carries each booking's payment state (the /team/sales booking list). The list
+  // read does not: payment for every booking of every customer would break its fan-out budget.
+  const payments=id?await customerBookingPayments(db,built.flatMap(record=>record.bookings)):null;
   const access=await customerDataAccessResolver(db);
   const records=built.map(record=>{
     const primary=record.addresses.find(entry=>entry.isDefault)??record.addresses[0]??null;
@@ -37,6 +41,7 @@ export async function GET(request:Request){if(!hasAuthenticationMaterial(request
     return{...record,primaryPhone:view.contact.phone,email:view.contact.email,
       // Only the precision the policy allows. `line1` and the postcode are the doorstep; the area is not.
       addresses:record.addresses.map(entry=>full?entry:{...entry,line1:"",line2:null,postalCode:null}),
+      ...(payments?{bookings:record.bookings.map(booking=>({...booking,payment:payments.get(booking.id)??null}))}:{}),
       contactChannel:view.contact.channel,addressPrecision:view.address.precision,revealed:view.revealed};
   });
   return json({data:{records,count:records.length,source:"canonical_customer_360",policyVersion:access.policyVersion}});}catch(error){return authError(error,"Unable to load Customer 360");}}

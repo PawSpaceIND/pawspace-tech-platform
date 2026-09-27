@@ -86,7 +86,7 @@ test("the governed service PIN fails closed before anything is scheduled", async
     assert.ok(outside instanceof Error, "an unserved PIN throws rather than resolving");
     // And it is the GOVERNED refusal, not an incidental crash on an absent field: a client that
     // stopped checking the server's answer would still throw, just not with a message anyone can act on.
-    assert.match(String(outside.message), /Zone not found for this pincode|outside the currently enabled service area/i,
+    assert.match(String(outside.message), /PawSpace doesn't serve PIN 110001 yet|outside the currently enabled service area/i,
       `the refusal is the governed one: ${outside.message}`);
     assert.doesNotMatch(String(outside.message), /blr-east/, "and never names a default zone");
     assert.doesNotMatch(String(outside.message), /Cannot read properties|undefined is not/i,

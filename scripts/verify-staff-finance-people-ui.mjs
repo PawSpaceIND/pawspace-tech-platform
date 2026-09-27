@@ -14,6 +14,7 @@ let role='admin',denyOverview=false,denyFinance=false,denyPayroll=false,refuseAp
 const roles={admin:['*'],finance:['finance.view','payroll.view','reports.view'],people:['people.view','payroll.view','self_service.view']};
 const actor=()=>({name:'UI Fixture '+role,email:role+'@example.test',roleCode:role,permissions:roles[role]});
 const overview=()=>({data:{actor:actor(),today:'2026-09-24',commandStrip:{revenueActions:0,firstResponseMinutes:null,managerAlertMinutes:null,openEscalations:0,openTickets:0,commandPackReports:0},workspaces:{bookingsToday:0,ticketsNeedAttention:0,dayCloseStatus:'open',activeEmployees:1,aiHandoffsWaiting:0,aiTurnsToday:0,aiRolloutStage:'off'}}});
+const bookingsLedger=()=>({data:{services:[{code:'grooming',label:'Grooming',workspace:null,bookings:1,paidBookings:1,captured:1350,refunded:100,attention:0}],items:[{bookingId:'UI-BOOKING-1',serviceCode:'grooming',packageName:'Fixture care',bookingStatus:'completed',scheduledStart:null,bookingTotal:1350,paymentId:'UI-PAYMENT-1',paymentStatus:'partially_refunded',paymentMode:'prepaid',amountDueNow:1350,scheduleStatus:null,balanceAmount:null,capturedAmount:1350,refundedAmount:100,netCollected:1250,gatewayStatus:'partially_refunded',reconciliationStatus:'matched',varianceAmount:0,openExceptions:0,invoiceNumber:'UI-INV-1'}],openExceptions:0,limit:200}});
 const ledger=()=>({source:'synthetic-ui-fixture',summary:{bookings:1,completed:1,invoiced:1350,collected:1350,refunded:100,receivable:0,reconciled:1,unreconciled:0,exceptions:0},items:[{booking_id:'UI-BOOKING-1',package_name:'Fixture care',booking_status:'completed',payment_status:'captured',gateway_status:'captured',reconciliation_status:'reconciled',captured_amount:1350,refunded_amount:100,variance_amount:0,invoice_number:'UI-INV-1'}]});
 const payroll=()=>({data:{structures:[{id:'UI-STRUCTURE-1',structure_code:'UI-SALARY',version:1,status:'active_uat',effective_from:Date.now()}],runs:[{id:'UI-PAYROLL-1',period_start:Date.UTC(2026,8,1),period_end:Date.UTC(2026,8,30),status:runStatus,created_by:'maker@example.test',reviewed_by:'checker@example.test',approved_by:null}],truth:{statutoryPolicyConfigured:false,incentivePolicyConfigured:false,bankTransmissionEnabled:false,approvedRunImmutable:true,productionReady:false}}});
 const training=()=>({data:{invoices:[{booking_id:'UI-TRAINING-1',commercial_total:1000,tax_amount:180,invoice_total:1180,payment_status:'captured',status:'draft_ready_for_number',invoice_number:numbered?'UI-TRAIN-INV-1':null},{booking_id:'UI-TRAINING-2',commercial_total:2000,tax_amount:null,invoice_total:null,payment_status:'pending',status:'configuration_required'}],earnings:[{status:'earned',gross_earning:500},{status:'pending_rate_configuration',gross_earning:0}],payouts:[{provider_id:'UI-TRAINER-1',period_code:'2026-09',earned_sessions:1,pending_sessions:0,held_sessions:0,earned_amount:500,status:'ready_for_finance_approval'}],taxPolicies:[],compensationRules:[],events:[],livePayout:false,executionMode:'sandbox',cancellation:{policies:[],cases:[],refunds:[],creditNotes:[],liveRefund:false,liveTaxFiling:false}}});
@@ -41,6 +42,7 @@ await context.route('**/*',async route=>{
   reads.push(url.pathname+url.search);
   if(url.pathname==='/api/team-overview')return denyOverview?json(route,{error:'Fixture navigation unavailable'},503):json(route,overview());
   if(url.pathname==='/api/grooming-finance')return denyFinance?json(route,{error:'Fixture finance data unavailable'},503):json(route,ledger());
+  if(url.pathname==='/api/payment-reconciliation')return denyFinance?json(route,{error:'Fixture finance data unavailable'},503):json(route,bookingsLedger());
   if(url.pathname==='/api/payroll')return denyPayroll?json(route,{error:'Fixture payroll access denied'},403):json(route,payroll());
   if(url.pathname==='/api/training-finance')return json(route,training());
   if(url.pathname==='/api/training-reconciliation')return json(route,reconciliation);
@@ -57,9 +59,9 @@ async function noOverflow(){const size=await page.evaluate(()=>({width:innerWidt
 function lastWrite(path){return writes.filter(w=>w.path===path).at(-1)?.body;}
 await check('Finance: canonical fixture amounts and original refresh endpoint',async()=>{
  await open('/team/finance');await page.getByText('UI-BOOKING-1',{exact:true}).waitFor();
- assert.match(await page.locator('tbody').innerText(),/1,350/);assert.match(await page.locator('tbody').innerText(),/100/);
- const count=reads.filter(r=>r==='/api/grooming-finance').length;await page.getByRole('button',{name:'Refresh',exact:true}).click();
- await page.waitForFunction(()=>!!document.querySelector('tbody')?.textContent?.includes('UI-BOOKING-1'));assert.ok(reads.filter(r=>r==='/api/grooming-finance').length>count);await shot('finance-populated');
+ assert.match(await page.locator('tbody').last().innerText(),/1,350/);assert.match(await page.locator('tbody').last().innerText(),/100/);
+ const count=reads.filter(r=>r==='/api/payment-reconciliation?view=bookings').length;await page.getByRole('button',{name:'Refresh',exact:true}).click();
+ await page.waitForFunction(()=>[...document.querySelectorAll('tbody')].some(body=>body.textContent?.includes('UI-BOOKING-1')));assert.ok(reads.filter(r=>r==='/api/payment-reconciliation?view=bookings').length>count);await shot('finance-populated');
 });
 await check('Finance: unavailable read hides previously displayed ledger, not a false zero report',async()=>{
  denyFinance=true;await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.getByText('Fixture finance data unavailable',{exact:true}).waitFor();assert.equal(await page.getByText('UI-BOOKING-1',{exact:true}).count(),0);denyFinance=false;

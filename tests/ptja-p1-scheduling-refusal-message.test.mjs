@@ -97,6 +97,20 @@ test("UI-03: a policy refusal that names its reason in `code` gets that reason's
   assert.equal(isProviderSlotRefusal(refused), false, "a later start, not another trainer, fixes this");
 });
 
+test("UI-03b: a stay beyond the booking horizon names the rule instead of 'We could not reserve this slot'", async () => {
+  // Round-2 staging (Boarding B4e): a stay 185 days out was refused at the final click with the generic sentence,
+  // although the reservation answered 400 {code:"beyond_booking_horizon", maximumHorizonDays:180}.
+  const { reserveUatSchedule } = await import("../lib/uat-scheduling-client.ts");
+  const refused = await withStubbedFetch({ error: "You can book up to 180 days ahead.", code: "beyond_booking_horizon", maximumHorizonDays: 180 }, 400, () =>
+    reserveUatSchedule(REQUEST).then(() => null, (e) => e));
+  assert.equal(refused.message, "You can book up to 180 days ahead. Please choose an earlier start date.");
+  assert.equal(refused.code, "beyond_booking_horizon");
+  // A city that set a shorter horizon is quoted its own number.
+  const shorter = await withStubbedFetch({ error: "You can book up to 90 days ahead.", code: "beyond_booking_horizon", maximumHorizonDays: 90 }, 400, () =>
+    reserveUatSchedule(REQUEST).then(() => null, (e) => e));
+  assert.equal(shorter.message, "You can book up to 90 days ahead. Please choose an earlier start date.");
+});
+
 test("UI-04: only a taken or unavailable slot lets the Meet & Greet try the next trainer", async () => {
   const { reserveUatSchedule, isProviderSlotRefusal } = await import("../lib/uat-scheduling-client.ts");
   for (const error of ["SLOT_TAKEN", "NO_SCHEDULE_AVAILABLE", "SELECTED_PROVIDER_UNAVAILABLE"]) {

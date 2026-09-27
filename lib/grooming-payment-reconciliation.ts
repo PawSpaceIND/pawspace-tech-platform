@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{postCollectionEvent,prepareCollectionEventPosting}from"./collection-ledger";
 import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
 import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
@@ -27,8 +28,6 @@ function canonicalGatewayEventType(value:string):SupportedGatewayEventType|null{
 }
 
 const reconciliationSchemaObjects=["booking_lifecycle_events","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link"] as const;
-const reconciliationTablesReady=new WeakSet<Db>();
-const reconciliationTablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function reconciliationSchemaReady(db:Db){
   try{const rows=await db.prepare(`SELECT name FROM sqlite_master WHERE name IN (${reconciliationSchemaObjects.map(()=>"?").join(",")})`).bind(...reconciliationSchemaObjects).all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===reconciliationSchemaObjects.length;}catch{return false;}
 }
@@ -43,7 +42,11 @@ async function ensurePaymentReconciliationTablesUncached(db:Db){if(await reconci
   db.prepare("CREATE TABLE IF NOT EXISTS payment_reconciliation_exceptions (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,event_id TEXT,exception_type TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
   db.prepare("CREATE TABLE IF NOT EXISTS post_service_payment_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL,provider_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'awaiting_payment',payment_path TEXT NOT NULL,qr_payload TEXT NOT NULL,expires_at INTEGER NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);await ensurePaymentLinkColumn(db);}
-export async function ensurePaymentReconciliationTables(db:Db){if(reconciliationTablesReady.has(db))return;const running=reconciliationTablesEnsuring.get(db);if(running)return running;const pending=ensurePaymentReconciliationTablesUncached(db).then(()=>{reconciliationTablesReady.add(db);});reconciliationTablesEnsuring.set(db,pending);try{await pending;}finally{if(reconciliationTablesEnsuring.get(db)===pending)reconciliationTablesEnsuring.delete(db);}}
+/* Once per isolate, ready-set only (lib/d1-ensure-once.js). Every customer checkout reaches this before the Razorpay
+ * order; the guard used to hand a cold isolate's in-flight setup to every concurrent caller, and a checkout cancelled
+ * mid-setup left that promise unsettled for ever, so each later checkout on the isolate waited on it. The setup is
+ * idempotent (existence check, CREATE IF NOT EXISTS, guarded ALTER), so a concurrent first caller simply runs it too. */
+export async function ensurePaymentReconciliationTables(db:Db){await ensureD1Once(db,"payment_reconciliation_tables",()=>ensurePaymentReconciliationTablesUncached(db));}
 
 
 async function ensurePaymentLinkColumn(db:Db){const columns=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!columns.results.some(row=>String(row.name)==="gateway_payment_link_id")){try{await db.prepare("ALTER TABLE payment_gateway_links ADD COLUMN gateway_payment_link_id TEXT").run();}catch(error){const refreshed=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!refreshed.results.some(row=>String(row.name)==="gateway_payment_link_id"))throw error;}}await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_gateway_links_payment_link ON payment_gateway_links(gateway_payment_link_id)").run();}
@@ -186,6 +189,20 @@ export function processedRefundStatements(db:Db,input:{bookingId:string;paymentI
     :db.prepare("UPDATE booking_payments SET status=(SELECT gateway_status FROM payment_reconciliation_records WHERE payment_id=?),detail_json=json_set(detail_json,'$.lastGatewayEventId',?,'$.lastGatewayRefundId',?),updated_at=? WHERE id=?").bind(paymentId,input.eventId,input.gatewayRefundId,now,paymentId),
   db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) SELECT ?,booking_id,payment_id,?,'refund_overage','critical','open',json_object('expected',expected_amount,'captured',captured_amount,'refundCeiling',captured_amount,'refunded',refunded_amount),? FROM payment_reconciliation_records WHERE payment_id=? AND variance_amount>0.009").bind(`PAYEX-refund-${input.environment}-${input.gatewayRefundId??input.eventId}`,input.eventId,now,paymentId),
  ];
+}
+
+/**
+ * A signed capture the webhook refuses to settle is still money Razorpay has taken: no booking payment owns
+ * its order, or its notes name a different booking than the one the order was opened for. The webhook answers
+ * 409 so Razorpay keeps retrying, but that left the money visible only in the webhook inbox, FAILED for good
+ * once the retries stopped. Finance gets one open critical exception per event, the same one across retries.
+ */
+export async function recordRefusedGatewayCapture(db:Db,input:{event:GatewayEvent;type:"unmatched_gateway_capture"|"gateway_order_booking_mismatch";bookingId?:string|null;paymentId?:string|null;detail?:Record<string,unknown>}){
+  await ensurePaymentReconciliationTables(db);
+  const{event}=input;
+  await db.prepare("INSERT OR IGNORE INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES (?,?,?,?,?,'critical','open',?,?)")
+    .bind(`PAYEX-refused-${event.environment}-${event.eventId}`,input.bookingId??null,input.paymentId??null,event.eventId,input.type,
+      JSON.stringify({eventType:event.eventType,gatewayOrderId:event.gatewayOrderId??null,gatewayPaymentId:event.gatewayPaymentId??null,amount:round2(Number(event.amountSubunits||0)/100),currency:event.currency??null,claimedBookingId:event.bookingId??null,...(input.detail??{})}),Date.now()).run();
 }
 
 async function addException(db:Db,input:{bookingId?:string;paymentId?:string;eventId?:string;type:string;severity?:"warning"|"critical";detail:unknown}){await db.prepare("INSERT INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES (?,?,?,?,?,?,'open',?,?)").bind(`PAYEX-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.bookingId??null,input.paymentId??null,input.eventId??null,input.type,input.severity??"critical",JSON.stringify(input.detail),Date.now()).run();}
