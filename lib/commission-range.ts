@@ -4,10 +4,12 @@
  * server enforces and computes.
  *
  * On every commission service PawSpace's commission is 10% to 40% of the amount the customer paid; the
- * provider gets the rest. The default is 30% everywhere until the owner gives per-service numbers. The range
- * holds for service defaults, provider terms and per-order overrides. It applies to the commission models
- * only: funeral / memorial is not a commission service (owner decisions 2 and 4) and a full-time contractor
- * has no share at all (decision 7).
+ * provider gets the rest. The default is 30% for every commission-based provider in every service (owner
+ * decision C, 27 Sept 2026); Finance can change each service's default (lib/service-commission-defaults.ts),
+ * a provider can get their own value at onboarding, and one booking an override a second person approves.
+ * The range holds for service defaults, provider terms and per-order overrides. It applies to the commission
+ * models only: funeral / memorial is not a commission service (owner decisions 2 and 4; a funeral booking's
+ * override can be any share, 0% to 100%) and a full-time contractor has no share at all (decision 7).
  *
  * Stored terms keep the PROVIDER's share as a fraction (provider_share_pct); people set PawSpace's
  * commission as a percentage. The two helpers below are the only conversion between them.
@@ -46,6 +48,30 @@ export function pawspaceCommissionProblem(percent:unknown,label=""){const value=
 export function providerShareRangeProblem(model:string,providerSharePct:number,label=""){if(!RANGE_GOVERNED_MODELS.has(model))return null;return pawspaceCommissionProblem(commissionFromProviderShare(providerSharePct),label);}
 /** A funeral vendor's PawSpace share is a percentage of the paid amount; it only has to be a real split. */
 export function funeralSharePercentProblem(percent:unknown,label=""){const value=Number(percent),where=label?` for ${label}`:"";if(percent===""||percent==null||!Number.isFinite(value)||value<0||value>=100)return`Enter PawSpace's share${where} as a percentage from 0% to below 100%.`;return null;}
+/** One funeral or memorial booking is not held to the commission range: its override can give PawSpace any share from 0% to 100% of the amount paid (the provider gets the rest), as the funeral model allows. */
+export function funeralOverridePercentProblem(percent:unknown,label=""){const value=Number(percent),where=label?` for ${label}`:"";if(percent===""||percent==null||!Number.isFinite(value))return`Enter PawSpace's share${where} as a percentage from 0% to 100%.`;if(value<0||value>100)return`PawSpace's share${where} must be from 0% to 100% of the amount paid (you entered ${percentText(value)}).`;return null;}
+/** The range for a per-booking override: any share from 0% to 100% on a funeral or memorial booking, 10% to 40% on every commission service. */
+export function orderOverridePercentProblem(percent:unknown,input:{serviceCode?:unknown;label?:string}={}){return isFuneralService(input.serviceCode)?funeralOverridePercentProblem(percent,input.label):pawspaceCommissionProblem(percent,input.label);}
+
+/**
+ * The services a commission-based provider delivers for PawSpace, each with a service default (provider_id NULL): PawSpace
+ * 30% unless Finance changed it (owner decision C). Funeral / memorial is not a commission service, and vet consults are paid
+ * from their own vet payout terms (lib/vet-healthcare.ts).
+ */
+export const COMMISSION_DEFAULT_SERVICES:readonly string[]=["boarding","dog_training","dog_walking","grooming","pet_sitting","pet_taxi"];
+/** How the engine (computeOrderPayout) picks the commission for one booking, in plain English. */
+export const COMMISSION_RESOLUTION_ORDER="Which commission a booking uses, in this order: an override a second person approved for that booking; otherwise the provider's own terms for that service; otherwise the service default. Full-time providers never get a share.";
+/** Service defaults are never back-dated: a change starts today or later. `today` is the engine's date (bookings resolve on their UTC date). */
+export function serviceDefaultStartProblem(effectiveFrom:unknown,today:string){const day=String(effectiveFrom??"").trim(),parsed=Date.parse(`${day}T00:00:00Z`);if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||Number.isNaN(parsed)||new Date(parsed).toISOString().slice(0,10)!==day)return"Enter the date the new default starts from as a real date (YYYY-MM-DD).";if(day<today)return`A service default cannot be back-dated: choose ${today} or a later date (you entered ${day}).`;return null;}
+
+/* Active terms approved by the system, not a person. Payouts keep using them (pay is never blocked), and Finance is asked
+ * for a person's approval (lib/provider-commercial-terms.ts, reapproveCommercialTerm). */
+export const LEGACY_COMMISSION_APPROVER="system:legacy-commission-migration";
+export const DEFAULT_COMMISSION_SEED_APPROVER="system:owner-decision-c";
+/** Whether an actor is the system (a migration, the default seed) rather than a person. */
+export function isSystemActor(actor:unknown){return String(actor??"").trim().toLowerCase().startsWith("system:");}
+/** The badge for a term a person has not approved yet, or null when a person approved it. */
+export function personApprovalNeeded(approvedBy:unknown):string|null{const by=String(approvedBy??"").trim().toLowerCase();if(!isSystemActor(by))return null;if(by===LEGACY_COMMISSION_APPROVER)return"Carried over, needs re-approval";if(by===DEFAULT_COMMISSION_SEED_APPROVER)return`Set automatically at ${PAWSPACE_COMMISSION_DEFAULT_PERCENT}%, needs approval`;return"Approved by the system, needs a person's approval";}
 
 export const rupeesText=(value:number)=>`Rs ${round2(value).toLocaleString("en-IN",{minimumFractionDigits:0,maximumFractionDigits:2})}`;
 export type CommissionPreview={paidAmount:number;providerGets:number;pawspaceKeeps:number;gst:number;pawspaceAfterGst:number;sentence:string};

@@ -42,6 +42,7 @@ import{runExecutiveDecisionLoop}from"../lib/executive/ceo-orchestrator";
 import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
 import{handleEdgeHealth}from"../lib/edge-health";
 import{runProviderPayoutQueueSweep}from"../lib/provider-payout-queue";
+import{seedMissingServiceCommissionDefaults}from"../lib/service-commission-defaults";
 import{createRequestD1Metrics,runWithRequestD1Metrics,withRequestD1MetricsEnv}from"../lib/request-d1-metrics";
 
 interface RateLimitBinding{limit(input:{key:string}):Promise<{success:boolean}>;}
@@ -232,7 +233,7 @@ const worker = {
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,providerPayoutQueue]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,commissionDefaults,providerPayoutQueue]=await Promise.allSettled([
         // UAT only (PAWSPACE_SCHEDULING_ENV=uat): also free groomers held by V2 checkouts abandoned unpaid for 30 min.
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime).then(async result=>({...result,uatAbandoned:await releaseAbandonedUatCheckouts(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime)})),
         gatewayInboundTask,
@@ -255,11 +256,18 @@ const worker = {
         atlasDailyTask,
         dpdpRetentionTask,
         sweepPartnerHeartbeats(env.DB,controller.scheduledTime),
-        // Provider payouts: queue each booking once, 7 days after completion; Finance releases with one click.
-        runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
+        // Owner decision C: every commission service keeps a PawSpace 30% default. A missing one is seeded here, audited, so
+        // bookings never wait for someone to open Finance > Partners; once every service has one this is a single SELECT.
+        seedMissingServiceCommissionDefaults(env.DB),
+        // Provider payouts: queue each booking once, 7 days after completion; Finance releases with one click. On UAT
+        // (PAWSPACE_SCHEDULING_ENV=uat with RazorpayX TEST) a seeded groomer with no payout beneficiary is given one as
+        // its booking is assessed (lib/uat-payout-beneficiaries.ts); the env is what decides that, nothing else changes.
+        runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker",env:env as unknown as Record<string,unknown>}),
       ]);
       const errors:string[]=[];
       if(partnerHeartbeat.status==="rejected")errors.push(`partner heartbeat: ${String(partnerHeartbeat.reason)}`);
+      // A locked month is not a failure: the defaults are seeded once the month is open again, and the reason is logged.
+      if(commissionDefaults.status==="rejected")errors.push(`commission defaults: ${commissionDefaults.reason instanceof Error?commissionDefaults.reason.message:String(commissionDefaults.reason)}`);else if(commissionDefaults.value.blocked)console.warn(`[scheduled] commission defaults not seeded: ${commissionDefaults.value.blocked}`);
       if(providerPayoutQueue.status==="rejected")errors.push(`finance provider payout queue: ${providerPayoutQueue.reason instanceof Error?providerPayoutQueue.reason.message:String(providerPayoutQueue.reason)}`);else if(providerPayoutQueue.value.errors.length)errors.push(`finance provider payout queue: ${providerPayoutQueue.value.errors.length} booking(s) failed: ${providerPayoutQueue.value.errors.slice(0,3).join("; ")}`);
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
       if(gatewayInbound.status==="rejected")errors.push(`gateway inbound retry: ${gatewayInbound.reason instanceof Error?gatewayInbound.reason.message:String(gatewayInbound.reason)}`);else if(gatewayInbound.value.deadLettered||gatewayInbound.value.purge.deadLettered)errors.push(`gateway inbound retry: ${gatewayInbound.value.deadLettered+gatewayInbound.value.purge.deadLettered} event(s) dead-lettered`);

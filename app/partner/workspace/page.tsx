@@ -11,6 +11,7 @@ type WS={linked:boolean;email?:string;engagement?:string;features?:{surface:stri
   liveAssignments?:Offer[];earnings?:{netPayout?:number;orders?:number;grossOrderValue?:number;visible?:boolean;note?:string;
     commissionOrders?:Array<{bookingId:string;serviceCode:string;orderAmount:number;commissionMode:string;commissionValue:number;commissionAmount:number;source:string;status:string;completedAt:number;dueAt:number}>;
     payouts?:Array<{id:string;bookingId:string;amount:number;status:string;dueAt:number;providerReference:string|null;updatedAt:number}>;
+    payoutAdjustments?:Array<{id:string;bookingId:string;kind:string;amount:number;message:string;createdAt:number}>;
     statements?:Array<Record<string,unknown>>};pendingProof?:Pending[]};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
@@ -60,6 +61,8 @@ export default function PartnerWorkspacePage(){
           <div style={card}>{data.earnings?.commissionOrders?.length?data.earnings.commissionOrders.map(item=><div key={item.bookingId} style={{borderBottom:`1px solid ${C.line}`,padding:"9px 0"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><span><b>{item.serviceCode}</b> · <code style={{color:C.dim}}>{item.bookingId}</code></span><span>{INR(item.orderAmount)} order → <b style={{color:C.gold}}>{INR(item.commissionAmount)}</b> commission</span></div><small style={{color:C.dim}}>{item.commissionMode} {item.commissionValue} · {item.source} · {item.status} · eligible {new Date(item.dueAt).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})}</small></div>):<p style={{color:C.dim,margin:0}}>No governed commission orders yet.</p>}</div>
           <h2 style={h2}>Payout status</h2>
           <div style={card}>{data.earnings?.payouts?.length?data.earnings.payouts.map(item=><div key={item.id} style={{display:"flex",justifyContent:"space-between",gap:10,borderBottom:`1px solid ${C.line}`,padding:"8px 0",flexWrap:"wrap"}}><span><code style={{color:C.dim}}>{item.bookingId}</code> · {item.status}</span><b>{INR(item.amount)}</b></div>):<p style={{color:C.dim,margin:0}}>No payout instruction has been created yet.</p>}</div>
+          {data.earnings?.payoutAdjustments?.length?<><h2 style={h2}>Payout adjustments</h2>
+          <div style={card}>{data.earnings.payoutAdjustments.map(item=><div key={item.id} style={{borderBottom:`1px solid ${C.line}`,padding:"8px 0"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><span><code style={{color:C.dim}}>{item.bookingId}</code> · {item.kind==="recovery_from_next_payout"?"taken off your next payout":"payout reduced"}</span><b>−{INR(item.amount)}</b></div><small style={{color:C.dim}}>{item.message} · {new Date(item.createdAt).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"})}</small></div>)}</div></>:null}
         </>:null}
 
         <h2 style={{...h2,marginTop:24}}>Live assignments to accept</h2>

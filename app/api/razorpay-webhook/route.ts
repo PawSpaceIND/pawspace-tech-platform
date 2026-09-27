@@ -9,6 +9,7 @@ import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reco
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 import{postBookingRefundCollectionReversal}from"../../../lib/refund-collection-reversal";
+import{settleEscalationRefundAfterWebhook}from"../../../lib/escalation-refunds";
 import{forwardVerifiedRazorpaySandboxWebhook}from"../../../lib/razorpay-sandbox-webhook-relay";
 
 type RazorEntity=Record<string,unknown>;
@@ -146,6 +147,8 @@ export async function POST(request:Request){
       if(eventType==="refund.processed"){
         const replay=extract(payload,String(accepted.row.event_id||eventId),String(accepted.row.payload_sha256),gate.environment);
         await postBookingRefundCollectionReversal(db,{gatewayRefundId:replay.gatewayRefundId,amountSubunits:replay.amountSubunits,createdAt:replay.createdAt});
+        // A refund after completion finishes its credit note, TCS, payout and messages once (idempotent; never throws).
+        await settleEscalationRefundAfterWebhook(db,replay.gatewayRefundId);
       }
       const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
       // Another delivery may own the claim, or a Worker may have stopped before committing it.
@@ -211,10 +214,12 @@ export async function POST(request:Request){
       const refundCollectionReversal=eventType==="refund.processed"
         ?await postBookingRefundCollectionReversal(db,{gatewayRefundId:event.gatewayRefundId,amountSubunits:event.amountSubunits,createdAt:event.createdAt})
         :null;
+      // A refund after completion (lib/escalation-refunds.ts): credit note, TCS, provider payout and messages, once. Never throws.
+      const escalationRefund=eventType==="refund.processed"?await settleEscalationRefundAfterWebhook(db,event.gatewayRefundId):null;
       let transition:Awaited<ReturnType<typeof advancePaymentState>>|null=null;
       if(intent&&target)transition=await advancePaymentState(db,{intentId:String(intent.id),target,gatewayPaymentId:event.gatewayPaymentId});
       await markInbox(db,accepted.row,"PROCESSED",eventType);
-      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null,refundCollectionReversal});
+      return json({ok:true,environment:gate.environment,...result,paymentState:transition,journal:null,refundCollectionReversal,...(escalationRefund?.examined?{escalationRefund}:{})});
     }catch(error){
       await markInbox(db,accepted.row,"FAILED",eventType,error instanceof Error?error.message:"domain_processing_failed").catch(()=>null);
       throw error;

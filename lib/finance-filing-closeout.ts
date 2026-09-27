@@ -49,7 +49,10 @@ export async function generateStatutoryPackageSafe(db:Db,input:Row,actor:string)
   const result=await generateStatutoryPackageBase(db,input,actor) as Row;
   const entityId=text(input.entityId),period=text(input.periodCode);
   const itc=await db.prepare("SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7)=?").bind(entityId,period).first<Row>();
-  const summary={...((result.summary??{}) as Row),eligibleInputTax:num(itc?.total)};
+  // A month whose ITC computation Finance saved (the purchase register) uses it, so the package agrees with GSTR-3B.
+  const{reportItc}=await import("./gst-input-tax");
+  const credit=await reportItc(db,{entityId,registrationId:text(input.registrationId)||null,fromPeriod:period,toPeriod:period,legacyByMonth:new Map([[period,num(itc?.total)]])});
+  const summary={...((result.summary??{}) as Row),eligibleInputTax:credit.total,...(credit.monthsFromComputation.length?{itcFromComputation:true}:{})};
   await db.prepare("UPDATE finance_statutory_packages SET summary_json=? WHERE id=?").bind(JSON.stringify(summary),text(result.id)).run();
   return{...result,summary};
 }
@@ -59,8 +62,11 @@ export async function generateAnnualReturnSafe(db:Db,input:Row,actor:string){
   await ensureFinanceEntityScope(db);
   const result=await generateAnnualReturnBase(db,input,actor) as Row;
   const entityId=text(input.entityId),startYear=Number(text(input.financialYear).slice(0,4)),fromPeriod=`${startYear}-04`,toPeriod=`${startYear+1}-03`;
-  const itc=await db.prepare("SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ?").bind(entityId,fromPeriod,toPeriod).first<Row>();
-  const current=(result.summary??{}) as Row,totalEligibleItc=Math.round(num(itc?.total)*100)/100;
+  const itc=(await db.prepare("SELECT substr(b.bill_date,1,7) month,COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE b.entity_id=? AND v.review_status='eligible' AND substr(b.bill_date,1,7) BETWEEN ? AND ? GROUP BY month").bind(entityId,fromPeriod,toPeriod).all<Row>()).results;
+  // Months whose ITC computation Finance saved (the purchase register) use it, so the annual return agrees with each GSTR-3B.
+  const{reportItc}=await import("./gst-input-tax");
+  const credit=await reportItc(db,{entityId,registrationId:text(input.registrationId)||null,fromPeriod,toPeriod,legacyByMonth:new Map(itc.map(r=>[text(r.month),num(r.total)]))});
+  const current=(result.summary??{}) as Row,totalEligibleItc=Math.round(credit.total*100)/100;
   const summary={...current,totalEligibleItc,netTaxPayable:Math.round((num(current.totalOutputTax)+num(current.totalAdjustments)-totalEligibleItc)*100)/100};
   await db.prepare("UPDATE finance_annual_returns SET summary_json=? WHERE id=?").bind(JSON.stringify(summary),text(result.id)).run();
   return{...result,summary};

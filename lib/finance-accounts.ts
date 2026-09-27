@@ -32,6 +32,19 @@ export const ACCT = {
    */
   GATEWAY_CLEARING: "1020-Payment Gateway Clearing",      // captured by the gateway, not yet settled
   CUSTOMER_COLLECTIONS: "2230-Customer Collections",      // control: money taken from customers
+  /*
+   * Input tax credit (owner decision E, 27 Sept 2026; lib/gst-input-tax.ts). GST a vendor charged sits in the input account
+   * of its head (CGST / SGST / IGST / cess) once the invoice is in GSTR-2B (or Finance confirmed it), and in 1185 until
+   * then; the Rule 88A set-off (lib/gst-setoff.ts) credits these accounts for the credit it uses. 2130 stays the one output
+   * GST payable that completion posts to; reverse-charge tax PawSpace owes on a purchase has its own payable, paid in cash.
+   */
+  INPUT_CGST: "1180-Input CGST",
+  INPUT_SGST: "1181-Input SGST",
+  INPUT_IGST: "1182-Input IGST",
+  INPUT_CESS: "1183-Input Cess",
+  INPUT_TAX_PENDING_2B: "1185-Input tax not yet in GSTR-2B",
+  GST_PAYABLE: "2130-GST Payable",
+  GST_RCM_PAYABLE: "2135-GST Payable (reverse charge)",
 } as const;
 
 export const CASH_ACCOUNTS = new Set<string>([ACCT.CASH, ACCT.BANK]);

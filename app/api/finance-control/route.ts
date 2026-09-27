@@ -5,6 +5,7 @@ import{ensureFinanceEntityScope}from"../../../lib/finance-filing-closeout";
 import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{uatLoginEnabled}from"../../../lib/uat-staging-auth";
+import{billHasSplit,billPostingLines,billTaxColumns,billTaxLocked,ensureInputTaxTables,entityHomeState,hasBillTaxInput,isIsoDate,istToday,syncBillLedger,type BillTaxColumns}from"../../../lib/gst-input-tax";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -38,6 +39,7 @@ async function ensureSchema(db:Db){
  for(const table of["finance_expenses","finance_bills"]as const){await ensureColumn(db,table,"category_code");await ensureColumn(db,table,"created_by");}
  await repairSchemaDrift(db);
  await ensureFinanceEntityScope(db);
+ await ensureInputTaxTables(db);
  await db.prepare("INSERT OR IGNORE INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) SELECT source_type,source_id,'legacy:'||source_type||':'||source_id,MIN(created_at) FROM finance_journal_entries GROUP BY source_type,source_id").run();
 }
 
@@ -45,18 +47,21 @@ function resolveAccountCode(categoryCode:string|undefined,fallback:string){if(!c
 async function audit(db:Db,actor:string,entityType:string,entityId:string,action:string,after:unknown,reason:string){await db.prepare("INSERT INTO finance_audit_events (id,entity_type,entity_id,action,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,NULL,?,?,?,?)").bind(id("fin_audit"),entityType,entityId,action,JSON.stringify(after),actor,reason,Date.now()).run();}
 async function periodLocked(db:Db,date:string){const code=date.slice(0,7);const row=await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(code).first<{status:string}>();return row?.status==="locked";}
 
-type ApprovalInput={table:"finance_expenses"|"finance_bills";dateColumn:"expense_date"|"bill_date";sourceType:"expense"|"vendor_bill";sourceId:string;actor:string;entityId:string;date:string;debitAccount:string;creditAccount:string;amount:number;narration:string;costCentre:string;vertical:string;changedAt:number};
+/* lines: a bill with split GST posts expense, input tax by head, accounts payable (and reverse-charge payable) instead of the pair. */
+type ApprovalInput={table:"finance_expenses"|"finance_bills";dateColumn:"expense_date"|"bill_date";sourceType:"expense"|"vendor_bill";sourceId:string;actor:string;entityId:string;date:string;debitAccount:string;creditAccount:string;amount:number;narration:string;costCentre:string;vertical:string;changedAt:number;lines?:Array<{account:string;debit:number;credit:number}>;version?:number};
 async function approveWithJournal(db:Db,input:ApprovalInput){
  const period=input.date.slice(0,7),claimToken=crypto.randomUUID(),createdAt=Date.now(),group=id("journal");
- const eligible=`EXISTS (SELECT 1 FROM ${input.table} WHERE id=? AND status NOT IN ('approved','paid','rejected') AND (created_by IS NULL OR created_by<>?)) AND NOT EXISTS (SELECT 1 FROM finance_close_periods WHERE period_code=? AND status='locked')`;
- const claim=db.prepare(`INSERT INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) SELECT ?,?,?,? WHERE ${eligible}`).bind(input.sourceType,input.sourceId,claimToken,createdAt,input.sourceId,input.actor,period);
+ // version: lines computed from the row as loaded (a bill's split GST) post only if the row is still that version.
+ const eligible=`EXISTS (SELECT 1 FROM ${input.table} WHERE id=? AND status NOT IN ('approved','paid','rejected') AND (created_by IS NULL OR created_by<>?)${input.version===undefined?"":" AND updated_at=?"}) AND NOT EXISTS (SELECT 1 FROM finance_close_periods WHERE period_code=? AND status='locked')`;
+ const claim=db.prepare(`INSERT INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) SELECT ?,?,?,? WHERE ${eligible}`).bind(input.sourceType,input.sourceId,claimToken,createdAt,input.sourceId,input.actor,...(input.version===undefined?[]:[input.version]),period);
  const journal=(suffix:number,account:string,debit:number,credit:number)=>db.prepare("INSERT INTO finance_journal_entries (id,entity_id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM finance_journal_posting_claims WHERE source_type=? AND source_id=? AND claim_token=?").bind(`${group}_${suffix}`,input.entityId,input.date,input.sourceType,input.sourceId,account,input.costCentre,input.vertical,debit,credit,input.narration,period,1,createdAt,input.sourceType,input.sourceId,claimToken);
- const debits=journal(1,input.debitAccount,input.amount,0),credits=journal(2,input.creditAccount,0,input.amount);
+ const lines=input.lines??[{account:input.debitAccount,debit:input.amount,credit:0},{account:input.creditAccount,debit:0,credit:input.amount}];
+ const debits=lines.filter(line=>line.debit>0),credits=lines.filter(line=>line.credit>0),entries=[...debits,...credits].map((line,index)=>journal(index+1,line.account,line.debit,line.credit));
  const transition=db.prepare(`UPDATE ${input.table} SET status='approved',updated_at=? WHERE id=? AND status NOT IN ('approved','paid','rejected') AND EXISTS (SELECT 1 FROM finance_journal_posting_claims WHERE source_type=? AND source_id=? AND claim_token=?)`).bind(input.changedAt,input.sourceId,input.sourceType,input.sourceId,claimToken);
  let results;
- try{results=await db.batch([claim,debits,credits,transition]);}
+ try{results=await db.batch([claim,...entries,transition]);}
  catch(error){const message=error instanceof Error?error.message:String(error);if(/finance_journal_posting_claims|UNIQUE constraint failed.*source_type.*source_id/i.test(message))throw new Error("journal_already_posted");throw error;}
- if(!Number(results[0]?.meta?.changes)||!Number(results[3]?.meta?.changes)){
+ if(!Number(results[0]?.meta?.changes)||!Number(results[results.length-1]?.meta?.changes)){
   const current=await db.prepare(`SELECT status,created_by,${input.dateColumn} transaction_date FROM ${input.table} WHERE id=?`).bind(input.sourceId).first<Row>();
   if(current?.created_by&&String(current.created_by)===input.actor)throw new Error("maker_cannot_approve");
   if(current&&await periodLocked(db,String(current.transaction_date||input.date)))throw new Error("period_locked");
@@ -71,8 +76,13 @@ async function seed(db:Db){
  const{env}=await import("cloudflare:workers");
  if(!uatLoginEnabled(env as unknown as Record<string,unknown>))return;
  const createdAt=Date.now(),seedActor="uat-seed@pawspace.invalid";
- const vendors=[["ven_fuel","Shell Fleet Services","29AAACS0001A1Z5","194C"],["ven_food","Happy Tails Foods","29AAHFT2201B1Z9","194Q"],["ven_software","Cloud Software India","29AABCC2233D1ZA","194J"]]as const;
- for(const vendor of vendors)await db.prepare("INSERT OR IGNORE INTO finance_vendors (id,name,gstin,pan,payment_terms_days,bank_reference,tds_section,status,created_at,updated_at) VALUES (?,?,?,NULL,30,'masked',?,'active',?,?)").bind(vendor[0],vendor[1],vendor[2],vendor[3],createdAt,createdAt).run();
+ // Sample GSTINs with valid check characters (the purchase register verifies them).
+ const vendors=[["ven_fuel","Shell Fleet Services","29AAACS0001A1ZB","194C","29AAACS0001A1Z5"],["ven_food","Happy Tails Foods","29AAHFT2201B1ZP","194Q","29AAHFT2201B1Z9"],["ven_software","Cloud Software India","29AABCC2233D1Z6","194J","29AABCC2233D1ZA"]]as const;
+ for(const vendor of vendors){
+  await db.prepare("INSERT OR IGNORE INTO finance_vendors (id,name,gstin,pan,payment_terms_days,bank_reference,tds_section,status,created_at,updated_at) VALUES (?,?,?,NULL,30,'masked',?,'active',?,?)").bind(vendor[0],vendor[1],vendor[2],vendor[3],createdAt,createdAt).run();
+  // Earlier seeds stored a sample GSTIN whose check character was wrong; only that exact sample value is corrected.
+  await db.prepare("UPDATE finance_vendors SET gstin=?,updated_at=? WHERE id=? AND gstin=?").bind(vendor[2],createdAt,vendor[0],vendor[4]).run();
+ }
  await db.prepare("INSERT OR IGNORE INTO finance_expenses (id,entity_id,expense_date,claimant,merchant,category,cost_centre,vertical,amount,gst_amount,payment_mode,receipt_reference,status,duplicate_risk,created_by,created_at,updated_at) VALUES ('exp_1001',?,'2026-08-02','Arun K','Shell','Travel & fuel','Bengaluru Ops','Grooming',2840,433,'Corporate card','RCPT-8421','approval_due',0,?,?,?)").bind(DEFAULT_ENTITY_ID,seedActor,createdAt,createdAt).run();
  await db.prepare("INSERT OR IGNORE INTO finance_expenses (id,entity_id,expense_date,claimant,merchant,category,cost_centre,vertical,amount,gst_amount,payment_mode,receipt_reference,status,duplicate_risk,created_by,created_at,updated_at) VALUES ('exp_1002',?,'2026-08-01','Priya S','Quick Print','Marketing collateral','Growth','All verticals',11800,1800,'Employee paid','INV-QP-118','held',1,?,?,?)").bind(DEFAULT_ENTITY_ID,seedActor,createdAt,createdAt).run();
  await db.prepare("INSERT OR IGNORE INTO finance_bills (id,entity_id,vendor_id,bill_number,bill_date,due_date,cost_centre,vertical,taxable_amount,gst_amount,tds_amount,total_amount,status,purchase_order_id,attachment_reference,created_by,created_at,updated_at) VALUES ('bill_2001',?,'ven_food','HTF-882','2026-07-28','2026-08-12','Boarding Ops','Boarding',48000,8640,0,56640,'approval_due','PO-2241','receipt://uat/htf-882',?,?,?)").bind(DEFAULT_ENTITY_ID,seedActor,createdAt,createdAt).run();
@@ -98,13 +108,18 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
   const total=finite(body.totalAmount),taxable=finite(body.taxableAmount,total??undefined),gst=finite(body.gstAmount,0),tds=finite(body.tdsAmount,0),date=String(body.billDate??"");
   if(!date||!body.vendorId||!body.billNumber||total===null||total<=0||taxable===null||taxable<0||gst===null||gst<0||tds===null||tds<0)return json({error:"Vendor, bill number, date and finite non-negative amounts are required"},400);
   if(await periodLocked(db,date))return json({error:"period_locked"},409);
-  const billId=id("bill");await db.prepare("INSERT INTO finance_bills (id,entity_id,vendor_id,bill_number,bill_date,due_date,cost_centre,vertical,taxable_amount,gst_amount,tds_amount,total_amount,status,purchase_order_id,attachment_reference,category_code,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(billId,entityId,body.vendorId,body.billNumber,date,body.dueDate??date,body.costCentre??"Bengaluru Ops",body.vertical??"All verticals",taxable,gst,tds,total,"draft",body.purchaseOrderId??null,body.attachmentReference??null,body.categoryCode??null,actor.email,createdAt,createdAt).run();
+  // Purchase register (lib/gst-input-tax.ts): supplier GSTIN, invoice, place of supply, SAC, tax by head, reverse charge and ITC
+  // treatment. A bill sent without them is saved as before and needs a component split before any credit is taken.
+  let tax:BillTaxColumns|null=null;
+  if(hasBillTaxInput(body)){const vendor=await db.prepare("SELECT gstin FROM finance_vendors WHERE id=?").bind(String(body.vendorId)).first<Row>();const checked=billTaxColumns(body,{vendorGstin:vendor?.gstin?String(vendor.gstin):null,billNumber:String(body.billNumber),billDate:date,taxable,total,categoryCode:body.categoryCode?String(body.categoryCode):null,homeState:await entityHomeState(db,entityId,body.recipientRegistrationId?String(body.recipientRegistrationId):null)});if("error" in checked)return json({error:checked.error},400);tax=checked.columns;}
+  const taxColumns=tax?Object.entries(tax).filter(([column])=>column!=="gst_amount"):[];
+  const billId=id("bill");await db.prepare(`INSERT INTO finance_bills (id,entity_id,vendor_id,bill_number,bill_date,due_date,cost_centre,vertical,taxable_amount,gst_amount,tds_amount,total_amount,status,purchase_order_id,attachment_reference,category_code,created_by,created_at,updated_at${taxColumns.map(([column])=>`,${column}`).join("")}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?${taxColumns.map(()=>",?").join("")})`).bind(billId,entityId,body.vendorId,body.billNumber,date,body.dueDate??date,body.costCentre??"Bengaluru Ops",body.vertical??"All verticals",taxable,tax?tax.gst_amount:gst,tds,total,"draft",body.purchaseOrderId??null,body.attachmentReference??null,body.categoryCode??null,actor.email,createdAt,createdAt,...taxColumns.map(([,value])=>value)).run();
   await audit(db,actor.email,"bill",billId,"created",body,"Vendor bill created");await securityAudit(db,actor,"finance.bill.create","bill",billId,"completed",{entityId});return json({data:{id:billId,status:"draft"}},201);
  }
  return json({error:"Unsupported finance entity"},400);
  }catch(error){return authError(error,"Finance save failed");}}
 
-export async function PATCH(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const version=expectedVersion(request);const db=await database();await seed(db);const body=await request.json()as{entity?:string;id?:string;action?:string;reason?:string};if(!body.id||!body.action||!body.reason||body.reason.trim().length<5)return json({error:"A reason of at least 5 characters is required"},400);const changedAt=Date.now();
+export async function PATCH(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const version=expectedVersion(request);const db=await database();await seed(db);const body=await request.json()as{entity?:string;id?:string;action?:string;reason?:string}&Record<string,unknown>;if(!body.id||!body.action||!body.reason||body.reason.trim().length<5)return json({error:"A reason of at least 5 characters is required"},400);const changedAt=Date.now();
  if(body.entity==="expense"){
   if(!["approve","reject","pay"].includes(body.action))return json({error:"Unsupported expense action"},400);
   const row=await db.prepare("SELECT * FROM finance_expenses WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Expense not found"},404);assertVersion(row,version);const currentStatus=String(row.status||"");
@@ -129,22 +144,46 @@ export async function PATCH(request:Request){try{sameOrigin(request);const actor
   await audit(db,actor.email,"expense",body.id,"reject",{status:"rejected"},body.reason);await securityAudit(db,actor,"finance.expense.reject","expense",body.id,"completed",{});return json({data:{id:body.id,status:"rejected"}});
  }
  if(body.entity==="bill"){
-  if(!["approve","reject","pay"].includes(body.action))return json({error:"Unsupported bill action"},400);
+  if(!["approve","reject","pay","classify"].includes(body.action))return json({error:"Unsupported bill action"},400);
   const row=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(body.id).first<Row>();if(!row)return json({error:"Bill not found"},404);assertVersion(row,version);const currentStatus=String(row.status||"");
   if(body.action==="approve"){
    if(row.created_by&&String(row.created_by)===actor.email)return json({error:"Maker cannot approve their own transaction"},403);
    if(["approved","paid"].includes(currentStatus))return json({data:{id:body.id,status:currentStatus,duplicatePrevented:true}});
    if(currentStatus==="rejected")return json({error:"Rejected bill cannot be approved without a new submission"},409);
-   const result=await approveWithJournal(db,{table:"finance_bills",dateColumn:"bill_date",sourceType:"vendor_bill",sourceId:body.id,actor:actor.email,entityId:String(row.entity_id||DEFAULT_ENTITY_ID),date:String(row.bill_date),debitAccount:resolveAccountCode(row.category_code?String(row.category_code):undefined,"6300-Vendor expense"),creditAccount:"2200-Accounts payable",amount:Number(row.total_amount),narration:String(row.bill_number),costCentre:String(row.cost_centre),vertical:String(row.vertical),changedAt});
+   const result=await approveWithJournal(db,{table:"finance_bills",dateColumn:"bill_date",sourceType:"vendor_bill",sourceId:body.id,actor:actor.email,entityId:String(row.entity_id||DEFAULT_ENTITY_ID),date:String(row.bill_date),debitAccount:resolveAccountCode(row.category_code?String(row.category_code):undefined,"6300-Vendor expense"),creditAccount:"2200-Accounts payable",amount:Number(row.total_amount),narration:String(row.bill_number),costCentre:String(row.cost_centre),vertical:String(row.vertical),changedAt,...(billHasSplit(row)?{lines:billPostingLines(row,resolveAccountCode(row.category_code?String(row.category_code):undefined,"6300-Vendor expense")),version:Number(row.updated_at)}:{})});
    if(result.duplicatePrevented)return json({data:{id:body.id,status:result.status,duplicatePrevented:true}});
    await audit(db,actor.email,"bill",body.id,"approve",{status:"approved"},body.reason);await securityAudit(db,actor,"finance.bill.approve","bill",body.id,"completed",{});return json({data:{id:body.id,status:"approved"}});
   }
   if(body.action==="pay"){
    if(currentStatus==="paid")return json({data:{id:body.id,status:"paid",duplicatePrevented:true}});
    if(currentStatus!=="approved")return json({error:"Bill must be approved before payment"},409);
-   const result=await db.prepare("UPDATE finance_bills SET status='paid',updated_at=? WHERE id=? AND status='approved'").bind(changedAt,body.id).run();
+   // The date the supplier was paid decides Rule 37 (180 days) and a reverse-charge bill's time of supply.
+   const paidOn=body.paidOn?String(body.paidOn):istToday(),invoiceDate=String(row.supplier_invoice_date||row.bill_date);
+   if(!isIsoDate(paidOn)||paidOn>istToday()||paidOn<invoiceDate)return json({error:"The date paid must be a real date, on or after the invoice date and not in the future"},400);
+   if(await periodLocked(db,paidOn))return json({error:"period_locked"},409);
+   const result=await db.prepare("UPDATE finance_bills SET status='paid',paid_to_supplier_on=?,updated_at=? WHERE id=? AND status='approved'").bind(paidOn,changedAt,body.id).run();
    if(!Number(result.meta.changes)){const latest=await db.prepare("SELECT status FROM finance_bills WHERE id=?").bind(body.id).first<Row>();if(String(latest?.status)==="paid")return json({data:{id:body.id,status:"paid",duplicatePrevented:true}});return json({error:"Bill payment state changed concurrently"},409);}
-   await audit(db,actor.email,"bill",body.id,"pay",{status:"paid"},body.reason);await securityAudit(db,actor,"finance.bill.pay","bill",body.id,"completed",{});return json({data:{id:body.id,status:"paid"}});
+   await audit(db,actor.email,"bill",body.id,"pay",{status:"paid",paidToSupplierOn:paidOn},body.reason);await securityAudit(db,actor,"finance.bill.pay","bill",body.id,"completed",{});return json({data:{id:body.id,status:"paid",paidToSupplierOn:paidOn}});
+  }
+  if(body.action==="classify"){
+   // Split and classify a bill's GST (purchase register). An approved bill keeps its amounts; its journal is brought in line
+   // with the new details (only the difference is posted). Once a saved ITC computation has taken the bill, it is final.
+   if(currentStatus==="rejected")return json({error:"A rejected bill cannot be changed"},409);
+   if(billTaxLocked(row))return json({error:"This bill's credit is already in a saved ITC computation, so its GST details are final; correct it in a later month"},409);
+   const posted=["approved","paid"].includes(currentStatus),taxable=posted?Number(row.taxable_amount):finite(body.taxableAmount,Number(row.taxable_amount)),total=posted?Number(row.total_amount):finite(body.totalAmount,Number(row.total_amount));
+   if(taxable===null||taxable<0||total===null||total<=0)return json({error:"Taxable value and total must be finite amounts"},400);
+   if(posted&&((body.taxableAmount!==undefined&&Number(body.taxableAmount)!==Number(row.taxable_amount))||(body.totalAmount!==undefined&&Number(body.totalAmount)!==Number(row.total_amount))))return json({error:"An approved bill's amounts cannot change; only its GST details"},409);
+   const categoryCode=body.categoryCode!==undefined?String(body.categoryCode||"")||null:row.category_code?String(row.category_code):null;
+   const vendor=await db.prepare("SELECT gstin FROM finance_vendors WHERE id=?").bind(String(row.vendor_id)).first<Row>();
+   const checked=billTaxColumns(body,{vendorGstin:vendor?.gstin?String(vendor.gstin):null,billNumber:String(row.bill_number),billDate:String(row.bill_date),taxable,total,categoryCode,homeState:await entityHomeState(db,String(row.entity_id||DEFAULT_ENTITY_ID),body.recipientRegistrationId?String(body.recipientRegistrationId):row.recipient_registration_id?String(row.recipient_registration_id):null)});
+   if("error" in checked)return json({error:checked.error},400);
+   const columns=Object.entries(checked.columns);
+   const updated=await db.prepare(`UPDATE finance_bills SET ${columns.map(([column])=>`${column}=?`).join(",")},category_code=?,taxable_amount=?,total_amount=?,updated_at=? WHERE id=? AND updated_at=? AND status NOT IN ('rejected') AND itc_claimed_period IS NULL AND rcm_reported_period IS NULL`).bind(...columns.map(([,value])=>value),categoryCode,taxable,total,changedAt,body.id,version).run();
+   if(!Number(updated.meta.changes))return json({error:"Finance record changed since it was loaded; refresh before retrying"},412);
+   const fresh=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(body.id).first<Row>();
+   const ledger=fresh?await syncBillLedger(db,fresh,{actor:actor.email,reason:body.reason}):{journalGroup:null};
+   await audit(db,actor.email,"bill",body.id,"classify",{...checked.columns,categoryCode,taxable,total,journalGroup:ledger.journalGroup},body.reason);await securityAudit(db,actor,"finance.bill.classify","bill",body.id,"completed",{journalGroup:ledger.journalGroup});
+   return json({data:{id:body.id,status:currentStatus,updatedAt:changedAt,journalGroup:ledger.journalGroup,...checked.columns}});
   }
   if(["approved","paid"].includes(currentStatus))return json({error:"Approved or paid bill cannot be rejected"},409);
   const rejected=await db.prepare("UPDATE finance_bills SET status='rejected',updated_at=? WHERE id=? AND status NOT IN ('approved','paid','rejected')").bind(changedAt,body.id).run();
