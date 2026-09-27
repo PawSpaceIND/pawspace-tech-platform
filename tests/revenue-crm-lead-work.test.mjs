@@ -162,3 +162,51 @@ test("a new lead is on the first page of the Revenue & CX engine however many ol
   assert.equal(due.body.leads[1].id, "LEAD-OLD-000", "then the lead whose first response has been due longest");
   assert.equal(due.body.stats.slaBreaches, 1, "counted over all open leads, not just the page");
 });
+
+// Round-2 staging: "Rotate day" and the governed assign were predicted/observed to answer 409 - with no
+// routing policy ever configured, every lead was refused "No active lead assignment policy matches".
+test("Rotate day and the governed assign work on a fresh database: the default routing policies apply instead of a 409", async () => {
+  const w = await salesWorld();
+  await get(MANAGER);
+  leadOwnedBy(w, "LEAD-STAFF-1", REP);
+  leadOwnedBy(w, "LEAD-STAFF-2", "Unassigned");
+  const rotated = await read(await post(MANAGER, { action: "advance_day", leadId: "LEAD-STAFF-1" }));
+  assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+  assert.equal(rotated.body.workDay, 2);
+  assert.equal(rotated.body.owner, REP, "continuity keeps the rep who already had it");
+  assert.equal(rotated.body.sla, "canonical", "and the first-response clock restarts under the default SLA policy");
+
+  const assignmentRoute = await import("../app/api/lead-assignment-governance/route.ts");
+  const assigned = await read(await assignmentRoute.POST(asActor(MANAGER, "/api/lead-assignment-governance", { method: "POST", body: JSON.stringify({ action: "assign", leadId: "LEAD-STAFF-2", idempotencyKey: "assign-staff-2", reason: "new_lead" }) })));
+  assert.equal(assigned.status, 200, JSON.stringify(assigned.body));
+  assert.equal(assigned.body.data.assignment.employee_email, REP);
+});
+
+// Round-2 staging: the /crm lead detail offered only "Book this customer" and "Open canonical 360" - no way
+// to record a call note, move the stage or promise a callback, although the engine's APIs do all three.
+test("the CRM detail carries the contact's open lead and offers call-outcome, note and callback controls wired to the engine", async () => {
+  const w = await salesWorld();
+  await seedActors(w.sqlite, w.db, [{ id: "U-FOUNDER", email: "founder.crm@pawspace.test", role: "founder" }]);
+  const leadId = await publicEnquiry("9000000961");
+  const contactId = w.sqlite.prepare("SELECT customer_id FROM lead_work_items WHERE id=?").get(leadId).customer_id;
+  const crm = await import("../app/api/crm/route.ts");
+  const listed = await read(await crm.GET(asActor("founder.crm@pawspace.test", "/api/crm")));
+  assert.equal(listed.status, 200, JSON.stringify(listed.body).slice(0, 200));
+  assert.equal(listed.body.contacts.find((row) => row.id === contactId).open_lead_id, leadId, "the detail panel knows which lead to work");
+
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { createElement } = await import("react");
+  const { default: LeadWorkPanel } = await import("../app/crm/lead-work-panel.tsx");
+  const html = renderToStaticMarkup(createElement(LeadWorkPanel, { leadId, onSaved: () => {} }));
+  for (const control of ['name="outcome"', 'name="note"', 'type="datetime-local"', 'name="reason"', "Save call outcome", "Schedule callback", 'value="Interested"', 'value="Opt-out"']) assert.ok(html.includes(control), control);
+  const page = (await import("node:fs")).readFileSync(new URL("../app/crm/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /<LeadWorkPanel key=\{selected\.openLeadId\} leadId=\{selected\.openLeadId\}/, "the panel is rendered in the lead detail");
+
+  // What the panel sends, as the lead's own rep: an outcome with a note moves the stage.
+  const interested = await read(await post(REP, { action: "log_attempt", leadId, channel: "call", outcome: "Interested", note: "Wants boarding for 3 nights in December" }));
+  assert.equal(interested.status, 200, JSON.stringify(interested.body));
+  assert.equal(w.sqlite.prepare("SELECT stage FROM crm_contacts WHERE id=?").get(contactId).stage, "Qualified");
+  assert.equal(w.sqlite.prepare("SELECT note FROM lead_attempts WHERE lead_id=?").get(leadId).note, "Wants boarding for 3 nights in December");
+  const callback = await read(await post(REP, { action: "schedule_callback", leadId, requestedAt: Date.now() + DAY, reason: "Customer asked to be called tomorrow" }));
+  assert.equal(callback.status, 200, JSON.stringify(callback.body));
+});
