@@ -1,5 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
+import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
+import {runWithWorkersDb} from './helpers/module-hooks.mjs';
+installAiHooks();
+const responsesRoute=await import('../app/api/elevenlabs/v1/responses/route.ts');
 const valid={transcript:'What grooming services do you offer for my dog Bruno?',reply:'We offer Essential Bath grooming for dogs. Would you like to hear more?',audioBytes:16000,nonSilentBytes:9000};
 test('audio proof requires recognized request, substantive response and non-silent audio',()=>{
  assert.equal(audioProof(valid),true);
@@ -66,4 +70,36 @@ test('speech before the caller fixture starts, audio before recognition and hand
 test('socket event types are counted only under allowlisted names',()=>{
  for(const t of ['audio','interruption','agent_response_correction','user_transcript','ping'])assert.equal(audioEventKind(t),t);
  for(const t of ['__proto__','constructor','prototype','toString','audio\n::error::x',undefined,null,{},42])assert.equal(audioEventKind(t),'other');
+});
+/* The probe must never pass a turn in which the real voice runtime handed off to staff. These run the
+ * product's own ElevenLabs custom-LLM route through both handoff paths - the orchestrator's handoff
+ * for an unclassifiable turn and the governed staff pause - and judge the words it actually speaks. */
+const LLM_SECRET='test-only-llm-secret';
+async function spokenHandoff(t,{staffPause}){
+ const w=freshUatAiDb({ELEVENLABS_API_KEY:'test-only-elevenlabs',ELEVENLABS_AGENT_ID:'agent-test',ELEVENLABS_LLM_SECRET:LLM_SECRET,PAWSPACE_UAT_LOGIN:'on',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'test-only-openai'});
+ t.after(()=>w.sqlite.close());globalThis.__PAWSPACE_TEST_ENV__={...globalThis.__PAWSPACE_TEST_ENV__,DB:w.db};
+ seedCustomer(w.sqlite,'CUS-AUDIO-PROOF','Synthetic Tester','9876500093');
+ await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-AUDIO-PROOF',customerId:'CUS-AUDIO-PROOF',text:'synthetic fixture',channel:'voice',idempotencyKey:'audio-proof-fixture'});
+ const {ensureAiConversationOrchestrator}=await import('../lib/ai-conversation-orchestrator.ts');await ensureAiConversationOrchestrator(w.db);
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ const {setAiRolloutStage}=await import('../lib/ai-audience-rollout.ts');
+ await setAiRolloutStage(w.db,{stage:'staff_only',reason:'synthetic audio proof handoff',actorEmail:'test@pawspace.test'});
+ if(staffPause){const {requestAiHumanHandoff}=await import('../lib/ai-human-handoff.ts');await requestAiHumanHandoff(w.db,{threadId:'THREAD-AUDIO-PROOF',customerId:'CUS-AUDIO-PROOF',reason:'low_confidence',actorEmail:'test@pawspace.test'});}
+ const mock=stubFetch(()=>{throw new Error('a handoff turn must not call the provider');});t.after(()=>mock.restore());
+ const input=staffPause?'What grooming services do you offer for my dog Bruno?':'I want for tomorrow at 11:00 AM.';
+ const request=new Request('https://pawspace-staging-gateway.test/api/elevenlabs/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+LLM_SECRET},body:JSON.stringify({input,elevenlabs_extra_body:{pawspace_customer_id:'CUS-AUDIO-PROOF',pawspace_thread_id:'THREAD-AUDIO-PROOF'}})});
+ const sse=await runWithWorkersDb(w.db,async()=>(await responsesRoute.POST(request)).text());
+ const events=sse.split('\n').filter(l=>l.startsWith('data: {')).map(l=>JSON.parse(l.slice(6)));
+ assert.equal(events.at(-1)?.type,'response.completed');assert.equal(mock.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1,'the turn really handed off');
+ return events.filter(e=>e.type==='response.output_text.delta').map(e=>e.delta).join('');
+}
+for(const [name,staffPause] of [['orchestrator handoff',false],['staff pause',true]])test(`the audio proof rejects the real ${name} reply the voice runtime speaks`,async t=>{
+ const spoken=await spokenHandoff(t,{staffPause});
+ assert.ok(spoken.length>20,spoken);
+ assert.equal(isHandoffReply(spoken),true,spoken);
+ assert.equal(audioProof({...valid,reply:spoken}),false);
+ const {s,now}=replay([...greeting,asked,{type:'agent_response',agent_response_event:{agent_response:spoken}},{type:'audio',audio_event:{event_id:2,audio_base_64:pcm(32000)}}]);
+ assert.equal(audioProbeComplete(s,now+5000),false);
 });

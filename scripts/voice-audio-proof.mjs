@@ -1,5 +1,7 @@
 import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
-const HANDOFF=/waiting for a PawSpace team member|routing this to a PawSpace team member|cannot continue the booking/i;
+// Every handoff wording the voice runtime speaks (lib/elevenlabs-custom-llm.ts staff pause and
+// lib/ai-conversation-orchestrator.ts handoff); tests/voice-audio-proof.test.mjs executes both.
+const HANDOFF=/waiting for a PawSpace team member|routing this (?:conversation )?to a PawSpace team member|cannot continue the booking/i;
 export function audioFormat(format){
  const m=/^(pcm|ulaw)_(\d+)$/.exec(String(format));
  if(!m||![8000,16000,22050,24000,44100,48000].includes(Number(m[2])))throw Error('Unsupported agent audio format');
