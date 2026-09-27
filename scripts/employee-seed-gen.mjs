@@ -95,6 +95,7 @@ s.push("CREATE TABLE IF NOT EXISTS finance_entities (id TEXT PRIMARY KEY,legal_n
 s.push("CREATE TABLE IF NOT EXISTS tax_registrations (id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,jurisdiction TEXT NOT NULL,registration_type TEXT NOT NULL,registration_reference TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',effective_from TEXT,effective_to TEXT,approved_by TEXT,approved_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);");
 s.push("CREATE TABLE IF NOT EXISTS tax_policy_versions (id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',effective_from TEXT NOT NULL,effective_to TEXT,policy_json TEXT NOT NULL,approval_reference TEXT,approved_by TEXT,approved_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(entity_id,version));");
 s.push("CREATE TABLE IF NOT EXISTS tax_classifications (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,service_code TEXT NOT NULL,classification_code TEXT NOT NULL,tax_component_json TEXT NOT NULL,place_of_supply_rule TEXT NOT NULL,input_tax_rule TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(policy_id,service_code));");
+s.push("CREATE TABLE IF NOT EXISTS finance_document_series (id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,document_type TEXT NOT NULL,prefix TEXT NOT NULL,next_number INTEGER NOT NULL DEFAULT 1,padding INTEGER NOT NULL DEFAULT 6,policy_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',updated_at INTEGER NOT NULL,UNIQUE(entity_id,document_type));");
 s.push("CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number TEXT NOT NULL UNIQUE,entity_id TEXT NOT NULL,customer_id TEXT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_event_key TEXT NOT NULL UNIQUE,policy_id TEXT NOT NULL,registration_id TEXT NOT NULL,issue_date TEXT NOT NULL,currency TEXT NOT NULL,subtotal REAL NOT NULL,tax_total REAL NOT NULL,total REAL NOT NULL,status TEXT NOT NULL DEFAULT 'issued',tax_snapshot_json TEXT NOT NULL,document_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(source_type,source_id));");
 s.push("CREATE TABLE IF NOT EXISTS finance_invoice_lines (id TEXT PRIMARY KEY,invoice_id TEXT NOT NULL,line_key TEXT NOT NULL,description TEXT NOT NULL,service_code TEXT NOT NULL,taxable_amount REAL NOT NULL,tax_amount REAL NOT NULL,tax_snapshot_json TEXT NOT NULL,UNIQUE(invoice_id,line_key));");
 
@@ -213,9 +214,19 @@ const policyJson = JSON.stringify({ seller: COMPANY, defaultComponents: [{ code:
 s.push(`INSERT OR IGNORE INTO tax_policy_versions (id,entity_id,version,status,effective_from,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES (${q(POLICY)},${q(ENTITY)},1,'active','2024-01-01',${q(policyJson)},'SEED-GST-APPROVAL',${q("founder@pawspace.in")},${BASE},${BASE},${BASE});`);
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 const comps = JSON.stringify([{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }]);
+// Each seeded service's SAC and place-of-supply rule, as in the one SAC table (lib/service-sac-defaults.ts; a test keeps the two
+// the same). Earlier seeds wrote placeholder classifications ("SAC-9985-<n>") that are not SACs and cannot be printed on a tax
+// invoice: only a row that still holds exactly that placeholder is corrected, so anything Finance set is never touched.
+const SERVICE_SACS = { grooming: ["998612", "service_location"], dog_training: ["998612", "training_performance"], boarding: ["998612", "default_recipient_or_service"], pet_sitting: ["998612", "default_recipient_or_service"], dog_walking: ["998612", "default_recipient_or_service"], pet_taxi: ["996511", "transport"] };
 SERVICES.forEach((svc, i) => {
-  s.push(`INSERT OR IGNORE INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES (${q("SEEDTC-" + svc)},${q(POLICY)},${q(svc)},${q("SAC-9985-" + i)},${q(comps)},'buyer_state','standard',${BASE});`);
+  const [sac, rule] = SERVICE_SACS[svc];
+  s.push(`UPDATE tax_classifications SET classification_code=${q(sac)},place_of_supply_rule=${q(rule)} WHERE id=${q("SEEDTC-" + svc)} AND policy_id=${q(POLICY)} AND classification_code=${q("SAC-9985-" + i)};`);
+  s.push(`INSERT OR IGNORE INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES (${q("SEEDTC-" + svc)},${q(POLICY)},${q(svc)},${q(sac)},${q(comps)},${q(rule)},'standard',${BASE});`);
 });
+// One invoice series a financial year for the seeded seller: "{FY}" becomes 26-27, 27-28, ... and each year starts at 00001
+// (TKP/26-27/00001: 15 characters, within Rule 46's 16, room for 99,999 invoices a year). The sample invoices below keep their
+// own TKP/2026-27/0001.. numbers; nothing issued is renumbered.
+s.push(`INSERT OR IGNORE INTO finance_document_series (id,entity_id,document_type,prefix,next_number,padding,policy_id,status,updated_at) VALUES ('SEEDDS-TKPET-INVOICE',${q(ENTITY)},'invoice','TKP/{FY}/',1,5,${q(POLICY)},'active',${BASE});`);
 
 // ---- 12 sample GST tax invoices (CGST 9% + SGST 9%) ----
 const PRICES = [799, 1299, 699, 399, 599, 1499, 899, 2499, 999, 1799, 499, 3499];
