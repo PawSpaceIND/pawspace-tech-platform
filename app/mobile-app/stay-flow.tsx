@@ -749,7 +749,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>{mode === "boarding" ? "Full payment for stays up to 4 nights" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
+                <b>{mode === "boarding" ? "Full payment for daycare and stays up to 4 nights" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
                 <span>
                   {"50/50 split payment becomes available automatically for overnight stays longer than four nights."}
                 </span>
