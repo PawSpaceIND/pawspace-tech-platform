@@ -10,15 +10,18 @@
  *  - Saving drafts one term per service (the maker). A second person activates them all with an approval
  *    reference (the checker); the drafter can never activate their own. Activation also records the engagement
  *    on the provider's capacity profile and payout profile, so every reader of "is this provider full-time"
- *    agrees with the terms.
+ *    agrees with the terms. The terms and the engagement apply in ONE guarded batch: all of it or none of it.
+ *  - Changing how a provider is engaged is the same proposal + approval (proposeProviderEngagementChange); nothing
+ *    changes a provider's engagement on one person's say-so.
  *  - Every proposal carries the plain-English example staff saw: "On a Rs 1,000 booking: provider gets Rs 700,
  *    PawSpace keeps Rs 300 and pays Rs 54 GST", under the one GST setting.
  */
 import{GovernedRefusal}from"./governed-http-error";
-import{activateCommercialTerm,ensureCommercialTermsTables,pendingOrderOverrideRequests,saveCommercialTerm}from"./provider-commercial-terms";
-import{PAWSPACE_COMMISSION_DEFAULT_PERCENT,PAWSPACE_COMMISSION_MAX_PERCENT,PAWSPACE_COMMISSION_MIN_PERCENT,commissionFromProviderShare,commissionPreview,engagementModelFor,engagementOfModel,engagementOfModels,providerShareFromCommission,providerShareRangeProblem,providerTermsProblems,type ProviderEngagement}from"./commission-range";
+import{activateTermsTogether,ensureCommercialTermsTables,lockedMonthProblem,pendingOrderOverrideRequests,saveCommercialTerm,termsAwaitingPersonApproval}from"./provider-commercial-terms";
+import{COMMISSION_RESOLUTION_ORDER,PAWSPACE_COMMISSION_DEFAULT_PERCENT,PAWSPACE_COMMISSION_MAX_PERCENT,PAWSPACE_COMMISSION_MIN_PERCENT,PROVIDER_ENGAGEMENT_LABELS,commissionFromProviderShare,commissionPreview,engagementModelFor,engagementOfModel,engagementOfModels,isProviderEngagement,personApprovalNeeded,providerShareFromCommission,providerShareRangeProblem,providerTermsProblems,type ProviderEngagement}from"./commission-range";
 import{resolveGstPolicy}from"./gst-setting";
 import{ensureProviderCommissionTables,legacyCommissionNeedingDecision,migrateLegacyCommissionProfiles}from"./provider-commission-governance";
+import{serviceCommissionDefaultsView}from"./service-commission-defaults";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -33,7 +36,7 @@ async function allRows(db:Db,sql:string,binds:unknown[]=[]){try{return(await db.
 
 /** The GST rule for the worked example: the all-cities setting (the owner's default, 18% of the amount, when none is set). */
 async function previewGstPolicy(db:Db){const policy=await resolveGstPolicy(db,{cityId:"*"});return{ratePercent:policy.ratePercent,method:policy.method};}
-const termSummary=(row:Row)=>{const model=text(row.engagement_model),share=num(row.provider_share_pct);return{termId:text(row.id),serviceCode:text(row.service_code),status:text(row.status),engagementModel:model,engagement:engagementOfModel(model),providerSharePct:share,pawspaceCommissionPercent:model==="direct_employee"?null:commissionFromProviderShare(share),effectiveFrom:text(row.effective_from),version:num(row.version),createdBy:text(row.created_by),approvedBy:text(row.approved_by)||null,approvalReference:text(row.approval_reference)||null};};
+const termSummary=(row:Row)=>{const model=text(row.engagement_model),share=num(row.provider_share_pct);return{termId:text(row.id),serviceCode:text(row.service_code),status:text(row.status),engagementModel:model,engagement:engagementOfModel(model),providerSharePct:share,pawspaceCommissionPercent:model==="direct_employee"?null:commissionFromProviderShare(share),effectiveFrom:text(row.effective_from),version:num(row.version),createdBy:text(row.created_by),approvedBy:text(row.approved_by)||null,approvalReference:text(row.approval_reference)||null,/* "Carried over, needs re-approval" and similar: an active term the system approved, not a person */needsPersonApproval:text(row.status)==="active"?personApprovalNeeded(row.approved_by):null};};
 
 /* Terms are effective-dated: of the active terms for a service, the one in force today is the latest starting on or before
  * today; any starting later are scheduled (activated, but not yet in force). Rows must be ordered effective_from DESC. */
@@ -65,6 +68,7 @@ export async function draftProviderCommercialTerms(db:Db,input:ProviderTermsProp
  if(reason.length<8)throw refuse("A clear reason of at least 8 characters is required");
  // Checked here, before older drafts are withdrawn, so a mistyped date cannot leave the provider with no proposal at all.
  const day=Date.parse(`${effectiveFrom}T00:00:00Z`);if(!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)||Number.isNaN(day)||new Date(day).toISOString().slice(0,10)!==effectiveFrom)throw refuse("Enter the date these terms start from as a real date (YYYY-MM-DD)");
+ const locked=await lockedMonthProblem(db,[effectiveFrom]);if(locked)throw refuse(locked,409);
  const seen=new Set<string>(),lines:Array<{serviceCode:string;percent:number}>=[];
  for(const item of Array.isArray(input.services)?input.services:[]){const code=text(item?.serviceCode).toLowerCase();if(!code||seen.has(code))continue;seen.add(code);const raw=item.pawspaceCommissionPercent;lines.push({serviceCode:code,percent:raw===""||raw==null?PAWSPACE_COMMISSION_DEFAULT_PERCENT:Number(raw)});}
  const problems=providerTermsProblems({engagement,services:lines.map(l=>({serviceCode:l.serviceCode,pawspaceCommissionPercent:l.percent}))});
@@ -83,21 +87,32 @@ export async function draftProviderCommercialTerms(db:Db,input:ProviderTermsProp
  return{providerId,engagement:chosen,effectiveFrom,status:"awaiting_approval" as const,drafts,next:"A second person must approve these terms, with an approval reference, before they apply."};
 }
 
-/** Record the engagement where the rest of the platform reads it: the capacity profile and the payout profile. */
-async function recordProviderEngagement(db:Db,input:{providerId:string;engagement:ProviderEngagement;actorId:string}){
- const model=input.engagement==="full_time"?"full_time":"commission",now=Date.now(),recorded:string[]=[];
- const capacity=await db.prepare("UPDATE provider_capacity_profiles SET provider_model=?,contract_type=?,version=version+1,updated_by=?,updated_at=? WHERE id=? AND (COALESCE(provider_model,'')<>? OR COALESCE(contract_type,'')<>?)").bind(model,model,input.actorId,now,input.providerId,model,model).run().catch(()=>db.prepare("UPDATE provider_capacity_profiles SET provider_model=?,version=version+1,updated_by=?,updated_at=? WHERE id=? AND COALESCE(provider_model,'')<>?").bind(model,input.actorId,now,input.providerId,model).run()).catch(()=>null);
- if(Number(capacity?.meta?.changes??0)>0)recorded.push("capacity_profile");
- await ensureProviderCommissionTables(db);
- await db.prepare("INSERT INTO provider_compensation_profiles (provider_id,engagement_model,status,reason,updated_by,created_at,updated_at) VALUES (?,?,'active',?,?,?,?) ON CONFLICT(provider_id) DO UPDATE SET engagement_model=excluded.engagement_model,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(input.providerId,model,"Engagement set by approved commercial terms",input.actorId,now,now).run();
- recorded.push("payout_profile");
- return{providerModel:model,recorded};
+/* Record the engagement where the rest of the platform reads it (the capacity profile and the payout profile), inside the
+ * activation's own batch: each statement runs only if the activation was claimed. The capacity statement uses only the
+ * columns the table has, so an older table cannot fail the whole batch. */
+function engagementStatements(db:Db,input:{providerId:string;engagement:ProviderEngagement;actorId:string;capacityColumns:ReadonlySet<string>},claimed:string,activationId:string,now:number){
+ const model=input.engagement==="full_time"?"full_time":"commission",have=input.capacityColumns,stamped=have.has("version")&&have.has("updated_by")&&have.has("updated_at"),out:D1PreparedStatement[]=[];
+ if(have.has("provider_model")&&have.has("contract_type")&&stamped)out.push(db.prepare(`UPDATE provider_capacity_profiles SET provider_model=?,contract_type=?,version=version+1,updated_by=?,updated_at=? WHERE id=? AND (COALESCE(provider_model,'')<>? OR COALESCE(contract_type,'')<>?) AND ${claimed}`).bind(model,model,input.actorId,now,input.providerId,model,model,activationId));
+ else if(have.has("provider_model")&&stamped)out.push(db.prepare(`UPDATE provider_capacity_profiles SET provider_model=?,version=version+1,updated_by=?,updated_at=? WHERE id=? AND COALESCE(provider_model,'')<>? AND ${claimed}`).bind(model,input.actorId,now,input.providerId,model,activationId));
+ else if(have.has("provider_model"))out.push(db.prepare(`UPDATE provider_capacity_profiles SET provider_model=? WHERE id=? AND COALESCE(provider_model,'')<>? AND ${claimed}`).bind(model,input.providerId,model,activationId));
+ out.push(db.prepare(`INSERT INTO provider_compensation_profiles (provider_id,engagement_model,status,reason,updated_by,created_at,updated_at) SELECT ?,?,'active',?,?,?,? WHERE ${claimed} ON CONFLICT(provider_id) DO UPDATE SET engagement_model=excluded.engagement_model,updated_by=excluded.updated_by,updated_at=excluded.updated_at`).bind(input.providerId,model,"Engagement set by approved commercial terms",input.actorId,now,now,activationId));
+ return out;
+}
+/* The same approval repeated (a double click, a retried request) after it applied returns that activation, not an error. */
+async function replayedActivation(db:Db,input:{providerId:string;termIds?:ReadonlyArray<unknown>|null;approvalReference:string;actorId:string}){
+ const ids=Array.isArray(input.termIds)?[...new Set(input.termIds.map(text).filter(Boolean))]:[];if(!ids.length)return null;
+ const rows=await allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY service_code,version",[input.providerId,JSON.stringify(ids)]);
+ if(rows.length!==ids.length||!rows.every(r=>text(r.status)==="active"&&actorKey(r.approved_by)===actorKey(input.actorId)&&text(r.approval_reference)===input.approvalReference))return null;
+ const engagement=engagementOfModels(rows.map(r=>text(r.engagement_model)))??"commission";
+ return{providerId:input.providerId,engagement,status:"active" as const,activated:rows.map(termSummary),engagementRecorded:{providerModel:engagement==="full_time"?"full_time":"commission",recorded:[] as string[]},duplicatePrevented:true};
 }
 
 /**
  * The CHECKER step: a second person activates every draft for the provider, with an approval reference. `termIds` are the
  * drafts the checker was shown (the screens always send them): if the proposal was replaced or added to since, nothing
- * is activated and the checker must review the new one - approving is always approving what was seen.
+ * is activated and the checker must review the new one - approving is always approving what was seen. The whole set and
+ * the engagement it implies apply in ONE guarded batch (activateTermsTogether), so a change that lands between these
+ * checks and the batch leaves nothing half-applied (audit gap 2 of #1111).
  */
 export async function activateProviderCommercialTerms(db:Db,input:{providerId:string;approvalReference:string;actorId:string;termIds?:ReadonlyArray<unknown>|null}){
  await ensureCommercialTermsTables(db);
@@ -105,40 +120,70 @@ export async function activateProviderCommercialTerms(db:Db,input:{providerId:st
  if(!providerId)throw refuse("Provider ID is required");
  if(approvalReference.length<4)throw refuse("An approval reference is required to activate commercial terms");
  const drafts=await allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id=? AND status='draft' ORDER BY service_code,version",[providerId]);
- if(!drafts.length)throw refuse("Nothing is waiting for approval for this provider",404);
+ if(!drafts.length){const replay=await replayedActivation(db,{providerId,termIds:input.termIds,approvalReference,actorId});if(replay)return replay;throw refuse("Nothing is waiting for approval for this provider",404);}
  if(drafts.some(d=>actorKey(d.created_by)===actorKey(actorId)))throw refuse("Maker/checker: the drafter cannot activate their own commercial term. A second person must approve these terms.",409);
  if(Array.isArray(input.termIds)){const seen=new Set(input.termIds.map(text).filter(Boolean)),waiting=drafts.map(d=>text(d.id));if(seen.size!==waiting.length||waiting.some(id=>!seen.has(id)))throw refuse("The terms waiting for approval changed after you loaded them. Reload this provider, check the new proposal and approve again.",409);}
  // All or nothing: a draft outside the range (saved before it existed) stops the whole set before any of it applies.
  const outside=drafts.map(d=>providerShareRangeProblem(text(d.engagement_model),num(d.provider_share_pct),text(d.service_code))).filter(Boolean);
  if(outside.length)throw refuse(`${outside.join(" ")} Propose these terms again; they cannot be activated.`,409);
- const activated=[];
- for(const draft of drafts){await activateCommercialTerm(db,{termId:text(draft.id),approvalReference,actorId});activated.push({...termSummary({...draft,status:"active",approved_by:actorId,approval_reference:approvalReference})});}
- const engagement=engagementOfModels(drafts.map(d=>text(d.engagement_model)))??"commission",recorded=await recordProviderEngagement(db,{providerId,engagement,actorId});
- return{providerId,engagement,status:"active" as const,activated,engagementRecorded:recorded};
+ const locked=await lockedMonthProblem(db,drafts.map(d=>d.effective_from));if(locked)throw refuse(locked,409);
+ const engagement=engagementOfModels(drafts.map(d=>text(d.engagement_model)))??"commission";
+ await ensureProviderCommissionTables(db);
+ const capacityColumns=new Set((await allRows(db,"PRAGMA table_info(provider_capacity_profiles)")).map(r=>text(r.name)));
+ const done=await activateTermsTogether(db,{drafts,approvalReference,actorId,scope:providerId,wholeSetOf:providerId,detail:{providerId,engagement},extraStatements:(claimed,activationId,now)=>engagementStatements(db,{providerId,engagement,actorId,capacityColumns},claimed,activationId,now)});
+ if(!done.applied)throw refuse("The terms waiting for approval changed after you loaded them. Reload this provider, check the new proposal and approve again.",409);
+ const capacityChanged=capacityColumns.has("provider_model")&&Number((done.results.at(-2) as {meta?:{changes?:number}}|undefined)?.meta?.changes??0)>0;
+ const activated=drafts.map(draft=>termSummary({...draft,status:"active",approved_by:actorId,approval_reference:approvalReference}));
+ return{providerId,engagement,status:"active" as const,activated,engagementRecorded:{providerModel:engagement==="full_time"?"full_time":"commission",recorded:[...(capacityChanged?["capacity_profile"]:[]),"payout_profile"]},duplicatePrevented:false};
 }
 
 /** One provider's terms for the screens: each service with its active term, any draft waiting, and the service default. */
 export async function providerCommercialTermsView(db:Db,input:{providerId:string}){
  await ensureCommercialTermsTables(db);await migrateLegacyCommissionProfiles(db).catch(()=>null);
  const providerId=text(input.providerId);if(!providerId)throw refuse("Provider ID is required");
- const[terms,defaults,offered,gstPolicy,capacity,legacy]=await Promise.all([allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id=? AND status IN ('active','draft') ORDER BY service_code,effective_from DESC,version DESC",[providerId]),allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NULL AND status='active' ORDER BY service_code,effective_from DESC,version DESC"),providerOfferedServices(db,providerId),previewGstPolicy(db),allRows(db,"SELECT provider_model FROM provider_capacity_profiles WHERE id=?",[providerId]),legacyCommissionNeedingDecision(db)]);
+ const[terms,defaults,offered,gstPolicy,capacity,profile,legacy]=await Promise.all([allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id=? AND status IN ('active','draft') ORDER BY service_code,effective_from DESC,version DESC",[providerId]),allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NULL AND status='active' ORDER BY service_code,effective_from DESC,version DESC"),providerOfferedServices(db,providerId),previewGstPolicy(db),allRows(db,"SELECT * FROM provider_capacity_profiles WHERE id=?",[providerId]),allRows(db,"SELECT engagement_model,status FROM provider_compensation_profiles WHERE provider_id=?",[providerId]),legacyCommissionNeedingDecision(db)]);
  const codes=[...new Set([...offered,...terms.map(r=>text(r.service_code))])].sort();
  // "active" is the term in force today; "scheduled" are activated terms that start later (earliest first).
  const services=codes.map(code=>{const active=inForceToday(terms,code),draft=terms.find(r=>text(r.status)==="draft"&&text(r.service_code)===code),standard=inForceToday(defaults,code)??defaults.find(r=>text(r.service_code)===code);return{serviceCode:code,active:active?termSummary(active):null,scheduled:scheduledAfterToday(terms,code).map(termSummary),draft:draft?termSummary(draft):null,serviceDefault:standard?termSummary(standard):null};});
  const modelsOf=(rows:Row[])=>rows.map(t=>text(t.engagement_model));
  const engagement:ProviderEngagement=engagementOfModels(modelsOf(terms.filter(t=>text(t.status)==="draft")))??engagementOfModels(modelsOf(terms.filter(isActive)))??(text(capacity[0]?.provider_model)==="full_time"?"full_time":"commission");
+ // How the provider is engaged today, as the payout engine and the full-time rule read it (any full-time record makes them full-time).
+ const fullTime=text(capacity[0]?.provider_model)==="full_time"||text(capacity[0]?.contract_type)==="full_time"||(text(profile[0]?.status)==="active"&&text(profile[0]?.engagement_model)==="full_time");
+ const currentEngagement:ProviderEngagement=fullTime?"full_time":engagementOfModels(codes.map(code=>inForceToday(terms,code)).filter((row):row is Row=>Boolean(row)).map(row=>text(row.engagement_model)))??engagementOfModels(modelsOf(terms.filter(isActive)))??"commission";
  const waiting=terms.filter(t=>text(t.status)==="draft").map(termSummary);
- return{providerId,engagement,services,awaitingApproval:waiting,proposedBy:[...new Set(waiting.map(w=>w.createdBy))],gstPolicy,range:{minPercent:PAWSPACE_COMMISSION_MIN_PERCENT,maxPercent:PAWSPACE_COMMISSION_MAX_PERCENT,defaultPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT},legacyCommission:legacy.find(l=>l.providerId===providerId)??null};
+ return{providerId,engagement,currentEngagement,services,awaitingApproval:waiting,proposedBy:[...new Set(waiting.map(w=>w.createdBy))],gstPolicy,range:{minPercent:PAWSPACE_COMMISSION_MIN_PERCENT,maxPercent:PAWSPACE_COMMISSION_MAX_PERCENT,defaultPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT},legacyCommission:legacy.find(l=>l.providerId===providerId)??null};
 }
 
-/** Everything Finance > Partners shows about commission: provider terms, drafts waiting, order overrides waiting, and older settings that need a decision. */
+/**
+ * Changing how a provider is engaged (commission, full-time contractor, funeral / memorial vendor) needs a second person (audit
+ * gap 1 of #1111: one Finance person could switch provider_compensation_profiles.engagement_model, which the full-time rule,
+ * the partner settlement exclusions and TDS classification read). The change is proposed as the provider's terms under the
+ * new engagement, one per service they offer, keeping each service's PawSpace commission in force (else the service default,
+ * else 30%). A different person approves it with activateProviderCommercialTerms, which applies the terms and records the
+ * engagement on the capacity and payout profiles in the same guarded batch. The older one-person write is refused.
+ */
+export async function proposeProviderEngagementChange(db:Db,input:{providerId:string;engagement:string;reason:string;effectiveFrom?:string|null;actorId:string}){
+ const providerId=text(input.providerId),engagement=text(input.engagement),actorId=text(input.actorId);
+ if(!providerId)throw refuse("Provider ID is required");
+ if(!isProviderEngagement(engagement))throw refuse("Choose how the provider is engaged: commission, full-time contractor or funeral / memorial vendor.");
+ const view=await providerCommercialTermsView(db,{providerId});
+ if(view.currentEngagement===engagement&&!view.awaitingApproval.length)throw refuse(`This provider is already engaged this way (${PROVIDER_ENGAGEMENT_LABELS[engagement]}). Nothing needs to change.`,409);
+ if(!view.services.length)throw refuse("Add the services this provider offers first, under Provider commercial terms: each service needs its terms before the engagement can change.",409);
+ const saved=await draftProviderCommercialTerms(db,{providerId,engagement,services:view.services.map(service=>({serviceCode:service.serviceCode,pawspaceCommissionPercent:service.active?.pawspaceCommissionPercent??service.serviceDefault?.pawspaceCommissionPercent??null})),effectiveFrom:input.effectiveFrom,reason:input.reason,actorId});
+ await db.prepare("INSERT INTO commercial_terms_audit (id,term_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),`ENGAGEMENT-${providerId}`,"engagement_change_proposed",actorId,JSON.stringify({providerId,from:view.currentEngagement,to:engagement,termIds:saved.drafts.map(d=>d.termId),effectiveFrom:saved.effectiveFrom}),Date.now()).run();
+ return{...saved,from:view.currentEngagement,to:engagement,next:"A different person must approve this change, with an approval reference (Approve and activate), before the provider's engagement changes."};
+}
+
+/** Everything Finance > Partners shows about commission: the default for each service, provider terms, drafts waiting, order overrides waiting, terms waiting for a person's approval, and older settings that need a decision. */
 export async function commercialTermsOverview(db:Db){
  await ensureCommercialTermsTables(db);await migrateLegacyCommissionProfiles(db).catch(()=>null);
- const[terms,defaults,gstPolicy,overrideRequests,legacy]=await Promise.all([allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NOT NULL AND status IN ('active','draft') ORDER BY provider_id,service_code,effective_from DESC,version DESC LIMIT 500"),allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NULL AND status='active' ORDER BY service_code,effective_from DESC,version DESC"),previewGstPolicy(db),pendingOrderOverrideRequests(db),legacyCommissionNeedingDecision(db)]);
+ // First: every commission service gets its 30% default if it has none (owner decision C), so everything below lists it.
+ const serviceDefaultsByService=await serviceCommissionDefaultsView(db);
+ const[terms,defaults,gstPolicy,overrideRequests,legacy,approvalNeeded]=await Promise.all([allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NOT NULL AND status IN ('active','draft') ORDER BY provider_id,service_code,effective_from DESC,version DESC LIMIT 500"),allRows(db,"SELECT * FROM provider_commercial_terms WHERE provider_id IS NULL AND status='active' ORDER BY service_code,effective_from DESC,version DESC"),previewGstPolicy(db),pendingOrderOverrideRequests(db),legacyCommissionNeedingDecision(db),termsAwaitingPersonApproval(db)]);
  const providers=new Map<string,{providerId:string;engagement:ProviderEngagement|null;terms:ReturnType<typeof termSummary>[]}>();
  // Per provider and service: the newest draft, and every active term (the one in force today and any scheduled to start later).
  for(const row of terms){const id=text(row.provider_id),entry=providers.get(id)??{providerId:id,engagement:null,terms:[]};const summary=termSummary(row);if(!entry.terms.some(t=>t.serviceCode===summary.serviceCode&&t.status===summary.status&&(summary.status!=="active"||t.effectiveFrom===summary.effectiveFrom)))entry.terms.push(summary);providers.set(id,entry);}
  for(const entry of providers.values())entry.engagement=engagementOfModels(entry.terms.map(t=>t.engagementModel));
  const serviceDefaults:ReturnType<typeof termSummary>[]=[];for(const code of new Set(defaults.map(r=>text(r.service_code)))){const row=inForceToday(defaults,code)??defaults.find(r=>text(r.service_code)===code);if(row)serviceDefaults.push(termSummary(row));}/* the default in force today, else the one scheduled */
- return{range:{minPercent:PAWSPACE_COMMISSION_MIN_PERCENT,maxPercent:PAWSPACE_COMMISSION_MAX_PERCENT,defaultPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT},gstPolicy,example:commissionPreview({engagement:"commission",pawspaceCommissionPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT,gstPolicy}).sentence,providers:[...providers.values()],awaitingApproval:[...providers.values()].filter(p=>p.terms.some(t=>t.status==="draft")).map(p=>({providerId:p.providerId,proposedBy:[...new Set(p.terms.filter(t=>t.status==="draft").map(t=>t.createdBy))],services:p.terms.filter(t=>t.status==="draft")})),serviceDefaults,overrideRequests,legacyNeedsDecision:legacy};
+ return{range:{minPercent:PAWSPACE_COMMISSION_MIN_PERCENT,maxPercent:PAWSPACE_COMMISSION_MAX_PERCENT,defaultPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT},gstPolicy,example:commissionPreview({engagement:"commission",pawspaceCommissionPercent:PAWSPACE_COMMISSION_DEFAULT_PERCENT,gstPolicy}).sentence,resolutionOrder:COMMISSION_RESOLUTION_ORDER,providers:[...providers.values()],awaitingApproval:[...providers.values()].filter(p=>p.terms.some(t=>t.status==="draft")).map(p=>({providerId:p.providerId,proposedBy:[...new Set(p.terms.filter(t=>t.status==="draft").map(t=>t.createdBy))],services:p.terms.filter(t=>t.status==="draft")})),serviceDefaults,defaults:serviceDefaultsByService,approvalNeeded,overrideRequests,legacyNeedsDecision:legacy};
 }

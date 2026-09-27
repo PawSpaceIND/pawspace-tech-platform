@@ -77,7 +77,7 @@ test("G22: a manual funeral order dated into a closed month is filed in the mont
   assert.deepEqual([late.supplyKey, late.period, late.exemptValue, late.periodClosed], [`funeral_order:${order.id}`, recordedIn, 5000, false]);
   await supplies.assignPeriodServiceOwnership(db, { periodCode: recordedIn, entityId: ENTITY, registrationId: REG, reason: "Late funeral order filed in the month it was recorded" }, FINANCE);
   const gstr1 = await returns.generateGstr1(db, scope(recordedIn), MAKER);
-  assert.deepEqual(gstr1.payload.nil.inv, [{ sply_ty: "INTRAB2C", expt_amt: 5000, nil_amt: 0, ngsup_amt: 0 }], "filed as exempt in the open month");
+  assert.deepEqual(gstr1.payload.nil.inv, [{ sply_ty: "INTRAB2C", expt_amt: 0, nil_amt: 0, ngsup_amt: 5000 }], "filed outside GST (Schedule III) in the open month");
 });
 
 test("G22: a completion finalized after its month was locked is filed in the month it was finalized", async () => {
