@@ -43,8 +43,6 @@ function patchBill(sqlite, email, id, action, extra = {}) {
   return control.PATCH(asActor(email, "/api/finance-control", { method: "PATCH", headers: { "if-match": `"${row.updated_at}"` }, body: JSON.stringify({ entity: "bill", id, action, reason: "Checked against the supplier invoice", ...extra }) })).then(json);
 }
 const gst = (email, body) => gstRoute.POST(asActor(email, "/api/gst-accounting", { method: "POST", body: JSON.stringify(body) })).then(json);
-const view = (email, query) => gstRoute.GET(asActor(email, `/api/gst-accounting?${new URLSearchParams(query)}`)).then(json);
-const books = (sqlite, billId) => Object.fromEntries(sqlite.prepare("SELECT account_code,ROUND(SUM(debit)-SUM(credit),2) net FROM finance_journal_entries WHERE source_id=? GROUP BY account_code").all(billId).filter((r) => r.net !== 0).map((r) => [r.account_code, r.net]));
 const balanced = (sqlite) => { const r = sqlite.prepare("SELECT ROUND(SUM(debit),2) d,ROUND(SUM(credit),2) c FROM finance_journal_entries").get(); return r.d === r.c; };
 function gstr2b(period, invoices) {
   const [y, m] = period.split("-"), bySupplier = new Map();
