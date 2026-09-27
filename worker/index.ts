@@ -246,8 +246,10 @@ const worker = {
         atlasDailyTask,
         dpdpRetentionTask,
         sweepPartnerHeartbeats(env.DB,controller.scheduledTime),
-        // Provider payouts: queue each booking once, 7 days after completion; Finance releases with one click.
-        runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
+        // Provider payouts: queue each booking once, 7 days after completion; Finance releases with one click. On UAT
+        // (PAWSPACE_SCHEDULING_ENV=uat with RazorpayX TEST) a seeded groomer with no payout beneficiary is given one as
+        // its booking is assessed (lib/uat-payout-beneficiaries.ts); the env is what decides that, nothing else changes.
+        runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker",env:env as unknown as Record<string,unknown>}),
       ]);
       const errors:string[]=[];
       if(partnerHeartbeat.status==="rejected")errors.push(`partner heartbeat: ${String(partnerHeartbeat.reason)}`);
