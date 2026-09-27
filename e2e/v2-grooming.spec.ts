@@ -2,6 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 
 type Fixture = {
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
+  providers?: Array<{ id: string; name: string; model: string; rating: number }>;
+  couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean;
   captured: boolean; confirmed: boolean; locationReady: boolean; unauthorized: boolean; quoteSource: string;
   previewGate?: Promise<void>; coverageGate?: Promise<void>; previewStarted: boolean; coverageStarted: boolean;
   booking: Record<string, unknown> | null; reservation: Record<string, unknown> | null;
@@ -9,7 +11,7 @@ type Fixture = {
 async function fixture(page: Page) {
   const state: Fixture = { bookingWrites: 0, orderWrites: 0, locationWrites: 0, locationFailures: 0,
     captured: false, confirmed: false, locationReady: false, unauthorized: false, quoteSource: "pricing_control",
-    previewStarted: false, coverageStarted: false, booking: null, reservation: null };
+    previewStarted: false, coverageStarted: false, couponStarted: false, booking: null, reservation: null };
   const provider = { id: "PRV1", name: "Arjun - PawSpace Care", model: "full_time", rating: 4.9 };
   const bundle = { petCount: 1, packageCode: "dog-basic", price: 1899, currency: "INR", slotMinutes: 120,
     blockingMinutes: 150, effectiveFrom: "2020-01-01", effectiveTo: null };
@@ -45,10 +47,17 @@ async function fixture(page: Page) {
       if (body.action === "preview") {
         state.previewStarted = true; if (state.previewGate) await state.previewGate;
         expect(body.serviceAddress).toContain("Indiranagar"); expect(body.servicePincode).toBe("560038");
-        return reply({ providers: [provider], availabilityChecked: true, reserved: false, cityId: body.cityId, zoneId: body.zoneId,
+        return reply({ providers: state.providers || [provider], availabilityChecked: true, reserved: false, cityId: body.cityId, zoneId: body.zoneId,
           scheduledStart: body.scheduledStart, scheduledEnd: body.scheduledEnd });
       }
       state.reservation = body; return reply({ groupId: body.clientRequestId, provider });
+    }
+    if (path === "/api/coupon-governance") {
+      const input = body.input as { code: string; orderValue: number }, valid = state.couponValid !== false;
+      state.couponStarted = true;
+      if (state.couponGate) await state.couponGate;
+      return reply(valid ? { valid: true, code: input.code, discount: 200, quoteId: `CPQ-${input.code}`, finalAmount: input.orderValue - 200 }
+        : { valid: false, discount: 0, error: "The previous coupon is no longer available" });
     }
     if (path === "/api/canonical-bookings") {
       state.bookingWrites++; state.booking = body;
@@ -257,4 +266,88 @@ test('explicit V2 review retains full address and distinguishes service area fro
   await fixture(page);await previewCare(page);
   await expect(page.locator('aside').filter({ hasText: 'YOUR CARE PLAN' })).toContainText('21 Indiranagar Main Road, 560038');
   await expect(page.getByText('Service area matched only. The complete doorstep must still be map-verified before payment.')).toBeVisible();
+});
+
+
+test("G10: four visible keyboard-accessible steps preserve the complete booking draft", async ({ page }) => {
+  const state = await fixture(page), requests: string[] = [];
+  page.on("request", request => { if (request.url().includes("/api/")) requests.push(request.url()); });
+  await openCare(page);
+  const navigation = page.getByRole("navigation", { name: "Booking steps" });
+  await expect(navigation.getByRole("button")).toHaveCount(4);
+  for (const button of await navigation.getByRole("button").all()) await expect(button).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "4 Time & review" })).toBeDisabled();
+  await page.getByRole("button", { name: "Check service area" }).click();
+  await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
+  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
+  await page.getByLabel("Notes for your groomer (optional)").fill("Please be gentle with paws");
+  const before = [...requests];
+  await navigation.getByRole("button", { name: "1 Pets", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#v2-grooming-pets")).toBeFocused();
+  await navigation.getByRole("button", { name: "4 Time & review" }).focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("#v2-grooming-time")).toBeFocused();
+  await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
+  await expect(page.getByLabel("PIN code", { exact: true })).toHaveValue("560038");
+  await expect(page.getByLabel("Notes for your groomer (optional)")).toHaveValue("Please be gentle with paws");
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  expect(requests).toEqual(before);
+  expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0); expect(state.reservation).toBeNull();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  const bounds = await page.locator("[aria-label='Booking steps'], #v2-grooming-pets, #v2-grooming-package, #v2-grooming-address, #v2-grooming-time").evaluateAll(elements => elements.map(element => {
+    const rect = element.getBoundingClientRect();
+    return { id: element.id || element.getAttribute("aria-label"), x: rect.x, right: rect.right, width: rect.width, viewport: innerWidth };
+  }));
+  console.log("G10 visible content boundaries", JSON.stringify(bounds));
+  for (const box of bounds) {
+    expect(box.x, `${box.id} must not be clipped on the left`).toBeGreaterThanOrEqual(0);
+    expect(box.right, `${box.id} must not be clipped on the right`).toBeLessThanOrEqual(box.viewport + 1);
+  }
+  await page.screenshot({ path: test.info().outputPath("g10-four-step-navigation.png"), fullPage: true });
+  await page.getByLabel("House, street & area").fill("22 Indiranagar Main Road");
+  await expect(navigation.getByRole("button", { name: "4 Time & review" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeDisabled();
+});
+
+test("G03: several eligible groomers no longer require manual selection, but customers can change it", async ({ page }) => {
+  const state = await fixture(page);
+  state.providers = [{ id: "ranked-first", name: "First Ranked Groomer", model: "commission", rating: 4.7 },
+    { id: "ranked-second", name: "Second Ranked Groomer", model: "full_time", rating: 4.9 }];
+  await previewCare(page);
+  const first = page.getByRole("button", { name: /First Ranked Groomer/ });
+  const second = page.getByRole("button", { name: /Second Ranked Groomer/ });
+  await expect(first).toContainText("✓"); await expect(second).toContainText("Choose");
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  await second.click(); await expect(second).toContainText("✓"); await expect(first).toContainText("Choose");
+  expect(state.bookingWrites).toBe(0); expect(state.reservation).toBeNull();
+});
+
+for (const oldValid of [true, false]) test(`G08: late ${oldValid ? "success" : "refusal"} from an old basket cannot replace a fresh coupon`, async ({ page }) => {
+  const state = await fixture(page);
+  let release!: () => void;
+  state.couponGate = new Promise(resolve => { release = resolve; }); state.couponValid = oldValid;
+  await previewCare(page);
+  const couponBox = page.getByRole("group", { name: "Coupon code", exact: true });
+  await couponBox.getByRole("textbox").fill("OLD200");
+  await couponBox.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect.poll(() => state.couponStarted).toBe(true);
+  await page.locator("#v2-grooming-time").getByRole("button").nth(2).click();
+  await expect(couponBox).toHaveCount(0);
+  state.couponGate = undefined; state.couponValid = true;
+  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await expect(couponBox).toBeVisible();
+  await couponBox.getByRole("textbox").fill("NEW200");
+  await couponBox.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.getByText(/Coupon NEW200/)).toBeVisible();
+  const oldResponse = page.waitForResponse(response => response.url().includes("/api/coupon-governance") && response.request().postData()?.includes("OLD200") === true);
+  release(); await oldResponse;
+  // Let the fetch completion and both React paint turns settle before checking the parent's state.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(page.getByText(/Coupon NEW200/)).toBeVisible();
+  await expect(page.getByText(/Coupon OLD200/)).toHaveCount(0);
+  await expect(couponBox.getByRole("textbox")).toHaveValue("NEW200");
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
 });
