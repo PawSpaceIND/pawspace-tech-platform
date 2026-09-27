@@ -16,3 +16,11 @@ test("unpaid live bookings, including pay after service, still count", () => {
   assert.equal(awaitingPayment({ status: "confirmed", payment_status: "created" }), true);
   assert.equal(awaitingPayment({ status: "confirmed", payment_status: "captured" }), false);
 });
+
+ test("captured deposits enter the collection queue only when an instalment is due", () => {
+  assert.equal(awaitingPayment({status:"confirmed",payment_status:"captured",amount_due_now:6000}),true);
+  assert.equal(awaitingPayment({status:"confirmed",payment_status:"captured",amount_due_now:0,outstanding_balance:6000}),false);
+  assert.equal(awaitingPayment({status:"cancelled",payment_status:"captured",amount_due_now:6000}),false);
+  assert.equal(awaitingPayment({status:"confirmed",payment_status:"refund_pending",amount_due_now:6000}),false);
+  assert.equal(awaitingPayment({status:"confirmed",payment_status:"captured",amount_due_now:"invalid"}),false);
+ });

@@ -15,19 +15,27 @@ export async function executeTransactionalCustomerMerge(db: Db, input: { primary
     db.prepare("SELECT * FROM canonical_customers WHERE id=?").bind(input.duplicateCustomerId).first<Row>(),
   ]);
   if (!primary || !duplicate) throw new Error("Both canonical customer records are required for merge");
-  const review = await db.prepare("SELECT * FROM customer_merge_reviews WHERE ((primary_customer_id=? AND duplicate_customer_id=?) OR (primary_customer_id=? AND duplicate_customer_id=?)) AND status='open' LIMIT 1")
+  if (primary.merged_into || duplicate.merged_into) throw new Error("Already merged customers cannot be merged again");
+  const review = await db.prepare("SELECT * FROM customer_merge_reviews WHERE ((primary_customer_id=? AND duplicate_customer_id=?) OR (primary_customer_id=? AND duplicate_customer_id=?)) AND status IN ('open','approved_for_merge') ORDER BY CASE status WHEN 'approved_for_merge' THEN 0 ELSE 1 END,created_at DESC LIMIT 1")
     .bind(input.primaryCustomerId, input.duplicateCustomerId, input.duplicateCustomerId, input.primaryCustomerId).first<Row>().catch(() => null);
-  if (!review) throw new Error("An open duplicate review is required before transactional merge");
+  if (!review) throw new Error("An open duplicate review is required before transactional merge, or an approved review for the same survivor");
+  if (review.status === "approved_for_merge" && (review.primary_customer_id !== input.primaryCustomerId || review.duplicate_customer_id !== input.duplicateCustomerId)) throw new Error("The merge must preserve the approved surviving customer");
   // The loser row is soft-merged below (marked, and its phone/email neutralized) so it can never be
   // re-detected as a duplicate of the survivor again. These marker columns must exist first: ALTER cannot
   // run inside the transactional batch, and ADD COLUMN on a column that already exists simply no-ops here.
   for (const ddl of ["ALTER TABLE canonical_customers ADD COLUMN merged_into TEXT", "ALTER TABLE canonical_customers ADD COLUMN merged_at INTEGER"]) await db.prepare(ddl).run().catch(() => undefined);
+  const hasPreferences=await tableExists(db,"customer_contact_preferences");
+  const preferenceSnapshot=hasPreferences?(await db.prepare("SELECT * FROM customer_contact_preferences WHERE customer_id IN (?,?)").bind(input.primaryCustomerId,input.duplicateCustomerId).all<Row>()).results:[];
   const now = Date.now(), runId = uid("MERGE");
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO customer_merge_runs (id,primary_customer_id,duplicate_customer_id,status,reason,actor_id,summary_json,created_at,completed_at) VALUES (?,?,?,'completed',?,?,'{}',?,?)").bind(runId, input.primaryCustomerId, input.duplicateCustomerId, text(input.reason), input.actorId, now, now),
+    db.prepare("INSERT INTO customer_merge_runs (id,primary_customer_id,duplicate_customer_id,status,reason,actor_id,summary_json,created_at,completed_at) VALUES (?,?,?,'completed',?,?,?, ?,?)").bind(runId, input.primaryCustomerId, input.duplicateCustomerId, text(input.reason), input.actorId, JSON.stringify({preferenceSnapshot}), now, now),
   ];
   if (await tableExists(db, "canonical_pets")) statements.push(db.prepare("UPDATE canonical_pets SET customer_id=? WHERE customer_id=?").bind(input.primaryCustomerId, input.duplicateCustomerId));
   if (await tableExists(db, "canonical_bookings")) statements.push(db.prepare("UPDATE canonical_bookings SET customer_id=? WHERE customer_id=?").bind(input.primaryCustomerId, input.duplicateCustomerId));
+  // Payment ownership and food orders must move with the customer; gateway IDs and amounts do not.
+  for(const table of ["booking_payments","payment_intents","food_orders","food_order_payments"]){
+    if(await tableExists(db,table))statements.push(db.prepare(`UPDATE ${table} SET customer_id=? WHERE customer_id=?`).bind(input.primaryCustomerId,input.duplicateCustomerId));
+  }
   if (await tableExists(db, "lead_work_items")) statements.push(db.prepare("UPDATE lead_work_items SET customer_id=?,updated_at=? WHERE customer_id=?").bind(input.primaryCustomerId, now, input.duplicateCustomerId));
   if (await tableExists(db, "communication_threads")) statements.push(db.prepare("UPDATE communication_threads SET customer_id=?,updated_at=? WHERE customer_id=?").bind(input.primaryCustomerId, now, input.duplicateCustomerId));
   if (await tableExists(db, "communication_messages")) statements.push(db.prepare("UPDATE communication_messages SET customer_id=? WHERE customer_id=?").bind(input.primaryCustomerId, input.duplicateCustomerId));
@@ -35,7 +43,14 @@ export async function executeTransactionalCustomerMerge(db: Db, input: { primary
   if (await tableExists(db, "crm_opportunities")) statements.push(db.prepare("UPDATE crm_opportunities SET customer_id=?,updated_at=? WHERE customer_id=?").bind(input.primaryCustomerId, now, input.duplicateCustomerId));
   if (await tableExists(db, "canonical_revenue_opportunities")) statements.push(db.prepare("UPDATE canonical_revenue_opportunities SET customer_id=?,updated_at=? WHERE customer_id=?").bind(input.primaryCustomerId, now, input.duplicateCustomerId));
   if (await tableExists(db, "customer_addresses")) statements.push(db.prepare("UPDATE customer_addresses SET customer_id=? WHERE customer_id=?").bind(input.primaryCustomerId, input.duplicateCustomerId));
-  if (await tableExists(db, "customer_contact_preferences")) {
+  if (hasPreferences) {
+    // A reviewed identity merge must never turn an opt-out into permission to contact.
+    // Preserve both originals in the transactional audit record before removing the duplicate row.
+    const columns=(await db.prepare("PRAGMA table_info(customer_contact_preferences)").all<Row>()).results.map(row=>text(row.name));
+    const restrictive=["marketing_consent","service_consent","whatsapp_consent","sms_consent","email_consent"].filter(column=>columns.includes(column));
+    const assignments=restrictive.map(column=>`${column}=MIN(${column},(SELECT ${column} FROM customer_contact_preferences WHERE customer_id=?))`);
+    if(columns.includes("opt_out"))assignments.push("opt_out=MAX(opt_out,(SELECT opt_out FROM customer_contact_preferences WHERE customer_id=?))");
+    if(assignments.length)statements.push(db.prepare(`UPDATE customer_contact_preferences SET ${assignments.join(",")} WHERE customer_id=? AND EXISTS (SELECT 1 FROM customer_contact_preferences WHERE customer_id=?)`).bind(...assignments.map(()=>input.duplicateCustomerId),input.primaryCustomerId,input.duplicateCustomerId));
     statements.push(db.prepare("DELETE FROM customer_contact_preferences WHERE customer_id=? AND EXISTS (SELECT 1 FROM customer_contact_preferences WHERE customer_id=?)").bind(input.duplicateCustomerId, input.primaryCustomerId));
     statements.push(db.prepare("UPDATE customer_contact_preferences SET customer_id=? WHERE customer_id=?").bind(input.primaryCustomerId, input.duplicateCustomerId));
   }
@@ -53,7 +68,7 @@ export async function executeTransactionalCustomerMerge(db: Db, input: { primary
   // rewrite violates a constraint, none of the merge moves commit.
   const results = await db.batch(statements);
   const changes = results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
-  const summary = { primaryCustomerId: input.primaryCustomerId, duplicateCustomerId: input.duplicateCustomerId, statements: statements.length, changes, neutralizedDuplicate: { mergedInto: input.primaryCustomerId, originalPrimaryPhone: text(duplicate.primary_phone), originalSecondaryPhone: duplicate.secondary_phone ? text(duplicate.secondary_phone) : null, originalEmail: duplicate.email ? text(duplicate.email) : null } };
+  const summary = { preferenceSnapshot, primaryCustomerId: input.primaryCustomerId, duplicateCustomerId: input.duplicateCustomerId, statements: statements.length, changes, neutralizedDuplicate: { mergedInto: input.primaryCustomerId, originalPrimaryPhone: text(duplicate.primary_phone), originalSecondaryPhone: duplicate.secondary_phone ? text(duplicate.secondary_phone) : null, originalEmail: duplicate.email ? text(duplicate.email) : null } };
   await db.prepare("UPDATE customer_merge_runs SET summary_json=? WHERE id=?").bind(JSON.stringify(summary), runId).run();
   return { runId, status: "completed", ...summary };
 }

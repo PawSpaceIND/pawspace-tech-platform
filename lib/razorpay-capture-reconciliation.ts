@@ -37,7 +37,7 @@ export async function reconcileRazorpayCaptureIntent(db: Db, env: Env, intent: R
   const gatewayPaymentId = text(payment.id), raw = JSON.stringify(payment), eventId = `provider-api:capture:${gatewayPaymentId}`;
   const committed = await commitRazorpayCaptureAtomic(db, {
     authority: "provider_api", eventId, environment: provider.environment, intentId: text(intent.id), bookingId: text(intent.booking_id), paymentId: text(intent.payment_id),
-    gatewayOrderId: orderId, gatewayPaymentId, amountPaise: Number(intent.amount_paise), currency: text(intent.currency || "INR"), payloadHash: await sha256(raw),
+    gatewayOrderId: orderId, gatewayPaymentId, gatewayMethod: text(payment.method), amountPaise: Number(intent.amount_paise), currency: text(intent.currency || "INR"), payloadHash: await sha256(raw),
     detail: { source: "razorpay_provider_api", providerStatus: text(payment.status), providerCaptured: payment.captured === true || text(payment.status) === "captured", observedAt: input.asOf ?? Date.now() },
   });
   const effects = committed.effectsOutboxId
