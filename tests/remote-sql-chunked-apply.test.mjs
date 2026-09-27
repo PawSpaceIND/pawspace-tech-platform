@@ -165,9 +165,20 @@ const SEEDS = [
   ["scripts/uat-demo-seed.sql", []],
 ];
 
+/*
+ * Seeds stamp rows relative to the database clock ("unixepoch() * 1000 - 604800000"). Two loads a second apart
+ * would then differ, so both loads read one fixed instant instead. Values the runtime setup stamps from
+ * Date.now() are masked by dump().
+ */
+const FROZEN = "'2026-09-27 00:00:00'";
+const freezeNow = (sql) => sql
+  .replace(/unixepoch\(\s*\)/gi, `unixepoch(${FROZEN})`)
+  .replace(/'now'/gi, FROZEN)
+  .replace(/\bCURRENT_TIMESTAMP\b/g, FROZEN);
+
 for (const [file, preload] of SEEDS) {
   test(`${file} sent as chunks leaves exactly the rows the whole-file load leaves`, async () => {
-    const sql = read(file);
+    const sql = freezeNow(read(file));
     const since = Date.now();
     const whole = await stagingWorld(preload);
     whole.exec(sql);
