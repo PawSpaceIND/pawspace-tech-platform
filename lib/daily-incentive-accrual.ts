@@ -1,3 +1,4 @@
+import{appendPayrollCheck}from"./payroll-integrity";
 /**
  * Daily incentive AUTO-accrual. Each day the background scheduler runs this sweep for the previous
  * (complete) IST day: for every employee with a configured sales base vertical it computes the day's
@@ -103,7 +104,16 @@ export async function approvedSalesIncentiveEntriesForPayroll(db:Db,input:{emplo
  const rows=await db.prepare("SELECT r.* FROM sales_incentive_period_results r LEFT JOIN sales_incentive_payroll_links l ON l.result_id=r.id WHERE r.employee_id=? AND r.status='approved' AND r.month_start>=? AND r.month_start<=? AND l.id IS NULL AND r.approved_total>0 ORDER BY r.month_start").bind(input.employeeId,from,to).all<Row>();
  return rows.results.map(r=>({sourceType:"sales_incentive_period" as const,sourceId:text(r.id),label:`Approved sales incentive · ${text(r.month_start)}`,kind:"earning" as const,amount:money(r.approved_total),policyVersion:`sales_rate_sheet:${text(r.month_start)}`}));
 }
-export async function markSalesIncentiveEntriesIncluded(db:Db,input:{entries:SalesPayrollIncentiveEntry[];payrollRunId:string;payrollResultId:string;employeeId:string}){
- await ensureSalesIncentivePeriodTables(db);const now=Date.now();for(const e of input.entries){await db.prepare("INSERT OR IGNORE INTO sales_incentive_payroll_links (id,result_id,payroll_run_id,payroll_result_id,employee_id,amount,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("SIPL"),e.sourceId,input.payrollRunId,input.payrollResultId,input.employeeId,e.amount,now).run();await db.prepare("UPDATE sales_incentive_period_results SET status='payroll_included' WHERE id=? AND status='approved'").bind(e.sourceId).run();}}
+export async function markSalesIncentiveEntriesIncluded(db:Db,input:{entries:SalesPayrollIncentiveEntry[];payrollRunId:string;payrollResultId:string;employeeId:string},pending?:D1PreparedStatement[]){
+ await ensureSalesIncentivePeriodTables(db);const now=Date.now(),writes:D1PreparedStatement[]=[];
+ for(const e of input.entries){
+  if(pending)appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM sales_incentive_period_results WHERE id=? AND status='approved' AND approved_total=?)",[e.sourceId,e.amount]);
+  // A racing payroll must fail its entire batch instead of ignoring an already-consumed source.
+  const insert=pending?"INSERT INTO":"INSERT OR IGNORE INTO";
+  writes.push(db.prepare(`${insert} sales_incentive_payroll_links (id,result_id,payroll_run_id,payroll_result_id,employee_id,amount,created_at) VALUES (?,?,?,?,?,?,?)`).bind(uid("SIPL"),e.sourceId,input.payrollRunId,input.payrollResultId,input.employeeId,e.amount,now));
+  writes.push(db.prepare("UPDATE sales_incentive_period_results SET status='payroll_included' WHERE id=? AND status='approved'").bind(e.sourceId));
+ }
+ if(pending)pending.push(...writes);else if(writes.length)await db.batch(writes);
+}
 
 export async function salesIncentivePeriodTruth(db:Db,input:{employeeId:string;monthStart:string}){await ensureSalesIncentivePeriodTables(db);const row=await db.prepare("SELECT r.*,l.payroll_run_id,l.payroll_result_id,l.created_at payroll_included_at FROM sales_incentive_period_results r LEFT JOIN sales_incentive_payroll_links l ON l.result_id=r.id WHERE r.employee_id=? AND r.month_start=?").bind(input.employeeId,input.monthStart).first<Row>();if(!row)return null;return{employeeId:text(row.employee_id),monthStart:text(row.month_start),dailyAccruedTotal:money(row.daily_accrued_total),monthlyAchievedValue:money(row.monthly_achieved_value),monthlyTierTarget:row.monthly_tier_target==null?null:money(row.monthly_tier_target),monthlyBonus:money(row.monthly_bonus),total:money(row.approved_total),status:text(row.status),approvedBy:row.approved_by?text(row.approved_by):null,approvedAt:row.approved_at?num(row.approved_at):null,payrollRunId:row.payroll_run_id?text(row.payroll_run_id):null,payrollResultId:row.payroll_result_id?text(row.payroll_result_id):null,payrollIncludedAt:row.payroll_included_at?num(row.payroll_included_at):null};}
