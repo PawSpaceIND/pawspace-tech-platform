@@ -16,8 +16,10 @@ import { writeFileSync } from "node:fs";
 const money = (v) => Math.round(Number(v || 0) * 100) / 100;
 const q = (v) => (v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
 const BASE = Date.UTC(2026, 7, 1);            // 2026-08-01
-const PERIOD_START = Date.UTC(2026, 7, 1);
-const PERIOD_END = Date.UTC(2026, 7, 31, 23, 59, 59);
+const PERIOD_START = Date.parse("2026-08-01T00:00:00+05:30");
+const PERIOD_END = Date.parse("2026-09-01T00:00:00+05:30"); // exclusive, matching the Payroll UI
+const LEGACY_PERIOD_START = Date.UTC(2026, 7, 1);
+const LEGACY_PERIOD_END = Date.UTC(2026, 7, 31, 23, 59, 59);
 const JOINED = Date.UTC(2024, 0, 15);
 const s = [];
 
@@ -125,6 +127,12 @@ Object.entries(BANDS).forEach(([band, cfg]) => {
 // ---- One approved Aug-2026 payroll run ----
 const RUN = "SEEDRUN-AUG2026";
 s.push(`INSERT OR IGNORE INTO payroll_runs (id,idempotency_key,period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at) VALUES (${q(RUN)},'seed-payroll-aug-2026',${PERIOD_START},${PERIOD_END},'approved','{"seed":true,"period":"2026-08"}',${q("hr@pawspace.in")},${BASE},${q("finance@pawspace.in")},${BASE},${q("founder@pawspace.in")},${BASE});`);
+
+// Correct only the exact untouched, unpaid synthetic run emitted by older versions of this seed.
+// UTC August's inclusive end overlaps the new September IST month by 5.5 hours. Do not edit any
+// non-seed payroll, prepared batch, operator-modified period, or paid history.
+s.push("CREATE TABLE IF NOT EXISTS payroll_payment_batches (id TEXT PRIMARY KEY,run_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'sandbox_prepared',instruction_count INTEGER NOT NULL,total_amount REAL NOT NULL,external_transmission INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at INTEGER NOT NULL);");
+s.push(`UPDATE payroll_runs SET period_start=${PERIOD_START},period_end=${PERIOD_END} WHERE id=${q(RUN)} AND idempotency_key='seed-payroll-aug-2026' AND period_start=${LEGACY_PERIOD_START} AND period_end=${LEGACY_PERIOD_END} AND input_snapshot_json='{"seed":true,"period":"2026-08"}' AND created_by='hr@pawspace.in' AND reviewed_by='finance@pawspace.in' AND approved_by='founder@pawspace.in' AND status='approved' AND payment_prepared_at IS NULL AND NOT EXISTS (SELECT 1 FROM payroll_payment_batches WHERE run_id=${q(RUN)});`);
 
 // ---- Current employment version for the seeded managers (location, team, cost centre). Without
 // these rows a manager resolves no organizational scope and is locked out of Booking Command
