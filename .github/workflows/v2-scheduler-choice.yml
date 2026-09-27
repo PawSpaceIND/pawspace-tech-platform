@@ -1,0 +1,56 @@
+name: V2 shared scheduler choice
+on:
+  pull_request:
+    # Cover transitive shared engines, fixtures and browser/server configuration.
+    paths:
+      - 'app/**'
+      - 'lib/**'
+      - 'backend/**'
+      - 'worker/**'
+      - 'tests/**'
+      - 'e2e/**'
+      - 'scripts/**'
+      - 'playwright*.config.ts'
+      - 'vite.config.*'
+      - 'tsconfig*.json'
+      - 'wrangler*'
+      - 'package*.json'
+      - '.github/workflows/v2-scheduler-choice.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v2-scheduler-choice-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  scheduler-choice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      PW_PORT: '4297'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Shared-engine and migration regressions
+        env:
+          NODE_ENV: test
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/scheduler-choice-ci-coverage.test.mjs tests/scheduler-provider-choice.test.mjs tests/scheduling-hardening.test.mjs tests/training-availability-preview.test.mjs tests/provider-assignment-execution.test.mjs tests/v2-grooming-checkout.test.mjs tests/training-booking-guards.test.mjs tests/training-mobile-trainer-alternatives.test.mjs
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
+      - name: V2 automatic and explicit choice journeys
+        run: node node_modules/@playwright/test/cli.js test --config playwright.scheduler-choice.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v2-scheduler-choice-${{ github.sha }}
+          path: artifacts/scheduler-choice/
+          retention-days: 7
