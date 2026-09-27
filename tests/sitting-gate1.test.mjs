@@ -112,11 +112,31 @@ test("Pet Sitting Gate 1 prices a Home Visit only as one 60-minute visit; Overni
 // ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 1 halves only the amount due now on the approved 50/50 split", async () => {
   const { db } = await sittingWorld();
-  const split = await quoteFor(db, { packageCode: "sitting-overnight", petCount: 2, paymentMode: "split_50_50", ...stayWindow({ durationHours: 12 }) });
+  // The split is only for overnight stays longer than four nights (SIT-05); a 1-night split is refused
+  // (tests/stay-split-payments.test.mjs).
+  const split = await quoteFor(db, { packageCode: "sitting-overnight", petCount: 2, paymentMode: "split_50_50", ...stayWindow({ durationHours: 5 * 24 }) });
 
-  assert.equal(split.totalAmount, 1198);
-  assert.equal(split.amountDueNow, 599, "half now");
-  assert.equal(split.totalAmount - split.amountDueNow, 599, "the other half stays owed, it is not discounted");
+  assert.equal(split.totalAmount, 5990, "(799 + 399) x 5 nights");
+  assert.equal(split.amountDueNow, 2995, "half now");
+  assert.equal(split.totalAmount - split.amountDueNow, 2995, "the other half stays owed, it is not discounted");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("POST /api/sitting-commercial refuses a 1-night 50/50 split with the reason (round-2 staging, SIT-05)", async () => {
+  // Staging answered 201 {"total":799,"amountDueNow":399.5,"paymentMode":"split_50_50"} for this request.
+  const { db } = await sittingWorld();
+  const route = await import("../app/api/sitting-commercial/route.ts");
+  const ist = (days, time) => new Date(`${new Date(Date.now() + days * 86_400_000 + 19_800_000).toISOString().slice(0, 10)}T${time}:00+05:30`).toISOString();
+  const post = (body) => route.POST(new Request(stayUrl("/api/sitting-commercial"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+  const oneNight = { packageCode: "sitting-overnight", petCount: 1, scheduledStart: ist(3, "19:00"), scheduledEnd: ist(4, "09:00"), cityId: "blr", zoneId: "blr-east" };
+  const refused = await post({ ...oneNight, paymentMode: "split_50_50" });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: "Split payment is only for overnight stays longer than 4 nights. Please pay in full for this stay.", code: "split_payment_not_eligible" });
+  const prepaid = await post({ ...oneNight, paymentMode: "prepaid" });
+  assert.equal(prepaid.status, 201, "the same night paid in full is quoted");
+  assert.equal((await prepaid.json()).data.totalAmount, 799);
+  const quotes = await db.prepare("SELECT COUNT(*) n FROM sitting_commercial_quotes WHERE payment_mode='split_50_50'").all();
+  assert.equal(Number(quotes.results[0].n), 0, "the refused split left no priced quote behind");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -138,7 +158,7 @@ test("Pet Sitting Gate 1 refuses an unsupported payment mode and any coupon", as
 // ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 1 attests a sandbox capture against the quote's amount due now", async () => {
   const { db } = await sittingWorld();
-  const split = await quoteFor(db, { packageCode: "sitting-overnight", petCount: 2, paymentMode: "split_50_50", ...stayWindow({ durationHours: 12 }) });
+  const split = await quoteFor(db, { packageCode: "sitting-overnight", petCount: 2, paymentMode: "split_50_50", ...stayWindow({ durationHours: 5 * 24 }) });
 
   // Paying the TOTAL on a split quote is the mistake worth catching: it looks like overpayment and
   // would silently satisfy a check written against totalAmount.

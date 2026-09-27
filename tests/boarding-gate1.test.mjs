@@ -105,15 +105,29 @@ test("Boarding Gate 1 prices a prepaid quote from the catalogue, never from the 
 // ---------------------------------------------------------------------------------------------
 test("Boarding Gate 1 halves only the amount due now on the approved 50/50 split", async () => {
   const { db } = await boardingWorld();
-  const window = stayWindow({ durationHours: 48 });
+  // The split is only for overnight stays longer than four nights (SIT-05); tests/stay-split-payments.test.mjs
+  // pins the refusal for shorter stays.
+  const window = stayWindow({ durationHours: 5 * 24 });
   const quote = await governance.createBoardingQuote(db, {
     packageCode: "boarding-24h", petCount: 2, paymentMode: "split_50_50", ...window,
   });
 
-  assert.equal(quote.stayUnits, 2, "48 hours of a 24-hour package is two stay units");
-  assert.equal(quote.totalAmount, 2796, "2 pets x 2 units x 699");
-  assert.equal(quote.amountDueNow, 1398, "the split takes half now — the total is unchanged");
-  assert.equal(quote.totalAmount - quote.amountDueNow, 1398, "the remaining half stays owed, it is not discounted");
+  assert.equal(quote.stayUnits, 5, "120 hours of a 24-hour package is five stay units");
+  assert.equal(quote.totalAmount, 6990, "2 pets x 5 units x 699");
+  assert.equal(quote.amountDueNow, 3495, "the split takes half now — the total is unchanged");
+  assert.equal(quote.totalAmount - quote.amountDueNow, 3495, "the remaining half stays owed, it is not discounted");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("POST /api/boarding-commercial refuses a 50/50 split for four nights or fewer, with the reason (SIT-05)", async () => {
+  await boardingWorld();
+  const window = stayWindow({ durationHours: 4 * 24 });
+  const refused = await commercialRoute.POST(new Request(stayUrl("/api/boarding-commercial"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ packageCode: "boarding-24h", petCount: 1, paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east", ...window }),
+  }));
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: "Split payment is only for overnight stays longer than 4 nights. Please pay in full for this stay." });
 });
 
 // ---------------------------------------------------------------------------------------------
