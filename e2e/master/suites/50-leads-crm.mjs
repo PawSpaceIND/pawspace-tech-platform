@@ -510,14 +510,17 @@ try {
       await f.page.goto(`${BASE}/team/sales`, { waitUntil: "domcontentloaded" }); await settle(f.page, 4000);
       await f.page.getByPlaceholder("Filter by name, phone, stage or owner").fill(leadCustomer.name).catch(() => {});
       await f.page.locator("button").filter({ hasText: leadCustomer.name }).first().click().catch(() => {});
-      if (ours[0]) await f.page.getByText(ours[0], { exact: false }).first().waitFor({ timeout: 20_000 }).catch(() => {});
+      const bookingList = f.page.getByRole("list", { name: "Bookings" });
+      await bookingList.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {});
       await settle(f.page, 500);
       const ui = await mainText(f.page, 6000), shot = await f.shot("customer-360-lead");
-      const uiListsBookings = ours.length > 0 && ours.every((id) => ui.includes(id));
+      const bookingRows = (await bookingList.locator("li").allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/g, " ").trim());
+      const uiListsBookings = ours.length > 0 && shownBookings.length === ours.length && bookingRows.length >= ours.length;
+      const uiPaymentState = bookingRows.some((row) => /\bPaid\b|Part paid|Due|Refund/i.test(row)) && !bookingRows.some((row) => /Payment state unavailable|Checking payment/i.test(row));
       const paidTotal = [booked.boarding, booked.taxi].filter((b) => b?.paid).reduce((s, b) => s + Number(b.dueNow ?? b.fee ?? 0), 0);
-      out.staff.c360 = { status: r.status, bookings: shownBookings, lifetimeValue: rec360?.lifetimeValue, paymentFields, uiListsBookings, uiStats: clip(ui.match(/Pets[\s\S]{0,120}/)?.[0] || "", 160), paidTotal };
-      rec("L5 Customer 360 of the converted lead", cid, shownBookings.length === ours.length && ours.length && paymentFields && uiListsBookings ? "PASS" : shownBookings.length ? "PARTIAL" : "FAIL", out.staff.c360, [shot]);
-      if (rec360 && (!paymentFields || !uiListsBookings)) finding({ suite: SUITE, severity: "P2", area: "CRM - Customer 360", persona: "Sales staff", flow: "/team/sales Customer 360", title: "Customer 360 of a converted lead shows booking counts only: no booking list in the screen and no payment state (paid / due / refunded)", steps: `Founder: /team/sales > ${leadCustomer.name}; GET /api/customer-360?customerId=${cid}`, expected: "the lead's bookings with what was paid and what is due", actual: `API bookings ${clip(shownBookings, 200)} carry status/total only; lifetimeValue ₹${rec360.lifetimeValue} vs ₹${paidTotal} actually paid; screen: ${out.staff.c360.uiStats}`, evidence: [shot] });
+      out.staff.c360 = { status: r.status, bookings: shownBookings, lifetimeValue: rec360?.lifetimeValue, paymentFields, uiListsBookings, uiPaymentState, bookingRows: bookingRows.slice(0, 6), uiStats: clip(ui.match(/Pets[\s\S]{0,120}/)?.[0] || "", 160), paidTotal };
+      rec("L5 Customer 360 of the converted lead", cid, shownBookings.length === ours.length && ours.length && paymentFields && uiListsBookings && uiPaymentState ? "PASS" : shownBookings.length ? "PARTIAL" : "FAIL", out.staff.c360, [shot]);
+      if (rec360 && (!paymentFields || !uiListsBookings || !uiPaymentState)) finding({ suite: SUITE, severity: "P2", area: "CRM - Customer 360", persona: "Sales staff", flow: "/team/sales Customer 360", title: "Customer 360 of a converted lead does not show its booking list with payment state", steps: `Founder: /team/sales > ${leadCustomer.name}; GET /api/customer-360?customerId=${cid}`, expected: "the lead's booking rows with what was paid and what is due", actual: `API bookings ${clip(shownBookings, 200)}; UI rows ${clip(bookingRows, 300)}; payment fields ${paymentFields}; UI payment state ${uiPaymentState}; lifetimeValue ₹${rec360.lifetimeValue} vs ₹${paidTotal} actually paid`, evidence: [shot] });
     } catch (e) { fail("L5 Customer 360 of the converted lead", leadCustomer.customerId || "lead customer", e); }
   }
 
