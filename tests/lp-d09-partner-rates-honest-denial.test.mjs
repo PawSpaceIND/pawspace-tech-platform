@@ -26,8 +26,9 @@ import { d1 } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__LPD09_DB__", "__LPD09_ENV__");
 
-async function world() {
+async function world(t) {
   const sqlite = new DatabaseSync(":memory:");
+  t.after(() => sqlite.close());
   const db = d1(sqlite);
   enterWorkersDbScope(db);
   globalThis.__LPD09_DB__ = db;
@@ -54,8 +55,8 @@ const STAFF_HEADERS = {
   "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
 };
 
-test("LP-D09: a staff sign-in with no provider session gets a governed 403 (requirePermission's own text)", async () => {
-  await world();
+test("LP-D09: a staff sign-in with no provider session gets a governed 403 (requirePermission's own text)", async t => {
+  await world(t);
   const route = await import("../app/api/provider-service-rates/route.ts");
   const response = await route.GET(new Request("https://uat.pawspace.in/api/provider-service-rates", { headers: STAFF_HEADERS }));
   assert.equal(response.status, 403);
@@ -63,14 +64,14 @@ test("LP-D09: a staff sign-in with no provider session gets a governed 403 (requ
   assert.match(String(body.error), /Permission denied/);
 });
 
-test("LP-D09: a commission Pet Sitting provider's OWN session gets 200 with priceable options - the route is not the bug", async () => {
-  const { db } = await world();
+test("LP-D09: a commission Pet Sitting provider's OWN session gets 200 with priceable options - the route is not the bug", async t => {
+  const { db } = await world(t);
   const terms = await import("../lib/provider-commercial-terms.ts");
   await terms.ensureCommercialTermsTables(db);
   const now = Date.now();
   await db.prepare("INSERT INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed,onboarding_fee,renewal_fee,renewal_months,effective_from,reason,created_by,approved_by,approval_reference,created_at,updated_at) VALUES ('T1','pet_sitting','sit_sana',1,'active','commission_standard',.70,'provider_gst_on_behalf',.18,0,0,0,12,'2026-01-01','probe','maker','checker','TEST',?,?)").bind(now, now).run();
   await db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,zones_json) VALUES ('sit_sana','blr','[\"blr-east\"]')").run();
-  const cookie = await providerCookie(db, { providerId: "sit_sana", principalKey: "uat-provider:sit_sana" });
+  const cookie = await providerCookie(db, { providerId: "sit_sana", principalKey: "partner_otp:9000000991" });
   const route = await import("../app/api/provider-service-rates/route.ts");
   const response = await route.GET(new Request("https://uat.pawspace.in/api/provider-service-rates", { headers: { cookie } }));
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
@@ -79,8 +80,8 @@ test("LP-D09: a commission Pet Sitting provider's OWN session gets 200 with pric
   assert.ok(body.data.options.every(option => option.serviceCode === "pet_sitting"));
 });
 
-test("LP-D09: a signed-in but non-commission provider (e.g. full-time groomer) gets 200 with an empty option list, not a 403", async () => {
-  const { db } = await world();
+test("LP-D09: a signed-in but non-commission provider (e.g. full-time groomer) gets 200 with an empty option list, not a 403", async t => {
+  const { db } = await world(t);
   await db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,zones_json) VALUES ('groom_9000000901','blr','[\"blr-east\"]')").run();
   const cookie = await providerCookie(db, { providerId: "groom_9000000901", principalKey: "partner_otp:9000000901" });
   const route = await import("../app/api/provider-service-rates/route.ts");
@@ -97,4 +98,19 @@ test("LP-D09: /partner/rates never shows the raw server 403 text; it explains wh
   assert.match(page, /\{notEligible&&<article[^>]*>This page is for a signed-in commission Boarding\/Sitting partner/,
     "an honest explanation must render instead of the alert banner for a 403");
   assert.doesNotMatch(page, /setError\(b\.error\|\|"Unable to load rates"\)/, "the 403 path must not fall through to the raw-error alert");
+});
+
+// A UAT-issued identity is not interchangeable with a normal partner OTP identity.
+// Exercise the actual protected route: keep both ordinary access and test-session revocation.
+test("LP-D09: UAT provider rates require test access and lose it immediately when disabled", async t => {
+  const { db } = await world(t);
+  await db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,zones_json) VALUES ('g20_test_provider','blr','[]')").run();
+  const cookie = await providerCookie(db, { providerId: "g20_test_provider", principalKey: "uat-provider:g20_test_provider" });
+  const route = await import("../app/api/provider-service-rates/route.ts");
+  const read = () => route.GET(new Request("https://uat.pawspace.in/api/provider-service-rates", { headers: { cookie } }));
+  assert.equal((await read()).status, 401, "disabled UAT must deny a test session");
+  globalThis.__LPD09_ENV__ = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "g20-fixture-signing-key-not-a-real-secret" };
+  assert.equal((await read()).status, 200, "the issuer's test gate admits the same scoped provider");
+  globalThis.__LPD09_ENV__.PAWSPACE_UAT_LOGIN = "off";
+  assert.equal((await read()).status, 401, "turning test access off must revoke route access on the next request");
 });

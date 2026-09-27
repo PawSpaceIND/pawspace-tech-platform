@@ -58,6 +58,7 @@ export async function POST(request: Request) {
         actorId: `partner_otp:${verified.identitySource}`, reason: productionMode?"Verified production Fast2SMS OTP identity assertion exchange":"Verified sandbox OTP identity assertion exchange",
       });
       const issued = await issuePlatformSession(db, {
+        request,
         bindingId: String(binding?.id || ""), identitySource: verified.identitySource, principalType: verified.principalType,
         principalKey: verified.principalKey, subjectType: verified.subjectType, subjectId: verified.subjectId,
         ttlSeconds: 28_800, metadata: { cityId: verified.cityId ?? null },
