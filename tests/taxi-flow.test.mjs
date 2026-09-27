@@ -268,7 +268,8 @@ test("round 2: a Taxi call that never answers stops at its time limit with a pla
 
 test("round 2: the Taxi screens route every caught error through the plain-sentence helper", () => {
   const manage = fs.readFileSync("app/taxi/manage/taxi-customer-management.tsx", "utf8");
-  for (const [name, source] of [["taxi-flow", flowSource], ["taxi manage", manage]]) {
+  const incidents = fs.readFileSync("app/taxi/manage/taxi-customer-incidents.tsx", "utf8");
+  for (const [name, source] of [["taxi-flow", flowSource], ["taxi manage", manage], ["taxi incidents", incidents]]) {
     assert.doesNotMatch(source, /await response\.json\(\)|\.then\(async r=>\{const b=await r\.json\(\)/, `${name} must not parse a response blindly`);
     assert.doesNotMatch(source, /setError\(e instanceof Error\?e\.message|setError\(problem instanceof Error\?problem\.message/, `${name} must not show a raw error message`);
     assert.match(source, /taxiErrorMessage\(/);
