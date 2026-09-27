@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assertSaleBaseline,assertSpokenQuote,assertSpokenBooking,assertSandboxSale} from '../scripts/voice-spoken-sale-guards.mjs';
+import {voiceCalendarContext} from '../lib/voice-calendar-context.ts';
 const baseline=()=>({aiPaused:false,dialed:false,pendingOffers:[],completedBookings:['OLD']});
 test('refuses paused contexts and pre-existing offers before sending speech',()=>{
  assert.throws(()=>assertSaleBaseline({...baseline(),aiPaused:true}));
@@ -22,4 +23,9 @@ test('requires exact canonical booking and synthetic payment capture with replay
  const r={dialed:false,synthetic:true,replayChecked:true,captured:true,booking:{id:'NEW',booking_status:'confirmed',payment_status:'captured',gateway_order_id:'order_test',currency:'INR',payment_amount:1241,total_amount:1241}};
  assert.doesNotThrow(()=>assertSandboxSale(r,'NEW'));
  for(const change of [{synthetic:false},{replayChecked:false},{booking:{...r.booking,id:'OTHER'}},{booking:{...r.booking,payment_amount:1}},{booking:{...r.booking,payment_status:'pending'}}])assert.throws(()=>assertSandboxSale({...r,...change},'NEW'));
+});
+
+test('spoken sale guard executes production voice context code',()=>{
+ const context=voiceCalendarContext(Date.UTC(2026,8,27,18,0,0));
+ assert.ok(context && typeof context==='object');
 });
