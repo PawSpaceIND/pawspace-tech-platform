@@ -3,6 +3,7 @@ import{saveCommercialTerm,activateCommercialTerm,setOrderCommercialOverride,reje
 import{activateProviderCommercialTerms,draftProviderCommercialTerms,providerCommercialTermsView}from"../../../lib/provider-commission-setup";
 import{approveOrderCommissionOverride}from"../../../lib/provider-commission-governance";
 import{computeOrderPayoutStatutory}from"../../../lib/provider-payout-statutory";
+import{serviceDefaultStartProblem}from"../../../lib/commission-range";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -12,8 +13,11 @@ function sameOrigin(request:Request){const origin=request.headers.get("origin");
 export async function GET(request:Request){try{await authorize(request,"finance.view");const db=await database(),providerId=text(new URL(request.url).searchParams.get("providerId"));if(providerId)return json({data:await providerCommercialTermsView(db,{providerId}),productionReady:false});const[directory,overrideRequests]=await Promise.all([commercialTermsDirectory(db),pendingOrderOverrideRequests(db)]);return json({data:{...directory,overrideRequests},productionReady:false});}catch(error){return authError(error,"Unable to load commercial terms");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database();const body=await request.json() as Row,action=text(body.action);let result:unknown;
+ // A service default (no provider) is never back-dated (owner decision C): it starts today or later, here as on Finance > Partners.
+ if(action==="save_term"&&!text(body.providerId)){const start=serviceDefaultStartProblem(body.effectiveFrom,new Date().toISOString().slice(0,10));if(start)return json({error:start},400);}
  if(action==="save_term")result=await saveCommercialTerm(db,{serviceCode:text(body.serviceCode),providerId:text(body.providerId)||null,engagementModel:text(body.engagementModel) as never,providerSharePct:body.providerSharePct==null?undefined:Number(body.providerSharePct),gstMode:body.gstMode?text(body.gstMode) as never:undefined,platformGstRate:body.platformGstRate==null?undefined:Number(body.platformGstRate),cashAllowed:body.cashAllowed==null?undefined:Boolean(body.cashAllowed),onboardingFee:Number(body.onboardingFee)||0,renewalFee:Number(body.renewalFee)||0,renewalMonths:body.renewalMonths==null?undefined:Number(body.renewalMonths),effectiveFrom:text(body.effectiveFrom),reason:text(body.reason),actorId:actor.email});
- else if(action==="activate_term")result=await activateCommercialTerm(db,{termId:text(body.termId),approvalReference:text(body.approvalReference),actorId:actor.email});
+ // One term at a time is for service defaults: a provider's terms are approved as a set (activate_provider_terms), a system-made draft never by one person, and a default is never back-dated.
+ else if(action==="activate_term")result=await activateCommercialTerm(db,{termId:text(body.termId),approvalReference:text(body.approvalReference),actorId:actor.email,staffApproval:true});
  // A provider's whole set of terms, one per service: the maker proposes, a different person activates (owner decision 8).
  else if(action==="save_provider_terms")result=await draftProviderCommercialTerms(db,{providerId:text(body.providerId),engagement:text(body.engagement),services:Array.isArray(body.services)?body.services as never:[],effectiveFrom:text(body.effectiveFrom)||null,reason:text(body.reason),actorId:actor.email});
  else if(action==="activate_provider_terms")result=await activateProviderCommercialTerms(db,{providerId:text(body.providerId),approvalReference:text(body.approvalReference),actorId:actor.email,termIds:Array.isArray(body.termIds)?body.termIds:null});

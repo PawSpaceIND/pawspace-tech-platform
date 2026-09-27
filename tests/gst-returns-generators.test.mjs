@@ -129,8 +129,10 @@ test("GSTR-3B nets two-source output tax against eligible ITC", async () => {
   assert.equal(res.summary.outputTaxLedger, 270);
   assert.equal(res.summary.serviceVerticalTax, 90);
   assert.equal(res.summary.totalOutputTax, 360);
-  assert.equal(res.summary.eligibleInputTax, 60);
-  assert.equal(res.summary.netTaxPayable, 300);
+  // Owner decision E (27 Sept 2026): credit needs the tax split by head and the invoice in GSTR-2B (s.16(2)(aa)); this review
+  // row has neither, so it is not credited and all 360 is payable (tests/gst-input-tax-register.test.mjs covers the credit).
+  assert.equal(res.summary.eligibleInputTax, 0);
+  assert.equal(res.summary.netTaxPayable, 360);
   assert.equal(res.payload.sup_details.osup_det.iamt, 180);
 });
 

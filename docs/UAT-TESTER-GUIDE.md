@@ -111,6 +111,20 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
     proof status → Add service proof → Complete job**. The uploader can never approve their own photo.
 - **Scheduling board** (`/team/scheduling?date=YYYY-MM-DD`, manager): day columns per provider; try a reassign.
 - **Relocation triage** (`/team/relocation-enquiries`): your submitted enquiries appear with Domestic/Intl tags.
+- **Finance: provider payouts on staging (RazorpayX TEST, no real money)** (`/team/finance/partners`, Finance login):
+  the page opens with a readiness line, "RazorpayX TEST: configured" or "not configured: <what is missing>". A
+  commission groomer's payout is queued automatically 7 calendar days after the job is completed (the *Payout days after
+  completion* setting; 1 day is the lowest it allows, and a change applies to jobs completed after it, never before).
+  Complete a booking with a seeded UAT groomer (lifecycle above), wait for the hold, then click **Check for due payouts
+  now**: on staging the seeded groomer's missing bank account is added automatically (a RazorpayX TEST fund account from
+  the staging secrets, never a real one), so the booking shows as *Ready to release* instead of *No verified bank
+  account*. Click **Release payout**: one click releases it and sends the TEST payout to RazorpayX; the notice names the
+  RazorpayX payout id, or says why it was not sent yet (then use **Send TEST payout** under *RazorpayX Test Mode payout
+  queue*). RazorpayX's `payout.processed` webhook then marks the row "paid in RazorpayX TEST". For that last step the
+  webhook must be registered once in the RazorpayX dashboard (Test Mode → Webhooks) for the staging origin,
+  `https://<staging-worker-origin>/api/razorpayx-webhook`, with the same secret as the `RAZORPAYX_WEBHOOK_SECRET_SANDBOX`
+  Worker secret and the events `payout.queued`, `payout.initiated`, `payout.processed` and `payout.reversed`. Nothing here
+  touches live money: the release refuses outside the sandbox payment environment.
 
 ### AI assistant (read the state before judging the screens)
 

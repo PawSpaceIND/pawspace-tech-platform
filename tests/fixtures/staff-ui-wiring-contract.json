@@ -36,6 +36,7 @@
   "app/booking-command-center/page.tsx": {
     "logicHash": "f54b96b368453068cabc7b4caa71b79b5ebcd48d00f35c456dff220cedc61509",
     "bindings": [
+      "href={`/api/booking-invoice?bookingId=${encodeURIComponent(String(selected.id))}&view=operations`}",
       "onChange={event => setActionReason(event.target.value)}",
       "onChange={event => setQuery(event.target.value)}",
       "onClick={() => setFilter(item)}",

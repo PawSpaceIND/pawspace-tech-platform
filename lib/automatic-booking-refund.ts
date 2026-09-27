@@ -11,6 +11,12 @@ const money = (value: unknown) => Math.round(Math.max(0, Number(value || 0)) * 1
 
 /** A refund of the difference a customer paid for a reschedule that could not be applied. */
 export const RESCHEDULE_DIFFERENCE_REFUND_PURPOSE = "reschedule_difference";
+/**
+ * A refund after completion that Finance approved (lib/escalation-refunds.ts, owner decision D). The booking stays completed,
+ * so the case is picked up by its purpose, as a reschedule difference is. Its messages (approved, processed) are sent by
+ * lib/escalation-refunds.ts, not the "booking cancelled" text below.
+ */
+export const POST_COMPLETION_ESCALATION_REFUND_PURPOSE = "post_completion_escalation";
 
 function refundPolicy(row: Row) {
   try {
@@ -91,6 +97,7 @@ async function ensureRefundMessage(db: Db, row: Row) {
   const bookingId = text(row.booking_id), refundCaseId = text(row.refund_case_id);
   if (!bookingId || !refundCaseId) return { generated: false, reason: "missing_identity" };
   const amount = money(row.refund_amount);
+  if (text(row.purpose) === POST_COMPLETION_ESCALATION_REFUND_PURPOSE) return { generated: false, reason: "sent_by_escalation_refunds" };
   const difference = text(row.purpose) === RESCHEDULE_DIFFERENCE_REFUND_PURPOSE;
   const result = await enqueueCommunication(db, {
     customerId: text(row.customer_id),
@@ -137,12 +144,13 @@ const CANDIDATE_SELECT = `SELECT
  * capped at what is left of that payment: the case keeps the newest part and each further part becomes
  * its own case (id `<case>-P2`, `-P3`, ...), so every Razorpay refund has one case and one payment.
  * A reschedule-difference case is refunded against the difference payment it names, also on a booking
- * that is not cancelled.
+ * that is not cancelled. An approved refund after completion is refunded the same way on its completed booking.
+ * `refundCaseIds` runs just those cases now (an approval does not wait for the schedule).
  */
 export async function runAutomaticBookingRefundSweep(
   db: Db,
   env: Env,
-  input: { asOf?: number; limit?: number } = {},
+  input: { asOf?: number; limit?: number; refundCaseIds?: string[] } = {},
 ) {
   const asOf = input.asOf ?? Date.now();
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 25)));
@@ -158,11 +166,12 @@ export async function runAutomaticBookingRefundSweep(
     return { processed: 0, initiated: 0, notified: 0, skipped: 0, failed: 1, errors: [error instanceof Error ? error.message : String(error)], blocked: true };
   }
 
+  const only = (input.refundCaseIds ?? []).map(text).filter(Boolean);
   const candidates = await db.prepare(`${CANDIDATE_SELECT}
     WHERE r.status IN ('requested','approved','processing','processed')
-      AND (b.status='cancelled' OR r.purpose=?) AND r.amount>0
+      AND (b.status='cancelled' OR r.purpose IN (?,?)) AND r.amount>0${only.length ? " AND r.id IN (SELECT value FROM json_each(?))" : ""}
     ORDER BY r.created_at ASC
-    LIMIT ?`).bind(RESCHEDULE_DIFFERENCE_REFUND_PURPOSE, limit).all<Row>();
+    LIMIT ?`).bind(RESCHEDULE_DIFFERENCE_REFUND_PURPOSE, POST_COMPLETION_ESCALATION_REFUND_PURPOSE, ...(only.length ? [JSON.stringify(only)] : []), limit).all<Row>();
 
   const report = { processed: 0, initiated: 0, notified: 0, skipped: 0, failed: 0, errors: [] as string[] };
   const queue = [...candidates.results];
@@ -319,6 +328,12 @@ export async function runAutomaticBookingRefundSweep(
       report.failed++;
       report.errors.push(`${refundCaseId || bookingId}:${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  // Refunds after completion the gateway has processed: credit note, TCS, provider payout and messages, once each
+  // (lib/escalation-refunds.ts; the refund.processed webhook does the same for its own refund straight away).
+  if (!only.length) {
+    try { Object.assign(report, { escalationSettlements: await (await import("./escalation-refunds")).settleEscalationRefunds(db, { asOf, limit }) }); }
+    catch (error) { report.errors.push(`escalation settlements:${error instanceof Error ? error.message : String(error)}`); }
   }
   return report;
 }
