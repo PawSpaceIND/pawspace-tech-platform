@@ -48,6 +48,7 @@ export async function triggerHaptikCall(env: HEnv, input: { phone: string; campa
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) return { connected: false, reason: `Haptik outbound call failed (${response.status}): ${String((body.error as Record<string, unknown> | undefined)?.message || "request failed")}` };
     const callRef = String(body.callId || body.id || body.reference || "").trim();
+    if (!callRef) return { connected: false, reason: "Haptik returned no call identifier; placement is unverified" };
     return { connected: true, callRef };
   } catch {
     return { connected: false, reason: controller.signal.aborted?"Haptik outbound request timed out":"Haptik outbound request failed" };
