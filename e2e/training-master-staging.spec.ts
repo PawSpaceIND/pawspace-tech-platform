@@ -843,6 +843,9 @@ test("Dog Training master E2E on staging", async ({ browser }) => {
         await shot(clean.page, "balance-before");
         const result = await payOnPage(clean.page, b.phone, state.starter.bookingId, "starter-balance");
         state.starter.balancePaid = true;
+        // #1120 sends a verified payment to the booking confirmation by itself. Opening the booking page while that
+        // navigation is still in flight aborts it (net::ERR_ABORTED, run 36298168519), so let it land first.
+        await clean.page.waitForURL(/\/booking-confirmation\?bookingId=/, { timeout: 30_000 }).catch(() => {});
         await clean.page.goto(`/v2/booking?bookingId=${encodeURIComponent(state.starter.bookingId)}`); await settle(clean.page, 3000); await shot(clean.page, "balance-after");
         return `${result} · booking page now: ${(await mainText(clean.page)).slice(0, 250)}`;
       });
