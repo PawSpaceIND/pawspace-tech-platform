@@ -1,5 +1,6 @@
-import { CANONICAL_BOOKING_CORE_DDL, ensureCanonicalBookingCoreTables } from "./canonical-booking-core-schema";
+import { CANONICAL_BOOKING_CORE_DDL } from "./canonical-booking-core-schema";
 import { CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL } from "./subscription-wallet";
+import { groomingPricingPackageCode } from "./grooming-pricing-code";
 
 // Coupon monetary values are calculated in integer paise, including percentage rounding.
 function couponPaise(value:unknown):number|null{
@@ -99,7 +100,16 @@ const jsonList=(value:unknown)=>{try{return JSON.parse(String(value||"[]")) as s
 const normalize=(value:string)=>value.trim().toUpperCase().replace(/\s+/g,"");
 const isCouponService=(value:string):value is CouponService=>couponServices.includes(value as CouponService);
 
+const couponSetupInflight=new WeakMap<Db,Promise<void>>();
 export async function ensureCouponTables(db:Db){
+  const pending=couponSetupInflight.get(db);
+  if(pending)return pending;
+  // Publish the promise before work begins so the complete cold setup and migrations are shared.
+  const setup=Promise.resolve().then(()=>ensureCouponTablesOnce(db));
+  couponSetupInflight.set(db,setup);
+  try{await setup;}finally{if(couponSetupInflight.get(db)===setup)couponSetupInflight.delete(db);}
+}
+async function ensureCouponTablesOnce(db:Db){
   // Cold history schemas travel in the existing coupon setup round trip. Mark them ready only
   // after that batch succeeds; warm quotes retain their prior D1 request budget.
   const initializeAuthority=!customerAuthorityReady.has(db);
@@ -112,7 +122,8 @@ export async function ensureCouponTables(db:Db){
   if(initializeAuthority)customerAuthorityReady.set(db,Promise.resolve());
   const columns=await db.prepare("PRAGMA table_info(coupon_campaigns)").all<Row>();
   if(!columns.results.some(row=>String(row.name)==="cross_sell_from_services_json")){
-    await db.prepare("ALTER TABLE coupon_campaigns ADD COLUMN cross_sell_from_services_json TEXT NOT NULL DEFAULT '[]'").run();
+    try{await db.prepare("ALTER TABLE coupon_campaigns ADD COLUMN cross_sell_from_services_json TEXT NOT NULL DEFAULT '[]'").run();}
+    catch(error){const again=await db.prepare("PRAGMA table_info(coupon_campaigns)").all<Row>();if(!again.results.some(row=>String(row.name)==="cross_sell_from_services_json"))throw error;}
   }
   // Customer-bound campaigns (the Training grooming bonus): an empty list means any eligible customer, as
   // before. A concurrent request may add the column first; only a column still missing is an error.
@@ -139,16 +150,14 @@ export async function listCouponCampaigns(db:Db){await seedUatCoupons(db);const 
 
 const customerAuthorityReady=new WeakMap<Db,Promise<void>>();
 async function ensureCouponCustomerAuthority(db:Db){
-  let ready=customerAuthorityReady.get(db);
-  if(!ready){
-    ready=(async()=>{
-      await ensureCanonicalBookingCoreTables(db);
-      // Reuse the wallet owner's exact schema, not a permissive read-only imitation.
-      await db.prepare(CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL).run();
-    })();
-    customerAuthorityReady.set(db,ready);
-  }
-  try{await ready;}catch(error){customerAuthorityReady.delete(db);throw error;}
+  const ready=customerAuthorityReady.get(db);
+  if(ready){await ready;return;}
+  await ensureCouponTables(db);
+}
+
+/** Coupons keep the exact pricing scope; a single-pet code never silently becomes a bundle code. */
+function bookingCouponPackage(serviceCode:string,packageCode:string,petCount=1){
+  return serviceCode==="grooming"&&!packageCode.startsWith("sub-")?groomingPricingPackageCode(packageCode,petCount):packageCode;
 }
 
 export async function customerFacts(db:Db,customerId:string){
@@ -189,7 +198,14 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   const booking=await db.prepare("SELECT id,customer_id,service_code,city_id,package_code,total_amount,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
   if(!booking||String(booking.customer_id)!==input.customerId)throw new Error("Canonical booking does not belong to this customer");
   const amount=Number(booking.total_amount),amountMatches=[Number(quote.order_value),Number(quote.final_amount)].some(value=>sameMoney(value,amount));
-  if(String(booking.service_code)!==String(quote.service_code)||String(booking.city_id)!==String(quote.city_id)||String(booking.package_code)!==String(quote.package_code)||!amountMatches)throw new Error("Canonical booking does not match the coupon quote context");
+  let expectedPackage=String(booking.package_code);
+  if(String(booking.service_code)==="grooming"&&String(quote.service_code)==="grooming"&&/^.+__[2-4]_pets$/.test(String(quote.package_code))){
+    const pets=await db.prepare("SELECT pet_ids_json FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+    const ids=JSON.parse(String(pets?.pet_ids_json||"null"));
+    if(!Array.isArray(ids)||!ids.length||ids.length>4||ids.some(id=>typeof id!=="string"||!id)||new Set(ids).size!==ids.length)throw new Error("Canonical booking does not match the coupon quote context");
+    expectedPackage=bookingCouponPackage("grooming",expectedPackage,ids.length);
+  }
+  if(String(booking.service_code)!==String(quote.service_code)||String(booking.city_id)!==String(quote.city_id)||expectedPackage!==String(quote.package_code)||!amountMatches)throw new Error("Canonical booking does not match the coupon quote context");
   const [totalUsed,customerUsed,campaignRow]=await Promise.all([
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(quote.campaign_id).first<Row>(),
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(quote.campaign_id,input.customerId).first<Row>(),
@@ -236,14 +252,15 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
  * aborts the batch, and D1 rolls the booking back with it. This prevents an orphan booking or an
  * unconsumed discount while retaining friendly validation errors before the transaction.
  */
-export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number}):Promise<CouponBookingPreparation>{
+export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number;petCount?:number}):Promise<CouponBookingPreparation>{
   await ensureCouponTables(db);
   const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit,c.customer_ids_json campaign_customer_ids_json FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
   if(!quote)throw new Error("Coupon quote not found");
   if(String(quote.customer_id)!==input.customerId)throw new Error("Coupon quote customer mismatch");
   const customerIds=storedCustomerIds(quote.campaign_customer_ids_json);
   if(customerIds.length&&!customerIds.includes(input.customerId))throw new Error("Coupon quote customer mismatch");
-  if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==input.packageCode)throw new Error("Coupon quote does not match this booking");
+  const couponPackageCode=bookingCouponPackage(input.serviceCode,input.packageCode,input.petCount);
+  if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==couponPackageCode)throw new Error("Coupon quote does not match this booking");
   if(String(quote.status)!=="open"||String(quote.campaign_status)!=="active")throw new Error("Coupon quote is no longer open");
   if(Number(quote.expires_at)<input.now)throw new Error("Coupon quote has expired");
   const discount=Number(quote.discount_amount),orderValue=Number(quote.order_value),finalAmount=Number(quote.final_amount);
@@ -256,7 +273,7 @@ export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId
   if(Number(customerUsed?.count||0)>=Number(quote.per_customer_limit))throw new Error("Customer coupon limit reached");
   const redemptionId=`CPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
   const eligibleCampaign=`SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND ${customerCouponScopeSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit`;
-  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,input.packageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
+  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,couponPackageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
   const claimStatement=db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open' AND EXISTS (SELECT 1 FROM coupon_redemptions WHERE id=? AND booking_id=?)").bind(input.bookingId,input.now,input.quoteId,redemptionId,input.bookingId);
   return{quoteId:input.quoteId,code:String(quote.code),campaignId:String(quote.campaign_id),discount,orderValue,finalAmount,redemptionId,redemptionStatement,claimStatement};
 }
