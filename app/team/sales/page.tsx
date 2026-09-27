@@ -9,7 +9,7 @@ import styles from "./sales.module.css";
 import CustomerBookings,{type CustomerBooking}from"./customer-bookings";
 type Customer=Record<string,unknown>&{customerId:string;name:string;primaryPhone:string;crmStage:string;owner:string;lifetimeValue:number;openTicketCount:number;dataQuality:{score:number;issues:string[]};consent:{marketing:boolean;service:boolean};pets:Record<string,unknown>[];bookings:CustomerBooking[]};
 type Action=Record<string,unknown>&{id:string;customer_id?:string;customerId?:string;reason?:string;score?:number;expected_revenue?:number;status?:string;suppression_json?:string};
-const card={background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:14};
+const card={background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))"};
 /* The whole customer list used to render in one column (236 records, ~22,700px of page). It is now
  * filtered and paged, so the aside stays navigable however many records Customer 360 merges. */
 const PAGE=25;

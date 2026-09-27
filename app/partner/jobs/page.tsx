@@ -36,9 +36,9 @@ export default function PartnerJobsPage(){
     finally{setBusy(false);}
   }
 
-  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18,marginTop:14};
+  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18,marginTop:14};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:C.gold,margin:"24px 0 0"};
-  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.green,color:"#01261F",fontWeight:700,cursor:"pointer"};
+  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:"calc(9px * var(--paw-radius-scale))",border:"none",background:C.green,color:"#01261F",fontWeight:700,cursor:"pointer"};
   const chip=(color:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:"rgba(255,255,255,0.06)",color});
 
   const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
