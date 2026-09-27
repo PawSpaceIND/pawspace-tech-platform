@@ -54,6 +54,8 @@
   border-color: var(--v2-utility-line) !important;
 }
 :global(body:has([data-pawspace-v2]) .ps-order-fab [role="dialog"] button) { color: inherit; }
+/* An open notifications panel must sit above the separate appearance FAB so its close control stays clickable. */
+:global(body:has([data-pawspace-v2]) .ps-order-fab:has([role="dialog"])) { z-index: 120 !important; }
 @media (max-width: 820px) {
   .canvas { padding-bottom: calc(176px + env(safe-area-inset-bottom, 0px)); }
   :global(body:has([data-pawspace-v2]) .paw-appearance-trigger),

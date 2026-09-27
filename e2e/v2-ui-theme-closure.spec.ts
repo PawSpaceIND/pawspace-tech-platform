@@ -167,7 +167,7 @@ test("Appearance selections persist across V2 navigation, reload and system disp
   const trigger = page.getByRole('button', {name: 'Change PawSpace appearance'});
   await trigger.click();
   const dialog = page.getByRole('dialog', {name: 'Make PawSpace yours.'});
-  await dialog.getByRole('radio', {name: /Brand book/}).check();
+  await dialog.getByRole('radio', {name: /Brand Purple \+ Gold/}).check();
   await dialog.getByRole('radio', {name: /Professional/}).check();
   await dialog.getByRole('radio', {name: /^dark$/i}).check();
   await dialog.getByRole('button', {name: 'Done', exact: true}).click();
@@ -222,7 +222,7 @@ test('Switching visual styles preserves the current Training form and sends no b
  const mutations:string[]=[];page.on('request',r=>{if(r.method()==='POST'&&/booking|payment|scheduling/.test(r.url()))mutations.push(r.url());});
  await page.getByRole('button',{name:'Change PawSpace appearance'}).click();
  const dialog=page.getByRole('dialog',{name:'Make PawSpace yours.'});
- await dialog.getByRole('radio',{name:/Fun/}).check();await dialog.getByRole('radio',{name:/Brand book/}).check();
+ await dialog.getByRole('radio',{name:/Fun/}).check();await dialog.getByRole('radio',{name:/Brand Purple \+ Gold/}).check();
  await dialog.getByRole('button',{name:'Done',exact:true}).click();
  await expect(date).toHaveValue('2026-10-15');await expect(page.locator('html')).toHaveAttribute('data-paw-style','cartoon');
  await expect(page.locator('html')).toHaveAttribute('data-paw-theme','signature');expect(mutations).toEqual([]);

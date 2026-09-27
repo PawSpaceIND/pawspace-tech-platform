@@ -4,7 +4,7 @@ import styles from "../components/marketing/premium-marketing.module.css";
 
 export type LoggedInProvider = { providerId: string; providerName: string; phone: string };
 
-const box: React.CSSProperties = { width: "100%", padding: 12, borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" };
+const box: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: 12, borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" };
 
 type Copy = { eyebrow?: string; title?: string; description?: string };
 /** Same OTP transport everywhere; only the framing copy differs between onboarding and the Partner app. */
