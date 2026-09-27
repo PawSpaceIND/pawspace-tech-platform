@@ -363,6 +363,19 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   }
 }
 
+// Retry generation only, before speech or action execution. Each attempt uses the same
+// governance, quota and circuit controls, with its own usage reservation.
+export async function requestAiDraftWithVoiceRecovery(input:Parameters<typeof requestAiDraft>[0]):Promise<AiDraftResult>{
+ const started=Date.now(),budget=Number(input.timeoutMs)||DEFAULT_TIMEOUT_MS;
+ const first=await requestAiDraft(input);
+ if(first.connected||input.channel!=="voice"||input.onDelta||!["provider_error","network","rate_limited"].includes(first.failure))return first;
+ const remaining=budget-(Date.now()-started);
+ if(remaining<MIN_TIMEOUT_MS)return first;
+ try{input.onTiming?.("voiceProviderRetry");}catch{/* Diagnostics cannot change recovery. */}
+ const second=await requestAiDraft({...input,timeoutMs:remaining});
+ return second.connected?{...second,latencyMs:Date.now()-started}:second;
+}
+
 export async function verifyAiProvider(): Promise<{
   verified: boolean;
   providerRef: string | null;
