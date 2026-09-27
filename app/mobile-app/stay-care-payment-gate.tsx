@@ -7,6 +7,7 @@ import { saveSittingCustomerPlan } from '../../lib/sitting-customer-view';
 import type { SittingCarePlan } from '../../lib/sitting-lifecycle';
 import BookingPaymentPage from './booking-payment-page';
 import styles from './booking-payment-page.module.css';
+import {plainErrorMessage} from "../../lib/safe-json-response";
 
 type Props = {
   routeScope?:'legacy'|'v2'; mode: 'boarding' | 'sitting'; carePlan: SittingCarePlan;
@@ -23,7 +24,7 @@ export default function StayCarePaymentGate({ mode, carePlan, payment, onVerifie
     const save = mode === 'boarding' ? saveCustomerBoardingCare : saveSittingCustomerPlan;
     void save(payment.bookingId, initialPlan.current, `initial-${mode}-care:${payment.bookingId}`)
       .then(() => { if (active) setReady(true); })
-      .catch(problem => { if (active) setError(problem instanceof Error ? problem.message : 'Care instructions were not confirmed.'); })
+      .catch(problem => { if (active) setError(plainErrorMessage(problem,'Care instructions were not confirmed.')); })
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
   }, [mode, payment.bookingId, attempt]);

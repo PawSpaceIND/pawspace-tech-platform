@@ -1,6 +1,6 @@
 import type {BoardingRequirements} from "./stay-host-requirements";
 // @ts-expect-error Node 22 strip-types requires the explicit .ts extension at runtime.
-import{readJsonBody}from"./safe-json-response.ts";
+import{fetchOrExplain,readJsonBody}from"./safe-json-response.ts";
 export type BoardingPackage={package_code:string;name:string;care_kind:"daycare"|"overnight";max_hours:number;base_price_per_pet:number;currency:string;max_pets:number;version:number};
 export type BoardingHost={providerId:string;name:string;model:"full_time"|"commission";area:string;rating:number;qualityScore:number;capacity:number;availableGuestPets?:number;species:string[];oneFamilyOnly:boolean;medicationSupport:boolean;residentPets:string;homeVerified:boolean;kycStatus:string;backgroundCheckStatus:string;profileVersion:number;availabilityVerified?:boolean;availabilityMode?:"uat_canonical";commitments?:number};
 export type BoardingQuote={quoteId:string;packageCode:string;packageName:string;packageVersion:number;petCount:number;cityId:string;zoneId:string;scheduledStart:string;scheduledEnd:string;durationHours:number;stayUnits:number;basePricePerPet:number;totalAmount:number;amountDueNow:number;paymentMode:"prepaid"|"split_50_50";expiresAt:number;liveMoney:false};
@@ -12,7 +12,7 @@ async function boardingRequest<T>(url:string,init:RequestInit={},options:Boardin
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),options.timeoutMs??15000),cancel=()=>controller.abort();
  options.signal?.addEventListener("abort",cancel,{once:true});if(options.signal?.aborted)controller.abort();
  try{
-  const response=await fetch(url,{...init,signal:controller.signal});
+  const response=await fetchOrExplain(url,{...init,signal:controller.signal},"check Boarding hosts and prices");
   // A timeout page or an empty body is a plain sentence, never a JSON parse error.
   const body=await readJsonBody<{data?:T;error?:string}>(response);
   if(body===undefined)throw new Error(response.status>=500?"Boarding is taking longer than usual to respond. Please try again.":"Boarding response could not be read. Please try again.");

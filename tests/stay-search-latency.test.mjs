@@ -276,3 +276,57 @@ test("the review screen's reserve, quote and booking clients show a plain retry 
   });
   assert.match(hostTimeout.message, /^Still checking host availability/, "a host search that runs out of time is still checking, not 'no host available'");
 });
+
+// Round-2 staging (Pet Sitting S3): the review screen showed the raw browser error "Unexpected token 'u', "upstream r"...
+// is not valid JSON". #1112 made the reserve/quote/booking clients read unreadable answers safely; a request that never
+// reached PawSpace still surfaced the browser's own "Failed to fetch", and the stay-read, care-save, extension, PIN and
+// account clients the same screens call still parsed JSON before looking at the answer. Every one of them now gives a
+// plain sentence with a retry, whatever the failure.
+test("every Boarding and Pet Sitting client call reads a network failure or an unreadable answer as a plain retry sentence", async () => {
+  const care = await import("../lib/boarding-customer-care.ts");
+  const stays = await import("../lib/boarding-stay-client.ts");
+  const sittingView = await import("../lib/sitting-customer-view.ts");
+  const zones = await import("../lib/service-zone-client.ts");
+  const account = await import("../lib/customer-account-client.ts");
+  const window60 = { scheduledStart: request.scheduledStart, scheduledEnd: request.scheduledEnd };
+  const calls = {
+    "reserve": () => client.reserveUatSchedule(request),
+    "sitter search": () => client.previewSitters(request),
+    "Pet Sitting quote": () => sittingClient.createSittingQuote({ packageCode: "sitting-visit-60", petCount: 1, cityId: "blr", zoneId: "blr-east", ...window60 }),
+    "Pet Sitting prices": () => sittingClient.loadSittingCatalogue({ cityId: "blr", zoneId: "blr-east" }),
+    "Pet Sitting booking": () => sittingBookingClient.createCanonicalSittingBooking({ groupId: "g" }),
+    "Boarding quote": () => boardingClient.quoteBoarding({ packageCode: "boarding-4h", petCount: 1, cityId: "blr", zoneId: "blr-east", paymentMode: "prepaid", ...window60 }),
+    "Boarding host search": () => boardingClient.loadBoardingCommercial({ cityId: "blr", zoneId: "blr-east" }),
+    "Boarding stay read": () => care.loadOwnedBoardingStay("PS-B1"),
+    "Boarding care save": () => care.saveCustomerBoardingCare("PS-B1", { vet: "Dr Rao", emergencyContact: "Asha" }, "care-key"),
+    "Boarding extension request": () => stays.updateBoardingStay({ stayId: "BSTAY-1", action: "request_extension", idempotencyKey: "ext-key" }),
+    "Pet Sitting booking read": () => sittingView.loadSittingCustomerView("PS-S1"),
+    "service PIN check": () => zones.resolveServiceCoverage("560038"),
+    "account and pets": () => account.loadCustomerAccount(),
+  };
+  const failures = {
+    "no network": () => { throw new TypeError("Failed to fetch"); },
+    "a gateway page": () => new Response("<html>upstream request timeout</html>", { status: 502 }),
+    "an empty 504": () => new Response("", { status: 504 }),
+  };
+  const RAW = /Failed to fetch|NetworkError|Load failed|JSON|Unexpected|token|SyntaxError/i;
+  for (const [failure, respond] of Object.entries(failures)) for (const [label, call] of Object.entries(calls)) {
+    const error = await withFetch(respond, () => rejection(call()));
+    assert.ok(error instanceof Error, `${label}, ${failure}: rejects with an Error`);
+    assert.doesNotMatch(error.message, RAW, `${label}, ${failure}: ${error.message}`);
+    assert.match(error.message, /try again|retry/i, `${label}, ${failure} offers a retry: ${error.message}`);
+  }
+  assert.equal((await withFetch(failures["no network"], () => rejection(calls.reserve()))).message,
+    "We couldn't reach PawSpace to confirm this slot. Check your connection and try again - trying again will not book twice.");
+  // A cancelled request is still a cancellation (the Plan step ignores a search a newer one replaced).
+  const controller = new AbortController(); controller.abort();
+  const cancelled = await withFetch(() => { throw Object.assign(new Error("aborted"), { name: "AbortError" }); }, () => rejection(zones.resolveServiceCoverage("560038", controller.signal)));
+  assert.equal(cancelled.name, "AbortError");
+  // Screens pass any other client's failure through the same sentence.
+  const { plainErrorMessage } = await import("../lib/safe-json-response.ts");
+  assert.equal(plainErrorMessage(new SyntaxError(`Unexpected token 'u', "upstream r"... is not valid JSON`), "x"), "PawSpace sent an answer we could not read. Please try again in a moment.");
+  assert.equal(plainErrorMessage(new TypeError("Load failed"), "x"), "We couldn't reach PawSpace. Check your connection and try again.");
+  assert.equal(plainErrorMessage(new TypeError("Cannot read properties of undefined (reading 'id')"), "Unable to load stay status"), "Unable to load stay status");
+  assert.equal(plainErrorMessage(new Error("Boarding stay was not found."), "x"), "Boarding stay was not found.");
+  assert.equal(plainErrorMessage("nope", "Unable to check your address."), "Unable to check your address.");
+});

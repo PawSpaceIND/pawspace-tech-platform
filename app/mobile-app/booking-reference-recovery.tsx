@@ -4,11 +4,12 @@ import {useEffect,useState} from 'react';
 import {loadVerifiedBookingReference,withoutBookingReference,type RecoverableService} from '../../lib/booking-reference-recovery';
 import type {CustomerConfirmationProjection} from '../../lib/customer-checkout-client';
 import {scopedBookingHref} from '../../lib/customer-booking-safety';
+import {plainErrorMessage} from "../../lib/safe-json-response";
 type Props={bookingId:string;service:RecoverableService;routeScope?:'legacy'|'v2';className?:string};
 function Recovery({bookingId,service,routeScope='legacy',className}:Props){
  const [attempt,setAttempt]=useState(0),[settled,setSettled]=useState(-1),[data,setData]=useState<CustomerConfirmationProjection|null>(null),[error,setError]=useState('');
  useEffect(()=>{let active=true;const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
-  loadVerifiedBookingReference(bookingId,service,controller.signal).then(value=>{if(active){setData(value);setError('');}}).catch(problem=>{if(active){setData(null);setError(controller.signal.aborted?'Booking verification timed out. Please retry.':problem instanceof Error?problem.message:'The booking could not be verified.');}}).finally(()=>{clearTimeout(timer);if(active)setSettled(attempt);});
+  loadVerifiedBookingReference(bookingId,service,controller.signal).then(value=>{if(active){setData(value);setError('');}}).catch(problem=>{if(active){setData(null);setError(controller.signal.aborted?'Booking verification timed out. Please retry.':plainErrorMessage(problem,'The booking could not be verified.'));}}).finally(()=>{clearTimeout(timer);if(active)setSettled(attempt);});
   return()=>{active=false;clearTimeout(timer);controller.abort();};
  },[bookingId,service,attempt]);
  const v2=routeScope==='v2',loading=settled!==attempt;
