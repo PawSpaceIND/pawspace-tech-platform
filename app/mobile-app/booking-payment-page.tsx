@@ -9,10 +9,20 @@ const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",curr
 type Props={
  serviceName:string; totalAmount:number; amountDueNow:number; mode:"prepaid"|"split"|"split_50_50"|"pay_after_service";
  bookingId?:string; busy?:boolean; autoStart?:boolean; onCreateBooking?:()=>Promise<void>|void; onVerified?:()=>Promise<void>|void; onBack?:()=>void;
+ /** false keeps the customer in the calling flow after a verified payment (the app's Dog Training flow goes on to its
+  * next step); every other caller returns to the booking confirmation, as #1120 made them. */
+ returnAfterVerified?:boolean;
  /** "balance": the first instalment is already captured and amountDueNow is the outstanding balance. */
  stage?:"balance"; paidAmount?:number; balanceDueAt?:number|null;
 };
-function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingId,busy=false,autoStart=false,onCreateBooking,onVerified,onBack,stage,paidAmount,balanceDueAt}:Props){
+/** What follows a captured payment: the owned booking must be ready, then the caller's next step runs, and only then,
+ * unless the caller keeps the customer in its flow, the page returns to the booking confirmation. */
+export async function completeVerifiedPayment({bookingId,onVerified,returnAfterVerified=true,onNotified}:Pick<Props,"bookingId"|"onVerified"|"returnAfterVerified">&{onNotified?:()=>void}):Promise<void>{
+ if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}
+ await onVerified?.();onNotified?.();
+ if(bookingId&&returnAfterVerified)returnToBooking(bookingId);
+}
+function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingId,busy=false,autoStart=false,onCreateBooking,onVerified,onBack,returnAfterVerified=true,stage,paidAmount,balanceDueAt}:Props){
  const balance=stage==="balance";
  const[state,setState]=useState<CheckoutState>({phase:"ready",message:"",canCheck:false});
  const controller=useRef<CustomerCheckoutController|null>(null),notified=useRef(false),autoStarted=useRef(false);
@@ -22,10 +32,10 @@ function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingI
  const finishConfirmation=useCallback(async()=>{
   if(finishingRef.current||notified.current)return;
   finishingRef.current=true;setFinishing(true);setConfirmationError("");
-  try{if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}await onVerified?.();notified.current=true;if(bookingId)returnToBooking(bookingId);}
+  try{await completeVerifiedPayment({bookingId,onVerified,returnAfterVerified,onNotified:()=>{notified.current=true;}});}
   catch(problem){setConfirmationError(problem instanceof Error?problem.message:"Payment is verified, but booking details could not be refreshed. Retry confirmation, not payment.");}
   finally{finishingRef.current=false;setFinishing(false);}
- },[bookingId,onVerified]);
+ },[bookingId,onVerified,returnAfterVerified]);
  useEffect(()=>{if(!bookingId){controller.current=null;return;}let active=true;controller.current=new CustomerCheckoutController(bookingId,value=>{if(active)setState(value);});return()=>{active=false;controller.current=null;};},[bookingId]);
  useEffect(()=>{if(state.phase!=="captured"||notified.current||confirmationError)return;void finishConfirmation();},[state.phase,confirmationError,finishConfirmation]);
  useEffect(()=>{if(!autoStart||!bookingId||payAfter||autoStarted.current||!controller.current)return;autoStarted.current=true;void controller.current.start();},[autoStart,bookingId,payAfter]);
