@@ -404,3 +404,44 @@ test("a turn that never streams still reports provider headers and no first toke
   assert.ok(!stages.includes("providerFirstDelta"),"a blocking turn has no first-token moment to report");
  }finally{stub.restore();}
 });
+
+test("anything the action-envelope parser accepts is withheld by the speech gate",async()=>{
+ const llm=await import("../lib/elevenlabs-custom-llm.ts");
+ const grounded=await import("../lib/ai-grounded-runtime-provider.ts");
+ // A confirmed action re-runs the turn through the orchestrator and speaks ITS reply, discarding the
+ // fast generation. That is only safe because the fast generation was never spoken: the gate withholds
+ // on `{` or a backtick, and the parser accepts only those two shapes. The two sets are coupled and
+ // nothing asserted it. If the parser ever tolerates leading prose, or the gate stops withholding
+ // fences, a caller confirming a booking hears a discarded draft instead of their confirmation, and
+ // no existing test fails.
+ const envelopes=[
+  '{"reply":"Booked.","actions":[{"toolCode":"booking.create","arguments":{"packageCode":"GRM-BASIC"}}]}',
+  '  \n {"reply":"Reserved.","actions":[{"toolCode":"schedule.reserve","arguments":{"slot":"10:00"}}]}',
+  '```json\n{"reply":"Paid.","actions":[{"toolCode":"checkout.payment_order.create","arguments":{"amount":1499}}]}\n```',
+  '{"reply":"Nothing to do.","actions":[]}',
+ ];
+ for(const raw of envelopes){
+  assert.notEqual(grounded.parseGroundedActionEnvelope(raw),null,`parser must accept: ${raw.slice(0,40)}`);
+  const spoken=[];
+  const gate=llm.speechGate(chunk=>spoken.push(chunk));
+  // One character at a time: the gate must decide from the first non-whitespace byte, not from a
+  // conveniently whole response.
+  for(const char of raw)gate.push(char);
+  assert.deepEqual(spoken,[],`gate must speak nothing for a parseable envelope: ${raw.slice(0,40)}`);
+  assert.equal(gate.unspoken,true,"an envelope must leave the turn unspoken so the caller hears the governed reply");
+ }
+});
+
+test("prose in front of an envelope is refused by the parser, so it can never reach the confirmed-action path",async()=>{
+ const llm=await import("../lib/elevenlabs-custom-llm.ts");
+ const grounded=await import("../lib/ai-grounded-runtime-provider.ts");
+ // The other half of the same invariant. This shape IS spoken by the gate, so it must never be read
+ // as a confirmed action - otherwise the caller would hear this text and then the orchestrator's too.
+ const proseFirst='Sure, booking that now. {"reply":"Booked.","actions":[{"toolCode":"booking.create","arguments":{}}]}';
+ assert.equal(grounded.parseGroundedActionEnvelope(proseFirst),null,
+  "prose before the envelope must not parse as an action envelope");
+ const spoken=[];
+ const gate=llm.speechGate(chunk=>spoken.push(chunk));
+ for(const char of proseFirst)gate.push(char);
+ assert.ok(spoken.join("").startsWith("Sure,"),"prose-first output is spoken, which is why it must not carry actions");
+});
