@@ -1,4 +1,4 @@
-import { ensureCanonicalBookingCoreTables } from "./canonical-booking-core-schema";
+import { CANONICAL_BOOKING_CORE_DDL, ensureCanonicalBookingCoreTables } from "./canonical-booking-core-schema";
 import { CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL } from "./subscription-wallet";
 
 // Coupon monetary values are calculated in integer paise, including percentage rounding.
@@ -100,11 +100,16 @@ const normalize=(value:string)=>value.trim().toUpperCase().replace(/\s+/g,"");
 const isCouponService=(value:string):value is CouponService=>couponServices.includes(value as CouponService);
 
 export async function ensureCouponTables(db:Db){
-  await db.batch([
+  // Cold history schemas travel in the existing coupon setup round trip. Mark them ready only
+  // after that batch succeeds; warm quotes retain their prior D1 request budget.
+  const initializeAuthority=!customerAuthorityReady.has(db);
+  try{await db.batch([
+    ...(initializeAuthority?[...CANONICAL_BOOKING_CORE_DDL,CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL].map(sql=>db.prepare(sql)):[]),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_campaigns (id TEXT PRIMARY KEY,code TEXT NOT NULL UNIQUE,name TEXT NOT NULL,status TEXT NOT NULL,test_only INTEGER NOT NULL DEFAULT 1,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,channels_json TEXT NOT NULL,customer_kinds_json TEXT NOT NULL,package_scope TEXT NOT NULL,package_codes_json TEXT NOT NULL DEFAULT '[]',first_order_only INTEGER NOT NULL DEFAULT 0,min_order REAL NOT NULL,max_order REAL,subscription_eligible INTEGER NOT NULL DEFAULT 0,full_payment_only INTEGER NOT NULL DEFAULT 0,discount_type TEXT NOT NULL,discount_value REAL NOT NULL,max_discount REAL,per_customer_limit INTEGER NOT NULL,total_limit INTEGER NOT NULL,valid_from INTEGER NOT NULL,valid_until INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_quotes (id TEXT PRIMARY KEY,code TEXT NOT NULL,campaign_id TEXT NOT NULL,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,channel TEXT NOT NULL,package_code TEXT NOT NULL,order_value REAL NOT NULL,discount_amount REAL NOT NULL,final_amount REAL NOT NULL,policy_snapshot_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',expires_at INTEGER NOT NULL,booking_id TEXT UNIQUE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_redemptions (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,quote_id TEXT NOT NULL UNIQUE,campaign_id TEXT NOT NULL,code TEXT NOT NULL,customer_id TEXT NOT NULL,booking_id TEXT NOT NULL UNIQUE,discount_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'consumed',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-  ]);
+  ]);}catch(error){if(initializeAuthority)throw new Error("Coupon customer eligibility is temporarily unavailable");throw error;}
+  if(initializeAuthority)customerAuthorityReady.set(db,Promise.resolve());
   const columns=await db.prepare("PRAGMA table_info(coupon_campaigns)").all<Row>();
   if(!columns.results.some(row=>String(row.name)==="cross_sell_from_services_json")){
     await db.prepare("ALTER TABLE coupon_campaigns ADD COLUMN cross_sell_from_services_json TEXT NOT NULL DEFAULT '[]'").run();
