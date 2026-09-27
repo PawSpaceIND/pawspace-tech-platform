@@ -9,6 +9,8 @@ const React = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { default: GroomingPetList } = await import("../app/mobile-app/grooming-pet-list.tsx");
 const { default: StayFlow } = await import("../app/mobile-app/stay-flow.tsx");
+const { stayWindowProblem, stayDateBounds, boardingVaccinationProblem, boardingPetNote } = await import("../lib/stay-plan-checks.ts");
+const { indiaDateOffset } = await import("../lib/customer-booking-safety.ts");
 
 test("seven-night stay preserves both customer times in IST and the visible duration", () => {
   const window = stayCareWindow("2026-09-15", "2026-09-22", "10:00", "10:00");
@@ -93,4 +95,32 @@ for(const mode of ["boarding","sitting"])test(`${mode}: rendered plan exposes on
   assert.equal((html.match(/type="time"/g)||[]).length,2);
   assert.doesNotMatch(html,/>4 hours<|>10 hours<|>24 hours<|eligible commission partners/);
   assert.match(html,/Change Address/);
+});
+
+// Round-2 staging (Boarding B4c/B4d/B4e, Pet Sitting SIT-12): a start ~20 hours away, a start 185 days out and a pet
+// without verified vaccination got hosts, a price, a Care Card and a Review, and were refused only at the final click.
+test("the stay Plan step refuses short notice, a start past the 180-day horizon and unverified Boarding pets", () => {
+  const HOUR = 3_600_000, DAY = 24 * HOUR, now = Date.parse("2026-09-27T04:30:00.000Z"); // 10:00 IST
+  assert.deepEqual(stayWindowProblem(now + 20 * HOUR, now), { code: "below_minimum_lead_time", message: "Book at least 24 hours ahead." });
+  assert.deepEqual(stayWindowProblem(now + 185 * DAY, now), { code: "beyond_booking_horizon", message: "You can book up to 180 days ahead." });
+  assert.equal(stayWindowProblem(now + 24 * HOUR, now), null, "exactly 24 hours' notice is enough, as the reservation measures it");
+  assert.equal(stayWindowProblem(now + 180 * DAY, now), null, "and the 180th day is still bookable");
+  assert.equal(stayWindowProblem(new Date(Number.NaN), now), null, "an incomplete window is left to the dates check");
+  assert.deepEqual(stayDateBounds(now), { min: "2026-09-28", max: "2027-03-26" }, "the picker's range is IST calendar days");
+  assert.equal(boardingVaccinationProblem([{ name: "BrdDog", vaccinationStatus: "verified" }]), null);
+  assert.deepEqual(boardingVaccinationProblem([{ name: "BrdDog", vaccinationStatus: "verified" }, { name: "BrdPup", vaccinationStatus: "not_provided" }]),
+    { code: "vaccination_required", message: "Boarding needs verified vaccination for every pet. BrdPup isn't verified yet - add the vaccination record in the pet details, or choose another pet." });
+  assert.match(boardingVaccinationProblem([{ name: "Kiwi", vaccinationStatus: "pending" }, { name: "Momo" }]).message, /Kiwi and Momo aren't verified yet/);
+  assert.equal(boardingPetNote({ vaccinationStatus: "not_provided" }), "Vaccination not verified - Boarding needs it");
+  assert.equal(boardingPetNote({ vaccinationStatus: "pending" }), "Vaccination record pending - Boarding needs it verified");
+  assert.equal(boardingPetNote({ vaccinationStatus: "verified" }), null);
+});
+for (const mode of ["boarding", "sitting"]) test(`${mode}: the check-in picker stops at the 180-day horizon (IST) and the Plan step states the booking window`, () => {
+  const before = [indiaDateOffset(1), indiaDateOffset(180)];
+  const html = renderToStaticMarkup(React.createElement(StayFlow, { mode, customer: { customerId: "test-customer", customerName: "Test", phone: "9000000000" } }));
+  const after = [indiaDateOffset(1), indiaDateOffset(180)];
+  const input = html.match(/<label[^>]*>Check-in date<input[^>]*>/)?.[0] ?? "";
+  const bounds = [input.match(/ min="([^"]+)"/)?.[1], input.match(/ max="([^"]+)"/)?.[1]];
+  assert.ok([before, after].some((expected) => expected[0] === bounds[0] && expected[1] === bounds[1]), `check-in ${input}`);
+  assert.match(html, /Book at least 24 hours ahead\. You can book up to 180 days ahead\./);
 });
