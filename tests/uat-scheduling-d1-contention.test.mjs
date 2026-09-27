@@ -125,7 +125,10 @@ test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger
   assert.match(route,/await db\.batch\(\[ledgerStatement,exceptionsStatement\]\)/);
   assert.match(route,/LEFT JOIN \(SELECT payment_id,COUNT\(\*\) open_reconciliation_exceptions/);
   assert.doesNotMatch(route,/const recentExceptions=await db\.prepare/);
-  assert.match(reconciliation,/reconciliationTablesEnsuring=new WeakMap/);
+  // Once per isolate, ready-set only (lib/d1-ensure-once.js): a checkout cancelled mid-setup must not leave its
+  // unsettled promise for later checkouts to join (executed in tests/taxi-booking-latency.test.mjs).
+  assert.match(reconciliation,/ensureD1Once\(db,"payment_reconciliation_tables",\(\)=>ensurePaymentReconciliationTablesUncached\(db\)\)/);
+  assert.doesNotMatch(reconciliation,/reconciliationTablesEnsuring/);
   assert.match(reconciliation,/reconciliationSchemaReady/);
 });
 
