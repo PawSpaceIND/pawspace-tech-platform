@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 type Fixture = {
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
-  couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean;
+  couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean; couponDiscount?: number;
   captured: boolean; confirmed: boolean; locationReady: boolean; unauthorized: boolean; quoteSource: string;
   previewGate?: Promise<void>; coverageGate?: Promise<void>; previewStarted: boolean; coverageStarted: boolean;
   booking: Record<string, unknown> | null; reservation: Record<string, unknown> | null;
@@ -56,7 +56,8 @@ async function fixture(page: Page) {
       const input = body.input as { code: string; orderValue: number }, valid = state.couponValid !== false;
       state.couponStarted = true;
       if (state.couponGate) await state.couponGate;
-      return reply(valid ? { valid: true, code: input.code, discount: 200, quoteId: `CPQ-${input.code}`, finalAmount: input.orderValue - 200 }
+      const discount = state.couponDiscount ?? 200;
+      return reply(valid ? { valid: true, code: input.code, discount, quoteId: `CPQ-${input.code}`, finalAmount: input.orderValue - discount }
         : { valid: false, discount: 0, error: "The previous coupon is no longer available" });
     }
     if (path === "/api/canonical-bookings") {
@@ -349,5 +350,18 @@ for (const oldValid of [true, false]) test(`G08: late ${oldValid ? "success" : "
   await expect(page.getByText(/Coupon OLD200/)).toHaveCount(0);
   await expect(couponBox.getByRole("textbox")).toHaveValue("NEW200");
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+});
+
+
+test("G08: V2 review preserves paise in the discount and payable total", async ({ page }) => {
+  const state = await fixture(page); state.couponDiscount = 189.90;
+  await previewCare(page);
+  const box = page.getByRole("group", { name: "Coupon code", exact: true });
+  await box.getByRole("textbox").fill("PRECISE10");
+  await box.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.getByText(/Coupon PRECISE10/)).toHaveText("Coupon PRECISE10 · −₹189.9");
+  await expect(page.getByText("₹1,709.1", { exact: true })).toBeVisible();
+  await expect(page.getByText("₹1,709", { exact: true })).toHaveCount(0);
   expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
 });
