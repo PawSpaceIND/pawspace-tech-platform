@@ -247,7 +247,7 @@ try {
           expect: (fact, body) => { const status = fact?.paymentStatus ?? body?.data?.booking?.payment_status; const captured = body?.data?.booking?.captured_amount ?? fact?.recon?.captured_amount ?? 0; return [[`Payment ${A.label(status)}`, new RegExp(`Payment\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Captured ${A.inr0(captured)}`, null]]; },
           apiCheck: (fact, body) => { if (!fact || !body?.data?.booking) return null; const collected = A.COLLECTED_STATUSES.includes(fact.paymentStatus) ? Number(fact.recon?.captured_amount ?? fact.capturedSum) : 0; return A.same(body.data.booking.captured_amount, collected) ? null : `Finance shows captured ₹${body.data.booking.captured_amount}, D1 reconciliation ₹${collected}`; } },
         { service: "pet_taxi", path: "/team/finance/taxi", heading: /Taxi payment & reconciliation/i, journey: "Taxi finance workspace shows this run's rides (founder)", apiPath: id => `/api/taxi-finance?bookingId=${encodeURIComponent(id)}`,
-          expect: (fact, body) => { const status = fact?.b?.booking_status ?? body?.data?.booking?.status; return [[`Booking ${A.label(status)}`, new RegExp(`Booking\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Booking value ${A.inr0(fact?.b?.booking_total ?? body?.data?.booking?.total_amount)}`, null]]; },
+          expect: (fact, body) => { const status = fact?.b?.booking_status ?? body?.data?.booking?.status; return [[`Booking ${A.label(status)}`, new RegExp(`Booking\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Booking value ${A.inr2(fact?.b?.booking_total ?? body?.data?.booking?.total_amount)}`, null]]; },
           apiCheck: (fact, body) => fact && body?.data?.booking && String(body.data.booking.payment_status) !== fact.paymentStatus ? `API payment_status ${body.data.booking.payment_status} ≠ D1 ${fact.paymentStatus}` : null },
       ];
       for (const ws of workspaces) {
@@ -325,8 +325,8 @@ try {
           const refundCount = fact ? fact.refundCases.length : (row?.refunds || []).length;
           const checks = [
             [`PAYMENT STATUS ${A.pretty(status)}`, new RegExp(`PAYMENT STATUS\\s+${A.pretty(status).replace(/ /g, "\\s+")}`, "i")],
-            [`amount ${A.inr0(amount)}`, new RegExp(A.inr0(amount).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
-            [`Available to collect ${A.inr0(due)}`, new RegExp(`Available to collect\\s+${A.inr0(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
+            [`amount ${A.inr2(amount)}`, new RegExp(A.inr2(amount).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
+            [`Available to collect ${A.inr2(due)}`, new RegExp(`Available to collect\\s+${A.inr2(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
             [`Refund cases ${refundCount}`, new RegExp(`Refund cases\\s+${refundCount}\\b`, "i")],
           ];
           const missing = checks.filter(([, pattern]) => !pattern.test(text)).map(([expectedText]) => expectedText);

@@ -804,5 +804,6 @@ export function factSummary(fact) {
 
 /** Formatting shared by the INR screens (Intl, en-IN, no decimals) so UI text can be matched exactly. */
 export const inr0 = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(value || 0));
+export const inr2 = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(round2(value));
 export const pretty = (value) => String(value || "Not recorded").replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 export const label = (value, fallback = "not configured") => String(value || fallback).replaceAll("_", " ");
