@@ -65,3 +65,12 @@ test('a thousand-booking report reads each money/CX ledger once, preserving all 
  for(const table of ['booking_payments','stay_payment_schedules','booking_refund_cases']){const reads=w.selects.filter(x=>x.query.includes('FROM '+table+' WHERE'));assert.equal(reads.length,1,table);assert.deepEqual(reads[0].args,['2026-07-01','2026-07-31\uffff']);}
  w.sql.close();
 });
+
+test('an obsolete home bootstrap cannot publish account, availability, errors or loading completion',async()=>{
+ const account=deferred(),availability=deferred();let current=true;const published=[];
+ const task=bootstrapHome({session:async()=>true,account:()=>account.promise,availability:()=>availability.promise,isCurrent:()=>current,onAccount:x=>published.push(x),onAvailability:x=>published.push(x),onAccountError:x=>published.push(x),onAvailabilityError:x=>published.push(x),onAccountSettled:()=>published.push('settled')});
+ await flush();current=false;account.resolve('old family');availability.reject(Error('old failure'));await task;assert.deepEqual(published,[]);
+});
+test('poll failures surface status, a successful retry clears it, cleanup emits no late status',async()=>{
+ const messages=[];let fail=true;const poll=createTranscriptPoll(async()=>{if(fail)throw Error('offline');},10000,x=>messages.push(x));await poll.tick();assert.match(messages[0],/Retrying/);fail=false;await poll.tick();assert.equal(messages[1],'');poll.stop();await poll.tick();assert.equal(messages.length,2);
+});

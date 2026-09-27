@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CustomerAccountRecord } from "../../lib/customer-account";
 import {
   endV2CustomerSession,
@@ -67,13 +67,16 @@ export default function PawSpaceV2() {
   const [authBusy, setAuthBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
+  const bootstrapGeneration = useRef(0);
   const bootstrap = useCallback(async () => {
+    const generation = ++bootstrapGeneration.current;
     setLoading(true);
     setLoadError("");
     setServiceError("");
     // Publish each independent section as soon as it is ready. Account loading depends only
     // on identity, never on service availability (and service links never wait for identity).
     await bootstrapHome({
+      isCurrent: () => generation === bootstrapGeneration.current,
       session: loadV2CustomerSession,
       account: () => loadV2CustomerAccount(),
       availability: loadV2ServiceAvailability,
@@ -91,7 +94,7 @@ export default function PawSpaceV2() {
     });
   }, []);
 
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+  useEffect(() => { void bootstrap(); return () => { bootstrapGeneration.current += 1; }; }, [bootstrap]);
 
   const enabledByCode = useMemo(() => new Map((availability || []).map(item => [item.code, item.enabled])), [availability]);
   const upcoming = useMemo(() => {
@@ -139,6 +142,8 @@ export default function PawSpaceV2() {
   const signOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
+    bootstrapGeneration.current += 1;
+    setLoading(false);
     try {
       await endV2CustomerSession();
       setAccount(null);

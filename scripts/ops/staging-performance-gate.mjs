@@ -230,6 +230,7 @@ const byOperationUnder750 = operationThresholds(metric);
 const allOperationsUnder750 = Object.values(byOperationUnder750).every(Boolean);
 const report = {
   runId:RUN_ID, stagingUrl:BASE,
+  buildSha:process.env.EXPECTED_SHA||null,harnessSha:process.env.GITHUB_SHA||null,
   setup:{assignmentCandidatesAttempted:candidateCursor,expectedCapacityMisses:skippedCapacityCandidates},
   counts:{assignments:prepared.length,bookings:bookingResults.length,duplicatePaymentAttempts:replayResults.length,webhookReplays:webhookResults.length,ledgerQueries:ledgerOk},
   metrics:{totalRequests,p95Ms:Number(p95.toFixed(2)),errorRate:Number(errorRate.toFixed(6)),byOperation:metric},

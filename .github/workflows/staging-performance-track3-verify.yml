@@ -11,8 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: staging-performance-track3-remediation
+  group: pawspace-staging-sweep
   cancel-in-progress: false
+  queue: max
 
 env:
   EXPECTED_SHA: 43156cd1900177831f33c25a7e81fe46a5e96601
@@ -104,6 +105,8 @@ jobs:
           console.log(JSON.stringify(evidence,null,2));
           if(response.status!==200||body?.status!=='ok') process.exit(1);
           NODE
+      # This historical remediation harness intentionally tests a pinned build. Both harness files
+      # come from the same immutable triggering commit; evidence records buildSha and harnessSha.
       - name: Materialize committed Track 3 gate
         run: |
           mkdir -p scripts/ops

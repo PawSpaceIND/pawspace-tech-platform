@@ -44,16 +44,16 @@
       "conditions": 33
     },
     "app/v2/chat/page.tsx": {
-      "sha256": "024bc676e95153335323bb611c86466c4449de011067b06b81957e359a72ebc5",
-      "functions": 40,
-      "declarations": 62,
+      "sha256": "745284b63bf72a1b062cf0151b74f04dab2d510591f1d21b562d9438a55b278e",
+      "functions": 41,
+      "declarations": 65,
       "interactionProps": 15,
-      "conditions": 25
+      "conditions": 29
     },
     "app/v2/page.tsx": {
-      "sha256": "f0dfac484585b3792f5767ac833232403e3e17fda64383ebda24b063fc360b12",
-      "functions": 28,
-      "declarations": 33,
+      "sha256": "78778fb1f97009d6ac91b1e9678caf7a33b92492a8776bbaf2e6d9f8cf569a8c",
+      "functions": 30,
+      "declarations": 35,
       "interactionProps": 30,
       "conditions": 5
     },
@@ -97,9 +97,9 @@
         "conditions": 7
       },
       "app/v2/page.tsx": {
-        "sha256": "528865701d28fa405970c69b55f688368a714f3687cd078f3d075964da8756d9",
-        "functions": 28,
-        "declarations": 33,
+        "sha256": "c3c588b9e5d2b048a3ea26f1ece02cf404a5cb1183608ca67f77e878e5e0d64d",
+        "functions": 30,
+        "declarations": 35,
         "interactionProps": 16,
         "conditions": 5
       }
