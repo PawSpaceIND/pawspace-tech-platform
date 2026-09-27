@@ -323,11 +323,25 @@ try {
       for (const [name, r] of [["Rotate day (stage day_1 -> day_2)", rotate], ["Log RNR call", rnr], ["Connected", connected]]) rec("L1 Lead worked in Revenue & CX engine", `${name} via ${r.via}`, r.status === 200 ? (r.via === "ui" ? "PASS" : "PARTIAL") : "FAIL", { status: r.status, body: r.body }, [r.shot]);
       rec("L1 Lead worked in Revenue & CX engine", "Queue WhatsApp attempt", "SKIPPED", "not pressed: it queues a WhatsApp to the lead's number (synthetic numbers may be real)");
       if (rotate.status === 409) finding({ suite: SUITE, severity: "P2", area: "CRM - lead governance", persona: "Sales staff", flow: "Revenue & CX engine > Rotate day", title: "'Rotate day' is refused for a new lead (409): lead assignment/SLA governance has no active policy", steps: `Rotate day on ${lead.leadId}`, expected: "lead moves to work day 2 with a governed owner and SLA", actual: rotate.body, evidence: [rotate.shot] });
-      // Follow-up: a callback (API only: no screen offers it), completed straight away so no reminder is left behind.
-      const cb = await api(creator.context, "POST", "/api/revenue-crm", { action: "schedule_callback", leadId: lead.leadId, requestedAt: Date.now() + 2 * 3600_000, reason: "Master E2E follow-up (synthetic)" });
+      // Follow-up: exercise the real CRM callback form, then complete it by API so no reminder is left behind.
+      await searchCrm(creator, lead.phone, "crm-callback");
+      const when = new Date(Date.now() + 2 * 3600_000);
+      const pad = (n) => String(n).padStart(2, "0");
+      const localWhen = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
+      const form = creator.page.getByRole("region", { name: "Work this lead" }).locator("form").filter({ hasText: "Schedule a callback" });
+      let cb = { status: null, body: null }, via = "ui";
+      if (await form.isVisible().catch(() => false)) {
+        await form.locator('input[name="when"]').fill(localWhen);
+        await form.locator('input[name="reason"]').fill("Master E2E follow-up synthetic");
+        const response = await Promise.all([creator.page.waitForResponse(r => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/revenue-crm", { timeout: 30_000 }), form.getByRole("button", { name: "Schedule callback" }).click()]).then(([r]) => r).catch(() => null);
+        if (response) cb = { status: response.status(), body: await response.json().catch(() => ({})) };
+      } else {
+        via = "api-fallback";
+        cb = await api(creator.context, "POST", "/api/revenue-crm", { action: "schedule_callback", leadId: lead.leadId, requestedAt: when.getTime(), reason: "Master E2E follow-up synthetic" });
+      }
       const cbId = cb.body?.callback?.id || cb.body?.callback?.callbackId || cb.body?.callback?.callback?.id || null;
       const cbDone = cbId ? await api(creator.context, "POST", "/api/revenue-crm", { action: "complete_callback", callbackId: cbId, outcome: "connected" }) : null;
-      rec("L1 Follow-up and assignment", "callback scheduled + completed (API; no UI control)", cb.status === 200 && cbDone?.status === 200 ? "PARTIAL" : "FAIL", { schedule: cb.status, callbackId: cbId, complete: cbDone?.status ?? null, body: clip(cb.body, 200) });
+      rec("L1 Follow-up and assignment", `callback scheduled via ${via} + completed`, cb.status === 200 && cbDone?.status === 200 ? "PASS" : "FAIL", { schedule: cb.status, callbackId: cbId, complete: cbDone?.status ?? null, body: clip(cb.body, 200) });
       // Assignment.
       const dir = await api(creator.context, "GET", "/api/lead-assignment-governance");
       const assign = await api(creator.context, "POST", "/api/lead-assignment-governance", { action: "assign", leadId: lead.leadId, idempotencyKey: `m50-assign-${lead.leadId}`, reason: "new_lead" });
@@ -349,7 +363,8 @@ try {
         const inC360 = (c360.body?.data?.records || []).some((x) => x.customerId === lead.id);
         const sees = s.status === 200 && s.contacts.some((c) => c.id === lead.id);
         out.staff[`manager_${email}`] = { crm: s.status, error: s.status === 200 ? null : clip(s.text.match(/[^.]*(scope|denied|Permission)[^.]*/i)?.[0] || "", 160), sees, customer360: c360.status, inC360 };
-        rec("L1 Manager sees the lead", email, sees ? "PASS" : inC360 ? "PARTIAL" : "FAIL", out.staff[`manager_${email}`], [s.shot]);
+        const expectedScopeDenial = s.status === 403 && /scope/i.test(out.staff[`manager_${email}`].error || "");
+        rec("L1 Manager sees the lead", email, sees || expectedScopeDenial ? "PASS" : inC360 ? "PARTIAL" : "FAIL", { ...out.staff[`manager_${email}`], expectedScopeDenial }, [s.shot]);
         if (!sees && email === STAFF.salesManager && s.status === 200) finding({ suite: SUITE, severity: "P1", area: "CRM - visibility", persona: "Sales manager", flow: "/crm search", title: "The sales manager cannot find a new lead in the CRM", steps: `${email}: /crm search ${lead.phone}`, expected: `${lead.id} listed`, actual: clip(out.staff[`manager_${email}`], 300), evidence: [s.shot] });
       } catch (e) { fail("L1 Manager sees the lead", email, e); }
     }

@@ -155,10 +155,10 @@ for (const check of GLOBAL_CHECKS) {
     if (afterDeploy.some(row => row.__sev === "P0")) severity = "P0";
     if (afterDeploy.some(row => runIds.has(String(row.booking_id || ""))) && check.runSeverity) severity = check.runSeverity;
     const list = rows.map(row => `${runIds.has(String(row.booking_id || "")) ? "[this run] " : ""}${check.fmt(row)}${when(row)}`);
-    // Decision (main session): rows written before the live deploy are information only (PARTIAL, no finding).
-    const result = errors.length && !rows.length ? "BLOCKED" : afterDeploy.length ? "FAIL" : rows.length ? "PARTIAL" : "PASS";
+    // Rows written before the live deploy are historical information only: they do not make the current build partial.
+    const result = errors.length && !rows.length ? "BLOCKED" : afterDeploy.length ? "FAIL" : "PASS";
     const since = liveSince ? `; live deploy ${new Date(liveSince).toISOString().slice(0, 16)}Z (${String(deploy?.sha || "").slice(0, 8)}): ${afterDeploy.length} after, ${rows.length - afterDeploy.length} before` : "";
-    const detail = result === "BLOCKED" ? `harness: D1 read failed: ${errors.join(" · ")}` : result === "PARTIAL" ? `before deploy: ${rows.length} row(s) left by the earlier build${since}: ${list.join(" · ")}` : rows.length ? `${rows.length} offending row(s)${ours.length ? ` (${ours.length} from this run)` : ""}${since}: ${list.join(" · ")}` : `none${missing.length ? ` (tables not created yet: ${missing.join(", ")})` : ""}${errors.length ? `; partial read errors: ${errors.join(" · ")}` : ""}`;
+    const detail = result === "BLOCKED" ? `harness: D1 read failed: ${errors.join(" · ")}` : afterDeploy.length ? `${rows.length} offending row(s)${ours.length ? ` (${ours.length} from this run)` : ""}${since}: ${list.join(" · ")}` : rows.length ? `PASS for current build; ${rows.length} historical row(s) pre-date the live deploy${since}: ${list.join(" · ")}` : `none${missing.length ? ` (tables not created yet: ${missing.join(", ")})` : ""}${errors.length ? `; partial read errors: ${errors.join(" · ")}` : ""}`;
     out.global.push({ journey: check.journey, result, rows, errors, missing, afterDeploy: afterDeploy.length });
     record({ suite: SUITE, journey: check.journey, combo: "staging D1, last 7 days", result, detail: clip(detail), evidence: EVIDENCE });
     const oursAfter = afterDeploy.filter(row => runIds.has(String(row.booking_id || ""))).length;
