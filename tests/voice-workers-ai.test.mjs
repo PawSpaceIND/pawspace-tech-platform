@@ -39,3 +39,22 @@ test("the in-app voice-speech route is fail-closed and permission-gated", () => 
   assert.match(route, /action==="synthesize"/);
   assert.match(route, /sameOrigin\(request\)/);
 });
+
+// Exercise the binding boundary: matching its source text alone cannot prove fail-closed behavior.
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__WORKERS_AI_BINDING_TEST_DB__');
+const {workersAiConfigured,resolveWorkersAiStt,resolveWorkersAiTts}=await import('../lib/voice-workers-ai.ts');
+test('missing or malformed AI bindings never expose connected speech providers',()=>{
+ for(const env of [{},{AI:null},{AI:{}},{AI:{run:'configured'}}]){
+  assert.equal(workersAiConfigured(env),false);
+  assert.notEqual(resolveWorkersAiStt(env).status,'connected');
+  assert.notEqual(resolveWorkersAiTts(env).status,'connected');
+ }
+});
+test('a callable AI binding connects lazily without placing a provider request',()=>{
+ let calls=0;const env={AI:{run:async()=>{calls++;return {text:'test'};}}};
+ assert.equal(workersAiConfigured(env),true);
+ assert.equal(resolveWorkersAiStt(env).status,'connected');
+ assert.equal(resolveWorkersAiTts(env).status,'connected');
+ assert.equal(calls,0);
+});
