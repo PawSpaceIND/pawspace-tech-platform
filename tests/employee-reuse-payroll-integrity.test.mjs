@@ -112,3 +112,53 @@ test("concurrent different keys cannot create two runs for an overlapping period
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payroll_runs").get().n,1);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payroll_integrity_checks").get().n,0);
 });
+
+for(const [field,value]of[["amount",29999],["component_code","ALTERED"],["source_reference","OTHER"],["policy_version","salary_structure:other"],["label","Changed without recalculation"]])test(`replay refuses changed payroll line ${field} without a line-count change`,async t=>{
+ const w=await world(t);await calculate(w);w.sqlite.prepare(`UPDATE payroll_result_lines SET ${field}=?`).run(value);
+ await assert.rejects(()=>calculate(w),e=>e instanceof Response&&e.status===409);
+});
+test("payment preparation refuses a missing employee payslip",async t=>{
+ const w=await world(t),runId=await approved(w);w.sqlite.prepare("DELETE FROM payslips WHERE run_id=?").run(runId);
+ await assert.rejects(()=>payroll.prepareSandboxPaymentBatch(w.db,{runId,actorId:"finance@audit.test"}),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payroll_payment_batches").get().n,0);
+});
+test("replay refuses internally consistent but changed result amounts",async t=>{
+ const w=await world(t);await calculate(w);w.sqlite.prepare("UPDATE employee_payroll_results SET gross_earnings=gross_earnings+1,net_pay=net_pay+1").run();
+ await assert.rejects(()=>calculate(w),e=>e instanceof Response&&e.status===409);
+});
+
+test("draft payroll is not an approved cost or employee payslip",async t=>{
+ const w=await world(t),r=await calculate(w),self=await import("../lib/employee-self-service.ts"),reports=await import("../lib/people-reports.ts");
+ const input={actorEmail:"finance@audit.test",roleCode:"finance",permissions:["payroll.view"],periodStart:START,periodEnd:END};
+ assert.equal((await reports.peopleReports(w.db,input)).payroll.register.length,0);
+ assert.equal((await self.employeeSelfServiceView(w.db,{email:"employee@audit.test"})).payslips.list.length,0);
+ await payroll.reviewPayroll(w.db,{runId:r.run.id,actorId:"reviewer@audit.test"});await payroll.approvePayroll(w.db,{runId:r.run.id,actorId:"approver@audit.test"});
+ const approved=await reports.peopleReports(w.db,input);assert.equal(approved.payroll.register.length,1);assert.equal(approved.payroll.runTotals[0].netPay,30000);
+ assert.equal((await self.employeeSelfServiceView(w.db,{email:"employee@audit.test"})).payslips.list.length,1);
+});
+test("historical conflicting approved runs are excluded rather than double-counted",async t=>{
+ const w=await world(t),runId=await approved(w),reports=await import("../lib/people-reports.ts"),self=await import("../lib/employee-self-service.ts");
+ w.sqlite.prepare("INSERT INTO payroll_runs SELECT 'HISTORY-DUP','history-dup',period_start,period_end,status,input_snapshot_json,created_by,created_at,reviewed_by,reviewed_at,approved_by,approved_at,payment_prepared_at FROM payroll_runs WHERE id=?").run(runId);
+ w.sqlite.prepare("INSERT INTO employee_payroll_results SELECT 'RESULT-DUP','HISTORY-DUP',employee_id,structure_id,gross_earnings,total_deductions,reimbursements,employer_cost,net_pay,source_snapshot_json FROM employee_payroll_results WHERE run_id=?").run(runId);
+ const report=await reports.peopleReports(w.db,{actorEmail:"finance@audit.test",roleCode:"finance",permissions:["payroll.view"],periodStart:START,periodEnd:END});
+ assert.equal(report.payroll.register.length,0);assert.equal(report.payroll.runTotals.length,0);
+ assert.equal((await self.employeeSelfServiceView(w.db,{email:"employee@audit.test"})).payslips.list.length,0);
+});
+
+test("partial-month salary requires an explicit approved calculation policy",async t=>{
+ const w=await world(t);w.sqlite.prepare("UPDATE employees SET joined_at=? WHERE id=?").run(Date.parse("2026-09-16T00:00:00+05:30"),w.employeeId);
+ await assert.rejects(()=>calculate(w),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payroll_runs").get().n,0);
+});
+test("approved calendar proration pays 15 of 30 days for a 16 September joiner",async t=>{
+ const w=await world(t),policy=await import("../lib/payroll-proration.ts");w.sqlite.prepare("UPDATE employees SET joined_at=? WHERE id=?").run(Date.parse("2026-09-16T00:00:00+05:30"),w.employeeId);
+ const structure=w.sqlite.prepare("SELECT id FROM salary_structure_versions").get();await policy.saveSalaryCalculationPolicy(w.db,{structureId:structure.id,mode:"calendar_days",componentCodes:["BASIC"],approvalReference:"QA-POLICY-1",actorId:"finance@audit.test"});
+ const result=await calculate(w);assert.equal(result.results[0].net_pay,15000);assert.equal(JSON.parse(result.results[0].source_snapshot_json).proration.employedDays,15);
+ assert.equal((await calculate(w)).results[0].net_pay,15000);
+});
+test("a deliberately approved full-period policy is explicit and immutable after use",async t=>{
+ const w=await world(t),policy=await import("../lib/payroll-proration.ts");w.sqlite.prepare("UPDATE employees SET joined_at=? WHERE id=?").run(Date.parse("2026-09-16T00:00:00+05:30"),w.employeeId);
+ const structure=w.sqlite.prepare("SELECT id FROM salary_structure_versions").get();await policy.saveSalaryCalculationPolicy(w.db,{structureId:structure.id,mode:"full_period",componentCodes:[],approvalReference:"QA-FULL-PERIOD",actorId:"finance@audit.test"});
+ assert.equal((await calculate(w)).results[0].net_pay,30000);
+ await assert.rejects(()=>policy.saveSalaryCalculationPolicy(w.db,{structureId:structure.id,mode:"calendar_days",componentCodes:["BASIC"],approvalReference:"QA-CHANGE",actorId:"finance@audit.test"}),e=>e instanceof Response&&e.status===409);
+});

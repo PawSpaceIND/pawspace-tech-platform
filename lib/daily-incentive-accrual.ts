@@ -26,32 +26,48 @@ export function istMonthStart(ms=Date.now()){return istDate(ms).slice(0,7)+"-01"
 export async function ensureDailyIncentiveAccrualTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS daily_incentive_accruals (id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,accrual_date TEXT NOT NULL,base_vertical TEXT NOT NULL,achieved_value REAL NOT NULL,base_incentive REAL NOT NULL,blitz INTEGER NOT NULL DEFAULT 0,incentive REAL NOT NULL,status TEXT NOT NULL DEFAULT 'accrued',source TEXT NOT NULL DEFAULT 'auto_daily_sweep',created_at INTEGER NOT NULL,UNIQUE(employee_id,accrual_date))"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_daily_accrual_emp ON daily_incentive_accruals(employee_id,accrual_date)"),
+ db.prepare("CREATE TABLE IF NOT EXISTS daily_incentive_sweep_pending (accrual_date TEXT PRIMARY KEY,first_attempt_at INTEGER NOT NULL,last_attempt_at INTEGER NOT NULL,failed_employees INTEGER NOT NULL DEFAULT 0)"),
  db.prepare("CREATE TABLE IF NOT EXISTS daily_incentive_sweep_runs (accrual_date TEXT PRIMARY KEY,employee_count INTEGER NOT NULL,accrued_total REAL NOT NULL,completed_at INTEGER NOT NULL)"),
 ]);}
 
 /** Accrue the previous complete IST day's sales incentive for every configured employee. One-time per day, idempotent. */
 export async function runDailyIncentiveAccrualSweep(db:Db,input:{asOf?:number;date?:string}={}){
  await ensureDailyIncentiveAccrualTables(db);
- const asOf=Number(input.asOf)||Date.now();
- const date=/^\d{4}-\d{2}-\d{2}$/.test(text(input.date))?text(input.date):istDate(asOf-86400000);
- // sales base table may not exist yet on a cold DB
- const hasBase=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sales_employee_base'").first<Row>().catch(()=>null);
+ const asOf=input.asOf??Date.now(),date=text(input.date)||istDate(asOf-86400000);
+ if(!Number.isFinite(asOf)||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(`${date}T00:00:00Z`))||new Date(`${date}T00:00:00Z`).toISOString().slice(0,10)!==date||date>=istDate(asOf))throw new Error("Accrual requires a completed IST calendar day");
+ const hasBase=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sales_employee_base'").first<Row>();
  if(!hasBase)return{date,processed:0,accruedTotal:0,skipped:true,reason:"no_sales_base_table"};
- const marker=await db.prepare("SELECT accrual_date FROM daily_incentive_sweep_runs WHERE accrual_date=?").bind(date).first<Row>();
- if(marker)return{date,processed:0,accruedTotal:0,skipped:true,reason:"already_processed"};
- const employees=await db.prepare("SELECT DISTINCT employee_id FROM sales_employee_base WHERE effective_from<=? AND (effective_until IS NULL OR effective_until>?)").bind(date,date).all<Row>();
- let processed=0,accruedTotal=0;
- for(const e of employees.results){
-  const employeeId=text(e.employee_id);
-  const result=await computeDailySalesIncentive(db,{employeeId,date,actorId:"system:daily-incentive-sweep"}).catch(()=>null);
-  if(!result)continue;
-  const write=await db.prepare("INSERT INTO daily_incentive_accruals (id,employee_id,accrual_date,base_vertical,achieved_value,base_incentive,blitz,incentive,status,source,created_at) VALUES (?,?,?,?,?,?,?,?, 'accrued','auto_daily_sweep',?) ON CONFLICT(employee_id,accrual_date) DO NOTHING")
-    .bind(uid("DIA"),employeeId,date,result.baseVertical,money(result.achievedValue),money(result.baseIncentive),result.blitz?1:0,money(result.incentive),asOf).run();
-  if(num(write.meta?.changes)>0){processed++;accruedTotal=money(accruedTotal+money(result.incentive));}
+ // Retain unfinished work across calendar days. Each tick recovers a bounded backlog in addition
+ // to yesterday, so a transient failure cannot be forgotten at midnight.
+ const backlog=(await db.prepare("SELECT accrual_date FROM daily_incentive_sweep_pending WHERE accrual_date<? ORDER BY accrual_date LIMIT 7").bind(date).all<Row>()).results;
+ const days=[...new Set([...backlog.map(row=>text(row.accrual_date)),date])];
+ const outcomes:Array<{date:string;processed:number;accruedTotal:number;employeesConsidered:number;failed:number;skipped:boolean;reason?:string}>=[];
+ for(const day of days){
+  const employees=(await db.prepare("SELECT DISTINCT employee_id FROM sales_employee_base WHERE effective_from<=? AND (effective_until IS NULL OR effective_until>?)").bind(day,day).all<Row>()).results;
+  const marker=await db.prepare("SELECT accrual_date FROM daily_incentive_sweep_runs WHERE accrual_date=?").bind(day).first<Row>();
+  const missingSql="SELECT DISTINCT b.employee_id FROM sales_employee_base b WHERE b.effective_from<=? AND (b.effective_until IS NULL OR b.effective_until>?) AND NOT EXISTS(SELECT 1 FROM daily_incentive_accruals a WHERE a.employee_id=b.employee_id AND a.accrual_date=?)";
+  const missing=(await db.prepare(missingSql).bind(day,day,day).all<Row>()).results;
+  if(marker&&!missing.length){await db.prepare("DELETE FROM daily_incentive_sweep_pending WHERE accrual_date=?").bind(day).run();outcomes.push({date:day,processed:0,accruedTotal:0,employeesConsidered:employees.length,failed:0,skipped:true,reason:"already_processed"});continue;}
+  await db.prepare("INSERT INTO daily_incentive_sweep_pending (accrual_date,first_attempt_at,last_attempt_at,failed_employees) VALUES (?,?,?,0) ON CONFLICT(accrual_date) DO UPDATE SET last_attempt_at=excluded.last_attempt_at").bind(day,asOf,asOf).run();
+  let processed=0,accruedTotal=0;
+  for(const e of missing){
+   const employeeId=text(e.employee_id);
+   try{
+    const result=await computeDailySalesIncentive(db,{employeeId,date:day,actorId:"system:daily-incentive-sweep"});
+    if(![result.achievedValue,result.baseIncentive,result.incentive].every(v=>Number.isFinite(Number(v))))throw new Error("Non-finite incentive evidence");
+    const write=await db.prepare("INSERT INTO daily_incentive_accruals (id,employee_id,accrual_date,base_vertical,achieved_value,base_incentive,blitz,incentive,status,source,created_at) VALUES (?,?,?,?,?,?,?,?, 'accrued','auto_daily_sweep',?) ON CONFLICT(employee_id,accrual_date) DO NOTHING").bind(uid("DIA"),employeeId,day,result.baseVertical,money(result.achievedValue),money(result.baseIncentive),result.blitz?1:0,money(result.incentive),asOf).run();
+    if(num(write.meta?.changes)>0){processed++;accruedTotal=money(accruedTotal+money(result.incentive));}
+   }catch{/* Missing evidence stays in the durable pending day; no completion is claimed. */}
+  }
+  const failed=(await db.prepare(missingSql).bind(day,day,day).all<Row>()).results.length;
+  await db.prepare("UPDATE daily_incentive_sweep_pending SET failed_employees=?,last_attempt_at=? WHERE accrual_date=?").bind(failed,asOf,day).run();
+  if(!failed)await db.batch([
+   db.prepare(`INSERT INTO daily_incentive_sweep_runs (accrual_date,employee_count,accrued_total,completed_at) SELECT ?,?,COALESCE((SELECT SUM(incentive) FROM daily_incentive_accruals WHERE accrual_date=?),0),? WHERE NOT EXISTS(${missingSql}) ON CONFLICT(accrual_date) DO UPDATE SET employee_count=excluded.employee_count,accrued_total=excluded.accrued_total,completed_at=excluded.completed_at`).bind(day,employees.length,day,asOf,day,day,day),
+   db.prepare(`DELETE FROM daily_incentive_sweep_pending WHERE accrual_date=? AND EXISTS(SELECT 1 FROM daily_incentive_sweep_runs WHERE accrual_date=?) AND NOT EXISTS(${missingSql})`).bind(day,day,day,day,day),
+  ]);
+  outcomes.push({date:day,processed,accruedTotal,employeesConsidered:employees.length,failed,skipped:false,...(failed?{reason:"employee_accrual_retry_pending"}:{})});
  }
- await db.prepare("INSERT INTO daily_incentive_sweep_runs (accrual_date,employee_count,accrued_total,completed_at) VALUES (?,?,?,?) ON CONFLICT(accrual_date) DO UPDATE SET employee_count=excluded.employee_count,accrued_total=excluded.accrued_total,completed_at=excluded.completed_at")
-  .bind(date,employees.results.length,accruedTotal,asOf).run();
- return{date,processed,accruedTotal,employeesConsidered:employees.results.length,skipped:false};
+ return{...outcomes[outcomes.length-1],recoveredDays:outcomes.slice(0,-1)};
 }
 
 /** Accrued daily incentive per employee over a window (for self-service / dashboards). Cold-DB safe. */
@@ -94,6 +110,11 @@ export async function approveSalesIncentivePeriodResult(db:Db,input:{employeeId:
  const actor=text(input.actorId).toLowerCase(),generator=text(row.generated_by).toLowerCase();if(actor.startsWith("system:"))throw new Error("Sales incentive approval requires a human actor");
  if(generator&&!generator.startsWith("system:")&&generator===actor)throw new Error("Sales incentive maker cannot approve their own generated result");
  const now=input.asOf??Date.now();if(input.monthStart>=istMonthStart(now))throw new Error("Sales incentive approval is allowed only after the month is complete");
+ await ensureDailyIncentiveAccrualTables(db);
+ const incomplete=await db.prepare("SELECT p.accrual_date FROM daily_incentive_sweep_pending p WHERE p.accrual_date>=? AND p.accrual_date<=? AND NOT EXISTS(SELECT 1 FROM daily_incentive_accruals a WHERE a.accrual_date=p.accrual_date AND a.employee_id=?) LIMIT 1").bind(input.monthStart,monthEnd(input.monthStart),input.employeeId).first<Row>();
+ if(incomplete)throw new Error("Daily incentive recovery is pending; reconcile accruals before monthly approval");
+ const actualDaily=await db.prepare("SELECT COALESCE(SUM(incentive),0) amount FROM daily_incentive_accruals WHERE employee_id=? AND accrual_date>=? AND accrual_date<=?").bind(input.employeeId,input.monthStart,monthEnd(input.monthStart)).first<Row>();
+ if(money(actualDaily?.amount)!==money(row.daily_accrued_total))throw new Error("Daily incentive evidence changed; regenerate the draft before approval");
  const claim=await db.prepare("UPDATE sales_incentive_period_results SET status='approved',approved_by=?,approved_at=? WHERE id=? AND status='draft'").bind(input.actorId,now,row.id).run();
  if(!num(claim.meta?.changes))return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:true};
  return{result:await db.prepare("SELECT * FROM sales_incentive_period_results WHERE id=?").bind(row.id).first<Row>(),duplicatePrevented:false};
