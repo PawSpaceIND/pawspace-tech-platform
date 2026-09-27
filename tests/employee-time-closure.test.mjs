@@ -20,3 +20,22 @@ test("multi-day leave requires an explicit calendar and matching units",async t=
 test("same-day half leave remains supported; self approval is refused",async t=>{const w=await world(t);await leavePolicy(w);const r=await leave(w,"2026-09-21","2026-09-21",0.5);await assert.rejects(()=>time.decideLeave(w.db,{requestId:r.id,decision:"approved",reason:"Self approval test",actorId:"EMPLOYEE@TIME.TEST"}));await time.decideLeave(w.db,{requestId:r.id,decision:"approved",reason:"Manager approval",actorId:"manager@time.test"});assert.equal(w.sqlite.prepare("SELECT balance FROM employee_leave_balances").get().balance,9.5);});
 test("correction requester cannot be the approver",async t=>{const w=await world(t);const r=await time.requestAdjustment(w.db,{employeeId:w.employeeId,workDate:"2026-09-20",requestedStatus:"present",requestedCheckIn:AT,requestedCheckOut:AT+3600000,reason:"Synthetic correction request",actorId:"employee@time.test"});await assert.rejects(()=>time.approveAdjustment(w.db,{requestId:r.id,actorId:"EMPLOYEE@TIME.TEST"}),e=>e instanceof Response&&e.status===409);await time.approveAdjustment(w.db,{requestId:r.id,actorId:"manager@time.test"});assert.equal(w.sqlite.prepare("SELECT status FROM attendance_adjustment_requests").get().status,"approved");});
 test("event and attendance summary roll back together on failure",async t=>{const w=await world(t);w.sqlite.exec("CREATE TRIGGER fail_day BEFORE INSERT ON attendance_days BEGIN SELECT RAISE(ABORT,'synthetic day failure'); END");await assert.rejects(()=>clock(w,"check_in",AT),/synthetic day failure/);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM attendance_events").get().n,0);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM attendance_snapshot_checks").get().n,0);});
+
+test("a late overnight checkout closes the original check-in day",async t=>{
+ const w=await world(t);await shift(w,"22:00","06:00",[]);
+ await clock(w,"check_in",Date.parse("2026-09-20T22:00:00+05:30"),"night-one-in");
+ const out=await clock(w,"check_out",Date.parse("2026-09-21T06:15:00+05:30"),"night-one-out");
+ assert.equal(out.workDate,"2026-09-20");
+ assert.equal(w.sqlite.prepare("SELECT worked_minutes FROM attendance_days WHERE work_date='2026-09-20'").get().worked_minutes,495);
+ await clock(w,"check_in",Date.parse("2026-09-21T22:00:00+05:30"),"night-two-in");
+ await clock(w,"check_out",Date.parse("2026-09-22T06:10:00+05:30"),"night-two-out");
+ const days=w.sqlite.prepare("SELECT work_date,worked_minutes,exception_code FROM attendance_days ORDER BY work_date").all();
+ assert.deepEqual(days.map(r=>[r.work_date,r.worked_minutes,r.exception_code]),[["2026-09-20",495,null],["2026-09-21",490,null]]);
+});
+test("legacy attendance without stored workday metadata retains its overnight pair",async t=>{
+ const w=await world(t);await shift(w,"22:00","06:00",[]);
+ await clock(w,"check_in",Date.parse("2026-09-20T22:00:00+05:30"),"legacy-night-in");
+ w.sqlite.prepare("UPDATE attendance_events SET detail_json='{}'").run();
+ await clock(w,"check_out",Date.parse("2026-09-21T06:30:00+05:30"),"legacy-night-out");
+ assert.equal(w.sqlite.prepare("SELECT worked_minutes FROM attendance_days WHERE work_date='2026-09-20'").get().worked_minutes,510);
+});

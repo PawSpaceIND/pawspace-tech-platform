@@ -25,13 +25,25 @@ export async function recordAttendance(db:Db,input:{employeeId:string;eventType:
  const prior=await db.prepare("SELECT id,employee_id,event_type FROM attendance_events WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
  if(prior){if(text(prior.employee_id)!==input.employeeId||text(prior.event_type)!==input.eventType)throw governedJsonError({error:"Attendance request key belongs to a different event"},409);return{eventId:text(prior.id),duplicatePrevented:true};}
  if(await isLocked(db,input.occurredAt))throw new Error("Payroll period is locked; use an attendance adjustment workflow");
- const calendar=await employeeAttendanceCalendar(db,input.employeeId,input.occurredAt),date=calendar.workDate(input.occurredAt,input.eventType);
+ const calendar=await employeeAttendanceCalendar(db,input.employeeId,input.occurredAt);
  const from=input.occurredAt-2*86400000,to=input.occurredAt+2*86400000;
- const nearby=(await db.prepare("SELECT event_type,occurred_at FROM attendance_events WHERE employee_id=? AND occurred_at>=? AND occurred_at<=? ORDER BY occurred_at,created_at").bind(input.employeeId,from,to).all<Row>()).results;
- const events=nearby.filter(row=>calendar.workDate(Number(row.occurred_at),text(row.event_type))===date),last=events[events.length-1];
+ const nearby=(await db.prepare("SELECT event_type,occurred_at,detail_json FROM attendance_events WHERE employee_id=? AND occurred_at>=? AND occurred_at<=? ORDER BY occurred_at,created_at").bind(input.employeeId,from,to).all<Row>()).results;
+ // The working day belongs to the check-in, not the checkout wall clock. Preserve the pair
+ // after midnight and after an overnight shift's scheduled end; lateness never invents pay.
+ let openDay:string|null=null;
+ const dated=nearby.map<Row&{workDate:string}>(row=>{
+  let stored="";try{const details=JSON.parse(text(row.detail_json)||"{}");if(details?.source==="employee_attendance_calendar"&&realCalendarDate(text(details.workDate)))stored=text(details.workDate);}catch{/* legacy metadata is resolved from the ordered pair */}
+  const kind=text(row.event_type),derived=calendar.workDate(Number(row.occurred_at),kind);
+  const workDate=stored||(kind==="check_out"&&openDay?openDay:derived);
+  if(kind==="check_in")openDay=workDate;else if(kind==="check_out")openDay=null;
+  return{...row,workDate};
+ });
+ const last=dated[dated.length-1];
  if(last&&Number(last.occurred_at)>input.occurredAt)throw governedJsonError({error:"Out-of-order attendance requires an approved correction"},409);
  if(input.eventType==="check_out"&&(!last||text(last.event_type)!=="check_in"))throw governedJsonError({error:"Check in before checking out"},409);
  if(input.eventType==="check_in"&&last&&text(last.event_type)==="check_in")throw governedJsonError({error:"An open check-in already exists; check out or request a correction"},409);
+ const date=input.eventType==="check_out"?last.workDate:calendar.workDate(input.occurredAt,input.eventType);
+ const events=dated.filter(row=>row.workDate===date);
  const id=uid("ATE"),now=Date.now(),all=[...events,{event_type:input.eventType,occurred_at:input.occurredAt}];
  const cin=all.find(row=>text(row.event_type)==="check_in"),cout=[...all].reverse().find(row=>text(row.event_type)==="check_out");
  let open:number|null=null,minutes=0;for(const event of all){if(text(event.event_type)==="check_in")open=Number(event.occurred_at);else if(open!==null){minutes+=Math.max(0,Math.floor((Number(event.occurred_at)-open)/60000));open=null;}}
@@ -39,7 +51,7 @@ export async function recordAttendance(db:Db,input:{employeeId:string;eventType:
  const writes=[
   db.prepare("INSERT INTO attendance_snapshot_checks (id,valid) SELECT ?,CASE WHEN (SELECT COUNT(*) FROM attendance_events WHERE employee_id=? AND occurred_at>=? AND occurred_at<=?)=? AND NOT EXISTS(SELECT 1 FROM people_period_locks WHERE status='locked' AND period_start<=? AND period_end>=?) THEN 1 ELSE 0 END").bind(check,input.employeeId,from,to,nearby.length,input.occurredAt,input.occurredAt),
   db.prepare("DELETE FROM attendance_snapshot_checks WHERE id=?").bind(check),
-  db.prepare("INSERT INTO attendance_events (id,idempotency_key,employee_id,event_type,occurred_at,source,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,input.idempotencyKey,input.employeeId,input.eventType,input.occurredAt,input.source||"self_service",input.actorId,now),
+  db.prepare("INSERT INTO attendance_events (id,idempotency_key,employee_id,event_type,occurred_at,source,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(id,input.idempotencyKey,input.employeeId,input.eventType,input.occurredAt,input.source||"self_service",JSON.stringify({source:"employee_attendance_calendar",workDate:date,timezone:calendar.timezone}),input.actorId,now),
   db.prepare("INSERT INTO attendance_days (id,employee_id,work_date,status,first_check_in,last_check_out,worked_minutes,exception_code,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(employee_id,work_date) DO UPDATE SET status=excluded.status,first_check_in=excluded.first_check_in,last_check_out=excluded.last_check_out,worked_minutes=excluded.worked_minutes,exception_code=excluded.exception_code,updated_at=excluded.updated_at").bind(uid("ATD"),input.employeeId,date,"present",cin?Number(cin.occurred_at):null,cout?Number(cout.occurred_at):null,open!==null?null:minutes,exception,now),
  ];
  try{await db.batch(writes);}catch(error){
