@@ -209,16 +209,31 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
 
 async function audit(env:GatewayEnv,actor:GatewayActor,request:Request,outcome:string,detail:unknown){await env.DB.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),actor.email,actor.roleCode,request.method,new URL(request.url).pathname,null,outcome,JSON.stringify(detail),Date.now()).run();}
 
+/** These staff read surfaces already require permissions. Keep the refusal and audit, but let
+ * StaffWorkspace show its existing sign-in recovery instead of incorrectly calling this a role
+ * restriction. Its route-level message is otherwise unreachable: the gateway refuses first.
+ * No shared customer/provider endpoint, write permission, or role definition is changed here.
+ */
+function permissionDeniedResponse(request:Request,env:GatewayEnv,actor:GatewayActor){
+ const staffRead=request.method==="GET"&&["/api/team-overview","/api/crm","/api/customer-360"].includes(new URL(request.url).pathname);
+ if(staffRead&&(actor.roleCode==="customer"||actor.roleCode==="service_provider")){
+  const who=actor.roleCode==="customer"?"a customer":"a PawSpace partner";
+  const signInUrl=uatLoginEnabled(env as unknown as Record<string,unknown>)?"/staging-login":"";
+  return Response.json({error:`You are signed in as ${who} in this browser, not as PawSpace staff. Sign in with a staff account to use the Team workspace.`,code:"staff_sign_in_required",...(signInUrl?{signInUrl}:{})},{status:403,headers:{"cache-control":"no-store"}});
+ }
+ return Response.json({error:"Permission denied"},{status:403});
+}
+
 export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promise<{actor:GatewayActor;permission:Permission|null}|Response>{const url=new URL(request.url);if(!url.pathname.startsWith("/api/"))return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};const permission=await requiredPermission(request);if(permission===null)return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};
   if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}
   if(isDevelopmentPreviewRequest(request))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);
-  if(uat){const actor={email:uat.email,roleCode:uat.roleCode,permissions:uat.permissions,preview:false};if(!hasPermission(uat.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
+  if(uat){const actor={email:uat.email,roleCode:uat.roleCode,permissions:uat.permissions,preview:false};if(!hasPermission(uat.permissions,permission)){await audit(env,actor,request,"denied",{permission});return permissionDeniedResponse(request,env,actor);}return {actor,permission};}
   const session=await resolvePlatformSession(env.DB,request).catch(()=>null);
-  if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
+  if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return permissionDeniedResponse(request,env,actor);}return {actor,permission};}
   const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});await ensureGatewayTables(env);
   const user=await env.DB.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Record<string,unknown>>();
   if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled"},{status:403});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
-  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
+  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return permissionDeniedResponse(request,env,actor);}return {actor,permission};}
 
 export async function auditApiResponse(env:GatewayEnv,actor:GatewayActor,permission:Permission|null,request:Request,response:Response){if(!permission||actor.roleCode==="public")return;await audit(env,actor,request,response.ok?"allowed":"failed",{permission,status:response.status});}
