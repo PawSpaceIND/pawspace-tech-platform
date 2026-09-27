@@ -365,7 +365,7 @@ for(const mode of ["boarding","sitting"] as const)test(`${mode}: customer-select
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Meet and Greet",exact:true})).toContainText(meeting.request.id);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:00:00 pm IST/i);
-  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("payment pending");
+  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/payment pending/i);
   const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
   await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
   // Verify-first contract: provider execution remains locked until signed Razorpay evidence advances payment.
