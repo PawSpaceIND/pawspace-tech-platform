@@ -29,6 +29,7 @@
  * the whole process moving, not a value a request can carry.
  */
 import{registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-governance";
+import{bookingHorizonMessage,minimumNoticeMessage}from"./booking-time-copy";
 
 type Db=D1Database;
 
@@ -191,13 +192,13 @@ export async function assertBookingWindow(db:Db,input:BookingWindowInput):Promis
 
   const leadMinutes=Math.floor((startMs-now)/MINUTE);
   if(leadMinutes<config.minimumLeadMinutes)
-    refuse(`This service needs at least ${config.minimumLeadMinutes} minutes' notice`,
+    refuse(minimumNoticeMessage(config.minimumLeadMinutes),
       {code:"below_minimum_lead_time",minimumLeadMinutes:config.minimumLeadMinutes,leadMinutes,policyVersion:policy.policyVersion});
 
   const horizonMs=now+config.maximumHorizonDays*DAY;
   const latestStart=Math.max(startMs,...(input.occurrences??[]).map(item=>new Date(String(item.start)).getTime()).filter(Number.isFinite));
   if(latestStart>horizonMs)
-    refuse(`Bookings can be made up to ${config.maximumHorizonDays} days ahead`,
+    refuse(bookingHorizonMessage(config.maximumHorizonDays),
       {code:"beyond_booking_horizon",maximumHorizonDays:config.maximumHorizonDays,policyVersion:policy.policyVersion});
 
   // The stay cap measures ONE booking's span. A recurring calendar is many short occurrences, not one
