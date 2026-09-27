@@ -22,13 +22,22 @@ function rolePermissions(roleCode:"customer"|"service_provider"){const role=defa
 function bytesToBase64Url(bytes:Uint8Array){let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);return btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=+$/g,"");}
 async function sha256(value:string){const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return bytesToBase64Url(new Uint8Array(digest));}
 function sessionToken(){const bytes=new Uint8Array(32);crypto.getRandomValues(bytes);return bytesToBase64Url(bytes);}
-function cookieValue(request:Request,name:string){const source=request.headers.get("cookie")||"";for(const part of source.split(";")){const [key,...rest]=part.trim().split("=");if(key===name)return decodeURIComponent(rest.join("="));}return "";}
+function cookieValue(request:Request,name:string){const source=request.headers.get("cookie")||"";for(const part of source.split(";")){const [key,...rest]=part.trim().split("=");if(key===name){try{return decodeURIComponent(rest.join("="));}catch{return "";}}}return "";}
 
 export function platformSessionCookie(token:string,ttlSeconds:number){return `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(1,Math.floor(ttlSeconds))}`;}
 export function clearPlatformSessionCookie(){return `${PLATFORM_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;}
 
-export async function issuePlatformSession(db:D1Database,input:{bindingId:string;identitySource:IdentitySource;principalType:PrincipalType;principalKey:string;subjectType:IdentitySubjectType;subjectId:string;ttlSeconds?:number;metadata?:Record<string,unknown>}){await ensurePlatformSessionTables(db);forgetSessions(db,item=>item.subjectType===input.subjectType&&item.subjectId===input.subjectId);const roleCode=input.subjectType==="customer"?"customer":"service_provider",ttl=Math.min(Math.max(Number(input.ttlSeconds||28_800),900),86_400),issuedAt=Date.now(),expiresAt=issuedAt+ttl*1000,token=sessionToken(),tokenHash=await sha256(token),id=`sess_${crypto.randomUUID().slice(0,16)}`;await db.batch([
-  db.prepare("UPDATE platform_identity_sessions SET status='superseded',revoked_at=? WHERE subject_type=? AND subject_id=? AND status='active'").bind(issuedAt,input.subjectType,input.subjectId),
+export async function issuePlatformSession(db:D1Database,input:{bindingId:string;identitySource:IdentitySource;principalType:PrincipalType;principalKey:string;subjectType:IdentitySubjectType;subjectId:string;ttlSeconds?:number;metadata?:Record<string,unknown>;request?:Request}){await ensurePlatformSessionTables(db);forgetSessions(db,item=>item.subjectType===input.subjectType&&item.subjectId===input.subjectId);const roleCode=input.subjectType==="customer"?"customer":"service_provider",ttl=Math.min(Math.max(Number(input.ttlSeconds||28_800),900),86_400),issuedAt=Date.now(),expiresAt=issuedAt+ttl*1000,token=sessionToken(),tokenHash=await sha256(token),id=`sess_${crypto.randomUUID().slice(0,16)}`;
+// A verified browser sign-in rotates only the presented session for this subject. Another browser
+// must remain signed in. Trusted non-browser callers retain explicit subject-wide replacement by
+// omitting request. Never accept a replacement token or session id from a request body.
+const previousToken=input.request?cookieValue(input.request,PLATFORM_SESSION_COOKIE):"";
+const previousHash=previousToken?await sha256(previousToken):null;
+const supersede=input.request
+  ? previousHash?[db.prepare("UPDATE platform_identity_sessions SET status='superseded',revoked_at=? WHERE token_hash=? AND subject_type=? AND subject_id=? AND status='active'").bind(issuedAt,previousHash,input.subjectType,input.subjectId)]:[]
+  :[db.prepare("UPDATE platform_identity_sessions SET status='superseded',revoked_at=? WHERE subject_type=? AND subject_id=? AND status='active'").bind(issuedAt,input.subjectType,input.subjectId)];
+await db.batch([
+  ...supersede,
   db.prepare("INSERT INTO platform_identity_sessions (id,token_hash,binding_id,identity_source,principal_type,principal_key,subject_type,subject_id,role_code,status,issued_at,expires_at,last_seen_at,metadata_json) VALUES (?,?,?,?,?,?,?,?,?,'active',?,?,?,?)").bind(id,tokenHash,input.bindingId,input.identitySource,input.principalType,input.principalKey,input.subjectType,input.subjectId,roleCode,issuedAt,expiresAt,issuedAt,JSON.stringify(input.metadata??{})),
   db.prepare("INSERT INTO platform_identity_session_audit (id,session_id,action,identity_source,subject_type,subject_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,'{}',?)").bind(crypto.randomUUID(),id,"issued",input.identitySource,input.subjectType,input.subjectId,"completed",issuedAt),
 ]);return{token,ttlSeconds:ttl,session:{id,bindingId:input.bindingId,identitySource:input.identitySource,principalType:input.principalType,principalKey:input.principalKey,subjectType:input.subjectType,subjectId:input.subjectId,roleCode,issuedAt,expiresAt}};}
