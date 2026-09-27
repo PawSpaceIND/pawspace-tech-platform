@@ -102,7 +102,7 @@ export default function RevenueMissionPage() {
       </VisualGrid>}
 
       {pipeline && <VisualGrid>
-        <MetricBars title="Pipeline value" note="Potential value only; review-required opportunities are included in this pipeline." format={money} items={[{ label: "Unweighted", value: pipeline.unweightedPipeline, tone: "gold" }, { label: "Probability weighted", value: pipeline.weightedPipeline }]} />
+        <MetricBars title="Pipeline — not achieved revenue" note="Potential value only; review-required opportunities are included in this pipeline." format={money} items={[{ label: "Unweighted", value: pipeline.unweightedPipeline, tone: "gold" }, { label: "Probability weighted", value: pipeline.weightedPipeline }]} />
         <MetricBars title="Opportunity status" note="Counts of opportunities, separate from revenue." items={[{ label: "Ready", value: pipeline.ready }, { label: "Review required", value: pipeline.reviewRequired, tone: "gold" }, { label: "Suppressed", value: pipeline.suppressed, tone: "warning" }]} />
       </VisualGrid>}
 
