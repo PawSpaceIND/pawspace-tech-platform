@@ -6,6 +6,15 @@ export type QueuedProviderProof = {
   mimeType: string; sizeBytes: number; sha256: string; attempts: number;
   nextAttemptAt: number; createdAt: number;
 };
+/** ArrayBuffer storage also works in WebKit contexts that refuse IndexedDB Blob writes. */
+type StoredProviderProof = Omit<QueuedProviderProof, "file"> & { file: Blob | ArrayBuffer };
+const restoreProof = (row: StoredProviderProof): QueuedProviderProof => ({ ...row, file: row.file instanceof Blob ? row.file : new Blob([row.file], { type: row.mimeType }) });
+async function persistProof(row: QueuedProviderProof, generation = queueGeneration) {
+  const stored: StoredProviderProof = { ...row, file: await row.file.arrayBuffer() };
+  if (generation !== queueGeneration) return false;
+  await tx("readwrite", store => store.put(stored));
+  return true;
+}
 export type ProviderProofFlushResult = { uploaded: number; pending: number; discarded: number; skipped: number };
 /** "in_flight": another dispatcher holds the item. "withdrawn": the item left the queue before this dispatcher could send it. */
 export type ProviderProofDispatchOutcome = "uploaded" | "in_flight" | "withdrawn";
@@ -16,8 +25,23 @@ const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
   req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: "id" }); };
   req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
 });
-const request = <T>(req: IDBRequest<T>) => new Promise<T>((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
-async function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>) { const db = await openDb(); try { return await request(run(db.transaction(STORE, mode).objectStore(STORE))); } finally { db.close(); } }
+async function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const db = await openDb();
+  try {
+    // Request success is not a committed transaction: quota/IO failures can still abort afterwards.
+    // Never tell a partner that a photo is saved until IndexedDB confirms the whole transaction.
+    return await new Promise<T>((resolve, reject) => {
+      const transaction = db.transaction(STORE, mode);
+      let result: T;
+      transaction.oncomplete = () => resolve(result);
+      transaction.onabort = () => reject(transaction.error ?? new Error("Device storage aborted. The photo was not saved; keep the original and retry."));
+      transaction.onerror = () => reject(transaction.error ?? new Error("Device storage failed. Keep the original photo and retry."));
+      const operation = run(transaction.objectStore(STORE));
+      operation.onsuccess = () => { result = operation.result; };
+      operation.onerror = () => reject(operation.error ?? new Error("Unable to save proof on this device"));
+    });
+  } finally { db.close(); }
+}
 
 /**
  * One queue entry per (booking, purpose, bytes). The id is derived from the SHA-256 the app computes over
@@ -29,10 +53,13 @@ export const providerProofQueueId = (input: { bookingId: string; purpose: Purpos
 export async function queueProviderProof(input: Omit<QueuedProviderProof, "id" | "attempts" | "nextAttemptAt" | "createdAt">) {
   const sha256 = input.sha256.trim().toLowerCase();
   const item: QueuedProviderProof = { ...input, sha256, id: providerProofQueueId({ ...input, sha256 }), attempts: 0, nextAttemptAt: Date.now(), createdAt: Date.now() };
-  await tx("readwrite", store => store.put(item)); return item;
+  if (!(await persistProof(item))) throw new Error("Session changed before the photo could be saved. Keep the original and sign in again."); return item;
 }
 /** The row as the queue holds it NOW, or undefined once an upload, a discard or a session boundary removed it. */
-const queuedRow = (id: string) => tx("readonly", store => store.get(id)) as Promise<QueuedProviderProof | undefined>;
+const queuedRow = async (id: string): Promise<QueuedProviderProof | undefined> => {
+  const row = await tx("readonly", store => store.get(id)) as StoredProviderProof | undefined;
+  return row ? restoreProof(row) : undefined;
+};
 /** Drop a queued proof that the server has refused for good (a 4xx that a retry can never fix). */
 export async function discardProviderProof(id: string) { if (typeof indexedDB === "undefined") return; await tx("readwrite", store => store.delete(id)); }
 /**
@@ -42,6 +69,10 @@ export async function discardProviderProof(id: string) { if (typeof indexedDB ==
  */
 let queueGeneration = 0;
 export async function clearProviderProofQueue() { queueGeneration++; if (typeof indexedDB === "undefined") return; await tx("readwrite", store => store.clear()); }
+/** Expired authentication is recoverable: never erase a partner's only queued photo on HTTP 401. */
+export function providerProofFailure(status: number, message: string) {
+  return Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && ![401, 408, 425, 429].includes(status) });
+}
 /** An error carrying `permanent: true` tells the flush loop to discard the item instead of retrying it. */
 export const isPermanentProofError = (error: unknown): error is Error & { permanent: true } => Boolean(error && typeof error === "object" && (error as { permanent?: unknown }).permanent === true);
 
@@ -75,9 +106,13 @@ async function withProofLock<T>(id: string, run: () => Promise<T>): Promise<T | 
  * leaving the item queued for retry.
  */
 export async function dispatchQueuedProof(item: QueuedProviderProof, register: (item: QueuedProviderProof) => Promise<void>): Promise<ProviderProofDispatchOutcome> {
+  const generation = queueGeneration;
   return withProofLock(item.id, async () => {
-    if (!(await queuedRow(item.id))) return "withdrawn" as const;
-    await register(item); await discardProviderProof(item.id); return "uploaded" as const;
+    const current = await queuedRow(item.id);
+    if (!current || generation !== queueGeneration) return "withdrawn" as const;
+    await register(current);
+    if (generation !== queueGeneration) return "withdrawn" as const;
+    await discardProviderProof(item.id); return "uploaded" as const;
   });
 }
 
@@ -90,10 +125,10 @@ export function flushProviderProofQueue(register: (item: QueuedProviderProof) =>
   return run;
 }
 async function flushQueueOnce(register: (item: QueuedProviderProof) => Promise<void>): Promise<ProviderProofFlushResult> {
-  if (typeof indexedDB === "undefined" || (typeof navigator !== "undefined" && !navigator.onLine)) return { uploaded: 0, pending: 0, discarded: 0, skipped: 0 };
+  if (typeof indexedDB === "undefined") return { uploaded: 0, pending: 0, discarded: 0, skipped: 0 };
   const generation = queueGeneration;
-  const db = await openDb(); let items: QueuedProviderProof[] = [];
-  try { items = await request(db.transaction(STORE, "readonly").objectStore(STORE).getAll()) as QueuedProviderProof[]; } finally { db.close(); }
+  const items = (await tx("readonly", store => store.getAll()) as StoredProviderProof[]).map(restoreProof);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return { uploaded: 0, pending: items.length, discarded: 0, skipped: 0 };
   let uploaded = 0, pending = 0, discarded = 0, skipped = 0;
   for (const item of items) {
     // The session that queued these rows has ended (logout, provider switch): what it read is not this session's to send.
@@ -104,13 +139,17 @@ async function flushQueueOnce(register: (item: QueuedProviderProof) => Promise<v
       // session boundary may have cleared it; a row that is gone is never sent from the stale copy.
       const current = await queuedRow(item.id);
       if (!current || generation !== queueGeneration) return "withdrawn" as const;
-      try { await register(current); await tx("readwrite", store => store.delete(item.id)); return "uploaded" as const; }
+      try {
+        await register(current);
+        if (generation !== queueGeneration) return "withdrawn" as const;
+        await tx("readwrite", store => store.delete(item.id)); return "uploaded" as const;
+      }
       catch (error) {
         // A permanent refusal (grant mismatch, ownership, unsupported type) would otherwise re-register a
         // fresh asset every cycle for ever; only transport-class failures earn the exponential retry.
-        if (isPermanentProofError(error)) { await tx("readwrite", store => store.delete(item.id)); return "discarded" as const; }
         if (generation !== queueGeneration) return "withdrawn" as const;
-        const attempts = current.attempts + 1; const retry = { ...current, attempts, nextAttemptAt: Date.now() + Math.min(60_000, 2 ** Math.min(attempts, 6) * 1_000) }; await tx("readwrite", store => store.put(retry)); return "pending" as const;
+        if (isPermanentProofError(error)) { await tx("readwrite", store => store.delete(item.id)); return "discarded" as const; }
+        const attempts = current.attempts + 1; const retry = { ...current, attempts, nextAttemptAt: Date.now() + Math.min(60_000, 2 ** Math.min(attempts, 6) * 1_000) }; if (!(await persistProof(retry, generation))) return "withdrawn" as const; return "pending" as const;
       }
     });
     if (outcome === "uploaded") uploaded++; else if (outcome === "discarded") discarded++; else if (outcome === "pending") pending++; else skipped++;

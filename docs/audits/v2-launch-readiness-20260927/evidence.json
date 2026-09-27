@@ -1,0 +1,79 @@
+{
+  "audit_utc": "2026-09-27T14:50:23.922656+00:00",
+  "decision": "NO_GO_UNRESTRICTED_PUBLIC_LAUNCH",
+  "base_commit": "3432e5ce9eb6b015789e1325ea7a01a7048d3bb8",
+  "branch": "fix/v2-launch-offline-readiness-20260927",
+  "production_mutated": false,
+  "deployed": false,
+  "physical_devices_certified": false,
+  "full_sweep_before_fixture_repairs": {
+    "tests": 8451,
+    "pass": 8449,
+    "fail": 2,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "full_sweep_rerun_after_fixture_repairs": false,
+  "both_failed_d1_fixtures_repaired_and_rerun": true,
+  "delivery_regressions": {
+    "tests": 77,
+    "pass": 77,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "source_contracts": {
+    "tests": 67,
+    "pass": 67,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "browser_matrix": {
+    "passed": 165,
+    "failed": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "duration_ms": 477824.109,
+    "log_sha256": "912994b638297626780f0f0574acf67b857e5dbe1dd45be5e2fb123bc1269a10"
+  },
+  "actual_partner_screen_matrix": {
+    "passed": 14,
+    "failed": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "duration_ms": 173610.694,
+    "log_sha256": "a94b5957ca161ce4ad7ba0e49199acf05c6cafae9a6667b082084f54fb5e9172"
+  },
+  "browser_cases_passed_across_two_disjoint_runs": 179,
+  "typecheck": "pass",
+  "production_format_local_build": "pass_not_deployed",
+  "changed_file_lint": {
+    "errors": 0,
+    "warnings": 4
+  },
+  "runtime_file_sha256": {
+    "app/partner-app/page.tsx": "e48b841a32db8e48b6de1cd06055c8da436992e8c3844f4679c105abd86fb1a4",
+    "app/partner-app/use-status-queue.ts": "66e630e8c0a6030294dae56beef6746ad760d8b747d3c4531f8680a1f7c853de",
+    "lib/bounded-fetch.ts": "f465d8cf8897836e8cccbfa0e992c9959a37b703ce8b45bddbad9caab1fea17e",
+    "lib/partner-status-queue.ts": "d60007699e2b9e43a2759f70cd60c86a5b3faada96ff02dea6a7a039db1cb863",
+    "lib/provider-proof-offline-queue.ts": "78acc5a434c7d05b63fa4e812c2c814b97ba2faaec7df91831fc115d8f2739f6"
+  },
+  "log_sha256": {
+    "full-unit.log": "d353bcd4024b11439f457de7b7d0eca6f148202e26aa4a6a2e6b6735b1c1464f",
+    "delivery-regressions.tap": "2472e52af86bddcba9509512f715f84656bfdb61a0711f72c6c15eff53208caf",
+    "source-contract-delivery.tap": "661e513665ab04ac3b56bb7b74a82f5858f575b348076dc0db9d983c9d4ce746",
+    "typecheck-delivery.log": "192b7cf6c2d7ab9fcd1b4b424dd370f23fad2ecf0fd78360a366fd02c9273967",
+    "build-final.log": "53f58d95c87a4442816ff343d2eb57c96cfaf0915e7d65e3c967f64d33aaff1c",
+    "lint-delivery.log": "2653d014ba7c5f95d409a6d17acde658023c83373681f8d24ef46ed66a020363",
+    "browser-certified.log": "20737691080c1baf5ef6d21e2cdde04adf012498c59e2bf0b45c50b1d032d904",
+    "partner-app-browser-delivery.log": "623bceef0c4417d4c3965546c7d137a57454cbc295f7c592427aaf9484d32d30"
+  },
+  "boundaries": [
+    "Browser APIs and local storage are real; booking/identity/payment responses are local fixtures.",
+    "WebKit photo test uses network request failures and connectivity events because its setOffline emulator also breaks local Blob/File reads.",
+    "WebKit upload bytes verified by a real loopback HTTP receiver; Chromium/Firefox bytes verified in their same-origin request inspector.",
+    "No offline cold-start, killed-app background upload, physical-device or full real-sandbox service-chain certification.",
+    "No pending launch criterion was waived; see README L01-L26."
+  ]
+}

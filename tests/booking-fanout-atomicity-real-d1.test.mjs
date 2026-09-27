@@ -24,6 +24,8 @@ test("canonical booking fanout rolls back completely on a real D1 mid-batch fail
     assert.equal(response.status,200,`atomicity worker failed: ${JSON.stringify(result)}\n${logs}`);
     assert.equal(result.ok,true,JSON.stringify(result));
     assert.equal(result.fanoutRolledBack,true,JSON.stringify(result));
+    assert.equal(result.injectedFaultReached,true,JSON.stringify(result));
+    assert.equal(result.positiveControlStatus,201,JSON.stringify(result));
     assert.deepEqual(result.assertions,{customers:0,pets:0,bookings:0,workOrders:0,payments:0,lifecycleEvents:0,reservations:1});
   }finally{
     await stopWorker(child);
