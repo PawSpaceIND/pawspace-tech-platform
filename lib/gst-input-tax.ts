@@ -39,7 +39,7 @@ import{expenseChartOfAccounts,findExpenseCategory}from"./chart-of-accounts";
 import{governedJsonError}from"./governed-http-error";
 import{ConfigurationRequired}from"./gst-accounting";
 import{ensureFinanceEntityScope}from"./finance-filing-closeout";
-import{serviceVerticalOutputTax}from"./service-output-tax";
+import{canonicalInvoicesOnlySql,serviceVerticalOutputTax}from"./service-output-tax";
 import{chunkedIn}from"./d1-chunked-in";
 import{resolveFuneralGstTreatment}from"./funeral-gst-treatment";
 
@@ -608,7 +608,8 @@ const isFuneralLine=(l:{serviceCode:string;source:string})=>l.serviceCode==="fun
  */
 export async function rule42Turnover(db:Db,scope:Scope,fromPeriod:string,toPeriod:string){
  const{startMs,endMs}=periodWindow(fromPeriod,toPeriod),svc=await serviceVerticalOutputTax(db,startMs,endMs,scope);
- const canonical=await db.prepare("SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'").bind(scope.entityId,scope.registrationId,fromPeriod,toPeriod).first<Row>();
+ // Invoices issued by hand only: a booking's customer tax invoice is already in the service register above.
+ const canonical=await db.prepare(`SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND registration_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`).bind(scope.entityId,scope.registrationId,fromPeriod,toPeriod).first<Row>();
  const treatment=await funeralGstTreatment(db,scope.entityId,lastDayOf(toPeriod));
  const funeral=round2(svc.lines.filter(l=>l.section==="exempt"&&isFuneralLine(l)).reduce((s,l)=>s+l.exemptValue,0)),otherExempt=round2(svc.exemptValue-funeral);
  const taxable=round2(svc.pawspaceOwnTaxableValue+(treatment==="taxable_18"?funeral:0)),canonicalInvoices=round2(num(canonical?.txval)),exempt=round2(otherExempt+(treatment==="exempt"?funeral:0));

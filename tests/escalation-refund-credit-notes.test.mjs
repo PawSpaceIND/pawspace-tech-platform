@@ -589,6 +589,22 @@ test("the person who asked cannot approve their own refund; a different Finance 
   assert.equal(f.refunds.length, 1);
 });
 
+test("the person who asked cannot reject their own refund either; a different Finance person decides it", async (t) => {
+  const f = await refundWorld(t);
+  await completedBooking(f, "BK-SOR");
+  const asked = await callRefunds("POST", FOUNDER, { action: "request", bookingId: "BK-SOR", percent: 10, reason: "Pet came back with matted fur" });
+  assert.equal(asked.status, 201, JSON.stringify(asked.body));
+  const requestId = asked.body.data.request.id;
+  const own = await callRefunds("POST", FOUNDER, { action: "reject", requestId, reason: "Asked for this by mistake" });
+  assert.equal(own.status, 409);
+  assert.equal(own.body.code, "escalation_refund_self_decision_forbidden");
+  assert.equal(f.row("SELECT status FROM escalation_refund_requests WHERE id=?", requestId).status, "requested", "still waiting");
+  assert.equal(auditCount(f, "escalation_refund.reject", requestId), 0);
+  const other = await callRefunds("POST", FINANCE, { action: "reject", requestId, reason: "Asked for this by mistake" });
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  assert.equal(f.row("SELECT status,decided_by FROM escalation_refund_requests WHERE id=?", requestId).decided_by, FINANCE);
+});
+
 /** Holds each decision's write until both decisions have passed every check, so they really race for the same request. */
 function racingDb(db, parties = 2) {
   const waiting = [];

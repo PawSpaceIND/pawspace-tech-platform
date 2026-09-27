@@ -70,10 +70,19 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // approved eligibility (never claim unreviewed input credit).
  // Invoices issued by hand only: a booking's customer tax invoice is filed through the service supply register below.
  const output=await safeFirst(db,`SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'${await canonicalInvoicesOnlySql(db)}`,[startDate,endDate]);
- const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
- // A month whose ITC computation Finance saved (the purchase register) uses it, so the close agrees with GSTR-3B.
+ // Per entity, a month whose ITC computation Finance saved (the purchase register) uses it instead of that entity's older
+ // reviewed figure, so the close agrees with each GSTR-3B. A bill with no entity keeps its older figure.
  const{reportItc}=await import("./gst-input-tax");
- const inputCredit=await reportItc(db,{fromPeriod:input.period,toPeriod:input.period,legacyByMonth:new Map([[input.period,Number(input_?.tax||0)]])});
+ const tableNames=new Set((await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('finance_vendor_tax_reviews','finance_bills','finance_itc_computations')").all<Row>()).results.map(r=>String(r.name)));
+ const billEntity=tableNames.has("finance_bills")&&(await db.prepare("PRAGMA table_info(finance_bills)").all<Row>()).results.some(c=>String(c.name)==="entity_id")?"COALESCE(b.entity_id,'')":"''";
+ const legacyByEntity=tableNames.has("finance_vendor_tax_reviews")&&tableNames.has("finance_bills")?(await db.prepare(`SELECT ${billEntity} entity_id,COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<? GROUP BY 1`).bind(startDate,endDate).all<Row>()).results:[];
+ const savedEntities=tableNames.has("finance_itc_computations")?(await db.prepare("SELECT DISTINCT entity_id FROM finance_itc_computations WHERE period_code=?").bind(input.period).all<Row>()).results.map(r=>String(r.entity_id??"")):[];
+ let creditTotal=0;
+ for(const entityId of new Set([...legacyByEntity.map(r=>String(r.entity_id??"")),...savedEntities])){
+  const legacy=Number(legacyByEntity.find(r=>String(r.entity_id??"")===entityId)?.tax||0);
+  creditTotal+=entityId?(await reportItc(db,{entityId,fromPeriod:input.period,toPeriod:input.period,legacyByMonth:new Map([[input.period,legacy]])})).total:legacy;
+ }
+ const inputCredit={total:round2(creditTotal)};
  // Output tax has TWO sources and the close only ever read one. finance_invoices is written solely by
  // the B2B module (lib/gst-accounting.ts); all five service invoice modules - sitting, boarding,
  // walking, taxi, grooming - write their tax into booking_invoices.tax_amount. Reading only the first

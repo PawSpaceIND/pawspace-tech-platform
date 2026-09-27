@@ -201,6 +201,7 @@ export async function decideEscalationRefund(db:Db,env:Env,input:{requestId:stri
  if(text(request.status)!=="requested")throw refuse(`This refund request was already ${text(request.status)}`,409,"escalation_refund_already_decided");
  const bookingId=text(request.booking_id),claim=crypto.randomUUID(),now=Date.now(),guard="EXISTS (SELECT 1 FROM escalation_refund_requests WHERE id=? AND claim_token=?)";
  if(decision==="reject"){
+  if(sameActor(request.requested_by,actor.email))throw refuse("The person who asked for this refund cannot decide it; a different Finance person must approve or reject it",409,"escalation_refund_self_decision_forbidden");
   const detail={bookingId,amount:money(request.amount),percent:num(request.percent),requestedBy:text(request.requested_by),reason};
   const results=await db.batch([
    db.prepare("UPDATE escalation_refund_requests SET status='rejected',decided_by=?,decided_at=?,decision_reason=?,claim_token=?,updated_at=? WHERE id=? AND status='requested'").bind(text(actor.email),now,reason,claim,now,requestId),

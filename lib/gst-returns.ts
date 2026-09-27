@@ -168,7 +168,9 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
   if(untaxed){addNil(c.supplyType==="INTRA",false,l.section==="exempt"?"expt_amt":"ngsup_amt",txval);if(l.section==="non_gst")continue;}
   else addB2cs(c.supplyType,c.pos,rt,{txval,iamt:c.iamt,camt:c.camt,samt:c.samt,csamt:0});
   addHsn(s.sac,l.treatment==="commission"?"PawSpace commission on pet care services":untaxed?"Pet funeral and memorial services (exempt)":sacDescription(s.sac)||"Pet care services",rt,{txval,iamt:untaxed?0:c.iamt,camt:untaxed?0:c.camt,samt:untaxed?0:c.samt,csamt:0});}
- const payload={gstin,fp:returnPeriod(period),gt:round2(canonicalTaxable),cur_gt:round2(canonicalTaxable),
+ // Turnover: invoices issued by hand plus the service supplies filed above (taxable and exempt; Schedule III is not a supply).
+ const turnover=round2(canonicalTaxable+svc.pawspaceOwnTaxableValue+svc.exemptValue);
+ const payload={gstin,fp:returnPeriod(period),gt:turnover,cur_gt:turnover,
   b2b:[...b2b.values()],b2cs:[...b2csMap.values()],cdnr,cdnur,hsn:{data:[...hsnMap.values()]},...(nilMap.size?{nil:{inv:[...nilMap.values()]}}:{})};
  const summary={returnType:"GSTR-1",period,gstin,gstModel:svc.gstModel,b2bInvoices:b2bCount,b2cInvoices:b2cCount,cdnrCount:cdnr.length,cdnurCount:cdnur.length,hsnLines:hsnMap.size,
   canonicalTaxableValue:round2(canonicalTaxable),canonicalOutputTax:round2(canonicalTax),

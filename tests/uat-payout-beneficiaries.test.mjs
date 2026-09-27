@@ -174,6 +174,13 @@ test("under the UAT gate the seeded groomer is given a payout beneficiary once; 
   assert.deepEqual(second.healed, []);
   assert.deepEqual(second.unchanged.sort(), ["uatcap_groom_north", GROOMER, "uatcap_groom_west"]);
   assert.equal(dump(sqlite), before, "a second run writes nothing");
+  // A run that stopped after healing the rows but before its events: a later run records the missing events once.
+  sqlite.prepare("DELETE FROM provider_onboarding_events WHERE event_type='uat_payout_beneficiary_seeded'").run();
+  await seeds.ensureUatPayoutBeneficiaries(db, UAT, { providerIds: [GROOMER, "uatcap_groom_north", "uatcap_groom_west", "PRV-REAL-1"], now: now + 120_000 });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_onboarding_events WHERE event_type='uat_payout_beneficiary_seeded'").get().n, 3, "each missing event recorded");
+  const recovered = dump(sqlite);
+  await seeds.ensureUatPayoutBeneficiaries(db, UAT, { providerIds: [GROOMER, "uatcap_groom_north", "uatcap_groom_west", "PRV-REAL-1"], now: now + 180_000 });
+  assert.equal(dump(sqlite), recovered, "and only once");
 });
 
 test("a seed profile keeps a fund account that already looks real, and the roster scan finds the seeded ids and the runtime defaults only", async () => {
