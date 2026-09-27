@@ -17,14 +17,6 @@ export async function ensureCaseSopTables(db:Db){
   ]);
 }
 
-async function caseContext(db:Db,row:Row){
-  let serviceCode=text(row.service_code),providerId=text(row.provider_id)||null;
-  if(row.booking_id&&await tableExists(db,"canonical_bookings")){
-    const booking=await db.prepare("SELECT service_code,provider_id FROM canonical_bookings WHERE id=?").bind(row.booking_id).first<Row>();
-    if(booking){serviceCode=text(booking.service_code)||serviceCode;providerId=text(booking.provider_id)||providerId;}
-  }
-  return{serviceCode,providerId};
-}
 
 /**
  * Materialises the currently published required SOP modules that apply to an open provider/service case.
@@ -37,20 +29,31 @@ export async function syncCaseSopRequirements(db:Db,input:{caseId?:string;actorI
   const rows=input.caseId
     ?await db.prepare("SELECT * FROM unified_cases WHERE id=?").bind(input.caseId).all<Row>()
     :await db.prepare("SELECT * FROM unified_cases WHERE status NOT IN ('resolved','closed') ORDER BY created_at DESC LIMIT 500").all<Row>();
+  const bookingById=new Map<string,Row>(),modulesByService=new Map<string,Row[]>();
+  const bookingIds=[...new Set(rows.results.filter(row=>CASE_TYPES_REQUIRING_SOP.has(text(row.case_type))).map(row=>text(row.booking_id)).filter(Boolean))];
+  if(bookingIds.length&&await tableExists(db,"canonical_bookings")){
+    for(let offset=0;offset<bookingIds.length;offset+=80){const ids=bookingIds.slice(offset,offset+80);const bookings=await db.prepare(`SELECT id,service_code,provider_id FROM canonical_bookings WHERE id IN (${ids.map(()=>"?").join(",")})`).bind(...ids).all<Row>();for(const booking of bookings.results)bookingById.set(text(booking.id),booking);}
+  }
+  const existing=await listCaseSopRequirementsForCases(db,rows.results.map(row=>text(row.id)));
+  const requirementKeys=new Set([...existing.values()].flat().map(row=>`${text(row.case_id)}:${text(row.module_id)}:${Number(row.module_version)}`));
+  const hasEvents=await tableExists(db,"unified_case_events");
   let created=0,eligible=0,skippedNoService=0;
   for(const row of rows.results){
     if(!CASE_TYPES_REQUIRING_SOP.has(text(row.case_type)))continue;
-    const{serviceCode,providerId}=await caseContext(db,row);
+    const booking=bookingById.get(text(row.booking_id));
+    const serviceCode=text(booking?.service_code)||text(row.service_code),providerId=text(booking?.provider_id)||text(row.provider_id)||null;
     if(!serviceCode){skippedNoService++;continue;}
     eligible++;
-    const modules=await db.prepare("SELECT id,title,service_code,version FROM lms_modules WHERE status='published' AND required=1 AND service_code IN ('all',?) ORDER BY created_at").bind(serviceCode).all<Row>();
-    for(const moduleRow of modules.results){
+    if(!modulesByService.has(serviceCode)){const modules=await db.prepare("SELECT id,title,service_code,version FROM lms_modules WHERE status='published' AND required=1 AND service_code IN ('all',?) ORDER BY created_at").bind(serviceCode).all<Row>();modulesByService.set(serviceCode,modules.results);}
+    for(const moduleRow of modulesByService.get(serviceCode)||[]){
+      const requirementKey=`${text(row.id)}:${text(moduleRow.id)}:${Number(moduleRow.version)}`;
+      if(requirementKeys.has(requirementKey))continue;
       const now=Date.now();
       const result=await db.prepare("INSERT OR IGNORE INTO unified_case_sop_requirements (id,case_id,module_id,module_version,title,service_code,provider_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?)")
         .bind(uid("CSOP"),row.id,moduleRow.id,Number(moduleRow.version),text(moduleRow.title),text(moduleRow.service_code),providerId,now,now).run();
       if(Number(result.meta?.changes||0)===1){
         created++;
-        if(await tableExists(db,"unified_case_events"))await db.prepare("INSERT OR IGNORE INTO unified_case_events (id,idempotency_key,case_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)")
+        if(hasEvents)await db.prepare("INSERT OR IGNORE INTO unified_case_events (id,idempotency_key,case_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)")
           .bind(uid("CASEE"),`sop-required:${text(row.id)}:${text(moduleRow.id)}:${Number(moduleRow.version)}`,row.id,"sop_required",input.actorId,JSON.stringify({moduleId:text(moduleRow.id),moduleVersion:Number(moduleRow.version),title:text(moduleRow.title),serviceCode:text(moduleRow.service_code)}),now).run();
       }
     }
