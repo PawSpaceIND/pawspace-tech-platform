@@ -56,6 +56,58 @@ export function stubGeocoding() {
   };
 }
 
+/** What the customer checkout needs to open a Razorpay TEST order (synthetic values, not credentials). */
+export const CHECKOUT_ENV = { FORBID_PRODUCTION: "true", PAWSPACE_PAYMENT_LIVE_APPROVED: "false", RAZORPAY_KEY_ID_SANDBOX: "rzp_test_taxiLatencyFixture",
+  RAZORPAY_KEY_SECRET_SANDBOX: "synthetic-checkout-secret-not-a-credential", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "synthetic-webhook-secret-not-a-credential" };
+
+/** Pet Taxi addresses the stub geocodes, [lat, lng]; anything else resolves to a point derived from its text. */
+export const TAXI_PLACES = {
+  pickup: ["100 Feet Road, Indiranagar, Bengaluru 560038", 12.9719, 77.6412],
+  drop: ["Koramangala 5th Block, Bengaluru 560095", 12.9352, 77.6245],
+  returnDrop: ["MG Road, Ashok Nagar, Bengaluru 560001", 12.9756, 77.6069],
+  airport: ["Kempegowda International Airport, Bengaluru 560300", 13.1986, 77.7066],
+  whitefield: ["Whitefield Main Road, Bengaluru 560066", 12.9698, 77.75],
+};
+/**
+ * Google Geocoding, Google Routes and Razorpay orders for the Taxi quote and checkout paths: deterministic, counted by kind,
+ * and adjustable per test (`taxiMaps.route` may delay or refuse a leg; `taxiMaps.geocode` may refuse an address).
+ * A Routes leg's distance is the straight line between its two latLng waypoints times 1.35, driven at 28 km/h.
+ */
+export const taxiMaps = { calls: { geocode: 0, routes: 0, orders: 0 }, routesInFlight: 0, maxRoutesInFlight: 0, route: () => ({}), geocode: () => ({}) };
+export function stubTaxiMaps() {
+  const places = new Map(Object.values(TAXI_PLACES).map(([address, lat, lng]) => [address, { lat, lng }]));
+  const pointOf = (address) => places.get(address) ?? (() => { let hash = 0; for (const char of address) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; return { lat: 12.85 + (hash % 1500) / 10000, lng: 77.5 + (hash % 2500) / 10000 }; })();
+  const km = (a, b) => { const rad = Math.PI / 180, dLat = (b.latitude - a.latitude) * rad, dLng = (b.longitude - a.longitude) * rad, x = Math.sin(dLat / 2) ** 2 + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.asin(Math.sqrt(x)); };
+  globalThis.fetch = async (url, init = {}) => {
+    const target = String(url);
+    if (target.startsWith("https://maps.googleapis.com/maps/api/geocode/json")) {
+      taxiMaps.calls.geocode++;
+      const address = new URL(target).searchParams.get("address") || "", override = taxiMaps.geocode(address) || {};
+      if (override.status) return Response.json({ status: override.status, results: [] });
+      const point = pointOf(address);
+      return Response.json({ status: "OK", results: [{ formatted_address: address, geometry: { location: point } }] });
+    }
+    if (target === "https://routes.googleapis.com/directions/v2:computeRoutes") {
+      taxiMaps.calls.routes++;
+      taxiMaps.maxRoutesInFlight = Math.max(taxiMaps.maxRoutesInFlight, ++taxiMaps.routesInFlight);
+      try {
+        const body = JSON.parse(String(init.body)), origin = body.origin.location.latLng, destination = body.destination.location.latLng;
+        const leg = taxiMaps.route({ origin, destination }) || {};
+        await new Promise((resolve) => setTimeout(resolve, leg.delayMs ?? 0));
+        if (leg.status) return Response.json({ error: { message: "stubbed refusal" } }, { status: leg.status });
+        const meters = Math.round(km(origin, destination) * 1.35 * 1000);
+        return Response.json({ routes: [{ distanceMeters: meters, duration: `${Math.round(meters / 28000 * 3600)}s` }] });
+      } finally { taxiMaps.routesInFlight--; }
+    }
+    if (target === "https://api.razorpay.com/v1/orders") {
+      const body = JSON.parse(String(init.body));
+      taxiMaps.calls.orders++;
+      return Response.json({ id: `order_taxiLatency${taxiMaps.calls.orders}`, amount: body.amount, currency: body.currency, status: "created" });
+    }
+    throw new Error(`unexpected outbound call ${target}`);
+  };
+}
+
 const PROFILE = "INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,3,'active',1,'2026-01-01',NULL,'founder_seed',1)";
 const HOST = "INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,?,?,?,'[\"dog\",\"cat\"]',8,?,1,'none',1,'verified','verified',1,1,'founder_seed',1)";
 
@@ -85,10 +137,28 @@ function ownStayRoster(sqlite) {
 }
 
 /**
+ * A Pet Taxi roster the test owns: every seeded blr driver is taken off the live roster and every car except the three
+ * the code itself seeds (lib/taxi-fleet-governance.ts) is parked; these drivers [id, model, rating] may drive all three.
+ */
+export const OWN_TAXI_ROSTER = {
+  drivers: [["taxi_lat_first", "full_time", 4.9], ["taxi_lat_second", "full_time", 4.8], ["taxi_lat_third", "commission", 4.7], ["taxi_lat_fourth", "commission", 4.6]],
+  vehicles: ["TXF-CITROEN-9179", "TXF-CITROEN-9188", "TXF-XUV-OWNER"],
+};
+function ownTaxiRoster(sqlite) {
+  sqlite.exec("UPDATE provider_capacity_profiles SET live=0 WHERE city_id='blr' AND services_json LIKE '%\"pet_taxi\"%'");
+  sqlite.prepare(`UPDATE taxi_fleet_vehicles SET active=0 WHERE id NOT IN (${OWN_TAXI_ROSTER.vehicles.map(() => "?").join(",")})`).run(...OWN_TAXI_ROSTER.vehicles);
+  for (const [id, model, rating] of OWN_TAXI_ROSTER.drivers) {
+    sqlite.prepare(PROFILE).run(id, "blr", `Test driver ${id}`, model, '["pet_taxi"]', '["blr-east"]', rating, 90, 1, 20, 16);
+    sqlite.prepare(HOME).run(`PHB-${id}`, id);
+    for (const vehicle of OWN_TAXI_ROSTER.vehicles) sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility (provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(id, vehicle);
+  }
+}
+
+/**
  * Staging as it is: runtime tables first, then the deploy's roster seed, then (optionally) extra
  * providers in blr-east so a test can show the query count does not grow with the roster.
  */
-export async function stayWorld({ dbGlobal, envGlobal, extra = 0, ownRoster = false, seedFile = process.env.STAY_LATENCY_SEED || "scripts/uat-staging-provider-capacity.sql" } = {}) {
+export async function stayWorld({ dbGlobal, envGlobal, extra = 0, ownRoster = false, taxiRoster = false, env: extraEnv = {}, seedFile = process.env.STAY_LATENCY_SEED || "scripts/uat-staging-provider-capacity.sql" } = {}) {
   const { ensureSecurityTables } = await import("../../lib/server-auth.ts");
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
@@ -102,13 +172,15 @@ export async function stayWorld({ dbGlobal, envGlobal, extra = 0, ownRoster = fa
   const setup = d1(sqlite);
   enterWorkersDbScope(setup);
   globalThis[dbGlobal] = setup;
-  globalThis[envGlobal] = RUNTIME;
+  const runtime = { ...RUNTIME, ...extraEnv };
+  globalThis[envGlobal] = runtime;
   await ensureSecurityTables(setup); await seedDefaultZones(setup); await seedProviderCapacityDefaults(setup); await ensureCustomerAccountTables(setup);
   await ensureBoardingGovernanceTables(setup); await ensureBoardingStayLifecycleTables(setup); await ensureTaxiFleetTables(setup);
   const seedPath = seedFile.startsWith("/") ? seedFile : new URL(seedFile, REPO);
   const roster = fs.readFileSync(seedPath, "utf8").split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
   for (const statement of roster.split(/;\s*\n/).map((item) => item.trim()).filter(Boolean)) sqlite.exec(`${statement};`);
   if (ownRoster) ownStayRoster(sqlite);
+  if (taxiRoster) ownTaxiRoster(sqlite);
   for (let index = 0; index < extra; index++) {
     sqlite.prepare(PROFILE).run(`extra_host_${index}`, "blr", `Extra host ${index}`, "commission", '["boarding"]', '["blr-east"]', 4.0, 60, 8, 0, 12);
     sqlite.prepare(HOST).run(`extra_host_${index}`, "blr", "blr-east", "Extra area", 0);
@@ -126,7 +198,7 @@ export async function stayWorld({ dbGlobal, envGlobal, extra = 0, ownRoster = fa
   const { log, db } = counted(d1(sqlite), latency);
   enterWorkersDbScope(db);
   globalThis[dbGlobal] = db;
-  return { sqlite, db, log, latency, dbGlobal, env: { ...RUNTIME, DB: db }, cookie: `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}` };
+  return { sqlite, db, log, latency, dbGlobal, env: { ...runtime, DB: db }, cookie: `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}` };
 }
 
 let gatewayModules = null;
@@ -205,6 +277,9 @@ export const boardingQuoteRequest = (world, body) => json(world, "/api/boarding-
 export const schedulingRequest = (world, body) => json(world, "/api/uat-scheduling", { customerId: CUSTOMER, cityId: "blr", zoneId: "blr-east", ...ADDRESS, ...body });
 export const canonicalBookingRequest = (world, body) => json(world, "/api/canonical-bookings", body);
 export const taxiRideBookingRequest = (world, body) => json(world, "/api/taxi-ride-bookings", body);
+/** The Pet Taxi fare (lib/taxi-commercial-client.ts createTaxiRideQuote) and the booking page's checkout (lib/customer-checkout-client.ts). */
+export const taxiQuoteRequest = (world, body) => json(world, "/api/taxi-commercial", { originLabel: TAXI_PLACES.pickup[0], destinationLabel: TAXI_PLACES.drop[0], passengerCount: 1, petCount: 1, luggageCount: 0, tripType: "one_way", ridePurpose: "regular", waitingMinutes: 0, ...body });
+export const checkoutRequest = (world, body) => json(world, "/api/customer-checkout", body);
 /** The care-plan save at the payment gate: the customer's stay read, then the governed save (lib/boarding-customer-care.ts). */
 export const boardingStayReadRequest = (world, bookingId) => new Request(`${ORIGIN}/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(bookingId)}`, { headers: { cookie: world.cookie, "cf-ray": ray() } });
 export const boardingStayRequest = (world, body) => json(world, "/api/boarding-stays", body);

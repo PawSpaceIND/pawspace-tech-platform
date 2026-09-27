@@ -32,6 +32,7 @@ import {handleAiVoiceSelfTestNegotiate,handleAiVoiceSelfTestStream} from "../lib
 import {handleDirectBrowserVoiceHarnessStream} from "../lib/voice-ai-browser-harness";
 import {ensureFinancialRuntimeSchema} from "../lib/financial-runtime-bootstrap";
 import{secureApiResponse}from"../lib/api-security-headers";
+import{isServiceBusyResponse,isTransientD1Refusal,replaceTransientD1Failure,serviceBusyResponse}from"../lib/d1-transient";
 import{requestForAuthorization}from"../lib/trusted-workspace-identity";
 import{drainGatewayInboundQueue,purgeExpiredInboundPayloads}from"../lib/gateway-inbound-queue";
 import{processQueuedMetaEnvelope}from"../lib/meta-whatsapp-inbound-processing";
@@ -99,6 +100,11 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Boarding and Pet Taxi booking writes share the scope too, so the gateway and the route look the session up once.
     if(request.method==="POST"&&COUNTED_POST_PATHS.has(new URL(request.url).pathname))return runWithRequestD1Metrics(createRequestD1Metrics(request,true,promise=>ctx.waitUntil(promise)),()=>worker.handle(request,withRequestD1MetricsEnv(env),ctx));
+    const response=await worker.handle(request,env,ctx);
+    // D1 refused the query before running it (an import or overload, lib/d1-transient.ts): a read is
+    // safe to repeat, so one more attempt after a short pause usually answers the customer normally.
+    if(request.method!=="GET"||!isServiceBusyResponse(response))return response;
+    await new Promise(resolve=>setTimeout(resolve,1_500));
     return worker.handle(request,env,ctx);
   },
   async handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -140,7 +146,7 @@ const worker = {
     if (url.pathname.startsWith("/api/")) {
       const edgeLimiter=url.pathname==="/api/public-contact"?env.PUBLIC_CONTACT_RATE_LIMITER:url.pathname==="/api/ai-voice-uat"?env.AI_VOICE_RATE_LIMITER:null;
       if(edgeLimiter){const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()||"unknown";const decision=await edgeLimiter.limit({key:`${url.pathname}:${ip}`});if(!decision.success)return secureApiResponse(Response.json({error:"Too many requests"},{status:429,headers:{"retry-after":"60","cache-control":"no-store"}}));}
-      if(url.pathname==="/api/identity-session"){const response=await handler.fetch(request,env,ctx);return secureApiResponse(observeApiResponse(request,response));}
+      if(url.pathname==="/api/identity-session"){const response=await handler.fetch(request,env,ctx);return secureApiResponse(observeApiResponse(request,await replaceTransientD1Failure(response)));}
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
       const isDiallerWebhook=url.pathname==="/api/dialler/callback";
@@ -169,7 +175,7 @@ const worker = {
       const response = await handler.fetch(request, env, ctx);
       if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
-      return secureApiResponse(observeApiResponse(request,response));
+      return secureApiResponse(observeApiResponse(request,await replaceTransientD1Failure(response)));
     }
 
     if (url.pathname === "/_vinext/image") {
@@ -185,6 +191,9 @@ const worker = {
 
     return handler.fetch(request, env, ctx);
     }catch(error){
+      // A refusal that escaped a route would otherwise become Cloudflare's HTML error page, which the
+      // screens show as "Unexpected token '<'". It is not a bug to report, so it is not re-thrown.
+      if(url.pathname.startsWith("/api/")&&isTransientD1Refusal(error)){emitStructuredError("api_service_busy",{surface:apiSurface(url.pathname),method:request.method,status:503});return secureApiResponse(serviceBusyResponse());}
       if(url.pathname.startsWith("/api/"))emitStructuredError("api_unhandled_failure",{surface:apiSurface(url.pathname),method:request.method,status:500,errorType:error instanceof Error?error.name:"UnknownError"});
       throw error;
     }

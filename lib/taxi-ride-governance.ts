@@ -1,3 +1,4 @@
+import{ensureD1Once}from"./d1-ensure-once.js";
 import{calculateTaxiFare,taxiCitroenIneligibleReason,taxiVehicleRecommendation,TAXI_RESERVATION_MINUTES,TAXI_VEHICLES,type TaxiRidePurpose,type TaxiTripType,type TaxiVehicleClass}from"./taxi-business-rules";
 type Row=Record<string,unknown>;
 type RoutePoint={latitude:number;longitude:number};
@@ -7,17 +8,27 @@ const TAXI_TRIP_TYPES:readonly unknown[]=["one_way","round_trip"] satisfies read
 const TAXI_RIDE_PURPOSES:readonly unknown[]=["regular","airport"] satisfies readonly TaxiRidePurpose[];
 function validPoint(point:RoutePoint|undefined){return Boolean(point)&&Number.isFinite(point!.latitude)&&point!.latitude>=-90&&point!.latitude<=90&&Number.isFinite(point!.longitude)&&point!.longitude>=-180&&point!.longitude<=180;}
 
-export async function ensureTaxiRideTables(db:D1Database){await db.batch([
+/*
+ * Once per isolate (ready-set only: lib/d1-ensure-once.js, so a cancelled request can never leave a later one
+ * waiting on its setup). This ran on every Pet Taxi fare and twice per ride booking - a CREATE batch and twelve
+ * sequential ALTERs, 13 D1 round trips each time (~3 s at staging's ~250 ms per call). The end state is the same:
+ * one table_info read per table decides which coordinate columns an older table still lacks, and exactly those
+ * ALTERs run as before; if that read fails, every ALTER is attempted as before.
+ */
+export async function ensureTaxiRideTables(db:D1Database){await ensureD1Once(db,"taxi_ride_tables",()=>ensureTaxiRideTablesUncached(db));}
+const tableColumns=(db:D1Database,table:string)=>db.prepare(`PRAGMA table_info(${table})`).all<Row>().then(rows=>new Set(rows.results.map(row=>String(row.name)))).catch(()=>null);
+async function ensureTaxiRideTablesUncached(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS taxi_ride_quotes (id TEXT PRIMARY KEY,origin_label TEXT NOT NULL,destination_label TEXT NOT NULL,return_drop_label TEXT,origin_latitude REAL,origin_longitude REAL,destination_latitude REAL,destination_longitude REAL,return_drop_latitude REAL,return_drop_longitude REAL,passenger_count INTEGER NOT NULL,pet_count INTEGER NOT NULL,luggage_count INTEGER NOT NULL,trip_type TEXT NOT NULL,ride_purpose TEXT NOT NULL,waiting_minutes INTEGER NOT NULL,distance_km REAL NOT NULL,estimated_duration_minutes INTEGER NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,reservation_minutes INTEGER NOT NULL DEFAULT 180,route_provider TEXT NOT NULL,fare_options_json TEXT NOT NULL,recommended_vehicle_class TEXT NOT NULL,payment_mode TEXT NOT NULL DEFAULT 'split_50_50',expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,used_at INTEGER,used_booking_id TEXT)"),
  db.prepare("CREATE TABLE IF NOT EXISTS taxi_payment_schedules (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,total_amount REAL NOT NULL,booking_fee_amount REAL NOT NULL,balance_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'booking_fee_pending',booking_fee_paid_at INTEGER,booking_fee_reference TEXT,final_paid_at INTEGER,final_payment_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS taxi_ride_booking_details (booking_id TEXT PRIMARY KEY,quote_id TEXT NOT NULL UNIQUE,vehicle_class TEXT NOT NULL,reserved_vehicle_id TEXT,passenger_count INTEGER NOT NULL,pet_count INTEGER NOT NULL,luggage_count INTEGER NOT NULL,trip_type TEXT NOT NULL,ride_purpose TEXT NOT NULL,waiting_minutes INTEGER NOT NULL,return_drop_label TEXT,origin_latitude REAL,origin_longitude REAL,destination_latitude REAL,destination_longitude REAL,return_drop_latitude REAL,return_drop_longitude REAL,distance_km REAL NOT NULL,estimated_duration_minutes INTEGER NOT NULL,initial_total REAL NOT NULL,final_total REAL NOT NULL,booking_fee_amount REAL NOT NULL,hyperactive_pet INTEGER NOT NULL DEFAULT 0,restraint_required INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS taxi_trip_adjustments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,trip_id TEXT NOT NULL,adjustment_type TEXT NOT NULL,quantity REAL,amount REAL NOT NULL,media_id TEXT,incident_id TEXT,status TEXT NOT NULL DEFAULT 'applied',reason TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(booking_id,adjustment_type,reason))"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_taxi_adjustments_booking ON taxi_trip_adjustments(booking_id,status,created_at)"),
  ]);
+ const columns={taxi_ride_quotes:tableColumns(db,"taxi_ride_quotes"),taxi_ride_booking_details:tableColumns(db,"taxi_ride_booking_details")};
  for(const [table,column,type] of[
   ["taxi_ride_quotes","origin_latitude","REAL"],["taxi_ride_quotes","origin_longitude","REAL"],["taxi_ride_quotes","destination_latitude","REAL"],["taxi_ride_quotes","destination_longitude","REAL"],["taxi_ride_quotes","return_drop_latitude","REAL"],["taxi_ride_quotes","return_drop_longitude","REAL"],
   ["taxi_ride_booking_details","origin_latitude","REAL"],["taxi_ride_booking_details","origin_longitude","REAL"],["taxi_ride_booking_details","destination_latitude","REAL"],["taxi_ride_booking_details","destination_longitude","REAL"],["taxi_ride_booking_details","return_drop_latitude","REAL"],["taxi_ride_booking_details","return_drop_longitude","REAL"],
- ] as const)await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run().catch(()=>{});
+ ] as const){const present=await columns[table];if(!present?.has(column))await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run().catch(()=>{});}
 }
 
 export async function createTaxiRideQuote(db:D1Database,input:TaxiRideQuoteInput){
@@ -40,9 +51,10 @@ export async function createTaxiRideQuote(db:D1Database,input:TaxiRideQuoteInput
  return{quoteId:id,...input,scheduledEnd:end,reservationMinutes:TAXI_RESERVATION_MINUTES,paymentMode:"split_50_50" as const,recommendedVehicleClass:recommendation.recommendedVehicle,recommendation,fareOptions,expiresAt,routeSource:input.routeProvider,productionMapsVerified:false as const,liveMoney:false as const};
 }
 
-export async function governTaxiRideBooking(db:D1Database,input:{quoteId:string;vehicleClass:TaxiVehicleClass;petCount:number;scheduledStart:string;scheduledEnd:string;submittedTotal:number;submittedAmountDueNow:number;reservations:Array<Record<string,unknown>>}){
+/** `quote`: the caller's own read of this quote row, when it started that read beside its other checks (after the tables were set up). */
+export async function governTaxiRideBooking(db:D1Database,input:{quoteId:string;vehicleClass:TaxiVehicleClass;petCount:number;scheduledStart:string;scheduledEnd:string;submittedTotal:number;submittedAmountDueNow:number;reservations:Array<Record<string,unknown>>;quote?:Promise<Row|null>}){
  await ensureTaxiRideTables(db);
- const q=await db.prepare("SELECT * FROM taxi_ride_quotes WHERE id=?").bind(input.quoteId).first<Row>();
+ const q=await(input.quote??db.prepare("SELECT * FROM taxi_ride_quotes WHERE id=?").bind(input.quoteId).first<Row>());
  if(!q||String(q.status)!=="open")throw new Response("A valid open Pet Taxi ride quote is required",{status:409});
  if(Number(q.expires_at)<Date.now())throw new Response("Pet Taxi ride quote expired; refresh route and fare",{status:409});
  if(Number(q.pet_count)!==input.petCount||String(q.scheduled_start)!==input.scheduledStart||String(q.scheduled_end)!==input.scheduledEnd)throw new Response("Pet Taxi ride details changed after quote",{status:409});

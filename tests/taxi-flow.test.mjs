@@ -242,6 +242,13 @@ test("round 2: governed answers keep their own sentences, and rule codes are tra
   assert.equal(area.retryable, false);
   const fleet = await withFetch(async () => Response.json({ error: "No Citroen eC3 is free for this 3-hour Taxi window in blr" }, { status: 409 }), () => refusedWith(() => createCanonicalTaxiRideBooking({ idempotencyKey: "k", groupId: "g", taxiQuoteId: "q", vehicleClass: "citroen_ec3", customer: { id: "c", name: "n", primaryPhone: "p" }, pets: [], cityId: "blr", zoneId: "blr-east", scheduledStart: "s", scheduledEnd: "e", provider: { id: "d", name: "D", model: "full_time", rating: null }, totalAmount: 1, amountDueNow: 1 })));
   assert.equal(fleet.message, "No Citroen eC3 is free for this 3-hour Taxi window in blr");
+  // The Worker's answer while D1 refuses queries (an import or overload; lib/d1-transient.ts) is shown as written, with a retry.
+  const { serviceBusyResponse, SERVICE_BUSY_MESSAGE } = await import("../lib/d1-transient.ts");
+  for (const call of [() => createTaxiRideQuote(RIDE_QUOTE_INPUT), () => requestTaxiCancellation({ bookingId: "B", reason: "Plans changed" })]) {
+    const busy = await withFetch(async () => serviceBusyResponse(), () => refusedWith(call));
+    assert.equal(busy.message, SERVICE_BUSY_MESSAGE);
+    assert.deepEqual([busy.status, busy.code, busy.retryAfterSeconds, busy.retryable], [503, "SERVICE_BUSY", 5, true]);
+  }
   // The cancellation's success replay is data, not an error.
   const replay = await withFetch(async () => Response.json({ data: { bookingId: "B", status: "cancelled", duplicatePrevented: true } }), () => requestTaxiCancellation({ bookingId: "B", reason: "Plans changed" }));
   assert.equal(replay.status, "cancelled");

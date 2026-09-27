@@ -20,10 +20,19 @@ export function parseGeofenceCentre(value:unknown):TaxiAreaPoint|null{
  const[latitude,longitude]=parts.map(Number);
  return Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180?{latitude,longitude}:null;
 }
+/*
+ * A geofence changes only when the founder edits a city, so the fare and booking paths read it from a copy this
+ * isolate refreshes every minute: a warm fare makes no extra D1 call (tests/taxi-booking-latency.test.mjs pins it
+ * at three). Only a completed read is kept, so a cancelled request never leaves another waiting on it.
+ */
+const AREAS_FRESH_MS=60_000,areaCopies=new WeakMap<object,{readAt:number;areas:TaxiServiceArea[]}>();
 export async function taxiServiceAreas(db:D1Database):Promise<TaxiServiceArea[]>{
+ const copy=areaCopies.get(db),now=Date.now();if(copy&&now-copy.readAt<AREAS_FRESH_MS)return copy.areas;
  await seedDefaultCityLaunchConfigs(db);
  const rows=await db.prepare("SELECT city_code,city,status,centre,radius_km FROM city_launch_configs").all<Row>();
- return rows.results.flatMap(row=>{const centre=parseGeofenceCentre(row.centre),radiusKm=Number(row.radius_km);return!NOT_SERVING.has(String(row.status))&&centre&&Number.isFinite(radiusKm)&&radiusKm>0?[{cityCode:String(row.city_code||"").trim().toLowerCase(),city:String(row.city||"").trim(),centre,radiusKm}]:[];});
+ const areas=rows.results.flatMap(row=>{const centre=parseGeofenceCentre(row.centre),radiusKm=Number(row.radius_km);return!NOT_SERVING.has(String(row.status))&&centre&&Number.isFinite(radiusKm)&&radiusKm>0?[{cityCode:String(row.city_code||"").trim().toLowerCase(),city:String(row.city||"").trim(),centre,radiusKm}]:[];});
+ areaCopies.set(db,{readAt:now,areas});
+ return areas;
 }
 export function taxiServiceAreaFor(areas:readonly TaxiServiceArea[],point:TaxiAreaPoint,cityId?:string){
  const city=String(cityId||"").trim().toLowerCase();
