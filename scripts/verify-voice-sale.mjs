@@ -44,6 +44,12 @@ export async function verifyVoiceSale(env=process.env,request=fetch){
   }
  }
  const report={destinationLast4:last4,aiPaused:handoffs.length>0,pets,addressCount:Number(addresses[0]?.count||0),recentTurns:turns,offerStatuses:offers.map(o=>o.status),completedBookings:offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId),dialed:false,captured:false};
+ // Explicit sales runner requires a complete thread inventory, not the diagnostic latest-five window.
+ if(env.VOICE_SALE_FULL_INVENTORY==='true'){
+  const all=await rows('SELECT id,status,summary,expires_at,result_json FROM voice_sales_offers WHERE thread_id=? AND customer_id=? ORDER BY created_at DESC',[threadId,call.customer_id]);
+  offers.splice(0,offers.length,...all);
+  report.completedBookings=offers.filter(o=>o.status==='completed').map(o=>JSON.parse(o.result_json||'{}').bookingId);
+ }
  report.pendingOffers=offers.filter(o=>o.status==='pending').map(o=>({id:o.id,summary:o.summary,expiresAt:o.expires_at}));
  if(!bookingId)return report;
  const offer=offers.find(o=>o.status==='completed'&&JSON.parse(o.result_json||'{}').bookingId===bookingId);
