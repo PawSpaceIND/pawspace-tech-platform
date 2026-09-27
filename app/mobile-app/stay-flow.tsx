@@ -577,7 +577,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   </strong>
                 </div>
                 {mode === "boarding" ? (
-                  <label>✓ Verified host · available for your dates</label>
+                  <label>✓ Verified host · selected-window availability verified in UAT</label>
                 ) : <>
                   <label>Your sitter is confirmed when you send the request</label>
                 </>}
