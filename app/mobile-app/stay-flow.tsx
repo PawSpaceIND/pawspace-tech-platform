@@ -26,6 +26,7 @@ import {boardingRequirements} from "../../lib/stay-host-requirements";
 import {useInitialBookingReference} from "../../lib/use-initial-booking-reference";
 import {indiaDateOffset,rememberBookingReference,sameReviewedStayQuote} from "../../lib/customer-booking-safety";
 import {boardingPetNote,boardingVaccinationProblem,stayBookingWindowRule,stayDateBounds,stayWindowCheckNow,stayWindowProblem} from "../../lib/stay-plan-checks";
+import {HOST_REQUESTS_NOTE,HOST_REQUESTS_NOT_INCLUDED,HOST_REQUESTS_TITLE,hostRequestsExcludedNote,hostRequestsReviewValue} from "../../lib/boarding-host-requests";
 import {plainErrorMessage} from "../../lib/safe-json-response";
 
 type Mode = "boarding" | "sitting";
@@ -85,7 +86,7 @@ const boardingPlaceholder: Caregiver = {
   area: "Bengaluru East",
   rating: "—",
   price: 0,
-  badge: "Governed Boarding",
+  badge: "Verified Boarding",
   home: "Host availability is loaded from PawSpace capacity records for the selected stay window.",
   features: [],
   capacity: "Window availability required",
@@ -362,7 +363,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     } catch(error){setScheduleError(plainErrorMessage(error,"No host or sitter is available for the full care window"));} finally {actionLock.current=false;setScheduling(false);}
 
   };
-  if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
+  if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} hostRequests={mode==="boarding"?selectedBenefits:[]} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
   if(recoveryBookingId)return <BookingReferenceRecovery bookingId={recoveryBookingId} service={mode} routeScope={routeScope} className={styles.flow}/>;
   if (confirmed)
     return (
@@ -540,8 +541,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
           {mode === "sitting" && sitterWindowKey === boardingHostQueryKey && !caregivers.length && <p role="alert">{sitterError||"No sitter is available for this care window. Try different dates."}</p>}
           {mode === "sitting" && sitterError && <button onClick={()=>{setSitterWindowKey("");setSitterError("");setHostRetry(value=>value+1);}}>Retry sitter search</button>}
           {mode === "boarding" && !serviceLocation && <p role="alert">Return to Plan and verify a service address before searching for hosts.</p>}
-          {mode === "boarding" && serviceLocation && boardingHostWindowKey !== boardingHostQueryKey && <p className={styles.hint}>Checking governed host availability for this stay window…</p>}
-          {mode === "boarding" && boardingHostWindowKey === boardingHostQueryKey && caregivers.length === 0 && <p role="alert" className={styles.hint}>{boardingHostError || "No verified Boarding host currently has capacity for every selected pet in this UAT window."}</p>}
+          {mode === "boarding" && serviceLocation && boardingHostWindowKey !== boardingHostQueryKey && <p className={styles.hint}>Checking host availability for this stay window…</p>}
+          {mode === "boarding" && boardingHostWindowKey === boardingHostQueryKey && caregivers.length === 0 && <p role="alert" className={styles.hint}>{boardingHostError || "No verified Boarding host currently has capacity for every selected pet on these dates. Try different dates."}</p>}
           {mode === "boarding" && boardingHostError && <button onClick={()=>{setBoardingHostWindowKey("");setBoardingHostError("");setHostRetry(value=>value+1);}}>Retry host search</button>}
           <div className={styles.caregivers}>
             {caregivers.map((c) => (
@@ -580,9 +581,9 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                   </strong>
                 </div>
                 {mode === "boarding" ? (
-                  <label>✓ Governed host · selected-window availability verified in UAT</label>
+                  <label>✓ Verified host · available for your dates</label>
                 ) : <>
-                  <label>UAT profile · final assignment is decided by the canonical scheduler</label>
+                  <label>Your sitter is confirmed when you send the request</label>
                 </>}
               </button>
             ))}
@@ -593,7 +594,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
                 {caregiver.name} · {caregiver.capacity}
               </b>
               <span>
-                {mode === "boarding" ? "Identity, species eligibility and stay capacity come from PawSpace governed records. Published profile details are loaded below. Private messages and your service feedback are linked to the saved booking." : "Availability comes from the current schedule. Published profile details appear below; private chat opens from a confirmed booking."}
+                {mode === "boarding" ? "PawSpace verifies each host's identity, the pets they can take and their capacity. Their published profile is below; private messages and your feedback are linked to the saved booking." : "Availability comes from the current schedule. Published profile details appear below; private chat opens from a confirmed booking."}
               </span>
             </div>
             <button onClick={() => setProfileOpen((open) => !open)}>
@@ -636,7 +637,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </div>
           </article>
           <div className={styles.careInstructions}><p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field])=>mode==="sitting"||field!=="homeAccess").map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>
-          {mode==="boarding"&&<><div className={styles.sectionHead}><b>Requested extras</b><span>Subject to host agreement</span></div><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
+          {mode==="boarding"&&<><div className={styles.sectionHead}><b>{HOST_REQUESTS_TITLE}</b><span>{HOST_REQUESTS_NOT_INCLUDED}</span></div><p className={styles.hint}>{HOST_REQUESTS_NOTE}</p><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
           {caregiver.providerId&&<StayMeetingRequest key={`${mode}:${caregiver.providerId}:${start}:${end}`} providerId={caregiver.providerId} providerName={caregiver.name} serviceCode={mode==="boarding"?"boarding":"pet_sitting"} start={start} end={end} onRequested={setMeeting}/>}
           <p className={styles.hint}>Care updates appear against the saved booking. Introduction requests are separate and never silently added to this stay bill.</p>
           <button className={styles.back} onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}>
@@ -676,11 +677,11 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             </span>
             <span>Service address<b>{serviceLocation?.address||"Verify your saved address"}</b></span>
             <span>
-              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Final assignment and partner approval are requested at confirmation"}</b>
+              Partner approval<b>{mode === "boarding" ? "Your host accepts the stay after you book and pay" : "Final assignment and partner approval are requested at confirmation"}</b>
             </span>
-            <span>
-              Care benefits<b>{selectedBenefits.join(" · ")}</b>
-            </span>
+            {mode === "boarding" && <span>
+              {HOST_REQUESTS_TITLE}<b>{hostRequestsReviewValue(selectedBenefits)}</b>
+            </span>}
             <span>
               Food<b>{foodType||"See care instructions"}</b>
             </span>
@@ -709,6 +710,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               </span>
             )}
             {currentMeeting&&<p>Introduction {currentMeeting.id} is a separate request and is excluded from this stay total.</p>}
+            {mode === "boarding" && selectedBenefits.length > 0 && <p>{hostRequestsExcludedNote(selectedBenefits)}</p>}
             <strong>
               Booking total<b>{quoteMoney(total)}</b>
             </strong>
@@ -751,19 +753,19 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
+                <b>{mode === "boarding" ? "Full payment for stays up to 4 nights" : "Full payment for a Home Visit or stays up to 4 nights"}</b>
                 <span>
                   {"50/50 split payment becomes available automatically for overnight stays longer than four nights."}
                 </span>
               </div>
             </article>
           )}
-          <p className={styles.hint}>{mode === "boarding" ? "Boarding" : "Pet Sitting"} coupons are disabled until that service has an explicit canonical redemption policy.</p>
+          <p className={styles.hint}>Coupons can&apos;t be used for {mode === "boarding" ? "Boarding" : "Pet Sitting"} yet.</p>
           <article className={styles.protection}>
             <i>✓</i>
             <div>
               <b>PawSpace Stay Protection</b>
-              <span>{mode === "boarding" ? "Host capacity is rechecked when requested. Payment is not yet verified. Cancellation/refund policy, live messaging and 24/7 support integrations remain pre-live gates." : "The canonical quote is ready. Sitter capacity is confirmed only when the scheduler accepts this request; payment remains UAT sandbox-only."}</span>
+              <span>{mode === "boarding" ? "Host capacity is rechecked when requested. Payment is not yet verified. Cancellation/refund policy, live messaging and 24/7 support integrations remain pre-live gates." : "Your price is ready. Your sitter's availability is confirmed when you send this request; payment is a sandbox test payment."}</span>
             </div>
           </article>
           <label className={styles.consent}>
