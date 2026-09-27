@@ -190,12 +190,13 @@ test("renders the evidence-based System Integration Control", async () => {
 });
 
 test("keeps the four-vertical closure UX explicit and partner-connected", async () => {
-  const [grooming, training, stays, host, partner] = await Promise.all(
+  const [grooming, training, stays, host, hostToday, partner] = await Promise.all(
     [
       "app/mobile-app/grooming-flow.tsx",
       "app/mobile-app/training-flow.tsx",
       "app/mobile-app/stay-flow.tsx",
       "app/host/page.tsx",
+      "app/host/host-today-stays.tsx",
       "app/partner-app/page.tsx",
     ].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
@@ -218,7 +219,9 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
   assert.match(stays, /Available sitters for your care window/);
   assert.doesNotMatch(stays, /TEST PARTNER PROFILE|What pet parents say/);
   assert.match(host, /GOVERNED BOARDING HOST PROFILE/);
-  assert.match(host, /Canonical Care Card/);
+  // The Care Card is rendered once per due or active stay, by the Today component the host page uses (R2-P02).
+  assert.match(host, /<HostTodayStays /);
+  assert.match(hostToday, /Canonical Care Card/);
   assert.match(partner, /LIVE CUSTOMER PROFILE/);
 });
 
