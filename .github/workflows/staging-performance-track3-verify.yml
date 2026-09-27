@@ -108,6 +108,7 @@ jobs:
         run: |
           mkdir -p scripts/ops
           git show "${GITHUB_SHA}:scripts/ops/staging-performance-gate.mjs" > scripts/ops/staging-performance-gate.mjs
+          git show "${GITHUB_SHA}:scripts/ops/performance-thresholds.mjs" > scripts/ops/performance-thresholds.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -142,7 +143,7 @@ jobs:
           const errorRate=Number(p.metrics?.errorRate ?? NaN);
           const evidence={failureCount:failures.length,lockOr500Failures:lockOr500,p95Ms:p95,errorRate,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds};
           console.log(JSON.stringify(evidence,null,2));
-          if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate>=0.01||lockOr500.length||failures.length) process.exit(1);
+          if(p.thresholds?.allOperationsUnder750!==true||!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate>=0.01||lockOr500.length||failures.length) process.exit(1);
           NODE
       - uses: actions/upload-artifact@v4
         if: always()

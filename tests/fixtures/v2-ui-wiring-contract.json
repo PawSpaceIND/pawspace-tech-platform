@@ -51,11 +51,11 @@
       "conditions": 25
     },
     "app/v2/page.tsx": {
-      "sha256": "c1d4c908c98ae90c33bb83cdb354942a740c804c6b076a50960145401a2d47d0",
-      "functions": 24,
-      "declarations": 34,
+      "sha256": "f0dfac484585b3792f5767ac833232403e3e17fda64383ebda24b063fc360b12",
+      "functions": 28,
+      "declarations": 33,
       "interactionProps": 30,
-      "conditions": 8
+      "conditions": 5
     },
     "app/v2/service-bridge-shell.tsx": {
       "sha256": "31e8ed403feb187b7e9b13e1fb78a3c810fdb2dc1305a121a2a3b59e542013f7",
@@ -97,11 +97,11 @@
         "conditions": 7
       },
       "app/v2/page.tsx": {
-        "sha256": "70a011e9f3838e18667ea1cc0438158289649b22e70b26770d3dfffe7b056b0e",
-        "functions": 24,
-        "declarations": 34,
+        "sha256": "528865701d28fa405970c69b55f688368a714f3687cd078f3d075964da8756d9",
+        "functions": 28,
+        "declarations": 33,
         "interactionProps": 16,
-        "conditions": 8
+        "conditions": 5
       }
     },
     "logoSha256": "88bc7b6f6634739e64da2931ab456f0d0c5c650da3a945ec84d274e60c199bd2"
