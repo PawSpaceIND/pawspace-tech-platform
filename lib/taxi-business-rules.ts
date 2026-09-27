@@ -52,11 +52,25 @@ export function taxiVehicleRecommendation(input:{passengerCount:number;petCount:
  return{recommendedVehicle:(reasons.length?"xuv":"citroen_ec3") as TaxiVehicleClass,citroenEligible:reasons.length===0,reasons};
 }
 
+/**
+ * Why the Citroën cannot take this ride, in the customer's words. The recommendation reasons above are
+ * rule codes ("more_than_3_passengers") for the server and the audit trail; the Citroën card used to
+ * print them verbatim.
+ */
+const CITROEN_LIMITS:Record<string,string>={more_than_3_passengers:"3 passengers",more_than_3_pets:"3 pets",more_than_3_luggage_items:"3 bags"};
+export function taxiCitroenIneligibleReason(reasons:readonly string[]){
+ const limits=reasons.map(reason=>CITROEN_LIMITS[reason]).filter(Boolean),words=(items:string[])=>items.length>1?`${items.slice(0,-1).join(", ")} and ${items[items.length-1]}`:items[0]||"";
+ const parts:string[]=[];
+ if(limits.length)parts.push(`${reasons.includes("more_than_3_passengers")||reasons.includes("more_than_3_pets")?"Seats":"Carries"} up to ${words(limits)}`);
+ if(reasons.includes("route_over_70_km"))parts.push(`${parts.length?"takes":"Takes"} rides up to 70 km`);
+ return `${parts.length?parts.join(" and "):"Does not fit this ride"} — choose the XUV`;
+}
+
 export function calculateTaxiFare(input:{vehicleClass:TaxiVehicleClass;tripType:TaxiTripType;ridePurpose:TaxiRidePurpose;distanceKm:number;passengerCount:number;petCount:number;luggageCount:number;waitingMinutes:number}){
  const party=validateTaxiParty(input),waitingMinutes=validateTaxiWaitingMinutes(input.tripType,input.waitingMinutes),vehicle=TAXI_VEHICLES[input.vehicleClass],distanceKm=money(Number(input.distanceKm));
  if(!Number.isFinite(distanceKm)||distanceKm<=0)throw new Error("Route distance must be positive");
  const recommendation=taxiVehicleRecommendation({...party,distanceKm});
- if(input.vehicleClass==="citroen_ec3"&&!recommendation.citroenEligible)throw new Error(`Citroen eC3 is not eligible for this ride: ${recommendation.reasons.join(",")}`);
+ if(input.vehicleClass==="citroen_ec3"&&!recommendation.citroenEligible)throw new Error(`Citroen eC3 is not eligible for this ride. ${taxiCitroenIneligibleReason(recommendation.reasons)}.`);
  const distanceFare=input.ridePurpose==="airport"?vehicle.airportFare:money(vehicle.baseFare+Math.max(0,distanceKm-vehicle.firstKm)*vehicle.extraKmRate);
  const waitingCharge=input.tripType==="round_trip"?waitingMinutes/30*vehicle.waitingPer30Min:0;
  const handlerCharge=party.passengerCount===0?TAXI_HANDLER_CHARGE:0;

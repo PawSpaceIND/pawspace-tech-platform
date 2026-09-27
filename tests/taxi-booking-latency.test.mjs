@@ -44,7 +44,8 @@ const EXPECTED = {
   "fare one way": [201,6.03,13,"citroen_ec3","google_routes_uat",[true,536.05,0,0,536.05,268.02,268.03,null],[true,641.2,0,0,641.2,320.6,320.6,null]],
   "fare round trip, 90 min wait": [201,12.62,28,"citroen_ec3","google_routes_uat",[true,766.7,450,0,1216.7,608.35,608.35,null],[true,904.8,600,0,1504.8,752.4,752.4,null]],
   "fare airport": [201,35.35,76,"citroen_ec3","google_routes_uat",[true,2300,0,0,2300,1150,1150,null],[true,2600,0,0,2600,1300,1300,null]],
-  "fare 4 pax 3 pets 4 bags": [201,6.03,13,"xuv","google_routes_uat",[false,536.05,0,0,536.05,268.02,268.02,"Citroen eC3 is not eligible for this ride: more_than_3_passengers,more_than_3_luggage_items"],[true,641.2,0,0,641.2,320.6,320.6,null]],
+  // Round 2 intended copy change: the Citroën's ineligibility is explained in plain words, not rule codes.
+  "fare 4 pax 3 pets 4 bags": [201,6.03,13,"xuv","google_routes_uat",[false,536.05,0,0,536.05,268.02,268.02,"Seats up to 3 passengers and 3 bags — choose the XUV"],[true,641.2,0,0,641.2,320.6,320.6,null]],
   "fare no passenger (handler)": [201,15.92,35,"citroen_ec3","google_routes_uat",[true,882.2,0,300,1182.2,591.1,591.1,null],[true,1036.8,0,300,1336.8,668.4,668.4,null]],
   "fare same pickup and drop": [400,"Pet Taxi requires distinct complete pickup and drop addresses"],
   "fare pickup in the past": [400,"Pet Taxi requires a future pickup date and time"],

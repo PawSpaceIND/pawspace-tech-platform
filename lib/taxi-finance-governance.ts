@@ -3,6 +3,7 @@ import{ensureTaxiLifecycleTables}from"./taxi-lifecycle";
 import{collectedForBooking}from"./collected-funds";
 import{providerPayoutHoldDays}from"./provider-payout-hold";
 import{ensureTaxiFleetTables,taxiFleetForBooking}from"./taxi-fleet-governance";
+import{governedJsonError}from"./governed-http-error";
 type Row=Record<string,unknown>;
 export type TaxiFinanceAction="request_cancel"|"approve_cancel"|"record_trip_payment"|"record_refund"|"prepare_settlement"|"approve_settlement"|"reconcile";
 export type TaxiFinanceInput={bookingId:string;action:TaxiFinanceAction;actorId:string;idempotencyKey:string;reason?:string;paymentReference?:string;approvedRefundAmount?:number;refundReference?:string};
@@ -30,9 +31,83 @@ async function totals(db:D1Database,bookingId:string){
  if(rideSchedule){const due=Number(rideSchedule.total_amount||0),paid=await collectedForBooking(db,bookingId),unpaid=Math.max(0,Math.round((due-paid)*100)/100);return{due,paid,unpaid,refund:Number(refund?.total||0)}}
  const due=payment?Number(payment.amount||0):0,paid=payment&&["sandbox_paid","gateway_paid"].includes(String(payment.status))?Number(payment.amount||0):0,unpaid=payment&&String(payment.status)==="due"?Number(payment.amount||0):0;return{due,paid,unpaid,refund:Number(refund?.total||0)}
 }
+/*
+ * THE CUSTOMER'S CANCELLATION (request_cancel).
+ *
+ * An UNPAID ride hold (payment_pending, nothing collected) is cancelled at once and its car and driver are
+ * released - there is no money to review, so it never waits for Finance. This mirrors the owner-approved
+ * unpaid cancellation of Boarding (lib/boarding-finance-governance.ts). The ride flow tells the customer
+ * the car is "held for 3 hours"; filing a Finance review for it left the booking payment_pending with the
+ * car (TXF-CITROEN-9179) and driver reserved until someone in support released them.
+ *
+ * A PAID ride keeps the request-only path: a policy_review_required request that Finance approves
+ * (approve_cancel), with segregation of duties and the refund ceiling unchanged.
+ *
+ * Both write ONE batch in which the cancellation and its idempotency record commit together. They used to
+ * be two writes, so a failure between them (a D1 hiccup, or a concurrent identical request tripping the
+ * idempotency key's primary key) answered HTTP 500 after the request was already recorded - and every
+ * retry was then refused as "already pending", which the route redacts to "Unable to update Pet Taxi
+ * finance". Now a failed batch leaves nothing behind, and a request that lost a race replays the winner.
+ *
+ * Refusals are governed so the customer reads the real reason rather than the redacted fallback.
+ */
+const refuse=(error:string,status=409)=>governedJsonError({error},status);
+const COLLECTED_OR_AUTHORIZED="('captured','paid','refunded','partially_refunded','authorized')";
+async function requestCancellation(db:D1Database,input:TaxiFinanceInput,booking:Row,now:number):Promise<Record<string,unknown>>{
+ const bookingStatus=String(booking.status),tripStatus=String(booking.trip_status);
+ if(bookingStatus==="cancelled")throw refuse("This ride is already cancelled.");
+ if(bookingStatus==="completed")throw refuse("A completed ride cannot be cancelled.");
+ if(["in_progress","arrived_dropoff","dropoff_confirmed"].includes(tripStatus))throw refuse("Your ride is under way. Call PawSpace support to stop an active ride safely.");
+ const reason=String(input.reason||"").trim();if(reason.length<3)throw refuse("Tell us briefly why you are cancelling (at least 3 characters).",400);
+ const id=crypto.randomUUID();
+ if(bookingStatus==="payment_pending"&&await collectedForBooking(db,input.bookingId)<=0){
+  const released=await cancelUnpaidRideHold(db,{bookingId:input.bookingId,groupId:String(booking.schedule_group_id||""),actorId:input.actorId,now,requestId:id,reason,idempotencyKey:input.idempotencyKey,eventType:"ride_hold_cancelled_by_customer"});
+  if(released)return released;
+  // The hold changed under us: a concurrent identical request won, the fee was captured, or it expired.
+  const replay=await prior(db,input.idempotencyKey);if(replay)return{...replay,duplicatePrevented:true};
+  const current=await db.prepare("SELECT status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+  if(String(current?.status)==="cancelled")throw refuse("This ride is already cancelled.");
+ }
+ const result={requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true};
+ let written:D1Result[];
+ try{written=await db.batch([
+  db.prepare("INSERT INTO taxi_cancellation_requests (id,booking_id,requested_by,reason,status,created_at,updated_at) SELECT ?,?,?,?,'policy_review_required',?,? WHERE NOT EXISTS (SELECT 1 FROM taxi_cancellation_requests WHERE booking_id=? AND status='policy_review_required') AND NOT EXISTS (SELECT 1 FROM taxi_cancellation_approval_claims WHERE booking_id=?)").bind(id,input.bookingId,input.actorId,reason,now,now,input.bookingId,input.bookingId),
+  db.prepare("INSERT INTO taxi_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM taxi_cancellation_requests WHERE id=?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now,id),
+ ]);}catch(error){if(!/UNIQUE constraint failed/i.test(error instanceof Error?error.message:String(error)))throw error;const replay=await prior(db,input.idempotencyKey);if(replay)return{...replay,duplicatePrevented:true};throw error;}
+ if(Number(written[0]?.meta?.changes||0)===1&&Number(written[1]?.meta?.changes||0)===1)return result;
+ const replay=await prior(db,input.idempotencyKey);if(replay)return{...replay,duplicatePrevented:true};
+ throw refuse("Your cancellation request is already with PawSpace. Finance will review any refund and contact you.");
+}
+/**
+ * Cancels an unpaid Pet Taxi hold in ONE batch and releases its car and driver. The booking claim is the
+ * first statement and only matches a still-unpaid payment_pending ride (a capture that committed first
+ * wins); every other statement runs only if THIS batch made that claim, so a lost race changes nothing.
+ * Returns null when the claim did not happen. Used by the customer's cancellation and by the 3-hour hold
+ * expiry (lib/taxi-unpaid-hold-expiry.ts), so both release exactly the same records.
+ */
+export async function cancelUnpaidRideHold(db:D1Database,input:{bookingId:string;groupId:string;actorId:string;now:number;requestId:string;reason:string;idempotencyKey:string|null;eventType:string}){
+ const{bookingId,now}=input,claimedNow="EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.id=? AND b.status='cancelled' AND b.updated_at=?)";
+ const schedule=await db.prepare("SELECT booking_id FROM taxi_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+ const result={requestId:input.requestId,bookingId,status:"cancelled",approvedRefundAmount:0,refundId:null,refundStatus:"not_required",capacityReleased:true,bookingPreserved:false};
+ const statements=[
+  db.prepare(`UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND service_code='pet_taxi' AND status='payment_pending' AND NOT EXISTS (SELECT 1 FROM booking_payments p WHERE p.booking_id=canonical_bookings.id AND p.status IN ${COLLECTED_OR_AUTHORIZED})`).bind(now,bookingId),
+  db.prepare(`INSERT INTO taxi_cancellation_requests (id,booking_id,requested_by,reason,status,approved_refund_amount,decision_by,decision_reason,created_at,updated_at) SELECT ?,?,?,?,'cancelled',0,?,'Unpaid ride hold released: no payment was taken',?,? WHERE ${claimedNow}`).bind(input.requestId,bookingId,input.actorId,input.reason,input.actorId,now,now,bookingId,now),
+  db.prepare(`UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=? AND status NOT IN ('completed','cancelled') AND ${claimedNow}`).bind(now,bookingId,bookingId,now),
+  db.prepare(`UPDATE taxi_trips SET status='cancelled',updated_at=? WHERE booking_id=? AND status NOT IN ('completed','cancelled') AND ${claimedNow}`).bind(now,bookingId,bookingId,now),
+  db.prepare(`UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status NOT IN ('completed','cancelled') AND ${claimedNow}`).bind(input.groupId,bookingId,now),
+  db.prepare(`UPDATE taxi_fleet_reservations SET status='released',updated_at=? WHERE booking_id=? AND status IN ('held','confirmed') AND ${claimedNow}`).bind(now,bookingId,bookingId,now),
+  db.prepare(`UPDATE booking_payments SET status='cancelled',updated_at=? WHERE booking_id=? AND status NOT IN ${COLLECTED_OR_AUTHORIZED} AND ${claimedNow}`).bind(now,bookingId,bookingId,now),
+  db.prepare(`INSERT INTO taxi_trip_events (id,booking_id,trip_id,provider_id,event_type,actor_id,detail_json,created_at) SELECT ?,t.booking_id,t.id,t.provider_id,?,?,?,? FROM taxi_trips t WHERE t.booking_id=? AND ${claimedNow}`).bind(crypto.randomUUID(),input.eventType,input.actorId,JSON.stringify({requestId:input.requestId,reason:input.reason,approvedRefundAmount:0,refundRequired:false,capacityReleased:true}),now,bookingId,bookingId,now),
+ ];
+ if(schedule)statements.push(db.prepare(`UPDATE taxi_payment_schedules SET status='cancelled',updated_at=? WHERE booking_id=? AND status='booking_fee_pending' AND ${claimedNow}`).bind(now,bookingId,bookingId,now));
+ if(input.idempotencyKey)statements.push(db.prepare(`INSERT INTO taxi_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) SELECT ?,?,'request_cancel',?,? WHERE ${claimedNow}`).bind(input.idempotencyKey,bookingId,JSON.stringify(result),now,bookingId,now));
+ let written:D1Result[];
+ try{written=await db.batch(statements);}catch(error){if(input.idempotencyKey&&/UNIQUE constraint failed/i.test(error instanceof Error?error.message:String(error)))return null;throw error;}
+ return Number(written[0]?.meta?.changes||0)===1?result:null;
+}
 function concurrentApprovalError(error:unknown){return /taxi_cancellation_approval_claims|UNIQUE constraint failed.*taxi_cancellation_approval_claims|NOT NULL constraint failed.*taxi_cancellation_approval_claims/i.test(error instanceof Error?error.message:String(error))}
 export async function mutateTaxiFinance(db:D1Database,input:TaxiFinanceInput){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});await ensureTaxiFinanceTables(db);const old=await prior(db,input.idempotencyKey);if(old)return{...old,duplicatePrevented:true};const booking=await context(db,input.bookingId),now=Date.now(),bookingStatus=String(booking.status),tripStatus=String(booking.trip_status);
- if(input.action==="request_cancel"){if(["cancelled","completed"].includes(bookingStatus))throw new Response("Closed Pet Taxi bookings cannot accept cancellation requests",{status:409});if(["in_progress","arrived_dropoff","dropoff_confirmed"].includes(tripStatus))throw new Response("An active Pet Taxi trip must use the Operations safety workflow before cancellation",{status:409});const existing=await db.prepare("SELECT id FROM taxi_cancellation_requests WHERE booking_id=? AND status='policy_review_required' LIMIT 1").bind(input.bookingId).first<Row>(),claimed=await db.prepare("SELECT cancellation_request_id FROM taxi_cancellation_approval_claims WHERE booking_id=?").bind(input.bookingId).first<Row>();if(existing||claimed)throw new Response("A Pet Taxi cancellation is already pending or approved",{status:409});const id=crypto.randomUUID();await db.prepare("INSERT INTO taxi_cancellation_requests (id,booking_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?, 'policy_review_required',?,?)").bind(id,input.bookingId,input.actorId,why(input),now,now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true})}
+ if(input.action==="request_cancel")return requestCancellation(db,input,booking,now);
  if(input.action==="approve_cancel"){if(["cancelled","completed"].includes(bookingStatus))throw new Response("Closed Pet Taxi booking cannot be cancelled again",{status:409});if(["in_progress","arrived_dropoff","dropoff_confirmed"].includes(tripStatus))throw new Response("Active Pet Taxi trip must be operationally resolved before Finance cancellation",{status:409});const request=await db.prepare("SELECT * FROM taxi_cancellation_requests WHERE booking_id=? AND status='policy_review_required' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!request)throw new Response("No Pet Taxi cancellation request is awaiting policy review",{status:409});if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});const current=await totals(db,input.bookingId),amount=Number(input.approvedRefundAmount);if(!Number.isFinite(amount)||amount<0||amount>current.paid)throw new Response("Approved Pet Taxi refund must be explicit and cannot exceed sandbox-paid trip value",{status:409});const reason=why(input),refundId=amount>0?crypto.randomUUID():null,statements=[db.prepare("INSERT INTO taxi_cancellation_approval_claims (booking_id,cancellation_request_id,created_at) VALUES ((SELECT b.id FROM canonical_bookings b JOIN taxi_cancellation_requests c ON c.booking_id=b.id WHERE c.id=? AND c.status='policy_review_required' AND b.status NOT IN ('cancelled','completed')),?,?)").bind(request.id,request.id,now),db.prepare("UPDATE taxi_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=? WHERE id=? AND status='policy_review_required'").bind(amount,input.actorId,reason,now,request.id),db.prepare("UPDATE taxi_cancellation_requests SET status='superseded',decision_by=?,decision_reason='Superseded by approved cancellation',updated_at=? WHERE booking_id=? AND id<>? AND status='policy_review_required'").bind(input.actorId,now,input.bookingId,request.id),db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status NOT IN ('cancelled','completed')").bind(now,input.bookingId),db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),db.prepare("UPDATE taxi_trips SET status='cancelled',updated_at=? WHERE booking_id=? AND status NOT IN ('completed','cancelled')").bind(now,input.bookingId),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status NOT IN ('completed','cancelled')").bind(booking.schedule_group_id),db.prepare("UPDATE taxi_fleet_reservations SET status='released',updated_at=? WHERE booking_id=? AND status IN ('held','confirmed')").bind(now,input.bookingId)];if(refundId)statements.push(db.prepare("INSERT INTO taxi_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_finance_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now));let results;try{results=await db.batch(statements)}catch(error){if(concurrentApprovalError(error))throw new Response("Pet Taxi cancellation was already approved or the booking closed",{status:409});throw error}if(!Number(results[1]?.meta?.changes)||!Number(results[3]?.meta?.changes))throw new Response("Pet Taxi cancellation state changed concurrently",{status:409});return remember(db,input,{bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required"})}
  if(input.action==="record_trip_payment"){const reference=String(input.paymentReference||"").trim();if(!reference)throw new Response("Sandbox Pet Taxi payment reference is required",{status:400});const payment=await db.prepare("SELECT * FROM taxi_trip_payment_events WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!payment)throw new Response("Completed Pet Taxi payment-due event not found",{status:404});if(String(payment.status)==="sandbox_paid")return remember(db,input,{bookingId:input.bookingId,status:"sandbox_paid",reference:payment.reference,amount:Number(payment.amount),duplicatePayment:true});if(String(payment.status)!=="due")throw new Response("Pet Taxi payment event is not payable",{status:409});const used=await db.prepare("SELECT id FROM taxi_trip_payment_events WHERE reference=?").bind(reference).first<Row>();if(used)throw new Response("Pet Taxi sandbox payment reference was already used",{status:409});await db.batch([db.prepare("UPDATE taxi_trip_payment_events SET status='sandbox_paid',reference=?,updated_at=? WHERE id=? AND status='due'").bind(reference,now,payment.id),db.prepare("UPDATE booking_payments SET status='paid',detail_json=?,updated_at=? WHERE booking_id=?").bind(JSON.stringify({source:"taxi_trip_ledger",sandboxReference:reference,liveMoney:false,productionPaymentTimingPolicy:"pending"}),now,input.bookingId)]);return remember(db,input,{bookingId:input.bookingId,status:"sandbox_paid",reference,amount:Number(payment.amount),liveMoney:false})}
  if(input.action==="record_refund"){const reference=String(input.refundReference||"").trim();if(!reference)throw new Response("Sandbox Pet Taxi refund reference is required",{status:400});const refund=await db.prepare("SELECT * FROM taxi_refund_ledger WHERE booking_id=? AND status='sandbox_pending' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!refund)throw new Response("No Pet Taxi sandbox refund is pending",{status:409});const used=await db.prepare("SELECT id FROM taxi_refund_ledger WHERE reference=?").bind(reference).first<Row>();if(used&&String(used.id)!==String(refund.id))throw new Response("Pet Taxi refund reference was already used",{status:409});await db.prepare("UPDATE taxi_refund_ledger SET status='sandbox_recorded',reference=?,updated_at=? WHERE id=?").bind(reference,now,refund.id).run();return remember(db,input,{bookingId:input.bookingId,refundId:refund.id,status:"sandbox_recorded",amount:Number(refund.amount),reference})}
