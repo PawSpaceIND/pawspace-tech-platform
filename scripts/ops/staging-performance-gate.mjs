@@ -1,3 +1,4 @@
+import { operationThresholds } from "./performance-thresholds.mjs";
 import { createHmac, randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 
@@ -225,13 +226,16 @@ const totalRequests = latencies.length;
 const p95 = percentile(latencies,0.95);
 const errorRate = totalRequests ? failures.length/totalRequests : 1;
 const metric = Object.fromEntries([...timings.entries()].map(([name,xs]) => [name,{count:xs.length,p95Ms:Number(percentile(xs,0.95).toFixed(2)),maxMs:Number(Math.max(...xs).toFixed(2))}]));
+const byOperationUnder750 = operationThresholds(metric);
+const allOperationsUnder750 = Object.values(byOperationUnder750).every(Boolean);
 const report = {
   runId:RUN_ID, stagingUrl:BASE,
+  buildSha:process.env.EXPECTED_SHA||null,harnessSha:process.env.GITHUB_SHA||null,
   setup:{assignmentCandidatesAttempted:candidateCursor,expectedCapacityMisses:skippedCapacityCandidates},
   counts:{assignments:prepared.length,bookings:bookingResults.length,duplicatePaymentAttempts:replayResults.length,webhookReplays:webhookResults.length,ledgerQueries:ledgerOk},
   metrics:{totalRequests,p95Ms:Number(p95.toFixed(2)),errorRate:Number(errorRate.toFixed(6)),byOperation:metric},
-  thresholds:{p95Under750:p95<750,errorRateUnder1Percent:errorRate<0.01}, failures
+  thresholds:{p95Under750:p95<750,byOperationUnder750,allOperationsUnder750,errorRateUnder1Percent:errorRate<0.01}, failures
 };
 await writeFile(OUT, JSON.stringify(report,null,2));
 console.log(JSON.stringify(report,null,2));
-if (prepared.length!==100 || bookingResults.length!==100 || replayResults.length!==100 || webhookResults.length!==500 || ledgerOk!==10000 || p95>=750 || errorRate>=0.01 || failures.length) process.exit(1);
+if (prepared.length!==100 || bookingResults.length!==100 || replayResults.length!==100 || webhookResults.length!==500 || ledgerOk!==10000 || !allOperationsUnder750 || p95>=750 || errorRate>=0.01 || failures.length) process.exit(1);

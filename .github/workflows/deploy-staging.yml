@@ -54,6 +54,10 @@ on:
         options:
           - 'off'
           - 'on'
+      performance_audit:
+        description: "Measure authenticated report reads after staging certification (no bookings or messages)"
+        type: boolean
+        default: false
       atlas_smoke:
         description: "Run real-provider Atlas staging scenarios (synthetic founder questions only)"
         type: boolean
@@ -581,3 +585,19 @@ jobs:
           name: atlas-live-certification
           path: artifacts/atlas-live/
           retention-days: 7
+
+      - name: Measure certified staging report performance
+        if: ${{ github.event.inputs.performance_audit == 'true' }}
+        timeout-minutes: 15
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node scripts/ops/staging-read-performance.mjs
+      - name: Upload staging report performance
+        if: ${{ always() && github.event.inputs.performance_audit == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-read-performance-${{ github.event.inputs.expected_sha }}
+          path: staging-read-performance.json
+          if-no-files-found: warn

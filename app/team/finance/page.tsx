@@ -31,6 +31,7 @@ export default function TeamFinance(){
       {loading&&<section style={{padding:24,background:"var(--staff-surface)",borderRadius:14}}>Loading canonical Grooming ledger…</section>}
       <VisualAnalytics serviceCode="grooming" title="Grooming revenue trends" />
       {data&&!loading&&!error&&<>
+        <p role="note">Ledger totals below cover the latest 200 Grooming bookings with payment records, ordered by last update. The revenue chart above has its own date range; its filters do not change this ledger.</p>
         <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:12}} data-staff-grid="stats">
           {[["Bookings",data.summary.bookings],["Reconciled",data.summary.reconciled],["Unreconciled",data.summary.unreconciled],["Open exceptions",data.summary.exceptions]].map(([name,value])=><article key={String(name)} style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:14,padding:18}}><small style={{color:"var(--staff-muted)"}}>{name}</small><strong style={{display:"block",fontSize:25,marginTop:7}}>{value}</strong></article>)}
         </section>
