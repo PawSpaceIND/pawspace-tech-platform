@@ -3,7 +3,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-installWorkersHooks("__G20_SESSION_DB__");
+installWorkersHooks("__G20_SESSION_DB__", "__G20_SESSION_ENV__");
 const { upsertIdentityBinding, revokeIdentityBinding } = await import("../lib/identity-binding.ts");
 const { issuePlatformSession, resolvePlatformSession, revokePlatformSession, platformSessionCookie, clearPlatformSessionCookie, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
 
@@ -175,4 +175,27 @@ test("cookie security, bounded expiry and customer/provider permissions remain u
   assert.equal((await resolve(db, b)).permissions.includes("*"), false);
   assert.match(platformSessionCookie(a.token, a.ttlSeconds), /Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=900$/);
   assert.match(clearPlatformSessionCookie(), /Max-Age=0$/);
+});
+
+for (const legacyPrincipal of [false, true]) test(`UAT provider session is denied after test access is disabled (legacy principal: ${legacyPrincipal})`, async t => {
+  const { db } = world(t);
+  const runtime = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "local-fixture-key-not-production-0123456789" };
+  globalThis.__G20_SESSION_ENV__ = runtime;
+  t.after(() => { delete globalThis.__G20_SESSION_ENV__; });
+  let subject = await identity(db, "provider", "G20-UAT-PROVIDER");
+  if (legacyPrincipal) {
+    const principalKey = "uat-provider:G20-UAT-PROVIDER";
+    const binding = await upsertIdentityBinding(db, { ...subject, principalKey, actorId: "fixture", reason: "Legacy UAT provider fixture" });
+    subject = { ...subject, principalKey, bindingId: String(binding.id) };
+  }
+  const session = await issuePlatformSession(db, { ...subject, request: browser(), metadata: legacyPrincipal ? {} : { uatProviderSwitch: true } });
+  const ordinary = await signIn(db, await identity(db, "provider", "G20-ORDINARY-PROVIDER"));
+  assert.ok(await resolve(db, session));
+  runtime.PAWSPACE_UAT_LOGIN = "off";
+  assert.equal(await resolve(db, session), null);
+  assert.ok(await resolve(db, ordinary));
+  runtime.PAWSPACE_UAT_LOGIN = "on";
+  runtime.PAWSPACE_UAT_SIGNING_KEY = "short";
+  assert.equal(await resolve(db, session), null);
+  assert.ok(await resolve(db, ordinary));
 });

@@ -50,3 +50,11 @@ The Mac reconnected. An isolated checkout of exact PR head `0703b685b2ad7081cd61
 Initial CI exposed three failures: the staging customer test represented repeat login without sending the prior cookie, and two presentation contracts retained pre-fix source hashes. The route test now sends the prior cookie for same-browser re-login and retains its old-token refusal assertion. Two further executed route tests require independent browser sessions, profile/account reads, and re-login isolation to work. Ten fingerprint entries in two manifests are updated only for the six authentication source files already changed by this PR; assertions and unrelated entries remain unchanged.
 
 Executed on Mac Node 24.19.0: 70 session/ownership/route tests passed, then 27 OTP/security/presentation tests passed; zero failures or skips in either run. `npm run typecheck` passed. These are focused local results, not the full repository CI result or live-browser acceptance. Exact-head CI and staging verification still must complete.
+
+## Review corrections
+
+Two independently verified authentication findings are included. Malformed JSON, null/non-object payloads and non-string or empty assertions now return the existing 400 validation response before database access; the same-origin 403 check still runs first. No credential is issued on either refusal.
+
+Previously issued UAT provider-switch sessions are recognized using server-owned session metadata or their legacy `uat-provider:` principal. Each new request checks the same UAT flag/signing-key gate as the issuer. Disabling UAT or using an invalid signing key therefore denies those sessions, while ordinary verified partner OTP sessions remain valid. The existing partner identity-source value is preserved for compatibility.
+
+Executed on the Mac: 108 focused tests passed, zero failed/skipped; TypeScript passed. The expanded tests exercise the actual identity route and real session resolver. Narrow protected-source fingerprints were refreshed only for the two further authentication edits. Live after-fix acceptance and final exact-head CI remain separate gates.
