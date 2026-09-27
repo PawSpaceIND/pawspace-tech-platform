@@ -2,9 +2,10 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {readFile} from 'node:fs/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
-import {applyAudioProbeEvent,audioFormat,audioProbeComplete,audioProofChecks,createAudioProbeState,isHandoffReply} from './voice-audio-proof.mjs';
-// Remote values are stripped of CR/LF/control characters and capped before reaching workflow logs.
-const logSafe=(value,max=128)=>String(value).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,'').slice(0,max);
+import {applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProofChecks,createAudioProbeState,isHandoffReply} from './voice-audio-proof.mjs';
+// Remote values are stripped of CR/LF (explicitly, so log-injection scanners see it), other control
+// characters and line/paragraph separators, and capped before reaching workflow logs or commands.
+const logSafe=(value,max=128)=>String(value).replace(/\r|\n/g,'').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,'').slice(0,max);
 const before=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'probe-agent-socket'});
 const key=process.env.ELEVENLABS_API_KEY,agentId=process.env.GROOMING_AGENT_ID,callId=process.env.UAT_VOICE_CALL_ID;
 const headers={'xi-api-key':key};
@@ -17,11 +18,12 @@ const signed=await sr.json();if(!sr.ok||!signed.signed_url)throw Error('Agent so
 console.log('::add-mask::'+signed.signed_url);
 const socket=new WebSocket(signed.signed_url);
 let format,outputFormat,sending=false,finished=false,started=0,sentBytes=0;
-const state=createAudioProbeState(),eventCounts={};
+// Counts are keyed only by allowlisted event names (anything else is 'other'), never by raw socket data.
+const state=createAudioProbeState(),eventCounts=new Map();
 await new Promise((resolve,reject)=>{
  const deadline=setTimeout(()=>finish(Error('Audio round trip did not complete within 90 seconds')),90000);
  const check=setInterval(()=>{if(audioProbeComplete(state,Date.now()))finish();},250);
- function finish(error){if(finished)return;finished=true;clearTimeout(deadline);clearInterval(check);console.log('VOICE_AUDIO_DIAGNOSTICS='+JSON.stringify({eventCounts,sentBytes,greeting:state.greeting,sending,started:Boolean(started),transcriptReceived:Boolean(state.transcript),transcriptSegments:state.segments.length,replyReceived:Boolean(state.reply),audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,interruptedEventId:state.interruptedEventId,proofs:audioProofChecks(state)}));socket.close();error?reject(error):resolve();}
+ function finish(error){if(finished)return;finished=true;clearTimeout(deadline);clearInterval(check);console.log('VOICE_AUDIO_DIAGNOSTICS='+JSON.stringify({eventCounts:Object.fromEntries(eventCounts),sentBytes,greeting:state.greeting,sending,started:Boolean(started),transcriptReceived:Boolean(state.transcript),transcriptSegments:state.segments.length,replyReceived:Boolean(state.reply),audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,interruptedEventId:state.interruptedEventId,proofs:audioProofChecks(state)}));socket.close();if(error)reject(error);else resolve();}
  async function sendAudio(){
   if(sending||!format||!state.greeting)return;sending=true;
   // Fixed informational utterance: this probe cannot confirm or create a sale.
@@ -34,7 +36,7 @@ await new Promise((resolve,reject)=>{
  }
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_voice_call_id:callId},dynamic_variables:{pawspace_voice_call_id:callId,pawspace_uat:'true'}})));
  socket.addEventListener('message',event=>{try{
-  const d=JSON.parse(String(event.data));eventCounts[d.type]=(eventCounts[d.type]||0)+1;
+  const d=JSON.parse(String(event.data)),kind=audioEventKind(d.type);eventCounts.set(kind,(eventCounts.get(kind)||0)+1);
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
   if(d.type==='conversation_initiation_metadata'){
    const m=d.conversation_initiation_metadata_event;format=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(format);audioFormat(outputFormat);

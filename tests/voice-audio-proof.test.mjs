@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {applyAudioProbeEvent,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
+import {applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 const valid={transcript:'What grooming services do you offer for my dog Bruno?',reply:'We offer Essential Bath grooming for dogs. Would you like to hear more?',audioBytes:16000,nonSilentBytes:9000};
 test('audio proof requires recognized request, substantive response and non-silent audio',()=>{
  assert.equal(audioProof(valid),true);
@@ -62,4 +62,8 @@ test('speech before the caller fixture starts, audio before recognition and hand
  assert.equal(early.s.transcript,'');
  assert.equal(replay([...greeting,{type:'audio',audio_event:{event_id:2,audio_base_64:pcm(32000)}}]).s.audioBytes,0);
  assert.equal(isHandoffReply('This conversation is waiting for a PawSpace team member.'),true);assert.equal(isHandoffReply(reply),false);
+});
+test('socket event types are counted only under allowlisted names',()=>{
+ for(const t of ['audio','interruption','agent_response_correction','user_transcript','ping'])assert.equal(audioEventKind(t),t);
+ for(const t of ['__proto__','constructor','prototype','toString','audio\n::error::x',undefined,null,{},42])assert.equal(audioEventKind(t),'other');
 });
