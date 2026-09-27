@@ -1,3 +1,4 @@
+import {voiceCalendarContext} from "./voice-calendar-context";
 import { specialistSalesPrompt, type VoiceSalesService } from "./voice-sales-specialists";
 import{aiProviderConnection,requestAiDraftWithVoiceRecovery}from"./ai-provider-adapter";
 import{prepareAiToolExecution,type AiToolChannel,type AiToolIntent}from"./ai-tool-registry";
@@ -92,7 +93,7 @@ return subscriptions;})(),
   cancellations:"Cancellation and reschedule eligibility is service-policy specific. Never promise a refund; refund and payment disputes go to a human reviewer.",
   operatingHours:"Do not invent fixed operating hours. State hours only when approved knowledge or a server scheduling/availability tool supplies them for the requested service/location."
  };
- return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,serviceDirectory,operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyGrounding:true,carrierIndependent:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true},availableActionTools:["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]},groundingRefs:knowledgeRefs(knowledge)};
+ return{context:{...input.canonicalContext,...voiceCalendarContext(),approvedKnowledge:knowledge,catalogueTool,catalogue,serviceDirectory,operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyGrounding:true,carrierIndependent:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true},availableActionTools:["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]},groundingRefs:knowledgeRefs(knowledge)};
 }
 
 export async function buildRuntimeSystemPrompt(db:D1Database,input:{customerId:string;channel:AiToolChannel;dispatchItemId?:string|null;asOf?:number}){let prompt=pawspaceChannelSystemPrompt(input.channel);if(input.channel!=="voice"&&input.channel!=="whatsapp")return prompt;const sales=input.dispatchItemId?await import("./ai-sales-goal-orchestrator").then(({buildSalesPromptContext})=>buildSalesPromptContext(db,{dispatchItemId:input.dispatchItemId!,customerId:input.customerId,channel:input.channel as "voice"|"whatsapp",asOf:input.asOf})):await latestSalesPromptContext(db,{customerId:input.customerId,channel:input.channel as "voice"|"whatsapp",asOf:input.asOf});if(sales)prompt+=`\n\n${renderProtectedQuotaDirective(sales)}`;return prompt;}

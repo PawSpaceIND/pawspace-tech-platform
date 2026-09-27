@@ -61,6 +61,9 @@ test("Specialist voice offer then confirmation executes reserve -> booking -> Ra
   const req=JSON.parse(init.body),input=JSON.parse(req.input);
   assert.ok(input.canonicalContext.pets.some(p=>p.id===petId));
   assert.equal(input.canonicalContext.salesService,'grooming');
+  assert.equal(input.canonicalContext.timezone,'Asia/Kolkata');
+  assert.match(input.canonicalContext.tomorrowDate,/^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Number.isFinite(Date.parse(input.canonicalContext.asOfIso)));
   assert.ok(req.max_output_tokens>=600);
   const proposed=incompleteOffer?actions.map(a=>a.toolCode==='schedule.reserve'?{...a,arguments:{...a.arguments,servicePincode:""}}:a):actions;
   const envelope=JSON.stringify({reply:"Ready",actions:proposed});
