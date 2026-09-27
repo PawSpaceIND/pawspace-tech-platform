@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
+import { MetricBars, TargetProgress, VisualGrid, reportDate } from "../../components/ui/ReportVisuals";
+import TrendChart from "../../components/ui/TrendChart";
+import { Badge, StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
 
 /**
  * Revenue Mission Command Center.
@@ -16,14 +18,16 @@ import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamSt
 type Warning = { severity: string; code: string; message: string };
 type Command = {
   status?: string;
-  mission?: { name?: string; revenueBasis?: string; periodStart?: string; periodEnd?: string; cityId?: string };
-  revenue?: { target?: number; achieved?: number; gap?: number; booked?: number; collected?: number; refunded?: number; netCollected?: number };
+  generatedAt?: number;
+  breakdowns?: { service: { serviceCode: string; booked: number; collected: number; refunded: number; netCollected: number }[]; city: { cityId: string; booked: number; collected: number; refunded: number; netCollected: number }[] };
+  mission?: { name?: string; revenueBasis?: string; periodStart?: number; periodEnd?: number; cityId?: string };
+  revenue?: { target?: number; achieved?: number; gap?: number; booked?: number; collected?: number; refunded?: number; netCollected?: number; elapsedPercent?: number; paceTarget?: number; paceVariance?: number };
   pipeline?: { weightedPipeline?: number; unweightedPipeline?: number; ready?: number; suppressed?: number; reviewRequired?: number };
   leadQueue?: { currentAssignments?: number; unassigned?: number; unacknowledged?: number; slaBreached?: number; managerEscalationDue?: number; reassignmentDue?: number };
   warnings?: Warning[];
 };
 
-const money = (value: unknown) => `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const money = (value: unknown) => value == null ? "—" : `₹${Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
 const TONE: Record<string, "danger" | "warning" | "info"> = { critical: "danger", warning: "warning", info: "info" };
 
@@ -57,7 +61,7 @@ export default function RevenueMissionPage() {
   const revenue = data?.revenue, pipeline = data?.pipeline, queue = data?.leadQueue;
   const warnings = [...(data?.warnings || [])].sort((a, b) => (RANK[a.severity] ?? 3) - (RANK[b.severity] ?? 3));
   const target = Number(revenue?.target || 0), achieved = Number(revenue?.achieved || 0);
-  const attained = target > 0 ? Math.round((achieved / target) * 100) : null;
+  const attained = target > 0 ? (achieved / target) * 100 : null;
   const blockers = warnings.filter((item) => item.severity === "critical").length;
 
   return (
@@ -68,48 +72,51 @@ export default function RevenueMissionPage() {
       nav={NAV}
       status={<>{error && <TeamAlert>{error}</TeamAlert>}<TeamAlert tone="info">Production ready: NO — this command centre reports UAT state, and every warning below is a real blocker rather than a placeholder.</TeamAlert></>}
     >
+      {data?.mission && <>
+        <p>Mission period: <strong>{reportDate(data.mission.periodStart)} – {reportDate(data.mission.periodEnd)}</strong> · IST · Report as of {reportDate(data.generatedAt)}</p>
+        <VisualGrid>
+          <TargetProgress title="Mission achievement" percent={attained} note={`${money(achieved)} of ${money(target)} · ${data.mission.revenueBasis?.replaceAll("_", " ") || "mission basis"}`} />
+          <MetricBars title="Achievement against time elapsed" note="Straight-line pace is a planning reference, not a revenue forecast." format={money} items={[
+            { label: "Achieved", value: revenue?.achieved },
+            { label: `Pace reference · ${revenue?.elapsedPercent ?? "—"}% of period elapsed`, value: revenue?.paceTarget, tone: "gold" },
+            { label: "Mission target", value: revenue?.target, tone: "gold" },
+          ]} />
+        </VisualGrid>
+      </>}
       <TeamStatGrid>
         <StatCard label="Target" value={loading && !data ? "…" : money(revenue?.target)} meta={data?.mission?.cityId ? `city ${data.mission.cityId}` : "mission target"} />
-        <StatCard label="Achieved" value={loading && !data ? "…" : money(revenue?.achieved)} meta={attained == null ? `basis ${data?.mission?.revenueBasis || "—"}` : `${attained}% of target · basis ${data?.mission?.revenueBasis || "—"}`} trend={attained != null && attained >= 100 ? "up" : "none"} />
+        <StatCard label="Achieved" value={loading && !data ? "…" : money(revenue?.achieved)} meta={attained == null ? `basis ${data?.mission?.revenueBasis || "—"}` : `${attained.toFixed(1)}% of target · basis ${data?.mission?.revenueBasis || "—"}`} trend={attained != null && attained >= 100 ? "up" : "none"} />
         <StatCard label="Gap to target" value={loading && !data ? "…" : money(revenue?.gap)} meta={Number(revenue?.gap || 0) > 0 ? "still to close" : "target met"} trend={Number(revenue?.gap || 0) > 0 ? "down" : "up"} />
         <StatCard label="Critical blockers" value={data ? blockers : "—"} meta={blockers > 0 ? "must be resolved before the mission is trustworthy" : "no critical blockers"} trend={blockers > 0 ? "down" : "up"} />
       </TeamStatGrid>
 
-      <TeamSection title="Revenue truth" note="Achieved counts only what the payment records prove. Booked is what was sold; net collected is booked less refunds.">
-        <TeamFigures items={[
-          { label: "Booked", value: money(revenue?.booked) },
-          { label: "Collected", value: money(revenue?.collected), tone: "good" },
-          { label: "Refunded", value: money(revenue?.refunded), tone: Number(revenue?.refunded || 0) > 0 ? "bad" : "default" },
-          { label: "Net collected", value: money(revenue?.netCollected), tone: "good" },
-        ]} />
-      </TeamSection>
+      {revenue && <MetricBars title="From booked to net collected" note="Booked is sold value; net collected is collections minus refunds. These ledger amounts must not be added together." format={money} items={[
+        { label: "Booked", value: revenue.booked, tone: "gold" }, { label: "Collected", value: revenue.collected },
+        { label: "Refunded", value: revenue.refunded, tone: "warning" }, { label: "Net collected", value: revenue.netCollected },
+      ]} />}
+      {data?.breakdowns && <VisualGrid>
+        <TeamSection title="Revenue by service" note="Mission totals · INR · collected and net collected may overlap exactly when there are no refunds.">
+          <TrendChart type="bar" xKey="service" data={data.breakdowns.service.map(row => ({ ...row, service: row.serviceCode.replaceAll("_", " ") }))} series={[{ key: "booked", label: "Booked" }, { key: "collected", label: "Collected" }, { key: "netCollected", label: "Net collected" }]} valueFormatter={money} />
+        </TeamSection>
+        <MetricBars title="Net collected by city" note="Revenue attributed to each city in this mission." format={money} items={data.breakdowns.city.map(row => ({ label: row.cityId || "Unattributed", value: row.netCollected }))} />
+      </VisualGrid>}
 
-      <TeamSection title="Pipeline — not achieved revenue" note="Weighted applies each opportunity's own probability; suppressed and review-required rows are excluded from any target claim.">
-        <TeamFigures items={[
-          { label: "Weighted", value: money(pipeline?.weightedPipeline) },
-          { label: "Unweighted", value: money(pipeline?.unweightedPipeline) },
-          { label: "Ready", value: pipeline?.ready ?? 0 },
-          { label: "Suppressed", value: pipeline?.suppressed ?? 0 },
-          { label: "Review required", value: pipeline?.reviewRequired ?? 0 },
-        ]} />
-      </TeamSection>
+      {pipeline && <VisualGrid>
+        <MetricBars title="Pipeline — not achieved revenue" note="Potential value only; review-required opportunities are included in this pipeline." format={money} items={[{ label: "Unweighted", value: pipeline.unweightedPipeline, tone: "gold" }, { label: "Probability weighted", value: pipeline.weightedPipeline }]} />
+        <MetricBars title="Opportunity status" note="Counts of opportunities, separate from revenue." items={[{ label: "Ready", value: pipeline.ready }, { label: "Review required", value: pipeline.reviewRequired, tone: "gold" }, { label: "Suppressed", value: pipeline.suppressed, tone: "warning" }]} />
+      </VisualGrid>}
 
-      <TeamSection title="Lead execution" note="The queue behind the pipeline. An SLA breach or an unacknowledged assignment is why revenue stalls before it reaches the pipeline at all.">
-        <TeamFigures items={[
-          { label: "Current assignments", value: queue?.currentAssignments ?? 0 },
-          { label: "Unassigned", value: queue?.unassigned ?? 0, tone: Number(queue?.unassigned || 0) > 0 ? "bad" : "default" },
-          { label: "Unacknowledged", value: queue?.unacknowledged ?? 0, tone: Number(queue?.unacknowledged || 0) > 0 ? "bad" : "default" },
-          { label: "SLA breached", value: queue?.slaBreached ?? 0, tone: Number(queue?.slaBreached || 0) > 0 ? "bad" : "default" },
-          { label: "Manager escalation due", value: queue?.managerEscalationDue ?? 0 },
-          { label: "Reassignment due", value: queue?.reassignmentDue ?? 0 },
-        ]} />
-      </TeamSection>
+      {queue && <MetricBars title="Lead execution pressure" note="Current queue snapshot. Status counts can overlap; they are not a conversion funnel." items={[
+        { label: "Current assignments", value: queue.currentAssignments }, { label: "Unassigned", value: queue.unassigned, tone: "warning" },
+        { label: "Unacknowledged", value: queue.unacknowledged, tone: "gold" }, { label: "SLA breached", value: queue.slaBreached, tone: "warning" },
+        { label: "Manager escalation due", value: queue.managerEscalationDue, tone: "warning" }, { label: "Reassignment due", value: queue.reassignmentDue, tone: "gold" },
+      ]} />}
 
       <TeamSection title="Warnings & blockers" note="Ranked by severity. A critical entry means the mission figures above cannot yet be relied on.">
         <TeamTable
           head={["Severity", "What is wrong", "Code"]}
           rows={warnings.map((item) => [<Badge key={item.code} tone={TONE[item.severity] || "neutral"}>{item.severity.toUpperCase()}</Badge>, item.message, <code key={`${item.code}-code`}>{item.code}</code>])}
-          empty={loading ? "Loading…" : "No current command-centre warnings — every governing policy the mission depends on is in place."}
+          empty={loading ? "Loading…" : error ? "Warnings unavailable while the report cannot be loaded." : "No current command-centre warnings — every governing policy the mission depends on is in place."}
         />
       </TeamSection>
     </TeamShell>

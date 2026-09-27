@@ -2,6 +2,7 @@
 import{useCallback,useEffect,useState}from"react";
 import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
+import { MetricBars, VisualGrid, reportDate } from "../../components/ui/ReportVisuals";
 import styles from"./performance.module.css";
 
 type Row={rank:number;employeeEmail:string;employeeName:string;leadsAssigned:number;meaningfulActions:number;qualifiedLeads:number;firstResponseRate:number|null;bookingConversions:number;netCollectedRevenue:number;refunds:number;cxEscalations:number;rankValue:number};
@@ -144,6 +145,14 @@ export default function PerformancePage(){
    <StatCard label="Net revenue" value={money(data?.totals.net||0)} />
    <StatCard label="Refunds" value={money(data?.totals.refunds||0)} />
   </section>
+
+  {data && data.rows.length > 0 && <>
+    <p>Loaded report: {reportDate(data.period.from)} – {reportDate(data.period.to)} · IST</p>
+    <VisualGrid>
+      <MetricBars title={`${METRICS.find(([key]) => key === data.metric)?.[1] || data.metric} by employee`} note="Top 10 in the loaded ranking. Full detail remains in the table." format={value => data.metric === "net_collected_revenue" ? money(value) : data.metric === "first_response_rate" ? `${value}%` : value.toLocaleString("en-IN")} items={data.rows.slice(0, 10).map(row => ({ label: row.employeeName || row.employeeEmail, value: data.metric === "first_response_rate" ? row.firstResponseRate : row.rankValue }))} />
+      <MetricBars title="Leads and booking conversions" note="Independent totals from the selected report; no conversion-rate attribution is inferred." items={[{ label: "Assigned leads", value: data.totals.leads }, { label: "Booking conversions", value: data.totals.conversions, tone: "gold" }]} />
+    </VisualGrid>
+  </>}
 
   {!activePolicy&&governance?<section className={`${styles.panel} ${styles.panelSetup}`}>
    <div className={styles.panelHead}><h2>Set up the leaderboard</h2><Badge tone="warning">Sales Ops</Badge></div>

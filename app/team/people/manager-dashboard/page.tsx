@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { MetricBars, VisualGrid, reportDate } from "../../../components/ui/ReportVisuals";
 import{readReportJson}from"../../../../lib/read-report-json";
 import StaffModule from "../../../components/staff-workspace/StaffModule";
 
@@ -53,6 +54,10 @@ export default function ManagerDashboardPage() {
             <p style={{ fontSize: 14, color: "var(--staff-muted)", marginTop: 12, marginBottom: 0 }}>{data.note}</p>
           </section>
 
+          <VisualGrid>
+            <MetricBars title="People by vertical" note={`Current scope · ${reportDate(data.asOf)} · IST`} items={Object.entries(data.verticals).map(([label, rows]) => ({ label: label.charAt(0).toUpperCase() + label.slice(1), value: rows.length }))} />
+            <MetricBars title="Operations needing attention" note="Current scoped snapshot. Cases may appear in more than one category." items={[{ label: "Critical cases", value: data.operations.criticalCases, tone: "warning" }, { label: "First response overdue", value: data.operations.firstResponseOverdue, tone: "warning" }, { label: "Resolution overdue", value: data.operations.resolutionOverdue, tone: "gold" }, { label: "Manager escalations due", value: data.operations.managerEscalationsDue, tone: "gold" }]} />
+          </VisualGrid>
           <section style={{...card,overflowX:"auto"}}>
             <h2 style={{marginTop:0,fontSize:16}}>Operations control</h2>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}} data-staff-grid="stats">
