@@ -89,6 +89,11 @@ test("a hold with money collected or a checkout in flight is never expired", asy
   // Once that checkout has gone quiet, the hold is released.
   const later = await expiry.releaseExpiredTaxiHolds(w.db, { asOf: Date.now() + 20 * 60_000 });
   assert.deepEqual(later.bookings, ["BKG-HOLD-PAYING"]);
+  // A payment the gateway authorized hours ago (capture not yet recorded) keeps its ride too.
+  await hold(w, { id: "BKG-HOLD-AUTHORIZED", car: "TXF-XUV-OWNER", ageHours: 6 });
+  w.sqlite.prepare("INSERT INTO payment_intents (id,booking_id,state,created_at,updated_at) VALUES ('PI-AUTHORIZED','BKG-HOLD-AUTHORIZED','AUTHORIZED',?,?)").run(Date.now() - 6 * HOUR, Date.now() - 5 * HOUR);
+  assert.deepEqual((await expiry.releaseExpiredTaxiHolds(w.db, { asOf: Date.now() + 20 * 60_000 })).bookings, []);
+  assert.equal(state(w, "BKG-HOLD-AUTHORIZED").booking, "payment_pending");
 });
 
 test("a capture that lands first keeps its ride: the release claim only matches a still-unpaid booking", async () => {

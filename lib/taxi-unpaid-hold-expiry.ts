@@ -11,7 +11,8 @@ type Row=Record<string,unknown>;
  *
  * POLICY. An unpaid hold expires at the EARLIER of 3 hours after it was reserved (what the customer was
  * told) and the ride's pickup time (an unpaid ride cannot start). A hold whose checkout is in flight - a
- * payment intent created or updated in the last 15 minutes - waits for the next run.
+ * payment intent created or updated in the last 15 minutes - waits for the next run, and a hold whose
+ * payment the gateway has authorized or captured is never expired here.
  *
  * RESULT. The same money-free cancellation the customer's own "Cancel ride" performs
  * (cancelUnpaidRideHold): the booking, work order, trip, driver reservation, car reservation and unpaid
@@ -29,7 +30,7 @@ export async function releaseExpiredTaxiHolds(db:D1Database,input:{asOf?:number;
  const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(50,Math.floor(Number(input.limit)||20)));
  const tables=await tableSet(db,["canonical_bookings","booking_payments","taxi_trips","payment_intents"]);
  if(!tables.has("canonical_bookings")||!tables.has("booking_payments")||!tables.has("taxi_trips"))return{released:0,examined:0,bookings:[] as string[]};
- const graceFrom=asOf-TAXI_HOLD_CHECKOUT_GRACE_MS,intents=tables.has("payment_intents")?" AND NOT EXISTS (SELECT 1 FROM payment_intents i WHERE i.booking_id=b.id AND (i.state IN ('CAPTURED','SETTLED') OR i.created_at>? OR i.updated_at>?))":"";
+ const graceFrom=asOf-TAXI_HOLD_CHECKOUT_GRACE_MS,intents=tables.has("payment_intents")?" AND NOT EXISTS (SELECT 1 FROM payment_intents i WHERE i.booking_id=b.id AND (i.state IN ('AUTHORIZED','CAPTURED','SETTLED') OR i.created_at>? OR i.updated_at>?))":"";
  const due=await db.prepare(`SELECT b.id,b.schedule_group_id FROM canonical_bookings b JOIN taxi_trips t ON t.booking_id=b.id WHERE b.service_code='pet_taxi' AND b.status='payment_pending' AND (b.created_at<=? OR julianday(b.scheduled_start)<=julianday(?)) AND NOT EXISTS (SELECT 1 FROM booking_payments p WHERE p.booking_id=b.id AND p.status IN ('captured','paid','refunded','partially_refunded','authorized'))${intents} ORDER BY b.created_at LIMIT ?`)
   .bind(asOf-TAXI_UNPAID_HOLD_MS,new Date(asOf).toISOString(),...(intents?[graceFrom,graceFrom]:[]),limit).all<Row>();
  if(!due.results.length)return{released:0,examined:0,bookings:[] as string[]};

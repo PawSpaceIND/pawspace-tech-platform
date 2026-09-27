@@ -278,4 +278,9 @@ test("round 2: the Taxi screens route every caught error through the plain-sente
   assert.match(manage, /taxiMoney as money/);
   assert.doesNotMatch(manage, /maximumFractionDigits:0/);
   assert.match(manage, />Try again</);
+  // A failed pets or incidents load offers a retry that runs the load again, instead of an empty list.
+  assert.match(flowSource, /\[customer\.customerId,petsAttempt\]/);
+  assert.match(flowSource, /petsFailed\?<button type="button" onClick=\{\(\)=>\{setError\(""\);setPetsFailed\(false\);setPetsLoading\(true\);setPetsAttempt\(n=>n\+1\)\}\}>/);
+  assert.match(incidents, /\[bookingId,attempt\]/);
+  assert.match(incidents, /loadFailed&&<button onClick=\{retryLoad\}>Try again<\/button>/);
 });
