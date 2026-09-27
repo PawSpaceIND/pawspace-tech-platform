@@ -653,7 +653,7 @@
     "lib/conversation-access.ts": "9ec57bb5daeda470cf8babd263e14c85ada068fe43fb34193c24d744a58ac7e8",
     "lib/conversation-governance.ts": "a3ac188a8d91241796f088267c566b17d2b558ed218333d651d98b1f0087e9c1",
     "lib/coupon-governance-client.ts": "1de85412012668b4db84b1d2865058d3fddf35cf003b304cde8598e312f75d04",
-    "lib/coupon-governance.ts": "49b21fbc3fbc3650845ef3fc8a4e6f35c23c1a91b472698d902279587925ca44",
+    "lib/coupon-governance.ts": "9ea5da91dd52ebc5c06532e752a8d63fe7436525287c089c3fb28874743b4371",
     "lib/coupon-reapply-guard.ts": "22556786935fbf01365ecb773b1e8b89414ec859368ed5bc53b58fe89a7fae9f",
     "lib/crm-automation-governance.ts": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
     "lib/crm-contact-list.ts": "f4f083daf46019c942176190d670a2660f18125ca8a330d64a744ee2dae4dc30",
