@@ -29,7 +29,7 @@
 }
 
 /* Context navigation remains inside labelled disclosures. */
-.module { --staff-font:"PawSpaceStaffNunito",system-ui,sans-serif; }
+.module { --staff-primary:var(--paw-deep); --staff-font:"PawSpaceStaffNunito",system-ui,sans-serif; }
 .module details[data-staff-context] { margin:16px 24px; border:1px solid var(--staff-line); border-radius:calc(12px * var(--paw-radius-scale)); background:var(--staff-surface); color:var(--staff-text); }
 .module details[data-staff-context] > summary { min-height:46px; padding:12px 16px; font-size:.9375rem; font-weight:750; cursor:pointer; }
 .module details[data-staff-context] > aside { display:flex !important; position:static !important; inset:auto !important; height:auto !important; width:auto !important; min-width:0 !important; padding:16px !important; overflow:visible !important; background:var(--staff-surface) !important; color:var(--staff-text) !important; border-top:1px solid var(--staff-line); }
