@@ -86,7 +86,7 @@ export default function AiAnalyticsPage() {
       nav={NAV}
       status={error ? <TeamAlert>{error}</TeamAlert> : undefined}
     >
-      <TeamSection title="Filter" note="The API supports these; nothing on this page previously exposed them.">
+      <TeamSection title="Filter" note="Choose a channel and date range to explore recorded activity.">
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#746b7d" }}>Channel
             <select value={channel} onChange={(event) => setChannel(event.target.value)} style={{ ...field, minWidth: 160 }}>
