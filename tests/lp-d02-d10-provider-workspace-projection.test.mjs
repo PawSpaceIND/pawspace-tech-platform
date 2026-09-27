@@ -193,7 +193,7 @@ async function boardingStayRun(w, { carePlan = validCarePlan(), medicationEviden
 }
 
 /** A Pet Sitting visit run by the sitter through the governed lifecycle and proof workflows, then checked out. */
-async function sittingVisitRun(w, { meal = true, photo = true } = {}) {
+async function sittingVisitRun(w, { meal = true, photo = true, carePlan = validSittingCarePlan(), onCheckedIn = null } = {}) {
   const lifecycle = await import("../lib/sitting-lifecycle.ts");
   const proof = await import("../lib/sitting-proof-governance.ts");
   const seeded = await seedSittingBooking(w.db, w.sqlite, { window: LIVED_WINDOW });
@@ -203,8 +203,9 @@ async function sittingVisitRun(w, { meal = true, photo = true } = {}) {
   const act = (action, extra = {}) => lifecycle.mutateSittingBooking(w.db, { bookingId: seeded.bookingId, action, actorId: SITTER, idempotencyKey: nextKey("R2-SIT"), ...extra });
   const evidence = (action, extra = {}) => proof.mutateSittingProof(w.db, { bookingId: seeded.bookingId, action, actorId: SITTER, idempotencyKey: nextKey("R2-SPROOF"), ...extra });
   await act("accept");
-  await act("submit_care_plan", { carePlan: validSittingCarePlan(), actorId: seeded.customerId });
+  await act("submit_care_plan", { carePlan, actorId: seeded.customerId });
   await act("check_in", metresNorth(doorstep, 20));
+  if (onCheckedIn) await onCheckedIn(evidence);
   if (meal) await act("care_event", { careEventType: "meal", detail: { message: "Dinner served" } });
   if (photo) {
     const grant = await evidence("prepare_media", { purpose: "sitting_update", mimeType: "image/jpeg", sizeBytes: 240_000, sha256: SHA });
@@ -255,6 +256,22 @@ test("R2-P01: a Pet Sitting visit checked out with its meal and verified photo i
   const skipped = await sittingVisitRun(bare, { meal: false, photo: false });
   assert.deepEqual((await bare.pendingFor(SITTER, skipped.bookingId))?.missing, ["food", "visit_photo"],
     "Sitting checkout does not gate on proof, so a visit closed without it is genuinely missing it");
+});
+
+test("R2-P01: a Sitting Care Card that says \"No medication\" owes no medication proof, and none can be recorded against it", async () => {
+  const w = await governedWorld();
+  const visit = await sittingVisitRun(w, {
+    carePlan: validSittingCarePlan({ medication: "No medication" }),
+    onCheckedIn: async (evidence) => {
+      const grant = await evidence("prepare_media", { purpose: "sitting_medication", mimeType: "image/jpeg", sizeBytes: 240_000, sha256: SHA });
+      await evidence("sandbox_finalize_media", { uploadToken: grant.upload.token, storageObjectId: `sitting/objects/${nextKey("OBJ")}` });
+      await evidence("record_media_scan", { mediaRef: grant.mediaRef, scanResult: "clean", actorId: REVIEWER });
+      const refused = await evidence("record_medication", { mediaRef: grant.mediaRef, medicationName: "Apoquel", dose: "16 mg", administeredAt: new Date(CLOCK).toISOString() }).then(() => null, error => error);
+      assert.ok(refused instanceof Response && refused.status === 409, "the workflow refuses medication evidence against a Care Card that asks for none");
+      assert.match(await refused.text(), /no medication instruction/);
+    },
+  });
+  assert.equal(await w.pendingFor(SITTER, visit.bookingId), null, "so the projection does not demand it either");
 });
 
 test("R2-P01: a Pet Taxi trip completed through its governed lifecycle is not reported as missing proof", async () => {

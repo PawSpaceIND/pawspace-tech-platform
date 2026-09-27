@@ -19,7 +19,7 @@ import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 import{PHOTO_PROOF_PURPOSE,MEDIA_REF_PREFIX}from"./care-proof-photo-claims";
 import{bookingPaymentBalances}from"./booking-payment-balances";
 import{chunkedIn}from"./d1-chunked-in";
-import{boardingMedicationInstruction,sittingMedicationInstruction}from"./care-card-medication";
+import{careCardMedicationInstruction}from"./care-card-medication";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -46,15 +46,15 @@ export const PROOF_REQUIREMENTS:Record<string,string[]>={
  *   events   - the workflow's event type -> the requirement it meets
  *   started  - the booking statuses from which the workflow can record proof at all (after check-in or
  *              trip start). A job the partner never started has nothing to evidence, so it owes nothing.
- *   carePlan - medication proof is owed only when the Care Card asks for medication, by the rule the
- *              service's own proof workflow applies before it accepts medication evidence.
+ *   carePlan - the Care Card table: medication proof is owed only when the Care Card asks for medication,
+ *              the same rule the proof workflows apply before they accept medication evidence.
  * Grooming records its two photos as columns of grooming_service_proof, read separately below.
  */
 const STARTED=["in_progress","completed"] as const;
-const LIFECYCLE_PROOF:Record<string,{table:string;events:Record<string,string>;started?:readonly string[];carePlan?:{table:string;instruction:(plan:unknown)=>string|null}}>={
+const LIFECYCLE_PROOF:Record<string,{table:string;events:Record<string,string>;started?:readonly string[];carePlan?:string}>={
  dog_training:{table:"training_session_events",events:{arrive:"reached",complete:"completed"}},
- boarding:{table:"boarding_stay_events",events:{care_meal:"food",proof_daily_update:"daily_photo",medication_evidenced:"medication"},started:STARTED,carePlan:{table:"boarding_care_plan_snapshots",instruction:boardingMedicationInstruction}},
- pet_sitting:{table:"sitting_care_events",events:{care_meal:"food",proof_update:"visit_photo",medication_evidenced:"medication"},started:STARTED,carePlan:{table:"sitting_care_plan_snapshots",instruction:sittingMedicationInstruction}},
+ boarding:{table:"boarding_stay_events",events:{care_meal:"food",proof_daily_update:"daily_photo",medication_evidenced:"medication"},started:STARTED,carePlan:"boarding_care_plan_snapshots"},
+ pet_sitting:{table:"sitting_care_events",events:{care_meal:"food",proof_update:"visit_photo",medication_evidenced:"medication"},started:STARTED,carePlan:"sitting_care_plan_snapshots"},
  pet_taxi:{table:"taxi_trip_events",events:{arrived_dropoff:"reached",trip_completed:"completed"},started:STARTED},
 };
 const parsedJson=(value:unknown):unknown=>{try{return JSON.parse(text(value));}catch{return null;}};
@@ -78,8 +78,7 @@ async function proofOnRecord(db:Db,bookings:Array<{bookingId:string;serviceCode:
   const ids=idsFor(code=>code===serviceCode);if(!ids.length)continue;
   const eventTypes=Object.keys(source.events).map(type=>`'${type}'`).join(",");
   reads.push(read(ids,p=>`SELECT DISTINCT booking_id,event_type FROM ${source.table} WHERE booking_id IN (${p}) AND event_type IN (${eventTypes})`).then(rows=>{for(const row of rows){const requirement=source.events[text(row.event_type)];if(requirement)mark(row.booking_id,requirement);}}));
-  const carePlan=source.carePlan;
-  if(carePlan)reads.push(read(ids,p=>`SELECT booking_id,plan_json FROM ${carePlan.table} WHERE booking_id IN (${p}) AND status='ready'`).then(rows=>{const asksForMedication=new Set(rows.filter(row=>carePlan.instruction(parsedJson(row.plan_json))).map(row=>text(row.booking_id)));for(const id of ids)if(!asksForMedication.has(id))mark(id,"medication");}));
+  if(source.carePlan)reads.push(read(ids,p=>`SELECT booking_id,plan_json FROM ${source.carePlan} WHERE booking_id IN (${p}) AND status='ready'`).then(rows=>{const asksForMedication=new Set(rows.filter(row=>careCardMedicationInstruction(parsedJson(row.plan_json))).map(row=>text(row.booking_id)));for(const id of ids)if(!asksForMedication.has(id))mark(id,"medication");}));
  }
  await Promise.all(reads);
  return met;
