@@ -12,6 +12,7 @@
  */
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { withScopedRequestClones } from "./scoped-request-clones.mjs";
 import { enterWorkersDbScope } from "./module-hooks.mjs";
 import { d1, ORIGIN } from "./execution-harness.mjs";
 
@@ -148,6 +149,10 @@ async function gateway() {
 const COUNTED_POST_PATHS = new Set(["/api/uat-scheduling", "/api/canonical-bookings", "/api/taxi-ride-bookings"]);
 /** Exactly what worker/index.ts runs for an /api/ request, then the real route handler. */
 export async function viaWorker(world, request, handler) {
+  return withScopedRequestClones(request, () => dispatchViaWorker(world, request, handler));
+}
+
+async function dispatchViaWorker(world, request, handler) {
   enterWorkersDbScope(world.db);
   globalThis[world.dbGlobal] = world.db;
   const m = await gateway();
