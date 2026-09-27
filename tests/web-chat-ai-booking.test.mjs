@@ -145,3 +145,39 @@ test("only PawSpace's own pay link is clickable in the chat, and only on PawSpac
   assert.match(pane, /message\.side==="pawspace"\?withPayLink\(message\.text\):message\.text/);
   assert.doesNotMatch(pane, /dangerouslySetInnerHTML/);
 });
+
+
+test("pending-payment wording preserves an owned offer but requires a separate exact confirmation", async (t) => {
+ const w=await world(t), model=salesModel(plan(w));
+ await chatTurn(w,"Book a grooming appointment","pending-offer",model);
+ const clarified=await chatTurn(w,"Yes, reserve this staging test booking and create the pending payment.","pending-wording",model);
+ assert.equal(clarified.turn.policyDecision,"customer_confirmation_required");
+ assert.match(clarified.turn.output,/Reply "Yes"/);
+ assert.equal(bookings(w).length,0); assert.equal(w.orders.length,0);
+ assert.equal(model.calls,1,"the acknowledgement does not call the model or execute its actions");
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs").get().n,0);
+ const confirmed=await chatTurn(w,"Yes","pending-confirm",model);
+ assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");
+ assert.equal(bookings(w).length,1); assert.equal(w.orders.length,1);
+});
+
+test("pending-payment wording without a current offer retains the policy handoff", async (t) => {
+ const w=await world(t), model=salesModel(plan(w));
+ const result=await chatTurn(w,"Yes, create the pending payment","no-offer-payment",model);
+ assert.equal(result.turn.policyDecision,"blocked_high_impact");
+ assert.equal(bookings(w).length,0); assert.equal(w.orders.length,0);
+});
+
+
+test("expired offers and refund requests cannot use pending-payment clarification", async (t) => {
+ for (const [key,message,expire] of [["expired","Yes, create the pending payment",true],["refund","Yes, refund the pending payment",false]]) {
+  await t.test(key,async t=>{
+   const w=await world(t),model=salesModel(plan(w));
+   await chatTurn(w,"Book a grooming appointment",`${key}-offer`,model);
+   if(expire)w.sqlite.prepare("UPDATE voice_sales_offers SET expires_at=0").run();
+   const result=await chatTurn(w,message,`${key}-reply`,model);
+   assert.equal(result.turn.policyDecision,"blocked_high_impact");
+   assert.equal(bookings(w).length,0); assert.equal(w.orders.length,0);
+  });
+ }
+});
