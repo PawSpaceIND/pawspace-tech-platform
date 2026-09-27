@@ -550,7 +550,7 @@
     "app/mobile-app/taxi-flow.tsx": "b05a5e5d154e9b44b74a16cf80056c84493c949ee27d6de76b02ad1bdb467e55",
     "app/mobile-app/theme-config.ts": "26533b48037071c506f6bc3c5251fc74b501e357702865e9b1ea6d1637a37dc4",
     "app/mobile-app/training-extra.module.css": "92c7053bd8b847ebd539275260a750e4791b0824713d57aee3453a74c576b237",
-    "app/mobile-app/training-flow.tsx": "61a2ed9615662fd92f670f057cc2dba7bf581189e2833368433deace8ae83b7f",
+    "app/mobile-app/training-flow.tsx": "247f9e3be6d6a20b8290f8c1a434423112f910513adeebd2af5dd1d9e35589da",
     "app/mobile-app/training-plans.module.css": "d6e8db9e6a5609f7e15875548ac79411bc25c9bf2c428537603267c7e94180c9",
     "app/mobile-app/training-uat.module.css": "1fef765453367d2515d70fe1dc0b52cdf8dff17674f7a10444c8c2dadc77aaad",
     "app/mobile-app/training.module.css": "4ff85afdb69f625684a5f087dd9eef6fb6228a1150e74b52f027b49a7e6b8363",
