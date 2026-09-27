@@ -15,6 +15,13 @@ type Props={
  /** "balance": the first instalment is already captured and amountDueNow is the outstanding balance. */
  stage?:"balance"; paidAmount?:number; balanceDueAt?:number|null;
 };
+/** What follows a captured payment: the owned booking must be ready, then the caller's next step runs, and only then,
+ * unless the caller keeps the customer in its flow, the page returns to the booking confirmation. */
+export async function completeVerifiedPayment({bookingId,onVerified,returnAfterVerified=true,onNotified}:Pick<Props,"bookingId"|"onVerified"|"returnAfterVerified">&{onNotified?:()=>void}):Promise<void>{
+ if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}
+ await onVerified?.();onNotified?.();
+ if(bookingId&&returnAfterVerified)returnToBooking(bookingId);
+}
 function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingId,busy=false,autoStart=false,onCreateBooking,onVerified,onBack,returnAfterVerified=true,stage,paidAmount,balanceDueAt}:Props){
  const balance=stage==="balance";
  const[state,setState]=useState<CheckoutState>({phase:"ready",message:"",canCheck:false});
@@ -25,7 +32,7 @@ function BookingPaymentInner({serviceName,totalAmount,amountDueNow,mode,bookingI
  const finishConfirmation=useCallback(async()=>{
   if(finishingRef.current||notified.current)return;
   finishingRef.current=true;setFinishing(true);setConfirmationError("");
-  try{if(bookingId){const projection=await loadCustomerConfirmationProjection(bookingId,AbortSignal.timeout(20_000));if(!projection.ready)throw new Error("Payment is verified, but the canonical booking is still synchronizing. Retry confirmation, not payment.");}await onVerified?.();notified.current=true;if(bookingId&&returnAfterVerified)returnToBooking(bookingId);}
+  try{await completeVerifiedPayment({bookingId,onVerified,returnAfterVerified,onNotified:()=>{notified.current=true;}});}
   catch(problem){setConfirmationError(problem instanceof Error?problem.message:"Payment is verified, but booking details could not be refreshed. Retry confirmation, not payment.");}
   finally{finishingRef.current=false;setFinishing(false);}
  },[bookingId,onVerified,returnAfterVerified]);

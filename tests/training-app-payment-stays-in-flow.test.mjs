@@ -16,11 +16,42 @@ const read = (path) => readFileSync(new URL(path, root), "utf8");
 const page = read("app/mobile-app/booking-payment-page.tsx");
 const flow = read("app/mobile-app/training-flow.tsx");
 
-test("the shared payment page returns to the booking unless its caller keeps the customer in the flow", () => {
+test("the shared payment page hands a captured payment, and the caller's choice, to one completion step", () => {
   assert.match(page, /returnAfterVerified\?:boolean;/);
   assert.match(page, /onBack,returnAfterVerified=true,stage/, "a caller that says nothing keeps #1120's return");
-  assert.match(page, /await onVerified\?\.\(\);notified\.current=true;if\(bookingId&&returnAfterVerified\)returnToBooking\(bookingId\);/, "the caller's next step runs first; the return follows only when asked for");
+  assert.match(page, /try\{await completeVerifiedPayment\(\{bookingId,onVerified,returnAfterVerified,onNotified:\(\)=>\{notified\.current=true;\}\}\);\}/);
   assert.match(page, /\},\[bookingId,onVerified,returnAfterVerified\]\);/);
+});
+
+// Runs the real completion step with the booking read (fetch) and the browser location stubbed, recording the order.
+const BOOKING = "PS-UAT-TRAINING-1";
+async function complete(t, { ready = true, onVerified, ...options } = {}) {
+  const { completeVerifiedPayment } = await import("../app/mobile-app/booking-payment-page.tsx");
+  const events = [], oldFetch = globalThis.fetch, oldWindow = globalThis.window;
+  globalThis.fetch = async (url, init) => { const body = JSON.parse(init.body); events.push(`read ${url} ${body.action} ${body.bookingId}`); return Response.json({ data: { bookingId: BOOKING, environment: "sandbox", confirmation: { bookingId: BOOKING, ready } } }); };
+  globalThis.window = { location: { pathname: "/mobile-app", assign: (href) => events.push(`return ${href}`) } };
+  t.after(() => { globalThis.fetch = oldFetch; if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow; });
+  const outcome = await completeVerifiedPayment({ bookingId: BOOKING, onVerified: onVerified ?? (() => { events.push("next step"); }), onNotified: () => events.push("notified"), ...options })
+    .then(() => "done", (problem) => problem.message);
+  return { events, outcome };
+}
+const bookingRead = `read /api/customer-checkout status ${BOOKING}`;
+
+test("a verified payment reads the booking, runs the caller's next step, then returns to the booking by default", async (t) => {
+  assert.deepEqual(await complete(t), { outcome: "done", events: [bookingRead, "next step", "notified", `return /mobile-app/booking-confirmation?bookingId=${BOOKING}`] });
+  assert.deepEqual(await complete(t, { returnAfterVerified: true }), { outcome: "done", events: [bookingRead, "next step", "notified", `return /mobile-app/booking-confirmation?bookingId=${BOOKING}`] });
+});
+
+test("a caller that keeps the customer in its flow gets its next step and no return", async (t) => {
+  assert.deepEqual(await complete(t, { returnAfterVerified: false }), { outcome: "done", events: [bookingRead, "next step", "notified"] });
+});
+
+test("a booking still synchronizing, or a next step that fails, neither completes nor returns, so confirmation can be retried", async (t) => {
+  const syncing = await complete(t, { ready: false, returnAfterVerified: false });
+  assert.match(syncing.outcome, /still synchronizing\. Retry confirmation, not payment\./);
+  assert.deepEqual(syncing.events, [bookingRead]);
+  const failing = await complete(t, { onVerified: () => { throw new Error("next step failed"); } });
+  assert.deepEqual(failing, { outcome: "next step failed", events: [bookingRead] });
 });
 
 test("the app's Training flow stays in place, and its next steps are the programme choice and the dashboard", () => {
