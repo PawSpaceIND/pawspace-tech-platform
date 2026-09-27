@@ -111,7 +111,7 @@ test("the five-minute background scheduler runs the Taxi hold expiry", async () 
   await hold(w, { id: "BKG-HOLD-SCHEDULED", car: "TXF-CITROEN-9179", ageHours: 3.5 });
   const source = fs.readFileSync(new URL("../lib/background-scheduler.ts", import.meta.url), "utf8");
   assert.match(source, /import\("\.\/taxi-unpaid-hold-expiry"\)\.then\(\(\{releaseExpiredTaxiHolds\}\)=>releaseExpiredTaxiHolds\(db,\{asOf,limit:20\}\)\)/);
-  assert.match(source, /"taxiUnpaidHoldExpiry"\]/);
+  assert.match(source, /const names=\[[^\]]*"taxiUnpaidHoldExpiry"/); // Other tasks may follow Taxi; the registration must remain.
   // The scheduler's task, executed on its own (the full scheduler also runs every other sweep).
   const task = await import("../lib/taxi-unpaid-hold-expiry.ts").then(({ releaseExpiredTaxiHolds }) => releaseExpiredTaxiHolds(w.db, { asOf: Date.now(), limit: 20 }));
   assert.deepEqual(task.bookings, ["BKG-HOLD-SCHEDULED"]);
