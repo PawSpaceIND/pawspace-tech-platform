@@ -140,6 +140,25 @@ test("POST /api/sitting-commercial refuses a 1-night 50/50 split with the reason
 });
 
 // ---------------------------------------------------------------------------------------------
+test("POST /api/sitting-commercial names the missing city and zone instead of 'Sitting commercial request failed'", async () => {
+  // Round-2 staging: a quote without cityId/zoneId answered 400 {"error":"Sitting commercial request failed"} -
+  // the library's reason was a plain Response that lib/server-auth.ts authError() redacts.
+  await sittingWorld();
+  const route = await import("../app/api/sitting-commercial/route.ts");
+  const post = (body) => route.POST(new Request(stayUrl("/api/sitting-commercial"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+  const visit = { packageCode: "sitting-visit-60", petCount: 1, paymentMode: "prepaid", ...stayWindow({ durationHours: 1 }) };
+  const placeless = await post(visit);
+  assert.equal(placeless.status, 400);
+  assert.deepEqual(await placeless.json(), { error: "City and zone are required for a live commercial quote (missing: cityId, zoneId)", code: "quote_location_required", missingFields: ["cityId", "zoneId"] });
+  const zoneless = await post({ ...visit, cityId: "blr" });
+  assert.equal(zoneless.status, 400);
+  assert.deepEqual(await zoneless.json(), { error: "City and zone are required for a live commercial quote (missing: zoneId)", code: "quote_location_required", missingFields: ["zoneId"] });
+  const mismatched = await post({ ...visit, cityId: "blr", zoneId: "maa-central" });
+  assert.equal(mismatched.status, 409);
+  assert.deepEqual(await mismatched.json(), { error: "Quote city and zone do not match", code: "quote_location_mismatch" });
+});
+
+// ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 1 refuses an unsupported payment mode and any coupon", async () => {
   const { db } = await sittingWorld();
 

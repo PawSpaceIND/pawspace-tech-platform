@@ -384,7 +384,7 @@ test("Boarding Gate 1 commercial route serves the canonical catalogue and refuse
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withoutPlace),
   }));
   assert.equal(placeless.status, 400);
-  assert.match((await placeless.json()).error, /City and zone are required/);
+  assert.deepEqual(await placeless.json(), { error: "City and zone are required for a live commercial quote (missing: cityId, zoneId)", code: "quote_location_required", missingFields: ["cityId", "zoneId"] });
 
   const crossOrigin = await commercialRoute.POST(new Request(stayUrl("/api/boarding-commercial"), {
     method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" },
