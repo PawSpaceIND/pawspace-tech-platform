@@ -38,11 +38,12 @@ import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
 import PetManager from "../pet-form";
 import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
+import { groomingBasketTotal } from "../../../lib/v2/grooming-money";
 import { GROOMING_STEPS, groomingStepAccess, suggestedGroomerId, type GroomingStep } from "../../../lib/v2/grooming-navigation";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
 const AUDIENCE_LABEL: Record<V2GroomingPackage["audience"], string> = { dog: "Dogs", cat: "Cats", young: "Puppies & kittens" };
-const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 
 export default function V2GroomingPage() {
   const recoveryBookingId = useQueryParameter("bookingId");
@@ -138,6 +139,7 @@ export default function V2GroomingPage() {
   const availableAddOns = groomingAddOnsForSpecies(String(selectedPets[0]?.species || "").toLowerCase());
   const chosenAddOns = addOns.filter(label => availableAddOns.some(item => item.label === label));
   const addOnTotal = chosenAddOns.reduce((sum, label) => sum + (availableAddOns.find(item => item.label === label)?.price ?? 0), 0);
+  const basketTotal = quote ? groomingBasketTotal(quote.price, addOnTotal) : null;
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
   const stepAccess = groomingStepAccess({ petCount: selectedPets.length, selectionIssue: mixedAudience,
@@ -406,10 +408,10 @@ export default function V2GroomingPage() {
             <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
-          {quote && account && coverage && bundle && <V2GroomingCouponBox key={`${quote.price}|${bundle.packageCode}|${scheduledStart}|${coverage.cityId}|${coverage.zoneId}`} orderValue={quote.price} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
+          {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={`${basketTotal}|${bundle.packageCode}|${scheduledStart}|${coverage.cityId}|${coverage.zoneId}`} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
           {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
