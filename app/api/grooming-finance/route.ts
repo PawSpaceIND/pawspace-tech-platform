@@ -23,14 +23,14 @@ async function ensureTables(db:Db){if(groomingFinanceTablesReady.has(db))return;
 
 
 type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};
-type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[]};
+type FinanceSnapshot={scope:{kind:"latest_updated_bookings";limit:number;dateFiltered:false};source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[]};
 // Finance GET is actor-independent after finance.view authorization. Coalesce only requests that overlap
 // in time on the same D1 binding; the promise is removed immediately after settlement, so this is NOT a
 // TTL/stale-data cache and the next read always observes subsequent finance writes.
 const financeReads=new WeakMap<Db,Promise<FinanceSnapshot>>();
 async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
  const running=financeReads.get(db);if(running)return running;
- const pending=(async()=>{await ensureTables(db);
+ const pending=(async():Promise<FinanceSnapshot>=>{await ensureTables(db);
   const ledgerStatement=db.prepare(`SELECT b.id booking_id,b.customer_id,b.package_name,b.status booking_status,b.total_amount,b.currency,b.scheduled_start,b.updated_at,
     p.id payment_id,p.status payment_status,p.method payment_method,p.mode payment_mode,p.gateway,p.amount payment_amount,p.amount_due_now,
     i.id invoice_id,i.invoice_number,i.status invoice_status,i.gross_amount,i.tax_amount,i.net_amount,i.issued_at,
@@ -55,7 +55,7 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
   const summary=items.reduce((acc:FinanceSummary,item)=>{
     acc.bookings+=1;if(item.invoiced)acc.invoiced+=invoiceTotal(item);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;return acc;
   },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0});
-  return{source:"canonical Grooming booking/payment/invoice/reconciliation ledger",summary,items,reconciliationExceptions:recentExceptions};
+  return{scope:{kind:"latest_updated_bookings",limit:200,dateFiltered:false},source:"canonical Grooming booking/payment/invoice/reconciliation ledger",summary,items,reconciliationExceptions:recentExceptions};
  })().finally(()=>{if(financeReads.get(db)===pending)financeReads.delete(db);});
  financeReads.set(db,pending);return pending;
 }

@@ -34,9 +34,9 @@ export async function claimBotSession(db:D1Database,sessionRef:string,state:BotS
  * Read, compute and claim, retrying when another turn claimed first. `step` must not have side effects:
  * they happen after the claim, once this turn owns the new state.
  */
-export async function advanceBotSession<T extends{state:BotState}>(db:D1Database,sessionRef:string,step:(state:BotState)=>T,at=Date.now()){
+export async function advanceBotSession<T extends{state:BotState}>(db:D1Database,sessionRef:string,step:(state:BotState)=>T|Promise<T>,at=Date.now()){
  for(let attempt=0;attempt<3;attempt++){
-  const current=await loadBotSessionVersion(db,sessionRef),result=step(current.state);
+  const current=await loadBotSessionVersion(db,sessionRef),result=await step(current.state);
   if(await claimBotSession(db,sessionRef,result.state,current.version,at))return{...result,previous:current.state};
  }
  throw new Response("This conversation is busy - please send your message again.",{status:409});
