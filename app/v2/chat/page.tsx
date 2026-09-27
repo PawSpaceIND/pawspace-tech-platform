@@ -11,7 +11,7 @@ import styles from "./page.module.css";
  */
 type Identity="checking"|"customer"|"guest"|"unavailable";
 type BotReply={text:string;choices:WatiChoice[];inputHint:string|null};
-type PublicTurn={data?:{bot?:BotReply;display?:string;ai?:{turn?:{output?:string}}|null;lead?:{captured?:boolean}|null};error?:string};
+type PublicTurn={data?:{bot?:BotReply;display?:string;ai?:{turn?:{output?:string}}|null;lead?:{captured?:boolean}|null;verify?:{phone:string;sandboxCode?:string}|null;verified?:boolean;transcript?:Transcript|null};error?:string};
 type ThreadMessage={id:string;role:"customer"|"ai"|"bot"|"team";text:string;createdAt:number;author:string|null;choices?:WatiChoice[];inputHint?:string|null};
 type Transcript={threadId:string|null;messages:ThreadMessage[];handoff:{active:boolean;status:"queued"|"staff_active"|null}};
 
@@ -77,9 +77,14 @@ export default function V2Chat(){
     const history=publicMessages.filter(item=>item.side==="customer").map(item=>({role:"user" as const,text:item.text})).slice(-8);
     const payload=await post({mode,bot:true,message:choice?"":text,choiceId,sessionKey:publicSessionKey,history}) as PublicTurn;
     const data=payload.data,next:WatiMessage[]=[];
+    /* The visitor confirmed their number in the chat: the server signed them in (cookie) and PawSpace AI
+     * has started booking their enquiry. From here the page is the customer's conversation. */
+    if(data?.verified&&data.transcript){setIdentity("customer");choose("authenticated");showTranscript(data.transcript);return;}
     const answer=data?.ai?.turn?.output;if(answer)next.push({id:localId(),side:"pawspace",author:"PawSpace AI",text:cleanAiText(answer),at:Date.now()});
     if(data?.bot)next.push({id:localId(),side:"pawspace",author:"PawSpace bot",text:data.bot.text,choices:data.bot.choices,at:Date.now()});
     if(data?.lead?.captured)next.push({id:localId(),side:"system",text:"Your details were shared with the PawSpace team"});
+    // Sandbox environments return the code instead of sending an SMS; production never does.
+    if(data?.verify?.sandboxCode)next.push({id:localId(),side:"system",text:`Test environment - your code is ${data.verify.sandboxCode}`});
     setPublicMessages(current=>[...current,...next]);setPublicHint(data?.bot?.inputHint||null);
    }else{
     // The customer's message shows at once; the server's answer replaces the conversation with the stored one.

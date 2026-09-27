@@ -8,9 +8,11 @@ import{withinPublicRateLimit}from"../../../lib/public-abuse-gate";
 import{requestAiHumanHandoff,routeLeadToTeamQueue}from"../../../lib/ai-human-handoff";
 import{isCustomerCallbackRequest,requestGovernedCustomerCallback}from"../../../lib/ai-first-control-plane";
 import{activeCrossSell}from"../../../lib/ai-sales-offers";
+import{CustomerOtpUnavailableError,CustomerOtpVerificationError,exchangeCustomerOtp,startCustomerOtp}from"../../../lib/customer-otp-exchange";
+import{PLATFORM_SESSION_COOKIE}from"../../../lib/platform-session";
 
 type Body={bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string};
-const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+const json=(value:unknown,status=200,headers?:Headers)=>{const merged=new Headers(headers);merged.set("cache-control","no-store");return Response.json(value,{status,headers:merged});};
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI web chat write blocked",{status:403});}
 async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 
@@ -98,6 +100,9 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
   return json({data:{mode:"public",sessionKey,bot:menuReply()}});
  }
  if(!String(body.message||"").trim()&&!String(body.choiceId||"").trim())return json({error:"Message is required"},400);
+ // A visitor confirming their number: the code they typed is exchanged for a signed-in session, and the AI books.
+ const pending=await loadWebChatBotState(db,ref);
+ if(pending.verify&&!String(body.choiceId||"").trim())return verifyVisitor(db,request,ref,pending,String(body.message||"").trim());
  // "Start over" resets the flow, not the visitor: the lead created for their number stays theirs.
  const crossSell=await activeCrossSell(db,{channel:"website"});
  const turn=await advanceBotSession(db,ref,previous=>{const result=runBotTurn(previous,{text:body.message||"",choiceId:body.choiceId,signedIn:false,crossSell});return previous.leadId&&!result.state.leadId?{...result,state:{...result.state,leadId:previous.leadId}}:result;});
@@ -115,6 +120,14 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
   const teamReason=turn.event.followUp==="team"?turn.event.followUpReason??"bot_lead_qualified":null;
   if(state.leadId)lead=await completeWebChatBotLead(db,{leadId:state.leadId,service:turn.event.service,summary:turn.event.summary,whatsappConsent:/^yes/i.test(turn.event.answers.whatsapp||""),teamReason});
   else{const submitted=await submitBotLead(request,sessionKey,{service:turn.event.service,answers:turn.event.answers,summary:turn.event.summary});lead=submitted.captured&&submitted.leadId&&teamReason?{...submitted,routedTo:await routeLeadToTeamQueue(db,{leadId:String(submitted.leadId),reason:teamReason})}:submitted;}
+  /* WATI parity ends at the lead; here the enquiry can be booked in the same conversation. The visitor
+   * confirms the number they gave with a code sent to it; verified, they are the signed-in customer and
+   * PawSpace AI recommends, prices and books exactly as it does for a customer in the app. Where no OTP
+   * can be sent (or the enquiry is a team's), the lead stands and the team follows up as before. */
+  if(!teamReason&&turn.event.answers.phone){
+   const offered=await offerVisitorVerification(db,request,ref,{phone:turn.event.answers.phone,service:turn.event.service,summary:turn.event.summary});
+   if(offered)return json({data:{mode:"public",sessionKey,display:turn.display,bot:{...turn.reply,text:`${turn.reply.text}\n\n${offered.text}`,inputHint:VERIFY_HINT},event:turn.event.type,ai,lead,verify:offered.verify}});
+  }
  }else if(state.status==="collecting"&&state.answers.phone&&state.answers.name&&!state.leadId){
   /* The visitor's number is known: the lead is created now, as WATI has it from the first message, so a
    * visitor who stops half way is still followed up by the lead's own response clock. */
@@ -137,4 +150,47 @@ async function submitBotLead(request:Request,sessionKey:string,event:{service:st
  })});
  const response=await submitPublicContact(intake),payload=await response.json().catch(()=>null) as Record<string,unknown>|null;
  return response.ok?{captured:true,leadId:payload?.leadId??(payload?.data as Record<string,unknown>|undefined)?.leadId??null}:{captured:false,status:response.status};
+}
+
+const VERIFY_HINT="Enter the 6-digit code";
+const verifyText=(phone:string)=>`To book this for you right now, I just need to confirm your number. I've sent a 6-digit code to ${phone} - type it here. (Or leave it, and the team will contact you.)`;
+/** Sends the code and remembers the enquiry it unlocks. Returns null where no OTP can be sent, so the lead stands alone. */
+async function offerVisitorVerification(db:D1Database,request:Request,ref:string,input:{phone:string;service:string;summary:string}){
+ const{env}=await import("cloudflare:workers");
+ let started;try{started=await startCustomerOtp(db,request,env as unknown as Record<string,unknown>,input.phone);}catch(error){if(error instanceof CustomerOtpUnavailableError||error instanceof Error)return null;throw error;}
+ await advanceBotSession(db,ref,current=>({state:{...current,verify:{challengeId:started.challengeId,phone:started.phone,service:input.service,summary:input.summary}}}));
+ // The sandbox code is returned only where the sign-in route returns it (never when an SMS was sent).
+ return{text:verifyText(started.phone),verify:{phone:started.phone,expiresInSeconds:started.expiresInSeconds,...(started.sandboxCode?{sandboxCode:started.sandboxCode}:{})}};
+}
+/**
+ * The visitor's next message while a code is pending. A 6-digit code is exchanged for a signed-in customer
+ * session; the response carries the session cookie and the AI's booking turn, and the page continues as
+ * the customer. A code that no longer works gets a fresh one; anything else steps out of verification.
+ */
+async function verifyVisitor(db:D1Database,request:Request,ref:string,state:Awaited<ReturnType<typeof loadWebChatBotState>>,message:string){
+ const verify=state.verify!,sessionKey=ref.slice("public:".length);
+ const leave=async(text:string)=>{await advanceBotSession(db,ref,current=>({state:{...current,verify:undefined}}));return json({data:{mode:"public",sessionKey,display:message,bot:{text,choices:[{id:"start_over",label:"Start over"}],inputHint:"Type a message"},event:"none",ai:null,lead:null}});};
+ if(!message)return json({error:"Message is required"},400);
+ const code=message.replace(/\s+/g,"");
+ if(!/^\d{6}$/.test(code)){
+  if(/^(resend|new code|send again)$/i.test(message)){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`Sent again. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
+  return leave("No problem - your enquiry is with the PawSpace team, who will contact you shortly. Ask me anything else, or start over.");
+ }
+ const{env}=await import("cloudflare:workers");
+ let exchanged;
+ try{exchanged=await exchangeCustomerOtp(db,request,env as unknown as Record<string,unknown>,{challengeId:verify.challengeId,code,name:state.answers.name});}
+ catch(error){
+  if(error instanceof CustomerOtpVerificationError&&error.status===401)return json({data:{mode:"public",sessionKey,display:message,bot:{text:"That code didn't match. Please check the SMS and type the 6-digit code again, or type 'resend' for a new one.",choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null}});
+  if(error instanceof CustomerOtpVerificationError){const offered=await offerVisitorVerification(db,request,ref,verify);if(offered)return json({data:{mode:"public",sessionKey,display:message,bot:{text:`That code is no longer valid. ${verifyText(offered.verify.phone)}`,choices:[],inputHint:VERIFY_HINT},event:"none",ai:null,lead:null,verify:offered.verify}});}
+  return leave("I couldn't confirm your number just now. Your enquiry is with the PawSpace team, who will contact you shortly.");
+ }
+ await advanceBotSession(db,ref,current=>({state:{...current,verify:undefined}}));
+ // The freshly issued session is this request's identity from here on.
+ const signedIn=new Request(request.url,{headers:{cookie:`${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(exchanged.token)}`,origin:request.headers.get("origin")||new URL(request.url).origin}});
+ const actor=await resolveActor(signedIn),customerId=exchanged.customerId;
+ await requireCustomerOwnership(db,actor,customerId);
+ const booking=await runAuthenticatedAiWebChat(db,{actor,customerId,text:`I'd like to book ${verify.service}. My details:\n${verify.summary}\nPlease recommend the right package with its price and book it for me.`,idempotencyKey:`web-chat-verify:${verify.challengeId}`},{acceptWhileWithTeam:true});
+ await securityAudit(db,actor,"ai.web_chat.visitor_verified","communication_thread",booking.threadId,"completed",{customerId,autonomousExecution:false});
+ const transcript=await customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true,threadId:booking.threadId,threadVerified:true,...("handoff"in booking&&booking.handoff?{handoff:booking.handoff}:{})}).catch(()=>null);
+ return json({data:{mode:"authenticated",verified:true,customerId,threadId:booking.threadId,display:message,transcript}},200,exchanged.headers);
 }
