@@ -5,6 +5,7 @@
  */
 import{parsePermissions}from"./platform-security";
 import{constantTimeEqual}from"./security-crypto";
+import{isTransientD1Refusal}from"./d1-transient";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -46,11 +47,24 @@ async function verifyUatToken(env:UatEnv,token:string):Promise<string|null>{
  return obj.email;
 }
 
+/** A failed directory read is not proof that the staff identity is absent. Swallowing it let
+ * a valid Founder cookie fall through to a customer/partner cookie and become "Permission denied".
+ * Retry only a recognised pre-execution D1 refusal, only this SELECT, and only once. Persistent or
+ * unexpected errors must propagate to the error boundary, never become a different identity.
+ */
+async function readStaffDirectory<T>(read:()=>Promise<T>):Promise<T>{
+ try{return await read();}catch(error){
+  if(!isTransientD1Refusal(error))throw error;
+  await new Promise(resolve=>setTimeout(resolve,150));
+  return read();
+ }
+}
+
 const uatActorReads=new WeakMap<Db,Map<string,Promise<Row|null>>>();
 async function readUatActorRow(db:Db,email:string){
  let byEmail=uatActorReads.get(db);if(!byEmail){byEmail=new Map();uatActorReads.set(db,byEmail);}
  const running=byEmail.get(email);if(running)return running;
- const pending=db.prepare("SELECT u.id,u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null)
+ const pending=readStaffDirectory(()=>db.prepare("SELECT u.id,u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>())
   .finally(()=>{if(byEmail!.get(email)===pending)byEmail!.delete(email);});
  byEmail.set(email,pending);return pending;
 }
@@ -70,10 +84,10 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
 }
 
 export async function uatStaffIdentityAllowed(db:Db,email:string){
- const row=await db.prepare("SELECT status,role_code FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>().catch(()=>null);
+ const row=await readStaffDirectory(()=>db.prepare("SELECT status,role_code FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>());
  if(!row||String(row.status)!=="active")return false;
  const roleCode=String(row.role_code||"").trim();
  if(!roleCode)return false;
- const role=await db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
+ const role=await readStaffDirectory(()=>db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(roleCode).first<Row>());
  return Boolean(role);
 }

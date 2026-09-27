@@ -873,7 +873,7 @@
     "lib/ai-web-chat-adapter.ts": "7ef952fd9fa2f8df7a9f33b8af137229e9c61f82e7c83d204acdcbeb1a02f3ec",
     "lib/api-error-message.ts": "587ec81fb07e5d460594845930bf9b3582a7e2bc84a578fc064f0cb53a81516e",
     "lib/api-fetch.ts": "7f73fb6c6646f210e79a43f4c9b23522cbdc3b501df9a6b82feffa63a60f58b7",
-    "lib/api-gateway.ts": "2d95cbccca6c9d68416000a422fe3f2d5ee313db43cb75a7ec74f5e639bb6485",
+    "lib/api-gateway.ts": "04e9ec1ad4eefe0ecee82e0ef1da3fbae3c43735fa85cb1143b0a79ab3e0a6a6",
     "lib/api-security-headers.ts": "31d9d6bc1310881f2188e50305c82ef05828412e0aed76abb3249ed9adc3ff1c",
     "lib/app-to-revenue-funnel.ts": "c5a16495cba34ccbf2e10ef9cb915c88bd68ed9f440844c38f86c77802861f2e",
     "lib/assisted-orders-client.ts": "66fb2cd6c5f281be36e3b4d58b6373a0c3a7fe36277f35e791f04e0605ed22fd",
@@ -1457,7 +1457,7 @@
     "lib/uat-customer-testing.ts": "aa2a8cc0e9c739a47409035a567cca130f12fab04b6df7b6bf600b832c63a270",
     "lib/uat-sandbox-readiness.ts": "5a9cbfceb481052172891b6a33da5a18b9116fc45d498fdf5d42ac6b66dbbd56",
     "lib/uat-scheduling-client.ts": "0d83d536d3f4ab2abfed9cd279316e46648be915e11d571d795314779a2c715b",
-    "lib/uat-staging-auth.ts": "504dd41e4273bbd51bf4bbd3ef37ff38ec106eb1ac5799493ebe7d520e237ac2",
+    "lib/uat-staging-auth.ts": "206e5df017e7654f5a3f33308e3c0222bf3d6a57208cd0501f14d5f937de2695",
     "lib/unified-case-center.ts": "884052ce2bbd7861f5935ceae085c2f445f6b165d3fafefbe370253c4910f0b4",
     "lib/unit-economics.ts": "53391564e19fcc4a849b7c7f6e9ff16e13dc4b8ee7e31701d7cc262ecd0a0897",
     "lib/universal-location-recovery.ts": "f754e574523f4fd55279ddebc04e3540a567ebb2b2f46ea68995174baa412de2",
@@ -1528,5 +1528,3 @@
     "lib/intelligence/atlas-narrative-integrity.ts": "a5ca78482eee97a3c7fe753354ca33000ee929d2c0b9528bd5f114a7247c7aa5"
   }
 }
-
-[executed on device: Karthikeyans-Laptop.local (659a160b-d7d3-43ad-8a1c-18339671c5e2)]
