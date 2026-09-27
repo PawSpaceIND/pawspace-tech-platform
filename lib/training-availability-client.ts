@@ -53,3 +53,12 @@ export async function loadAvailableTrainingTrainers(
     return eligible ? [{...eligible, name: provider.name, model: provider.model}] : [];
   });
 }
+
+/** Reuse the same calendar builder and scheduler. Choice changes identity; changing a preview ranking does not. */
+export function trainingReservationForChoice(input: TrainingScheduleSelection, choice: {mode: "auto" | "specific"; providerId?: string}): UatScheduleRequest {
+  if (choice.mode !== "auto" && choice.mode !== "specific") throw new Error("Choose how your trainer will be assigned.");
+  if (choice.mode === "specific" && !choice.providerId?.trim()) throw new Error("Choose your trainer before reserving.");
+  const request = trainingScheduleRequest(input);
+  return {...request, clientRequestId: `${request.clientRequestId}:choice:${choice.mode}${choice.mode === "specific" ? `:${encodeURIComponent(choice.providerId!)}` : ""}`,
+    providerSelection: choice.mode, ...(choice.mode === "specific" ? {preferredProviderId: choice.providerId} : {})};
+}

@@ -3,6 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 type Fixture = {
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
+  assignedProvider?: { id: string; name: string; model: string; rating: number }; reserveRefusal?: string;
   couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean;
   captured: boolean; confirmed: boolean; locationReady: boolean; unauthorized: boolean; quoteSource: string;
   previewGate?: Promise<void>; coverageGate?: Promise<void>; previewStarted: boolean; coverageStarted: boolean;
@@ -50,7 +51,7 @@ async function fixture(page: Page) {
         return reply({ providers: state.providers || [provider], availabilityChecked: true, reserved: false, cityId: body.cityId, zoneId: body.zoneId,
           scheduledStart: body.scheduledStart, scheduledEnd: body.scheduledEnd });
       }
-      state.reservation = body; return reply({ groupId: body.clientRequestId, provider });
+      state.reservation = body; if(state.reserveRefusal)return route.fulfill({status:409,json:{error:state.reserveRefusal}}); return reply({ groupId: body.clientRequestId, provider:state.assignedProvider||provider });
     }
     if (path === "/api/coupon-governance") {
       const input = body.input as { code: string; orderValue: number }, valid = state.couponValid !== false;
@@ -318,7 +319,8 @@ test("G03: several eligible groomers no longer require manual selection, but cus
   await previewCare(page);
   const first = page.getByRole("button", { name: /First Ranked Groomer/ });
   const second = page.getByRole("button", { name: /Second Ranked Groomer/ });
-  await expect(first).toContainText("✓"); await expect(second).toContainText("Choose");
+  await expect(page.getByRole("button",{name:"PawSpace chooses the best available groomer"})).toHaveAttribute("aria-pressed","true");
+  await expect(first).toContainText("Choose"); await expect(second).toContainText("Choose");
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
   await second.click(); await expect(second).toContainText("✓"); await expect(first).toContainText("Choose");
   expect(state.bookingWrites).toBe(0); expect(state.reservation).toBeNull();
@@ -350,4 +352,25 @@ for (const oldValid of [true, false]) test(`G08: late ${oldValid ? "success" : "
   await expect(couponBox.getByRole("textbox")).toHaveValue("NEW200");
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
   expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+});
+
+
+test("V2 auto groomer choice accepts a new server match and names that person on the booking",async({page})=>{
+ const state=await fixture(page);await previewCare(page);
+ state.assignedProvider={id:"PRV-REPLACEMENT",name:"Replacement Groomer",model:"commission",rating:4.8};
+ await page.getByRole("button",{name:/Reserve & review payment/}).click();
+ await expect(page).toHaveURL(/bookingId=B1/);
+ expect(state.reservation?.providerSelection).toBe("auto");expect(state.reservation?.preferredProviderId).toBeUndefined();
+ expect(state.booking?.provider).toMatchObject({id:"PRV-REPLACEMENT",name:"Replacement Groomer"});
+ expect(state.bookingWrites).toBe(1);expect(state.orderWrites).toBe(0);
+});
+test("V2 specific groomer selection never silently uses a replacement",async({page})=>{
+ const state=await fixture(page);await previewCare(page);
+ await page.getByRole("button",{name:/Arjun - PawSpace Care/}).click();
+ state.reserveRefusal="SELECTED_PROVIDER_UNAVAILABLE";
+ await page.getByRole("button",{name:/Reserve & review payment/}).click();
+ await expect(page.getByRole("alert")).toContainText("selected provider");
+ expect(state.reservation?.providerSelection).toBe("specific");expect(state.reservation?.preferredProviderId).toBe("PRV1");
+ expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
+ await expect(page.getByRole("button",{name:/Arjun - PawSpace Care/})).toHaveAttribute("aria-pressed","true");
 });
