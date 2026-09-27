@@ -811,7 +811,7 @@
     "lib/ai-evaluation-security.ts": "e5529753024bf4f5718d4f960ff5f8b2e2471d3097cd575717175c01c744f085",
     "lib/ai-first-control-plane.ts": "5e96b90cc812a9ec1479db17536bcf3e3f456681f666e06fd56aaeb07243fa6f",
     "lib/ai-governance.ts": "afea995f8db867f14fcf8d10ccf3a7b29abf2529369bb159de0b6b7cb74a1d9b",
-    "lib/ai-grounded-runtime-provider.ts": "1bbb4db03428e0cf38716d9f53ec96a6ddbc3a8ee3caa6d9528476e60aef093a",
+    "lib/ai-grounded-runtime-provider.ts": "1c0d5b7dd78abd691dc486f37980e8cc30531161ee8b69bc11a1a161a419f330",
     "lib/ai-human-handoff.ts": "3004b8bc5dedf55401ac50610fa6cd6514f9294385720249b7cabcdb6f0a75b5",
     "lib/ai-provider-adapter.ts": "0da78123bf7e5477b407f8bc1c060a8dccefe152a6e0840d291ea2df77a3a112",
     "lib/ai-provider-runtime-control.ts": "97cca426e2d01675e5af30a7ab1b4bf0559b254e9aba37d2fcd99914536794b9",
