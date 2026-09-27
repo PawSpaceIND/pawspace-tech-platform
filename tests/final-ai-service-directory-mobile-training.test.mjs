@@ -8,7 +8,7 @@ const read = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("AI grounding receives the canonical enabled PawSpace service directory", async () => {
   const source = await read("lib/ai-grounded-runtime-provider.ts");
-  assert.match(source, /context:\{\.\.\.input\.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,serviceDirectory/);
+  assert.match(source, /context:\{\.\.\.input\.canonicalContext,\.\.\.voiceCalendarContext\(\),approvedKnowledge:knowledge,catalogueTool,catalogue,serviceDirectory/);
   const { db } = freshCountingD1();
   const services = await listServiceControls(db);
   const byCode = new Map(services.map(service => [service.code, service]));
