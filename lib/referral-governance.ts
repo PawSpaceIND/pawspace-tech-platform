@@ -1,4 +1,3 @@
-import{phoneMatchKey}from"./customer-phone";
 export type ReferralService="grooming"|"dog_training"|"boarding"|"pet_sitting"|"dog_walking";
 export type ReferralProgrammeStatus="active"|"paused";
 export type ReferralProgramme={
@@ -14,6 +13,8 @@ const DAY=86_400_000;
 const jsonList=(value:unknown)=>{try{return JSON.parse(String(value||"[]")) as string[]}catch{return [] as string[]}};
 const normalizeCode=(value:string)=>value.trim().toUpperCase().replace(/\s+/g,"");
 const normalizeIdentity=(value:unknown)=>String(value||"").trim().toLowerCase().replace(/\s+/g,"");
+/** The number, however it was written ("+919000000001" and "9000000001" are one person): its last 10 digits, as lib/customer-phone.ts keys it. Kept local: this module imports nothing. */
+const phoneMatchKey=(value:unknown)=>{const digits=String(value??"").replace(/\D/g,"");return digits.length>=10?digits.slice(-10):null;};
 const monthStart=(value=Date.now())=>{const d=new Date(value);return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1)};
 const id=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
