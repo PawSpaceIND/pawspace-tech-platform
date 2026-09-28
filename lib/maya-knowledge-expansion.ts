@@ -29,8 +29,8 @@ export const MAYA_KNOWLEDGE_EXPANSION:KnowledgeEntry[]=[
   },
   {
     "sourceKey": "maya_payment_modes",
-    "title": "Prepaid split payment and pay after service eligibility",
-    "contentText": "Payment modes depend on the service, customer, purchased arrangement and channel. Explain prepaid, eligible split payment or pay-after-service only when the applicable quote confirms availability. The voice Grooming checkout currently proposes prepaid payment; that is a channel capability, not proof that PawSpace universally forbids pay-after-service. Do not promise deferred payment, create a payment link during an enquiry, or equate a Razorpay order with verified payment. Amount paid, due now and later balance are different states."
+    "title": "Payment timing methods and channel permissions are separate",
+    "contentText": "Payment timing and payment method are separate. Prepaid means payment before service; pay-after-service means later collection under the agreed terms. Cash or UPI acceptance does not choose the timing. Explain the founder-confirmed service rule and separately check whether the requested channel may execute it. Do not infer new AI voice permissions from business acceptance. Every payment must be recorded and reconciled against its booking; a customer claim, screenshot or payment-order creation is not verified receipt. Amount due now, later balance and verified paid amount remain distinct."
   },
   {
     "sourceKey": "maya_training_socialisation",
@@ -90,7 +90,7 @@ export const MAYA_KNOWLEDGE_EXPANSION:KnowledgeEntry[]=[
   {
     "sourceKey": "maya_relocation_documents",
     "title": "Relocation route documents carrier acceptance and quarantine",
-    "contentText": "Collect origin/destination, travel window, species, breed, size and documents already held for specialist review. There is no universal country-entry checklist. The relocation team must verify current destination, carrier, transport and document requirements before making a commitment. Do not guarantee airline acceptance, no quarantine, document approval or a transit time from remembered generic rules. Keep passport and sensitive identification out of ordinary chat."
+    "contentText": "Relocation is enquiry only: collect origin/destination, travel window, species, breed, size and documents already held, then route to the specialist team. Do not offer instant booking or collect payment. The specialist must verify current destination, carrier, transport and document requirements. Do not guarantee airline acceptance, no quarantine, approval or transit time from generic rules. Keep passport and sensitive identification out of ordinary chat."
   },
   {
     "sourceKey": "maya_funeral_arrangements",
@@ -121,5 +121,30 @@ export const MAYA_KNOWLEDGE_EXPANSION:KnowledgeEntry[]=[
     "sourceKey": "maya_partner_employee_scope",
     "title": "Partner employee and business enquiries versus customer service",
     "contentText": "Identify whether the caller is a pet parent, a prospective partner, an authenticated partner, an employee or a business contact. Explain public onboarding enquiries and route them to the relevant team. Private job, payout, payroll, incentive, identity and finance information requires role-specific authenticated access. The customer knowledge collection must not contain personal employee or partner records. A knowledge article is not permission to process documents, approve a payout or change staff data."
-  }
+  },
+{
+  "sourceKey": "maya_grooming_payment_timing",
+  "title": "Grooming prepaid pay-after-service cash and UPI",
+  "contentText": "Grooming allows prepaid and pay-after-service. Cash and UPI are accepted. Timing and method are separate: cash does not automatically mean after-service, and UPI does not automatically mean upfront. Record and reconcile the payment against the booking; a customer claim or screenshot is not verified receipt. Business acceptance does not newly authorise AI voice to execute every option. Use the reviewed channel workflow and do not promise unsupported collection."
+},
+{
+  "sourceKey": "maya_daycare_payment_timing",
+  "title": "Daycare full prepaid or 50 percent split payment and 24 hour balance deadline",
+  "contentText": "Daycare allows full prepaid or split payment: 50% at booking and the remaining 50% due 24 hours before the booking start date/time. Do not apply the overnight-stay longer-than-four-nights restriction to daycare. Calculate the deadline from the exact start timestamp and timezone, not just a calendar date. For bookings made less than 24 hours before start, the balance deadline has passed and founder clarification is required on whether full prepayment must be mandatory. Do not invent a later deadline or promise split eligibility for that short-notice case. This rule does not newly specify daycare payment methods or AI voice execution rights."
+},
+{
+  "sourceKey": "maya_walking_payment_timing",
+  "title": "Walking upfront-only payment one-time subscription renewal",
+  "contentText": "Walking requires upfront payment only. One-time bookings, subscriptions and renewals are all prepaid. The former pay-after-service UAT assumption is superseded and must not be offered as an approved Walking rule. Payment method is a separate field in the applicable approved workflow; grooming cash/UPI acceptance does not automatically set Walking methods. Verify recorded and reconciled receipt, not a screenshot. Service calendar, holidays, weather cancellations and missed visits remain governed by the purchased plan and unresolved care-policy review."
+},
+{
+  "sourceKey": "maya_food_payment_timing",
+  "title": "Food prepaid-only payment and verified receipt",
+  "contentText": "Food is prepaid only; do not offer pay-after-delivery or pay-after-service as an approved option. Payment timing does not validate ingredients, allergens, pack sizes, delivery availability, substitutions, expiry or recurring-plan terms. Verify those separately from approved product records. A customer claim or screenshot is not verified receipt, and a verified payment does not prove the food was delivered. No new AI voice collection permissions are granted by this business rule."
+},
+{
+  "sourceKey": "maya_relocation_enquiry_only",
+  "title": "Relocation enquiry only no instant booking or payment collection",
+  "contentText": "Relocation is an enquiry-only service. Capture the customer's requirements and route them to the specialist team. Do not offer instant booking, collect a payment or generate a relocation payment link. Explain what details are needed without claiming the specialist has accepted, booked or dispatched anything unless verified. Public process guidance is not a universal route, document or quotation guarantee."
+}
 ];

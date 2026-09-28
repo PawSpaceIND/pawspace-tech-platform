@@ -1,5 +1,6 @@
+import {AI_FOUNDER_BUSINESS_UPDATE,AI_FOUNDER_BUSINESS_DECISIONS} from './ai-founder-business-decisions';
 import {MAYA_KNOWLEDGE} from './maya-knowledge-base';
-import {AI_KNOWLEDGE_OWNER_DECISIONS} from './ai-knowledge-owner-decisions';
+import {AI_KNOWLEDGE_OWNER_DECISIONS,AI_KNOWLEDGE_EXISTING_CODE_TERMS} from './ai-knowledge-owner-decisions';
 import {ensureAiBusinessConfiguration,createAiBusinessDraft} from './ai-business-configuration';
 /** Stages content only. Approval and activation continue through the ordinary audited lifecycle. */
 export async function stageMayaKnowledgeDrafts(db:D1Database,actorEmail:string){
@@ -23,5 +24,5 @@ export async function aiKnowledgeCoverage(db:D1Database){
   return{sourceKey:entry.sourceKey,title:entry.title,status:active?'active':latest?String(latest.status):'missing',activeVersion:active?Number(active.version):null,matchesReviewedSource:Boolean(active&&active.content_text===entry.contentText&&active.title===entry.title)};
  });
  const active=topics.filter(t=>t.status==='active').length;
- return{scopeVersion:'maya-service-knowledge-2026-09-28',asOf:now,requiredTopics:topics.length,activeTopics:active,activeTopicPercent:Math.round(active/topics.length*100),sourceMatchedTopics:topics.filter(t=>t.matchesReviewedSource).length,topics,ownerDecisions:AI_KNOWLEDGE_OWNER_DECISIONS,ownerDecisionStatus:'review_required',liveToolCoverage:'not_certified',audioAcceptance:'not_certified',knowledgeComplete:false,customerReady:false,note:'Article presence is not proof of correct answers, commercial approval, tool coverage or successful audio. Owner decisions are not published by this read.'};
+ return{scopeVersion:'maya-service-knowledge-2026-09-28',asOf:now,requiredTopics:topics.length,activeTopics:active,activeTopicPercent:Math.round(active/topics.length*100),sourceMatchedTopics:topics.filter(t=>t.matchesReviewedSource).length,topics,ownerDecisions:AI_KNOWLEDGE_OWNER_DECISIONS,founderUpdate:AI_FOUNDER_BUSINESS_UPDATE,confirmedBusinessDecisions:AI_FOUNDER_BUSINESS_DECISIONS,unchangedCodeTerms:AI_KNOWLEDGE_EXISTING_CODE_TERMS,implementationQuestions:AI_KNOWLEDGE_OWNER_DECISIONS.filter(d=>d.category==='implementation_clarification'),separateAuthorizations:AI_KNOWLEDGE_OWNER_DECISIONS.filter(d=>d.category==='separate_authorization'),ownerDecisionStatus:'partially_confirmed_review_required',liveToolCoverage:'not_certified',audioAcceptance:'not_certified',knowledgeComplete:false,customerReady:false,note:'Article presence is not proof of correct answers, commercial approval, tool coverage or successful audio. Owner decisions are not published by this read.'};
 }

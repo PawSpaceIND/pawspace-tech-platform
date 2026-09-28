@@ -42,7 +42,7 @@ test('library staging is draft-only, idempotent and does not claim 100 percent k
  const first=await stageMayaKnowledgeDrafts(w.db,'founder@test.invalid');assert.equal(first.created,MAYA_KNOWLEDGE.length);assert.equal(first.activated,0);
  const second=await stageMayaKnowledgeDrafts(w.db,'founder@test.invalid');assert.equal(second.created,0);assert.equal(second.unchanged,MAYA_KNOWLEDGE.length);
  assert.equal((await retrieveApprovedKnowledge(w.db,{query:'refund',visibilityScopes:['public']})).results.length,0);
- const c=await aiKnowledgeCoverage(w.db);assert.equal(c.activeTopics,0);assert.equal(c.knowledgeComplete,false);assert.equal(c.customerReady,false);assert.equal(c.ownerDecisions.length,9);
+ const c=await aiKnowledgeCoverage(w.db);assert.equal(c.activeTopics,0);assert.equal(c.knowledgeComplete,false);assert.equal(c.customerReady,false);assert.equal(c.ownerDecisions.length,12);
 });
 test('even all active explanation articles cannot certify unresolved commercial facts or audio',async t=>{
  const w=freshAiDb();t.after(()=>w.sqlite.close());await seedMayaKnowledge(w.db,{maker:'maker@test.invalid',checker:'checker@test.invalid'});

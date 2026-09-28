@@ -1,18 +1,32 @@
-// These are unresolved review questions, NEVER customer-facing answer content.
+// Owner-only review questions, never customer-facing answer content.
+// Six settled business decisions are recorded separately; do not re-ask those as unresolved.
 export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   {
-    "id": "grooming_payment_modes",
-    "owner": "Finance / founder",
-    "question": "Which Grooming bookings may use pay-after-service or split payment, and what is due now versus after completion? Should the voice agent offer those modes or only explain them?",
+    "id": "daycare_under_24h",
+    "category": "implementation_clarification",
+    "owner": "Founder / Finance",
+    "question": "For daycare booked less than 24 hours before start, must the booking be fully prepaid because the 50% split balance deadline has already passed? No rule is assumed until confirmed.",
+    "affected": [
+      "daycare",
+      "payments"
+    ]
+  },
+  {
+    "id": "grooming_subscription_collection",
+    "category": "implementation_clarification",
+    "owner": "Founder / Finance",
+    "question": "For grooming subscriptions paid after service, is collection per redeemed session or the entire pack amount at a specified milestone? Confirm that milestone and credit activation separately; neither is inferred.",
     "affected": [
       "grooming",
+      "subscriptions",
       "payments"
     ]
   },
   {
     "id": "grooming_adjustments",
+    "category": "commercial_policy",
     "owner": "Commercial / Operations",
-    "question": "Confirm the active tax-inclusive tariff and any permitted travel, coat-condition, access, early/late or add-on adjustments; identify which are quote-calculated and which require assessment.",
+    "question": "Confirm travel, access, early/late charges, de-matting assessment, and above-45-kg surcharge approval. Distinguish approved quote-calculated charges from assessment-dependent changes.",
     "affected": [
       "grooming",
       "taxes"
@@ -20,8 +34,9 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   },
   {
     "id": "subscription_terms",
+    "category": "commercial_policy",
     "owner": "Commercial",
-    "question": "Confirm currently sellable Grooming plan codes, package coverage, total/session count, validity, eligible pets, sharing, pause/grace, expiry and stacking. Historical totals and validity differ.",
+    "question": "Confirm final active plans, cat-equivalent package coverage, sharing, pause/grace and expiry. The confirmed prepaid/post-service choices do not settle these terms.",
     "affected": [
       "grooming",
       "subscriptions"
@@ -29,16 +44,18 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   },
   {
     "id": "training_socialisation",
+    "category": "commercial_policy",
     "owner": "Training Operations",
-    "question": "Which training programmes include centre socialisation, how many visits, where and when, and are parent participation or transport included? Confirm multi-dog pricing and balance deadline.",
+    "question": "Confirm weekend centre socialisation eligibility, visit count, parent participation and transport. Existing code terms (50% upfront, balance scheduled for the final session, 60% extra per additional dog) remain unchanged; this question does not reopen or replace them.",
     "affected": [
       "dog_training"
     ]
   },
   {
     "id": "change_refund_policy",
+    "category": "commercial_policy",
     "owner": "Finance / service owner",
-    "question": "Provide one approved policy by service for customer cancellation, reschedule, provider no-show, partially delivered service, refund review and communication of processing time. Preserve purchased terms.",
+    "question": "Resolve the conflicting full-refund and 100%/50%/0% policies, service exceptions, rescheduling fees and processing timelines. Do not choose a policy or apply it to existing purchases without the applicable approval.",
     "affected": [
       "all_services",
       "refunds"
@@ -46,8 +63,9 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   },
   {
     "id": "stay_and_walking_units",
+    "category": "commercial_policy",
     "owner": "Care Operations / Commercial",
-    "question": "Confirm Boarding/Sitting/Daycare billable units and inclusions, extension rules, and Walking service days, holiday/weather/missed-visit treatment.",
+    "question": "Confirm holidays, weather cancellations, missed visits, extensions and included supplies. Walking upfront-only payment and daycare split timing are settled separately; overnight rules are not extended to daycare.",
     "affected": [
       "boarding",
       "sitting",
@@ -57,8 +75,9 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   },
   {
     "id": "centre_support_contacts",
+    "category": "commercial_policy",
     "owner": "Operations",
-    "question": "Confirm centre address and visiting/admission rules, service/support hours, the authorised public support contact and actual handoff owner/fallback. No fixed response time will be promised without approval.",
+    "question": "Confirm operating address, hours, admission rules, handoff team and after-hours fallback; no response-time commitment is inferred.",
     "affected": [
       "all_services",
       "daycare",
@@ -67,20 +86,52 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
   },
   {
     "id": "food_product_labels",
+    "category": "commercial_policy",
     "owner": "Food Operations",
-    "question": "Supply approved current ingredients/allergens, pack sizes, storage/expiry, delivery coverage, substitutions and recurring-plan terms. Conflicting public labels will not become AI facts.",
+    "question": "Supply verified labels/allergens, pack sizes, storage/expiry, delivery coverage, substitutions and recurring-plan terms. Food prepaid-only timing does not approve missing product facts.",
     "affected": [
       "food"
     ]
   },
   {
-    "id": "taxi_relocation_funeral_scope",
+    "id": "taxi_funeral_scope",
+    "category": "commercial_policy",
     "owner": "Specialist Operations",
-    "question": "Confirm active Taxi fare/handler/waiting inclusions and current specialist intake/routing for relocation and funeral; separate starting prices from confirmed all-inclusive quotes.",
+    "question": "Confirm final Taxi and Funeral inclusions, extra charges and specialist arrangements. Relocation is separately confirmed as enquiry-only without instant booking or payment collection.",
     "affected": [
       "pet_taxi",
-      "relocation",
       "funeral"
+    ]
+  },
+  {
+    "id": "ai_voice_payment_access",
+    "category": "separate_authorization",
+    "owner": "Founder / Product / Finance",
+    "question": "Which already-confirmed business payment options may the AI voice channel execute, and through which reviewed tools? This update does not newly approve voice access to every option. Preserve existing permissions.",
+    "affected": [
+      "voice",
+      "payments"
+    ]
+  },
+  {
+    "id": "v2_source_authority_hierarchy",
+    "category": "separate_authorization",
+    "owner": "Founder / Commercial",
+    "question": "Review the proposed V2 source-authority hierarchy separately. This update supersedes the specified conflicting audit assumptions only; it does not newly approve a global precedence rule or change purchased terms.",
+    "affected": [
+      "all_services",
+      "source_authority"
     ]
   }
 ] as const;
+
+export const AI_KNOWLEDGE_EXISTING_CODE_TERMS={
+  "status": "existing_code_unchanged_not_new_approval",
+  "dogTraining": {
+    "upfrontPercent": 50,
+    "balanceScheduledFor": "final_session",
+    "extraPercentPerAdditionalDog": 60
+  },
+  "source": "Founder handoff 2026-09-28; existing training implementation retained",
+  "notChangedByThisRevision": true
+} as const;
