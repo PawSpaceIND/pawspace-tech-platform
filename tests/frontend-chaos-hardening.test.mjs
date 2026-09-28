@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+// Resolve the real client's transitive TypeScript imports as the app bundler does.
+installWorkersHooks("__FRONTEND_CHAOS_DB__");
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -89,4 +92,30 @@ test('hung provider proof request aborts and explicitly permits retry', async t 
   const assertion = assert.rejects(request, /timed out.*Please retry.*idempotency key/i);
   t.mock.timers.tick(20_001);
   await assertion;
+});
+
+// Both successful and failed HTTP headers still require a bounded response body.
+for (const status of [200, 503]) test(`reverse Maps lookup bounds the complete HTTP ${status} body`, async t => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  globalThis.fetch = async (_url, init) => new Response(new ReadableStream({ start(body) {
+    init.signal.addEventListener('abort', () => body.error(new DOMException('Aborted', 'AbortError')), { once: true });
+  } }), { status });
+  const { reverseGeocodeCoordinates } = await import('../lib/address-autocomplete-client.ts');
+  const request = reverseGeocodeCoordinates(12.9783692, 77.6408356);
+  const assertion = assert.rejects(request, error => error.kind === 'timeout');
+  t.mock.timers.tick(8_001);
+  await assertion;
+});
+
+test('generated browser evidence cannot trigger development-page reloads during assertions', async () => {
+  const config = await read('vite.config.ts');
+  const watched = config.match(/watch:\s*\{[\s\S]*?ignored:\s*\[([\s\S]*?)\]/);
+  assert.ok(watched, 'retain an enabled source watcher with explicit output exclusions');
+  for (const directory of ['.wrangler', 'artifacts', 'test-results', 'playwright-report']) {
+    assert.ok(watched[1].includes(`"**/${directory}"`), `ignore the ${directory} directory event`);
+    assert.ok(watched[1].includes(`"**/${directory}/**"`), `ignore files written inside ${directory}`);
+  }
+  assert.doesNotMatch(watched[1], /["']\*\*\/?\*?["']/, 'do not suppress ordinary application-source changes');
 });

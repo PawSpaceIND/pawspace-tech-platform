@@ -39,6 +39,7 @@ import {serviceAddressText} from "../../../lib/service-address-text";
 import PetManager from "../pet-form";
 import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
 import { groomingBasketTotal } from "../../../lib/v2/grooming-money";
+import GroomingLocationAssist from "./location-assist";
 import { GROOMING_STEPS, groomingStepAccess, suggestedGroomerId, type GroomingStep } from "../../../lib/v2/grooming-navigation";
 
 const SLOT_LABELS = ["9:00 – 11:00 AM", "11:00 AM – 1:00 PM", "1:00 – 3:00 PM", "3:00 – 5:00 PM", "5:00 – 7:00 PM"];
@@ -69,6 +70,12 @@ export default function V2GroomingPage() {
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [coverageBusy, setCoverageBusy] = useState(false);
   const [coverageError, setCoverageError] = useState("");
+  const [locationPending, setLocationPending] = useState(false);
+  const locationPendingRef = useRef(false), addressInputRef = useRef<HTMLInputElement>(null);
+  const [locationRevision, setLocationRevision] = useState(0);
+  const onLocationPendingChange = useCallback((pending: boolean) => {
+    locationPendingRef.current = pending; setLocationPending(pending);
+  }, []);
   const [date, setDate] = useState("");
   const [slotIndex, setSlotIndex] = useState(1);
   const [quote, setQuote] = useState<V2GroomingQuote | null>(null);
@@ -192,7 +199,14 @@ export default function V2GroomingPage() {
     });
   };
 
+  const editServiceAddress = () => {
+    if (checkoutLock.current) return;
+    invalidateDoorstep(); setCoverageError(""); setSavedAddressId(""); setSaveAddress(false);
+    setLocationRevision(value => value + 1); addressInputRef.current?.focus();
+  };
+
   const verifyCoverage = async () => {
+    if (checkoutLock.current || locationPendingRef.current) return;
     const version = ++coverageVersion.current;
     invalidateCare();
     setCoverageBusy(true);
@@ -212,7 +226,7 @@ export default function V2GroomingPage() {
   };
 
   const beginSecureCheckout = async () => {
-    if (checkoutLock.current || providerBusy || mixedAudience || youngIssue || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId)) return;
+    if (checkoutLock.current || providerBusy || mixedAudience || youngIssue || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPendingRef.current) return;
     const provider = providerSelection === "auto" ? providers?.providers[0] : providers?.providers.find(item => item.id === selectedProviderId);
     if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
     checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
@@ -236,6 +250,7 @@ export default function V2GroomingPage() {
   };
 
   const checkLiveCare = async () => {
+    if (checkoutLock.current || locationPendingRef.current) return;
     if (!account || !bundle || !coverage || !date || mixedAudience || youngIssue) return;
     const version = ++careVersion.current;
     setQuote(null); setCouponCheckedKey(""); setCoupon({ discount: 0, code: "", quoteId: "" });
@@ -370,10 +385,19 @@ export default function V2GroomingPage() {
           <section id="v2-grooming-address" tabIndex={-1} aria-labelledby="v2-grooming-address-title" className={styles.step} onFocusCapture={() => setActiveStep(3)}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2 id="v2-grooming-address-title">Where should we come?</h2></div></div>
             {account.addresses.length>0&&<label>Saved service address<select style={{display:"block",width:"100%",maxWidth:"100%"}} value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
+            <GroomingLocationAssist key={JSON.stringify([account.customerId, address, pincode, savedAddressId, locationRevision])}
+              disabled={checkoutBusy} onPendingChange={onLocationPendingChange} onManualEntry={editServiceAddress}
+              onConfirm={draft => {
+                if (checkoutLock.current) return;
+                invalidateDoorstep(); setCoverageError(""); setAddress(draft.address); setPincode(draft.pincode);
+                setSavedAddressId(""); setSaveAddress(false); setLocationRevision(value => value + 1);
+                addressInputRef.current?.focus();
+              }} />
+            {address && <button type="button" className={styles.liveButton} onClick={editServiceAddress}>Change address</button>}
             <div className={styles.addressBox}>
-              <label><span>House, street & area</span><input value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
+              <label><span>House, street & area</span><input ref={addressInputRef} value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
-              <button onClick={() => void verifyCoverage()} disabled={coverageBusy || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
+              <button onClick={() => void verifyCoverage()} disabled={coverageBusy || locationPending || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
             </div>
             {!savedAddressId && address.trim().length >= 8 && <label className={styles.helper}><input type="checkbox" checked={saveAddress} onChange={event => setSaveAddress(event.target.checked)} /> Save this address to my account</label>}
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
@@ -388,7 +412,7 @@ export default function V2GroomingPage() {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
-            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
+            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy || locationPending} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
             {providerError && <p className={styles.inlineError}>{providerError}</p>}
           </section>
@@ -418,7 +442,8 @@ export default function V2GroomingPage() {
           {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={couponContextKey} contextKey={couponContextKey} intentRef={couponIntentRef} onChecked={setCouponCheckedKey} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
           {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          {locationPending && <p id="v2-location-review-pending" role="status" className={styles.helper}>Review or cancel the current-location suggestion before reserving.</p>}
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
