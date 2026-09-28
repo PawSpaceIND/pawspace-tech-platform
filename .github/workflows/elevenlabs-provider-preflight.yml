@@ -729,6 +729,10 @@ jobs:
     environment: pawspace-staging
     timeout-minutes: 3
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
       - name: Tune Grooming agent for clear phone conversation
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -744,15 +748,18 @@ jobs:
           const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           const current=await read.json().catch(()=>({}));
           if(!read.ok) throw new Error('agent read failed '+read.status);
-          const voiceId=current?.conversation_config?.tts?.voice_id;
+          const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{};
+          const voiceId=currentTts.voice_id;
           if(!voiceId) throw new Error('agent voice_id missing');
           const body={
             conversation_config:{
               agent:{
+                ...currentAgent,
                 first_message:"Hi, this is Maya from PawSpace. How can I help with your pet today?",
-                prompt:{prompt:humanCallPrompt(current?.conversation_config?.agent?.prompt?.prompt)}
+                prompt:{...currentPrompt,prompt:humanCallPrompt(currentPrompt?.prompt)}
               },
               tts:{
+                ...currentTts,
                 model_id:profile.modelId,
                 voice_id:voiceId,
                 stability:profile.stability,
@@ -761,11 +768,13 @@ jobs:
                 optimize_streaming_latency:profile.optimizeStreamingLatency
               },
               turn:{
+                ...currentTurn,
                 turn_timeout:12,
                 silence_end_call_timeout:60,
                 turn_eagerness:'normal',
                 turn_model:'turn_v3',
                 soft_timeout_config:{
+                  ...(currentTurn?.soft_timeout_config||{}),
                   timeout_seconds:2.5,
                   message:"One moment while I check that for you.",
                   max_soft_timeouts_per_generation:1

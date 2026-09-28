@@ -1,5 +1,8 @@
+import {readFileSync} from 'node:fs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {humanCallProfile,humanCallPrompt,HUMAN_CALL_ACCEPTANCE,evaluateHumanCallMetrics} from '../scripts/elevenlabs-human-call-profile.mjs';
 test('human call profiles expose the two approved realtime ElevenLabs models',()=>{assert.equal(humanCallProfile('flash_v2_5').modelId,'eleven_flash_v2_5');assert.equal(humanCallProfile('v3_conversational').modelId,'eleven_v3_conversational');assert.throws(()=>humanCallProfile('unknown'));});
 test('phone prompt is interruption friendly and normalizes speech-hostile text',()=>{const p=humanCallPrompt('Existing PawSpace grounding.');for(const phrase of ['short spoken sentences','Ask one question at a time','Let the customer interrupt','rupee amounts','do not invent availability'])assert.match(p,new RegExp(phrase,'i'));assert.match(p,/Existing PawSpace grounding/);});
 test('acceptance evaluator pins human-call latency and barge-in targets',()=>{assert.equal(HUMAN_CALL_ACCEPTANCE.ordinaryReplyStartP95Ms,1500);assert.equal(evaluateHumanCallMetrics({replyStartP50Ms:700,replyStartP95Ms:1200,bargeInStopP95Ms:250,maxSilentGapMs:700}).pass,true);assert.equal(evaluateHumanCallMetrics({replyStartP50Ms:700,replyStartP95Ms:1900,bargeInStopP95Ms:250,maxSilentGapMs:700}).pass,false);});
+
+test('tuning workflow checks out code and preserves existing agent configuration',()=>{const y=readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8');assert.match(y,/tune-grooming-audio:[\s\S]*actions\/checkout@v4/);assert.match(y,/prompt:\{\.\.\.currentPrompt,prompt:humanCallPrompt/);assert.match(y,/tts:\{[\s\S]*\.\.\.currentTts/);assert.match(y,/turn:\{[\s\S]*\.\.\.currentTurn/);});
