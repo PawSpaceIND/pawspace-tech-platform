@@ -56,6 +56,7 @@ test("V2 booking keys are deterministic, pet-order independent and scoped by mat
   for (const changed of [{ cityId: "maa" }, { address: "42 Other Main Road" }, { zoneId: "blr-east" }, { pincode: "560001" }]) {
     assert.notEqual(await client.v2GroomingIdempotencyKey(original), await client.v2GroomingIdempotencyKey({ ...original, ...changed }));
   }
+  assert.notEqual(await client.v2GroomingIdempotencyKey(original), await client.v2GroomingIdempotencyKey({ ...original, paymentMode: "pay_after_service" }), "payment timing is a material booking choice");
   original.selectedPets.push({ ...original.selectedPets[0], id: "PET-2" });
   same.selectedPets = [...original.selectedPets].reverse();
   assert.equal(await client.v2GroomingIdempotencyKey(original), await client.v2GroomingIdempotencyKey(same));
@@ -72,6 +73,15 @@ test("V2 executes reserve -> canonical payment-pending booking -> verified locat
   assert.equal(result.bookingId, "B1"); assert.equal(created[0].bookingId, "B1");
   const replay = await client.createV2GroomingBooking(input());
   assert.equal(replay.bookingId, "B1"); assert.equal(f.ids.size, 1);
+});
+
+test("V2 pay-after-service reserves with zero due now and no gateway checkout", async t => {
+  const f = network(t, { canonicalStatus: "confirmed" }), value = input(); value.paymentMode = "pay_after_service";
+  const result = await client.createV2GroomingBooking(value);
+  const canonical = f.calls.find(call => call.url === "/api/canonical-bookings").body;
+  assert.equal(result.status, "confirmed");
+  assert.equal(canonical.amountDueNow, 0); assert.equal(canonical.payment.mode, "pay_after_service"); assert.equal(canonical.payment.method, "cash");
+  assert.deepEqual(f.calls.map(call => call.url), ["/api/uat-scheduling", "/api/canonical-bookings", "/api/grooming-service-location"]);
 });
 
 test("V2 publishes durable booking identity before a later address save fails", async t => {
@@ -153,7 +163,7 @@ test("V2 rejects a provider preview from a different zone or time", async t => {
 });
 
 for (const [field, value] of Object.entries({ ready: false, bookingStatus: "payment_pending", workOrderStatus: "payment_pending",
-  paymentStatus: "created", paymentMode: "pay_after_service", transactionId: "", providerId: "", providerModel: "unknown",
+  paymentStatus: "created", transactionId: "", providerId: "", providerModel: "unknown",
   scheduledStart: "invalid", totalAmount: NaN, serviceCode: "boarding", bookingId: "OTHER" })) {
   test(`V2 success remains closed when canonical ${field} is not ready`, () => {
     assert.equal(client.isV2GroomingConfirmationReady(confirmation({ [field]: value }), "B1"), false);
@@ -161,6 +171,10 @@ for (const [field, value] of Object.entries({ ready: false, bookingStatus: "paym
 }
 test("V2 displays success from a complete matching canonical projection", () => {
   assert.equal(client.isV2GroomingConfirmationReady(confirmation(), "B1"), true);
+});
+test("V2 pay-after-service confirmation needs no capture but does require zero due now", () => {
+  assert.equal(client.isV2GroomingConfirmationReady(confirmation({ paymentMode: "pay_after_service", paymentStatus: "created", transactionId: null }), "B1"), true);
+  assert.equal(client.isV2GroomingConfirmationReady(confirmation({ paymentMode: "pay_after_service", paymentStatus: "created", transactionId: null, amountDueNow: 100 }), "B1"), false);
 });
 
 function world(t) {
@@ -213,6 +227,13 @@ for (const patch of [{ signature: 0 }, { amount: 1 }, { environment: "live" }, {
     assert.equal((await readV2GroomingCheckoutReadiness(db, "C1", "B1")).confirmation.ready, false);
   });
 }
+
+test("V2 recovery confirms a pay-after-service booking without gateway evidence", async t => {
+  const { sqlite, db } = world(t);
+  sqlite.exec("UPDATE canonical_bookings SET status='confirmed'; UPDATE booking_payments SET mode='pay_after_service',amount_due_now=0,status='created'; UPDATE provider_work_orders SET status='assigned'");
+  const result = await readV2GroomingCheckoutReadiness(db, "C1", "B1");
+  assert.equal(result.confirmation.paymentMode, "pay_after_service"); assert.equal(result.confirmation.ready, true); assert.equal(result.confirmation.transactionId, null);
+});
 
 test("V2 checkout route enforces real customer sessions and record ownership", async t => {
   const { db } = world(t);
