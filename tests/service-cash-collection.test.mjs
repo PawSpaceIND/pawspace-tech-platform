@@ -118,7 +118,7 @@ test("a pay-after-service job cannot be completed with nothing collected", async
 });
 
 test("recording the collection lets the job complete, and the payout accrues", async () => {
-  const { post, complete, bookingStatus, settlement, paymentStatus } = await groomingWorld();
+  const { sqlite, db, post, complete, bookingStatus, settlement, paymentStatus } = await groomingWorld();
 
   const recorded = await post({ action: "record_cash_collection", collectedAmount: 1899, collectionMethod: "cash" });
   assert.equal(recorded.status, 200, `${JSON.stringify(recorded.body)}`);
@@ -132,6 +132,17 @@ test("recording the collection lets the job complete, and the payout accrues", a
   assert.equal(bookingStatus(), "completed");
   assert.equal(completed.body?.collection?.via, "recorded_collection");
   assert.equal(settlement().status, "accrued", "a job that was paid for accrues its payout as before");
+  const ledger = sqlite.prepare("SELECT group_key,event,amount,manual_entry,verification_status,created_by FROM collection_ledger_postings WHERE payment_id='PAY-SESS'").get();
+  assert.equal(ledger.event, "cash_collected_confirmed"); assert.equal(Number(ledger.amount), 1899);
+  assert.equal(Number(ledger.manual_entry), 1); assert.equal(ledger.verification_status, "pending_finance_verification");
+  assert.equal(paymentStatus(), "created", "cash completion never fabricates a gateway capture");
+  const history = JSON.parse(sqlite.prepare("SELECT detail_json FROM booking_lifecycle_events WHERE booking_id='BK-SESS' AND event_type='service_completed'").get().detail_json);
+  assert.equal(history.paymentStatus, "created", "R03 reads canonical status while preserving #1163 cash completion");
+  assert.equal(history.collection.cashLedger.groupKey, ledger.group_key);
+  assert.equal(history.collection.cashLedger.verificationStatus, "pending_finance_verification");
+  const { verifyManualCollection } = await import("../lib/collection-ledger.ts");
+  await verifyManualCollection(db, { groupKey: ledger.group_key, actorId: "finance.manager@pawspace.test", actorPermissions: ["finance.manage"], reason: "Cash counted against provider handover", expectedVersion: Number(sqlite.prepare("SELECT created_at FROM collection_ledger_postings WHERE group_key=?").get(ledger.group_key).created_at) });
+  assert.equal(sqlite.prepare("SELECT verification_status FROM collection_ledger_postings WHERE group_key=?").get(ledger.group_key).verification_status, "verified");
 });
 
 test("Operations can authorise a completion, and the payout stays withheld", async () => {

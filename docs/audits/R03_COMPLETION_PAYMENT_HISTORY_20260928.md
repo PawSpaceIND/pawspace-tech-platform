@@ -114,3 +114,29 @@ CodeAnt raised the pre-existing collection/finalization race and post-commit eve
 recovery limits; both threads were acknowledged and left unresolved. The finance/
 finalization section was verified byte-identical to base f9128593. CodeRabbit's
 requested review was rate-limited and is not counted as a completed review.
+
+## Integration with newly merged #1163
+
+Main advanced to `a2154d9e6848ec0b55e7e9517e10b81348912a71` during verification.
+The new pay-after-service/cash-reconciliation branch overlapped the lifecycle route
+and nine source manifests. These conflicts were resolved on the existing R03 branch,
+not by choosing an entire side or removing the newly merged cash-posting behavior.
+
+The integrated route retains #1163's post-completion manual-cash ledger entry and
+its cashLedger history detail. It reads only the stable canonical payment ID before
+the lease, because the cash posting needs that identity; the payment status still
+comes from R03's one-statement history writer, never from a pre-lease snapshot.
+Reversing these explicit R03 adaptations reproduces the upstream route exactly.
+
+Each source manifest retains the complete upstream expectations, plus the integrated
+route fingerprint and protected event helper. The separate V2 payment UI, Finance
+verification, collection calculations and payment-reconciliation sources are unchanged
+from #1163. No live payment or hosted customer operation was performed.
+
+The upstream cash-completion test was strengthened: after manual cash is recorded,
+payment and completion history both remain `created` (no invented gateway capture),
+and the history links the actual cash-ledger group with pending Finance verification.
+The integrated focused selection passed 58/58, including that cash path and the
+R02/R03/referral/integrity cases. Broader current-head results remain separate gates.
+Integration provenance and logs are in `pr1170-main-integration-20260928/` under the
+R03 evidence directory. Earlier pre-integration results are not current-main proof.

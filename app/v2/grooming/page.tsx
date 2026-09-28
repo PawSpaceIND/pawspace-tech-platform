@@ -26,6 +26,7 @@ import type { ProviderPreview } from "../../../lib/uat-scheduling-client";
 import {
   createV2GroomingBooking,
   type V2GroomingBooking,
+  type V2GroomingPaymentChoice,
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
 import V2GroomingPaymentPanel from "./payment-panel";
@@ -86,6 +87,7 @@ export default function V2GroomingPage() {
   const [providerError, setProviderError] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [providerSelection, setProviderSelection] = useState<"auto" | "specific">("auto");
+  const [paymentMode, setPaymentMode] = useState<V2GroomingPaymentChoice>("prepaid");
   const [booking, setBooking] = useState<V2GroomingBooking | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -150,7 +152,7 @@ export default function V2GroomingPage() {
   const chosenAddOns = addOns.filter(label => availableAddOns.some(item => item.label === label));
   const addOnTotal = chosenAddOns.reduce((sum, label) => sum + (availableAddOns.find(item => item.label === label)?.price ?? 0), 0);
   const basketTotal = quote ? groomingBasketTotal(quote.price, addOnTotal) : null;
-  const couponContextKey = JSON.stringify([account?.customerId, basketTotal, bundle?.packageCode, scheduledStart, coverage?.cityId, coverage?.zoneId]);
+  const couponContextKey = JSON.stringify([account?.customerId, basketTotal, bundle?.packageCode, scheduledStart, coverage?.cityId, coverage?.zoneId, paymentMode]);
   const couponChecking = Boolean(quote && couponCheckedKey !== couponContextKey);
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
@@ -232,7 +234,7 @@ export default function V2GroomingPage() {
     checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
     try {
       await createV2GroomingBooking({
-        account, selectedPets, pkg: selectedPackage, bundle, quote, provider, providerSelection,
+        account, selectedPets, pkg: selectedPackage, bundle, quote, provider, providerSelection, paymentMode,
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
         scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
         addOns: addOns.filter(label => availableAddOns.some(item => item.label === label)), comfort, specialInstructions,
@@ -439,10 +441,22 @@ export default function V2GroomingPage() {
             <div><span>Groomer</span><b>{providerSelection === "auto" ? "PawSpace chooses · confirmed at reservation" : providers?.providers.find(item => item.id === selectedProviderId)?.name || "Selected groomer unavailable"}</b></div>
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
-          {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={couponContextKey} contextKey={couponContextKey} intentRef={couponIntentRef} onChecked={setCouponCheckedKey} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
+          {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={couponContextKey} contextKey={couponContextKey} intentRef={couponIntentRef} onChecked={setCouponCheckedKey} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} paymentMode={paymentMode} onChange={onCouponChange} />}
           {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
-          <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          {quote && <div className={styles.addressBox} role="group" aria-label="Payment timing">
+            <b>How would you like to pay?</b>
+            <div className={styles.providerGrid}>
+              <button type="button" className={paymentMode === "prepaid" ? styles.providerSelected : styles.providerCard} aria-pressed={paymentMode === "prepaid"} onClick={() => { setPaymentMode("prepaid"); setCouponCheckedKey(""); }}>
+                <div><b>Pay now</b><small>Secure Razorpay / UPI checkout</small></div><strong>{paymentMode === "prepaid" ? "✓" : "Choose"}</strong>
+              </button>
+              <button type="button" className={paymentMode === "pay_after_service" ? styles.providerSelected : styles.providerCard} aria-pressed={paymentMode === "pay_after_service"} onClick={() => { setPaymentMode("pay_after_service"); setCouponCheckedKey(""); }}>
+                <div><b>Pay after service</b><small>₹0 now · settle by payment link / UPI or cash after grooming</small></div><strong>{paymentMode === "pay_after_service" ? "✓" : "Choose"}</strong>
+              </button>
+            </div>
+            <small>No split payment for Grooming. Cash is recorded by the provider and reconciled by Accounts.</small>
+          </div>}
+          <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; {paymentMode === "prepaid" ? "secure payment opens only after its doorstep is verified." : "nothing is charged now and the balance is due after service."}</p></div>
+          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : paymentMode === "prepaid" ? "Reserve & review payment" : "Reserve · pay after service"} <span>→</span></button>
           {locationPending && <p id="v2-location-review-pending" role="status" className={styles.helper}>Review or cancel the current-location suggestion before reserving.</p>}
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>

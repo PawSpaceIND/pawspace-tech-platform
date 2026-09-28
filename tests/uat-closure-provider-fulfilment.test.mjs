@@ -218,12 +218,12 @@ test("a post-service payment request cannot be raised early, and cannot fake a c
   await reconciliation.ensurePaymentReconciliationTables(db);
   const env = { PAWSPACE_PAYMENT_ENV: "sandbox" };
 
-  // A payment cannot be requested before the service is complete.
+  // A payment cannot be requested before approved service proof is complete.
   const early = await refused(reconciliation.createPostServicePaymentRequest(db, env, {
     bookingId: booking.bookingId, providerId: PROVIDER, actorId: PROVIDER,
   }));
   assert.ok(early);
-  assert.match(await refusalText(early), /only after service completion/);
+  assert.match(await refusalText(early), /only after service proof is complete/);
 
   sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(booking.bookingId);
 
