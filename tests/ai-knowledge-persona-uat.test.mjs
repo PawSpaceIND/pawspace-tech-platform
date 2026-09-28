@@ -33,7 +33,10 @@ test("grounding uses approved reads and exposes mutations only through the gover
 });
 
 test("canonical UAT catalogue coverage includes the major PawSpace service verticals",()=>{
- const source=read("lib/ai-grounded-runtime-provider.ts");
+ const runtimeSource=read("lib/ai-grounded-runtime-provider.ts");
+ assert.match(runtimeSource,/currentGroomingCatalogue\(db,asOf\)/);
+ assert.match(runtimeSource,/await currentGroomingCatalogue\(db\)/);
+ const source=runtimeSource+read("lib/ai-current-catalogue.ts");
  for(const table of["service_packages","training_commercial_packages","boarding_commercial_packages","sitting_commercial_packages","walking_commercial_packages","taxi_route_classes"])assert.match(source,new RegExp(table));
  assert.match(source,/dogTraining/);assert.match(source,/petSitting/);assert.match(source,/dogWalking/);assert.match(source,/petTaxi/);
 });

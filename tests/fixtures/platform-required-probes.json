@@ -1,0 +1,330 @@
+{
+  "sourceCommit": "0c7ce0443c01311a8dc9cabe448ca5f49b9381e1",
+  "scope": "Required platform module probes; edit only through explicit coverage review. Not a hosted service certificate.",
+  "probes": [
+    [
+      "fixture",
+      "seed"
+    ],
+    [
+      "gst-accounting",
+      "schema"
+    ],
+    [
+      "gst-returns",
+      "schema"
+    ],
+    [
+      "tds-governance",
+      "schema"
+    ],
+    [
+      "tcs-governance",
+      "schema"
+    ],
+    [
+      "financial-lifecycle",
+      "schema"
+    ],
+    [
+      "grooming-payment-reconciliation",
+      "schema"
+    ],
+    [
+      "provider-commission-governance",
+      "schema"
+    ],
+    [
+      "partner-settlement-governance",
+      "schema"
+    ],
+    [
+      "booking-rating",
+      "schema"
+    ],
+    [
+      "marketing-automation-rules",
+      "schema"
+    ],
+    [
+      "report-export-runtime",
+      "schema"
+    ],
+    [
+      "ai-analytics",
+      "schema"
+    ],
+    [
+      "server-auth",
+      "schema"
+    ],
+    [
+      "canonical-bookings",
+      "create"
+    ],
+    [
+      "booking_payments",
+      "capture"
+    ],
+    [
+      "grooming-payment-reconciliation",
+      "gateway webhook"
+    ],
+    [
+      "provider_work_orders",
+      "assignment"
+    ],
+    [
+      "provider-commission-governance",
+      "sync completed orders"
+    ],
+    [
+      "provider-commission-governance",
+      "commission dashboard"
+    ],
+    [
+      "partner-settlement-governance",
+      "statements from real earnings"
+    ],
+    [
+      "booking-rating",
+      "ratings + provider score"
+    ],
+    [
+      "gst-accounting",
+      "fail-closed without policy"
+    ],
+    [
+      "gst-accounting",
+      "issue invoice (configured)"
+    ],
+    [
+      "tds-governance",
+      "monthly TDS"
+    ],
+    [
+      "tcs-governance",
+      "monthly TCS"
+    ],
+    [
+      "gst-returns",
+      "GSTR generation"
+    ],
+    [
+      "gst-returns",
+      "GSTR-3B generation"
+    ],
+    [
+      "financial-lifecycle",
+      "balanced journal"
+    ],
+    [
+      "company-analytics",
+      "build"
+    ],
+    [
+      "ai-analytics",
+      "build"
+    ],
+    [
+      "pnl-reporting",
+      "P&L over the pilot period"
+    ],
+    [
+      "report-export-runtime",
+      "export tables"
+    ],
+    [
+      "marketing-automation-rules",
+      "rules"
+    ],
+    [
+      "schema",
+      "payment_intents"
+    ],
+    [
+      "schema",
+      "financial_outbox"
+    ],
+    [
+      "schema",
+      "journal_entries"
+    ],
+    [
+      "schema",
+      "journal_transactions"
+    ],
+    [
+      "schema",
+      "partner_earning_pending"
+    ],
+    [
+      "schema",
+      "payment_settlement_reconciliations"
+    ],
+    [
+      "grooming-payment-reconciliation",
+      "refund overage detection"
+    ],
+    [
+      "sitting-finance-governance",
+      "delivered stay cannot be refunded"
+    ],
+    [
+      "lead-assignment-governance",
+      "assign leads"
+    ],
+    [
+      "background-scheduler",
+      "full sweep"
+    ],
+    [
+      "communication-engine",
+      "governed enqueue"
+    ],
+    [
+      "financial-lifecycle",
+      "500-way concurrent capture on one idempotency key"
+    ],
+    [
+      "financial-lifecycle",
+      "500 distinct concurrent claims each land once"
+    ],
+    [
+      "financial-lifecycle",
+      "outbox lease admits exactly one worker"
+    ],
+    [
+      "provider_work_orders",
+      "concurrent dispatch cannot double-book a booking"
+    ],
+    [
+      "financial-lifecycle",
+      "post 400 booking journals"
+    ],
+    [
+      "journal",
+      "every transaction balances (per-transaction drift)"
+    ],
+    [
+      "journal",
+      "ledger-wide debits equal credits"
+    ],
+    [
+      "journal",
+      "collections parity: cash posted equals money captured"
+    ],
+    [
+      "journal",
+      "commission parity: payable posted equals commission ledger"
+    ],
+    [
+      "gst-accounting",
+      "tax parity: tax ledger equals invoiced tax"
+    ],
+    [
+      "financial-lifecycle",
+      "an unbalanced journal is refused"
+    ],
+    [
+      "journal",
+      "posted entries are immutable"
+    ],
+    [
+      "scheduling-reservation-leases",
+      "governance installs the active-slot index"
+    ],
+    [
+      "scheduling-reservation-leases",
+      "500 racers, one slot, one winner"
+    ],
+    [
+      "scheduling-reservation-leases",
+      "a cancelled slot is releasable, not permanently burned"
+    ],
+    [
+      "scheduling-reservation-leases",
+      "different windows and providers do not collide"
+    ],
+    [
+      "scheduling-reservation-leases",
+      "boarding and overnight are deliberately outside the guard"
+    ],
+    [
+      "identity-session",
+      "an unauthenticated read is refused"
+    ],
+    [
+      "identity-session",
+      "a cross-origin write is blocked"
+    ],
+    [
+      "identity-session",
+      "a write with no assertion is refused before any lookup"
+    ],
+    [
+      "identity-session",
+      "a forged assertion cannot mint a session"
+    ],
+    [
+      "partner-otp",
+      "a wrong code is refused and counted"
+    ],
+    [
+      "partner-otp",
+      "a correct code verifies exactly once - no replay"
+    ],
+    [
+      "partner-otp",
+      "brute force is capped at five attempts"
+    ],
+    [
+      "partner-otp",
+      "an expired challenge cannot be verified"
+    ],
+    [
+      "geo-fencing",
+      "Bengaluru zone boundaries measure correctly"
+    ],
+    [
+      "geo-fencing",
+      "a service radius admits inside and refuses outside"
+    ],
+    [
+      "surge-pricing",
+      "quiet demand does not surcharge the customer"
+    ],
+    [
+      "surge-pricing",
+      "peak demand surges but is capped, and the quote is arithmetic"
+    ],
+    [
+      "surge-pricing",
+      "extreme weather suspends pricing rather than surging it"
+    ],
+    [
+      "surge-pricing",
+      "boarding carries its own lower cap"
+    ],
+    [
+      "surge-pricing",
+      "a stale signal falls back to neutral instead of guessing"
+    ],
+    [
+      "surge-pricing",
+      "a negative base price is refused"
+    ],
+    [
+      "customer-business-view",
+      "LTV and churn over the pilot cohort"
+    ],
+    [
+      "staff-alert-center",
+      "the alert sweep runs and surfaces a directory"
+    ],
+    [
+      "staff-alert-center",
+      "an alert can be acknowledged and the change persists"
+    ]
+  ]
+}

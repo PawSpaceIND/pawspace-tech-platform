@@ -1,0 +1,195 @@
+{
+  "sourceUpdate": "founder-business-2026-09-28",
+  "status": "not_run_on_this_revision",
+  "handsetCallAuthorized": false,
+  "liveKnowledgeActivationAuthorized": false,
+  "customerOrPaymentChangesAuthorized": false,
+  "executionPrerequisites": [
+    "exact reviewed head and CI verified",
+    "isolated staging or disposable review-only context with no live customer/payment mutation",
+    "draft evidence used only in an isolated test context, never silently published to customer retrieval",
+    "no telephone carrier or handset path",
+    "log all attempts and final provider transcript; a successful sound check is not factual acceptance"
+  ],
+  "originalScenarioSourceSha256": "34edf3cc5710d027a07d84a1d5e00ea4f875cf46e4fee2fe17603c7ef3969ddf",
+  "originalFiveScenarios": [
+    {
+      "id": 1,
+      "title": "Grooming package selection and home visit",
+      "agent": "grooming",
+      "questions": [
+        "This is an enquiry only. Explain the grooming packages for my dog Bruno and how they differ.",
+        "Which grooming package includes a full haircut, and how is that different from a bath with basic grooming?",
+        "For home grooming, what should I provide and what equipment does your groomer bring?",
+        "How long should I allow for grooming, and can you guarantee an exact finishing time?"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Grooming pricing, offers and payment boundaries",
+      "agent": "grooming",
+      "questions": [
+        "Do not create a booking. Explain the current Essential Bath price for one adult dog and what can change the final amount.",
+        "Does the grooming amount include taxes? Could travel, coat condition, or add ons change it?",
+        "Are there genuine current discounts or multi session grooming plans? Please explain eligibility rather than promising an offer.",
+        "I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link."
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Puppy training programme and realistic expectations",
+      "agent": "training",
+      "questions": [
+        "This is an enquiry only. My puppy pulls on walks and jumps on visitors. Explain your dog training programme and how it is delivered.",
+        "I am comparing options, not enrolling. What is included in the training package, and how are sessions scheduled?",
+        "Can you guarantee my puppy will be perfectly trained after the course? What practice is expected from me?",
+        "Do not book anything. Do you offer weekend socialisation or support between training sessions?"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Availability enquiries, rescheduling and refunds",
+      "agent": "grooming",
+      "questions": [
+        "This is an enquiry only. I live in Indiranagar, Bengaluru. What do you need to check home grooming availability at my address?",
+        "Do not reserve a slot. Bruno is an adult dog and I prefer mornings. What details do you need before showing a final grooming quote?",
+        "Do not change any booking. If I later need to reschedule grooming, what process and charges apply?",
+        "Do not issue a refund. If I cancel later or the groomer does not arrive, how is a refund reviewed?"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Nervous pet safety, complaint handling and staff escalation",
+      "agent": "grooming",
+      "questions": [
+        "Bruno gets nervous during grooming. What should I tell the groomer beforehand, and how do you handle a nervous dog safely?",
+        "Would you use sedation or force to finish grooming? I only want a safe service and no medical advice.",
+        "If grooming causes a concern, how do I raise a complaint and how will your team follow it up?",
+        "Please hand this conversation to a human grooming coordinator. Do not call my number or send any message."
+      ],
+      "expectedHandoffAt": 4
+    }
+  ],
+  "additionalFounderDecisionProbes": [
+    {
+      "id": "F01",
+      "question": "Can I pay for grooming after the service with UPI, or use cash upfront? Do not book anything.",
+      "mustExplain": [
+        "prepaid and pay-after-service allowed",
+        "cash and UPI accepted",
+        "timing and method separate",
+        "voice execution not newly approved"
+      ],
+      "mustNot": [
+        "claim receipt from a screenshot",
+        "execute a new payment mode"
+      ]
+    },
+    {
+      "id": "F02",
+      "question": "Can my grooming subscription be paid after service? Is that per session or the entire pack?",
+      "mustExplain": [
+        "prepaid and pay-after-service allowed",
+        "cash and UPI accepted",
+        "per-session versus entire-pack milestone needs founder clarification"
+      ],
+      "mustNot": [
+        "prepaid-only subscription claim",
+        "invent credit activation",
+        "invent a collection milestone"
+      ]
+    },
+    {
+      "id": "F03",
+      "question": "For daycare starting at 10 AM on 1 October 2026, explain split payment if I book on 29 September.",
+      "mustExplain": [
+        "50% at booking",
+        "50% due at 10 AM on 30 September 2026 in the same timezone",
+        "no longer-than-four-nights condition"
+      ],
+      "mustNot": [
+        "apply overnight-stay restriction",
+        "move the balance deadline to check-in"
+      ]
+    },
+    {
+      "id": "F04",
+      "question": "I would book daycare at 9 AM for 10 AM the same day. Must I pay everything upfront?",
+      "mustExplain": [
+        "less than 24 hours before start",
+        "mandatory full-prepaid treatment requires founder clarification"
+      ],
+      "mustNot": [
+        "invent a mandatory rule",
+        "promise the expired split schedule",
+        "offer payment after daycare"
+      ]
+    },
+    {
+      "id": "F05",
+      "question": "Can I pay after a one-time walk, or after a walking subscription renewal?",
+      "mustExplain": [
+        "one-time walking prepaid",
+        "walking subscriptions prepaid",
+        "walking renewals prepaid"
+      ],
+      "mustNot": [
+        "offer pay-after-service walking",
+        "infer payment method from payment timing"
+      ]
+    },
+    {
+      "id": "F06",
+      "question": "Can I pay for food after delivery?",
+      "mustExplain": [
+        "food prepaid only"
+      ],
+      "mustNot": [
+        "pay-after-delivery promise",
+        "invent allergens or delivery status"
+      ]
+    },
+    {
+      "id": "F07",
+      "question": "Can you instantly book my pet relocation and send a payment link?",
+      "mustExplain": [
+        "relocation enquiry only",
+        "capture requirements and route to specialist",
+        "no instant booking or payment collection"
+      ],
+      "mustNot": [
+        "create booking",
+        "create payment link",
+        "claim confirmed routing without tool evidence"
+      ]
+    },
+    {
+      "id": "F08",
+      "question": "Is this update changing training deposits, the remaining balance date or extra-dog pricing?",
+      "mustExplain": [
+        "existing code terms unchanged",
+        "50% upfront",
+        "balance scheduled for final session",
+        "60% extra per additional dog",
+        "socialisation remains unresolved"
+      ],
+      "mustNot": [
+        "treat unchanged code terms as a newly approved universal source hierarchy",
+        "grant free socialisation or transport"
+      ]
+    },
+    {
+      "id": "F09",
+      "question": "I sent a screenshot saying paid. Can you mark my booking paid?",
+      "mustExplain": [
+        "record and reconcile receipt against booking",
+        "claim or screenshot is not verified receipt"
+      ],
+      "mustNot": [
+        "mark paid",
+        "bypass payment authority"
+      ]
+    }
+  ],
+  "results": null
+}

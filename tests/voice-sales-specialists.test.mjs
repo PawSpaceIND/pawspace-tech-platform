@@ -176,3 +176,49 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
  const bookingTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get();
  assert.equal(bookingTable ? w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n : 0,0);
 });
+
+// Review closure: read-only enquiries do not destroy the exact quoted offer or authorise changes.
+const {isSalesInformationQuestion}=await import('../lib/ai-sales-information.ts');
+for(const q of ['What equipment does the groomer bring?','Does this include nail clipping?','How long does grooming take?','What should I prepare?','Can I pay by UPI?','What is the difference between these packages?'])test('read-only offer question: '+q,()=>assert.equal(isSalesInformationQuestion(q),true));
+for(const q of ['Actually change it to Sunday.','Yes, but use another pet.','Add a second dog.','Can you change the payment mode?','What equipment do you bring? Also change my address.','Is the price correct? Confirm it now.','I want cash after service.','Use a different package.','What about Complete Makeover instead?'])test('changed or mixed terms are not an information exemption: '+q,()=>assert.equal(isSalesInformationQuestion(q),false));
+test('information follow-up preserves exact quoted offer; subsequent yes executes once after normal validation',async t=>{
+ const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);let modelCalls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){modelCalls++;assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'pending');return{text:'The groomer brings equipment and products. Please provide suitable space, water and electricity.',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};}};
+ const answer=await turn(w,'What equipment does the groomer bring?','info-keep',provider);
+ assert.notEqual(answer.turn.outcome,'handoff');assert.deepEqual(w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id),before);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ const yes=await turn(w,'yes','info-yes',provider);assert.equal(yes.turn.policyDecision,'customer_confirmed_action_executed');assert.equal(modelCalls,1);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});
+test('provider failure on an information follow-up preserves the offer but staff handoff still blocks confirmation',async t=>{
+ const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){throw Error('Simulated upstream failure');}};
+ const answer=await turn(w,'How long does grooming take?','info-error',provider);
+ assert.equal(answer.turn.handoffReason,'provider_error');assert.deepEqual(w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id),before);
+ await refuse(turn(w,'yes','info-after-error',provider),409);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+test('model-proposed mutation during a harmless question neither replaces nor consumes the pending offer',async t=>{
+ const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){return{text:'Changing your package',provider:'test',modelRef:'test',latencyMs:1,actionRequests:actions(w,'dog-makeover')};}};
+ const answer=await turn(w,'Does this include nail clipping?','info-bad-action',provider);
+ assert.equal(answer.turn.policyDecision,'information_only_action_rejected');assert.deepEqual(w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id),before);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers').get().n,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+for(const changed of ['Actually move it to Sunday.','Use a different pet.','Change the package to Complete Makeover.','I want to pay after service.'])test('changed terms immediately retire the old offer even when refresh fails: '+changed,async t=>{
+ const w=await world(t),offer=await prepare(w);let calls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){calls++;assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'superseded');return{text:'Please confirm the details for a fresh quote.',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true};}};
+ const answer=await turn(w,changed,'info-change',provider);assert.notEqual(answer.turn.outcome,'handoff');
+ const yes=await turn(w,'yes','info-change-yes',provider);assert.equal(yes.turn.policyDecision,'customer_confirmation_required');assert.equal(calls,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+test('preserving an information turn does not renew expiry',async t=>{
+ const w=await world(t),offer=await prepare(w);
+ w.sqlite.prepare('UPDATE voice_sales_offers SET expires_at=? WHERE id=?').run(Date.now()-1000,offer.id);
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){return{text:'The groomer brings the equipment.',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true};}};
+ await turn(w,'What equipment do you bring?','info-expired',provider);
+ const yes=await turn(w,'yes','info-expired-yes',provider);assert.equal(yes.turn.policyDecision,'customer_confirmation_required');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('original payment demo disclaimers remain read-only while suggestion-style changes do not',()=>{
+ assert.equal(isSalesInformationQuestion('I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.'),true);
+ assert.equal(isSalesInformationQuestion('What about the Complete Makeover package tomorrow?'),false);
+ assert.equal(isSalesInformationQuestion('How about the larger package?'),false);
+});

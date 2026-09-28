@@ -28,7 +28,7 @@ await seedServicePolicyScopes(db,ASSIGNMENT_POLICY_DOMAIN,[
  {serviceCode:"vet_consult",cityId:"*",config:{assignmentMode:"auto",preferredProviderMode:"preference"},notes:"Doorstep Vet uses ranked automatic assignment after mandatory VCI verification"},
  ...["food","relocation","funeral_memorial"].map(service=>({serviceCode:service,cityId:"*",config:{assignmentMode:"manual_workflow",preferredProviderMode:"disabled"},notes:`${service} uses governed Operations workflow`})),
 ]);await upgradeUntouchedTrainingSeed(db);seeded.add(db);}
-export async function resolveAssignmentPolicy(db:D1Database,serviceCode:string,cityId:string,at=new Date()){await seedAssignmentPolicies(db);return resolveServicePolicy<AssignmentPolicyConfig&Record<string,unknown>>(db,ASSIGNMENT_POLICY_DOMAIN,{serviceCode,cityId},at);}
+export async function resolveAssignmentPolicy(db:D1Database,serviceCode:string,cityId:string,at=new Date(),options:{readOnly?:boolean}={}){if(!options.readOnly)await seedAssignmentPolicies(db);return resolveServicePolicy<AssignmentPolicyConfig&Record<string,unknown>>(db,ASSIGNMENT_POLICY_DOMAIN,{serviceCode,cityId},at,options);}
 
 
 /** Approved V1 capability restoration, restricted to the exact untouched historical seed.

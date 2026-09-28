@@ -15,6 +15,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { makePlatformScaleD1 } from "./helpers/platform-scale-d1.mjs";
+import { assertPlatformMatrix } from "./helpers/platform-matrix-verdict.mjs";
+import { isPlatformMatrixGateChild, registerPlatformMatrixGateTests } from "./helpers/platform-matrix-gate-tests.mjs";
 
 installWorkersHooks("__E2E_DB__", "__E2E_ENV__");
 
@@ -42,30 +45,6 @@ async function probeHarness(module, area, fn) {
   catch (error) { record(module, area, "HARNESS", (error?.message ?? String(error)).slice(0, 160)); }
 }
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    sql,
-    bind: (...bound) => statement(sql, bound),
-    first: async (col) => {
-      const row = sqlite.prepare(sql).get(...args);
-      if (row === undefined) return null;
-      return col ? row[col] : row;
-    },
-    run: async () => {
-      const info = sqlite.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(info.changes), last_row_id: Number(info.lastInsertRowid || 0), rows_written: Number(info.changes) } };
-    },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args), success: true, meta: {} }),
-    raw: async () => sqlite.prepare(sql).all(...args).map((row) => Object.values(row)),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-    dump: async () => new ArrayBuffer(0),
-  };
-}
-
 // --- scale fixture ---------------------------------------------------------
 const CUSTOMERS = 520;
 const PROVIDERS = 100;
@@ -79,7 +58,7 @@ const ZONES = ["blr-indiranagar", "blr-koramangala", "blr-whitefield", "blr-jaya
 const PINCODES = ["560038", "560034", "560066", "560041", "560024"];
 
 const sqlite = new DatabaseSync(":memory:");
-const db = makeD1(sqlite);
+const db = makePlatformScaleD1(sqlite);
 globalThis.__E2E_DB__ = db;
 globalThis.__E2E_ENV__ = {};
 
@@ -281,18 +260,32 @@ test("E2E-300 provider journey: assignment -> delivery -> commission -> settleme
 
     const SETTLING = 10, PER_SESSION = 900;
     const contractProv = (p) => `E2E-CONTRACT-${String(p).padStart(3, "0")}`;
+    // Legacy per-session earnings have their own booking identity, never a commission work order.
+    const contractBooking = (p) => `E2E-CONTRACT-BK-${String(p).padStart(3, "0")}`;
     for (let p = 1; p <= SETTLING; p++) {
       sqlite.prepare(`INSERT OR REPLACE INTO training_sessions
         (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at)
         VALUES (?,?,?,?,1,?,?,?,'completed',?,?)`)
-        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), `E2E-RES-${p}`, contractProv(p), iso(NOW), iso(NOW + 3600000), NOW, NOW);
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, contractBooking(p), `E2E-RES-${p}`, contractProv(p), iso(NOW), iso(NOW + 3600000), NOW, NOW);
       sqlite.prepare(`INSERT OR REPLACE INTO training_session_earnings
         (session_id,programme_id,booking_id,provider_id,city_id,package_code,gross_earning,status,completed_at,calculated_at,updated_at)
         VALUES (?,?,?,?,?,'pkg-std',?,'earned',?,?,?)`)
-        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, bkg(p), contractProv(p), CITY, PER_SESSION, NOW, NOW, NOW);
+        .run(`E2E-TS-${p}`, `E2E-PRG-${p}`, contractBooking(p), contractProv(p), CITY, PER_SESSION, NOW, NOW, NOW);
     }
 
-    await m.refreshPartnerSettlementStatements(db, "2026-09");
+    // Negative control: even a different recipient cannot settle the same commission booking twice.
+    sqlite.prepare(`INSERT INTO training_sessions
+      (id,programme_id,booking_id,schedule_reservation_id,sequence_no,provider_id,scheduled_start,scheduled_end,status,created_at,updated_at)
+      VALUES ('E2E-COMMISSION-TS','E2E-COMMISSION-PRG',?,'E2E-COMMISSION-RES',1,?,?,?,'completed',?,?)`)
+      .run(bkg(1), contractProv(1), iso(NOW), iso(NOW + 3600000), NOW, NOW);
+    sqlite.prepare(`INSERT INTO training_session_earnings
+      (session_id,programme_id,booking_id,provider_id,city_id,package_code,gross_earning,status,completed_at,calculated_at,updated_at)
+      VALUES ('E2E-COMMISSION-TS','E2E-COMMISSION-PRG',?,?,'blr','pkg-std',99000,'earned',?,?,?)`)
+      .run(bkg(1), contractProv(1), NOW, NOW, NOW);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_work_orders WHERE booking_id=? AND provider_model='commission'").get(bkg(1)).n, 1);
+    assert.equal(await m.refreshPartnerSettlementStatements(db, "2026-09"), SETTLING);
+    // Repeated refresh must neither duplicate statements nor include the commission earning.
+    assert.equal(await m.refreshPartnerSettlementStatements(db, "2026-09"), SETTLING);
     const rows = sqlite.prepare("SELECT provider_id,earned_amount,payable_amount FROM partner_settlement_statements WHERE period_code='2026-09' ORDER BY provider_id").all();
     if (rows.length !== SETTLING) throw new Error(`expected ${SETTLING} statements, got ${rows.length}`);
     const wrong = rows.filter((r) => Math.abs(Number(r.earned_amount) - PER_SESSION) > 0.01);
@@ -1074,7 +1067,7 @@ test("E2E-999 result matrix", () => {
   const lines = RESULTS.map((r) => `  ${r.status.padEnd(4)} ${r.module}/${r.area}${r.detail ? ` - ${r.detail}` : ""}`);
   console.log("\n===== E2E PLATFORM MATRIX =====\n" + lines.join("\n") +
     `\n\nPASS ${by("PASS").length}  FAIL ${by("FAIL").length}  GAP ${by("GAP").length}  HARNESS ${by("HARNESS").length}\n`);
-  assert.ok(RESULTS.length > 0);
+  assertPlatformMatrix(RESULTS);
 });
 
 /*
@@ -1083,3 +1076,7 @@ test("E2E-999 result matrix", () => {
  * does the table exist? A missing table here means the code that writes to it throws in production.
  */
 
+
+// The verdict cases reuse real parent evidence; two integration children still run
+// the full matrix to prove actual terminal-test wiring without recursive meta-tests.
+if (!isPlatformMatrixGateChild()) registerPlatformMatrixGateTests(RESULTS);
