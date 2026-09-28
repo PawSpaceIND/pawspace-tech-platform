@@ -299,6 +299,9 @@ jobs:
           SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
@@ -314,7 +317,18 @@ jobs:
           if(!access||!elevenKey||!agentId||allow.length!==1)throw new Error('specialist UAT secrets/agent id/allowlist unavailable');
           const digits=allow[0].replace(/\D/g,''); const phone=allow[0].startsWith('+')?allow[0]:(digits.length===10?'+91'+digits:'+'+digits);
           console.log('::add-mask::'+phone);
-          const customerId='INBOUND-9513886363';
+          const cfToken=String(process.env.CLOUDFLARE_API_TOKEN||'').trim(),cfAccount=String(process.env.CLOUDFLARE_ACCOUNT_ID||'').trim(),d1=String(process.env.STAGING_D1_ID||'').trim();
+          if(!cfToken||!cfAccount||!d1)throw new Error('canonical ownership lookup prerequisites missing');
+          const suffix=phone.replace(/\D/g,'').slice(-10);
+          const d1Url='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(cfAccount)+'/d1/database/'+encodeURIComponent(d1)+'/query';
+          const sql=`WITH matched AS (SELECT id,city_id FROM canonical_customers WHERE replace(replace(replace(replace(replace(primary_phone,' ',''),'-',''),'+',''),'(',''),')','') LIKE '%' || ? ) SELECT c.id,c.city_id,COUNT(b.id) AS booking_count FROM matched c JOIN canonical_bookings b ON b.customer_id=c.id GROUP BY c.id,c.city_id`;
+          const qr=await fetch(d1Url,{method:'POST',headers:{authorization:'Bearer '+cfToken,'content-type':'application/json'},body:JSON.stringify({sql,params:[suffix]}),signal:AbortSignal.timeout(20000)});
+          const qb=await qr.json().catch(()=>({}));
+          const rows=(Array.isArray(qb?.result)?qb.result:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
+          if(!qr.ok||qb?.success===false||rows.length!==1)throw new Error('allowlisted recipient must resolve to exactly one booking-owning canonical customer');
+          const customerId=String(rows[0].id||'').trim();
+          if(!customerId)throw new Error('resolved canonical customer id missing');
+          console.log('CANONICAL_UAT_OWNER_RESOLVED=yes');
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
