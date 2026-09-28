@@ -1,0 +1,1218 @@
+{
+  "source": "Maya Master Knowledge Base v1.0, 26 September 2026, section 22",
+  "purpose": "Review/evaluation inventory, not runtime knowledge and not pass evidence. Numeric questions are adversarial inputs, not tariffs.",
+  "scope": [
+    "grooming",
+    "dog_training",
+    "boarding",
+    "sitting",
+    "walking",
+    "taxi",
+    "food",
+    "relocation",
+    "funeral",
+    "accounts_support"
+  ],
+  "cases": [
+    {
+      "id": "G01",
+      "question": "Do you come home or do I bring my pet?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G02",
+      "question": "Does Essential Bath include a haircut?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G03",
+      "question": "What is different about Bath & Basic?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G04",
+      "question": "Can I book a haircut without bathing?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G05",
+      "question": "Do cats have a no-bath package?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G06",
+      "question": "Can my seven-month-old puppy get the puppy price?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G07",
+      "question": "My dog is small. Is that a puppy package?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G08",
+      "question": "Is tick treatment included in Makeover?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G09",
+      "question": "Can you use dog tick treatment on my cat?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G10",
+      "question": "Do you bring shampoo and equipment?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G11",
+      "question": "Will you clean afterwards?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G12",
+      "question": "Can I leave while grooming happens?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G13",
+      "question": "My pet has severe knots. Is removal free?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G14",
+      "question": "Can you sedate my pet for grooming?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G15",
+      "question": "Can two pets use one two-pet price?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G16",
+      "question": "Can I add nails after booking a bath?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G17",
+      "question": "Is ₹999 the price for any grooming?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G18",
+      "question": "Do six sessions mean six months of unlimited grooming?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G19",
+      "question": "Can my neighbour use my subscription?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "G20",
+      "question": "The groomer missed an included step. What now?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T01",
+      "question": "Do you train at my home?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T02",
+      "question": "Which plan is right for my dog?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T03",
+      "question": "Is a demo free?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T04",
+      "question": "How long is a session?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T05",
+      "question": "Can you train four dogs for the same price?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T06",
+      "question": "Can I pay half now and use a coupon?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T07",
+      "question": "When is the remaining payment due?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T08",
+      "question": "Will two sessions solve toilet training?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T09",
+      "question": "Do I need to practise between visits?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T10",
+      "question": "Can I choose only custom topics at a custom price?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T11",
+      "question": "Are two weekend socialisation visits included?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T12",
+      "question": "Do you offer off-leash walking training?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T13",
+      "question": "Can an adult dog use the Puppy Training plan?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T14",
+      "question": "Can I change trainers without losing my sessions?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "T15",
+      "question": "Can you refund the unused course immediately?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B01",
+      "question": "What is home boarding?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B02",
+      "question": "Will my pet be the only animal there?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B03",
+      "question": "Is boarding cage-free?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B04",
+      "question": "Is food included in boarding?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B05",
+      "question": "Do you accept pets needing medicine?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B06",
+      "question": "Can I board without vaccination records?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B07",
+      "question": "Is Friday evening to Sunday evening two days?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B08",
+      "question": "Can I extend a stay?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B09",
+      "question": "Can I visit any host without an appointment?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "B10",
+      "question": "Can you send today’s feeding photo?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S01",
+      "question": "What is sitting compared with boarding?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S02",
+      "question": "Will an overnight sitter stay awake all night?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S03",
+      "question": "Does the sitter walk and feed my dog?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S04",
+      "question": "Can the sitter clean my entire house?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S05",
+      "question": "Where should I send the alarm code?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S06",
+      "question": "May the sitter bring a friend?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S07",
+      "question": "Can I get the same sitter next time?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S08",
+      "question": "My sitter is late and my pet is alone.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S09",
+      "question": "Do two pets cost exactly double?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "S10",
+      "question": "Can the sitter stay longer today?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W01",
+      "question": "Is the monthly walking plan 30 walks?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W02",
+      "question": "Can I ask for a longer walk?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W03",
+      "question": "Will a walking plan fix leash pulling?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W04",
+      "question": "What should I provide the walker?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W05",
+      "question": "Can my dog be let off leash?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W06",
+      "question": "Will a missed walk be restored?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W07",
+      "question": "Where is the walker right now?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "W08",
+      "question": "Can you promise the same walker every day?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X01",
+      "question": "Can my pet travel without me?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X02",
+      "question": "Is the taxi fare per pet?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X03",
+      "question": "Is airport travel the normal kilometre rate?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X04",
+      "question": "Is a return trip just double the one-way quote?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X05",
+      "question": "Is the handler included?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X06",
+      "question": "Do all trips include a cleaning fee?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X07",
+      "question": "Can you fit six people and six large dogs?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X08",
+      "question": "Can the pet taxi treat my dog on the way?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X09",
+      "question": "The driver added waiting. Can you remove it?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "X10",
+      "question": "Is the driver definitely five minutes away?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F01",
+      "question": "Is this fresh meal vegetarian?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F02",
+      "question": "Can this food cure allergies?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F03",
+      "question": "Can you substitute another flavour?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F04",
+      "question": "Is the trial still ₹75?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F05",
+      "question": "Can I pause meal deliveries?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "F06",
+      "question": "Today’s meal has not arrived.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R01",
+      "question": "Can you move my pet abroad?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R02",
+      "question": "What documents are compulsory everywhere?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R03",
+      "question": "Can you guarantee no quarantine?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R04",
+      "question": "My pet has passed away. Can you help?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R05",
+      "question": "Does the cremation starting price include pickup?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "R06",
+      "question": "Can I choose a non-religious farewell?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A01",
+      "question": "I entered the wrong service in the bot.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A02",
+      "question": "Use the same address as last time.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A03",
+      "question": "I paid but there is no booking confirmation.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A04",
+      "question": "Please issue my refund now.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A05",
+      "question": "Your website says cancellation is free.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A06",
+      "question": "Can you apply every discount together?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A07",
+      "question": "What is my PawPoints balance?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A08",
+      "question": "Can you share another customer’s host number?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A09",
+      "question": "I want a human, not the bot.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A10",
+      "question": "Stop sending reminders.",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A11",
+      "question": "Did you already reserve my slot?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A12",
+      "question": "Can you guarantee every service is available here?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A13",
+      "question": "Do I have to use the app?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A14",
+      "question": "Is the invoice amount final?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    },
+    {
+      "id": "A15",
+      "question": "Can you answer everything and make every change?",
+      "status": "not_run",
+      "requiredEvidence": [
+        "approved source or authorised tool",
+        "answer relevance and accuracy",
+        "no unauthorised mutation",
+        "correct escalation",
+        "audio completion for voice runs"
+      ]
+    }
+  ]
+}
