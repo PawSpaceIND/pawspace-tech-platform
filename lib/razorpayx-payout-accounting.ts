@@ -39,5 +39,8 @@ export async function prepareRazorpayXPayoutAccounting(db:Db,input:{source:"comm
 export async function razorpayXPayoutAccountingDirectory(db:Db,ids:string[]){
  if(!ids.length)return[];await ensureRazorpayXPayoutAccounting(db);
  const unique=[...new Set(ids)].slice(0,500);
- return(await db.prepare(`SELECT local_payout_id,status,amount_paise,reason,settlement_journal_group,reversal_journal_group FROM razorpayx_payout_accounting WHERE local_payout_id IN (${unique.map(()=>"?").join(",")})`).bind(...unique).all<Row>()).results;
+ const found:Row[]=[];
+ // D1 permits 100 bound parameters per query. Keep each directory lookup below that limit.
+ for(let i=0;i<unique.length;i+=80){const chunk=unique.slice(i,i+80);found.push(...(await db.prepare(`SELECT local_payout_id,status,amount_paise,reason,settlement_journal_group,reversal_journal_group FROM razorpayx_payout_accounting WHERE local_payout_id IN (${chunk.map(()=>"?").join(",")})`).bind(...chunk).all<Row>()).results);}
+ return found;
 }

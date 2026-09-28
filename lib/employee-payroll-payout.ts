@@ -1,4 +1,4 @@
-import {postPayrollJournal} from "./people-finance-integration";
+import {ensurePeopleFinanceTables,postPayrollJournal} from "./people-finance-integration";
 import {prepareJournalPosting,periodOf} from "./finance-accounts";
 import {prepareRazorpayXPayoutAccounting,razorpayXPayoutAccountingDirectory} from "./razorpayx-payout-accounting";
 import {razorpayXPayoutIdentityProblem} from "./razorpayx-payout-identity";
@@ -37,9 +37,11 @@ export async function queueEmployeeSalary(db:D1Database,input:{runId:string;acto
  const payable=results.filter(r=>Number(r.net_pay)>0);if(!payable.length)throw refusal("No positive employee salaries are payable");
  if(existing.length){if(existing.length!==payable.length||existing.some(row=>!payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))throw payrollIntegrityConflict();return{instructions:existing.map(instructionView),duplicatePrevented:true,environment:"sandbox"};}
  const periodCode=new Date(Number(run.period_end)).toISOString().slice(0,7);
- try{await postPayrollJournal(db,{runId:input.runId,periodCode,actorId:input.actorId});}catch(error){if(!/UNIQUE constraint failed: people_payroll_finance_posts/.test(error instanceof Error?error.message:String(error)))throw error;}
+ await ensurePeopleFinanceTables(db);const existingPost=await db.prepare("SELECT payroll_run_id FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat'").bind(input.runId).first<Row>();
+ // A previously accrued salary can be paid in a later open month without reopening or reposting its closed accrual month.
+ if(!existingPost){try{await postPayrollJournal(db,{runId:input.runId,periodCode,actorId:input.actorId});}catch(error){if(!/UNIQUE constraint failed: people_payroll_finance_posts/.test(error instanceof Error?error.message:String(error)))throw error;}}
  const mapping=await db.prepare("SELECT account_code FROM people_finance_account_mappings WHERE source_key='payroll.net_pay_payable'").first<Row>();if(!mapping?.account_code)throw refusal("Approved payroll Finance account mapping is required before salary preparation");
- const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM people_payroll_finance_posts WHERE payroll_run_id=?) AND ABS(COALESCE((SELECT SUM(credit-debit) FROM finance_journal_entries WHERE source_type='payroll_run' AND source_id=? AND account_code=? AND posted=1),0)-(SELECT COALESCE(SUM(net_pay),0) FROM employee_payroll_results WHERE run_id=?))<0.005",[input.runId,input.runId,mapping.account_code,input.runId]);appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM payroll_runs WHERE id=? AND status='payment_prepared') AND (SELECT COUNT(*) FROM payroll_payment_batches WHERE run_id=? AND external_transmission=0)=1",[input.runId,input.runId]);
+ const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat') AND ABS(COALESCE((SELECT SUM(credit-debit) FROM finance_journal_entries WHERE source_type='payroll_run' AND source_id=? AND account_code=? AND posted=1),0)-(SELECT COALESCE(SUM(net_pay),0) FROM employee_payroll_results WHERE run_id=?))<0.005",[input.runId,input.runId,mapping.account_code,input.runId]);appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM payroll_runs WHERE id=? AND status='payment_prepared') AND (SELECT COUNT(*) FROM payroll_payment_batches WHERE run_id=? AND external_transmission=0)=1",[input.runId,input.runId]);
  for(const result of payable){
   const beneficiary=await db.prepare("SELECT * FROM employee_salary_beneficiaries WHERE employee_id=? AND environment='sandbox' AND expires_at>?").bind(result.employee_id,now).first<Row>();
   if(!beneficiary)throw refusal("Every payable employee needs unexpired reviewed TEST beneficiary evidence");

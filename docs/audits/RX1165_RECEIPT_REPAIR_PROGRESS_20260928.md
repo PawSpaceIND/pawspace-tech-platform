@@ -44,3 +44,28 @@ Authorized Mac: `Documents/PawSpace-fixes/razorpayx-v1-v2-audit-20260928-evidenc
 - `receipt-typecheck.log` / `receipt-build.log`: local compilation and artifact checks.
 
 Provider documentation consulted for protocol expectations: Razorpay's Test Mode payout lifecycle and webhook validation guidance. Provider-side TEST connection, actual signed callbacks and hosted V1/V2 acceptance remain separate future gates; passing local fixtures is not provider certification.
+
+## Recovery continuation: final source fixes prepared on the same #1167 branch
+
+This section supersedes the earlier implementation-blocked and Mac-unresponsive status above. The authorized Mac responded again; the existing worktree and evidence were recovered rather than recreated. The branch includes main `f9128593c40cd339cb7e2fe150af1b6b1743f23a` (#1164) without conflict.
+
+### Additional shared-code repairs now present
+- The existing approved-only TEST salary sweep is connected to the Worker; activation remains opt-in and disabled unless explicitly configured. Failures reach the scheduler's diagnostics.
+- Approved contractor statements create one separate TEST payout instruction with approval, amount, journal and beneficiary checks, reusing the existing dispatch and authenticated receipt engine.
+- Provider/contractor and employee salary principal settlements and reversals join guarded receipt transactions. They use separate payout-in-transit accounts. Missing release books explicitly require Finance review; they do not manufacture opening balances or automatically reissue returned money.
+- Salary preparation uses the configured payroll Finance mappings. Already-posted payroll can be paid in a later open month without rewriting a closed accrual period; a locked payment period still refuses a new release.
+- Changed salary beneficiaries are held before dispatch. A signed confirmation received before a lost creation response remains authoritative.
+- Payout accounting directory queries are bounded; the 251-record test proves they do not exceed the tested 100-bind limit. Finance/Payroll screens distinguish provider status, principal accounting and actual bank-statement reconciliation.
+
+### Recovered exact-source verification
+- The recovered 43-file run originally had **514/515 passed**. Its remaining failure was the commission-defaults test's literal Worker destructuring expectation, which predated the added salary task.
+- Updated that exact expectation to include `employeeSalary`, retaining commission ordering, locked-month and one-SELECT checks and adding assertions for salary execution/review failure reporting. No application behavior or quality threshold was changed by this test correction.
+- Current direct 43-file selection: **515/515 passed**, zero failures/cancellations/skips, Node 24.19.0. The 60-case payout/salary/contractor/recovery selection also passed and overlaps those 515 tests.
+- Current typecheck passed. Forced-loader compatibility and the newly rebuilt full local suite are being verified separately; do not substitute the interrupted earlier broad run as evidence for this source.
+- Exact-source fingerprints were updated only for intentional payout/API/UI changes, and newly added payout sources are protected. No unrelated expected hashes, behavioral assertions or thresholds were removed.
+
+### Release and integration boundaries
+The same PR is being prepared for fresh cloud checks, not a new feature PR. Code review, required CI, merge and deployment remain separate gates. #1165 remains open for actual RazorpayX TEST acceptance and full bank-statement/provider-fee reconciliation. Principal accounting is not evidence of fees or external statement matching. No real/provider TEST payout, credentials, OTP, activation switches, production deployment or customer communication was performed during recovery. Commission payouts retain the existing Finance release control; V1/V2 use the shared modules.
+
+### Recovery checkpoint before push
+The same 43-file selection also passed **515/515 on the forced-loader compatibility path**, with zero failures/cancellations/skips. This repeats coverage, not 515 additional unique cases. Current targeted lint passed with zero errors and the existing unused `executive` warning in the Worker. Current typecheck passed. The full suite was started with a clean environment that carries no provider credentials and rebuilds the application before testing; its result is still pending at this checkpoint.
