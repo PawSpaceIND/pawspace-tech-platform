@@ -24,3 +24,21 @@ test("automatic offers accept exact server-priced amounts and use a read-only re
  t.mock.method(globalThis,"fetch",async(url,options)=>{assert.ok(String(url).includes("orderValue=1899"));assert.equal(options.method,undefined);return Response.json({data:response()});});
  assert.equal((await loadV2GroomingOffers(input)).coupons[0].code,"NORMAL");
 });
+
+test("offer discovery has the shared API deadline and cannot hold auto-checkout forever",async t=>{
+ let requestedTimeout;
+ const actualSetTimeout=globalThis.setTimeout;
+ t.mock.method(globalThis,"setTimeout",(callback,delay,...args)=>{requestedTimeout=delay;return actualSetTimeout(callback,Math.min(delay,10),...args);});
+ t.mock.method(globalThis,"fetch",async(_url,options)=>new Promise((_resolve,reject)=>{
+   options.signal.addEventListener("abort",()=>reject(new DOMException("Aborted","AbortError")),{once:true});
+ }));
+ const result=loadV2GroomingOffers(input);
+ // Bound the test itself even before the missing production deadline is repaired.
+ await assert.rejects(Promise.race([result,new Promise((_resolve,reject)=>actualSetTimeout(()=>reject(new Error("missing offer deadline")),100))]),/took too long/);
+ assert.equal(requestedTimeout,20000);
+});
+
+test("offer lookup gives a safe error for a non-JSON upstream failure",async t=>{
+ t.mock.method(globalThis,"fetch",async()=>new Response("<html>upstream failure</html>",{status:502}));
+ await assert.rejects(loadV2GroomingOffers(input),error=>error.kind==="http"&&error.status===502&&!error.message.includes("Unexpected token"));
+});
