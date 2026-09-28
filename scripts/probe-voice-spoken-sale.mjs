@@ -32,8 +32,8 @@ const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
 const cr=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await cr.json();
 if(!cr.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Agent must use exact staging backend');
 const dir=await mkdtemp(join(tmpdir(),'amaya-spoken-'));
-async function pcm(text,name){const wav=join(dir,name+'.wav'),raw=join(dir,name+'.pcm');execFileSync('espeak-ng',['-s','150','-w',wav,text]);execFileSync('ffmpeg',['-loglevel','error','-y','-i',wav,'-ar','16000','-ac','1','-f','s16le',raw]);return readFile(raw);}
-const quoteAudio=await pcm('Essential Bath for Bruno tomorrow 11 AM at 12 100 Feet Road Indiranagar Bengaluru 560038 healthy adult no aggression no medical issues show quote before booking','quote');
+async function pcm(text,name){const wav=join(dir,name+'.wav'),raw=join(dir,name+'.pcm');execFileSync('espeak-ng',['-s','185','-w',wav,text]);execFileSync('ffmpeg',['-loglevel','error','-y','-i',wav,'-ar','16000','-ac','1','-f','s16le',raw]);return readFile(raw);}
+const quoteAudio=await pcm('Essential Bath Bruno tomorrow 11 AM 12 100 Feet Road Indiranagar Bengaluru 560038 healthy adult no aggression no medical issues quote before booking','quote');
 const yesAudio=await pcm('Yes, proceed.','confirm');
 const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await sr.json();
 if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
@@ -57,7 +57,7 @@ async function waitFor(predicate){const end=Date.now()+120000;while(!predicate()
 async function turn(audio,expected){
  await checkRevision();
  state={...createAudioProbeState(),greeting:true,listening:true};firstAudio=lastAudio=bytes=0;audioStarted=true;
- const input=Buffer.concat([Buffer.alloc(16000),audio,Buffer.alloc(64000)]);
+ const input=Buffer.concat([Buffer.alloc(16000),audio,Buffer.alloc(24000)]);
  for(let i=0;i<input.length;i+=3200){if(error)throw error;if(spokenInputComplete(state.transcript,state.reply,expected))break;socket.send(JSON.stringify({user_audio_chunk:input.subarray(i,i+3200).toString('base64')}));await delay(100);}
  await waitFor(()=>expected.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&!isHandoffReply(state.reply)&&state.audioBytes>1600&&state.nonSilentBytes>100&&playback());
  console.log('SPOKEN_SALE_TURN='+JSON.stringify({transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
