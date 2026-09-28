@@ -119,3 +119,17 @@ test("R02: missing invoice persistence rolls back completion projections and rem
   assert.ok(invoice);
   assert.equal(ctx.sqlite.prepare("SELECT invoice_id FROM booking_tax_readiness WHERE booking_id=?").get(result.bookingId).invoice_id, invoice.id);
 });
+
+
+test("R02: completion response includes the newly persisted event and actual invoice", async (t) => {
+  const ctx = await setupJourney(); t.after(ctx.close);
+  const result = await runCompletedJourney(ctx, configuration("RESPONSE"));
+  assert.equal(result.completed.status, 200, JSON.stringify(result.completed.body));
+  const stored = ctx.sqlite.prepare("SELECT detail_json FROM booking_lifecycle_events WHERE booking_id=? AND event_type='service_completed'").get(result.bookingId);
+  assert.ok(stored, "the completion event must be durably persisted");
+  const responseEvents = result.completed.body.data.events.filter(row => row.eventType === "service_completed");
+  assert.equal(responseEvents.length, 1, "the successful response must not be a pre-event snapshot");
+  assert.equal(responseEvents[0].detail.invoiceNumber, JSON.parse(stored.detail_json).invoiceNumber);
+  assert.equal(responseEvents[0].detail.invoiceNumber, result.completed.body.data.invoice.invoiceNumber);
+  assert.equal(responseEvents[0].actorId, "provider_or_system", "the existing privacy projection remains enforced");
+});

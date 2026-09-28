@@ -99,3 +99,26 @@ The workstation connection timed out after those tests. On reconnection, source
 changes and both exit files were confirmed; the interrupted build had no completion
 evidence and was not counted as a pass. Build and exact-head CI remain separately
 reported in the PR checkpoint. No hosted booking or deployment followed the block.
+
+## Current-main integration and response freshness review
+
+The branch integrated main `7f3a3bd63e9e8b1a0e5cf9e1ac0ae8bbcf380bd6`
+without discarding the merged AI, history or voice changes. The integrated candidate
+`4989e5b1d89bcb02410171d48ff0dfab35cb93dc` exposed a response regression:
+completion persisted its event but returned a bundle captured before that event.
+A new actual-handler test failed on the unchanged candidate, despite the durable
+completion being successful. The earlier integrated test sequence was interrupted
+and is not reported as a full-suite pass.
+
+The route now reads only the persisted invoice number before emitting its completion
+event, then obtains the response bundle after the event and security audit. This
+restores the existing response ordering and privacy projection, with one narrow
+invoice lookup rather than an additional full bundle read. Pricing, permissions,
+proof requirements, payment authority and all four original integrity scenarios stay
+unchanged. The fifth regression checks exactly one completion event in the response,
+agreement with the stored invoice number and the masked actor identity.
+
+Five invoice/response regressions and six existing golden journeys passed together:
+11/11, zero failures/cancellations/skips/todos. This checkpoint is not a whole-suite,
+cloud, hosted-provider, deployment or tax-filing certificate. Final exact-head
+verification and merge status are recorded separately in PR #1164.
