@@ -55,3 +55,24 @@ standalone adapter-regression file was blocked by tool safety checking and was n
 written or retried through another mechanism; native-D1 adapter parity is not claimed.
 
 D1 contract reference: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch
+
+## Full-run follow-up: unchanged quality budget
+
+The exact `c5f6e49b` Node 22.16.0 full tracked run completed: 8,837 assertions,
+8,836 passed, one failed, zero cancelled/skipped/todo. The separate certification
+batch and forced-loader focused selection passed. This is not a green full sweep.
+The sole failure was the static-file ratchet: 161 classified files against the
+unchanged budget of 160. The new subprocess-only top-level file caused the increase.
+
+All nine actual gate scenarios are now registered by the existing executable
+platform suite through a helper. No scenario, expectation or timeout was removed.
+Only a process whose entry point is the explicit child fixture omits recursive
+meta-test registration; an environment variable alone cannot suppress parent tests.
+Every child still executes all 81 business probes and all 15 matrix assertions.
+The parent executes the 15 matrix assertions plus the same nine gate scenarios.
+A healthy child must also show exactly 15 passing assertions and zero failures.
+
+The quality detector, exemptions and 160-file limit are byte-for-byte unchanged.
+The related Node 22.16.0 selection including both quality checks passed 51/51,
+zero failures, cancellations, skips or todos. Evidence: `quality-repair-focused.log`.
+This is focused validation; a fresh integrated full run and cloud gates are required.

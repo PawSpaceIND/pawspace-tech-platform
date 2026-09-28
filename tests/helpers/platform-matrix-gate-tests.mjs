@@ -2,9 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-const root = fileURLToPath(new URL("../", import.meta.url));
-const fixture = fileURLToPath(new URL("./fixtures/platform-matrix-gate-child.mjs", import.meta.url));
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const fixture = fileURLToPath(new URL("../fixtures/platform-matrix-gate-child.mjs", import.meta.url));
 const cases = ["none", "settlement", "analytics", "GAP", "HARNESS", "UNKNOWN", "empty", "missing", "duplicate"];
+// Only the explicitly invoked child fixture omits recursive meta-tests.
+// Setting a test environment variable alone cannot suppress the parent scenarios.
+export function isPlatformMatrixGateChild() {
+  return process.argv[1] === fixture && cases.includes(process.env.PAWSPACE_TEST_MATRIX_FAULT);
+}
+export function registerPlatformMatrixGateTests() {
 for (const fault of cases) {
   test(`actual platform matrix release gate: ${fault}`, { timeout: 65000 }, () => {
     const env = { ...process.env, PAWSPACE_TEST_MATRIX_FAULT: fault,
@@ -22,6 +28,7 @@ for (const fault of cases) {
       assert.equal(result.status, 0, output);
       assert.match(output, /ok \d+ - E2E-999 result matrix/);
       assert.match(output, /PASS 81\s+FAIL 0\s+GAP 0\s+HARNESS 0/);
+      assert.match(output, /# tests 15\s+# suites 0\s+# pass 15\s+# fail 0/);
     } else {
       assert.equal(result.status, 1, output);
       assert.match(output, /not ok \d+ - E2E-999 result matrix/);
@@ -37,4 +44,5 @@ for (const fault of cases) {
       assert.match(output, /# tests 15\s+# suites 0\s+# pass 14\s+# fail 1/);
     }
   });
+}
 }

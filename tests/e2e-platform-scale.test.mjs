@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { makePlatformScaleD1 } from "./helpers/platform-scale-d1.mjs";
+import { isPlatformMatrixGateChild, registerPlatformMatrixGateTests } from "./helpers/platform-matrix-gate-tests.mjs";
 
 installWorkersHooks("__E2E_DB__", "__E2E_ENV__");
 
@@ -1081,3 +1082,7 @@ test("E2E-999 result matrix", () => {
  * does the table exist? A missing table here means the code that writes to it throws in production.
  */
 
+
+// Run the same nine verdict checks from this executable suite. Child fixtures still
+// execute all 81 business probes but do not recursively launch their own children.
+if (!isPlatformMatrixGateChild()) registerPlatformMatrixGateTests();
