@@ -1,3 +1,5 @@
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+import {stubFetch,jsonResponse} from './helpers/ai-harness.mjs';
 import {assertCompletedCarrier} from '../scripts/voice-uat-evidence.mjs';
 import {syntheticInfoAudio} from '../scripts/voice-synthetic-audio.mjs';
 import {SPOKEN_INFO_TEXT} from '../scripts/voice-spoken-fixtures.mjs';
@@ -9,6 +11,9 @@ import {SPOKEN_QUOTE_TEXT,SPOKEN_QUOTE_EXPECTED} from '../scripts/voice-spoken-f
 import {audioProbeComplete,applyAudioProbeEvent,createAudioProbeState} from '../scripts/voice-audio-proof.mjs';
 import {assertFinalConversation} from '../scripts/voice-final-conversation-proof.mjs';
 import {selectVoiceRepairConfig,repairStagingVoice} from '../scripts/repair-staging-voice-config.mjs';
+installWorkersHooks('__VOICE_REPAIR_DB__','__VOICE_REPAIR_ENV__');
+const {selectTelephonyProvider}=await import('../lib/voice-telephony-provider.ts');
+const {canonicalDialNumber}=await import('../lib/voice-call-gate.ts');
 const caller='+918012341196';
 const exophones=[{phone_number:caller,capabilities:{voice:true},region:'KA',voice_url:'https://my.exotel.com/test/exoml/start_voice/1347515'}];
 const imports=[{provider:'exotel',phone_number:caller,phone_number_id:'phnum_verified'}];
@@ -87,4 +92,54 @@ test('tester discovery uses actual canonical phone ownership and never rewrites 
 test('exhausted carrier polling cannot pass on a finished model session alone',()=>{
  assert.equal(assertCompletedCarrier({status:'completed',duration:12}),true);
  for(const carrier of [{status:'in-progress',duration:12},{status:'no-answer',duration:0},{status:'completed',duration:0},{status:'completed',duration:NaN},{status:'completed',duration:Infinity},undefined])assert.throws(()=>assertCompletedCarrier(carrier),/Carrier has not confirmed/);
+});
+
+// Execute the application's real dial adapter with the repair output. Only external transport
+// is stubbed: changing the selected agent, imported phone or context must break this regression.
+const repairedEnv=()=>({
+ ...selectVoiceRepairConfig(exophones,imports),PAWSPACE_VOICE_RUNTIME:'elevenlabs',
+ ELEVENLABS_API_KEY:'test-only-key',ELEVENLABS_AGENT_ID:'agent-default',
+ ELEVENLABS_GROOMING_AGENT_ID:'agent-grooming',ELEVENLABS_API_BASE:'https://api.elevenlabs.io',
+});
+const repairIntent=env=>({callRef:'VCALL-REPAIR',customerId:'CUS-VOICE-REPAIR',
+ useCase:'grooming_sales',toNumber:canonicalDialNumber(env,'09876543210'),
+ statusCallbackUrl:'https://example.test/voice-status',recordingAllowed:false});
+test('repaired routing drives the actual app adapter with exact agent, number and canonical context',async t=>{
+ const env=repairedEnv(),intent=repairIntent(env),provider=selectTelephonyProvider(env);
+ assert.equal(intent.toNumber,'+919876543210');
+ assert.equal(provider.provider,'elevenlabs_exotel');
+ const network=stubFetch((url,init)=>{
+  assert.equal(url,'https://api.elevenlabs.io/v1/convai/exotel/outbound-call');
+  assert.equal(init.method,'POST');
+  const body=JSON.parse(init.body);
+  assert.equal(body.agent_id,'agent-grooming');
+  assert.equal(body.agent_phone_number_id,'phnum_verified');
+  assert.equal(body.to_number,intent.toNumber);
+  assert.deepEqual(body.conversation_initiation_client_data.custom_llm_extra_body,{pawspace_voice_call_id:intent.callRef});
+  assert.equal(body.conversation_initiation_client_data.dynamic_variables.pawspace_customer_id,intent.customerId);
+  return jsonResponse({success:true,conversation_id:'conv-repair',callSid:'call-repair'});
+ });t.after(()=>network.restore());
+ const result=await provider.createCall(intent);
+ assert.equal(result.accepted,true);assert.equal(result.providerCallId,'call-repair');
+ assert.equal(result.providerStatus,'queued');assert.equal(network.calls.length,1,'no stale-ID recovery needed');
+});
+test('actual app adapter rejects a stale import when its replacement does not match the configured caller',async t=>{
+ const env={...repairedEnv(),ELEVENLABS_AGENT_PHONE_NUMBER_ID:'phnum_stale'};
+ const network=stubFetch((url,init)=>{
+  if(url.endsWith('/outbound-call')){
+   assert.equal(JSON.parse(init.body).agent_phone_number_id,'phnum_stale');
+   return jsonResponse({detail:{code:'document_not_found'}},404);
+  }
+  assert.equal(url,'https://api.elevenlabs.io/v1/convai/phone-numbers?provider=exotel');
+  return jsonResponse({phone_numbers:[{provider:'exotel',phone_number:'+918012340000',phone_number_id:'phnum_wrong'}]});
+ });t.after(()=>network.restore());
+ await assert.rejects(()=>selectTelephonyProvider(env).createCall(repairIntent(env)),/no unique current ExoPhone/);
+ assert.equal(network.calls.length,2);
+ assert.equal(network.calls.filter(call=>call.init.method==='POST').length,1,'wrong replacement must never be dialed');
+});
+test('repaired routing does not bypass the actual app recording-approval guard',async t=>{
+ const env=repairedEnv(),network=stubFetch(()=>{throw Error('Unapproved recording must never reach the provider');});
+ t.after(()=>network.restore());
+ await assert.rejects(()=>selectTelephonyProvider(env).createCall({...repairIntent(env),recordingAllowed:true}),/recording is not approved/);
+ assert.equal(network.calls.length,0);
 });
