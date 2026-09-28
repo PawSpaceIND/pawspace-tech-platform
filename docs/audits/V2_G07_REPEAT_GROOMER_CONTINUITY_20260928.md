@@ -1,6 +1,6 @@
 # G07 continuation after merged PR #1157
 
-Base: `f2cc5d4abc013d2a8ad27cab2a1f11a98455d8d3`. Scope: the server-side completed-history part of G07, not a replacement of closed #1157 and not all G01–G19 closure. The parallel voice #1156 and location #1158 work is untouched.
+Base: `f2cc5d4abc013d2a8ad27cab2a1f11a98455d8d3`. Scope: the server-side completed-history part of G07, not a replacement of closed #1157 and not all G01–G19 closure. The independently merged voice #1156 changes are preserved unchanged by integrating current main `db2c97003837663c7370e6ada2d9d1bf574e443e`. Location #1158 remains separate.
 
 ## Existing gap and reuse
 The shared scheduling engine already supports `repeatProviderId` and a governed repeat-provider ranking bonus. The customer-facing scheduling route did not populate that input. A new executable regression on the unchanged baseline chose `groom_arun` rather than the eligible previously used `groom_sanjay`; the history-aware route passes the same assertion.
