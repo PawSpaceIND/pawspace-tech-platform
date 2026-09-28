@@ -503,7 +503,7 @@ export function checkSchedules(fact) {
       if (!["pending_balance", "booking_fee_paid"].includes(status)) problem(out, status === "paid" ? "P0" : "P1", `booking fee captured but the taxi schedule is '${status}'`);
       if (!Number(taxi.booking_fee_paid_at) || !text(taxi.booking_fee_reference)) problem(out, "P1", `booking fee captured without booking_fee_paid_at / booking_fee_reference`);
       else if (fact.captures[0]?.gatewayPaymentId && text(taxi.booking_fee_reference) !== fact.captures[0].gatewayPaymentId) note(out, `booking_fee_reference ${text(taxi.booking_fee_reference)} is not the fee capture ${fact.captures[0].gatewayPaymentId}`);
-    } else if (!fact.sandboxCaptured && status !== "booking_fee_pending") problem(out, status === "paid" ? "P0" : "P1", `nothing captured but the taxi schedule is '${status}'`);
+    } else if (!fact.sandboxCaptured && status !== "booking_fee_pending" && !(status === "cancelled" && text(b.booking_status) === "cancelled")) problem(out, status === "paid" ? "P0" : "P1", `nothing captured but the taxi schedule is '${status}'`);
     if (fact.saved.balancePaid === true && !full && text(b.payment_status) !== "paid") problem(out, "P0", `the saving suite paid the ride balance, but D1 shows only ${rupees(fact.capturedSum)} captured`);
   }
   return out;
@@ -804,5 +804,6 @@ export function factSummary(fact) {
 
 /** Formatting shared by the INR screens (Intl, en-IN, no decimals) so UI text can be matched exactly. */
 export const inr0 = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(value || 0));
+export const inr2 = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(round2(value));
 export const pretty = (value) => String(value || "Not recorded").replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 export const label = (value, fallback = "not configured") => String(value || fallback).replaceAll("_", " ");

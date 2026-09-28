@@ -287,7 +287,7 @@ async function incidentFormCheck(t, flow, service) {
   if (shown) {
     before = await submit.isEnabled().catch(() => null);
     await summaryBox.fill(`Master E2E ${RUN} synthetic check - NOT submitted`);
-    after = await submit.isEnabled().catch(() => null);
+    for (let i = 0; i < 20; i++) { after = await submit.isEnabled().catch(() => null); if (after === true) break; await page.waitForTimeout(250); }
     shot = await flow.shot("incident-form-filled-not-submitted");
     await summaryBox.fill("");
   }

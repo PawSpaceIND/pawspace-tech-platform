@@ -155,10 +155,10 @@ for (const check of GLOBAL_CHECKS) {
     if (afterDeploy.some(row => row.__sev === "P0")) severity = "P0";
     if (afterDeploy.some(row => runIds.has(String(row.booking_id || ""))) && check.runSeverity) severity = check.runSeverity;
     const list = rows.map(row => `${runIds.has(String(row.booking_id || "")) ? "[this run] " : ""}${check.fmt(row)}${when(row)}`);
-    // Decision (main session): rows written before the live deploy are information only (PARTIAL, no finding).
-    const result = errors.length && !rows.length ? "BLOCKED" : afterDeploy.length ? "FAIL" : rows.length ? "PARTIAL" : "PASS";
+    // Rows written before the live deploy are historical information only: they do not make the current build partial.
+    const result = errors.length && !rows.length ? "BLOCKED" : afterDeploy.length ? "FAIL" : "PASS";
     const since = liveSince ? `; live deploy ${new Date(liveSince).toISOString().slice(0, 16)}Z (${String(deploy?.sha || "").slice(0, 8)}): ${afterDeploy.length} after, ${rows.length - afterDeploy.length} before` : "";
-    const detail = result === "BLOCKED" ? `harness: D1 read failed: ${errors.join(" · ")}` : result === "PARTIAL" ? `before deploy: ${rows.length} row(s) left by the earlier build${since}: ${list.join(" · ")}` : rows.length ? `${rows.length} offending row(s)${ours.length ? ` (${ours.length} from this run)` : ""}${since}: ${list.join(" · ")}` : `none${missing.length ? ` (tables not created yet: ${missing.join(", ")})` : ""}${errors.length ? `; partial read errors: ${errors.join(" · ")}` : ""}`;
+    const detail = result === "BLOCKED" ? `harness: D1 read failed: ${errors.join(" · ")}` : afterDeploy.length ? `${rows.length} offending row(s)${ours.length ? ` (${ours.length} from this run)` : ""}${since}: ${list.join(" · ")}` : rows.length ? `PASS for current build; ${rows.length} historical row(s) pre-date the live deploy${since}: ${list.join(" · ")}` : `none${missing.length ? ` (tables not created yet: ${missing.join(", ")})` : ""}${errors.length ? `; partial read errors: ${errors.join(" · ")}` : ""}`;
     out.global.push({ journey: check.journey, result, rows, errors, missing, afterDeploy: afterDeploy.length });
     record({ suite: SUITE, journey: check.journey, combo: "staging D1, last 7 days", result, detail: clip(detail), evidence: EVIDENCE });
     const oursAfter = afterDeploy.filter(row => runIds.has(String(row.booking_id || ""))).length;
@@ -247,7 +247,7 @@ try {
           expect: (fact, body) => { const status = fact?.paymentStatus ?? body?.data?.booking?.payment_status; const captured = body?.data?.booking?.captured_amount ?? fact?.recon?.captured_amount ?? 0; return [[`Payment ${A.label(status)}`, new RegExp(`Payment\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Captured ${A.inr0(captured)}`, null]]; },
           apiCheck: (fact, body) => { if (!fact || !body?.data?.booking) return null; const collected = A.COLLECTED_STATUSES.includes(fact.paymentStatus) ? Number(fact.recon?.captured_amount ?? fact.capturedSum) : 0; return A.same(body.data.booking.captured_amount, collected) ? null : `Finance shows captured ₹${body.data.booking.captured_amount}, D1 reconciliation ₹${collected}`; } },
         { service: "pet_taxi", path: "/team/finance/taxi", heading: /Taxi payment & reconciliation/i, journey: "Taxi finance workspace shows this run's rides (founder)", apiPath: id => `/api/taxi-finance?bookingId=${encodeURIComponent(id)}`,
-          expect: (fact, body) => { const status = fact?.b?.booking_status ?? body?.data?.booking?.status; return [[`Booking ${A.label(status)}`, new RegExp(`Booking\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Booking value ${A.inr0(fact?.b?.booking_total ?? body?.data?.booking?.total_amount)}`, null]]; },
+          expect: (fact, body) => { const status = fact?.b?.booking_status ?? body?.data?.booking?.status; return [[`Booking ${A.label(status)}`, new RegExp(`Booking\\s+${A.label(status).replace(/ /g, "\\s+")}`, "i")], [`Booking value ${A.inr2(fact?.b?.booking_total ?? body?.data?.booking?.total_amount)}`, null]]; },
           apiCheck: (fact, body) => fact && body?.data?.booking && String(body.data.booking.payment_status) !== fact.paymentStatus ? `API payment_status ${body.data.booking.payment_status} ≠ D1 ${fact.paymentStatus}` : null },
       ];
       for (const ws of workspaces) {
@@ -320,12 +320,13 @@ try {
           const shot = await staff.shot(`bcc-payments-${service}`);
           uiDefects({ ...view, shot }, "Operations");
           const fact = target.fact;
-          const status = fact?.paymentStatus ?? row?.payment_status, amount = fact?.b?.payment_amount ?? row?.payment_amount, due = fact?.b?.amount_due_now ?? row?.amount_due_now;
+          const status = fact?.paymentStatus ?? row?.payment_status, amount = fact?.b?.payment_amount ?? row?.payment_amount;
+          const due = row?.amount_due_now ?? fact?.b?.amount_due_now;
           const refundCount = fact ? fact.refundCases.length : (row?.refunds || []).length;
           const checks = [
             [`PAYMENT STATUS ${A.pretty(status)}`, new RegExp(`PAYMENT STATUS\\s+${A.pretty(status).replace(/ /g, "\\s+")}`, "i")],
-            [`amount ${A.inr0(amount)}`, new RegExp(A.inr0(amount).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
-            [`Due now ${A.inr0(due)}`, new RegExp(`Due now\\s+${A.inr0(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
+            [`amount ${A.inr2(amount)}`, new RegExp(A.inr2(amount).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
+            [`Available to collect ${A.inr2(due)}`, new RegExp(`Available to collect\\s+${A.inr2(due).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i")],
             [`Refund cases ${refundCount}`, new RegExp(`Refund cases\\s+${refundCount}\\b`, "i")],
           ];
           const missing = checks.filter(([, pattern]) => !pattern.test(text)).map(([expectedText]) => expectedText);

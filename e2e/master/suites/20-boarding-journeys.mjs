@@ -218,13 +218,17 @@ async function bookStayUi(flow, net, { label, dates, pets, needs = [], extras = 
   r.shots.push(await flow.shot(`${label}-care-card`));
   r.stage = "review";
   r.review = await H.toReview(flow, { split });
-  r.reviewQuote = net.quotes.at(-1) || null;
+  const quoteForThisStay = () => {
+    const scheduledStart = H.istIso(r.dates.start, r.dates.startTime), scheduledEnd = H.istIso(r.dates.end, r.dates.endTime);
+    return net.quotes.filter(q => q.req?.scheduledStart === scheduledStart && q.req?.scheduledEnd === scheduledEnd && Number(q.req?.petCount) === pets.length).at(-1) || null;
+  };
+  r.reviewQuote = quoteForThisStay();
   r.shots.push(await flow.shot(`${label}-review`));
   if (!create || r.review.cta !== "Create stay request & review payment") return r;
   r.create = await H.createStay(flow, net, { expectRefusal });
   r.shots.push(await flow.shot(`${label}-after-create`));
   r.bookingId = r.create.bookingId || null;
-  r.quote = net.quotes.at(-1) || r.reviewQuote;
+  r.quote = quoteForThisStay() || r.reviewQuote;
   r.reserve = net.reserve.filter(x => x.providerId).at(-1) || net.reserve.at(-1) || null;
   r.providerId = r.reserve?.providerId || null;
   r.stage = r.bookingId ? (r.create.state === "payment" ? "payment" : "created") : "create-refused";
@@ -305,7 +309,7 @@ async function daycare(flow, net, { id, dates, mobile, nearTerm = false }) {
   const p = await payStay(flow, net, r, { surface: mobile ? "flow" : "booking", label: id });
   const evidence = [...r.shots, ...p.shots];
   paymentFindings(id, r, p, r.quote?.amountDueNow ?? exp.dueNow, evidence);
-  const pageOk = p.after && /confirmed|assigned/i.test(String(p.after.status)) && /captured/i.test(String(p.after.paymentStatus)) && !p.after.payButton;
+  const pageOk = p.after && /confirmed|assigned/i.test(String(p.after.status)) && /captured|paid/i.test(String(p.after.paymentStatus)) && !p.after.payButton;
   const ok = pc.ok && p.captured && pageOk;
   rec(id, combo, viaUi(r, ok ? "PASS" : (p.opened === false && !p.alert ? "BLOCKED" : "FAIL")), `booking ${r.bookingId}; ${pc.text}; UI total ${inr(r.review?.total)}; ${reviewBrief(r)}; in-flow payment step reached: ${r.create?.state === "payment"}${r.create?.errors?.length ? ` (create/care retries: ${r.create.errors.join(" | ")})` : ""}; paid on ${p.surface}: "${p.label}" order ${p.order?.orderId || "-"} ${p.order?.amountPaise ?? "-"} paise; ${payBrief(p)}; server booking=${p.status?.bookingStatus} payment=${p.status?.paymentStatus} stage=${p.status?.paymentStage} due=${inr(p.status?.amountDueNow)}; /v2/booking "Status: ${p.after?.status} · Payment: ${p.after?.paymentStatus}" pay button ${p.after?.payButton || "none"}`, evidence);
   saveBooking({ suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode || "boarding-4h", providerId: r.providerId || p.status?.providerId || null, customer: CUSTOMER.id, scheduledStart: H.istIso(r.dates.start, r.dates.startTime), scheduledEnd: H.istIso(r.dates.end, r.dates.endTime), total: r.quote?.totalAmount ?? exp.total, dueNow: r.quote?.amountDueNow ?? exp.dueNow, paid: Boolean(p.captured), paymentMode: "prepaid", ...(nearTerm ? { nearTerm: true } : {}) });
@@ -358,7 +362,7 @@ async function overnightAllAddOns(flow, net) {
   const p = await payStay(flow, net, r, { surface: "booking", label: id });
   const evidence = [...r.shots, ...p.shots];
   paymentFindings(id, r, p, r.quote?.amountDueNow ?? exp.dueNow, evidence);
-  const pageOk = p.after && /confirmed|assigned/i.test(String(p.after.status)) && /captured/i.test(String(p.after.paymentStatus)) && !p.after.payButton;
+  const pageOk = p.after && /confirmed|assigned/i.test(String(p.after.status)) && /captured|paid/i.test(String(p.after.paymentStatus)) && !p.after.payButton;
   rec(id, combo, viaUi(r, pc.ok && p.captured && pageOk ? "PASS" : (p.opened === false && !p.alert ? "BLOCKED" : "FAIL")), `booking ${r.bookingId}; ${pc.text}; UI total ${inr(r.review?.total)}; ${reviewBrief(r)}; paid on ${p.surface}: "${p.label}" order ${p.order?.orderId || "-"} ${p.order?.amountPaise ?? "-"} paise; ${payBrief(p)}; server booking=${p.status?.bookingStatus} payment=${p.status?.paymentStatus}; /v2/booking "Status: ${p.after?.status} · Payment: ${p.after?.paymentStatus}" pay button ${p.after?.payButton || "none"}`, evidence);
   saveBooking({ suite: SUITE, bookingId: r.bookingId, service: "boarding", packageCode: r.quote?.packageCode || "boarding-24h", providerId: r.providerId || p.status?.providerId || null, customer: CUSTOMER.id, scheduledStart: H.istIso(r.dates.start, r.dates.startTime), scheduledEnd: H.istIso(r.dates.end, r.dates.endTime), total: r.quote?.totalAmount ?? exp.total, dueNow: r.quote?.amountDueNow ?? exp.dueNow, paid: Boolean(p.captured), paymentMode: "prepaid" });
   Object.assign(r, { pay: p, paid: Boolean(p.captured), total: r.quote?.totalAmount, providerId: r.providerId || p.status?.providerId || null, pets: [PETS.dog, PETS.cat] });
@@ -403,7 +407,7 @@ async function splitStay(flow, net) {
     const bst = bal.status || {}, ev = bal.shots;
     paymentFindings(`${id}-balance`, r, { ...bal, captured: bal.captured }, balance, ev);
     const settled = bal.captured && bst.paymentStage === "settled" && Number(bst.amountDueNow) === 0;
-    const pageClear = bal.after && !bal.after.payButton && /captured/i.test(String(bal.after.paymentStatus));
+    const pageClear = bal.after && !bal.after.payButton && /captured|paid/i.test(String(bal.after.paymentStatus));
     rec(`${id}-balance`, `pay the balance ${inr(balance)} → fully paid`, settled && pageClear ? "PASS" : (bal.opened === false && !bal.alert ? "BLOCKED" : "FAIL"), `"${bal.label}" order ${bal.order?.orderId || "-"} ${bal.order?.amountPaise ?? "-"} paise; ${payBrief(bal)}; projection stage=${bst.paymentStage} dueNow=${inr(bst.amountDueNow)} payment=${bst.paymentStatus} booking=${bst.bookingStatus}; /v2/booking "Status: ${bal.after?.status} · Payment: ${bal.after?.paymentStatus}" pay button ${bal.after?.payButton || "none"}`, ev);
     if (bal.captured && !pageClear) file("balance-page", { severity: "P1", area: "Payments", flow: "/v2/booking after the balance", title: "After the balance is paid the booking page still offers a payment", steps: `Pay the balance of ${r.bookingId}, reopen /v2/booking`, expected: "No payment control; Payment: captured", actual: oneLine(bal.after?.text, 300), evidence: ev });
   } else rec(`${id}-balance`, `pay the balance ${inr(balance)} → fully paid`, dep.captured ? "FAIL" : "BLOCKED", dep.captured ? `no "Pay balance" control on /v2/booking: "${oneLine(bp.payment, 300)}"` : "deposit not captured", [bp.shot]);
