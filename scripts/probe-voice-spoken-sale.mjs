@@ -1,3 +1,4 @@
+import {SPOKEN_QUOTE_TEXT,SPOKEN_QUOTE_EXPECTED} from './voice-spoken-fixtures.mjs';
 // Explicitly authorized staging-only synthetic speech sale. No telephony API.
 import {setTimeout as delay} from 'node:timers/promises';
 import {execFileSync} from 'node:child_process';
@@ -33,7 +34,7 @@ const cr=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComp
 if(!cr.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Agent must use exact staging backend');
 const dir=await mkdtemp(join(tmpdir(),'amaya-spoken-'));
 async function pcm(text,name){const wav=join(dir,name+'.wav'),raw=join(dir,name+'.pcm');execFileSync('espeak-ng',['-s','185','-w',wav,text]);execFileSync('ffmpeg',['-loglevel','error','-y','-i',wav,'-ar','16000','-ac','1','-f','s16le',raw]);return readFile(raw);}
-const quoteAudio=await pcm('Essential Bath Bruno tomorrow 11 AM 12 100 Feet Road Indiranagar Bengaluru 560038 healthy adult no aggression no medical issues quote before booking','quote');
+const quoteAudio=await pcm(SPOKEN_QUOTE_TEXT,'quote');
 const yesAudio=await pcm('Yes, proceed.','confirm');
 const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await sr.json();
 if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
@@ -65,7 +66,7 @@ async function turn(audio,expected){
 }
 try{
  await waitFor(()=>format&&state.greeting&&playback());
- await turn(quoteAudio,/(?=.*grooming)(?=.*bruno)(?=.*tomorrow)(?=.*11)(?=.*quote)/i);
+ await turn(quoteAudio,SPOKEN_QUOTE_EXPECTED);
  const quoted=await inspect(),offerId=assertSpokenQuote(before,quoted);
  // Only persisted, unexpired offer evidence permits explicit spoken confirmation.
  console.log('SPOKEN_SALE_QUOTE='+JSON.stringify({offerId,summary:quoted.pendingOffers[0].summary}));
