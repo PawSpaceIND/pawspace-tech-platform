@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import yaml from "js-yaml";
+import { parsePaymentEnvironment, sandboxCapabilitiesUnlocked } from "../lib/payment-environment.ts";
 
 const workflow = yaml.load(readFileSync(new URL("../.github/workflows/v2-launch-resilience.yml", import.meta.url), "utf8"));
 const config = readFileSync(new URL("../playwright.launch-readiness.config.ts", import.meta.url), "utf8");
@@ -54,3 +55,30 @@ test("the original compatibility gate passes only when every required partition 
     assert.equal(result.status === 0, offline === "success" && browser === "success", `${offline}/${browser}`);
   }
 });
+
+
+// YAML flags alone do not prove isolation. Execute the same production parser used by payment
+// operations against every partition's effective job/step environment, without network or credentials.
+for (const jobName of ["offline-checks", "browser-compatibility"]) {
+  test(`CI partition ${jobName} executes the real sandbox boundary for all run steps`, () => {
+    const job = workflow.jobs[jobName];
+    const steps = job.steps.filter(step => typeof step.run === "string");
+    assert.ok(steps.length > 0, `${jobName} must execute work`);
+    for (const step of steps) {
+      const env = Object.freeze({ ...workflow.env, ...job.env, ...step.env });
+      const label = `${jobName}/${step.name || step.run}`;
+      assert.equal(parsePaymentEnvironment(env), "sandbox", label);
+      assert.equal(sandboxCapabilitiesUnlocked(env), true, label);
+      for (const mode of ["live", "LIVE", "production", " sandbox", "sandbox ", "", undefined]) {
+        const unsafe = { ...env, PAWSPACE_PAYMENT_ENV: mode, PAWSPACE_PAYMENT_LIVE_APPROVED: "true" };
+        assert.throws(() => parsePaymentEnvironment(unsafe),
+          mode === "live" ? /FORBID_PRODUCTION blocks live payments/ : /must be exactly/, `${label}/${mode}`);
+        assert.equal(sandboxCapabilitiesUnlocked(unsafe), false, `${label}/${mode}`);
+      }
+      const misbound = { ...env, RAZORPAY_KEY_ID_SANDBOX: "rzp_live_ci_fixture_not_a_key" };
+      assert.throws(() => parsePaymentEnvironment(misbound), /forbidden in sandbox/, label);
+      assert.equal(sandboxCapabilitiesUnlocked(misbound), false, label);
+      assert.equal(env.PAWSPACE_PAYMENT_ENV, "sandbox", "validation must not mutate the workflow input");
+    }
+  });
+}
