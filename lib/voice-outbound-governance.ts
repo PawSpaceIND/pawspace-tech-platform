@@ -879,6 +879,7 @@ export async function reconcileVerifiedElevenLabsCompletion(db:Db,input:{callId:
  if(VOICE_TERMINAL_STATES.includes(state))return{callId:input.callId,state,duplicatePrevented:true};
  if(!input.completed){
   if(canVoiceCallTransition(state,"provider_error")){await applyTransition(db,{callId:input.callId,to:"provider_error",reason:"Verified ElevenLabs call initiation failure",actor:"provider:elevenlabs_exotel",detail:{conversationId:input.conversationId},asOf:now});state="provider_error";}
+  if(state==="provider_error")await recordTerminalVoiceDisposition(db,input.callId,"provider_error",now);
   return{callId:input.callId,state,duplicatePrevented:false};
  }
  for(const next of ["dialing","ringing","connected","completed"]as VoiceCallState[]){

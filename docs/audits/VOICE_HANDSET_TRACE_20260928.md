@@ -42,3 +42,25 @@ No production/staging deployment, workflow dispatch, provider-configuration chan
 The documentation establishes API meaning, not this account's current entitlements or the root cause of its particular unanswered call.
 
 Final local checks on the prepared source also passed: application build, Worker artifact validation, workflow YAML parsing with the repository's installed js-yaml parser, specialist shell syntax and embedded JavaScript syntax. Syntax checks did not execute the workflow. Full repository CI and an actual connected handset exchange are separate pending gates; no full-suite or live-call pass is claimed.
+
+## Continuation: signed initiation-failure recovery
+
+The documented `call_initiation_failure` payload includes agent/conversation identifiers but does not promise the dynamic variables used by a completed transcription. The previous handler looked only for those variables, swallowed reconciliation errors, and could acknowledge a failure as processed while leaving the outbound order unresolved. This is a reproduced source defect, not evidence that it caused the historical carrier no-answer.
+
+Implemented in this continuation:
+- Resolve an outbound failure against exactly one persisted acceptance matching conversation, agent, carrier and any supplied app-call identifier. Reject missing, malformed, ambiguous or conflicting correlation; never select by latest call or phone suffix.
+- Keep unresolved or storage-failed callbacks unprocessed. A later authorized delivery/replay can finish without another provider call or duplicate CRM task.
+- Reconcile a matched failure to the existing provider-error state, release its existing dial reservation and record the existing CRM disposition. This does not automatically retry or dial anyone.
+- Preserve HMAC authentication and unchanged customer identities. The legacy inbound-session path still uses its existing session resolver; this change does not certify that separate path or modify successful-transcription handling.
+
+Validation on the prepared callback revision (Node 22.16.0):
+- Broader voice/integration selection: 448/448 passed, no skips.
+- Final targeted callback, handset, policy, authority and schema/static-ratchet selection: 230/230 passed, no skips.
+- Forced loader compatibility selection: 146/146 passed, no skips.
+- Typecheck, application build, Worker artifact validation and diff checks passed. New-file lint passed; the previously documented audit-projection warning remains.
+These selections overlap and must not be added together as unique test coverage. Full repository CI remains a separate gate.
+
+Delivery limitation: ElevenLabs currently documents automatic retries only for `post_call_transcription`, disabled by default. These failure-recovery tests exercise replay in the application; they do NOT establish automatic redelivery of `call_initiation_failure`. Missing/early/failed initiation callbacks still require an authorized replay or exact-call reconciliation process; no such production process was enabled here.
+Sources checked: https://elevenlabs.io/docs/eleven-agents/workflows/post-call-webhooks and https://elevenlabs.io/docs/eleven-api/resources/webhooks .
+
+The previously documented draft holds remain. No blocked live-inspection or refinement operation was repeated, no phone-record cleanup was repeated, and no call, provider change, knowledge activation, shared deployment, or customer/payment mutation was performed. This patch improves forward-looking callback correctness, not proof of handset connectivity or a resolved historical failed leg.
