@@ -281,3 +281,24 @@ test('valid Bangalore alias and property numbers remain bookable in explicit V2'
   const f = network(t), value = input(); value.address = 'Flat 123456, 21 HSR Main Road, Bangalore 560102';
   await client.createV2GroomingBooking(value); assert.equal(f.calls.length, 3);
 });
+
+
+test("V2 automatic choice accepts the server's current eligible groomer, not a stale preview", async t => {
+  const f = network(t, {providerId:"PRV-REPLACEMENT"});
+  const result = await client.createV2GroomingBooking({...input(), providerSelection:"auto"});
+  assert.equal(f.calls[0].body.providerSelection,"auto");
+  assert.equal(f.calls[0].body.preferredProviderId,undefined);
+  assert.equal(f.calls[1].body.provider.id,"PRV-REPLACEMENT");
+  assert.equal(result.bookingId,"B1");
+});
+test("V2 automatic choice keeps its booking key when preview rankings change", async () => {
+  const first={...input(),providerSelection:"auto"};
+  const next={...first,provider:{...first.provider,id:"PRV-NEXT"}};
+  assert.equal(await client.v2GroomingIdempotencyKey(first),await client.v2GroomingIdempotencyKey(next));
+  assert.notEqual(await client.v2GroomingIdempotencyKey(first),await client.v2GroomingIdempotencyKey({...first,providerSelection:"specific"}));
+});
+test("V2 explicit choice asks the shared scheduler to enforce that exact provider", async t => {
+  const f=network(t);await client.createV2GroomingBooking({...input(),providerSelection:"specific"});
+  assert.equal(f.calls[0].body.providerSelection,"specific");
+  assert.equal(f.calls[0].body.preferredProviderId,"PRV1");
+});

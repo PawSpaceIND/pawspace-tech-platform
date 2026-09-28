@@ -5,27 +5,27 @@ html:not([data-paw-style="professional"]) .home .cards .cardPhoto>img {
   width: 112px !important;
   height: 112px !important;
   object-fit: contain !important;
-  border-radius: 18px !important;
-  background: #fff8ee !important;
+  border-radius: var(--paw-card-radius) !important;
+  background: var(--ui-canvas) !important;
 }
 html .home .cards .card {
-  background: #fff !important;
-  border: 1px solid #e4ddd0 !important;
-  border-radius: 20px !important;
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-gold-line) !important;
+  border-radius: var(--paw-card-radius) !important;
   box-shadow: 0 8px 22px rgba(1, 38, 31, 0.06) !important;
 }
 html .home .welcomeHero {
-  background: linear-gradient(135deg, #01261f, #0b3d32) !important;
-  color: #fff8ee !important;
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-deep)) !important;
+  color: var(--ui-on-primary) !important;
 }
 html .home .welcomeHero:after {
-  background: linear-gradient(90deg, rgba(1, 38, 31, 0.72), transparent) !important;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ui-brand-deep) 72%, transparent), transparent) !important;
 }
 html .home .welcomeHero em {
-  color: #e6b34e !important;
+  color: var(--ui-gold-ink) !important;
 }
 html .home .cards .card>button .ctaLabel {
-  color: #01261f;
+  color: var(--ui-ink);
 }
 html .home [data-service="funeral"] .cardPhoto>img {
   filter: grayscale(0.35) saturate(0.7);

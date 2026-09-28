@@ -1,10 +1,10 @@
 /* Pet Food flow — Emerald #01261F / Gold #E6B34E, system fonts, mobile-first. */
-.foodIntro{position:relative;display:grid;grid-template-columns:1fr auto;gap:10px;overflow:hidden;margin:2px 0 14px;padding:15px;border-radius:18px;background:linear-gradient(135deg,#01261f,#0d5746);color:#fff}.foodIntro:after{content:"";position:absolute;right:-36px;bottom:-54px;width:130px;height:130px;border:1px solid #ffffff2b;border-radius:50%}.foodIntro>span{grid-column:1/-1;color:#e6b34e;font-size:9px;letter-spacing:.14em;font-weight:900}.foodIntro h2{margin:0;font-size:20px;line-height:1;letter-spacing:-.05em}.foodIntro small{display:block;margin-top:5px;color:#dbece6;font-size:10px;line-height:1.35}.foodIntro>b{position:relative;z-index:1;align-self:end;color:#e6b34e;font-size:22px}.foodIntro>b i{color:#dbece6;font-size:11px;font-style:normal}
+.foodIntro{position:relative;display:grid;grid-template-columns:1fr auto;gap:10px;overflow:hidden;margin:2px 0 14px;padding:15px;border-radius:var(--paw-card-radius);background:linear-gradient(135deg,var(--ui-brand-deep),var(--ui-brand-deep));color:#fff}.foodIntro:after{content:"";position:absolute;right:-36px;bottom:-54px;width:130px;height:130px;border:1px solid color-mix(in srgb, var(--ui-surface) 16.86%, transparent);border-radius:50%}.foodIntro>span{grid-column:1/-1;color:var(--ui-gold-ink);font-size:9px;letter-spacing:.14em;font-weight:900}.foodIntro h2{margin:0;font-size:20px;line-height:1;letter-spacing:-.05em}.foodIntro small{display:block;margin-top:5px;color:var(--ui-on-primary);font-size:10px;line-height:1.35}.foodIntro>b{position:relative;z-index:1;align-self:end;color:var(--ui-gold-ink);font-size:22px}.foodIntro>b i{color:var(--ui-on-primary);font-size:11px;font-style:normal}
 
 .flow {
   padding-bottom: 10px;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #01261f;
+  font-family: var(--paw-font);
+  color: var(--ui-ink);
 }
 
 .steps {
@@ -16,9 +16,9 @@
 
 .steps span {
   height: 24px;
-  border-radius: 15px;
-  background: #e8e2ec;
-  color: #8c8195;
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   display: grid;
   place-items: center;
   font-size: 9px;
@@ -26,10 +26,10 @@
 }
 
 .steps .active {
-  background: #01261f;
+  background: var(--ui-brand-deep);
   color: white;
 }
-.steps{margin-bottom:18px}.steps span{height:5px;border-radius:99px;color:transparent;background:#dbe7e2}.steps .active{background:#e6b34e;color:transparent}.head h3{font-size:19px;letter-spacing:-.04em}.head small,.section span{font-size:10px}.primary{position:sticky;bottom:0;z-index:4;min-height:48px;border-radius:14px;background:#e6b34e;color:#2a1e05;box-shadow:0 -8px 20px #f2f7f5e8;font-size:13px}
+.steps{margin-bottom:18px}.steps span{height:5px;border-radius:99px;color:transparent;background:var(--ui-line)}.steps .active{background:var(--ui-gold-soft);color:transparent}.head h3{font-size:19px;letter-spacing:-.04em}.head small,.section span{font-size:10px}.primary{position:sticky;bottom:0;z-index:4;min-height:48px;border-radius:var(--paw-card-radius);background:var(--ui-gold-soft);color:var(--ui-on-gold);box-shadow:0 -8px 20px #f2f7f5e8;font-size:13px}
 
 .head,
 .section {
@@ -48,7 +48,7 @@
 .head small,
 .section span {
   font-size: 8px;
-  color: #0a4a3c;
+  color: var(--ui-ink);
   font-weight: 900;
   letter-spacing: 0.4px;
 }
@@ -69,15 +69,15 @@
 }
 
 .petRow button {
-  border: 1px solid #e5deea;
-  background: white;
-  color: #0b2b24;
-  border-radius: 13px;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 10px 4px;
   display: grid;
   place-items: center;
   gap: 2px;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -92,13 +92,13 @@
 
 .petRow button small {
   font-size: 8px;
-  color: #71667c;
+  color: var(--paw-link);
   text-align: center;
 }
 
 .petRow .selected {
-  border: 2px solid #e6b34e;
-  background: #01261f;
+  border: 2px solid var(--ui-gold-soft);
+  background: var(--ui-brand-deep);
   color: white;
 }
 
@@ -111,11 +111,11 @@
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  border: 1px solid #e5deea;
-  border-radius: 13px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 11px 12px;
   margin-bottom: 8px;
-  background: white;
+  background: var(--ui-surface);
 }
 
 .item > div:first-child {
@@ -129,24 +129,24 @@
 
 .item small {
   font-size: 10px;
-  color: #71667c;
+  color: var(--paw-link);
 }
 
 .item em {
   font-style: normal;
   font-size: 13px;
   font-weight: 800;
-  color: #01261f;
+  color: var(--ui-ink);
   white-space: nowrap;
 }
 
 .forPets {
   font-size: 9px;
   font-weight: 800;
-  color: #01261f;
-  background: rgba(230, 179, 78, 0.25);
-  border: 1px solid rgba(230, 179, 78, 0.6);
-  border-radius: 8px;
+  color: var(--ui-on-gold);
+  background: color-mix(in srgb, var(--ui-gold-soft) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-gold-soft) 60%, transparent);
+  border-radius: calc(8px * var(--paw-radius-scale));
   padding: 2px 7px;
   justify-self: start;
 }
@@ -159,13 +159,13 @@
 
 .addBtn {
   border: none;
-  background: #01261f;
-  color: #e6b34e;
-  border-radius: 9px;
+  background: var(--ui-brand-deep);
+  color: var(--ui-on-primary);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 6px 16px;
   font-size: 11px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -178,18 +178,18 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid #01261f;
-  border-radius: 9px;
+  border: 1px solid var(--ui-brand-deep);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 3px 8px;
 }
 
 .stepper button {
   border: none;
   background: none;
-  color: #01261f;
+  color: var(--ui-ink);
   font-size: 14px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
   padding: 0 3px;
 }
@@ -208,15 +208,15 @@
 }
 
 .planRow button {
-  border: 1px solid #e5deea;
-  background: white;
-  color: #0b2b24;
-  border-radius: 13px;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 11px 8px;
   display: grid;
   gap: 3px;
   text-align: left;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -226,12 +226,12 @@
 
 .planRow button span {
   font-size: 9px;
-  color: #71667c;
+  color: var(--paw-link);
 }
 
 .planRow .selected {
-  border: 2px solid #e6b34e;
-  background: #01261f;
+  border: 2px solid var(--ui-gold-soft);
+  background: var(--ui-brand-deep);
   color: white;
 }
 
@@ -248,28 +248,28 @@
 }
 
 .field input {
-  border: 1px solid #e5deea;
-  border-radius: 11px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(11px * var(--paw-radius-scale));
   padding: 11px 12px;
   font-size: 14px;
-  font-family: inherit;
-  color: #01261f;
+  font-family: var(--paw-font);
+  color: var(--ui-ink);
 }
 
 .field input:focus {
   outline: none;
-  border-color: #e6b34e;
+  border-color: var(--ui-gold-soft);
   box-shadow: 0 0 0 2px rgba(230, 179, 78, 0.35);
 }
 
 .review {
   display: grid;
   gap: 8px;
-  border: 1px solid #e5deea;
-  border-radius: 13px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 12px;
   margin-bottom: 8px;
-  background: white;
+  background: var(--ui-surface);
 }
 
 .review span {
@@ -277,20 +277,20 @@
   gap: 1px;
   font-size: 9px;
   font-weight: 800;
-  color: #71667c;
+  color: var(--paw-link);
   text-transform: uppercase;
 }
 
 .review span b {
   font-size: 12px;
-  color: #01261f;
+  color: var(--ui-ink);
   text-transform: none;
 }
 
 .totalRow {
-  border: 1px solid rgba(230, 179, 78, 0.6);
-  background: rgba(230, 179, 78, 0.12);
-  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--ui-gold-soft) 60%, transparent);
+  background: color-mix(in srgb, var(--ui-gold-soft) 12%, transparent);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 12px;
   margin-bottom: 10px;
   display: grid;
@@ -310,19 +310,19 @@
 
 .totalRow small {
   font-size: 9px;
-  color: #4c5b52;
+  color: var(--ui-muted);
 }
 
 .primary {
   width: 100%;
   border: none;
-  background: #01261f;
-  color: #e6b34e;
-  border-radius: 13px;
+  background: var(--ui-brand-deep);
+  color: var(--ui-on-primary);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 14px;
   font-size: 14px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
   margin-top: 6px;
 }
@@ -335,17 +335,17 @@
 .back {
   border: none;
   background: none;
-  color: #0a4a3c;
+  color: var(--ui-ink);
   font-size: 12px;
   font-weight: 700;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
   padding: 8px 0;
 }
 
 .hint {
   font-size: 10px;
-  color: #71667c;
+  color: var(--paw-link);
   margin: 8px 2px;
 }
 
@@ -363,7 +363,7 @@
   padding: 18px 12px;
   border: 1px solid rgba(230, 179, 78, 0.6);
   background: rgba(230, 179, 78, 0.1);
-  border-radius: 15px;
+  border-radius: calc(15px * var(--paw-radius-scale));
   margin-bottom: 10px;
 }
 
@@ -372,8 +372,8 @@
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  background: #01261f;
-  color: #e6b34e;
+  background: var(--paw-deep);
+  color: var(--paw-gold);
   display: grid;
   place-items: center;
   font-size: 16px;
@@ -398,11 +398,11 @@
 }
 
 .orderCard {
-  border: 1px solid #e5deea;
-  border-radius: 13px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(13px * var(--paw-radius-scale));
   padding: 12px;
   margin-bottom: 8px;
-  background: white;
+  background: var(--ui-surface);
   display: grid;
   gap: 5px;
 }
@@ -430,15 +430,15 @@
 
 .orderCard small {
   font-size: 10px;
-  color: #71667c;
+  color: var(--paw-link);
 }
 
 .subBadge {
   font-size: 10px;
   font-weight: 700;
-  color: #01261f;
-  background: rgba(230, 179, 78, 0.25);
-  border: 1px solid rgba(230, 179, 78, 0.6);
-  border-radius: 9px;
+  color: var(--ui-on-gold);
+  background: color-mix(in srgb, var(--ui-gold-soft) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-gold-soft) 60%, transparent);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 5px 9px;
 }

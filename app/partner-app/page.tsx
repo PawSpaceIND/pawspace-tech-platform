@@ -598,7 +598,7 @@ function PartnerMobileAppContent() {
   if (sessionState !== "verified") return <main className={styles.viewport}>
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
-        <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
+        <div className={styles.brand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /><small>PARTNER</small></div>
         <div className={styles.identityPill}><i>{sessionState === "checking" ? "…" : "!"}</i><span>{sessionState === "checking" ? "Checking" : "Sign in"}</span></div>
       </header>
       <section className={styles.content} aria-label="Partner sign-in">
@@ -620,7 +620,7 @@ function PartnerMobileAppContent() {
     <span hidden aria-hidden="true">LIVE CUSTOMER PROFILE</span>
     <section className={styles.phoneShell}>
       <header className={styles.appHeader}>
-        <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
+        <div className={styles.brand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /><small>PARTNER</small></div>
         <div className={styles.headerAccount}>
           <button type="button" className={styles.identityPill} onClick={() => setTab("more")} aria-label="Account, switch provider and sign out"><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span><em>›</em></button>
           {identity?.subjectId && <button type="button" className={styles.headerSignOut} onClick={() => void signOut()} disabled={accountBusy}>{signingOut ? "Signing out…" : "Sign out"}</button>}
@@ -827,3 +827,4 @@ function PartnerMobileAppContent() {
     </section>
   </main>;
 }
+

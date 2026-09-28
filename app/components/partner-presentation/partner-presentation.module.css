@@ -2,37 +2,37 @@
 .frame { composes:palette from "../brand/brand-surface.module.css"; min-height:100dvh; background:var(--brand-bg); color:var(--brand-text); font-size:16px; line-height:1.6; }
 .frame *, .frame *::before, .frame *::after { box-sizing:border-box; }
 .topbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px 24px; padding:14px max(20px,calc((100vw - 1280px)/2)); background:var(--brand-surface); border-bottom:1px solid var(--brand-line); }
-.logo { display:block; padding:10px 16px; background:#fff; border-radius:12px; flex:0 0 auto; }
+.logo { display:block; padding:10px 16px; background:#fff; border-radius:calc(12px * var(--paw-radius-scale)); flex:0 0 auto; }
 .logo img { display:block; width:168px; height:auto; object-fit:contain; }
 .navigation { display:flex; flex-wrap:wrap; gap:8px; }
-.navigation a { display:inline-flex; align-items:center; min-height:44px; padding:9px 14px; border:1px solid var(--brand-line); border-radius:10px; background:var(--brand-surface); color:var(--brand-text); font-size:15px; font-weight:750; text-decoration:none; }
+.navigation a { display:inline-flex; align-items:center; min-height:44px; padding:9px 14px; border:1px solid var(--brand-line); border-radius:calc(10px * var(--paw-radius-scale)); background:var(--brand-surface); color:var(--brand-text); font-size:15px; font-weight:750; text-decoration:none; }
 .navigation a:hover { background:var(--brand-raised); }
-.skip { position:fixed; top:8px; left:16px; transform:translateY(-200%); z-index:200; background:var(--brand-primary); color:var(--brand-on-primary); padding:12px 16px; border-radius:10px; }
+.skip { position:fixed; top:8px; left:16px; transform:translateY(-200%); z-index:200; background:var(--brand-primary); color:var(--brand-on-primary); padding:12px 16px; border-radius:calc(10px * var(--paw-radius-scale)); }
 .skip:focus { transform:translateY(0); }
 .content { min-width:0; }
 .content:focus { outline:none; }
 .frame .content main { min-height:calc(100dvh - 95px) !important; max-width:1280px !important; width:100%; margin:0 auto !important; padding:28px 24px 88px !important; background:var(--brand-bg) !important; color:var(--brand-text) !important; font:400 16px/1.6 "PawSpaceNunito",system-ui,sans-serif !important; }
-.frame .content :is(h1,h2,h3,h4) { color:var(--brand-text) !important; font-family:inherit !important; line-height:1.25 !important; overflow-wrap:anywhere; }
+.frame .content :is(h1,h2,h3,h4) { color:var(--brand-text) !important; font-family:var(--paw-font) !important; line-height:1.25 !important; overflow-wrap:anywhere; }
 .frame .content h1 { font-size:clamp(28px,3vw,36px) !important; margin:8px 0 18px; font-weight:800; }
 .frame .content h2 { font-size:23px !important; margin-block:18px 10px; font-weight:750; }
 .frame .content h3 { font-size:19px !important; margin-block:12px 8px; }
 .frame .content :is(p,li,td,dd) { font-size:16px !important; line-height:1.6 !important; overflow-wrap:anywhere; }
 .frame .content :is(small,label,dt,th) { font-size:14px !important; line-height:1.55 !important; }
-.frame .content a { color:var(--brand-primary) !important; font-size:15px; text-underline-offset:4px; }
-.frame .content :is(button,input,select,textarea) { font-family:inherit !important; font-size:16px !important; line-height:1.5 !important; }
-.frame .content button { min-height:46px; padding:10px 16px; border:1px solid var(--brand-line); border-radius:11px; background:var(--brand-surface) !important; color:var(--brand-text) !important; font-weight:750; cursor:pointer; white-space:normal; }
+.frame .content a { color:var(--paw-link) !important; font-size:15px; text-underline-offset:4px; }
+.frame .content :is(button,input,select,textarea) { font-family:var(--paw-font) !important; font-size:16px !important; line-height:1.5 !important; }
+.frame .content button { min-height:46px; padding:10px 16px; border:1px solid var(--brand-line); border-radius:calc(11px * var(--paw-radius-scale)); background:var(--brand-surface) !important; color:var(--brand-text) !important; font-weight:750; cursor:pointer; white-space:normal; }
 .frame .content button:disabled { opacity:.6; cursor:not-allowed; }
-.frame .content :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea) { min-height:46px; max-width:100%; padding:10px 12px; border:1px solid var(--brand-line) !important; border-radius:10px; color:var(--brand-text) !important; background:var(--brand-surface) !important; }
+.frame .content :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea) { min-height:46px; max-width:100%; padding:10px 12px; border:1px solid var(--brand-line) !important; border-radius:calc(10px * var(--paw-radius-scale)); color:var(--brand-text) !important; background:var(--brand-surface) !important; }
 .frame .content :is(input[type=checkbox],input[type=radio]) { width:20px; height:20px; accent-color:var(--brand-primary); flex-shrink:0; }
 .frame .content input[type=range] { max-width:100%; accent-color:var(--brand-primary); }
 .frame .content :is(input,textarea)::placeholder { color:var(--brand-muted); opacity:1; }
 .frame :is(a,button,input,select,textarea,summary):focus-visible { outline:3px solid var(--brand-gold) !important; outline-offset:3px !important; }
 /* In-place panels, local tabs and safety copy stay visible; no business element is hidden. */
 .frame .content :is(section,article,aside,fieldset) { min-width:0; border-color:var(--brand-line) !important; }
-.frame .content main > section:has(>h2),.frame .content main > section[style*="border"],.frame .content article[style*="border"],.frame .content aside[style*="border"] { background:var(--brand-surface) !important; border-radius:18px; }
+.frame .content main > section:has(>h2),.frame .content main > section[style*="border"],.frame .content article[style*="border"],.frame .content aside[style*="border"] { background:var(--brand-surface) !important; border-radius:calc(18px * var(--paw-radius-scale)); }
 .frame .content :global([class*="panel"]),.frame .content :global([class*="Panel"]),.frame .content :global([class*="card"]),.frame .content :global([class*="Card"]),.frame .content :global([class*="schedule"]),.frame .content :global([class*="session_"]) { background:var(--brand-surface) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
 .frame .content main > header { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; }
-.frame .content main > header:has(>h1) { display:block; padding:24px; background:var(--brand-surface); border:1px solid var(--brand-line); border-radius:20px; }
+.frame .content main > header:has(>h1) { display:block; padding:24px; background:var(--brand-surface); border:1px solid var(--brand-line); border-radius:calc(20px * var(--paw-radius-scale)); }
 .frame .content main:has(>aside>nav) { grid-template-columns:230px minmax(0,1fr) !important; padding:0 !important; }
 .frame .content main > aside:has(>nav) { position:sticky; top:0; height:auto !important; min-height:100%; background:var(--brand-raised) !important; color:var(--brand-text) !important; padding:20px !important; border-right:1px solid var(--brand-line); }
 .frame .content main > aside:has(>nav) nav { display:grid; gap:9px; }
@@ -42,12 +42,12 @@
 .frame .content main > section { min-width:0; }
 .frame .content :is(span,strong,b,code) { font-size:max(14px,1em); line-height:1.5; }
 .frame .content :global([class*="metrics"]) strong,.frame .content :global([class*="stats"]) strong { font-size:28px !important; font-variant-numeric:tabular-nums; }
-.frame .content :global([class*="hero"]),.frame .content :global([class*="Hero"]) { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; border-radius:18px; }
+.frame .content :global([class*="hero"]),.frame .content :global([class*="Hero"]) { background:var(--brand-hero) !important; color:var(--brand-hero-text) !important; border-radius:calc(18px * var(--paw-radius-scale)); }
 .frame .content :global([class*="hero"]) :is(h1,h2,h3,p,span,strong,b,small),.frame .content :global([class*="Hero"]) :is(h1,h2,h3,p,span,strong,b,small) { color:var(--brand-hero-text) !important; }
 .frame .content :global([class*="hero"]) button,.frame .content :global([class*="Hero"]) button { background:var(--brand-gold) !important; color:var(--brand-on-gold) !important; }
 .frame .content button[aria-pressed="true"],.frame .content button:global([class*="selected"]),.frame .content nav button:global([class*="active"]),.frame .content button:global([class*="primary"]),.frame .content button:global([class*="btn_"]) { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; border-color:var(--brand-primary) !important; }
 .frame .content button[aria-pressed="true"] :is(strong,b,span,small),.frame .content button:global([class*="selected"]) :is(strong,b,span,small) { color:var(--brand-on-primary) !important; }
-.frame .content :is([role="alert"],:global([class*="errorBox"])) { color:var(--brand-danger) !important; background:var(--brand-danger-bg) !important; border-color:var(--brand-danger) !important; padding:12px 16px; border-radius:12px; }
+.frame .content :is([role="alert"],:global([class*="errorBox"])) { color:var(--brand-danger) !important; background:var(--brand-danger-bg) !important; border-color:var(--brand-danger) !important; padding:12px 16px; border-radius:calc(12px * var(--paw-radius-scale)); }
 .frame .content [role="alert"] :is(p,span,small) { color:var(--brand-danger) !important; }
 .frame .content [aria-invalid="true"] { border-color:var(--brand-danger) !important; }
 .frame .content :global([class*="warnBox"]) { color:var(--brand-warning) !important; background:var(--brand-warning-bg) !important; }
@@ -67,7 +67,7 @@
 .frame .content :global([class*="main_"]) { padding:24px; }
 .frame .content :global([class*="main_"]) > header { flex-wrap:wrap; gap:12px; }
 .frame .content :global([class*="precheck"]),.frame .content :global([class*="goals"]),.frame .content :global([class*="homework"]),.frame .content :global([class*="carePlan"]) { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line); }
-.frame .content :global([class*="precheck"]) span,.frame .content :global([class*="goals"]) span { font-size:14px !important; color:var(--brand-primary) !important; }
+.frame .content :global([class*="precheck"]) span,.frame .content :global([class*="goals"]) span { font-size:14px !important; color:var(--paw-link) !important; }
 .frame .content :global([class*="actions"]) { gap:10px; }
 @media(max-width:1100px) {
  .frame .content :global([class*="layout_"]),.frame .content :global([class*="todayGrid"]),.frame .content :global([class*="requestLayout"]),.frame .content :global([class*="profileGrid"]) { grid-template-columns:minmax(0,1fr) !important; }
@@ -99,8 +99,8 @@
 .frame .content main:not([class]) > div > section > div[style*="background"] { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
 .frame .content main:not([class]) > div > section > div[style*="background"] b { color:var(--brand-text) !important; }
 .frame .content :where(main:not([class]) p:not([role="alert"]),main:not([class]) label) { color:var(--brand-text) !important; }
-.frame .content main:not([class]) > div > section > p:first-child,.frame .content main:not([class]) > div > section > div[style*="background"] > small { color:var(--brand-primary) !important; }
+.frame .content main:not([class]) > div > section > p:first-child,.frame .content main:not([class]) > div > section > div[style*="background"] > small { color:var(--paw-link) !important; }
 /* Walker's no-booking entry uses a div card rather than a section. */
 .frame .content main:not([class]) > div[style*="background"] { background:var(--brand-surface) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
 .frame .content main:not([class]) > div[style*="background"] > div[style*="background"] { background:var(--brand-raised) !important; color:var(--brand-text) !important; border-color:var(--brand-line) !important; }
-.frame .content main:not([class]) > div[style*="background"] > p:first-child { color:var(--brand-primary) !important; }
+.frame .content main:not([class]) > div[style*="background"] > p:first-child { color:var(--paw-link) !important; }

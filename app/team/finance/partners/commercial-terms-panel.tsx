@@ -16,7 +16,7 @@ export type TermsRequest = { url: string; body: Record<string, unknown> };
 type TermSummary = { termId: string; serviceCode: string; status: string; engagement: ProviderEngagement | null; pawspaceCommissionPercent: number | null; effectiveFrom: string; createdBy: string; approvedBy: string | null; needsPersonApproval?: string | null };
 type TermsView = { providerId: string; engagement: ProviderEngagement; currentEngagement?: ProviderEngagement; services: { serviceCode: string; active: TermSummary | null; scheduled?: TermSummary[]; draft: TermSummary | null; serviceDefault: TermSummary | null }[]; awaitingApproval: TermSummary[]; proposedBy: string[]; gstPolicy?: GstPolicy; legacyCommission?: { reason: string; legacyProviderSharePercent: unknown } | null };
 
-const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 16, marginBottom: 14 } as const;
+const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 16, marginBottom: 14 } as const;
 const muted = { color: "var(--staff-muted)" } as const;
 const serviceLabel = (code: string) => code.replaceAll("_", " ");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -138,7 +138,7 @@ export default function ProviderCommercialTermsPanel({ context, providerId: fixe
       <button type="button" disabled={!canSave} onClick={() => void save()}>{busy ? "Saving…" : "Save for approval"}</button>
     </div>
     {problems.length > 0 && <ul role="alert" style={{ margin: "10px 0 0", paddingLeft: 20, color: "var(--staff-danger)" }}>{problems.map(problem => <li key={problem}>{problem}</li>)}</ul>}
-    <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "var(--staff-raised)" }}>
+    <div style={{ marginTop: 14, padding: 12, borderRadius: "calc(10px * var(--paw-radius-scale))", background: "var(--staff-raised)" }}>
       <b>Waiting for approval</b>
       {waiting.length === 0 ? <p style={{ margin: "6px 0", ...muted }}>{view ? "Nothing is waiting for approval for this provider." : "Load a provider to see terms waiting for approval."}</p> : <ul style={{ margin: "6px 0", paddingLeft: 20 }}>{waiting.map(term => <li key={term.termId}>{serviceLabel(term.serviceCode)}: {term.pawspaceCommissionPercent == null ? "full-time, no share" : `PawSpace ${term.pawspaceCommissionPercent}%`} from {term.effectiveFrom}, proposed by {term.createdBy}</li>)}</ul>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>

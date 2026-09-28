@@ -11,7 +11,7 @@ export default function Loading() {
         justifyContent: "center",
         gap: 10,
         fontFamily:
-          'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+          "var(--paw-font, system-ui)",
       }}
     >
       <div
@@ -25,7 +25,7 @@ export default function Loading() {
           animation: "ps-spin 900ms linear infinite",
         }}
       />
-      <span style={{ fontSize: 13, color: "#5b6b66" }}>Loading…</span>
+      <span style={{ fontSize: 13, color: "var(--paw-text)" }}>Loading…</span>
     </div>
   );
 }

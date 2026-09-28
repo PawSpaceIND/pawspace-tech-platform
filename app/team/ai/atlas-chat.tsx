@@ -12,7 +12,7 @@ export function AtlasChat(){
   catch(e){setError(controller.signal.aborted?"Atlas took too long. Reload history to check whether your answer was saved before retrying.":e instanceof Error?e.message:"Atlas is unavailable.");}
   finally{clearTimeout(timer);pending.current=false;setBusy(false);}
  }
- return <section aria-label="Ask Atlas" style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:14,padding:16,marginBottom:16}}>
+ return <section aria-label="Ask Atlas" style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16,marginBottom:16}}>
   <h2>Ask Atlas</h2><p>Founder questions use current PawSpace records. Asking a question does not approve or execute an action. Include the full context in each question.</p>
   {error&&<p role="alert">{error}</p>}
   <button type="button" disabled={busy||loading} onClick={()=>{setLoading(true);setError("");void load().then(setMessages).catch(e=>setError(e.message)).finally(()=>setLoading(false));}}>Reload Atlas history</button>

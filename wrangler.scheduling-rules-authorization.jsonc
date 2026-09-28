@@ -4,6 +4,10 @@
   "main": "tests/scheduling-rules-authorization-worker.ts",
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "NODE_ENV": "test",
+    "PAWSPACE_WORKSPACE_IDENTITY_TRUST": "openai-dispatch"
+  },
   "d1_databases": [
     {
       "binding": "DB",
