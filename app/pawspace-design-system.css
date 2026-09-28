@@ -1,0 +1,98 @@
+/* One presentation source for every web route and Capacitor shell.
+   Semantic feedback colours and the official logo retain their own meaning. */
+:root, html[data-paw-theme] {
+  --paw-primary:#01261F; --paw-deep:#01261F; --paw-gold:#E6B34E;
+  --paw-bg:#F8FAF7; --paw-surface:#FFFFFF; --paw-raised:#EAF3EE;
+  --paw-text:#18382F; --paw-muted:#556B63; --paw-line:#D5E3DA;
+  --paw-soft:#84B6A4; --paw-soft-ink:#BBDACD; --paw-on-primary:#FFFFFF;
+  --paw-card-radius:16px; --paw-control-radius:12px; --paw-radius-scale:1;
+  --paw-font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+html[data-paw-theme="signature"] {
+  --paw-primary:#894AED; --paw-deep:#452179; --paw-gold:#FFAF00;
+  --paw-bg:#FAF7FE; --paw-raised:#F0E8FC; --paw-text:#30223F;
+  --paw-muted:#6D5E7A; --paw-line:#E4D8F0; --paw-soft:#B89AD9; --paw-soft-ink:#DDC9F5;
+}
+html[data-paw-theme="coral"] {
+  --paw-primary:#B94339; --paw-deep:#742C29; --paw-gold:#FFAF00;
+  --paw-bg:#FFF8F4; --paw-raised:#FCEBE4; --paw-text:#482F2B;
+  --paw-muted:#7D6058; --paw-line:#EDD9D0; --paw-soft:#DA9B8E; --paw-soft-ink:#F1C6BA;
+}
+html[data-paw-mode="dark"] {
+  --paw-bg:#151A19; --paw-surface:#202725; --paw-raised:#2C3532;
+  --paw-text:#F3F6F3; --paw-muted:#BCC9C2; --paw-line:#465650;
+}
+html[data-paw-mode="dark"][data-paw-theme="signature"] {--paw-bg:#1B1721;--paw-surface:#27212F;--paw-raised:#352C40;--paw-text:#FAF5FF;--paw-muted:#CBBFD5;--paw-line:#574862}
+html[data-paw-mode="dark"][data-paw-theme="coral"] {--paw-bg:#211918;--paw-surface:#302422;--paw-raised:#40312D;--paw-text:#FFF7F2;--paw-muted:#D4BFB8;--paw-line:#654E47}
+html[data-paw-style="cartoon"] {--paw-card-radius:24px;--paw-control-radius:18px;--paw-radius-scale:1.35}
+:root,html:root[data-paw-theme],html:root[data-paw-mode] {
+  /* These aliases replace historical per-screen palette literals. */
+  --ui-surface:var(--paw-surface);--ui-canvas:var(--paw-bg);--ui-line:var(--paw-line);--ui-muted:var(--paw-muted);--ui-ink:var(--paw-text);
+  --ui-primary:var(--paw-primary);--ui-on-primary:#FFFFFF;--ui-soft-ink:var(--paw-soft-ink);
+  --ui-brand-canvas:var(--paw-bg);--ui-brand-wash:var(--paw-raised);--ui-brand-line:var(--paw-line);--ui-brand-soft:var(--paw-soft);--ui-brand-primary:var(--paw-primary);--ui-brand-deep:var(--paw-deep);
+  --ui-gold-canvas:color-mix(in srgb,var(--paw-gold) 6%,var(--paw-surface));--ui-gold-wash:color-mix(in srgb,var(--paw-gold) 13%,var(--paw-surface));--ui-gold-line:color-mix(in srgb,var(--paw-gold) 30%,var(--paw-surface));--ui-gold-soft:var(--paw-gold);--ui-gold-primary:var(--paw-gold);--ui-gold-deep:#70501B;--ui-gold-ink:#795316;
+  --paw-hero:var(--paw-deep);--paw-hero-text:var(--paw-on-primary);--paw-welcome:var(--paw-primary);--paw-welcome-text:var(--paw-gold);
+  --psu-emerald:var(--paw-primary);--psu-emerald-2:var(--paw-deep);--psu-gold:var(--paw-gold);--psu-ivory:var(--paw-bg);
+  --ps-primary:var(--paw-primary);--ps-deep:var(--paw-deep);--ps-ink:var(--paw-text);--ps-bg:var(--paw-bg);--ps-surface:var(--paw-surface);--ps-muted:var(--paw-muted);--ps-line:var(--paw-line);--ps-gold:var(--paw-gold);
+  --purple:var(--paw-primary);--purple-deep:var(--paw-deep);--orange:var(--paw-gold);--ink:var(--paw-text);--muted:var(--paw-muted);--line:var(--paw-line);
+}
+html:root[data-paw-mode="dark"]{--ui-gold-ink:#F0C976}
+html,body{background:var(--paw-bg)!important;color:var(--paw-text);font-family:var(--paw-font)}
+button,input,textarea,select{font-family:inherit;accent-color:var(--paw-primary)}
+:where(button,a,input,textarea,select):focus-visible{outline:3px solid var(--paw-gold);outline-offset:3px}
+.paw-appearance-trigger{background:var(--paw-surface)!important;color:var(--paw-primary)!important;border:1px solid var(--paw-line)!important;bottom:90px;min-width:44px;min-height:44px;z-index:90}
+.paw-appearance-dialog{background:var(--paw-surface);color:var(--paw-text);border-radius:var(--paw-card-radius);max-height:85dvh;overflow:auto}
+.paw-appearance-dialog fieldset{margin:16px 0}.paw-theme-choice{padding:12px;border-radius:var(--paw-control-radius)}
+.paw-appearance-dialog button.paw-appearance-done{background:var(--paw-primary)!important;color:var(--paw-on-primary)!important}
+/* Cosmetic launch overlay, pointer-transparent and automatically dismissed. */
+.paw-welcome{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:var(--paw-bg);pointer-events:none;animation:paw-welcome-out 1.65s both}
+.paw-welcome-inner{text-align:center;display:grid;justify-items:center;gap:20px;padding:24px}
+.paw-welcome-logo{width:180px;background:#fff;border-radius:16px;padding:12px;animation:paw-logo-in .6s both}
+.paw-welcome-pets{display:flex;gap:0;align-items:center}
+.paw-welcome-pets img{width:115px;height:130px;object-fit:cover;border-radius:50% 50% 42% 42%;border:6px solid var(--paw-surface);box-shadow:0 8px 30px #00000010;animation:paw-pet-in .65s both}
+.paw-welcome-pets img+img{margin-left:-16px;margin-top:24px;animation-delay:.1s}
+.paw-welcome p{margin:0;color:var(--paw-text);font-size:16px;font-weight:650}.paw-welcome-dots{font-size:10px;letter-spacing:8px;color:var(--paw-primary)}
+@keyframes paw-logo-in{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}
+@keyframes paw-pet-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes paw-welcome-out{0%,72%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
+@media(prefers-reduced-motion:reduce){.paw-welcome{display:none}.paw-welcome *{animation:none!important}}
+:root,html[data-paw-theme]{--paw-lilac:var(--paw-raised);--paw-yellow:var(--ui-gold-wash);--paw-pink:var(--paw-raised);--paw-mint:var(--paw-raised)}
+:root{--paw-danger:#AF3444}
+html[data-paw-mode="dark"]{--paw-danger:#FF9CA6}
+/* Foreground accents are separate from filled buttons for dark-mode contrast. */
+:root,html[data-paw-theme]{--paw-link:var(--paw-primary);--ui-on-gold:#251B05}
+html[data-paw-theme="signature"]{--paw-link:#7130C9}
+html[data-paw-mode="dark"]{--paw-link:#98D4BE}
+html[data-paw-mode="dark"][data-paw-theme="signature"]{--paw-link:#CCADFF}
+html[data-paw-mode="dark"][data-paw-theme="coral"]{--paw-link:#FFB5A5}
+html[data-paw-mode="dark"] .paw-appearance-trigger{color:var(--paw-link)!important}
+/* Legacy address and service widgets must inherit readable surface text. */
+:root,html:root[data-paw-theme],html:root[data-paw-mode]{
+ --ds-text:var(--paw-text);--ds-text-muted:var(--paw-muted);
+ --ds-surface:var(--paw-surface);--ds-border:var(--paw-line);
+ --ds-primary-500:var(--paw-primary);--ds-on-primary:var(--paw-on-primary);
+}
+:root,html:root[data-paw-theme],html:root[data-paw-mode]{
+ --ds-radius-sm:var(--paw-control-radius);--ds-radius-md:var(--paw-card-radius);
+ --ds-radius-lg:var(--paw-card-radius);--ds-radius-xl:calc(var(--paw-card-radius) + 6px);
+ --ds-accent-ink:var(--ui-on-gold);
+}
+:root,html:root[data-paw-theme],html:root[data-paw-mode]{--ps-text:var(--paw-text);--ps-border:var(--paw-line);--ps-accent-text:var(--ui-on-gold)}
+/* Modal support content takes precedence over decorative floating shortcuts. */
+body:has([class*="supportOverlay"]) .paw-appearance-trigger,
+body:has([class*="supportOverlay"]) button[aria-label="Order notifications"]{visibility:hidden}
+html:root[data-paw-theme] [data-pawspace-mobile="true"]{
+ --ps-primary:var(--paw-primary);--ps-primary-2:var(--paw-deep);--ps-text:var(--paw-text);--ps-muted:var(--paw-muted);
+ --ps-surface:var(--paw-surface);--ps-surface-2:var(--paw-raised);--ps-bg:var(--paw-bg);--ps-border:var(--paw-line);
+ --ps-accent-text:var(--ui-on-gold);
+}
+html[data-paw-theme="coral"][data-paw-mode="light"]{--paw-link:#A43830}
+
+/* Shared feedback roles and utility surfaces used by older team screens. */
+:root,html:root[data-paw-theme]{--ds-warning-600:#875006;--ds-warning-50:#FFF4DF;--ds-success-600:#0D6B46;--ds-success-50:#E9FAF3;--ds-danger-600:#A4232F;--ds-danger-50:#FDECEC;--ds-info-500:var(--paw-link)}
+html:root[data-paw-mode="dark"]{--ds-success-600:#9AD8B8;--ds-success-50:#163B2B;--ds-danger-600:#FFACB5;--ds-danger-50:#48242C;--ds-warning-600:#F4CC87;--ds-warning-50:#44331D}
+html[data-paw-theme] .bg-white{background-color:var(--paw-surface)!important}
+
+.pet-count-row strong{color:var(--paw-text)}
+
+:root,html:root[data-paw-theme],html:root[data-paw-mode]{--paw-gold-ink:var(--ui-on-gold);--paw-feedback-danger-bg:var(--ds-danger-50);--paw-feedback-success:var(--ds-success-600);--paw-feedback-success-bg:var(--ds-success-50);--paw-feedback-warning:var(--ds-warning-600);--paw-feedback-warning-bg:var(--ds-warning-50)}

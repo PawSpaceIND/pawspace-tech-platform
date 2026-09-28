@@ -1,9 +1,9 @@
 {
   "base": "87fb55bc1badff8c996275bb0170df7fe543cdbd",
   "pages": {
-    "app/team/finance-compliance/page.tsx": "3f34056ad0e6a2d431514de8e8106ef1da6701c2c2b4de49f6d88e814b234b3c",
+    "app/team/finance-compliance/page.tsx": "8b9bf61557256276f0b84ee1b09e4bc00d34877348a26358be075574bca327f8",
     "app/team/scheduling/page.tsx": "b8d675b40201ff0648b5726d1d37d73850577c1fb48e6fef439e77af6383391e",
-    "app/team/cases/page.tsx": "630b97694ffe25c8f69caee719be51379fa26cfc4d69d1ea2db4eaf8fe10ce15",
+    "app/team/cases/page.tsx": "435ac1bb685f5e7f30be9383eebad009a51d1ae679f7e057bdb799105fede1af",
     "app/team/revenue-mission/page.tsx": "29d9c28d639dbfef35995575cb03fcfd9b0a7b31db284299a21b0be37c3c1df9",
     "app/team/operations/page.tsx": "6b2690bd925ef75ac59f59fe9002aa979f11a37a4432dcb56ed03e61654f9dd2",
     "app/team/customer-experience/page.tsx": "63a6db7ffcf216bae41b2e0c909716cedc5bad352c9f98467685a9d5735a9095",
@@ -13,10 +13,10 @@
     "app/team/people/page.tsx": "35c5da64b7aa1c0caf006d19999935480392f0f5ecc9b97eedf2434e8986b28a",
     "app/team/meet-and-greet/page.tsx": "3be4b0948e979da785f79654cbd9e32f979dadaf785f46f56ef789987ee21638",
     "app/team/performance/page.tsx": "e6cb34e093b97d0ad10d313471fa0fffce3913791bd5078a10c8c444f96b3e1c",
-    "app/team/whatsapp/page.tsx": "647a736ba0f6d912f8f551f66edab532b4ba4e6e5948ce1e164089d994df54ef",
+    "app/team/whatsapp/page.tsx": "e2311b4aa181dcf212aef852cb7da40504590a8053f6f2348500db24b7afa875",
     "app/team/subscription-plans/page.tsx": "a723ecef7ba8218a962f8d05ff46367ac7dae3408c623b3ed80918058943b583",
     "app/team/voice/ai-test/page.tsx": "23d48386903dfca1da8fafaa9fdbb97c6bfb7c2fe873cc6122c18265bd8fb5d2",
-    "app/team/ai/analytics/page.tsx": "ea4e98518084d22841beef42a152e8e01ba86a2e9ce9c501d129efc6ad1a2781",
+    "app/team/ai/analytics/page.tsx": "949a70ce5f82ed6f0ebb4b40bbab05d3d0da316a94c3623621d5f21511138d11",
     "app/team/whatsapp/templates/page.tsx": "2f065537db29bfc65287d1e611d0e61fbeacfa0f55406e44bebd3b8fc5ba5145",
     "app/team/whatsapp/automation/page.tsx": "24e1c5ea4cdad2163d0b094d8034eabdd7c4261a4b4f33c296d14f81e241f478",
     "app/team/whatsapp/analytics/page.tsx": "4304273d59500b1a4e5aab6b0cf961a9ce8e2af5050636e4d624ff5b1a7c6781"

@@ -38,7 +38,7 @@ export default function WhatsAppSectionIndex() {
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 12 }}>
           {SECTIONS.map((section) => (
             <li key={section.href}>
-              <Link href={section.href} style={{ display: "block", padding: 14, borderRadius: 12, border: "1px solid #e5dcef", textDecoration: "none", color: "inherit" }}>
+              <Link href={section.href} style={{ display: "block", padding: 14, borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid #e5dcef", textDecoration: "none", color: "inherit" }}>
                 <strong style={{ display: "block" }}>{section.title}</strong>
                 <span style={{ fontSize: 13 }}>{section.body}</span>
               </Link>

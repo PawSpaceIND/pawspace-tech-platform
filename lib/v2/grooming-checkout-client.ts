@@ -6,6 +6,7 @@ import { groomingAddOnsForSpecies } from "../grooming-add-ons";
 import { createCanonicalLifecycle, type CanonicalLifecycleResult } from "../canonical-lifecycle-client";
 import { apiSend } from "../api-fetch";
 import { quoteGovernedCoupon } from "../coupon-governance-client";
+import { groomingBasketTotal, groomingCouponPayable } from "./grooming-money";
 import { CustomerCheckoutController, checkoutReturnUrl, type CustomerConfirmationProjection, type CheckoutState } from "../customer-checkout-client";
 import { openMobileRazorpayCheckout } from "../mobile/razorpay";
 import { reserveUatSchedule, type ProviderPreview } from "../uat-scheduling-client";
@@ -18,6 +19,8 @@ export type V2GroomingCheckoutInput = {
   bundle: V2GroomingBundle;
   quote: V2GroomingQuote;
   provider: ProviderPreview["providers"][number];
+  /** Omitted by older callers: preserve their exact-provider behavior and retry key. */
+  providerSelection?: "auto" | "specific";
   address: string;
   pincode: string;
   cityName?: string;
@@ -39,7 +42,9 @@ export type V2GroomingCheckoutInput = {
 export function v2GroomingTotal(input: Pick<V2GroomingCheckoutInput, "quote" | "addOns" | "selectedPets">) {
   const species = String(input.selectedPets[0]?.species || "").toLowerCase();
   const available = groomingAddOnsForSpecies(species);
-  return input.quote.price + (input.addOns ?? []).reduce((sum, label) => sum + (available.find(item => item.label === label)?.price ?? 0), 0);
+  const total = groomingBasketTotal(input.quote.price, ...(input.addOns ?? []).map(label => available.find(item => item.label === label)?.price ?? 0));
+  if (total === null) throw new Error("A valid live price is required before booking.");
+  return total;
 }
 
 export type V2GroomingBooking = CanonicalLifecycleResult & {
@@ -61,7 +66,7 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     ...(input.addOns ?? []).slice().sort(),
     input.comfort ?? "",
     (input.specialInstructions ?? "").trim(),
-    input.provider.id,
+    input.providerSelection === "auto" ? "pawspace:automatic-choice" : input.provider.id,
     ...input.selectedPets.map(pet => pet.id).sort(),
     // The code, not its quote: a retry re-quotes the coupon but must keep the same booking.
     ...(input.coupon ? [`coupon:${input.coupon.code}`] : []),
@@ -95,11 +100,11 @@ export async function createV2GroomingBooking(
   // The shown quote may have expired (15 minutes) or been used up since it was applied. Re-quote it now,
   // before anything is reserved, and book with the server's fresh discount and quote - never the
   // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
-  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: input.quote.price, paymentMode: "full", isSubscription: false }) : null;
+  const basketTotal = v2GroomingTotal(input);
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false }) : null;
   if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
-  const discount = coupon ? Number(coupon.discount) : 0;
-  if (!Number.isFinite(discount) || discount < 0 || discount > input.quote.price) throw new Error("Reapply the coupon before booking.");
-  const payable = v2GroomingTotal(input) - discount;
+  const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
+  const discount = coupon ? coupon.discount : 0;
   const addOns = input.addOns ?? [], requirements = [
     ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
     ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
@@ -128,9 +133,10 @@ export async function createV2GroomingBooking(
     servicePincode: input.pincode,
     scheduledStart: input.scheduledStart,
     scheduledEnd: input.scheduledEnd,
-    preferredProviderId: input.provider.id,
+    providerSelection: input.providerSelection ?? "specific",
+    ...(input.providerSelection === "auto" ? {} : { preferredProviderId: input.provider.id }),
   });
-  if (!decision.provider || decision.groupId !== idempotencyKey || decision.provider.id !== input.provider.id) throw new Error("The selected groomer changed before reservation. Refresh availability and choose again.");
+  if (!decision.provider || decision.groupId !== idempotencyKey || (input.providerSelection !== "auto" && decision.provider.id !== input.provider.id)) throw new Error("The selected groomer changed before reservation. Refresh availability and choose again.");
 
   const canonical = await createCanonicalLifecycle({
     idempotencyKey,

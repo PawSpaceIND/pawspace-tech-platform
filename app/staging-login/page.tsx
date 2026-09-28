@@ -2,7 +2,7 @@
 import{useEffect,useState}from"react";
 import CustomerTestAccess from "./customer-test-access";
 
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
+const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",line:"var(--paw-line)",orange:"var(--paw-gold)",gold:"var(--paw-link)",green:"var(--ds-success-600)"};
 // Seeded identities a tester can jump in as. Sign-in resolves the role from the staff directory, so
 // only an ACTIVE seeded staff email works — an unrecognised email is refused (lib/uat-staging-auth.ts).
 const QUICK=[
@@ -30,15 +30,15 @@ export default function StagingLoginPage(){
   }
   async function logout(){setBusy(true);try{await fetch("/api/staging-login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"logout"})});setSignedIn(null);setMsg("Signed out.");}finally{setBusy(false);}}
 
-  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:22,maxWidth:520,margin:"0 auto"};
-  const inp:React.CSSProperties={display:"block",width:"100%",padding:11,marginTop:6,borderRadius:9,border:`1px solid ${C.line}`,background:C.ground,color:C.ink,boxSizing:"border-box"};
-  const btn:React.CSSProperties={padding:"11px 16px",borderRadius:10,border:"none",background:C.orange,color:"#01261F",fontWeight:700,cursor:"pointer"};
+  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:22,maxWidth:520,margin:"0 auto"};
+  const inp:React.CSSProperties={display:"block",width:"100%",padding:11,marginTop:6,borderRadius:"calc(9px * var(--paw-radius-scale))",border:`1px solid ${C.line}`,background:C.ground,color:C.ink,boxSizing:"border-box"};
+  const btn:React.CSSProperties={padding:"11px 16px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"none",background:C.orange,color:"var(--ui-on-gold)",fontWeight:700,cursor:"pointer"};
 
-  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif",display:"flex",alignItems:"center",padding:"40px 20px"}}>
+  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"var(--paw-font, system-ui)",display:"flex",alignItems:"center",padding:"40px 20px"}}>
     <div style={{width:"100%"}}>
       <p style={{textAlign:"center",fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12}}>PAWSPACE · STAGING UAT SIGN-IN</p>
       <div style={card}>
-        {enabled===false?<p style={{color:"#ff9a9a",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
+        {enabled===false?<p style={{color:"var(--paw-danger)",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
         {enabled===null?<p style={{color:C.dim,margin:0}}>Checking…</p>:null}
         {enabled?<>
           {signedIn?<p style={{color:C.green}}>Signed in as <b>{signedIn}</b>. <a href="/me" style={{color:C.gold}}>Go to my workspace →</a> · <button onClick={()=>void logout()} disabled={busy} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",textDecoration:"underline"}}>sign out</button></p>:null}

@@ -46,7 +46,7 @@ export default function UnitEconomicsPage(){
   {report&&previous&&<>
     <p>Loaded period: <b>{report.from} – {report.to}</b> · compared with <b>{previous.from} – {previous.to}</b> (equal number of days).</p>
     <VisualGrid>
-      <section style={{minWidth:0,border:"1px solid var(--staff-line)",borderRadius:18,padding:20,background:"var(--staff-surface)"}}>
+      <section style={{minWidth:0,border:"1px solid var(--staff-line)",borderRadius:"calc(18px * var(--paw-radius-scale))",padding:20,background:"var(--staff-surface)"}}>
         <h2 style={{fontSize:16}}>Current vs previous period</h2>
         <TrendChart type="bar" xKey="metric" valueFormatter={money} data={[
           {metric:"GMV",current:report.company.gmv,previous:previous.company.gmv},
@@ -83,7 +83,7 @@ export default function UnitEconomicsPage(){
     </tr>)}</tbody>
    </table>
   </section>}
-  {report&&<footer style={{border:"1px solid var(--staff-line)",borderRadius:14,padding:16}}>
+  {report&&<footer style={{border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16}}>
    <h2>What each number is made of</h2>
    <ul>{Object.entries(report.dataCoverage).map(([key,source])=><li key={key}><b>{label(key)}:</b> {source}</li>)}</ul>
    <small>Known contribution = GMV − discounts − provider payout − refunds. Tax, payment fees and variable cost join the ladder once their policies are configured; a service is never shown profitable because a cost is unrecorded.</small>

@@ -1,3 +1,4 @@
+import{partnerServiceDay}from"./partner-job-time";
 import{chunkedIn}from"./d1-chunked-in";
 import{boardingProviderExtras}from"./boarding-provider-projection";
 import{acceptancePhase,loadAssignmentOffers,providerJobBucket,providerOfferView,type ProviderOfferView}from"./provider-offer-state";
@@ -97,7 +98,7 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
     for(const row of await chunkedIn(customerIds,(chunk,placeholders)=>safeAll(db,`SELECT id,name FROM canonical_customers WHERE id IN (${placeholders})`,chunk)))nameByCustomer.set(String(row.id),firstName(row.name));
   }
 
-  const reference=new Date(now),startOfToday=new Date(reference.getFullYear(),reference.getMonth(),reference.getDate()).getTime(),endOfToday=startOfToday+DAY_MS;
+  const{end:endOfToday}=partnerServiceDay(now);
   const feed:PartnerJobFeed={providerId:id,needsAction:[],today:[],upcoming:[],completed:[],needsOperations:[],past:[]};
   // The offer each lifecycle checks before it accepts, read (never created) for the offer-governed services.
   const offers=await loadAssignmentOffers(db,bookings.filter(row=>OFFER_SERVICES.has(String(row.service_code))).map(row=>row.schedule_group_id));

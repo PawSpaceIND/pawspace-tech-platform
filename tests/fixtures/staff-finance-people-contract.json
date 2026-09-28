@@ -46,7 +46,7 @@
       "mainRoots": 1
     },
     "app/team/finance/training/page.tsx": {
-      "semantic": "33ea8c43649e0b67f69a4175ad9bbba116af3ef463f513c60bbc143b03ab7c1f",
+      "semantic": "8bc8a17b4a94448cd6815d0c88894864b53e01c652390183c8e40f583d8adc6a",
       "mainRoots": 1
     },
     "app/team/finance/unit-economics/page.tsx": {
@@ -74,7 +74,7 @@
       "mainRoots": 1
     },
     "app/team/people/payroll/page.tsx": {
-      "semantic": "8237d51666b444a02bfbfd0b41019aa7a8696baf76ce4ed5c7e28f9cabd5ab59",
+      "semantic": "aa74b5709d1e7946098ffd944034329c2469248e40c685979f20c523fe8b1e40",
       "mainRoots": 1
     },
     "app/team/people/provider-training/page.tsx": {
@@ -82,7 +82,7 @@
       "mainRoots": 1
     },
     "app/team/people/reports/page.tsx": {
-      "semantic": "f7d31377b99cf8d3cdca0d551caa637eaca93234ed73c906a7dbbfd858a4e177",
+      "semantic": "bd53e53696575b30e5cd3bec2d7ad5e2f1a94ba082a0e9d1a6c70ba8ea1ed908",
       "mainRoots": 3
     },
     "app/team/people/service-incentives/page.tsx": {

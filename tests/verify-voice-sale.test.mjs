@@ -9,3 +9,14 @@ test('explicit sandbox capture is replayed with the same event and read back',as
 test('handset mismatch is refused before accessing provider or database',async()=>{await assert.rejects(verifyVoiceSale({...env,EXPECTED_DESTINATION_LAST4:'1111'},()=>{throw Error('must not request');}),/Confirmed UAT tester/);});
 
 test('paused tester context blocks both actual-agent probes and dialing',async()=>{for(const action of ['probe-agent-socket','direct-grooming-call']){const f=fixture({paused:true});await assert.rejects(verifyVoiceSale({...env,VOICE_SALE_ACTION:action},f.request),/paused for staff/);assert.ok(!f.calls.some(x=>x.url.includes('elevenlabs.io')));}});
+
+test('spoken sale inventory includes older offers outside the diagnostic window',async()=>{
+ const f=fixture();
+ const request=async(url,init={})=>{
+  if(url.endsWith('/query')){const {sql}=JSON.parse(init.body);if(sql?.includes('FROM voice_sales_offers')&&!sql.includes('LIMIT'))return Response.json({success:true,result:[{success:true,results:[{id:'OLDER',status:'completed',result_json:'{"bookingId":"OLDER-BOOKING"}'},{id:'PENDING',status:'pending',summary:'Existing offer',expires_at:123}]}]});}
+  return f.request(url,init);
+ };
+ const r=await verifyVoiceSale({...env,VOICE_SALE_FULL_INVENTORY:'true'},request);
+ assert.deepEqual(r.completedBookings,['OLDER-BOOKING']);assert.equal(r.pendingOffers[0].id,'PENDING');
+ assert.ok(!f.calls.some(x=>x.url.endsWith('/api/grooming-payment-sandbox')));
+});

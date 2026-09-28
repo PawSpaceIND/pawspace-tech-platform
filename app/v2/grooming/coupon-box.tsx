@@ -1,6 +1,7 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { quoteGovernedCoupon } from "../../../lib/coupon-governance-client";
+import { groomingCouponPayable } from "../../../lib/v2/grooming-money";
 import styles from "./grooming.module.css";
 
 type Props = {
@@ -19,6 +20,8 @@ type Props = {
 export default function V2GroomingCouponBox({ customerId, cityId, packageCode, orderValue, onChange }: Props) {
   const [code, setCode] = useState(""), [applied, setApplied] = useState(""), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
   const version = useRef(0);
+  // A removed price/package/slot form must never apply its late quote to the replacement basket.
+  useEffect(() => () => { version.current++; }, []);
   const apply = async () => {
     const normalized = code.trim().toUpperCase();
     if (!normalized || busy) return;
@@ -28,6 +31,7 @@ export default function V2GroomingCouponBox({ customerId, cityId, packageCode, o
       const result = await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode: "full", isSubscription: false });
       if (current !== version.current) return;
       if (!result.valid || !result.code || !result.quoteId) { onChange(0, ""); setMessage(result.error || "This coupon is not eligible for this booking."); return; }
+      groomingCouponPayable(orderValue, result);
       setApplied(result.code); setMessage(`${result.code} applied. You save ₹${result.discount}.`);
       onChange(result.discount, result.code, result.quoteId);
     } catch (problem) {
