@@ -1,3 +1,5 @@
+import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-information";
+import {currentGroomingCatalogue} from "./ai-current-catalogue";
 import{policyEnquiryTopic,POLICY_INFORMATION_DIRECTIVE}from"./ai-policy-enquiry";
 import {voiceCalendarContext} from "./voice-calendar-context";
 import { specialistSalesPrompt, type VoiceSalesService } from "./voice-sales-specialists";
@@ -52,8 +54,8 @@ export function parseGroundedActionEnvelope(raw:string):{reply:string;actions:Ai
 
 async function canonicalRows(db:D1Database,sql:string){return(await db.prepare(sql).all<Row>()).results;}
 function compact(rows:Row[],fields:string[]){return rows.slice(0,25).map(row=>Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]])));}
-export async function canonicalCatalogueSnapshot(db:D1Database){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
- canonicalRows(db,"SELECT * FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price"),
+export async function canonicalCatalogueSnapshot(db:D1Database,asOf=Date.now()){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
+ currentGroomingCatalogue(db,asOf),
  canonicalRows(db,"SELECT package_code,name,sessions,validity_days,base_price,currency,version FROM training_commercial_packages WHERE active=1 ORDER BY sessions"),
  canonicalRows(db,"SELECT package_code,name,care_kind,max_hours,base_price_per_pet,currency,version FROM boarding_commercial_packages WHERE active=1 ORDER BY max_hours"),
  canonicalRows(db,"SELECT package_code,name,mode,base_price_per_pet,extra_pet_price,currency,version FROM sitting_commercial_packages WHERE active=1 ORDER BY base_price_per_pet"),
@@ -72,7 +74,7 @@ function knowledgeRefs(result:unknown){if(!result||typeof result!=="object")retu
 export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;intent:AiToolIntent;channel:AiToolChannel;query:string;canonicalContext:Record<string,unknown>;fastVoice?:boolean}){
  if(input.fastVoice){
   const knowledge=await prepareAiToolExecution(db,{actor:input.actor,toolCode:"approved_knowledge.read",threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:{query:input.query,visibilityScopes:["public"]}});
-  const grooming=await canonicalRows(db,"SELECT * FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price");
+  const grooming=await currentGroomingCatalogue(db);
   const cc=input.canonicalContext as Row;
   const minimalContext={customer:cc.customer??null,pets:cc.pets??[],bookings:cc.bookings??[],thread:cc.thread??null,conversationHistory:cc.conversationHistory??[],asOf:cc.asOf??Date.now(),timezone:"Asia/Kolkata"};
   return{context:{...minimalContext,approvedKnowledge:knowledge,catalogueTool:null,catalogue:{grooming:compact(grooming,["package_code","name","description","base_price","currency","tax_inclusive","slot_minutes","version","effective_from","effective_to"]),source:"server_owned_read_only_catalogue_tables"},groundingPolicy:{readOnlyGrounding:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true}},groundingRefs:knowledgeRefs(knowledge)};
@@ -108,12 +110,14 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  /* Web chat and WhatsApp sell, so they carry the offers this customer can redeem on this channel; the voice
   * specialists quote no coupons. A failed offer read means no offer, never an invented one. */
  channel==="voice"?Promise.resolve([] as ApprovedSalesOffer[]):approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
- ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText);if(options.salesService&&!policyEnquiry){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:channel!=="voice"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}if(channel!=="voice"){Object.assign(grounded.context,{approvedOffers:offers});systemPrompt+=`\n\n${APPROVED_OFFERS_DIRECTIVE}`;}
- if(policyEnquiry){systemPrompt+="\n\n"+POLICY_INFORMATION_DIRECTIVE;Object.assign(grounded.context,{availableActionTools:[],policyEnquiry,informationOnly:true});}
+ ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation;
+ if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});
+ if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:channel!=="voice"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}if(channel!=="voice"){Object.assign(grounded.context,{approvedOffers:offers});systemPrompt+=`\n\n${APPROVED_OFFERS_DIRECTIVE}`;}
+ if(informationOnly){systemPrompt+="\n\n"+(policyEnquiry?POLICY_INFORMATION_DIRECTIVE:SALES_INFORMATION_DIRECTIVE);Object.assign(grounded.context,{availableActionTools:[],policyEnquiry,informationOnly:true});}
  const requestOptions={onTiming:options.onTiming,...(input.onDelta?{onDelta:input.onDelta}:{}),systemPrompt,userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),channel,intent:input.intent.intent,maxTokens:channel==="voice"?(options.salesService?700:options.fastVoice?(isExplicitCustomerActionConfirmation(input.inputText)?600:160):450):1200,timeoutMs:providerTimeoutMs};let result=await requestAiDraftWithVoiceRecovery(requestOptions);if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
  // Repair only the model's unexecuted voice checkout proposal, once. Never retry mutations.
  // The offer builder still validates every argument and requires separate customer confirmation.
- if(channel==="voice"&&options.salesService&&!policyEnquiry&&!input.onDelta){
+ if(channel==="voice"&&options.salesService&&!informationOnly&&!input.onDelta){
   const candidate=parseGroundedActionEnvelope(result.text);
   if(candidate?.actions.length&&candidate.actions.map(a=>a.toolCode).join(",")!=="schedule.reserve,booking.create,checkout.payment_order.create"){
    result=await requestAiDraftWithVoiceRecovery({...requestOptions,systemPrompt:systemPrompt+"\nYour previous checkout proposal had an invalid action sequence and was not executed. Correct the proposal using exactly three actions in this order: schedule.reserve, booking.create, checkout.payment_order.create. These actions prepare an unconfirmed quote only; do not omit booking or payment-order proposals because the caller asked to see the quote first. Reuse only the customer facts in canonical context. If required facts are missing, ask one specific question and return no actions."});

@@ -39,3 +39,43 @@ test('fast voice includes approved knowledge and actual tax flags rather than om
  assert.match(JSON.stringify(result.context.approvedKnowledge),/maya_refund_process/);assert.ok(result.groundingRefs.length>0);
  assert.equal(result.context.catalogue.grooming.find(r=>r.package_code==='dog-bath').tax_inclusive,1);assert.equal(mock.calls.length,0);
 });
+
+// The review reproduced these three dated records in one supposedly-current catalogue.
+test('normal and fast grounding exclude future expired malformed and inactive Grooming rows',async t=>{
+ const w=await world(t),day=new Date().toISOString().slice(0,10);
+ const set=(code,active,from,to,label)=>w.sqlite.prepare('UPDATE service_packages SET active=?,effective_from=?,effective_to=?,description=? WHERE package_code=?').run(active,from,to,label,code);
+ set('dog-bath',1,day,day,'CURRENT_BOUNDARY');
+ set('dog-basic',1,'2000-01-01','2000-12-31','EXPIRED_CANARY');
+ set('dog-makeover',1,'2099-01-01',null,'FUTURE_CANARY');
+ set('dog-trim',0,'2000-01-01',null,'INACTIVE_CANARY');
+ set('cat-routine',1,'not-a-date',null,'MALFORMED_CANARY');
+ const {canonicalCatalogueSnapshot,pricesMatchCatalogue}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const catalogue=await canonicalCatalogueSnapshot(w.db);
+ assert.deepEqual(catalogue.grooming.map(r=>r.package_code),['dog-bath']);
+ assert.doesNotMatch(JSON.stringify(catalogue),/EXPIRED_CANARY|FUTURE_CANARY|INACTIVE_CANARY|MALFORMED_CANARY/);
+ assert.equal(pricesMatchCatalogue('Grooming Complete Makeover is ₹2399.',catalogue),false);
+ for(const fastVoice of [false,true]){
+  const result=await buildGroundedAiTurnContext(w.db,{actor,threadId:'THREAD-KB',customerId:'CUS-KB',intent:'service_info',channel:'voice',query:'What is included in grooming?',canonicalContext:{customer:{customerId:'CUS-KB'}},fastVoice});
+  assert.deepEqual(result.context.catalogue.grooming.map(r=>r.package_code),['dog-bath']);
+  assert.doesNotMatch(JSON.stringify(result.context),/EXPIRED_CANARY|FUTURE_CANARY|INACTIVE_CANARY|MALFORMED_CANARY/);
+ }
+});
+test('Grooming effective days are inclusive and filtering happens before the 25-row display bound',async t=>{
+ const w=await world(t),{currentGroomingCatalogue}=await import('../lib/ai-current-catalogue.ts');
+ w.sqlite.prepare("UPDATE service_packages SET active=1,effective_from='2099-01-01',effective_to=NULL,base_price=1 WHERE service_code='grooming'").run();
+ w.sqlite.prepare("UPDATE service_packages SET effective_from='2026-09-28',effective_to='2026-09-28',base_price=1349 WHERE package_code='dog-bath'").run();
+ const at=Date.parse('2026-09-28T12:00:00Z');
+ assert.deepEqual((await currentGroomingCatalogue(w.db,at)).map(r=>r.package_code),['dog-bath']);
+ assert.equal((await currentGroomingCatalogue(w.db,at-86400000)).length,0);
+ assert.equal((await currentGroomingCatalogue(w.db,at+86400000)).length,0);
+ await assert.rejects(()=>currentGroomingCatalogue(w.db,NaN),/valid catalogue/);
+});
+for(const channel of ['voice','chat','whatsapp'])test(channel+': information questions keep sales history but expose no checkout proposal tools',async t=>{
+ const w=await world(t);let sent;
+ const mock=stubFetch((url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses');sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'The groomer brings the equipment and products.',usage:{total_tokens:20}});});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,channel,{salesService:'grooming'}),question='What equipment does the groomer bring?';
+ await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel,inputText:question,intent:classifyAiIntent(question),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ assert.equal(mock.calls.length,1);assert.match(sent.instructions,/read-only sales information question/);
+ assert.doesNotMatch(sent.instructions,/Specialty: Grooming only/);
+ const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.availableActionTools,[]);assert.ok(Array.isArray(cc.conversationHistory));
+});

@@ -7,18 +7,22 @@ const ACTIVE_RISK=[
  /\b(?:charged|debited|billed) (?:me )?(?:twice|again|incorrectly)|\b(?:double|duplicate|wrong) (?:charge|debit)|\bpayment dispute/i,
  /\b(?:my|our) (?:refund|complaint|dispute)|\b(?:i|we) (?:want|need|demand|request) (?:a |my |our )?(?:refund|money back)/i,
  /\b(?:i|we) (?:was|were|have been|got) (?:charged|debited)|\byou (?:have )?charged/i,
- /\b(?:yesterday|today|right now|currently|already|still|never|hasn't|didn't|did not|has not|last visit|last booking)\b/i,
  /\b(?:bleeding|injured|injury|seizure|collapsed|poisoned|not breathing|emergency|lost pet|missing dog|bitten)\b/i,
  /\b(?:connect|transfer|hand|route|escalate|speak|talk).{0,45}\b(?:human|person|staff|agent|coordinator|manager)|\bcall me\b/i,
  /\b(?:ignore|override|bypass).{0,40}\b(?:rules|instructions|safety|checks|policy)|\b(?:system prompt|developer message)\b/i,
 ];
+// Date/currentness words alone do not turn a complete general-policy question into a dispute.
+// Only a whole, standalone FAQ qualifies; mixed requests and reports keep the temporal-risk gate.
+const TEMPORAL_RISK=/\b(?:yesterday|today|right now|currently|already|still|never|hasn't|didn't|did not|has not|last visit|last booking)\b/i;
+const CURRENT_POLICY_QUESTION=/^(?:what(?:'s| is| are)|(?:please )?explain|(?:can|could) you (?:please )?explain)\s+(?:(?:your|the|pawspace's)\s+)?(?:current\s+)?(?:refund|cancellation|rescheduling|complaint)\s+(?:policy|policies|process|procedure|rules|terms)(?:\s+(?:currently|today|right now|at the moment|as of today))?[?!.]*$/i;
 export function policyEnquiryTopic(input:string):PolicyEnquiryTopic|null{
  if(!input||input.length>1200)return null;
  const text=input.normalize('NFKC').replace(/[’‘]/g,"'").replace(/\s+/g,' ').trim();
  if(ACTIVE_RISK.some(p=>p.test(text)))return null;
+ if(TEMPORAL_RISK.test(text)&&!CURRENT_POLICY_QUESTION.test(text))return null;
  const question=text.replace(/^(?:(?:this is an (?:enquiry|inquiry) only|do not (?:issue a refund|change any booking|cancel any booking|book anything))\.\s*)+/i,'');
  // Only a process question, not a request to initiate, approve, cancel, reschedule or transfer.
- if(!/^(?:please )?(?:explain\b|how\b|what\b|if\b|where\b|can you explain\b)/i.test(question))return null;
+ if(!/^(?:please )?(?:explain\b|how\b|what\b|if\b|where\b|can you explain\b|could you explain\b)/i.test(question))return null;
  if(/\b(?:issue|process|approve|give|send) (?:me |us )?(?:a |my |the )?refund\b|\b(?:cancel|reschedule|change) my\b|\braise (?:a |my )?complaint (?:for me|now)\b/i.test(question))return null;
  if(!/\b(?:process|policy|policies|review|reviewed|work|works|happen|happens|procedure|steps|charges|raise a complaint|follow it up)\b/i.test(question))return null;
  // Additional commands joined after a policy question do not inherit its read-only exemption.
