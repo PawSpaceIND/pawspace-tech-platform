@@ -26,6 +26,10 @@ on:
         description: "Exact certified staging revision for spoken sandbox sale"
         required: false
         default: ""
+      audio_profile:
+        description: 'Human-call TTS profile: flash_v2 (English Agent), flash_v2_5, or v3_conversational'
+        required: false
+        default: 'flash_v2'
       specialist_use_case:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
@@ -188,7 +192,9 @@ jobs:
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
         run: |
           node <<'NODE'
-          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();if(!key||!agentId)throw new Error('inspection prerequisites missing');
+          import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2');if(!key||!agentId)throw new Error('inspection prerequisites missing');
           const listResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=10`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           const list=await listResponse.json().catch(()=>({}));if(!listResponse.ok){console.log(JSON.stringify(list).slice(0,2000));throw new Error(`conversation list failed ${listResponse.status}`);}
           const rows=Array.isArray(list?.conversations)?list.conversations:[];if(!rows.length)throw new Error('no Grooming conversations found');
@@ -386,8 +392,9 @@ jobs:
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          AUDIO_PROFILE: ${{ inputs.audio_profile }}
         run: |
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
           const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
@@ -523,8 +530,9 @@ jobs:
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          AUDIO_PROFILE: ${{ inputs.audio_profile }}
         run: |
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
           const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
@@ -668,8 +676,9 @@ jobs:
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          AUDIO_PROFILE: ${{ inputs.audio_profile }}
         run: |
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
           const oldId=String(process.env.OLD_PHONE_NUMBER_ID||'').trim();
           const exKey=String(process.env.EXOTEL_API_KEY||'').trim();
@@ -720,40 +729,53 @@ jobs:
     environment: pawspace-staging
     timeout-minutes: 3
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
       - name: Tune Grooming agent for clear phone conversation
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          AUDIO_PROFILE: ${{ inputs.audio_profile }}
         run: |
-          node <<'NODE'
+          node --input-type=module <<'NODE'
+          import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2_5');
           if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
           const headers={'xi-api-key':key,'content-type':'application/json'};
           const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           const current=await read.json().catch(()=>({}));
           if(!read.ok) throw new Error('agent read failed '+read.status);
-          const voiceId=current?.conversation_config?.tts?.voice_id;
+          const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{};
+          const voiceId=currentTts.voice_id;
           if(!voiceId) throw new Error('agent voice_id missing');
           const body={
             conversation_config:{
               agent:{
-                first_message:"Hi, this is PawSpace's grooming assistant. How can I help with grooming today?"
+                ...currentAgent,
+                first_message:"Hi, this is Maya from PawSpace. How can I help with your pet today?",
+                prompt:{...currentPrompt,prompt:humanCallPrompt(currentPrompt?.prompt)}
               },
               tts:{
-                model_id:'eleven_flash_v2',
+                ...currentTts,
+                model_id:profile.modelId,
                 voice_id:voiceId,
-                stability:0.78,
-                similarity_boost:0.75,
-                speed:0.9,
-                optimize_streaming_latency:0
+                stability:profile.stability,
+                similarity_boost:profile.similarityBoost,
+                speed:profile.speed,
+                optimize_streaming_latency:profile.optimizeStreamingLatency
               },
               turn:{
+                ...currentTurn,
                 turn_timeout:12,
                 silence_end_call_timeout:60,
                 turn_eagerness:'normal',
                 turn_model:'turn_v3',
                 soft_timeout_config:{
-                  timeout_seconds:4,
+                  ...(currentTurn?.soft_timeout_config||{}),
+                  timeout_seconds:2.5,
                   message:"One moment while I check that for you.",
                   max_soft_timeouts_per_generation:1
                 }
@@ -767,6 +789,7 @@ jobs:
           if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error('agent update failed '+patch.status);}
           const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
           console.log('GROOMING_AUDIO_TUNED='+JSON.stringify({
+            profile:profile.id,
             firstMessage:agent.first_message||null,
             modelId:tts.model_id||null,
             stability:tts.stability??null,

@@ -187,7 +187,9 @@ test("real execution: booking -> accept -> travel -> proof -> complete mirrors i
   await db.prepare(findStatement(lifecycleRoute, "INSERT INTO grooming_service_proof")).bind("BK-C-1", "uat://proof/BK-C-1/before", "uat://proof/BK-C-1/after", JSON.stringify(["Coat check", "Finish review"]), "done", NOW, NOW).run();
   await db.prepare(findStatement(lifecycleRoute, "UPDATE canonical_bookings SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun").run();
   await db.prepare(findStatement(lifecycleRoute, "UPDATE provider_work_orders SET status='completed'")).bind(NOW, "BK-C-1", "groom_arun", "in_service").run();
-  await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO booking_invoices")).bind("INV-1", "BK-C-1", "CUS-G-1", "PS-2026-0001", "issued", "INR", 1899, 0, 1899, NOW, NOW, NOW).run();
+  const invoiceInsert = findStatement(lifecycleRoute, "INSERT INTO booking_invoices");
+  assert.match(invoiceInsert, /ON CONFLICT\(booking_id\) DO NOTHING/, "only an existing same-booking invoice may be reused");
+  await db.prepare(invoiceInsert).bind("INV-1", "BK-C-1", "CUS-G-1", "PS-2026-0001", "issued", "INR", 1899, 0, 1899, NOW, NOW, NOW).run();
   await db.prepare(findStatement(lifecycleRoute, "INSERT OR IGNORE INTO repeat_booking_tasks")).bind("RPT-1", "BK-C-1", "CUS-G-1", "grooming", NOW + 21 * 86_400_000, NOW, NOW).run();
   const { readCustomerAccount } = await import("../lib/customer-account.ts");
   const account = await readCustomerAccount(db, "CUS-G-1");
