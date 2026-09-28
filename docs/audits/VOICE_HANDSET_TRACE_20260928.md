@@ -80,3 +80,30 @@ Validation on the corrected source:
 - Current main observed: `3a37d67e4a6fa47971e1187de483fa7496777abe`, already incorporated in the branch.
 
 Only the handset test and this audit note are changed by this correction. Fresh CodeQL and full CI must validate the pushed head; the earlier failure is not relabelled passed. Existing draft review holds remain independent. No handset call, remote database/configuration change, recording enablement, knowledge activation, deployment or PR merge was performed.
+
+## Current-head CI repair: protected presentation fingerprints
+
+Inspected head: `3e3071560dcc5397e1f4dc7f6679dbfc8f6cd728`.
+Current main: `3a37d67e4a6fa47971e1187de483fa7496777abe`; behind count was zero.
+This is not a recurrence of the cleared CodeQL URL-prefix alerts.
+
+Pre-UAT run `36462886127`, job `109065775625`, finished with 9 failed assertions
+(9,203 passed / 9,212 total, zero skips). The hook-path job `109069065798`
+failed the two corresponding Inbox assertions. All reported mismatches were
+historical byte-preservation snapshots for intentional changes in this PR.
+
+Compared the complete main-to-PR diff for `lib/elevenlabs-post-call.ts`,
+`lib/voice-outbound-governance.ts`, `lib/voice-telephony-provider.ts`, and
+`.github/workflows/elevenlabs-provider-preflight.yml`. Each old expected hash
+matched the actual current-main file. Updated only their 28 existing protected
+hash values across the nine presentation JSON contracts. Every other JSON value,
+all key sets, stylesheet normalization, assertions, test limits and runtime
+sources were preserved. This aligns the UI guard's baseline; it does not approve
+the unfinished handset/evidence refinements or certify a connected call.
+
+Focused Node 22.16.0 validation includes all eight affected presentation suites
+plus handset, callback, provider, policy, authority, fixture and test-quality
+regressions: 438/438 passed with normal hooks and 438/438 with forced loader
+fallback, zero skips in either selection. Full-suite and GitHub CI outcomes are
+reported separately after execution. The prior hardening stash `a74a6098` was
+left untouched. No merge, shared deployment, remote data repair or dial occurred.
