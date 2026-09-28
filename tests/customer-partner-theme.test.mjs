@@ -18,8 +18,9 @@ test('Theme consumers compose the same palette; style changes cannot grant permi
   root.walkDecls('composes',d=>{assert.match(d.value,/palette from .*brand-surface\.module\.css/);compositions++;});
   assert.equal(compositions,x.roots.length,p);
  }
- const shared=read('app/components/brand/brand-surface.module.css').toString();
- assert.match(shared,/#894aed/i);assert.match(shared,/#ffaf00/i);assert.match(shared,/#01261f/i);assert.match(shared,/#e6b34e/i);assert.match(shared,/Nunito-Variable/);
+ const shared=read('app/components/brand/brand-surface.module.css').toString(),tokens=read('app/pawspace-design-system.css').toString();
+ assert.match(shared,/--brand-primary:var\(--paw-primary\)/);assert.match(shared,/--brand-gold:var\(--paw-gold\)/);assert.match(shared,/font-family:var\(--paw-font\)/);assert.match(shared,/Nunito-Variable/);
+ assert.match(tokens,/#894aed/i);assert.match(tokens,/#ffaf00/i);assert.match(tokens,/#01261f/i);assert.match(tokens,/#e6b34e/i);
  assert.doesNotMatch(shared,/https?:\/\/|javascript:|expression\(/);
 });
 
@@ -32,7 +33,7 @@ test('New customer management layouts preserve their only child and reuse existi
 });
 test('Browser appearance inventory includes every Customer V2 page without claiming staff aliases',()=>{
  const pages=fs.readdirSync(new URL('app/v2',base),{recursive:true}).filter(p=>p==='page.tsx'||p.endsWith('/page.tsx'));
- const expected=pages.map(p=>'/v2'+(p==='page.tsx'?'':'/'+p.slice(0,-9))).filter(p=>!['/v2/partner','/v2/workspaces','/v2/crm','/v2/control-center','/v2/employee','/v2/payroll','/v2/people','/v2/people/offboarding'].includes(p)&&!p.startsWith('/v2/partner/')).sort();
+ const expected=pages.map(p=>'/v2'+(p==='page.tsx'?'':'/'+p.slice(0,-9))).filter(p=>!['/v2/partner','/v2/workspaces','/v2/crm','/v2/control-center','/v2/employee','/v2/payroll','/v2/people','/v2/people/offboarding','/v2/control','/v2/system-integration','/v2/assisted-booking'].includes(p)&&!p.startsWith('/v2/partner/')&&p!=='/v2/team'&&!p.startsWith('/v2/team/')).sort();
  // Staff aliases have their own employee-surface coverage; verify their exact canonical target.
  for(const [path,target] of [['employee','../../me/page'],['payroll','../../team/people/payroll/page'],['people','../../team/people/page'],['people/offboarding','../../../team/people/offboarding/page']]){
   const source=read(`app/v2/${path}/page.tsx`).toString();assert.ok(source.includes('export {default} from '));assert.ok(source.includes(target),path+' must remain a canonical staff alias');
@@ -71,21 +72,14 @@ test('Executed route scoping retains original Food and Relocation record identif
 
 // Employee AI is embedded in a legacy shell. Its opt-in outer chrome must match the shared palette too.
 test('Employee AI chrome matches all seven shared palette values in both palettes and modes',()=>{
- const employee=postcss.parse(read('app/mobile-app/employee-ai-mobile.module.css').toString());
- const brand=postcss.parse(read('app/components/brand/brand-surface.module.css').toString());
- const names=['bg','surface','text','muted','primary','line','on-primary'];
- function values(tree,prefix,theme,mode){
-  const out={};tree.walkRules(rule=>{
-   if(rule.selector.includes('data-paw-theme="signature"')&&theme!=='signature')return;
-   if(rule.selector.includes('data-paw-mode="dark"')&&mode!=='dark')return;
-   rule.walkDecls(d=>{if(d.prop.startsWith(prefix)&&!d.value.includes('var('))out[d.prop.slice(prefix.length)]=d.value;});
-  });return out;
+ const employee=read('app/mobile-app/employee-ai-mobile.module.css').toString(),brand=read('app/components/brand/brand-surface.module.css').toString();
+ const mapping={bg:'bg',surface:'surface',text:'text',muted:'muted',primary:'primary',line:'line','on-primary':'on-primary'};
+ for(const [name,paw] of Object.entries(mapping)){
+  assert.match(employee,new RegExp(`--employee-${name}:var\\(--paw-${paw}\\)`),name);
+  assert.match(brand,new RegExp(`--brand-${name}:var\\(--paw-${paw}\\)`),name);
  }
- for(const theme of ['emerald','signature'])for(const mode of ['light','dark']){
-  const actual=values(employee,'--employee-',theme,mode),expected=values(brand,'--brand-',theme,mode);
-  for(const name of names)assert.equal(actual[name],expected[name],theme+'/'+mode+' '+name);
- }
- employee.walkRules(rule=>{if(rule.selector.includes('main[data-pawspace-mobile]'))assert.ok(rule.selectors.every(s=>s.includes(':has(.shell.shell)')),'Legacy chrome changes must be conditional on the employee AI panel');});
+ assert.doesNotMatch(employee,/--employee-(?:bg|surface|text|muted|primary|line|on-primary):#/);
+ const tree=postcss.parse(employee);tree.walkRules(rule=>{if(rule.selector.includes('main[data-pawspace-mobile]'))assert.ok(rule.selectors.every(selector=>selector.includes(':has(.shell.shell)')),'Legacy chrome changes must be conditional on the employee AI panel');});
 });
 
 // Additional V2 audit source contracts. Runtime proof remains in the browser and service tests.

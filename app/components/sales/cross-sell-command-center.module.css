@@ -1,10 +1,10 @@
 .shell {
   min-height: 100vh;
   background:
-    radial-gradient(circle at top right, rgba(111, 62, 178, 0.12), transparent 34rem),
-    #f6f3fa;
-  color: #24133f;
-  font-family: Arial, sans-serif;
+    radial-gradient(circle at top right, color-mix(in srgb, var(--ui-brand-primary) 12%, transparent), transparent 34rem),
+    var(--ui-canvas);
+  color: var(--ui-ink);
+  font-family: var(--paw-font);
   padding: 28px;
 }
 
@@ -28,7 +28,7 @@
 .hero span,
 .sectionHeader span,
 .recommendationCard header span {
-  color: #6c39a8;
+  color: var(--paw-link);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -41,7 +41,7 @@
 }
 
 .hero p {
-  color: #6d6477;
+  color: var(--ui-muted);
   line-height: 1.55;
   margin: 0;
   max-width: 760px;
@@ -54,10 +54,10 @@
 }
 
 .hero nav a {
-  background: #ffffff;
-  border: 1px solid #dfd4e9;
-  border-radius: 12px;
-  color: #3c1f60;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-brand-wash);
+  border-radius: calc(12px * var(--paw-radius-scale));
+  color: var(--ui-ink);
   font-weight: 700;
   padding: 10px 13px;
   text-decoration: none;
@@ -73,9 +73,9 @@
 .metrics article,
 .queuePanel,
 .recommendations {
-  background: #ffffff;
-  border: 1px solid #e4dbea;
-  border-radius: 18px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
   box-shadow: 0 16px 44px rgba(54, 29, 85, 0.06);
 }
 
@@ -85,7 +85,7 @@
 
 .metrics article span,
 .metrics article small {
-  color: #716879;
+  color: var(--ui-muted);
   display: block;
 }
 
@@ -113,7 +113,7 @@
 
 .sectionHeader {
   align-items: flex-end;
-  border-bottom: 1px solid #eee8f2;
+  border-bottom: 1px solid var(--ui-canvas);
   display: flex;
   gap: 16px;
   justify-content: space-between;
@@ -126,7 +126,7 @@
 }
 
 .sectionHeader small {
-  color: #776f80;
+  color: var(--ui-muted);
 }
 
 .queueHead,
@@ -137,9 +137,9 @@
 }
 
 .queueHead {
-  background: #faf8fc;
-  border-bottom: 1px solid #eee8f2;
-  color: #7a7084;
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-canvas);
+  color: var(--paw-link);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -149,7 +149,7 @@
 
 .queueRow {
   align-items: center;
-  border-bottom: 1px solid #f0ebf4;
+  border-bottom: 1px solid var(--ui-canvas);
   padding: 15px 22px;
 }
 
@@ -169,7 +169,7 @@
 
 .queueRow span,
 .queueRow small {
-  color: #746b7d;
+  color: var(--ui-muted);
   line-height: 1.35;
   margin-top: 4px;
 }
@@ -188,9 +188,9 @@
 }
 
 .workType {
-  background: #f3edf9;
+  background: var(--ui-canvas);
   border-radius: 999px;
-  color: #5f2d97 !important;
+  color: var(--paw-link) !important;
   display: inline-block !important;
   font-size: 11px;
   font-weight: 800;
@@ -210,18 +210,18 @@
 }
 
 .safetyAllowed {
-  background: #e9f8ef;
-  color: #176238 !important;
+  background: var(--ui-canvas);
+  color: var(--ui-ink) !important;
 }
 
 .safetySuppressed {
-  background: #fbeaea;
-  color: #982f36 !important;
+  background: var(--ui-canvas);
+  color: var(--paw-link) !important;
 }
 
 .safetyReview {
-  background: #fff3dc;
-  color: #8b5b09 !important;
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink) !important;
 }
 
 .recommendationGrid {
@@ -232,8 +232,8 @@
 }
 
 .recommendationCard {
-  border: 1px solid #e7dfec;
-  border-radius: 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -254,9 +254,9 @@
 }
 
 .recommendationCard header em {
-  background: #f2ebfa;
+  background: var(--ui-canvas);
   border-radius: 999px;
-  color: #5c2d91;
+  color: var(--paw-link);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
@@ -265,8 +265,8 @@
 }
 
 .householdLine {
-  background: #faf8fc;
-  border-radius: 10px;
+  background: var(--ui-surface);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 10px 12px;
 }
 
@@ -276,7 +276,7 @@
 }
 
 .householdLine span {
-  color: #756c7e;
+  color: var(--ui-muted);
   font-size: 12px;
   margin-top: 3px;
 }
@@ -288,12 +288,12 @@
 }
 
 .recommendationFacts div {
-  border-left: 3px solid #ded0ec;
+  border-left: 3px solid var(--ui-brand-wash);
   padding-left: 11px;
 }
 
 .recommendationFacts dt {
-  color: #766d7f;
+  color: var(--ui-muted);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -312,18 +312,18 @@
 }
 
 .reasonChips span {
-  background: #f4f0f7;
+  background: var(--ui-canvas);
   border-radius: 999px;
-  color: #685c73;
+  color: var(--paw-link);
   font-size: 10px;
   font-weight: 700;
   padding: 5px 7px;
 }
 
 .primaryAction {
-  background: #4b168c;
+  background: var(--ui-brand-deep);
   border: 0;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--paw-radius-scale));
   color: #ffffff;
   display: block;
   font-weight: 800;
@@ -334,15 +334,15 @@
 }
 
 .recommendationDisabled {
-  background: #f5f4f6;
+  background: var(--ui-canvas);
   filter: grayscale(0.78);
   opacity: 0.72;
 }
 
 .suppressionBanner {
-  background: #eee9ef;
-  border: 1px solid #d7cedb;
-  border-radius: 10px;
+  background: var(--ui-canvas);
+  border: 1px solid var(--ui-line);
+  border-radius: calc(10px * var(--paw-radius-scale));
   margin-top: auto;
   padding: 10px 11px;
 }
@@ -353,12 +353,12 @@
 }
 
 .suppressionBanner strong {
-  color: #742d39;
+  color: var(--paw-link);
   font-size: 12px;
 }
 
 .suppressionBanner span {
-  color: #6f6674;
+  color: var(--ui-muted);
   font-size: 11px;
   line-height: 1.4;
   margin-top: 4px;
@@ -366,9 +366,9 @@
 
 .state,
 .emptyState {
-  border: 1px dashed #d9cde4;
-  border-radius: 14px;
-  color: #6f6677;
+  border: 1px dashed var(--ui-brand-line);
+  border-radius: var(--paw-card-radius);
+  color: var(--ui-muted);
   margin: 18px 0;
   padding: 24px;
   text-align: center;
@@ -396,7 +396,7 @@
 }
 
 .footnote {
-  color: #756c7e;
+  color: var(--ui-muted);
   font-size: 11px;
   line-height: 1.5;
   margin: 14px 4px 0;
@@ -451,11 +451,11 @@
 :global([data-staff-module]) .shell {
     background: radial-gradient(circle at top right, rgba(111, 62, 178, 0.12), transparent 34rem),
     var(--staff-raised, #f6f3fa) !important;
-    color: var(--staff-primary, #24133f) !important;
-    font-family: inherit !important
+    color: var(--paw-link) !important;
+    font-family: var(--paw-font) !important
 }
 :global([data-staff-module]) .hero span, :global([data-staff-module]) .sectionHeader span, :global([data-staff-module]) .recommendationCard header span {
-    color: var(--staff-primary, #6c39a8) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .hero p {
@@ -464,7 +464,7 @@
 :global([data-staff-module]) .hero nav a {
     background: var(--staff-surface, #ffffff) !important;
     border: 1px solid var(--staff-line, #dfd4e9) !important;
-    color: var(--staff-primary, #3c1f60) !important
+    color: var(--paw-link) !important
 }
 :global([data-staff-module]) .metrics article, :global([data-staff-module]) .queuePanel, :global([data-staff-module]) .recommendations {
     background: var(--staff-surface, #ffffff) !important;
@@ -502,7 +502,7 @@
 }
 :global([data-staff-module]) .workType {
     background: var(--staff-raised, #f3edf9) !important;
-    color: var(--staff-primary, #5f2d97) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .safetyAllowed, :global([data-staff-module]) .safetySuppressed, :global([data-staff-module]) .safetyReview {
@@ -525,7 +525,7 @@
 }
 :global([data-staff-module]) .recommendationCard header em {
     background: var(--staff-raised, #f2ebfa) !important;
-    color: var(--staff-primary, #5c2d91) !important;
+    color: var(--paw-link) !important;
     font-size: 13px !important
 }
 :global([data-staff-module]) .householdLine {

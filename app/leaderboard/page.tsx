@@ -8,7 +8,7 @@ type Train={rank:number;trainerId:string;orderValue:number;meetGreetConversions:
 type Board={asOf:number;monthStart:string;metric:string;employees:Emp[];groomers:Groom[];trainers:Train[];counts:{employees:number;groomers:number;trainers:number}};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E"};
+const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",panel2:"var(--paw-raised)",line:"var(--paw-line)",orange:"var(--paw-gold)",purple:"var(--paw-primary)",gold:"var(--paw-gold)"};
 const METRICS=[["net_collected_revenue","Net collected"],["booking_conversions","Conversions"],["qualified_leads","Qualified leads"],["first_response_rate","First response %"]];
 const medal=(r:number)=>r===1?"🥇":r===2?"🥈":r===3?"🥉":`#${r}`;
 
@@ -18,12 +18,12 @@ export default function LeaderboardPage(){
   const[data,setData]=useState<Board|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(true),[metric,setMetric]=useState("net_collected_revenue");
   useEffect(()=>{let active=true;void loadBoard(metric).then(x=>{if(active){setData(x);setError("");}}).catch(e=>{if(active)setError(e instanceof Error?e.message:String(e));}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[metric]);
 
-  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18,marginTop:14};
+  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18,marginTop:14};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:C.gold,margin:"0 0 12px"};
   const th:React.CSSProperties={padding:"7px 10px",color:C.dim,textAlign:"left",fontWeight:600};
-  const rankCell=(r:number):React.CSSProperties=>({padding:"7px 10px",fontWeight:800,fontSize:r<=3?18:14,color:r===1?C.gold:r===2?"#cbd5cf":r===3?C.orange:C.ink,width:56});
+  const rankCell=(r:number):React.CSSProperties=>({padding:"7px 10px",fontWeight:800,fontSize:r<=3?18:14,color:r===1?C.gold:r===2?"var(--paw-muted)":r===3?C.orange:C.ink,width:56});
 
-  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif"}}>
+  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"var(--paw-font, system-ui)"}}>
     <div style={{maxWidth:1080,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/me" style={{color:C.dim,textDecoration:"none"}}>← My workspace</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · LIVE LEADERBOARD</p>
@@ -32,7 +32,7 @@ export default function LeaderboardPage(){
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading the leaderboard…</p>:null}
 
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"14px 0"}}>{METRICS.map(([k,label])=><button key={k} onClick={()=>setMetric(k)} style={{padding:"8px 14px",borderRadius:999,border:`1px solid ${metric===k?C.orange:C.line}`,background:metric===k?C.orange:"transparent",color:metric===k?"#01261F":C.ink,fontWeight:700,cursor:"pointer"}}>{label}</button>)}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"14px 0"}}>{METRICS.map(([k,label])=><button key={k} onClick={()=>setMetric(k)} style={{padding:"8px 14px",borderRadius:999,border:`1px solid ${metric===k?C.orange:C.line}`,background:metric===k?C.orange:"transparent",color:metric===k?"var(--ui-on-gold)":C.ink,fontWeight:700,cursor:"pointer"}}>{label}</button>)}</div>
 
       <section style={card}>
         <h2 style={h2}>Employees · {data?.counts.employees||0}</h2>

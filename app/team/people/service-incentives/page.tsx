@@ -23,10 +23,10 @@ async function loadResult(kind: Kind, employeeId: string, monthStart: string) {
   return p;
 }
 
-const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: 14, padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
-const label: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 700, color: "var(--staff-primary)", marginBottom: 4, marginTop: 10 };
-const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid var(--staff-line)", borderRadius: 8, fontSize: 15 };
-const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: 8, background: "var(--staff-primary)", color: "var(--staff-on-primary)", fontWeight: 700, fontSize: 15, cursor: "pointer" };
+const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
+const label: React.CSSProperties = { display: "block", fontSize: 14, fontWeight: 700, color: "var(--paw-link)", marginBottom: 4, marginTop: 10 };
+const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid var(--staff-line)", borderRadius: "calc(8px * var(--paw-radius-scale))", fontSize: 15 };
+const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: "calc(8px * var(--paw-radius-scale))", background: "var(--staff-primary)", color: "var(--staff-on-primary)", fontWeight: 700, fontSize: 15, cursor: "pointer" };
 const row: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 };
 
 function Field({ text, onChange, placeholder }: { text: string; onChange: (v: string) => void; placeholder: string }) {
@@ -69,9 +69,9 @@ export default function ServiceIncentivesPage() {
 
   return (
     <StaffModule><main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "inherit", color: "var(--staff-text)" }}>
-      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "var(--staff-primary)", color: "var(--staff-on-primary)", padding: "11px 18px", borderRadius: 10, fontSize: 15, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
+      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "var(--staff-primary)", color: "var(--staff-on-primary)", padding: "11px 18px", borderRadius: "calc(10px * var(--paw-radius-scale))", fontSize: 15, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--staff-primary)" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--paw-link)" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Groomer / Trainer / Sales incentive engine</h1>
         <p style={{ maxWidth: 900, color: "var(--staff-muted)" }}>
           Real, governed calculation - matches the published rate sheets exactly, sourced from real completed bookings.
@@ -81,7 +81,7 @@ export default function ServiceIncentivesPage() {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         {(["groomer", "trainer", "sales"] as Kind[]).map((k) => (
-          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: tab === k ? "2px solid var(--staff-primary)" : "1px solid var(--staff-line)", background: tab === k ? "var(--staff-raised)" : "var(--staff-surface)", color: "var(--staff-primary)", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
+          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: "calc(8px * var(--paw-radius-scale))", border: tab === k ? "2px solid var(--staff-primary)" : "1px solid var(--staff-line)", background: tab === k ? "var(--staff-raised)" : "var(--staff-surface)", color: "var(--paw-link)", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
         ))}
       </div>
 
@@ -92,7 +92,7 @@ export default function ServiceIncentivesPage() {
           <div><span style={label}>Month (YYYY-MM-01)</span><Field text={lookupMonth} onChange={setLookupMonth} placeholder="2026-08-01" /></div>
         </div>
         <button style={btn} onClick={runLookup}>Load {tab} breakdown</button>
-        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "var(--staff-raised)", borderRadius: 8, fontSize: 14, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
+        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "var(--staff-raised)", borderRadius: "calc(8px * var(--paw-radius-scale))", fontSize: 14, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
       </section>
 
       {tab === "groomer" && (

@@ -5,8 +5,8 @@ type Structure={id:string;structure_code:string;version:number;status:string;com
 type Employee={id:string;employee_code:string;display_name:string};
 type Props={structures:Structure[];employees:Employee[];capabilities?:{configure:boolean;calculate:boolean};onSaved:()=>Promise<void>};
 const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
-const inputStyle={display:"block",width:"100%",minHeight:44,padding:10,border:"1px solid var(--staff-line)",borderRadius:8,background:"var(--staff-surface)",color:"var(--staff-text)"};
-const card={border:"1px solid var(--staff-line)",borderRadius:12,padding:16,marginBottom:16};
+const inputStyle={display:"block",width:"100%",minHeight:44,padding:10,border:"1px solid var(--staff-line)",borderRadius:"calc(8px * var(--paw-radius-scale))",background:"var(--staff-surface)",color:"var(--staff-text)"};
+const card={border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:16,marginBottom:16};
 function componentsOf(structure?:Structure):Component[]{try{const items=JSON.parse(structure?.components_json||"[]");return Array.isArray(items)?items:[];}catch{return[];}}
 export default function PayrollSetupPanel({structures,employees,capabilities,onSaved}:Props){
  const[code,setCode]=useState(""),[effective,setEffective]=useState(today),[components,setComponents]=useState<Component[]>([{code:"BASIC",label:"Basic salary",kind:"earning",amount:0}]);

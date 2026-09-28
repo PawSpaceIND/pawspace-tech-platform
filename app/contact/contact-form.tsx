@@ -30,4 +30,4 @@ export default function ContactForm({initial}:{initial?:{name?:string;phone?:str
   </form>;
 }
 
-const inputStyle:React.CSSProperties={display:"block",width:"100%",marginTop:6,padding:"11px 13px",borderRadius:10,border:"1px solid var(--ps-border)",font:"inherit",background:"#fff"};
+const inputStyle:React.CSSProperties={display:"block",width:"100%",marginTop:6,padding:"11px 13px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"1px solid var(--ps-border)",font:"inherit",background:"var(--paw-surface)"};

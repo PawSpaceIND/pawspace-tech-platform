@@ -167,7 +167,7 @@ test("Appearance selections persist across V2 navigation, reload and system disp
   const trigger = page.getByRole('button', {name: 'Change PawSpace appearance'});
   await trigger.click();
   const dialog = page.getByRole('dialog', {name: 'Make PawSpace yours.'});
-  await dialog.getByRole('radio', {name: /Brand book/}).check();
+  await dialog.getByRole('radio', {name: /Brand Purple \+ Gold/}).check();
   await dialog.getByRole('radio', {name: /Professional/}).check();
   await dialog.getByRole('radio', {name: /^dark$/i}).check();
   await dialog.getByRole('button', {name: 'Done', exact: true}).click();
@@ -175,8 +175,21 @@ test("Appearance selections persist across V2 navigation, reload and system disp
   await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'signature');
   await expect(page.locator('html')).toHaveAttribute('data-paw-style', 'professional');
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'dark');
-  await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(25, 19, 34)');
-  await expect(page.locator('main section').first()).toHaveCSS('background-color', 'rgb(50, 22, 79)');
+  const darkPalette = await page.locator('main').evaluate(main => {
+    const resolve = (value: string) => {
+      const probe = document.createElement('span'); probe.style.color = value; main.appendChild(probe);
+      const color = getComputedStyle(probe).color; probe.remove(); return color;
+    };
+    const mainStyle = getComputedStyle(main), section = main.querySelector('section')!;
+    return {
+      background: mainStyle.backgroundColor,
+      expectedBackground: resolve('var(--brand-bg)'),
+      hero: getComputedStyle(section).backgroundColor,
+      expectedHero: resolve('var(--brand-hero)'),
+    };
+  });
+  expect(darkPalette.background).toBe(darkPalette.expectedBackground);
+  expect(darkPalette.hero).toBe(darkPalette.expectedHero);
   await trigger.click(); await dialog.getByRole('radio', {name: /^system$/i}).check();
   await dialog.getByRole('button', {name: 'Done', exact: true}).click();
   await page.emulateMedia({colorScheme: 'light'});
@@ -222,7 +235,7 @@ test('Switching visual styles preserves the current Training form and sends no b
  const mutations:string[]=[];page.on('request',r=>{if(r.method()==='POST'&&/booking|payment|scheduling/.test(r.url()))mutations.push(r.url());});
  await page.getByRole('button',{name:'Change PawSpace appearance'}).click();
  const dialog=page.getByRole('dialog',{name:'Make PawSpace yours.'});
- await dialog.getByRole('radio',{name:/Fun/}).check();await dialog.getByRole('radio',{name:/Brand book/}).check();
+ await dialog.getByRole('radio',{name:/Fun/}).check();await dialog.getByRole('radio',{name:/Brand Purple \+ Gold/}).check();
  await dialog.getByRole('button',{name:'Done',exact:true}).click();
  await expect(date).toHaveValue('2026-10-15');await expect(page.locator('html')).toHaveAttribute('data-paw-style','cartoon');
  await expect(page.locator('html')).toHaveAttribute('data-paw-theme','signature');expect(mutations).toEqual([]);

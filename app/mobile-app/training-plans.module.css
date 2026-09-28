@@ -11,24 +11,24 @@
   min-width: 0;
   padding: 14px;
   overflow: hidden;
-  border: 1px solid #ded5e4;
-  border-radius: 16px;
-  background: #fff;
-  color: #2f2039;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   text-align: left;
   box-shadow: 0 5px 16px rgba(47, 25, 64, 0.07);
   cursor: pointer;
 }
 
 .card:focus-visible {
-  outline: 3px solid rgba(105, 35, 170, 0.25);
+  outline: 3px solid color-mix(in srgb, var(--ui-brand-primary) 25%, transparent);
   outline-offset: 2px;
 }
 
 .selected {
-  border: 2px solid #2d103f;
+  border: 2px solid var(--ui-brand-deep);
   padding: 13px;
-  background: #281038;
+  background: var(--ui-brand-deep);
   color: #fff;
   box-shadow: 0 10px 26px rgba(42, 15, 59, 0.22);
 }
@@ -49,13 +49,13 @@
 .badge {
   width: max-content;
   max-width: 100%;
-  color: #7227b3;
+  color: var(--paw-link);
   font-size: 7px;
   font-weight: 900;
   letter-spacing: 0.08em;
 }
 
-.selected .badge { color: #d6c1e3; }
+.selected .badge { color: var(--ui-on-primary); }
 
 .header h4 {
   margin: 0;
@@ -67,22 +67,22 @@
 
 .price {
   flex: 0 0 auto;
-  color: #6723a8;
+  color: var(--paw-link);
   font-size: 17px;
   line-height: 1.1;
   white-space: nowrap;
 }
 
-.selected .price { color: #ffd466; }
+.selected .price { color: var(--ui-soft-ink); }
 
 .description {
   margin: 7px 0 11px;
-  color: #706477;
+  color: var(--ui-muted);
   font-size: 8px;
   line-height: 1.45;
 }
 
-.selected .description { color: #d6c6df; }
+.selected .description { color: var(--ui-on-primary); }
 
 .metrics {
   display: grid;
@@ -95,15 +95,15 @@
   gap: 2px;
   min-width: 0;
   padding: 8px;
-  border-radius: 10px;
-  background: #f3edf6;
-  color: #75677d;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   font-size: 6.5px;
   line-height: 1.3;
 }
 
 .metrics b {
-  color: #34243e;
+  color: var(--ui-ink);
   font-size: 8px;
 }
 
@@ -114,8 +114,8 @@
 }
 
 .selected .metrics > span {
-  background: rgba(255, 255, 255, 0.08);
-  color: #cdbbd7;
+  background: color-mix(in srgb, var(--ui-surface) 8%, transparent);
+  color: var(--ui-soft-ink);
 }
 
 .selected .metrics b { color: #fff; }
@@ -123,19 +123,19 @@
 .includes {
   display: block;
   margin-top: 10px;
-  color: #7a6d81;
+  color: var(--paw-link);
   font-size: 6.5px;
   line-height: 1.45;
 }
 
-.selected .includes { color: #cdbbd7; }
+.selected .includes { color: var(--ui-soft-ink); }
 
 .expanded {
   display: grid;
   gap: 7px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid color-mix(in srgb, var(--ui-surface) 14%, transparent);
 }
 
 .expanded p {
@@ -153,18 +153,18 @@
 
 .outcomes em {
   padding: 4px 6px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #d9cae2;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: color-mix(in srgb, var(--ui-surface) 8%, transparent);
+  color: var(--ui-on-primary);
   font-size: 6.5px;
   font-style: normal;
 }
 
 .expanded > small {
   padding: 6px 8px;
-  border-radius: 8px;
-  background: #fff0bd;
-  color: #745000;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink);
   font-size: 6.5px;
   font-weight: 900;
 }
@@ -176,10 +176,10 @@
   gap: 6px;
   margin-top: 11px;
   padding: 9px;
-  border: 1px solid #d9cde1;
-  border-radius: 10px;
-  background: #faf7fc;
-  color: #01261F;
+  border: 1px solid var(--ui-brand-line);
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   font-size: 7.5px;
   font-weight: 900;
 }
@@ -196,9 +196,9 @@
 }
 
 .selected .action {
-  border-color: #ffd466;
-  background: #ffd466;
-  color: #2c103d;
+  border-color: var(--ui-gold-soft);
+  background: var(--ui-gold-soft);
+  color: var(--ui-on-gold);
 }
 
 @media (max-width: 420px) {

@@ -64,7 +64,7 @@ test('the frame only reads navigation identity and never writes business state',
 });
 test('brand typography and theme selectors are staff-scoped',()=>{
  const css=read('app/components/staff-workspace/staff-workspace.module.css');
- assert.match(css,/PawSpaceStaffNunito/); assert.match(css,/#01261f/i);assert.match(css,/#e6b34e/i);
+ assert.match(css,/PawSpaceStaffNunito/); assert.match(css,/--staff-primary:var\(--paw-deep\)/);assert.match(css,/--staff-gold:var\(--paw-gold\)/);
  assert.match(css,/#894aed/i);assert.match(css,/#ffaf00/i);
  assert.doesNotMatch(css,/:root|(?:^|\})\s*body\s*\{/);
  for(const selector of css.matchAll(/:global\([^)]*\)[^{]+/g))assert.match(selector[0],/\.frame/);

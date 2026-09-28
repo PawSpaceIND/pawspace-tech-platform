@@ -7,6 +7,7 @@ import "./brand-lock.css";
 import "./prototype-convergence.css";
 import "./mascot-polish.css";
 import "./brand-book-theme.css";
+import "./pawspace-design-system.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
 import OrderNotificationCenter from "./components/order-notification-center";
 import PawSpaceAppearance from "./components/pawspace-appearance";

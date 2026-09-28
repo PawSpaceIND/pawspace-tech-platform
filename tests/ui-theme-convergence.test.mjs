@@ -20,9 +20,10 @@ test("UI-THEME-02: every standalone customer service route is under the shared p
 
 test("UI-THEME-03: the shared theme covers governed Grooming and canonical brand tokens", async () => {
   const theme = await read("app/unified-pawspace-theme.css");
-  assert.match(theme, /--psu-emerald:#01261f/i);
-  assert.match(theme, /--psu-gold:#e6b34e/i);
-  assert.match(theme, /--psu-ivory:#fffdf8/i);
+  const tokens = await read("app/pawspace-design-system.css");
+  assert.match(tokens, /--paw-primary:#01261f/i);
+  assert.match(tokens, /--paw-gold:#e6b34e/i);
+  assert.match(tokens, /--psu-ivory:var\(--paw-bg\)/);
   assert.match(theme, /\.app-shell>\.hero/);
   for (const route of routes) assert.match(theme, new RegExp(`\\.ps-${route}`), `theme must explicitly cover ${route}`);
 });
