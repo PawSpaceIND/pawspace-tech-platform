@@ -115,12 +115,16 @@ export default function FinanceCompliancePage(){
       <p><Button size="sm" variant="secondary" disabled={busy} onClick={()=>void act({action:"compute_tds"},"TDS recomputed from payroll + payouts")}>Recompute from source data</Button>
       {data.tds.deposit?<small style={{marginLeft:10}}>Deposited: {money(data.tds.deposit.amount)} · challan {data.tds.deposit.challan_reference}</small>
       :<Button size="sm" variant="secondary" disabled={busy||!close||close.tds.total<=0} onClick={()=>{const challan=window.prompt("ITNS-281 challan reference?");if(challan)void act({action:"record_tds_deposit",challanReference:challan,amount:close?.tds.total},"TDS deposit recorded");}}>Record deposit ({money(close?.tds.total??0)})</Button>}</p>
-      <div style={{display:"grid",gap:4,fontSize:14}}>
-        <div style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 80px 1fr 1fr",gap:8,fontWeight:700,color:"var(--ds-text-muted)"}}><span>Section</span><span>Deductee</span><span>Base</span><span>Rate</span><span>TDS</span><span>PAN</span></div>
-        {data.tds.deductions.length===0&&<p>No deductions computed for this period yet.</p>}
-        {data.tds.deductions.map((row,index)=><div key={index} style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 80px 1fr 1fr",gap:8,padding:"4px 0",borderBottom:"1px solid var(--ds-border)"}}>
-          <span>{row.section}</span><span>{row.deductee_id}</span><span>{money(row.base_amount)}</span><span>{row.section==="192"?"slab":`${row.rate_pct}%`}</span><span>{money(row.tds_amount)}</span><span style={{color:row.pan_status==="verified"?"inherit":"#b57400"}}>{row.pan_status.replaceAll("_"," ")}</span>
-        </div>)}
+      <div className={styles.tableWrap} role="region" aria-label="TDS deductions table; scroll horizontally for all columns" tabIndex={0}>
+        <table className={styles.table}>
+          <thead><tr>{["Section","Deductee","Base","Rate","TDS","PAN"].map(heading=><th key={heading} scope="col">{heading}</th>)}</tr></thead>
+          <tbody>
+            {data.tds.deductions.length===0&&<tr><td colSpan={6}>No deductions computed for this period yet.</td></tr>}
+            {data.tds.deductions.map((row,index)=><tr key={index}>
+              <td>{row.section}</td><td>{row.deductee_id}</td><td>{money(row.base_amount)}</td><td>{row.section==="192"?"slab":`${row.rate_pct}%`}</td><td>{money(row.tds_amount)}</td><td style={{color:row.pan_status==="verified"?"inherit":"var(--ds-warning-600)"}}>{row.pan_status.replaceAll("_"," ")}</td>
+            </tr>)}
+          </tbody>
+        </table>
       </div>
       <h3>Quarterly returns</h3>
       <p><Button size="sm" variant="secondary" disabled={busy} onClick={()=>{const fy=window.prompt("FY label (e.g. FY2026-27)?");const quarter=Number(window.prompt("Quarter (1-4)?"));const form=window.prompt("Form (24Q or 26Q)?");if(fy&&quarter&&form)void act({action:"prepare_tds_return",fyLabel:fy,quarter,form:form.toUpperCase()},"Quarterly return prepared");}}>Prepare quarterly return</Button></p>

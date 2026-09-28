@@ -218,7 +218,7 @@ export default function AiHandoffPage() {
             display: "grid",
             gridTemplateColumns: "minmax(320px,.8fr) minmax(540px,1.4fr)",
             gap: 16,
-          }} data-staff-grid="split"
+          }} data-staff-grid="split" data-audit-list-detail="true"
         >
           <aside style={{ ...box, overflow: "hidden" }}>
             <div style={{ padding: 16, borderBottom: "1px solid var(--staff-line)" }}>

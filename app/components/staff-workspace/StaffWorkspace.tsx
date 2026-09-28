@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { activeStaffLink, visibleStaffGroups, type StaffActor } from "./navigation";
 import styles from "./staff-workspace.module.css";
+import visual from "./visual-audit-closure.module.css";
 import {currentNavigationSnapshot, type NavigationSnapshot} from "./display-state";
 
 /** Presentation frame only. Existing page state, API requests and actions remain children. */
@@ -16,6 +17,14 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
   const [attempt, setAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const utilityRef = useRef<HTMLDivElement>(null);
+  // Keep the destination untouched until this boundary has hydrated.
+  useEffect(() => {
+    const slot = utilityRef.current;
+    if (!slot) return;
+    slot.dataset.pawAppearanceReady = "true";
+    return () => { delete slot.dataset.pawAppearanceReady; };
+  }, []);
   const currentNavigation = currentNavigationSnapshot(navigationSnapshot, pathname, attempt);
   const actor = suppliedActor === undefined ? currentNavigation?.actor ?? null : suppliedActor;
   const navigationError = currentNavigation?.error ?? "";
@@ -52,7 +61,7 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
     return () => abort.abort();
   }, [suppliedActor, pathname, attempt]);
 
-  return <div className={styles.frame} data-staff-workspace="true">
+  return <div className={`${styles.frame} ${visual.scope}`} data-staff-workspace="true">
     <a href="#staff-workspace-content" className={styles.skip}>Skip to workspace</a>
     <div className={styles.mobileBar}>
       <Link href="/team">PawSpace Team</Link>
@@ -78,6 +87,6 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
         <details><summary>Other experiences</summary><Link href="/">Customer home</Link><Link href="/v2">Customer app</Link><Link href="/v2/employee">Employee workspace</Link><Link href="/partner">Partner workspace</Link><Link href="/v2/partner">V2 Partner workspace</Link></details>
       </div>
     </aside>
-    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}>{staffSignInNeeded && <p className={styles.signInNotice} role="alert">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>
+    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}><div ref={utilityRef} className={visual.utility} data-paw-appearance-slot="staff" />{staffSignInNeeded && <p className={styles.signInNotice} role="alert">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>
   </div>;
 }

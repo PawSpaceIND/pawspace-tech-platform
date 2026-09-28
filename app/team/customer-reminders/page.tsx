@@ -109,7 +109,7 @@ export default function CustomerRemindersPage() {
     {totals.length ? <section className={styles.panel}>
       <div className={styles.panelHead}><h2>Outcomes by reminder type</h2></div>
       <p className={styles.panelNote}>A suppression is not a failure: it means that customer had already been reminded for the current cycle, which is exactly what stops a five-minute sweep from messaging someone twelve times an hour.</p>
-      <div className={styles.tableWrap}><table className={styles.table}>
+      <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
         <thead><tr><th>Reminder</th><th className={styles.numeric}>Queued</th><th className={styles.numeric}>Suppressed</th><th>Last activity</th></tr></thead>
         <tbody>{totals.map((row) => <tr key={row.reminder_type}>
           <td>{words(row.reminder_type)}</td>
@@ -125,7 +125,7 @@ export default function CustomerRemindersPage() {
       {shown.length === 0 ? <EmptyState
         title={events.length ? `No ${filter} events in the last 100` : "No sweep has run yet"}
         body={events.length ? "Switch the filter to see the other outcome." : "The scheduler runs every five minutes; you can also run a sweep now from the panel above."}
-      /> : <div className={styles.tableWrap}><table className={styles.table}>
+      /> : <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
         <thead><tr><th>When</th><th>Reminder</th><th>Customer</th><th>Outcome</th></tr></thead>
         <tbody>{shown.map((event) => <tr key={event.id}>
           <td><small>{when(event.created_at)}</small></td>

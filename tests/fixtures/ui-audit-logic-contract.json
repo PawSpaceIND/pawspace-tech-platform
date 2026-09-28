@@ -1,0 +1,28 @@
+{
+  "base": "89d483d971b1ca1ceeaeb96bbff91898168081f2",
+  "presentationFrames": [
+    "app/components/pawspace-appearance.tsx",
+    "app/components/staff-workspace/StaffWorkspace.tsx"
+  ],
+  "files": {
+    "app/me/page.tsx": "cb7451b872d14e48522f1d03a8ed95f33079446f47d3b7a37d814722ccbf9f48",
+    "app/team/ai/atlas-chat.tsx": "b908247058eb6f834042cc9fcf8e6f05328c29246b53ecca818d0cd97e2520eb",
+    "app/team/ai/handoff/page.tsx": "a711c74610e6dcb9d58dfc17f0997c4f682841efde5f13779a0a4d69e942ae56",
+    "app/team/customer-reminders/page.tsx": "6cb73817520e9dc8d5136a43e15d75536304d3aceb24c33851c885e1b090e6b3",
+    "app/team/finance-compliance/page.tsx": "95e2704f5366b84bf48d60ad477759dabcd1f03761435d40f31fa85781772365",
+    "app/team/finance/boarding/boarding-finance-workspace.tsx": "69d4b410ceecd6091efad71bda960cde672cedf757b152d889a3cf9112c5d3d6",
+    "app/team/finance/finance-ledger.tsx": "9719d9413c7203f0921476615344722658bbd2059af4511efb0606c9b096c15d",
+    "app/team/finance/reconciliation/reconciliation-workspace.tsx": "62b1180c3969657d51c5f4e5311fb3328aea79f41969439f4ff98efe2d5e694d",
+    "app/team/finance/statutory/page.tsx": "47921356c8442e869c1d0cec4708d7fb07acf602f51bbe617c10d2f68233238e",
+    "app/team/lifecycle-reminders/page.tsx": "83e45f7bf22077864931c7262484651b90fbbac57d5ced0afaec0ca791e86d6f",
+    "app/team/marketing/page.tsx": "36c4f6882fe721ddd46092a05e513217c0e5cd510bad2b84e5feb5776f269f8c",
+    "app/team/meet-and-greet/page.tsx": "900ec2b5c9c8b1f8480833a7131e4b958102d672e65d8723ba209fa7a5d823e4",
+    "app/team/people/finance/page.tsx": "4d5089c2c7981e6b3b742a269d34eb5ae73f77874fda485f5535104d3bb8d2b3",
+    "app/team/provider-onboarding/page.tsx": "2685ab40019dad57d086d8a08f54c079d142e22721a5620009964c6d5997536c",
+    "app/team/subscription-plans/page.tsx": "4b8f4a564396754e6a1a8552507c8618c4e1f4283f61fda34b0bf4ae189c4ba4",
+    "app/team/subscriptions/page.tsx": "faee60e6327db6a215ecbe6182e285070a69d33e19bdfd401e91f26c57966f44",
+    "app/components/ui/TeamShell.tsx": "948f0588199678daf95cdf0d1ad829475673f426cfc2dd10289026095a06e5c7",
+    "app/team/whatsapp/templates/page.tsx": "68e3de735c5a880e69ce3e95f237cb217a7f0f898b75c46c419e2973e3c90f54",
+    "app/team/finance/training/page.tsx": "5f6b953a38fbe88225ece602e3131bb871ea478518fd53e9f9c4de47f4589abd"
+  }
+}

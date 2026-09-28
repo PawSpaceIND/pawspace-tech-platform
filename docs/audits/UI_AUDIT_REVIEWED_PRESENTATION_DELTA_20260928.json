@@ -1,0 +1,135 @@
+{
+  "base": "d8ad4a321cc6277b072c82fb1297f4cad0af9dc4",
+  "review": "UI source review with original-program and original-event guards; hosted sign-off is pending",
+  "eventContractBase": "89d483d971b1ca1ceeaeb96bbff91898168081f2",
+  "existingFiles": {
+    "app/components/pawspace-appearance.tsx": {
+      "before": "be0452c6172443445b4be395af606f50ba662ac89ec6d6ea814b40f04b32fa29",
+      "after": "26b59e11e9e25420613991e3dcfb545fc61a245a378d1b67784b308e348af34d"
+    },
+    "app/components/staff-workspace/StaffWorkspace.tsx": {
+      "before": "72b8dc89e0a0205b6b4b07a8a52a802837b9bdd12969f10487e1626a8fb93236",
+      "after": "17a8fb4cc17eae8d5424566b962584a9193f0021fa4e0df2043ab8a707f1f432"
+    },
+    "app/components/staff-workspace/staff-module.module.css": {
+      "before": "afb8d1ce8db28af68d7eda7cb851e394cecb773956763004ffd8d808b387a6f2",
+      "after": "42e08f82d15cdaeacdac3823f0f4cd3f5d3d35488bc42e49abd0000b8002d86f"
+    },
+    "app/components/ui/TeamShell.tsx": {
+      "before": "8bd6ac699b72fb33b7653a2a593fa8b1f9944fb4f319e3eb4b3cf50a1df7cd84",
+      "after": "15b88aa7c853bd75e4a7fa9c8bede10b5d4f4b70de415334173b57e566566110"
+    },
+    "app/components/ui/ui.module.css": {
+      "before": "6a96626dd9c970aa163d1da766f8f049f7be786c173929af18c2bf425c82c4e5",
+      "after": "a16bb3afef6b6297171370a136a9c5099b58a6475f162558f1eccd2bcf95c68f"
+    },
+    "app/components/ui/visual-analytics.module.css": {
+      "before": "54d096961f5ca79f532f8f3e69e5beedd017c269d5a66effafeb2efa7be6fc12",
+      "after": "525af43fa6a7a742adb2e08d26b36cafc307081eda6cfce9768dc8eb896668e2"
+    },
+    "app/control/control.module.css": {
+      "before": "4874b13ca8bb5a28d59081f09905430d01c33fc90a38df2c2ef7fa290c59885d",
+      "after": "8f5d6a9d8283e6193d4bd9a5ab47075d2282ea92db7f6195cfe79506f2b76e55"
+    },
+    "app/control/pricing-control-panel.module.css": {
+      "before": "b2a28e6f0f9bb4cf3dae6b20769be4ebe38660fea408b3ec4746e00c959c4d1e",
+      "after": "2db16f4ebccbdc98aa48ed540c91ef7892f98a438ae4c01c34807a88b202c408"
+    },
+    "app/crm/crm.module.css": {
+      "before": "efb533e1bf200f016fce8134efd3aed61ad3eaaacb1852f5cbe4f84969a8c0a2",
+      "after": "5565d3d4fb4900505f5bdfaef10831a0be93acbb3f8b675254dc247b7f1d3fc3"
+    },
+    "app/me/page.tsx": {
+      "before": "508931418086b2d28ffac78d1e9d38ffda7ac6b174367316532fb9836c3222c0",
+      "after": "06bcc7db7701bf49dd96267db72759dd70c4ebc6a0bf8d7d5d5aa6c200ff3160"
+    },
+    "app/pawspace-design-system.css": {
+      "before": "2b0d26c9ced4ee55e48bc9b5a0dd96366468cf4ba7973e38352a6ffffa5718ce",
+      "after": "f02355d727dcc501c8f1d8285ba905c802220ce434c4e86ac9dca22f352d472c"
+    },
+    "app/team/ai/atlas-chat.tsx": {
+      "before": "35f6a3f9f8f7e63b6411622d239057a18cd84545a8036e5d57f8faa1850c6d0a",
+      "after": "07c1e9b452714e5bb7d9774c3c6f92d8d4235e71979700efd995076bc016c7ce"
+    },
+    "app/team/ai/handoff/page.tsx": {
+      "before": "720bb6ac84ba57f6c71a7d7ac956eb7f66e5d9b659495fbe0d4ab0f3ff3ce50e",
+      "after": "2b3ace8c2d1a360028ea208d61d581c1e809da8fe1f9475005fbabe084972581"
+    },
+    "app/team/customer-reminders/page.tsx": {
+      "before": "682a242fa799388e39636cb9b9bedc52f78c770584d1bc8a681a691007da121e",
+      "after": "4a5ef8123dc8cc3e6572d1fc5c5cf0dd37225b6bbbfcfd5b30d5e006c48253ca"
+    },
+    "app/team/finance-compliance/page.tsx": {
+      "before": "8b9bf61557256276f0b84ee1b09e4bc00d34877348a26358be075574bca327f8",
+      "after": "f6ba8fd416e8efc88e627adf6aeb45d73824a20f0013ad5bdc7efe0da296e0d4"
+    },
+    "app/team/finance/boarding/boarding-finance-workspace.tsx": {
+      "before": "985fdd173919ec2cf3e0feee839091b8d796784948cf528d71862f0117ce5599",
+      "after": "25d53a2689e23f7cd3920754499d93d261a28e28a7e219ca5ff6b1b1154e9aac"
+    },
+    "app/team/finance/finance-ledger.tsx": {
+      "before": "50ae68395b3d15bcf3a06e4a5f5e1974dbac51429555b17b2ec28a50308f9af0",
+      "after": "d4659beca252bcb6afb41368a9eee279d5119ae924f3130a5f2d3b5179849ae3"
+    },
+    "app/team/finance/reconciliation/reconciliation-workspace.tsx": {
+      "before": "ae6f601cdbc4fbd6c4285f080109f108110045fa9b20d9cf29b0ac76b6a135fc",
+      "after": "670c2d967965077d390960809bf20de91f2f6e413f61f7946e69f09d81bfc362"
+    },
+    "app/team/finance/statutory/page.tsx": {
+      "before": "c83180df8c7735a8b5514f9e559ebaf77fe20a2f52a2aff55bcac6285d27537e",
+      "after": "b764ec1c493040164dac443974369ea3380304bf2fa04d7cdff49135db10c3f6"
+    },
+    "app/team/lifecycle-reminders/page.tsx": {
+      "before": "b8ca22ab8dcade9e7eb318fe2de18f25a6af67909fb4f904778768d7e7c86c25",
+      "after": "aa539a6667b1e8bba41d4c97a9672bb489b9d86f47a2d6366d299b49d0d2ddbc"
+    },
+    "app/team/marketing/page.tsx": {
+      "before": "fc62b13fac126a0ef863162b81997ace3891c50d25cfa9c13607f578ffe9dfd7",
+      "after": "d06b485c9f18256141b18b879130cfd82438fb02b2947741d7786fa1107598e5"
+    },
+    "app/team/meet-and-greet/page.tsx": {
+      "before": "3be4b0948e979da785f79654cbd9e32f979dadaf785f46f56ef789987ee21638",
+      "after": "2ae3c2b976e64f036c1c3a9fe2f08f157395f49d431c540ae69035e577691e61"
+    },
+    "app/team/operations/live-tracking/live-tracking.module.css": {
+      "before": "93221551f025cd0e48c4b17f8e30d10afc6766d04827e857f9a2d483ff90a62b",
+      "after": "182c9de019e2367086ee545c14636aff5c20c993145ef7ef66764e87c449194a"
+    },
+    "app/team/people/finance/page.tsx": {
+      "before": "19b9cd66d50384f0e02543e1c0fbd0e1390550a053496beff428f5fcc001b466",
+      "after": "190409781a7e0818a20c2ba83f18383b7aa2eec581d394b603c2e6809116f423"
+    },
+    "app/team/performance/performance.module.css": {
+      "before": "298a20476073d184361e07025240c56edd53e88c3077d77ab5d4ae8f6754a300",
+      "after": "f8b051d422ed1b8774ac43792debfa598cdf7422bc6f7fa931007d1aaa2c0b1d"
+    },
+    "app/team/provider-onboarding/page.tsx": {
+      "before": "35a4c8fdb9ac377760a43f8e243ae23fc0188f709cd618db93dcae95cf10d783",
+      "after": "11c5596a35afa7ec969afb723ead09062be395791fc2b5d782d79be99d13aa7e"
+    },
+    "app/team/subscription-plans/page.tsx": {
+      "before": "a723ecef7ba8218a962f8d05ff46367ac7dae3408c623b3ed80918058943b583",
+      "after": "9f61c4f4de8f74956c0156efa496abef3811687091dd3cd2684165122084f687"
+    },
+    "app/team/subscriptions/page.tsx": {
+      "before": "d6d8fe06b31e26beb285ba57d2a2c8c4cd54bc49d4a6ee0a3ac118f44f1507cb",
+      "after": "fb9316ac7a7da3996b0bcbc59d66b2787850dc0f0b6b080c051312b71e4c8a7a"
+    },
+    "app/team/team-console.module.css": {
+      "before": "c486f8b97ee2a73402f6a5472089e8d9d0553939799dbe821e16692d5bfef290",
+      "after": "e5afb83cb40b9412a3c18bc5abae74832442b664b16144fe9007cab81bc49d27"
+    },
+    "app/team/whatsapp/templates/page.tsx": {
+      "before": "2f065537db29bfc65287d1e611d0e61fbeacfa0f55406e44bebd3b8fc5ba5145",
+      "after": "144e8c0e368c5a290930916dfcfc3158b121b902ce548e793754b8f6996bd0ed"
+    },
+    "app/team/finance/training/page.tsx": {
+      "before": "b89cb9a1d78a61e0be99d0e5f2f3eeb4d521628932f1b282dd193f0583d72d04",
+      "after": "4278dfb1a64f10d4567e5a9f1c5554ea62a398bf5187f5312512abab748b846c"
+    }
+  },
+  "newPresentationFiles": {
+    "app/components/ui/ReadableText.tsx": "bdc4a7340fe53f560f6f2749b5880cac491c716b7765ce880eb10b3257000399",
+    "app/components/staff-workspace/visual-audit-closure.module.css": "3ad56b8307784bd4f22a4be76d3c54f2209daabce8704d46c3e3bcf21f259b0c"
+  }
+}

@@ -384,3 +384,8 @@
 :global([data-staff-module]) .signal > i[data-signal-severity="clear"] {
   color:var(--staff-success) !important; background:var(--staff-success-bg) !important;
 }
+
+@media(max-width:600px) {
+ :global([data-staff-module]) .signal { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+ :global([data-staff-module]) .signal > i[data-signal-severity] { grid-column:1/-1; justify-self:start; width:auto; padding:6px 10px; white-space:nowrap; overflow-wrap:normal; }
+}

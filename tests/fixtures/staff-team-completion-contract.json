@@ -35,7 +35,7 @@
       "mainRoots": 1
     },
     "app/team/ai/handoff/page.tsx": {
-      "semantic": "db736fa6014b69df38806f7939d9f2bb6d977df59db4aa7493ce1d106be51614",
+      "semantic": "94cb38a2c9f3f7c6979dcb96a297161ad836c10688a72e398fbe927834ee55ce",
       "mainRoots": 1
     },
     "app/team/ai/page.tsx": {
@@ -83,7 +83,7 @@
       "mainRoots": 1
     },
     "app/team/marketing/page.tsx": {
-      "semantic": "52d5644aaee626ca4f2a7184235934d205a0f28efe8882153db2fe14a6b11a2a",
+      "semantic": "cdd89a125c63f88c87664317e3c21c4c61fe0c9fea7e51f5e6f286a2a01d1cd9",
       "mainRoots": 1
     },
     "app/team/pricing-rules/page.tsx": {
@@ -91,7 +91,7 @@
       "mainRoots": 1
     },
     "app/team/provider-onboarding/page.tsx": {
-      "semantic": "f8d47a28c45d923a38e4343f2cef0886077c864ea9726e6cd1998e218c29183e",
+      "semantic": "113d6f8b72fb16b3b102a44a4c34dd052b7d08454baf839eccc1d3cd5c96b3dc",
       "mainRoots": 1
     },
     "app/team/provider-verification/page.tsx": {
@@ -111,7 +111,7 @@
       "mainRoots": 1
     },
     "app/team/subscriptions/page.tsx": {
-      "semantic": "0faaaddc75f09adf1a21d63ca4d784e8ad622c04ca70e9d6c5ab7225623cb3cd",
+      "semantic": "d5bde4b4f89efc025bdf15793f7f7ab9d2f2da66fabea5466f41d9fb5cc7d6dd",
       "mainRoots": 1
     },
     "app/components/sales/CrossSellCommandCenter.tsx": {

@@ -12,3 +12,6 @@
 .chartTable.chartTable table{min-width:420px;table-layout:auto}
 .table.table :is(th,td),.chartTable.chartTable :is(th,td){white-space:nowrap!important;overflow-wrap:normal}
 .table.table button,.chartTable.chartTable button{white-space:nowrap;overflow-wrap:normal}
+
+.controls.controls select { white-space:nowrap; overflow-wrap:normal; width:100%; }
+@media(max-width:600px) { .controls.controls label { flex:1 1 100%; min-width:0; } }

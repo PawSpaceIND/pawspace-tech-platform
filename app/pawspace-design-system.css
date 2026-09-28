@@ -96,3 +96,16 @@ html[data-paw-theme] .bg-white{background-color:var(--paw-surface)!important}
 .pet-count-row strong{color:var(--paw-text)}
 
 :root,html:root[data-paw-theme],html:root[data-paw-mode]{--paw-gold-ink:var(--ui-on-gold);--paw-feedback-danger-bg:var(--ds-danger-50);--paw-feedback-success:var(--ds-success-600);--paw-feedback-success-bg:var(--ds-success-50);--paw-feedback-warning:var(--ds-warning-600);--paw-feedback-warning-bg:var(--ds-warning-50)}
+
+/* Readable, text-only Atlas formatting; raw HTML remains escaped text. */
+.paw-readable-text { white-space:normal; line-height:1.6; overflow-wrap:anywhere; }
+.paw-readable-text p { margin:8px 0; }
+.paw-readable-text :is(ul,ol) { padding-left:24px; margin:10px 0; }
+.paw-readable-text li { margin:5px 0; }
+.paw-readable-text pre { white-space:pre-wrap; padding:12px; background:var(--paw-raised); border-radius:var(--paw-control-radius); }
+.paw-readable-text code { font-size:.92em; }
+
+/* Text-only Atlas formatting keeps list markers visible after the application reset. */
+.paw-readable-text ul { list-style-type:disc; list-style-position:outside; }
+.paw-readable-text ol { list-style-type:decimal; list-style-position:outside; }
+.paw-readable-text li { display:list-item; }
