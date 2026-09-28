@@ -1,5 +1,5 @@
-import { boundedFetch } from "./bounded-fetch";
-export type QueuedStatus = { id:string;providerId:string;bookingId:string;action:"on_the_way"|"arrived"|"start_service"|"complete";checklist:string[];createdAt:number;error?:string };
+import { boundedFetch, boundedJsonFetch } from "./bounded-fetch";
+export type QueuedStatus = { id:string;providerId:string;bookingId:string;action:"on_the_way"|"arrived"|"start_service"|"complete";checklist:string[];createdAt:number;error?:string;attempts?:number;nextAttemptAt?:number };
 const key=(provider:string)=>`pawspace:partner-status:v1:${encodeURIComponent(provider)}`;
 export function readStatusQueue(provider:string,storage:Pick<Storage,"getItem">=localStorage):QueuedStatus[] {
   const raw=storage.getItem(key(provider));
@@ -29,18 +29,47 @@ const order=["assigned","on_the_way","arrived","in_service","completed"];
 export function statusAlreadyApplied(item:QueuedStatus,status:string) {
   return order.includes(status)&&order.indexOf(status)>=order.indexOf(targets[item.action]);
 }
+export const retryableStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+export function retryAfterMs(value: string | null, now = Date.now()): number {
+  if (!value?.trim()) return 0;
+  const text = value.trim();
+  const delay = /^\d+(?:\.\d+)?$/.test(text) ? Number(text) * 1000 : Date.parse(text) - now;
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+export function deferStatusRetry(item: QueuedStatus, failure: { retryAfterMs?: number }, now = Date.now(), random = Math.random): QueuedStatus {
+  const attempts = Math.min(30, Math.max(0, item.attempts ?? 0) + 1);
+  const backoff = Math.min(60_000, 2 ** Math.min(attempts, 6) * 1000);
+  const jittered = Math.round(backoff * (0.8 + Math.min(1, Math.max(0, random())) * 0.2));
+  const advised = Number.isFinite(failure.retryAfterMs) ? Math.max(0, failure.retryAfterMs ?? 0) : 0;
+  return { ...item, attempts, nextAttemptAt: now + Math.max(jittered, advised) };
+}
 /** Replay only after the authenticated server confirms current assignment. A lost response is reconciled before retry. */
-export async function deliverStatus(item:QueuedStatus,send:typeof boundedFetch=boundedFetch):Promise<void> {
-  const transport:typeof boundedFetch=async(...args)=>{try{return await send(...args);}catch(error){throw Object.assign(error instanceof Error?error:new Error("Connection lost"),{retry:true});}};
-  const current=await transport(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(item.bookingId)}`,{cache:"no-store"});
-  const body=await current.json();
-  if(!current.ok)throw Object.assign(new Error(body.error||"Unable to verify this job"),{retry:current.status>=500||current.status===429});
-  const booking=body.data?.booking;
-  if(!booking||String(booking.provider_id)!==item.providerId)throw new Error("Assignment changed. Ask Operations to resolve this pending update.");
-  if(statusAlreadyApplied(item,String(booking.status)))return;
-  if(Date.now()-item.createdAt>24*60*60_000)throw new Error("This update is over 24 hours old. Ask Operations to reconcile it.");
-  const response=await transport("/api/grooming-lifecycle",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bookingId:item.bookingId,action:item.action,checklist:item.checklist,clientEventId:item.id})});
-  if(!response.ok){const failure=await response.json().catch(()=>({}));throw Object.assign(new Error(failure.error||"Update needs review"),{retry:response.status>=500||response.status===429});}
+export async function deliverStatus(item: QueuedStatus, send: typeof boundedFetch = boundedFetch): Promise<void> {
+  const read = async (url: string, options: RequestInit) => {
+    let response: Response, body: unknown;
+    try {
+      if (send === boundedFetch) ({ response, body } = await boundedJsonFetch(url, options));
+      else {
+        response = await send(url, options);
+        body = await response.json().catch(error => { if (response.ok) throw error; return null; });
+      }
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error("Connection lost"), { retry: true });
+    }
+    const record = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    if (!response.ok) throw Object.assign(new Error(typeof record.error === "string" ? record.error : response.status === 401 ? "Sign in again before syncing saved updates" : "Unable to verify or update this job"), {
+      retry: retryableStatus(response.status), retryAfterMs: retryAfterMs(response.headers.get("retry-after")),
+    });
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw Object.assign(new Error("Incomplete server response. Saved update will be retried."), { retry: true });
+    return record;
+  };
+  const body = await read(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(item.bookingId)}`, { cache: "no-store" });
+  const data = body.data as { booking?: { provider_id?: unknown; status?: unknown } } | undefined;
+  const booking = data?.booking;
+  if (!booking || String(booking.provider_id) !== item.providerId) throw new Error("Assignment changed. Ask Operations to resolve this pending update.");
+  if (statusAlreadyApplied(item, String(booking.status))) return;
+  if (Date.now() - item.createdAt > 24 * 60 * 60_000) throw new Error("This update is over 24 hours old. Ask Operations to reconcile it.");
+  await read("/api/grooming-lifecycle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: item.bookingId, action: item.action, checklist: item.checklist, clientEventId: item.id }) });
 }
 
 /** Web Locks serialize read/modify/write and replay across tabs sharing the same origin. */
