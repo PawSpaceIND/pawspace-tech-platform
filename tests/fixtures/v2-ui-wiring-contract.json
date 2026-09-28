@@ -2,14 +2,14 @@
   "base": "7d3e947b",
   "files": {
     "app/food/canonical-food-page.tsx": {
-      "sha256": "0d077d23995a977337ce33d6c56357805e29440fed8cdb681c2e716175a86841",
+      "sha256": "f938716039f2d2be71d340c5b469ad8687e0c4767be33e502efee47bed523ebd",
       "functions": 28,
       "declarations": 37,
       "interactionProps": 21,
       "conditions": 18
     },
     "app/food/subscriptions/page.tsx": {
-      "sha256": "d7fe7d4e980d127aba2b608e0e0ca83354f3b2ebd04e89cee968450548cff6ea",
+      "sha256": "a287efab7a9953ad5e327d1c1b2ef1f16e02559a63c222b7466c82cadf31e3c4",
       "functions": 14,
       "declarations": 20,
       "interactionProps": 19,
@@ -23,14 +23,14 @@
       "conditions": 11
     },
     "app/partner/partner-login.tsx": {
-      "sha256": "3b683b0b6bf988b59b0949daf80e9489b3fd20f02f9ad19f4768b9cea455509f",
+      "sha256": "d25a35a892681604ee7992216b08d58019f6b823d7705a10e1d53a4973d5bd63",
       "functions": 8,
       "declarations": 15,
       "interactionProps": 14,
       "conditions": 4
     },
     "app/taxi/canonical-taxi-page.tsx": {
-      "sha256": "3f2f2b5e50ec64dff296e5142676b0afe5309f908759761f9c3b7c1a4a8c8eb0",
+      "sha256": "fbb7151c1f1549be5fdaef5ad2b2fb511723278ccc61a0465312a211777882a0",
       "functions": 28,
       "declarations": 38,
       "interactionProps": 25,
@@ -51,10 +51,10 @@
       "conditions": 31
     },
     "app/v2/page.tsx": {
-      "sha256": "78778fb1f97009d6ac91b1e9678caf7a33b92492a8776bbaf2e6d9f8cf569a8c",
-      "functions": 30,
+      "sha256": "54309688f485815c6060ea7ce8c1ae529d03fe694f38ac2b1887139feefeb004",
+      "functions": 31,
       "declarations": 35,
-      "interactionProps": 30,
+      "interactionProps": 31,
       "conditions": 5
     },
     "app/v2/service-bridge-shell.tsx": {
@@ -83,22 +83,22 @@
     "baseSha": "2cceca14eccc6fc0db432034662dbca7dc6e0f6a",
     "files": {
       "app/components/pawspace-appearance.tsx": {
-        "sha256": "fbcd9e47922e41dc8d2039ec75b24f6ff121183d2070d63d364d9c29c0703ddf",
-        "functions": 10,
-        "declarations": 13,
+        "sha256": "0e28da674a4b926fdb6879f4da0b62c49ab703d4c287d71140135425c0eb7230",
+        "functions": 11,
+        "declarations": 14,
         "interactionProps": 16,
-        "conditions": 4
+        "conditions": 6
       },
       "app/funeral-memorial/page.tsx": {
-        "sha256": "ae201391a60876327c8edecf740895f094fae9f7023a4fa696aa016038799818",
+        "sha256": "050c059c15894fc36085cca1b7d0207194dd9a83e16831e6320a95493a014d28",
         "functions": 38,
         "declarations": 26,
         "interactionProps": 35,
         "conditions": 9
       },
       "app/v2/page.tsx": {
-        "sha256": "c3c588b9e5d2b048a3ea26f1ece02cf404a5cb1183608ca67f77e878e5e0d64d",
-        "functions": 30,
+        "sha256": "0318d6c582f37f3239c8f99f104314597d374470a6ae6b8dd4f103f56085757e",
+        "functions": 31,
         "declarations": 35,
         "interactionProps": 16,
         "conditions": 5

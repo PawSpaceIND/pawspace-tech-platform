@@ -7,7 +7,7 @@ export type ServiceSacs={seller:{legalName:string;gstin:string;state:string;stat
 export type FuneralTreatment={current:{treatment:string;effectiveFrom:string|null;source:string};versions:Array<{id:string;treatment:string;effectiveFrom:string;version:number;reason:string;createdBy:string}>;labels:Record<string,string>};
 const money=(v:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(Number(v||0));
 const STATUS:Record<string,string>={ready:"Ready to issue",too_late:"Not issued: more than 30 days after completion",period_locked:"Not issued: the month is closed",refused:"Needs configuration"};
-const box={background:"var(--staff-raised)",border:"1px solid var(--staff-line)",borderRadius:12,padding:14} as const;
+const box={background:"var(--staff-raised)",border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:14} as const;
 /** Customer tax invoices (owner decision B): who issues them, the completed bookings still without one and why, the SAC each
  * service is invoiced under, and how funeral / memorial is treated for GST. Every change needs finance.manage and a reason. */
 export default function BookingInvoicesPanel({backlog,sacs,funeral,onSaved}:{backlog?:BookingInvoiceBacklog;sacs?:ServiceSacs;funeral?:FuneralTreatment;onSaved:()=>Promise<void>}){
@@ -16,7 +16,7 @@ export default function BookingInvoicesPanel({backlog,sacs,funeral,onSaved}:{bac
  const[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  async function send(body:Record<string,unknown>,fallback:string,done:(data:Record<string,unknown>)=>string){setBusy(true);setError("");setNotice("");try{const result=await apiSend<Record<string,unknown>>("/api/gst-accounting",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)},fallback);setNotice(done(result));await onSaved();}catch(problem){setError(problem instanceof Error?problem.message:fallback);}finally{setBusy(false);}}
  const rows=backlog?.rows??[],ready=backlog?.counts.ready??0;
- return <section style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",padding:18,borderRadius:14,marginBottom:16}} aria-label="Customer tax invoices">
+ return <section style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",padding:18,borderRadius:"calc(14px * var(--paw-radius-scale))",marginBottom:16}} aria-label="Customer tax invoices">
   <h2 style={{marginTop:0}}>Customer tax invoices</h2>
   <p style={{color:"var(--staff-muted)"}}>{sacs?.seller?`Issued by ${sacs.seller.legalName} · GSTIN ${sacs.seller.gstin} · ${sacs.seller.state} (${sacs.seller.stateCode}), the seller in the active tax policy. Every completed booking gets one invoice, dated the day it was completed, showing what the customer paid. GST is included and is 18% of the amount PawSpace makes.`:sacs?.refusal??"The seller in the active tax policy could not be read."}</p>
   {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}

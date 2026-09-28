@@ -1,2 +1,2 @@
-.ride{max-width:560px;margin:20px auto 0;padding:20px;border-radius:20px;background:#01261F;color:#FDF3E1}
+.ride{max-width:560px;margin:20px auto 0;padding:20px;border-radius:var(--paw-card-radius);background:var(--ui-brand-deep);color:var(--ui-on-primary)}
 @media(max-width:480px){.ride{padding:14px}}

@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, PLATFORM_THEME_STORAGE_KEY, THEME_STORAGE_KEY, isAppearanceMode, isOfferedTheme, resolveBrandTheme, themes, type ThemeId, type AppearanceMode } from "../mobile-app/theme-config";
+import { DEFAULT_STYLE, STYLE_STORAGE_KEY, resolveVisualStyle, type VisualStyle, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, PLATFORM_THEME_STORAGE_KEY, THEME_STORAGE_KEY, isAppearanceMode, isOfferedTheme, resolveBrandTheme, themes, type ThemeId, type AppearanceMode } from "../mobile-app/theme-config";
 
 /** Device-local presentation only. Never reads or writes account/service data. */
 export default function PawSpaceAppearance() {
   const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME);
   const [mode, setMode] = useState<AppearanceMode>(DEFAULT_APPEARANCE);
-  const [visualStyle, setVisualStyle] = useState("cartoon");
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_STYLE);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const sync = () => {
+    const sync = (event?: Event) => {
       let chosen: ThemeId = DEFAULT_THEME, appearance: AppearanceMode = DEFAULT_APPEARANCE;
       try {
         const saved = localStorage.getItem(THEME_STORAGE_KEY), savedMode = localStorage.getItem(APPEARANCE_STORAGE_KEY);
@@ -20,9 +20,12 @@ export default function PawSpaceAppearance() {
         else chosen = resolveBrandTheme(saved);
         if (isAppearanceMode(savedMode)) appearance = savedMode;
       } catch { /* Appearance remains usable when device storage is unavailable. */ }
+      if (event instanceof CustomEvent && event.detail?.theme) chosen = resolveBrandTheme(event.detail.theme);
+      if (event instanceof CustomEvent && isAppearanceMode(event.detail?.mode)) appearance = event.detail.mode;
       setTheme(chosen); setMode(appearance);
-      let style = "cartoon";
-      try { if (localStorage.getItem("pawspace.visual-style") === "professional") style = "professional"; } catch { /* Device preference only. */ }
+      let style: VisualStyle = DEFAULT_STYLE;
+      try { style = resolveVisualStyle(localStorage.getItem(STYLE_STORAGE_KEY)); } catch { /* Device preference only. */ }
+      if (event instanceof CustomEvent && event.detail?.style) style = resolveVisualStyle(event.detail.style);
       setVisualStyle(style);
       document.documentElement.dataset.pawStyle = style;
       document.documentElement.dataset.pawTheme = chosen;
@@ -32,8 +35,10 @@ export default function PawSpaceAppearance() {
     sync();
     window.addEventListener("storage", sync);
     window.addEventListener("pawspace-appearance-change", sync);
+    const open = () => dialog.current?.showModal();
+    window.addEventListener("pawspace-open-appearance", open);
     media.addEventListener("change", sync);
-    return () => { window.removeEventListener("storage", sync); window.removeEventListener("pawspace-appearance-change", sync); media.removeEventListener("change", sync); };
+    return () => { window.removeEventListener("pawspace-open-appearance", open); window.removeEventListener("storage", sync); window.removeEventListener("pawspace-appearance-change", sync); media.removeEventListener("change", sync); };
   }, []);
   function choose(next: ThemeId, appearance = mode) {
     const brand = resolveBrandTheme(next);
@@ -41,17 +46,18 @@ export default function PawSpaceAppearance() {
     document.documentElement.setAttribute("data-paw-theme", brand);
     document.documentElement.setAttribute("data-paw-mode", appearance === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : appearance);
     try { localStorage.setItem(THEME_STORAGE_KEY, brand); localStorage.setItem(APPEARANCE_STORAGE_KEY, appearance); } catch { /* Session-only preference. */ }
-    window.dispatchEvent(new CustomEvent("pawspace-appearance-change"));
+    window.dispatchEvent(new CustomEvent("pawspace-appearance-change", {detail: {theme:brand, mode:appearance, style:visualStyle}}));
   }
   return <>
     <button className="paw-appearance-trigger" aria-label="Change PawSpace appearance" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">◐</span><span>Appearance</span></button>
     <dialog ref={dialog} className="paw-appearance-dialog" aria-labelledby="paw-appearance-title">
       <div className="paw-appearance-head"><img src="/assets/pawspace-icon.jpeg" alt="PawSpace"/><button aria-label="Close appearance settings" onClick={() => dialog.current?.close()}>×</button></div>
-      <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>Choose Professional or Fun, then Emerald + Gold or Brand book colours. Both styles work with both palettes. Booking and payments stay the same.</p>
-      <fieldset><legend>Visual style</legend>{["cartoon", "professional"].map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
+      <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>Two styles. Three colour palettes. Choose a look that feels like you.</p>
+      <fieldset><legend>Visual style</legend>{(["professional", "cartoon"] as const).map(style => <label className="paw-theme-choice" key={style}><input type="radio" name="paw-style" checked={visualStyle === style} onChange={() => {
         setVisualStyle(style); document.documentElement.dataset.pawStyle = style;
-        try { localStorage.setItem("pawspace.visual-style", style); } catch { /* Session-only choice. */ }
-      }}/><span><b>{style === "cartoon" ? "Fun · Illustrated mascots" : "Professional"}</b><small>{style === "cartoon" ? "Friendly pet illustrations · compact service grid" : "Clean layout · compact line icons · no decorative scenes"}</small></span></label>)}</fieldset>
+        try { localStorage.setItem(STYLE_STORAGE_KEY, style); } catch { /* Session-only choice. */ }
+        window.dispatchEvent(new CustomEvent("pawspace-appearance-change", {detail: {theme, mode, style}}));
+      }}/><span><b>{style === "cartoon" ? "Fun" : "Professional"}</b><small>{style === "cartoon" ? "Friendly pets, soft shapes and a little joy" : "Clean, calm and compact · default"}</small></span></label>)}</fieldset>
       <fieldset><legend>Brand colour</legend>{themes.map(option => <label key={option.id} className="paw-theme-choice"><input type="radio" name="paw-theme" value={option.id} checked={theme === option.id} onChange={() => choose(option.id)}/><span><b>{option.label}</b><small>{option.tagline}</small></span><span className="paw-swatches" aria-hidden="true">{option.swatches.map(colour => <i key={colour} style={{background:colour}}/>)}</span></label>)}</fieldset>
       <fieldset><legend>Display</legend><div className="paw-mode-choices">{(["light", "dark", "system"] as const).map(value => <label key={value}><input type="radio" name="paw-mode" checked={mode===value} onChange={() => choose(theme,value)}/>{value}</label>)}</div></fieldset>
       <button className="paw-appearance-done" onClick={() => dialog.current?.close()}>Done</button>

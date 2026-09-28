@@ -5,7 +5,7 @@ import StaffModule from "../../components/staff-workspace/StaffModule";
 
 type Funnel = { appAcquisitionFunnel?: Record<string, number>; paymentRecovery?: Record<string, number>; inboundSalesFunnel?: { appInbound?: Record<string, number>; paymentRecovery?: Record<string, number> } };
 const wrap = { minHeight: "100vh", background: "var(--staff-bg)", padding: 28, fontFamily: "inherit", color: "var(--staff-text)" } as const;
-const card = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 16 } as const;
+const card = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 16 } as const;
 
 export default function AcquisitionFunnelPage() {
   const [data, setData] = useState<Funnel>({});
@@ -18,10 +18,10 @@ export default function AcquisitionFunnelPage() {
   const stat = (label: string, value: number | undefined, hint?: string) => <div style={{ ...card }}><div style={{ fontSize: 14, color: "var(--staff-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em" }}>{label}</div><div style={{ fontSize: 30, fontWeight: 800, margin: "6px 0" }}>{Number(value || 0).toLocaleString("en-IN")}</div>{hint && <div style={{ fontSize: 14, color: "var(--staff-muted)" }}>{hint}</div>}</div>;
   return <StaffModule><main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
-      <div><small style={{ fontWeight: 800, color: "var(--staff-primary)" }}>PAWSPACE TEAM · ACQUISITION FUNNEL</small><h1 style={{ margin: "7px 0" }}>App-to-Revenue funnel</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>Download → identify → booked / payment-pending / not-booked → convert. Payment-truthful.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button disabled={busy} onClick={refresh} style={{ padding: 10, background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "Refreshing…" : "Refresh sweep"}</button><Link href="/team" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div><small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM · ACQUISITION FUNNEL</small><h1 style={{ margin: "7px 0" }}>App-to-Revenue funnel</h1><p style={{ margin: 0, color: "var(--staff-muted)" }}>Download → identify → booked / payment-pending / not-booked → convert. Payment-truthful.</p></div>
+      <div style={{ display: "flex", gap: 8 }}><button disabled={busy} onClick={refresh} style={{ padding: 10, background: "var(--staff-gold)", color: "var(--staff-on-gold)", border: 0, borderRadius: "calc(10px * var(--paw-radius-scale))", fontWeight: 800 }}>{busy ? "Refreshing…" : "Refresh sweep"}</button><Link href="/team" style={{ padding: 10, background: "var(--staff-primary)", color: "var(--staff-on-primary)", borderRadius: "calc(10px * var(--paw-radius-scale))", textDecoration: "none" }}>Team home</Link></div>
     </header>
-    {error && <div style={{ padding: 12, background: "var(--staff-danger-bg)", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
+    {error && <div style={{ padding: 12, background: "var(--staff-danger-bg)", borderRadius: "calc(10px * var(--paw-radius-scale))", marginBottom: 12 }}>{error}</div>}
     <h3>App Acquisition</h3>
     <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 20 }} data-staff-grid="stats">
       {stat("Downloads", f.downloads)}{stat("Identified", f.identified)}{stat("Converted", f.converted, "payment captured")}{stat("Payment pending", f.paymentPending, "→ ₹300 + Sales")}{stat("Not booked", f.noBooking, "→ App-Inbound")}{stat("Conversion %", f.conversionRateFromIdentified, "of identified")}

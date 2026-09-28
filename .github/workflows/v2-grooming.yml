@@ -18,6 +18,9 @@ on:
       # Shared pages rendered by the V2 routes that the theme spec checks directly (Walking summary, Funeral care).
       - 'app/walking/**'
       - 'app/funeral-memorial/page.tsx'
+      - 'e2e/v2-customer-shell.spec.ts'
+      - 'playwright.config.ts'
+      - 'tests/v2-browser-workflow.test.mjs'
       - 'playwright.v2.config.ts'
       - '.github/workflows/v2-grooming.yml'
   workflow_dispatch:
@@ -28,7 +31,13 @@ concurrency:
   cancel-in-progress: true
 jobs:
   browser:
-    name: V2 Grooming desktop and mobile
+    name: V2 Grooming (${{ matrix.project }})
+    # Each full device suite keeps its own runner and 25-minute budget.
+    # The original serial run exceeded that budget after 80 passing tests.
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, mobile-chromium]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -54,12 +63,26 @@ jobs:
           PAWSPACE_LOCAL_PREVIEW: 'on'
           PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
       - name: Run browser contracts (SDK and API fixtures, not live provider proof)
-        run: npx playwright test --config=playwright.v2.config.ts
+        run: npx playwright test --config=playwright.v2.config.ts --project="${{ matrix.project }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v2-grooming-browser-contract-${{ github.event.pull_request.head.sha || github.sha }}
+          name: v2-grooming-browser-contract-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.project }}
           path: |
             artifacts/v2/browser-results/
             artifacts/v2/browser-report/
           retention-days: 14
+
+  browser-gate:
+    # Preserve the existing check name; failure, cancellation and missing work never pass.
+    name: V2 Grooming desktop and mobile
+    needs: browser
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both browser projects to succeed
+        env:
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          test "$BROWSER_RESULT" = "success"

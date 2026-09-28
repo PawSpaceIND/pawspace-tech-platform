@@ -32,7 +32,7 @@ export function CustomerBookingList({bookings,payments}:{bookings:CustomerBookin
  return<div className={styles.bookingList}><ul aria-label="Bookings">{shown.map(booking=>{
   const payment=payments==="loading"?"Checking payment…":payments==="ready"&&booking.payment?booking.payment.label:"Payment state unavailable";
   return<li key={booking.id}><div><strong>{serviceLabel(booking.serviceCode)}</strong>{booking.packageName?` · ${booking.packageName}`:""}<small>{istDateTime(booking.scheduledStart)} · {sentence(booking.status)}</small></div><div><b>₹{Number(booking.totalAmount||0).toLocaleString("en-IN")}</b><small data-owed={payments==="ready"&&STILL_OWED.test(payment)?"true":undefined}>{payment}</small></div></li>;
- })}</ul>{bookings.length>SHOWN&&<button type="button" onClick={()=>setAll(value=>!value)} style={{display:"block",width:"100%",padding:10,marginBottom:16,border:"1px solid var(--staff-line)",borderRadius:10,background:"var(--staff-raised)",fontWeight:700}}>{all?"Show fewer bookings":`Show all ${bookings.length} bookings`}</button>}</div>;
+ })}</ul>{bookings.length>SHOWN&&<button type="button" onClick={()=>setAll(value=>!value)} style={{display:"block",width:"100%",padding:10,marginBottom:16,border:"1px solid var(--staff-line)",borderRadius:"calc(10px * var(--paw-radius-scale))",background:"var(--staff-raised)",fontWeight:700}}>{all?"Show fewer bookings":`Show all ${bookings.length} bookings`}</button>}</div>;
 }
 
 export default function CustomerBookings({customerId,bookings}:{customerId:string;bookings:CustomerBooking[]}){
