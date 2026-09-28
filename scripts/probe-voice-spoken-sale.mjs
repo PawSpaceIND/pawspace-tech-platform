@@ -13,6 +13,18 @@ if(env.VOICE_SALE_ACTION!=='probe-spoken-sale-sandbox'||! /^[a-f0-9]{40}$/.test(
 const cfHeaders={authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'};
 const cf='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
 async function api(path){const r=await fetch(cf+path,{headers:cfHeaders,signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||!b.success)throw Error('Staging version inspection failed');return b.result;}
+async function freshUatContext(){
+ await checkRevision();
+ const sourceId=String(env.UAT_VOICE_CALL_ID||'');
+ const freshId='VCALL-SPOKEN-'+Date.now().toString(36).toUpperCase();
+ const base=cf+'/d1/database/'+encodeURIComponent(env.STAGING_D1_ID),now=Date.now();
+ const sql="INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,customer_id,city_id,phone_key,phone_last4,dial_number,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_attempt,requested_by,requested_at,updated_at) SELECT ?,?,direction,use_case,purpose,customer_id,city_id,phone_key,phone_last4,dial_number,'uat',provider,0,'requested',consent_decision,opt_out_decision,quiet_hours_decision,0,recording_allowed,0,requested_by,?,? FROM voice_call_orders WHERE id=? AND mode='uat' AND phone_last4=?";
+ const params=[freshId,'spoken-sale-proof:'+freshId,now,now,sourceId,env.EXPECTED_DESTINATION_LAST4];
+ const r=await fetch(base+'/query',{method:'POST',headers:cfHeaders,body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(30000)}),b=await r.json();
+ if(!r.ok||!b.success||b.result?.some(x=>!x.success)||Number(b.result?.[0]?.meta?.changes||0)!==1)throw Error('Fresh UAT voice context could not be created');
+ env.UAT_VOICE_CALL_ID=freshId;
+ console.log('SPOKEN_SALE_FRESH_CONTEXT='+freshId);
+}
 async function checkRevision(){
  const d=await api('/workers/scripts/pawspace-staging/deployments'),active=d.deployments?.[0];
  if(active?.versions?.length!==1||active.versions[0].percentage!==100)throw Error('One active staging version required');
@@ -27,6 +39,7 @@ async function inspect(bookingId='',capture=false){
  const report=await verifyVoiceSale({...env,VOICE_SALE_ACTION:capture?'capture-voice-sale-sandbox':'probe-agent-socket',SALE_BOOKING_ID:bookingId,VOICE_SALE_FULL_INVENTORY:'true'});
  if(report.aiPaused)throw Error('Paused voice context');return report;
 }
+await freshUatContext();
 const before=await inspect();assertSaleBaseline(before);
 const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
 const cr=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await cr.json();
