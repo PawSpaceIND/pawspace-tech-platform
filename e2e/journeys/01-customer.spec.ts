@@ -21,7 +21,7 @@ test("the storefront renders real content, not a blank or error page", async ({ 
 test("the customer can reach the canonical grooming service and see a bookable surface", async ({ page }) => {
   const response = await page.goto("/services/grooming", { waitUntil: "domcontentloaded" });
   expect(response?.status(), "canonical grooming route must resolve").toBe(200);
-  await expect(page.locator("body")).toContainText(/groom|package|price|₹|book/i);
+  await expect.poll(async () => (await page.locator("body").innerText()).replace(/\s+/g, " ").trim(), { timeout: 15_000, message: "canonical grooming surface must finish loading" }).toMatch(/groom|package|price|₹|book/i);
   const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/Application error|Unhandled Runtime Error/i);
   expect(body).toMatch(/groom|package|price|₹|book/i);

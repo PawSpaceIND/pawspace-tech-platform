@@ -22,6 +22,10 @@ on:
         description: "Exact voice-created booking for sandbox sale proof; blank inspects readiness only"
         required: false
         default: ""
+      expected_staging_sha:
+        description: "Exact certified staging revision for spoken sandbox sale"
+        required: false
+        default: ""
       specialist_use_case:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
@@ -947,3 +951,37 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
         run: node scripts/probe-voice-agent-audio.mjs
+
+  probe-spoken-sale-sandbox:
+    if: ${{ inputs.confirm == 'probe-spoken-sale-sandbox' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Generate synthetic caller audio locally (no provider TTS permission)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+          espeak-ng -s 150 -w /tmp/amaya-caller.wav "What grooming services do you offer for my dog Bruno?"
+          ffmpeg -loglevel error -y -i /tmp/amaya-caller.wav -ar 16000 -ac 1 -f s16le scripts/fixtures/amaya-caller.pcm
+          test -s scripts/fixtures/amaya-caller.pcm
+      - name: Probe actual speech recognition and returned audio without dialing
+        env:
+          EXPECTED_STAGING_SHA: ${{ inputs.expected_staging_sha }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          PROBE_INPUT: ${{ inputs.probe_input }}
+          VOICE_SALE_ACTION: ${{ inputs.confirm }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          SALE_BOOKING_ID: ${{ inputs.sale_booking_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/probe-voice-spoken-sale.mjs
