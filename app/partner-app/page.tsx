@@ -16,7 +16,7 @@ import GroomingRouteCard from "./grooming-route-card";
 import PartnerLogin from "../partner/partner-login";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
-import { clearProviderProofQueue, discardProviderProof, dispatchQueuedProof, flushProviderProofQueue, isPermanentProofError, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
+import { clearProviderProofQueue, discardProviderProof, dispatchQueuedProof, flushProviderProofQueue, isPermanentProofError, providerProofFailure, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -86,8 +86,8 @@ function describeProof(assets: MediaAsset[], purpose: "before_service" | "after_
   if (latest.access_status === "pending_upload") return { state: "unconfirmed", text: "registered but never confirmed · choose the file again" };
   return { state: "pending", text: `${label(latest.access_status)} · ${label(latest.review_status || latest.scan_status)}` };
 }
-/** A 4xx (other than timeout/rate-limit) will never succeed on retry; the offline queue drops it instead of re-registering for ever. */
-const proofFailure = (status: number, message: string) => Object.assign(new Error(message), { permanent: status >= 400 && status < 500 && status !== 408 && status !== 429 });
+/** Authentication expiry and temporary gateway failures must preserve the saved photo for retry. */
+const proofFailure = providerProofFailure;
 type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; providerReference: string; collectable: boolean; expiresAt: number; sandboxOnly: boolean; liveCapture: boolean };
 /**
  * Both engagement shapes, because providerWorkspace returns different keys for each and this one screen
@@ -410,11 +410,14 @@ function PartnerMobileAppContent() {
     let active=true;
     const flush = () => void flushProviderProofQueue(registerQueuedProof).then(result => {
       if (active&&result.uploaded) { setMediaMessage(`${result.uploaded} queued proof image${result.uploaded === 1 ? "" : "s"} synced.`); setRefreshKey(value => value + 1); }
-    });
+    }).catch(problem => { if (active) setMediaMessage(problem instanceof Error ? problem.message : "Device storage could not be read. Keep the original photos and contact Operations."); });
     flush();
+    const resume = () => { if (document.visibilityState === "visible") flush(); };
     window.addEventListener("online", flush);
+    window.addEventListener("pageshow", flush);
+    document.addEventListener("visibilitychange", resume);
     const timer = window.setInterval(flush, 15_000);
-    return () => { active=false;window.removeEventListener("online", flush); window.clearInterval(timer); };
+    return () => { active=false;window.removeEventListener("online", flush); window.removeEventListener("pageshow", flush); document.removeEventListener("visibilitychange", resume); window.clearInterval(timer); };
   }, [sessionState, identity?.subjectId]);
 
   const prepareMedia = async (file: File, purpose: "before_service" | "after_service") => {
