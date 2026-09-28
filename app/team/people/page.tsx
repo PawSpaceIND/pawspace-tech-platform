@@ -8,16 +8,16 @@ import styles from"../team-console.module.css";
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
 
 const WORKSPACES=[
- ["/team/people/onboarding","Employee onboarding"],
- ["/team/people/offboarding","Employee exits & settlement"],
- ["/team/people/time","Attendance & leave"],
- ["/team/people/payroll","Payroll"],
- ["/team/people/incentives","Incentives"],
- ["/team/people/service-incentives","Groomer / trainer / sales incentives"],
- ["/team/people/manager-dashboard","Manager & founder dashboard"],
- ["/team/people/finance","Finance + statutory"],
- ["/team/people/reports","People reports"],
- ["/team/performance","Employee performance"],
+ ["/v2/team/people/onboarding","Employee onboarding"],
+ ["/v2/team/people/offboarding","Employee exits & settlement"],
+ ["/v2/team/people/time","Attendance & leave"],
+ ["/v2/team/people/payroll","Payroll"],
+ ["/v2/team/people/incentives","Incentives"],
+ ["/v2/team/people/service-incentives","Groomer / trainer / sales incentives"],
+ ["/v2/team/people/manager-dashboard","Manager & founder dashboard"],
+ ["/v2/team/people/finance","Finance + statutory"],
+ ["/v2/team/people/reports","People reports"],
+ ["/v2/team/performance","Employee performance"],
 ] as const;
 
 // A field the HR record has never been given reads as "not set" rather than as a demand on the reader.

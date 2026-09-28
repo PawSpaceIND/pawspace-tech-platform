@@ -22,10 +22,17 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "Create a booking", href: "/assisted-booking", permission: "bookings.manage" },
   ] },
   { id: "people", label: "Partners & people", links: [
-    { label: "People workspace", href: "/team/people", permission: "people.view" },
+    { label: "People workspace", href: "/v2/team/people", permission: "people.view" },
+    { label: "Attendance & leave", href: "/v2/team/people/time", permission: "people.view" },
+    { label: "Employee onboarding", href: "/v2/team/people/onboarding", permission: "people.manage" },
     { label: "Provider onboarding", href: "/team/provider-onboarding", permission: "providers.manage" },
-    { label: "Payroll", href: "/team/people/payroll", permission: "payroll.view" },
-    { label: "My employee workspace", href: "/me", permission: "self_service.view" },
+    { label: "Payroll", href: "/v2/team/people/payroll", permission: "payroll.view" },
+    { label: "My employee workspace", href: "/v2/employee", permission: "self_service.view" },
+    { label: "Incentives", href: "/v2/team/people/incentives", permission: "people.view" },
+    { label: "Service incentives", href: "/v2/team/people/service-incentives", permission: "people.view" },
+    { label: "Manager dashboard", href: "/v2/team/people/manager-dashboard", permission: "people.view" },
+    { label: "People reports", href: "/v2/team/people/reports", permission: "reports.view" },
+    { label: "People finance", href: "/v2/team/people/finance", permission: "finance.view" },
   ] },
   { id: "finance", label: "Finance & compliance", links: [
     { label: "Finance workspace", href: "/team/finance", permission: "finance.view" },
@@ -44,7 +51,7 @@ export const STAFF_GROUPS: StaffGroup[] = [
     { label: "Analytics", href: "/team/analytics", permission: "reports.view" },
     { label: "Revenue mission", href: "/team/revenue-mission", permission: "reports.view" },
     { label: "Atlas intelligence", href: "/team/ai", permission: "reports.view" },
-    { label: "Performance", href: "/team/performance", permission: "performance.view" },
+    { label: "Performance", href: "/v2/team/performance", permission: "performance.view" },
   ] },
   { id: "settings", label: "Settings & controls", links: [
     { label: "Founder & system controls", href: "/control", permission: "launch.view" },
@@ -60,6 +67,18 @@ export function staffNavigationPath(path: string): string {
   if (path === "/booking-command-center" || path === "/v2/control-center") return "/team/operations/bookings";
   if (path === "/v2/crm") return "/crm";
   if (path === "/ops") return "/team";
+  if (path === "/me") return "/v2/employee";
+  if (path === "/team/people") return "/v2/team/people";
+  if (path === "/team/people/onboarding") return "/v2/team/people/onboarding";
+  if (path === "/team/people/time") return "/v2/team/people/time";
+  if (path === "/team/people/finance") return "/v2/team/people/finance";
+  if (path === "/team/people/reports") return "/v2/team/people/reports";
+  if (path === "/team/people/provider-training") return "/v2/team/people/provider-training";
+  if (path === "/team/people/payroll") return "/v2/team/people/payroll";
+  if (path === "/team/people/incentives") return "/v2/team/people/incentives";
+  if (path === "/team/people/service-incentives") return "/v2/team/people/service-incentives";
+  if (path === "/team/people/manager-dashboard") return "/v2/team/people/manager-dashboard";
+  if (path === "/team/performance") return "/v2/team/performance";
   return path;
 }
 export function visibleStaffGroups(permissions: string[], query = ""): StaffGroup[] {
