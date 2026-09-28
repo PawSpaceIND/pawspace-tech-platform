@@ -1,0 +1,10 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { groomingPaise, groomingBasketTotal, groomingCouponPayable } from "../lib/v2/grooming-money.ts";
+for (const [value,expected] of [[0,0],[0.01,1],[1.1,110],[1899.99,189999],[99999999.99,9999999999]]) test(`valid INR parsing: ${value}`,()=>assert.equal(groomingPaise(value),expected));
+for (const value of [NaN,Infinity,-1,0.001,1899.8700000000001,"100",null,undefined,Number.MAX_SAFE_INTEGER]) test(`invalid money refuses: ${String(value)}`,()=>assert.equal(groomingPaise(value),null));
+test("basket adds decimal package and extras as integers",()=>assert.equal(groomingBasketTotal(1899.99,499,0.01),2399));
+test("invalid basket does not round sub-paise input",()=>assert.equal(groomingBasketTotal(100,0.005),null));
+test("zero-due legitimate coupon remains exact",()=>assert.equal(groomingCouponPayable(1899,{discount:1899,finalAmount:0}),0));
+test("valid paise coupon final is preserved",()=>assert.equal(groomingCouponPayable(1899.99,{discount:0.12,finalAmount:1899.87}),1899.87));
+for (const quote of [{discount:1},{discount:1,finalAmount:98},{discount:-1,finalAmount:101},{discount:101,finalAmount:0},{discount:0.001,finalAmount:99.999}]) test(`invalid quote amount refuses: ${JSON.stringify(quote)}`,()=>assert.throws(()=>groomingCouponPayable(100,quote),/Reapply the coupon/));

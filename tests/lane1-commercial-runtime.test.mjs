@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+installWorkersHooks("__LANE1_COUPON_AUTHORITY_DB__");
 
 function makeD1(sqlite) {
   function statement(sql, args = []) {
