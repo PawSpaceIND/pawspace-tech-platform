@@ -1,3 +1,4 @@
+import { apiSend } from "./api-fetch";
 import type { AddressSuggestion, AutocompleteResult, ResolvedAddress } from "./address-autocomplete";
 
 async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8_000) {
@@ -26,9 +27,9 @@ export async function resolveAddress(placeId: string, sessionToken: string): Pro
   return payload<ResolvedAddress>(await fetchWithDeadline(`/api/address-autocomplete?${params.toString()}`, { cache: "no-store" }));
 }
 
-export async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<ResolvedAddress> {
+export async function reverseGeocodeCoordinates(latitude: number, longitude: number, signal?: AbortSignal): Promise<ResolvedAddress> {
   const params = new URLSearchParams({ mode: "reverse", latitude: String(latitude), longitude: String(longitude) });
-  return payload<ResolvedAddress>(await fetchWithDeadline(`/api/address-autocomplete?${params.toString()}`, { cache: "no-store" }));
+  return apiSend<ResolvedAddress>(`/api/address-autocomplete?${params.toString()}`, { cache: "no-store", signal }, "Location lookup could not be completed.", { timeoutMs: 8_000 });
 }
 
 export type { AddressSuggestion };

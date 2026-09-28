@@ -69,7 +69,14 @@ export default defineConfig(async () => {
       watch: {
         // D1/Miniflare writes can emit events for both the directory node and
         // descendants. Ignore both so sandbox OTP writes cannot remount the UI.
-        ignored: ["**/.wrangler", "**/.wrangler/**"],
+        // Browser traces/reports write HTML while tests are running. Watching
+        // that generated output triggers full-page reloads during assertions.
+        ignored: [
+          "**/.wrangler", "**/.wrangler/**",
+          "**/artifacts", "**/artifacts/**",
+          "**/test-results", "**/test-results/**",
+          "**/playwright-report", "**/playwright-report/**",
+        ],
         ...(isCodexSeatbeltSandbox
           ? { useFsEvents: false, usePolling: true }
           : {}),

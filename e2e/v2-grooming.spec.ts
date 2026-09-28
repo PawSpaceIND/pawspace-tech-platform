@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 type Fixture = {
+  reverseCalls: number; reverseGate?: Promise<void>; reverseResult?: Record<string, unknown>;
   bookingCount?: number; offersUnavailable?: boolean; normalOffers?: boolean; offerGate?: Promise<void>; offerReads?: number; offerValues?: Array<{code:string;savings:number}>; couponDiscounts?: Record<string,number>;
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
@@ -11,7 +12,7 @@ type Fixture = {
   booking: Record<string, unknown> | null; reservation: Record<string, unknown> | null;
 };
 async function fixture(page: Page) {
-  const state: Fixture = { bookingWrites: 0, orderWrites: 0, locationWrites: 0, locationFailures: 0,
+  const state: Fixture = { reverseCalls: 0, bookingWrites: 0, orderWrites: 0, locationWrites: 0, locationFailures: 0,
     captured: false, confirmed: false, locationReady: false, unauthorized: false, quoteSource: "pricing_control",
     previewStarted: false, coverageStarted: false, couponStarted: false, couponInputs: [], booking: null, reservation: null };
   const provider = { id: "PRV1", name: "Arjun - PawSpace Care", model: "full_time", rating: 4.9 };
@@ -43,6 +44,13 @@ async function fixture(page: Page) {
       state.coverageStarted = true; if (state.coverageGate) await state.coverageGate;
       return reply({ assignment: { cityId: "blr", city: "Bengaluru", zoneId: "blr-east", pincode: url.searchParams.get("pincode"), area: "Indiranagar" },
         zone: { zoneId: "blr-east", zoneName: "Bengaluru East", serviceAvailable: true } });
+    }
+    if (path === "/api/address-autocomplete") {
+      expect(request.method()).toBe("GET"); expect(url.searchParams.get("mode")).toBe("reverse");
+      state.reverseCalls++;
+      if (state.reverseGate) await state.reverseGate;
+      return reply(state.reverseResult || { status: "configured", address: "42 Indiranagar Double Road, Bengaluru 560038", pincode: "560038",
+        latitude: Number(url.searchParams.get("latitude")), longitude: Number(url.searchParams.get("longitude")) });
     }
     if (path === "/api/live-price-quote") return reply({ price: 1899, source: state.quoteSource });
     if (path === "/api/uat-scheduling") {
@@ -568,4 +576,131 @@ test("G09: typing a private code is not treated as consent to apply it on a new 
  await box.getByText("Have a special code?",{exact:true}).click();await expect(box.getByRole("textbox")).toHaveValue("PRIVATE");
  expect(state.couponInputs).toHaveLength(0);await box.getByRole("button",{name:"Apply",exact:true}).click();
  await expect(page.getByText(/Coupon PRIVATE/)).toBeVisible();expect(state.couponInputs).toHaveLength(1);
+});
+
+
+const locatedAddress = "42 Indiranagar Double Road, Bengaluru 560038";
+async function enableDeviceLocation(page: Page) {
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({ latitude: 12.9783692, longitude: 77.6408356 });
+}
+function noLocationMutations(state: Fixture) {
+  expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+  expect(state.locationWrites).toBe(0); expect(state.reservation).toBeNull();
+}
+
+test("G02/G05: location needs a user action and review; confirmed changes recheck the booking", async ({ page }) => {
+  const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
+  await previewCare(page);
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  expect(state.reverseCalls).toBe(0);
+  const reserve = page.getByRole("button", { name: /Reserve & review payment/ });
+  await expect(reserve).toBeEnabled();
+  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  const suggested = page.getByRole("region", { name: "Suggested service address" });
+  await expect(suggested).toBeVisible();
+  await expect(suggested).toContainText(locatedAddress);
+  await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
+  await expect(reserve).toBeDisabled();
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  const bounds = await page.getByRole("group", { name: "Current location", exact: true }).boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  await page.screenshot({ path: test.info().outputPath("g02-location-review.png"), fullPage: true });
+  await suggested.getByRole("button", { name: "Use suggested address" }).click();
+  await expect(page.getByLabel("House, street & area")).toHaveValue(locatedAddress);
+  await expect(page.getByLabel("House, street & area")).toBeFocused();
+  await expect(page.getByLabel("PIN code", { exact: true })).toHaveValue("560038");
+  await expect(page.getByText("Bengaluru East is covered")).toHaveCount(0);
+  await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toHaveCount(0);
+  await expect(page.getByLabel("Save this address to my account")).not.toBeChecked();
+  await expect(reserve).toBeDisabled();
+  await page.getByLabel("House, street & area").fill(`Flat 4, ${locatedAddress}`);
+  await page.getByRole("button", { name: "Check service area", exact: true }).click();
+  await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
+  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible(); await expect(reserve).toBeEnabled();
+  const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
+  expect(stored).not.toContain("12.9783692"); expect(stored).not.toContain("77.6408356");
+  expect(state.reverseCalls).toBe(1); noLocationMutations(state);
+});
+
+for (const code of [1, 3]) test(`G02: device refusal ${code} preserves entered address and manual fallback`, async ({ page }) => {
+  const state = await fixture(page);
+  await page.addInitScript(value => {
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+      getCurrentPosition(_success: unknown, fail: (error: { code: number }) => void) { fail({ code: value }); },
+    } });
+  }, code);
+  await previewCare(page);
+  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Current location", exact: true }).getByRole("alert")).toContainText("manually");
+  await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  expect(state.reverseCalls).toBe(0);
+  await page.getByRole("button", { name: "Enter address manually", exact: true }).click();
+  await expect(page.getByLabel("House, street & area")).toBeFocused(); noLocationMutations(state);
+});
+
+test("G02: cancelling a delayed reverse lookup cannot overwrite a later typed address", async ({ page }) => {
+  const state = await fixture(page); await enableDeviceLocation(page);
+  let release!: () => void; state.reverseGate = new Promise(resolve => { release = resolve; });
+  await previewCare(page);
+  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await expect.poll(() => state.reverseCalls).toBe(1);
+  await page.getByRole("button", { name: "Cancel location lookup", exact: true }).click();
+  await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
+  release();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(page.getByRole("region", { name: "Suggested service address" })).toHaveCount(0);
+  await expect(page.getByLabel("House, street & area")).toHaveValue("99 Indiranagar Main Road");
+  noLocationMutations(state);
+});
+
+test("G02: late device permission completion after manual entry never calls the map API", async ({ page }) => {
+  const state = await fixture(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+      getCurrentPosition(success: (position: unknown) => void) {
+        (window as unknown as { finishLocation: () => void }).finishLocation = () => success({ coords: { latitude: 12.9783692, longitude: 77.6408356 } });
+      },
+    } });
+  });
+  await openCare(page);
+  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await page.getByRole("button", { name: "Enter address manually", exact: true }).click();
+  await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
+  await page.evaluate(() => (window as unknown as { finishLocation: () => void }).finishLocation());
+  await expect(page.getByLabel("House, street & area")).toHaveValue("99 Indiranagar Main Road");
+  expect(state.reverseCalls).toBe(0); noLocationMutations(state);
+});
+
+test("G02: rejecting a suggested location keeps the existing quote and coupon intact", async ({ page }) => {
+  const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
+  await previewCare(page); await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await page.getByRole("button", { name: "Keep entered address", exact: true }).click();
+  await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  noLocationMutations(state);
+});
+
+test("G05: Change address preserves the care draft and the customer's removed-coupon decision", async ({ page }) => {
+  const state = await fixture(page); state.normalOffers = true; await previewCare(page);
+  await page.getByLabel("Notes for your groomer (optional)").fill("Please be gentle with paws");
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await page.getByRole("button", { name: "Remove coupon", exact: true }).click();
+  await page.getByRole("button", { name: "Change address", exact: true }).click();
+  await expect(page.getByLabel("House, street & area")).toBeFocused();
+  await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
+  await expect(page.getByLabel("Notes for your groomer (optional)")).toHaveValue("Please be gentle with paws");
+  await expect(page.getByText("Bengaluru East is covered")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeDisabled();
+  await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
+  await page.getByRole("button", { name: "Check service area", exact: true }).click();
+  await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
+  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
+  await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0); noLocationMutations(state);
 });
