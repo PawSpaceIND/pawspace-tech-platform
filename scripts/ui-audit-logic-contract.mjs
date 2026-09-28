@@ -22,7 +22,7 @@ export function uiProgramContract(source, filename='page.tsx') {
  return digest(normalized);
 }
 
-/** Sign expression children, spreads and all non-style prop initializers, including unknown custom props. */
+/** Sign children, spreads and every non-style prop value, including literal and boolean custom props. */
 export function uiJsxExpressions(source, filename='page.tsx') {
  const file=ts.createSourceFile(filename,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
  const printer=ts.createPrinter({removeComments:true}), expressions=[];
@@ -38,6 +38,8 @@ export function uiJsxExpressions(source, filename='page.tsx') {
   if(ts.isJsxAttribute(node)) {
    const name=node.name.getText(file);
    if(name==='style'||name==='className')return;
+   if(!node.initializer)add(`prop:${name}`,ts.factory.createTrue());
+   else if(ts.isStringLiteral(node.initializer))add(`prop:${name}`,node.initializer);
   }
   if(ts.isJsxExpression(node)&&node.expression) {
    const parent=node.parent;

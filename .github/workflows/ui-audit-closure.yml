@@ -8,6 +8,8 @@ on:
       - 'playwright.ui-audit.config.ts'
       - 'scripts/ui-audit-event-contract.mjs'
       - 'scripts/ui-audit-logic-contract.mjs'
+      - 'scripts/ui-audit-server.mjs'
+      - 'scripts/ui-audit-history.mjs'
       - 'tests/ui-audit-closure.test.mjs'
       - 'tests/fixtures/ui-audit-event-contract.json'
       - 'tests/fixtures/ui-audit-logic-contract.json'
@@ -39,6 +41,10 @@ jobs:
         run: npm run install:ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
+      - name: Verify immutable historical UI baselines
+        run: |
+          git fetch --no-tags --depth=1 origin 89d483d971b1ca1ceeaeb96bbff91898168081f2
+          node scripts/ui-audit-history.mjs
       - name: Preserve original UI events and field constraints
         run: node --test tests/ui-audit-closure.test.mjs
       - name: Check TypeScript

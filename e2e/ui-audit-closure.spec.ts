@@ -175,6 +175,7 @@ for(const theme of ["emerald","signature","coral"]) for(const mode of ["light","
    const second=main.locator('section[class*="grid"] > article').nth(1);
    expect.soft((await first.boundingBox())!.width).toBeGreaterThan(viewport.width===1440?400:viewport.width*.65);
    expect.soft((await second.boundingBox())!.height).toBeLessThan((await first.boundingBox())!.height);
+   if(viewport.width===1440)expect.soft((await first.boundingBox())!.width/(await second.boundingBox())!.width).toBeCloseTo(1.4,1);
    expect.soft(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width+2);
    await page.screenshot({path:info.outputPath(`tracking-${viewport.width}.png`)});
   }
@@ -293,4 +294,24 @@ for(const viewport of viewports) test(`review corrections preserve text and regi
  await expect(formatted.locator('p').nth(1)).toHaveText('**');
  await expect(formatted.locator('p').nth(2)).toHaveText('`');
  await formatted.scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath(`review-text-${viewport.width}.png`)});
+});
+
+for(const width of [390,768,1440,1920])test(`reviewed statistic grid and shared table landmarks ${width}`,async({page},info)=>{
+ await page.setViewportSize({width,height:1000});
+ await page.route('**/api/boarding-ops',route=>route.fulfill({json:{data:{source:'ui-only',generatedAt:0,stays:[],metrics:{total:7,clear:1,needsAttention:6,recovery:2,openIncidents:3,financeReview:4,mediaBlocked:5},readiness:{engineeringGate:'uat',productionReady:false,externalDependencies:{}}}}}));
+ await ready(page,'/v2/team/operations/boarding');
+ const cards=page.locator('[data-staff-grid="stats"] > *');await expect(cards).toHaveCount(7);
+ const boxes=await cards.evaluateAll(items=>items.map(item=>item.getBoundingClientRect().toJSON()));
+ for(const box of boxes){expect(box.width).toBeGreaterThanOrEqual(179);expect(box.right).toBeLessThanOrEqual(width+1);}
+ if(width===1920)expect(new Set(boxes.map(box=>Math.round(box.y))).size).toBe(1);
+ if(width===1440)expect(new Set(boxes.map(box=>Math.round(box.y))).size).toBeGreaterThan(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2);
+ await page.screenshot({path:info.outputPath(`seven-statistics-${width}.png`)});
+ await ready(page,'/v2/team/voice');
+ const regions=page.locator('[role="region"][aria-label^="Table:"]');
+ await expect(regions.first()).toBeVisible();
+ const names=await regions.evaluateAll(items=>items.map(item=>item.getAttribute('aria-label')));
+ expect(names.length).toBeGreaterThanOrEqual(2);expect(new Set(names).size).toBe(names.length);
+ expect(names).toContain('Table: Setting / State / Detail; scroll horizontally for all columns');
+ await page.screenshot({path:info.outputPath(`shared-table-landmarks-${width}.png`)});
 });

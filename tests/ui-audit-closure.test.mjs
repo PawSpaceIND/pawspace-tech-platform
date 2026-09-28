@@ -7,7 +7,12 @@ const read = file => readFileSync(new URL('../'+file,import.meta.url),'utf8');
 const contract = JSON.parse(read('tests/fixtures/ui-audit-event-contract.json'));
 for (const [file, expected] of Object.entries(contract.files)) {
   test(`UI audit preserves original events, requests and field contracts: ${file}`,()=>{
-    assert.deepEqual(uiBehaviorSignatures(read(file),file),expected);
+    const reviewed=[...expected];
+  for(const patch of [...(contract.presentationChanges?.[file]||[])].reverse()) {
+   assert.deepEqual(reviewed.slice(patch.index,patch.index+patch.remove.length),patch.remove);
+   reviewed.splice(patch.index,patch.remove.length,...patch.insert);
+  }
+  assert.deepEqual(uiBehaviorSignatures(read(file),file),reviewed);
   });
 }
 test('table repair stays scoped and never hides document overflow',()=>{
@@ -147,4 +152,84 @@ test('Atlas rendering preserves lone markers and aligned text',()=>{
 });
 test('audit server cannot silently reuse a stale local process',()=>{
  assert.match(read('playwright.ui-audit.config.ts'),/reuseExistingServer:false/);
+});
+
+import {resolveUiAuditServer} from '../scripts/ui-audit-server.mjs';
+import {UI_AUDIT_BASE,verifyHistoricalUiContracts} from '../scripts/ui-audit-history.mjs';
+const {TeamTable}=await import('../app/components/ui/TeamShell.tsx');
+test('table landmarks describe their actual distinct columns without modifying data',()=>{
+ const renderTable=head=>renderToStaticMarkup(createElement(TeamTable,{head,rows:[['A','B','C']]}));
+ const first=renderTable(['Setting','State','Detail']),second=renderTable(['Policy check','Result','Detail']);
+ assert.match(first,/aria-label="Table: Setting \/ State \/ Detail; scroll horizontally for all columns"/);
+ assert.match(second,/aria-label="Table: Policy check \/ Result \/ Detail; scroll horizontally for all columns"/);
+ assert.equal((first.match(/<td/g)||[]).length,3);
+ assert.match(first,/tabindex="0"/);
+});
+test('audit browser and server use one resolved local port',()=>{
+ assert.deepEqual(resolveUiAuditServer(),{port:'4197',baseURL:'http://127.0.0.1:4197'});
+ assert.deepEqual(resolveUiAuditServer({PW_BASE_URL:'http://localhost:4318'}),{port:'4318',baseURL:'http://localhost:4318'});
+ assert.deepEqual(resolveUiAuditServer({PW_PORT:'4318'}),{port:'4318',baseURL:'http://127.0.0.1:4318'});
+ assert.equal(resolveUiAuditServer({PW_PORT:'4318',PW_BASE_URL:'http://localhost:4318/'}).port,'4318');
+ assert.throws(()=>resolveUiAuditServer({PW_PORT:'4197',PW_BASE_URL:'http://localhost:4318'}),/must match/);
+ for(const PW_BASE_URL of ['https://localhost:4197','http://example.invalid:4197','http://localhost:4197/path','http://localhost:4197/?x=1','http://u:p@localhost:4197','http://localhost:4197/#part'])assert.throws(()=>resolveUiAuditServer({PW_BASE_URL}),/loopback HTTP/);
+ for(const PW_PORT of ['','0','65536','not-a-port','4197.5'])assert.throws(()=>resolveUiAuditServer({PW_PORT}),/port must/);
+});
+test('literal and uncontrolled field changes cannot bypass either UI guard',()=>{
+ for(const [before,after] of [
+  ['placeholder="Old"','placeholder="Other"'],['defaultValue="A"','defaultValue="B"'],
+  ['defaultChecked','defaultChecked={false}'],['readOnly','readOnly={false}'],
+  ['pattern="[0-9]+"','pattern=".*"'],['disabled','disabled={false}'],
+  ['type="submit"','type="button"'],['formAction="/safe"','formAction="/other"'],
+ ]) {
+  const a=`const view=<input ${before}/>;`,b=`const view=<input ${after}/>;`;
+  assert.notDeepEqual(uiBehaviorSignatures(a),uiBehaviorSignatures(b),before);
+  assert.notEqual(uiImperativeContract(a),uiImperativeContract(b),before);
+ }
+ assert.notEqual(uiImperativeContract('const v=<Card total="10"/>;'),uiImperativeContract('const v=<Card total="99"/>;'));
+});
+test('qualified fetch requests retain their target and body in the event contract',()=>{
+ for(const target of ['fetch','window.fetch','globalThis.fetch','self.fetch','window["fetch"]','globalThis["fetch"]']) {
+  const a=`const load=()=>${target}("/api/first",{method:"POST",body:"original"});`;
+  assert.equal(uiBehaviorSignatures(a).filter(s=>s.startsWith('fetch:')).length,1,target);
+  assert.notDeepEqual(uiBehaviorSignatures(a),uiBehaviorSignatures(a.replace('/api/first','/api/second')),target);
+  assert.notDeepEqual(uiBehaviorSignatures(a),uiBehaviorSignatures(a.replace('original','different')),target);
+ }
+ assert.notDeepEqual(uiBehaviorSignatures('fetch("/api/x")'),uiBehaviorSignatures('window.fetch("/api/x")'));
+});
+test('historical verification rejects a rebased or self-approved fixture',()=>{
+ const file='app/example.tsx',source='export default function View(){return <button disabled onClick={()=>save()}>Save</button>;}';
+ const events={base:UI_AUDIT_BASE,files:{[file]:uiBehaviorSignatures(source,file)}};
+ const programs={base:UI_AUDIT_BASE,files:{[file]:uiProgramContract(source,file)},jsxOriginal:{[file]:uiJsxExpressions(source,file)}};
+ const historical=(base,path)=>{assert.equal(base,UI_AUDIT_BASE);assert.equal(path,file);return source;};
+ assert.equal(verifyHistoricalUiContracts(events,programs,historical),1);
+ assert.throws(()=>verifyHistoricalUiContracts({...events,base:'main'},programs,historical),/pinned audit revision/);
+ const changed=source.replace('save()','otherAction()');
+ const updatedEvents={...events,files:{[file]:uiBehaviorSignatures(changed,file)}};
+ assert.throws(()=>verifyHistoricalUiContracts(updatedEvents,programs,historical),/historical events/);
+ const updatedPrograms={...programs,jsxOriginal:{[file]:uiJsxExpressions(changed,file)}};
+ assert.throws(()=>verifyHistoricalUiContracts(events,updatedPrograms,historical),/historical JSX/);
+ assert.throws(()=>verifyHistoricalUiContracts(events,programs,()=>{throw new Error('Historical source unavailable');}),/Historical source unavailable/);
+});
+test('hosted audit fetches and verifies the pinned history before current-source checks',()=>{
+ const workflow=read('.github/workflows/ui-audit-closure.yml');
+ assert.ok(workflow.includes(`git fetch --no-tags --depth=1 origin ${UI_AUDIT_BASE}`));
+ assert.ok(workflow.indexOf('node scripts/ui-audit-history.mjs')<workflow.indexOf('node --test tests/ui-audit-closure.test.mjs'));
+ assert.doesNotMatch(workflow,/continue-on-error/);
+});
+
+import ts from 'typescript';
+test('existing multi-table screens have distinct header-derived region names',()=>{
+ for(const file of ['app/team/revenue-mission/page.tsx','app/team/voice/ai-test/page.tsx','app/team/voice/page.tsx','app/team/ai/analytics/page.tsx']) {
+  const tree=ts.createSourceFile(file,read(file),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),names=[];
+  function visit(node) {
+   if((ts.isJsxSelfClosingElement(node)||ts.isJsxOpeningElement(node))&&node.tagName.getText(tree)==='TeamTable') {
+    const head=node.attributes.properties.find(prop=>ts.isJsxAttribute(prop)&&prop.name.getText(tree)==='head');
+    assert.ok(head&&ts.isJsxExpression(head.initializer)&&ts.isArrayLiteralExpression(head.initializer.expression),file+' table header must have a reviewed accessible name');
+    const labels=head.initializer.expression.elements.map(item=>{assert.ok(ts.isStringLiteral(item),file);return item.text;});
+    names.push(labels.join(' / '));
+   }
+   ts.forEachChild(node,visit);
+  }
+  visit(tree);assert.ok(names.length>0,file);assert.equal(new Set(names).size,names.length,file+' duplicate table purpose');
+ }
 });

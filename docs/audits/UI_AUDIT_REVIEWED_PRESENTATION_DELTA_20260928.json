@@ -17,7 +17,7 @@
     },
     "app/components/ui/TeamShell.tsx": {
       "before": "8bd6ac699b72fb33b7653a2a593fa8b1f9944fb4f319e3eb4b3cf50a1df7cd84",
-      "after": "15b88aa7c853bd75e4a7fa9c8bede10b5d4f4b70de415334173b57e566566110"
+      "after": "a3865093fd977a0700a981644c7525dd8269565335bf93ae124bf84d1317766c"
     },
     "app/components/ui/ui.module.css": {
       "before": "6a96626dd9c970aa163d1da766f8f049f7be786c173929af18c2bf425c82c4e5",

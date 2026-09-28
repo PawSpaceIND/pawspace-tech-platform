@@ -435,7 +435,7 @@
     "app/components/ui/EmptyState.tsx": "d9efbefc52eee5eb7a8127757252436afe4080aa5f3d0011ed377b1ffa6c8479",
     "app/components/ui/PageHeader.tsx": "334279e99a79610d6d06a28e4b3dc90bcc5432e431d649f0a1c00cee15e421a0",
     "app/components/ui/StatCard.tsx": "4d62c4885340b8d1b70ad25b86a5a390ef95a5fda1da534d6ac305a0c1a359e3",
-    "app/components/ui/TeamShell.tsx": "15b88aa7c853bd75e4a7fa9c8bede10b5d4f4b70de415334173b57e566566110",
+    "app/components/ui/TeamShell.tsx": "a3865093fd977a0700a981644c7525dd8269565335bf93ae124bf84d1317766c",
     "app/components/ui/TrendChart.tsx": "16cb593cafb092d1ccf3eb204df47f9733586d3c61cfaf2ca1a867efd9f339ef",
     "app/components/ui/index.ts": "8e163706c716e3c460242b4495e146f835c216d9d40fcb032de03078e1935e62",
     "app/components/ui/team-shell.module.css": "52a9954551508a74afd39bf9d2fa5faa50bb282185303abda9ab9bd7b4e69958",

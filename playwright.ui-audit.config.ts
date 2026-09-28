@@ -1,7 +1,6 @@
 import { defineConfig } from "@playwright/test";
-const port = process.env.PW_PORT || "4197";
-const baseURL = process.env.PW_BASE_URL || `http://127.0.0.1:${port}`;
-if (!["localhost", "127.0.0.1"].includes(new URL(baseURL).hostname)) throw new Error("UI repair fixtures must run only in the isolated local sandbox.");
+import {resolveUiAuditServer} from "./scripts/ui-audit-server.mjs";
+const {port,baseURL}=resolveUiAuditServer({PW_PORT:process.env.PW_PORT,PW_BASE_URL:process.env.PW_BASE_URL});
 export default defineConfig({
   testDir:"./e2e", testMatch:"ui-audit-closure.spec.ts", timeout:180_000,
   fullyParallel:true, workers:1, retries:0, forbidOnly:!!process.env.CI,
