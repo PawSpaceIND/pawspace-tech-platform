@@ -59,7 +59,6 @@ socket.addEventListener('message',event=>{try{
  const d=JSON.parse(String(event.data));
  if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
  if(d.type==='conversation_initiation_metadata'){format=d.conversation_initiation_metadata_event.user_input_audio_format;outputFormat=d.conversation_initiation_metadata_event.agent_output_audio_format;audioFormat(outputFormat);if(format!=='pcm_16000')throw Error('PCM16000 caller required');}
- if(d.type==='interruption')throw Error('Interrupted speech cannot certify this sale');
  const change=applyAudioProbeEvent(state,d,{now:Date.now(),outputFormat});
  if(d.type==='audio'&&(!audioStarted||state.transcript)){const n=Buffer.from(d.audio_event?.audio_base_64||'','base64').length;if(n){firstAudio ||= Date.now();lastAudio=Date.now();bytes+=n;}}
  if((change==='reply'||change==='correction')&&isHandoffReply(state.reply))throw Error('Spoken sale handed off');
