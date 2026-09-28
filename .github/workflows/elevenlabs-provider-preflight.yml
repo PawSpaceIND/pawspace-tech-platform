@@ -192,7 +192,7 @@ jobs:
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
         run: |
           node <<'NODE'
-          import {humanCallProfile, humanCallPrompt} from './scripts/elevenlabs-human-call-profile.mjs';
+          import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
           const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2');if(!key||!agentId)throw new Error('inspection prerequisites missing');
           const listResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=10`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
@@ -740,7 +740,7 @@ jobs:
           AUDIO_PROFILE: ${{ inputs.audio_profile }}
         run: |
           node --input-type=module <<'NODE'
-          import {humanCallProfile, humanCallPrompt} from './scripts/elevenlabs-human-call-profile.mjs';
+          import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
           const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2_5');
           if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
