@@ -27,9 +27,9 @@ on:
         required: false
         default: ""
       audio_profile:
-        description: 'Human-call TTS profile: flash_v2_5 or v3_conversational'
+        description: 'Human-call TTS profile: flash_v2 (English Agent), flash_v2_5, or v3_conversational'
         required: false
-        default: 'flash_v2_5'
+        default: 'flash_v2'
       specialist_use_case:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
@@ -194,7 +194,7 @@ jobs:
           node <<'NODE'
           import {humanCallProfile, humanCallPrompt} from './scripts/elevenlabs-human-call-profile.mjs';
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
-          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2_5');if(!key||!agentId)throw new Error('inspection prerequisites missing');
+          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2');if(!key||!agentId)throw new Error('inspection prerequisites missing');
           const listResponse=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=10`,{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           const list=await listResponse.json().catch(()=>({}));if(!listResponse.ok){console.log(JSON.stringify(list).slice(0,2000));throw new Error(`conversation list failed ${listResponse.status}`);}
           const rows=Array.isArray(list?.conversations)?list.conversations:[];if(!rows.length)throw new Error('no Grooming conversations found');
