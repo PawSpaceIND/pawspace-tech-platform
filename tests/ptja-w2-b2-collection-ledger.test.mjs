@@ -220,14 +220,27 @@ test("R04-11: only a finance role may verify a manual collection, and then it co
     paymentMethod: "cash", collectorId: "rider-42@pawspace.test", manualEntry: true });
 
   await assert.rejects(() => verifyManualCollection(w.db, { groupKey: posted.groupKey, actorId: "associate@pawspace.test",
-    actorPermissions: ["bookings.view"], reason: "looks right to me" }), "an associate may not make a collection final");
+    actorPermissions: ["bookings.view"], reason: "looks right to me", expectedVersion: Number(w.sqlite.prepare("SELECT created_at FROM collection_ledger_postings WHERE group_key=?").get(posted.groupKey).created_at) }), "an associate may not make a collection final");
 
   await verifyManualCollection(w.db, { groupKey: posted.groupKey, actorId: OPS,
-    actorPermissions: ["finance.manage"], reason: "Cash counted against the rider's deposit slip" });
+    actorPermissions: ["finance.manage"], reason: "Cash counted against the rider's deposit slip", expectedVersion: Number(w.sqlite.prepare("SELECT created_at FROM collection_ledger_postings WHERE group_key=?").get(posted.groupKey).created_at) });
 
   const after = await collectionsTotal(w.db, PERIOD);
   assert.equal(after.verified, 5000, "once finance verifies it, it counts");
   assert.equal(after.pendingVerification, 0);
+});
+
+test("R04-11b: manual cash verification is one atomic versioned transition", async () => {
+  const w = await world();
+  const { postCollectionEvent, verifyManualCollection } = await import("../lib/collection-ledger.ts");
+  const posted = await postCollectionEvent(w.db, { event: "cash_collected_confirmed", ...COLLECTION,
+    paymentMethod: "cash", collectorId: "rider-42@pawspace.test", manualEntry: true });
+  const version = Number(w.sqlite.prepare("SELECT created_at FROM collection_ledger_postings WHERE group_key=?").get(posted.groupKey).created_at);
+  await verifyManualCollection(w.db, { groupKey: posted.groupKey, actorId: OPS,
+    actorPermissions: ["finance.manage"], reason: "Cash counted against deposit evidence", expectedVersion: version });
+  await assert.rejects(() => verifyManualCollection(w.db, { groupKey: posted.groupKey, actorId: OPS,
+    actorPermissions: ["finance.manage"], reason: "Duplicate verification attempt", expectedVersion: version }));
+  assert.equal(w.sqlite.prepare("SELECT verification_status FROM collection_ledger_postings WHERE group_key=?").get(posted.groupKey).verification_status, "verified");
 });
 
 test("R04-12: a gateway capture posted twice does not double-count the money", async () => {
