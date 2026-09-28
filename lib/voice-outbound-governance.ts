@@ -1,3 +1,4 @@
+import { correlationFromVoiceTransitions } from "./voice-handset-evidence";
 /**
  * Outbound voice calling: the pre-dial policy gate, the call ledger, and the provider-event receiver.
  *
@@ -559,7 +560,7 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
       bookingId: text(input.bookingId) || null, useCase: text(input.useCase) || null,
     });
     await db.prepare("UPDATE voice_call_orders SET provider_call_id=?,production_call=?,updated_at=? WHERE id=?").bind(handle.providerCallId, handle.productionCall ? 1 : 0, now, id).run();
-    await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall }, asOf: now });
+    await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall, ...(handle.providerCorrelation ? { providerCorrelation: handle.providerCorrelation } : {}) }, asOf: now });
   } catch (error) {
     const unavailable = error instanceof TelephonyProviderUnavailable;
     // The recipient was never reached, so the slot goes back rather than silently consuming their
@@ -895,13 +896,14 @@ export async function voiceCallAudit(db: Db, callId: string) {
   const call = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
   if (!call) throw new Error("Voice call not found");
   const [transitions, decisions, events] = await Promise.all([
-    db.prepare("SELECT sequence,from_state,to_state,reason,reason_class,actor,created_at FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").bind(callId).all<Row>(),
+    db.prepare("SELECT sequence,from_state,to_state,reason,reason_class,detail_json,actor,created_at FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").bind(callId).all<Row>(),
     db.prepare("SELECT check_code,passed,detail,created_at FROM voice_call_policy_decisions WHERE call_id=? ORDER BY check_code").bind(callId).all<Row>(),
     db.prepare("SELECT provider,provider_event_id,event_kind,provider_status,signature_mechanism,payload_sha256,curated_json,applied,created_at FROM voice_call_provider_events WHERE call_id=? ORDER BY created_at").bind(callId).all<Row>(),
   ]);
   return {
     call: summarise(call),
-    transitions: transitions.results,
+    providerCorrelation: correlationFromVoiceTransitions(transitions.results),
+    transitions: transitions.results.map(({ detail_json: _detail, ...transition }) => transition),
     policyDecisions: decisions.results.map(row => ({ checkCode: text(row.check_code), passed: Number(row.passed) === 1, detail: text(row.detail), at: Number(row.created_at) })),
     providerEvents: events.results,
     truth: { rawProviderPayloadsStored: false, productionCallExecuted: Number(call.production_call) === 1 && call.dialed_at != null },
