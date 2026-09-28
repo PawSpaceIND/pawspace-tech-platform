@@ -1,0 +1,152 @@
+{
+  "id": 2,
+  "title": "Grooming pricing, offers and payment boundaries",
+  "agent": "grooming",
+  "dialed": false,
+  "startedAt": "2026-09-28T11:51:11.434Z",
+  "questionsPlanned": 4,
+  "turns": [
+    {
+      "number": 1,
+      "question": "Do not create a booking. Explain the current Essential Bath price for one adult dog and what can change the final amount.",
+      "transcript": "Do not create a booking. Explain the current essential bath price for one adult dog, and what can change the final amount.",
+      "reply": "The current Essential Bath price for one adult dog is ₹1,349. The final amount can change based on the number of pets, the selected grooming package, and the live quote for your location and appointment details. I won’t create a booking.",
+      "inputAudioBytes": 262042,
+      "outputAudioBytes": 481710,
+      "nonSilentBytes": 435761,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 29156,
+      "replyAudioAfterInputMs": 3765,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 2,
+      "question": "Does the grooming amount include taxes? Could travel, coat condition, or add ons change it?",
+      "transcript": "Does the grooming amount include taxes? Could travel, coat condition, or add-ons change it?",
+      "reply": "I’m not certain whether the ₹1,349 Essential Bath price includes taxes; the catalogue doesn’t specify that. Travel charges, coat condition, or add-ons are also not defined in the supplied catalogue, so I can’t confirm whether they apply. The exact total would be shown in the live quote before payment.",
+      "inputAudioBytes": 215422,
+      "outputAudioBytes": 636634,
+      "nonSilentBytes": 588196,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 32768,
+      "replyAudioAfterInputMs": 4024,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 3,
+      "question": "Are there genuine current discounts or multi session grooming plans? Please explain eligibility rather than promising an offer.",
+      "transcript": "Are there genuine current discounts or multi-session grooming plans? Please explain eligibility rather than promising an offer.",
+      "reply": "There’s no approved coupon showing for you right now. Genuine discounts, if available, are checked for Bruno’s city, dates, package, eligibility, usage limits, and payment mode before confirmation.\n\nFor regular grooming, prepaid plans are available: 3 Dog sessions for ₹3,597 valid for 4 months, 6 for ₹6,594 valid for 8 months, or 12 for ₹11,988 valid for 15 months. Each visit uses one credit per pet, and these are prepaid packs, not auto-renewing plans.",
+      "inputAudioBytes": 259186,
+      "outputAudioBytes": 1094142,
+      "nonSilentBytes": 1002085,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 48222,
+      "replyAudioAfterInputMs": 3869,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 4,
+      "question": "I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.",
+      "transcript": "I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.",
+      "reply": "One moment while I check that for you. Online payment is made through a secure Razorpay order after you confirm a booking. You can use UPI, including GPay, or the payment options shown on the PawSpace booking page. The booking is confirmed only after Razorpay verifies the payment.\n\nI’m not certain that paying after grooming is available. The approved policy only confirms online prepaid payment, so a human support representative would need to confirm any pay-after-service option.",
+      "inputAudioBytes": 253192,
+      "outputAudioBytes": 953744,
+      "nonSilentBytes": 868807,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 45625,
+      "replyAudioAfterInputMs": 4007,
+      "recognitionCoverage": 1
+    }
+  ],
+  "issues": [],
+  "finalTranscript": [
+    {
+      "role": "agent",
+      "message": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Do not create a booking. Explain the current essential bath price for one adult dog, and what can change the final amount.",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "The current Essential Bath price for one adult dog is ₹1,349. The final amount can change based on the number of pets, the selected grooming package, and the live quote for your location and appointment details. I won’t create a booking.",
+      "timeInCallSeconds": 12,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Does the grooming amount include taxes? Could travel, coat condition, or add-ons change it?",
+      "timeInCallSeconds": 29,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "I’m not certain whether the ₹1,349 Essential Bath price includes taxes; the catalogue doesn’t specify that. Travel charges, coat condition, or add-ons are also not defined in the supplied catalogue, so I can’t confirm whether they apply. The exact total would be shown in the live quote before payment.",
+      "timeInCallSeconds": 40,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Are there genuine current discounts or multi-session grooming plans? Please explain eligibility rather than promising an offer.",
+      "timeInCallSeconds": 62,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "There’s no approved coupon showing for you right now. Genuine discounts, if available, are checked for Bruno’s city, dates, package, eligibility, usage limits, and payment mode before confirmation.\n\nFor regular grooming, prepaid plans are available: 3 Dog sessions for ₹3,597 valid for 4 months, 6 for ₹6,594 valid for 8 months, or 12 for ₹11,988 valid for 15 months. Each visit uses one credit per pet, and these are prepaid packs, not auto-renewing plans.",
+      "timeInCallSeconds": 74,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.",
+      "timeInCallSeconds": 110,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "One moment while I check that for you. Online payment is made through a secure Razorpay order after you confirm a booking. You can use UPI, including GPay, or the payment options shown on the PawSpace booking page. The booking is confirmed only after Razorpay verifies the payment.\n\nI’m not certain that paying after grooming is available. The approved policy only confirms online prepaid payment, so a human support representative would need to confirm any pay-after-service option.",
+      "timeInCallSeconds": 122,
+      "interrupted": false
+    }
+  ],
+  "passed": true,
+  "deployedSha": "db2c97003837663c7370e6ada2d9d1bf574e443e",
+  "workerVersion": "c469441e-5630-4394-a5ab-be3d2490caf6",
+  "agentVersion": "agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs",
+  "agentId": "agent_9201m39vfcjjec4sya7rat0cerct",
+  "agentCallLimits": {
+    "agent_concurrency_limit": 1,
+    "daily_limit": 20,
+    "bursting_enabled": false
+  },
+  "runnerSha": "f0e930cc7bacffa463d1ee1e9d6257dc5fe12fb3",
+  "syntheticProfile": true,
+  "hasDialableNumber": false,
+  "threadId": "THREAD-AUDIO-DEMO-36418085900-1-2",
+  "conversationId": "conv_6301m3kxnq7bfnqbfj2mhxk5e4d9",
+  "greeting": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+  "closeCode": 1000,
+  "closeReason": "no-phone demo complete",
+  "providerStatus": "done",
+  "durationSeconds": 162,
+  "finalTranscriptMatched": true,
+  "businessStateUnchanged": true,
+  "nonVoiceMessages": 0,
+  "handoffs": [],
+  "finishedAt": "2026-09-28T11:54:09.761Z"
+}
