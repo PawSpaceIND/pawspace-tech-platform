@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright';
 const origin='https://pawspace-staging.karthik-fce.workers.dev';
-const expectedSha='074d603db4c03f53d2a27a55d19c1a82c4103ded';
+const expectedSha='3d844ebbba08221d14f4ace00027b173e5499d15';
 const code=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
 const out=process.env.MASTER_OUT||'artifacts/master';fs.mkdirSync(out,{recursive:true});
 const report={origin,expectedSha,startedAt:new Date().toISOString(),checks:[],unexpectedWrites:[],pageErrors:[]};
