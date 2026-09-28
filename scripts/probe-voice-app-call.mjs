@@ -4,7 +4,7 @@ import {exotelApiOrigin} from './repair-staging-voice-config.mjs';
 // No direct provider dialing, import mutation, policy bypass, or payment operation.
 import {setTimeout as delay} from 'node:timers/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
-import {conversationEvidence} from './voice-uat-evidence.mjs';
+import {conversationEvidence,assertCompletedCarrier} from './voice-uat-evidence.mjs';
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
 if(!['inspect-app-voice','direct-grooming-call'].includes(env.VOICE_SALE_ACTION))throw Error('Explicit app voice action required');
 await verifyVoiceSale({...env,VOICE_SALE_ACTION:'probe-agent-socket'});
@@ -50,6 +50,7 @@ for(let i=0;i<36;i++){
  if(['no-answer','busy','failed','canceled'].includes(carrier.status))throw Error('Carrier did not connect: '+carrier.status);
  if(carrier.status==='completed')break;
 }
+assertCompletedCarrier(carrier);
 const eh={'xi-api-key':env.ELEVENLABS_API_KEY};
 let detail;
 for(let attempt=0;attempt<15&&!detail;attempt++){

@@ -1,3 +1,4 @@
+import {assertCompletedCarrier} from '../scripts/voice-uat-evidence.mjs';
 import {syntheticInfoAudio} from '../scripts/voice-synthetic-audio.mjs';
 import {SPOKEN_INFO_TEXT} from '../scripts/voice-spoken-fixtures.mjs';
 import {exotelApiOrigin} from '../scripts/repair-staging-voice-config.mjs';
@@ -81,4 +82,9 @@ test('tester discovery uses actual canonical phone ownership and never rewrites 
  assert.throws(()=>resolveTesterCustomer(Array.from({length:101},()=>({id:'x',primary_phone:phone})),phone),/incomplete/);
  const query=testerCandidateQuery(phone);assert.match(query.sql,/^SELECT /);assert.deepEqual(query.params,['%3210%','%3210%']);
  assert.throws(()=>testerCandidateQuery('not-a-phone'),/canonicalised/);
+});
+
+test('exhausted carrier polling cannot pass on a finished model session alone',()=>{
+ assert.equal(assertCompletedCarrier({status:'completed',duration:12}),true);
+ for(const carrier of [{status:'in-progress',duration:12},{status:'no-answer',duration:0},{status:'completed',duration:0},{status:'completed',duration:NaN},{status:'completed',duration:Infinity},undefined])assert.throws(()=>assertCompletedCarrier(carrier),/Carrier has not confirmed/);
 });
