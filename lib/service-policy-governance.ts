@@ -173,11 +173,14 @@ const MATCHED_BY=["service_and_city","service_any_city","any_service_and_city","
  * and a 409 naming the row when what resolved does not satisfy its own domain's validator - a policy
  * nobody can vouch for must not be silently evaluated.
  */
-export async function resolveServicePolicy<T extends Record<string,unknown>>(db:Db,domain:string,scope:ServicePolicyScope={},at=new Date()):Promise<ResolvedServicePolicy<T>>{
+export async function resolveServicePolicy<T extends Record<string,unknown>>(db:Db,domain:string,scope:ServicePolicyScope={},at=new Date(),options:{readOnly?:boolean}={}):Promise<ResolvedServicePolicy<T>>{
   const spec=registry.get(domain) as ServicePolicyDomain<T>|undefined;
   if(!spec)throw new Error(`Unknown policy domain ${domain}`);
-  await seedServicePolicyDefault(db,domain);
+  if(!options.readOnly)await seedServicePolicyDefault(db,domain);
   const serviceCode=normalise(scope.serviceCode),cityId=normalise(scope.cityId),date=at.toISOString().slice(0,10);
+  const notConfigured=()=>Response.json({error:`${spec.label} is not configured for this service and city`,code:"service_policy_configuration_required",domain,serviceCode,cityId},{status:409});
+  // Availability previews read existing policy only: no schema, seed or audit writes.
+  if(options.readOnly&&!await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='service_policy_configs'").first<Row>())throw notConfigured();
   /*
    * POSITIONAL placeholders, with each value repeated, rather than numbered ?1/?2 reused across the
    * statement. Numbered parameters are valid SQLite, but node:sqlite's handling of them changed between
@@ -192,7 +195,7 @@ export async function resolveServicePolicy<T extends Record<string,unknown>>(db:
        AND (service_code=? OR service_code='*') AND (city_id=? OR city_id='*')
      ORDER BY rank ASC, version DESC, updated_at DESC LIMIT 1`)
     .bind(serviceCode,cityId,serviceCode,cityId,domain,date,date,serviceCode,cityId).first<Row>();
-  if(!row)throw Response.json({error:`${spec.label} is not configured for this service and city`,code:"service_policy_configuration_required",domain,serviceCode,cityId},{status:409});
+  if(!row)throw notConfigured();
   const record=rowToRecord(spec,row);
   const problem=spec.problem(record.config as Record<string,unknown>);
   if(problem)throw Response.json({error:`${spec.label} configuration is invalid: ${problem}`,code:"service_policy_configuration_invalid",domain,policyId:record.id},{status:409});
