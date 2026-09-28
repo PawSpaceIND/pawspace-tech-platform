@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
+import {customerScopedHref,isV2CustomerPath} from '../lib/v2/route-scope.ts';
 const source=readFileSync(new URL('../.github/workflows/v2-grooming.yml',import.meta.url),'utf8');
 const config=readFileSync(new URL('../playwright.v2.config.ts',import.meta.url),'utf8');
 function job(name){const match=source.match(new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z][\\w-]*:|$(?![\\s\\S]))`,'m'));assert.ok(match,`${name} job must exist`);return match[1];}
@@ -31,4 +32,9 @@ for(const result of ['success','failure','cancelled','skipped','', 'unknown'])te
  const execution=spawnSync('bash',['-e','-c',script],{env:{...process.env,BROWSER_RESULT:result},encoding:'utf8',timeout:5000});
  assert.ifError(execution.error);
  assert.equal(execution.status===0,result==='success',`${result}: ${execution.stdout}${execution.stderr}`);
+});
+
+test('browser workflow covers the real V2 grooming route scope',()=>{
+ assert.equal(isV2CustomerPath('/v2/grooming'),true);
+ assert.equal(customerScopedHref('/v2/grooming','/grooming/manage?bookingId=BOOK-1'),'/v2/grooming/manage?bookingId=BOOK-1');
 });
