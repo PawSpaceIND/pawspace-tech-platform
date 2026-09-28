@@ -135,6 +135,11 @@ test("recording the collection lets the job complete, and the payout accrues", a
   const ledger = sqlite.prepare("SELECT group_key,event,amount,manual_entry,verification_status,created_by FROM collection_ledger_postings WHERE payment_id='PAY-SESS'").get();
   assert.equal(ledger.event, "cash_collected_confirmed"); assert.equal(Number(ledger.amount), 1899);
   assert.equal(Number(ledger.manual_entry), 1); assert.equal(ledger.verification_status, "pending_finance_verification");
+  assert.equal(paymentStatus(), "created", "cash completion never fabricates a gateway capture");
+  const history = JSON.parse(sqlite.prepare("SELECT detail_json FROM booking_lifecycle_events WHERE booking_id='BK-SESS' AND event_type='service_completed'").get().detail_json);
+  assert.equal(history.paymentStatus, "created", "R03 reads canonical status while preserving #1163 cash completion");
+  assert.equal(history.collection.cashLedger.groupKey, ledger.group_key);
+  assert.equal(history.collection.cashLedger.verificationStatus, "pending_finance_verification");
   const { verifyManualCollection } = await import("../lib/collection-ledger.ts");
   await verifyManualCollection(db, { groupKey: ledger.group_key, actorId: "finance.manager@pawspace.test", actorPermissions: ["finance.manage"], reason: "Cash counted against provider handover", expectedVersion: Number(sqlite.prepare("SELECT created_at FROM collection_ledger_postings WHERE group_key=?").get(ledger.group_key).created_at) });
   assert.equal(sqlite.prepare("SELECT verification_status FROM collection_ledger_postings WHERE group_key=?").get(ledger.group_key).verification_status, "verified");
@@ -266,4 +271,58 @@ test("the gateway demands the same permission the route does", async () => {
   assert.equal(await ask("mark_paid"), "payments.manage");
   assert.equal(await ask("record_cash_collection"), "bookings.view", "the provider records their own collection");
   assert.equal(await ask("complete"), "bookings.view");
+});
+
+/** Rehearse a provider correcting its own synthetic cash entry before completion commits. */
+test("completion detects a governed cash correction at the transaction boundary", async () => {
+  const ctx = await groomingWorld();
+  try {
+    assert.equal((await ctx.post({ action: "record_cash_collection", collectedAmount: 1899, collectionMethod: "cash" })).status, 200);
+    const prepare = ctx.db.prepare, batch = ctx.db.batch; let corrected = false;
+    ctx.db.prepare = sql => { const stmt = prepare(sql), bind = stmt.bind;
+      stmt.bind = (...args) => { const bound = bind(...args);
+        bound.completionBoundary = sql.includes("UPDATE canonical_bookings SET status='completed'");
+        return bound;
+      }; return stmt;
+    };
+    ctx.db.batch = async items => {
+      if (!corrected && items.some(item => item.completionBoundary)) {
+        corrected = true;
+        const correction = await ctx.post({ action: "record_cash_collection", collectedAmount: 189, collectionMethod: "cash" });
+        assert.equal(correction.status, 200);
+      }
+      return batch(items);
+    };
+    const first = await ctx.complete(); assert.ok(corrected);
+    assert.equal(first.status, 409, JSON.stringify(first.body));
+    assert.equal(ctx.bookingStatus(), "in_service"); assert.equal(ctx.settlement(), null);
+    const retry = await ctx.complete(); assert.equal(retry.status, 200, JSON.stringify(retry.body));
+    assert.equal(ctx.settlement().status, "withheld_pending_collection");
+    assert.equal(ctx.paymentStatus(), "created");
+  } finally { ctx.sqlite.close(); }
+});
+
+/** An in-flight correction must not overwrite cash after another request completes the job. */
+test("cash recording rechecks completion at the actual write", async () => {
+  const ctx = await groomingWorld();
+  try {
+    assert.equal((await ctx.post({ action: "record_cash_collection", collectedAmount: 1899, collectionMethod: "cash" })).status, 200);
+    const prepare = ctx.db.prepare; let completed = false;
+    ctx.db.prepare = sql => { const stmt = prepare(sql), bind = stmt.bind;
+      stmt.bind = (...args) => { const bound = bind(...args), run = bound.run;
+        bound.run = async () => {
+          if (!completed && sql.startsWith("INSERT INTO service_cash_collections")) {
+            completed = true;
+            const result = await ctx.complete(); assert.equal(result.status, 200, JSON.stringify(result.body));
+          }
+          return run();
+        }; return bound;
+      }; return stmt;
+    };
+    const correction = await ctx.post({ action: "record_cash_collection", collectedAmount: 189, collectionMethod: "cash" });
+    assert.ok(completed); assert.equal(correction.status, 409, JSON.stringify(correction.body));
+    const row = ctx.sqlite.prepare("SELECT amount FROM service_cash_collections WHERE booking_id='BK-SESS'").get();
+    assert.equal(Number(row.amount), 1899);
+    assert.equal(ctx.bookingStatus(), "completed");
+  } finally { ctx.sqlite.close(); }
 });
