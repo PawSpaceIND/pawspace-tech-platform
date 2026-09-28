@@ -75,8 +75,9 @@ export default function V2GroomingPaymentPanel({ bookingId, initialAddress = "",
   }, [bookingId, refresh]);
 
   const confirmed = isV2GroomingConfirmationReady(projection, bookingId);
+  const payAfterService = projection?.paymentMode === "pay_after_service";
   const paymentVerified = projection?.paymentStatus === "captured" || state.phase === "captured" || state.phase === "settled";
-  const canPay = !preparing && !busy && !error && readiness?.locationReady === true &&
+  const canPay = projection?.paymentMode === "prepaid" && !preparing && !busy && !error && readiness?.locationReady === true &&
     projection?.bookingStatus === "payment_pending" && ["created", "authorised"].includes(projection.paymentStatus) &&
     !paymentVerified && !(attempted && state.phase === "pending");
 
@@ -108,19 +109,19 @@ export default function V2GroomingPaymentPanel({ bookingId, initialAddress = "",
   return <main className={styles.checkoutPage}><section className={styles.checkoutCard} aria-label="Grooming checkout">
     <Link href="/v2" className={styles.checkoutBrand}><img src="/assets/pawspace-official-lockup.png" alt="PawSpace" /></Link>
     <span className={styles.eyebrow}>{confirmed ? "BOOKING CONFIRMED" : "YOUR GROOMING BOOKING"}</span>
-    <h1>{confirmed ? "A lovely spa day is on its way." : paymentVerified ? "Payment verified. Finalizing your visit." : "One step closer to their spa day."}</h1>
-    <p role="status">{confirmed ? "Your care details below are confirmed by PawSpace." : preparing ? "Saving your verified doorstep before payment." : state.message}</p>
+    <h1>{confirmed ? "A lovely spa day is on its way." : paymentVerified ? "Payment verified. Finalizing your visit." : payAfterService ? "Your visit is reserved. Pay after grooming." : "One step closer to their spa day."}</h1>
+    <p role="status">{confirmed ? (payAfterService ? "Your care details are confirmed. Nothing is due now; settle after service by payment link / UPI or cash." : "Your care details below are confirmed by PawSpace.") : preparing ? "Saving your verified doorstep before confirmation." : state.message}</p>
     <div className={styles.checkoutFacts}>
       <div><span>Booking reference</span><b>{bookingId}</b></div>
       <div><span>Care professional</span><b>{projection?.providerName || "Verifying professional"}</b></div>
       <div><span>Package</span><b>{projection?.packageName || "Verifying package"}</b></div>
       <div><span>Booking total</span><b>{projection && Number.isFinite(projection.totalAmount) ? money(projection.totalAmount) : "Verifying amount"}</b></div>
       <div><span>Exact visit time (IST)</span><b>{projection ? `${when(projection.scheduledStart)} - ${when(projection.scheduledEnd)}` : "Verifying time"}</b></div>
-      <div><span>Payment reference</span><b>{projection?.transactionId || "Awaiting verified payment"}</b></div>
+      <div><span>Payment</span><b>{payAfterService ? "Pay after service · ₹0 due now" : projection?.transactionId || "Awaiting verified payment"}</b></div>
     </div>
     {confirmed ? <div className={styles.confirmedBox} role="status"><span aria-hidden="true">&#10003;</span><div><b>Your grooming visit is confirmed</b><small>{projection?.pets?.map(pet => pet.name).join(" + ")}</small></div></div>
-      : <div className={styles.safe}><span aria-hidden="true">&#9670;</span><p><b>Verify-first payment.</b> The browser never declares success. We wait for your verified payment, exact slot and care professional to agree on the server.</p></div>}
-    {!preparing && readiness && !readiness.locationReady && projection?.bookingStatus === "payment_pending" && !paymentVerified && <form className={styles.recoveryForm} onSubmit={event => { event.preventDefault(); void saveDoorstep(); }}>
+      : <div className={styles.safe}><span aria-hidden="true">&#9670;</span><p><b>{payAfterService ? "Pay after service." : "Verify-first payment."}</b> {payAfterService ? "No amount is collected now. Your groomer can collect cash, or PawSpace can issue a governed Razorpay / UPI payment request after service." : "The browser never declares success. We wait for your verified payment, exact slot and care professional to agree on the server."}</p></div>}
+    {!preparing && readiness && !readiness.locationReady && !paymentVerified && <form className={styles.recoveryForm} onSubmit={event => { event.preventDefault(); void saveDoorstep(); }}>
       <h2>Verify the doorstep for this booking</h2><p>Your booking reference is preserved. No second booking is needed.</p>
       <label>House, street &amp; area<input required minLength={8} value={address} onChange={event => setAddress(event.target.value)} autoComplete="street-address" /></label>
       <label>PIN code<input required pattern="[1-9][0-9]{5}" inputMode="numeric" value={pincode} onChange={event => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoComplete="postal-code" /></label>
@@ -128,12 +129,12 @@ export default function V2GroomingPaymentPanel({ bookingId, initialAddress = "",
     </form>}
     {error && <p className={styles.inlineError} role="alert">{error}</p>}
     {state.phase === "error" && <p className={styles.inlineError} role="alert">{state.message}</p>}
-    {!confirmed && <div className={styles.checkoutActions}>
+    {!confirmed && !payAfterService && <div className={styles.checkoutActions}>
       <button type="button" className={styles.continue} disabled={!canPay} onClick={() => void pay()}>{busy ? "Checking securely..." : paymentVerified ? "Payment received - do not pay again" : "Pay securely with Razorpay"}</button>
       <button type="button" className={styles.statusButton} disabled={busy} onClick={() => { setPolling(true); setRefresh(value => value + 1); void controller.current?.resume(); }}>Check verified status</button>
       {!polling && <p>Automatic checks have paused. Check status again; keep this booking reference rather than paying again.</p>}
     </div>}
     <Link href="/v2" className={styles.doneLink}>Back to PawSpace</Link>
-    <small className={styles.receiptNote}>Sandbox checkout only. Reloading this page reads the same booking and never creates a payment.</small>
+    <small className={styles.receiptNote}>{payAfterService ? "Pay-after-service booking. Reloading reads the same booking and never creates a payment." : "Sandbox checkout only. Reloading this page reads the same booking and never creates a payment."}</small>
   </section></main>;
 }
