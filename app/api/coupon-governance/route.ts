@@ -8,6 +8,9 @@ async function couponsLiveApproved(){const{env}=await import("cloudflare:workers
 // These are governed customer/operator outcomes, not internal exceptions. Only this exact allow-list
 // may cross the HTTP boundary; SQL/stack/runtime messages continue through authError's generic 500.
 const couponFailures=[
+  {message:"Coupon customer eligibility is temporarily unavailable",status:503},
+  {message:"Coupon customer scope is invalid",status:400},
+  {message:"Coupon amount configuration is invalid",status:409},
   {message:"Quote, booking, customer and idempotency key are required",status:400},
   {message:"Coupon quote not found",status:404},
   {message:"Coupon quote customer mismatch",status:403},
