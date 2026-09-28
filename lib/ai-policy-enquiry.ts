@@ -1,0 +1,31 @@
+/** Conservative information-only policy enquiries. This does not authorise any tool or action. */
+export type PolicyEnquiryTopic='refund_process'|'complaint_process'|'booking_change_process';
+export const POLICY_INFORMATION_SIGNAL='policy_information_only';
+const ACTIVE_RISK=[
+ /\b(?:human|person|staff|agent|representative|manager|coordinator)\b/i,
+ /\b(?:very unhappy|serious issue|service failure|not happy|no[- ]?show|missed (?:my|our)|damaged|hurt|unsafe|mistreat(?:ed|ment)?)\b/i,
+ /\b(?:charged|debited|billed) (?:me )?(?:twice|again|incorrectly)|\b(?:double|duplicate|wrong) (?:charge|debit)|\bpayment dispute/i,
+ /\b(?:my|our) (?:refund|complaint|dispute)|\b(?:i|we) (?:want|need|demand|request) (?:a |my |our )?(?:refund|money back)/i,
+ /\b(?:i|we) (?:was|were|have been|got) (?:charged|debited)|\byou (?:have )?charged/i,
+ /\b(?:yesterday|today|right now|currently|already|still|never|hasn't|didn't|did not|has not|last visit|last booking)\b/i,
+ /\b(?:bleeding|injured|injury|seizure|collapsed|poisoned|not breathing|emergency|lost pet|missing dog|bitten)\b/i,
+ /\b(?:connect|transfer|hand|route|escalate|speak|talk).{0,45}\b(?:human|person|staff|agent|coordinator|manager)|\bcall me\b/i,
+ /\b(?:ignore|override|bypass).{0,40}\b(?:rules|instructions|safety|checks|policy)|\b(?:system prompt|developer message)\b/i,
+];
+export function policyEnquiryTopic(input:string):PolicyEnquiryTopic|null{
+ if(!input||input.length>1200)return null;
+ const text=input.normalize('NFKC').replace(/[’‘]/g,"'").replace(/\s+/g,' ').trim();
+ if(ACTIVE_RISK.some(p=>p.test(text)))return null;
+ const question=text.replace(/^(?:(?:this is an (?:enquiry|inquiry) only|do not (?:issue a refund|change any booking|cancel any booking|book anything))\.\s*)+/i,'');
+ // Only a process question, not a request to initiate, approve, cancel, reschedule or transfer.
+ if(!/^(?:please )?(?:explain\b|how\b|what\b|if\b|where\b|can you explain\b)/i.test(question))return null;
+ if(/\b(?:issue|process|approve|give|send) (?:me |us )?(?:a |my |the )?refund\b|\b(?:cancel|reschedule|change) my\b|\braise (?:a |my )?complaint (?:for me|now)\b/i.test(question))return null;
+ if(!/\b(?:process|policy|policies|review|reviewed|work|works|happen|happens|procedure|steps|charges|raise a complaint|follow it up)\b/i.test(question))return null;
+ // Additional commands joined after a policy question do not inherit its read-only exemption.
+ if(/\b(?:and then|also|but|actually|by the way)\b|[;{}<>]/i.test(question))return null;
+ if(/\b(?:refund|refunds|money back)\b/i.test(question))return 'refund_process';
+ if(/\b(?:complaint|complaints|grievance)\b/i.test(question))return 'complaint_process';
+ if(/\b(?:reschedule|rescheduling|cancel|cancellation|cancellations)\b/i.test(question))return 'booking_change_process';
+ return null;
+}
+export const POLICY_INFORMATION_DIRECTIVE='This turn is an information-only policy enquiry, not permission to initiate a refund, complaint, cancellation, booking, payment or handoff. Explain the relevant approved process first. Use no action envelope or mutation tools. Do not promise a fee, refund amount, deadline, entitlement or completed action without the applicable approved source. A general question must not be described as an existing dispute or a completed team transfer. Do not append a sales pitch. If one detail is unavailable, identify that detail while explaining the supported process.';
