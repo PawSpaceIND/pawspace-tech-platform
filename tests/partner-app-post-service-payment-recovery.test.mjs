@@ -138,7 +138,7 @@ test("a refunded pay-after-service booking is never offered as collectable", () 
   // below one of its own callers and would have thrown a temporal-dead-zone ReferenceError.
   assert.match(page, /^const SETTLED_PAYMENT_STATUSES/m, "must be module-scoped, not inside the component");
 
-  const gate = page.match(/selected\.status === "completed" && selected\.payment\.mode === "pay_after_service" && ([^&]*)&&/);
+  const gate = page.match(/selected\.payment\.mode === "pay_after_service" && ([^&]*)&&/);
   assert.ok(gate, "the pay-after-service section gate must still exist");
   assert.match(gate[1], /!SETTLED_PAYMENT_STATUSES\.includes\(selected\.payment\.status\)/,
     "the gate must exclude every settled status, not just captured");

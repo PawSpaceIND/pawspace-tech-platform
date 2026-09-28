@@ -65,7 +65,12 @@ export async function createPostServicePaymentRequest(db:Db,env:Record<string,un
  const row=await db.prepare("SELECT b.status booking_status,b.provider_id,b.customer_id,p.id payment_id,p.amount,p.currency,p.status payment_status,p.mode FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(input.bookingId).first<Row>();
  if(!row)throw new Error("Canonical booking payment was not found");
  if(String(row.provider_id)!==input.providerId)throw new Error("This booking is not assigned to this provider");
- if(String(row.booking_status)!=="completed")throw new Error("Post-service payment can be requested only after service completion");
+ const bookingStatus=String(row.booking_status);
+ if(!["in_service","completed"].includes(bookingStatus))throw new Error("Post-service payment can be requested only after service proof is complete");
+ if(bookingStatus==="in_service"){
+  const proof=await db.prepare("SELECT before_photo_ref,after_photo_ref FROM grooming_service_proof WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  if(!String(proof?.before_photo_ref||"").trim()||!String(proof?.after_photo_ref||"").trim())throw new Error("Post-service payment can be requested only after service proof is complete");
+ }
  if(["captured","refunded","partially_refunded"].includes(String(row.payment_status)))throw new Error("This booking is already paid or refunded");
  if(String(row.mode)!=="pay_after_service")throw new Error("This booking is not configured for pay after service");
  const existing=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();
@@ -364,7 +369,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
   * The posting cannot fail the capture: the money has arrived either way, and a webhook answered with an
   * error would simply be retried into the same state. [PTJA-W2-B2-R04]
   */
- await postBookingCollectionOnCapture(db,{bookingId,paymentId,eventId:event.eventId}).catch(error=>{console.warn("[collection-ledger] capture posting deferred",error instanceof Error?error.message:String(error));});
+ await postBookingCollectionOnCapture(db,{bookingId,paymentId,eventId:event.eventId,paymentMethod:event.provider}).catch(error=>{console.warn("[collection-ledger] capture posting deferred",error instanceof Error?error.message:String(error));});
     await upsert("captured",collectedInFull?"matched":"partially_captured",capturedTotal,refundedCurrent,0);
     if(collectedInFull)await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?").bind(now,bookingId).run().catch(()=>null);
     if(settlesBalance)await settleStayBalance(db,{bookingId,eventId:event.eventId,paymentRef:event.gatewayPaymentId??null,now});
@@ -500,17 +505,19 @@ export async function resolvePaymentException(db:Db,input:{exceptionId:string;ac
   return{exceptionId:input.exceptionId,status:newStatus,action:input.action};}
 
 /** Reads the canonical payment and booking, then posts the approved collection entry for a capture. */
-async function postBookingCollectionOnCapture(db:Db,input:{bookingId:string;paymentId:string;eventId?:string|null}){
+async function postBookingCollectionOnCapture(db:Db,input:{bookingId:string;paymentId:string;eventId?:string|null;paymentMethod?:string|null}){
   const payment=await db.prepare("SELECT id,customer_id,amount,method FROM booking_payments WHERE id=?").bind(input.paymentId).first<Row>();
   if(!payment)return;
   const booking=await db.prepare("SELECT city_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
-  const method=String(payment.method||"").toLowerCase();
+  // This helper is called only after a verified GATEWAY capture. A pay-after-service booking may have
+  // started with method=cash, but a later Razorpay/UPI link is still gateway money, never Cash in Hand.
+  const method=String(input.paymentMethod||payment.method||"gateway").toLowerCase();
   await postCollectionEvent(db,{
-    event:method==="cash"?"cash_collected_confirmed":"online_payment_captured",
+    event:"online_payment_captured",
     bookingId:input.bookingId,customerId:payment.customer_id?String(payment.customer_id):null,
     cityId:booking?.city_id?String(booking.city_id):null,serviceCode:booking?.service_code?String(booking.service_code):null,
     paymentId:String(payment.id),amount:Number(payment.amount||0),paymentMethod:method||null,
-    collectorId:method==="cash"?"gateway_reconciliation":null,
+    collectorId:null,
     entryDate:new Date().toISOString().slice(0,10),transactionAt:Date.now(),actorId:"gateway_reconciliation",
   });
 }
