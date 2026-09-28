@@ -1202,7 +1202,7 @@
     "lib/payment-stage-amount.ts": "644847d20e365c1d3f33ac23f57d5bc731e2b4d85c2a685eef1fca1d4c94ed2b",
     "lib/payment-webhook-gate.ts": "44e5948a1d9e3c2154bb1a9bc84f996441a78ffa703079a0f396abcd3a037cdf",
     "lib/payout-beneficiary-verification.ts": "e41972d4dbe46811d9d6d2007753182f5f308d894f43157c18bb222ef79cedb6",
-    "lib/payroll-engine.ts": "4711d06276d44f598162465332d338b47c2ac356a23fe3c48f56b520e1a0e61f",
+    "lib/payroll-engine.ts": "fdfa763e8fdd10a0cc4e8d625138a225f2fe491f60b6271233cd10079cd591e5",
     "lib/payroll-live-disbursement.ts": "de144cb17d35ebe935be585cc7faf7030e31b3024c5b581d706a0f384f329bef",
     "lib/people-finance-integration.ts": "bbdf869e232cc6564856bd8f5cea5750a127aeccfe99775190848b3e0cd7ff5f",
     "lib/people-foundation.ts": "6f22e8ef3bc973519b69e0b1c4c60ece24e290e809fd88da6bf0f4eda57ec4d9",

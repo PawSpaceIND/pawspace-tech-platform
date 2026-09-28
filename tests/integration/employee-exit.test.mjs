@@ -22,13 +22,13 @@ async function fixture(t,approve=true){
 }
 test('local D1 employee exit rolls back a late audit failure and then retries completely',{timeout:60000},async t=>{
  const {db,caseId,employeeId}=await fixture(t);await db.prepare("CREATE TRIGGER exit_audit_fail BEFORE INSERT ON employee_exit_events WHEN NEW.action='access_revoked' BEGIN SELECT RAISE(ABORT,'exit audit failure'); END").run();
- await assert.rejects(()=>exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test'}),/exit audit failure/);
+ await assert.rejects(()=>exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test',asOf:CUT}),/exit audit failure/);
  assert.equal((await db.prepare('SELECT employment_status FROM employees WHERE id=?').bind(employeeId).first()).employment_status,'active');assert.equal((await db.prepare("SELECT status FROM app_users WHERE id='EXIT-U'").first()).status,'active');
- await db.prepare('DROP TRIGGER exit_audit_fail').run();await exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test'});assert.equal((await db.prepare("SELECT status FROM app_users WHERE id='EXIT-U'").first()).status,'disabled');
+ await db.prepare('DROP TRIGGER exit_audit_fail').run();await exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test',asOf:CUT});assert.equal((await db.prepare("SELECT status FROM app_users WHERE id='EXIT-U'").first()).status,'disabled');
  assert.equal((await db.prepare("SELECT COUNT(*) n FROM employee_exit_events WHERE action='access_revoked'").first()).n,1);
 });
 test('local D1 retains final earned salary for a verified leaver without restoring access',{timeout:60000},async t=>{
- const {db,caseId,employeeId}=await fixture(t);await exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test'});
+ const {db,caseId,employeeId}=await fixture(t);await exit.executeEmployeeExit(db,{caseId,actorId:'hr@exit-d1.test',asOf:CUT});
  const result=await payroll.calculatePayroll(db,{periodStart:START,periodEnd:END,idempotencyKey:'FINAL-EXIT',actorId:'maker@exit-d1.test'});
  assert.equal(result.results.length,1);assert.equal(result.results[0].employee_id,employeeId);assert.equal(result.results[0].net_pay,15000);
  assert.equal((await db.prepare("SELECT status FROM app_users WHERE id='EXIT-U'").first()).status,'disabled');
@@ -64,4 +64,13 @@ test('local D1 refuses exit approval racing the lead INSERT and safely retries t
  assert.equal((await db.prepare("SELECT owner FROM lead_work_items WHERE id='EXIT-L'").first()).owner,'Unassigned');
  transport.prepare=original;const retry=await assign();assert.equal(retry.assignment.employee_email,null);assert.equal(retry.assignment.fallback_queue,'exit-review');
  assert.equal((await db.prepare('SELECT COUNT(*) n FROM lead_assignments').first()).n,1);
+});
+
+test('concurrent local D1 exit sweeps revoke once and do not report false review failures',{timeout:60000},async t=>{
+ const {db,caseId}=await fixture(t);
+ const outcomes=await Promise.all(Array.from({length:3},()=>exit.runApprovedEmployeeExitSweep(db,CUT)));
+ assert.equal(outcomes.reduce((n,item)=>n+item.processed,0),1);
+ assert.deepEqual(outcomes.flatMap(item=>item.reviewRequired),[]);
+ assert.equal((await db.prepare("SELECT COUNT(*) n FROM employee_exit_events WHERE case_id=? AND action='access_revoked'").bind(caseId).first()).n,1);
+ assert.equal((await db.prepare("SELECT status FROM app_users WHERE id='EXIT-U'").first()).status,'disabled');
 });
