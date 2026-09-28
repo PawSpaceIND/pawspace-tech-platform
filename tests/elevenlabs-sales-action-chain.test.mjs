@@ -73,7 +73,9 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
  assert.match(result.turn.output,/Razorpay checkout is ready/);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,1);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM payment_intents WHERE customer_id=?").get(customerId).n,1);
- assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").get(customerId).n,3);
+ const completedTools=ctx.sqlite.prepare("SELECT tool_code FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed' ORDER BY created_at,rowid").all(customerId).map(row=>row.tool_code);
+ assert.equal(completedTools.filter(code=>code==='approved_knowledge.read').length,1,'one authorised knowledge read precedes the checkout');
+ assert.deepEqual(completedTools.filter(code=>code!=='approved_knowledge.read'),['schedule.reserve','booking.create','checkout.payment_order.create'],'the original three-action checkout is exact; no fourth mutation');
  const ucc=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='unified_cases'").get();if(ucc)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM unified_cases WHERE customer_id=?").get(customerId).n,0);
  const tasks=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crm_tasks'").get();if(tasks)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM crm_tasks").get().n,0);
  const payment=ctx.sqlite.prepare("SELECT booking_id,amount,currency,status FROM booking_payments WHERE customer_id=?").get(customerId);assert.notEqual(payment.status,"captured");

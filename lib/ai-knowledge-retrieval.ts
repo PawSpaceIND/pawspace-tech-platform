@@ -1,3 +1,4 @@
+import type {DegradationLog} from './degraded-reads';
 /** Read-only passage retrieval. Visibility and effective-date checks stay with the database caller. */
 type KnowledgeRow=Record<string,unknown>;
 const STOP=new Set('a an the is are was were do does did i my me your you we our it this that for of on at to and or in with can could would should please what which how when there be have has'.split(' '));
@@ -28,11 +29,21 @@ export function knowledgePassages(content:string):Passage[]{
  return result;
 }
 function scoreTerms(tokens:string[],query:string[]){const set=new Set(tokens);return query.reduce((n,term)=>n+(set.has(term)?1:0),0);}
-export function rankKnowledgePassages(rows:KnowledgeRow[],query:string,visibilityScopes:string[],limit=5){
+export function rankKnowledgePassages(rows:KnowledgeRow[],query:string,visibilityScopes:string[],limit=5,degradation?:DegradationLog){
  const queryTerms=knowledgeTokens(query),allowed=new Set(visibilityScopes.map(s=>s.toLowerCase()));
  if(!queryTerms.length)return [];
  const ranked=rows.flatMap(row=>{
-  let scopes:string[]=[];try{const parsed:unknown=JSON.parse(String(row.visibility_scope_json||'[]'));if(Array.isArray(parsed))scopes=parsed.filter((s):s is string=>typeof s==='string').map(s=>s.toLowerCase());}catch{return [];}
+  let scopes:string[]=[];
+  try{
+   const parsed:unknown=JSON.parse(String(row.visibility_scope_json||'[]'));
+   if(!Array.isArray(parsed)||!parsed.every((scope:unknown)=>typeof scope==='string'))throw new Error('Invalid visibility shape');
+   scopes=parsed.map((scope:string)=>scope.toLowerCase());
+  }catch{
+   // Do not expose the corrupt JSON, private content or source identity. Still fail closed.
+   const error=new Error('Knowledge visibility metadata is invalid; the record was excluded');
+   if(!degradation)throw error;
+   return degradation.note('approved_knowledge_visibility',error,[]);
+  }
   if(!scopes.includes('public')&&!scopes.some(s=>allowed.has(s)))return [];
   const title=String(row.title||''),text=String(row.content_text||'');
   const titleScore=scoreTerms(knowledgeTokens(title),queryTerms);

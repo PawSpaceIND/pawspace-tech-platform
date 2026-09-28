@@ -69,3 +69,23 @@ test('expired or private matching content does not hide a required new public re
  const repeated=await stageMayaKnowledgeDrafts(w.db,'maker@test.invalid');assert.equal(repeated.created,1);
  assert.equal(w.sqlite.prepare('SELECT status FROM ai_knowledge_source_versions WHERE id=?').get(privateVersion.id).status,'draft');
 });
+
+
+test('malformed visibility is excluded and reported without leaking source content or identity',async t=>{
+ const w=freshAiDb();t.after(()=>w.sqlite.close());
+ await publish(w.db,'public-refund','Refund reviews follow the purchased terms.');
+ const broken=await publish(w.db,'PRIVATE-SOURCE-CANARY','Refund SECRET-CONTENT-CANARY',['finance']);
+ w.sqlite.prepare('UPDATE ai_knowledge_source_versions SET visibility_scope_json=? WHERE id=?').run('{CORRUPT-SCOPE-CANARY',broken);
+ const result=await retrieveApprovedKnowledge(w.db,{query:'refund',visibilityScopes:['public']});
+ assert.deepEqual(result.results.map(r=>r.sourceKey),['public-refund']);assert.equal(result.retrievalDegraded,true);
+ assert.deepEqual(result.degradedReads,[{source:'approved_knowledge_visibility',reason:'Knowledge visibility metadata is invalid; the record was excluded'}]);
+ assert.doesNotMatch(JSON.stringify(result),/CANARY/);
+ w.sqlite.prepare('UPDATE ai_knowledge_source_versions SET visibility_scope_json=? WHERE id=?').run('["public",123]',broken);
+ const wrongShape=await retrieveApprovedKnowledge(w.db,{query:'refund',visibilityScopes:['public']});
+ assert.equal(wrongShape.retrievalDegraded,true);assert.deepEqual(wrongShape.results.map(r=>r.sourceKey),['public-refund']);
+});
+test('healthy knowledge reads report no degradation',async t=>{
+ const w=freshAiDb();t.after(()=>w.sqlite.close());await publish(w.db,'healthy','Refund process information.');
+ const result=await retrieveApprovedKnowledge(w.db,{query:'refund',visibilityScopes:['public']});
+ assert.equal(result.retrievalDegraded,false);assert.deepEqual(result.degradedReads,[]);
+});
