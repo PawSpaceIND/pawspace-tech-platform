@@ -1,0 +1,517 @@
+{
+  "id": 5,
+  "title": "Nervous pet safety, complaint handling and staff escalation",
+  "agent": "grooming",
+  "dialed": false,
+  "startedAt": "2026-09-28T11:55:34.498Z",
+  "questionsPlanned": 4,
+  "turns": [
+    {
+      "number": 1,
+      "question": "Bruno gets nervous during grooming. What should I tell the groomer beforehand, and how do you handle a nervous dog safely?",
+      "transcript": "Bruno gets nervous during grooming. What should I tell the groomer beforehand, and how do you handle a nervous dog safely?",
+      "reply": "One moment while I check that for you. Tell the groomer that Bruno is nervous, what triggers him, and whether he has ever tried to bite, escape, or become very distressed during grooming. A calm, gradual approach with breaks is safer; he should not be forced, and the session should stop if handling becomes unsafe. I’m not certain what method will suit Bruno specifically, and any sedation discussion should be with a veterinarian. What does he need today: mainly a bath, a trim, or a complete makeover?",
+      "inputAudioBytes": 253174,
+      "outputAudioBytes": 999736,
+      "nonSilentBytes": 901307,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 47303,
+      "replyAudioAfterInputMs": 4116,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 2,
+      "question": "Would you use sedation or force to finish grooming? I only want a safe service and no medical advice.",
+      "transcript": "Would you use sedation or force to finish grooming? I only want a safe service and no medical advice.",
+      "reply": "PawSpace does not use sedation, and Bruno should never be forced to continue. Please tell the groomer that he is nervous and mention any past distress, escape attempts, or biting; they should use calm handling, breaks, and stop if it becomes unsafe.",
+      "inputAudioBytes": 233212,
+      "outputAudioBytes": 481710,
+      "nonSilentBytes": 442159,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 27943,
+      "replyAudioAfterInputMs": 3519,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 3,
+      "question": "If grooming causes a concern, how do I raise a complaint and how will your team follow it up?",
+      "transcript": "If grooming causes a concern, how do I raise a complaint, and how will your team follow it up?",
+      "reply": "I’m routing this conversation to a PawSpace team member so it can be handled safely.",
+      "inputAudioBytes": 196746,
+      "outputAudioBytes": 145236,
+      "nonSilentBytes": 135592,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 14373,
+      "replyAudioAfterInputMs": 1575,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 4,
+      "question": "Please hand this conversation to a human grooming coordinator. Do not call my number or send any message.",
+      "transcript": "Please hand this conversation to a human grooming coordinator. Do not call my number or send any message.",
+      "reply": "This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.",
+      "inputAudioBytes": 234812,
+      "outputAudioBytes": 176704,
+      "nonSilentBytes": 161018,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 15780,
+      "replyAudioAfterInputMs": 755,
+      "recognitionCoverage": 1
+    }
+  ],
+  "issues": [
+    "Unexpected human handoff at turn 3"
+  ],
+  "finalTranscript": [
+    {
+      "role": "agent",
+      "message": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Bruno gets nervous during grooming. What should I tell the groomer beforehand, and how do you handle a nervous dog safely?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "One moment while I check that for you. Tell the groomer that Bruno is nervous, what triggers him, and whether he has ever tried to bite, escape, or become very distressed during grooming. A calm, gradual approach with breaks is safer; he should not be forced, and the session should stop if handling becomes unsafe. I’m not certain what method will suit Bruno specifically, and any sedation discussion should be with a veterinarian. What does he need today: mainly a bath, a trim, or a complete makeover?",
+      "timeInCallSeconds": 12,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Would you use sedation or force to finish grooming? I only want a safe service and no medical advice.",
+      "timeInCallSeconds": 48,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "PawSpace does not use sedation, and Bruno should never be forced to continue. Please tell the groomer that he is nervous and mention any past distress, escape attempts, or biting; they should use calm handling, breaks, and stop if it becomes unsafe.",
+      "timeInCallSeconds": 58,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "If grooming causes a concern, how do I raise a complaint, and how will your team follow it up?",
+      "timeInCallSeconds": 76,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "I’m routing this conversation to a PawSpace team member so it can be handled safely.",
+      "timeInCallSeconds": 83,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Please hand this conversation to a human grooming coordinator. Do not call my number or send any message.",
+      "timeInCallSeconds": 90,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.",
+      "timeInCallSeconds": 98,
+      "interrupted": false
+    }
+  ],
+  "passed": false,
+  "deployedSha": "db2c97003837663c7370e6ada2d9d1bf574e443e",
+  "workerVersion": "c469441e-5630-4394-a5ab-be3d2490caf6",
+  "catalogue": {
+    "grooming": [
+      {
+        "package_code": "young-basic",
+        "name": "Young Pet Bath & Basic",
+        "base_price": 999,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-routine",
+        "name": "Routine Grooming",
+        "base_price": 1149,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-bath",
+        "name": "Essential Bath",
+        "base_price": 1349,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-makeover",
+        "name": "Young Pet Complete Makeover",
+        "base_price": 1399,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-trim",
+        "name": "Just Trim",
+        "base_price": 1599,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-trim",
+        "name": "Just Trim",
+        "base_price": 1599,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-basic__2_pets",
+        "name": "Young Pet Bath & Basic · 2 pets",
+        "base_price": 1798,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-basic",
+        "name": "Bath & Basic",
+        "base_price": 1899,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-basic",
+        "name": "Bath & Basic",
+        "base_price": 1899,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-routine__2_pets",
+        "name": "Routine Grooming · 2 pets",
+        "base_price": 1998,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-bath__2_pets",
+        "name": "Essential Bath · 2 pets",
+        "base_price": 2298,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-makeover",
+        "name": "Complete Makeover",
+        "base_price": 2399,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-makeover",
+        "name": "Complete Makeover",
+        "base_price": 2399,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-makeover__2_pets",
+        "name": "Young Pet Complete Makeover · 2 pets",
+        "base_price": 2598,
+        "currency": "INR",
+        "version": 4
+      },
+      {
+        "package_code": "young-basic__3_pets",
+        "name": "Young Pet Bath & Basic · 3 pets",
+        "base_price": 2697,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-trim__2_pets",
+        "name": "Just Trim · 2 pets",
+        "base_price": 2798,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-trim__2_pets",
+        "name": "Just Trim · 2 pets",
+        "base_price": 2798,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-routine__3_pets",
+        "name": "Routine Grooming · 3 pets",
+        "base_price": 2997,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-basic__2_pets",
+        "name": "Bath & Basic · 2 pets",
+        "base_price": 3298,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-basic__2_pets",
+        "name": "Bath & Basic · 2 pets",
+        "base_price": 3298,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-bath__3_pets",
+        "name": "Essential Bath · 3 pets",
+        "base_price": 3447,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-basic__4_pets",
+        "name": "Young Pet Bath & Basic · 4 pets",
+        "base_price": 3596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-makeover__3_pets",
+        "name": "Young Pet Complete Makeover · 3 pets",
+        "base_price": 3897,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-routine__4_pets",
+        "name": "Routine Grooming · 4 pets",
+        "base_price": 3996,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-trim__3_pets",
+        "name": "Just Trim · 3 pets",
+        "base_price": 4197,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-trim__3_pets",
+        "name": "Just Trim · 3 pets",
+        "base_price": 4197,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-makeover__2_pets",
+        "name": "Complete Makeover · 2 pets",
+        "base_price": 4298,
+        "currency": "INR",
+        "version": 4
+      },
+      {
+        "package_code": "cat-makeover__2_pets",
+        "name": "Complete Makeover · 2 pets",
+        "base_price": 4298,
+        "currency": "INR",
+        "version": 4
+      },
+      {
+        "package_code": "dog-bath__4_pets",
+        "name": "Essential Bath · 4 pets",
+        "base_price": 4596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-basic__3_pets",
+        "name": "Bath & Basic · 3 pets",
+        "base_price": 4947,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-basic__3_pets",
+        "name": "Bath & Basic · 3 pets",
+        "base_price": 4947,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "young-makeover__4_pets",
+        "name": "Young Pet Complete Makeover · 4 pets",
+        "base_price": 5196,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-trim__4_pets",
+        "name": "Just Trim · 4 pets",
+        "base_price": 5596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-trim__4_pets",
+        "name": "Just Trim · 4 pets",
+        "base_price": 5596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-makeover__3_pets",
+        "name": "Complete Makeover · 3 pets",
+        "base_price": 6447,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-makeover__3_pets",
+        "name": "Complete Makeover · 3 pets",
+        "base_price": 6447,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-basic__4_pets",
+        "name": "Bath & Basic · 4 pets",
+        "base_price": 6596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-basic__4_pets",
+        "name": "Bath & Basic · 4 pets",
+        "base_price": 6596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "dog-makeover__4_pets",
+        "name": "Complete Makeover · 4 pets",
+        "base_price": 8596,
+        "currency": "INR",
+        "version": 3
+      },
+      {
+        "package_code": "cat-makeover__4_pets",
+        "name": "Complete Makeover · 4 pets",
+        "base_price": 8596,
+        "currency": "INR",
+        "version": 3
+      }
+    ],
+    "training": [
+      {
+        "package_code": "trainer-meet-greet",
+        "name": "Trainer Meet & Greet",
+        "sessions": 1,
+        "validity_days": 7,
+        "base_price": 500,
+        "currency": "INR",
+        "version": 2
+      },
+      {
+        "package_code": "training-2-starter",
+        "name": "Starter Plan",
+        "sessions": 2,
+        "validity_days": 31,
+        "base_price": 3500,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-4-puppy",
+        "name": "Puppy Training Plan",
+        "sessions": 4,
+        "validity_days": 31,
+        "base_price": 6000,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-8-basic",
+        "name": "Basic Obedience Plan",
+        "sessions": 8,
+        "validity_days": 62,
+        "base_price": 12000,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-8-leash",
+        "name": "Leash Obedience Plan · 8",
+        "sessions": 8,
+        "validity_days": 62,
+        "base_price": 12000,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-12-leash",
+        "name": "Leash Obedience Plan · 12",
+        "sessions": 12,
+        "validity_days": 93,
+        "base_price": 16500,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-12-advanced",
+        "name": "Advanced Obedience Plan",
+        "sessions": 12,
+        "validity_days": 93,
+        "base_price": 16500,
+        "currency": "INR",
+        "version": 1
+      },
+      {
+        "package_code": "training-16-pro",
+        "name": "Pro Training Plan",
+        "sessions": 16,
+        "validity_days": 120,
+        "base_price": 20000,
+        "currency": "INR",
+        "version": 2
+      }
+    ]
+  },
+  "agentVersion": "agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs",
+  "agentId": "agent_9201m39vfcjjec4sya7rat0cerct",
+  "agentCallLimits": {
+    "agent_concurrency_limit": 1,
+    "daily_limit": 20,
+    "bursting_enabled": false
+  },
+  "runnerSha": "2acdf37fd73453c1510b22fb68e843ade3d55581",
+  "syntheticProfile": true,
+  "hasDialableNumber": false,
+  "threadId": "THREAD-AUDIO-DEMO-36418478824-1-5",
+  "conversationId": "conv_5301m3kxxrweektbnw78zwmcskn4",
+  "greeting": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+  "closeCode": 1000,
+  "closeReason": "no-phone demo complete",
+  "providerStatus": "done",
+  "durationSeconds": 111,
+  "finalTranscriptMatched": true,
+  "businessStateUnchanged": true,
+  "nonVoiceMessages": 0,
+  "handoffs": [
+    {
+      "status": "queued",
+      "reason": "provider_unsupported"
+    }
+  ],
+  "finishedAt": "2026-09-28T11:57:40.807Z"
+}
