@@ -11,8 +11,9 @@ test('workforce parity executes the canonical engagement policy',()=>{
 });
 
 test('V2 employee self-service reuses the canonical employee portal',()=>{
- const source=fs.readFileSync('app/v2/employee/page.tsx','utf8').trim();
- assert.equal(source,"export { default } from '../../me/page';");
+ const source=fs.readFileSync('app/v2/employee/page.tsx','utf8');
+ assert.ok(source.includes('../../me/page')||source.includes("../../me/page"));
+ assert.match(source,/export\s*\{\s*default\s*\}\s*from/);
 });
 
 test('V2 team People routes reuse canonical workforce modules instead of copying business logic',()=>{
