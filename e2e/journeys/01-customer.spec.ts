@@ -62,6 +62,30 @@ test("customer discovery and app surfaces never expose sandbox/prototype payment
   expect(findings, "customer discovery/app copy must not disclose sandbox or prototype internals").toEqual([]);
 });
 
+// Read geometry and its centre hit-test in one browser task. Hydration, fonts and
+// fixed-dock placement can change between separate boundingBox/evaluate calls.
+async function readPhysicalTarget(control: import("@playwright/test").Locator) {
+  return control.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return { width: rect.width, height: rect.height,
+      unobstructed: !!top && (top === element || element.contains(top)),
+      pointerEvents: getComputedStyle(element).pointerEvents,
+      hitTag: top?.tagName ?? null, hitRole: top?.getAttribute("role") ?? null };
+  });
+}
+
+async function waitForPhysicalTarget(control: import("@playwright/test").Locator, label: string, timeout = 10_000) {
+  let measured = await readPhysicalTarget(control);
+  await expect.poll(async () => {
+    measured = await readPhysicalTarget(control);
+    return { wideEnough: measured.width >= 44, tallEnough: measured.height >= 44,
+      unobstructed: measured.unobstructed, pointerEnabled: measured.pointerEvents !== "none" };
+  }, { timeout, intervals: [50, 100, 250], message: `${label}: physical target must be at least 44px and unobstructed` })
+    .toEqual({ wideEnough: true, tallEnough: true, unobstructed: true, pointerEnabled: true });
+  return measured;
+}
+
 // Physical browser checks on the built app. No intercepted responses or SDK doubles.
 // This checks navigation and the real unconfigured-checkout refusal, NOT a gateway payment.
 test("customer navigation and billing controls have physical 44px targets and recover from unconfigured checkout", async ({ page }, testInfo) => {
@@ -76,28 +100,24 @@ test("customer navigation and billing controls have physical 44px targets and re
     await control.evaluate(element => element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }));
     // Wait for layout stability before measuring hit targets; the app enables smooth scrolling.
     await control.click({ trial: true });
-    const box = await control.boundingBox();
-    expect(box, `${label}: a physical rectangle is required`).not.toBeNull();
-    const hit = await control.evaluate(element => {
-      const rect = element.getBoundingClientRect();
-      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-      return { unobstructed: !!top && (top === element || element.contains(top)), pointerEvents: getComputedStyle(element).pointerEvents };
-    });
-    measurements.push({ label, width: box!.width, height: box!.height, ...hit });
+    const hit = await waitForPhysicalTarget(control, label);
+    measurements.push({ label, ...hit });
     console.log(`[PAWSPACE-UX] ${JSON.stringify(measurements.at(-1))}`);
-    expect.soft(box!.width, `${label}: minimum width`).toBeGreaterThanOrEqual(44);
-    expect.soft(box!.height, `${label}: minimum height`).toBeGreaterThanOrEqual(44);
+    expect.soft(hit.width, `${label}: minimum width`).toBeGreaterThanOrEqual(44);
+    expect.soft(hit.height, `${label}: minimum height`).toBeGreaterThanOrEqual(44);
     expect.soft(hit.unobstructed, `${label}: center must receive pointer events`).toBe(true);
     await control.click({ trial: true });
   }
   try {
     const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
     expect(response?.status()).toBe(200);
+    // The consent dock offset depends on the hydrated navigation (:has in globals.css).
+    const nav = page.getByRole("navigation", { name: "Customer navigation" });
+    await expect(nav).toBeVisible();
     // Consent remains visible through checkout: neither it nor the fixed navigation may intercept the other.
     const consent = page.getByRole("dialog", { name: "Cookie consent" });
     await target(consent.getByRole("button", { name: "Essential only" }), "consent:essential");
     await target(consent.getByRole("button", { name: "Accept optional" }), "consent:optional");
-    const nav = page.getByRole("navigation", { name: "Customer navigation" });
     const surfaces = [["Home", /Good morning,/], ["Book", /^Book Grooming$/], ["Activity", /^Your activity$/],
       ["My Pets", /^Your pets$/], ["Account", /^My PawSpace$/]] as const;
     for (const [name, heading] of surfaces) {
@@ -255,4 +275,24 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await expect(care.getByRole("button")).toHaveCount(8);
   await testInfo.attach("approved-unified-ui-controls", { body: JSON.stringify({ project: testInfo.project.name,
     uiSource: "97d006a54c6661d21bb455bf8968a97739430c67", scope: "guest service entry, artwork, search, location and navigation; not payment capture", measurements }, null, 2), contentType: "application/json" });
+});
+
+// Negative controls keep the waiting assertion honest: a lasting overlay or a
+// physically undersized control must still fail. This fixture never calls an API.
+test("physical target audit waits for layout recovery but rejects persistent obstructions and small controls", async ({ page }) => {
+  await page.setContent(`<button id="target" style="position:fixed;left:30px;top:100px;width:120px;height:48px">Target</button>
+    <div id="cover" style="position:fixed;left:30px;top:100px;width:120px;height:48px;z-index:10"></div>`);
+  const target = page.locator("#target");
+  expect((await readPhysicalTarget(target)).unobstructed).toBe(false);
+  await expect(waitForPhysicalTarget(target, "persistent obstruction", 400)).rejects.toThrow(/physical target/);
+  // Reproduce the readiness transition: the first sample is obstructed, then the
+  // layout settles. The audit must wait for the actual hit-test, not sleep blindly.
+  await page.locator("#cover").evaluate(element => { setTimeout(() => element.remove(), 200); });
+  const recovered = await waitForPhysicalTarget(target, "transient obstruction");
+  expect(recovered.unobstructed).toBe(true);
+  await target.click({ trial: true });
+  await target.evaluate(element => { element.style.width = "30px"; });
+  await expect(waitForPhysicalTarget(target, "undersized width", 400)).rejects.toThrow(/physical target/);
+  await target.evaluate(element => { element.style.width = "120px"; element.style.height = "30px"; });
+  await expect(waitForPhysicalTarget(target, "undersized height", 400)).rejects.toThrow(/physical target/);
 });

@@ -16,9 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: pawspace-staging-deploy
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
 
       - name: Verify staging lockdown and prepare controlled recipient
         env:
@@ -48,25 +49,16 @@ jobs:
           console.log('Staging lockdown verified; controlled allowlisted UAT recipient selected; value withheld.');
           NODE
 
-      - name: Refuse collision with any existing canonical customer
+      - name: Refuse canonical phone collisions and existing fixture reuse
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          OUT="$RUNNER_TEMP/all-customers.json"; export OUT
+          OUT="$RUNNER_TEMP/canonical-owner-inventory.json"; export OUT
           trap 'rm -f "$OUT"' EXIT
-          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT id,primary_phone,secondary_phone,source FROM canonical_customers;" --json > "$OUT"
-          node --input-type=module <<'NODE'
-          import{readFileSync}from'node:fs';
-          const digits=v=>String(v??'').replace(/\D/g,'');
-          const target=digits(process.env.UAT_RECIPIENT);
-          const payload=JSON.parse(readFileSync(process.env.OUT,'utf8'));
-          const rows=(Array.isArray(payload)?payload:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);
-          const collision=rows.find(r=>[r.primary_phone,r.secondary_phone].some(v=>digits(v)===target));
-          if(collision)throw new Error('Allowlisted test recipient already belongs to an existing canonical customer; refusing to mutate that identity');
-          console.log('No canonical-customer phone collision found; isolated UAT fixture may be created.');
-          NODE
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT COUNT(*) AS owner_count FROM canonical_customers; SELECT id,primary_phone,secondary_phone FROM canonical_customers;" --json > "$OUT"
+          node --experimental-strip-types scripts/uat-fixture-phone-guard.mjs
 
       - name: Provision auditable staging-only UAT customer consent and booking
         env:
@@ -82,10 +74,10 @@ jobs:
           if(!/^\+?[0-9]{10,15}$/.test(phone))throw new Error('Unsafe recipient value');
           const now=Date.now(), start=new Date(now+3600000).toISOString(), end=new Date(now+7200000).toISOString();
           const q=[];
-          q.push("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER','blr','WhatsApp UAT Certification',"+JSON.stringify(phone)+",NULL,NULL,'uat_certification','{\"whatsapp\":true,\"purpose\":\"provider_roundtrip_certification\"}',"+now+","+now+") ON CONFLICT(id) DO UPDATE SET primary_phone=excluded.primary_phone,source='uat_certification',consent_json=excluded.consent_json,updated_at=excluded.updated_at;");
-          q.push("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER',0,1,1,0,0,0,'uat_certification','uat_certification',"+now+") ON CONFLICT(customer_id) DO UPDATE SET service_consent=1,whatsapp_consent=1,opt_out=0,source='uat_certification',updated_by='uat_certification',updated_at=excluded.updated_at;");
-          q.push("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES ('UAT-WA-CERT-PET','UAT-WA-CERT-CUSTOMER','UAT Pet','dog','Mixed','verified',NULL,"+now+","+now+") ON CONFLICT(id) DO UPDATE SET customer_id='UAT-WA-CERT-CUSTOMER',updated_at=excluded.updated_at;");
-          q.push("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('UAT-WA-CERT-BOOKING','uat-wa-cert-booking','UAT-WA-CERT-CUSTOMER','[\"UAT-WA-CERT-PET\"]','[\"UAT-WA-CERT-PET\"]','blr','blr-east','grooming','grooming-std','UAT WhatsApp Certification','UAT-WA-CERT-SG','UAT-WA-CERT-PROVIDER',"+JSON.stringify(start)+","+JSON.stringify(end)+",'confirmed','uat_certification',799,'INR','{\"uatCertification\":true}','uat_certification',"+now+","+now+") ON CONFLICT(id) DO UPDATE SET customer_id='UAT-WA-CERT-CUSTOMER',scheduled_start=excluded.scheduled_start,scheduled_end=excluded.scheduled_end,status='confirmed',channel='uat_certification',updated_at=excluded.updated_at;");
+          q.push("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER','blr','WhatsApp UAT Certification',"+JSON.stringify(phone)+",NULL,NULL,'uat_certification','{\"whatsapp\":true,\"purpose\":\"provider_roundtrip_certification\"}',"+now+","+now+") ON CONFLICT(id) DO NOTHING;");
+          q.push("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER',0,1,1,0,0,0,'uat_certification','uat_certification',"+now+") ON CONFLICT(customer_id) DO NOTHING;");
+          q.push("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES ('UAT-WA-CERT-PET','UAT-WA-CERT-CUSTOMER','UAT Pet','dog','Mixed','verified',NULL,"+now+","+now+") ON CONFLICT(id) DO NOTHING;");
+          q.push("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('UAT-WA-CERT-BOOKING','uat-wa-cert-booking','UAT-WA-CERT-CUSTOMER','[\"UAT-WA-CERT-PET\"]','[\"UAT-WA-CERT-PET\"]','blr','blr-east','grooming','grooming-std','UAT WhatsApp Certification','UAT-WA-CERT-SG','UAT-WA-CERT-PROVIDER',"+JSON.stringify(start)+","+JSON.stringify(end)+",'confirmed','uat_certification',799,'INR','{\"uatCertification\":true}','uat_certification',"+now+","+now+") ON CONFLICT(id) DO NOTHING;");
           writeFileSync(process.env.SQL,'BEGIN;\n'+q.join('\n')+'\nCOMMIT;\n');
           NODE
           npx --yes wrangler@4 d1 execute pawspace-staging --remote --file="$SQL" >/dev/null
