@@ -1,3 +1,4 @@
+import {employeeExitAccessSchema} from "./employee-exit-access";
 import {ensurePeopleTables} from "./people-foundation";
 import {ensurePayrollTables} from "./payroll-engine";
 import {ensureSecurityTables} from "./server-auth";
@@ -12,9 +13,7 @@ function humanReviewer(actorId:string){if(!/^[^@\s:]+@[^@\s:]+$/.test(email(acto
 export async function ensureEmployeeExitTables(db:D1Database){
  await ensurePeopleTables(db);await ensurePayrollTables(db);await ensureSecurityTables(db);await ensureAdminMfaTables(db);
  await db.batch([
-  db.prepare("CREATE TABLE IF NOT EXISTS employee_exit_cases (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,employee_id TEXT NOT NULL,user_id TEXT NOT NULL,identity_email TEXT NOT NULL,employee_snapshot_json TEXT NOT NULL,access_ends_at INTEGER NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','approved','access_revoked','cancelled','settled_sandbox')),requested_by TEXT NOT NULL,created_at INTEGER NOT NULL,approved_by TEXT,approved_at INTEGER,revoked_at INTEGER,cancelled_by TEXT,cancel_reason TEXT,clearance_reference TEXT,settlement_reference TEXT,settlement_snapshot_json TEXT,settled_by TEXT,settled_at INTEGER,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS employee_exit_one_open_idx ON employee_exit_cases(employee_id) WHERE status<>'cancelled'"),
-  db.prepare("CREATE INDEX IF NOT EXISTS employee_exit_due_idx ON employee_exit_cases(status,access_ends_at)"),
+  ...employeeExitAccessSchema(db),
   db.prepare("CREATE TABLE IF NOT EXISTS employee_exit_events (id TEXT PRIMARY KEY,case_id TEXT NOT NULL,action TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  ]);
 }

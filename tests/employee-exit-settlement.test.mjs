@@ -128,3 +128,27 @@ test('exit approved during lead selection blocks the assignment write atomically
   const wrap=s=>new Proxy(s,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='run')return async()=>{if(!injected++){await exit.approveEmployeeExit(w.db,{caseId:pending.case.id,actorId:'manager@exit.test'});}return target.run();};return Reflect.get(target,key);}});return wrap(statement);};
  await assert.rejects(assign);assert.equal(injected,1);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM lead_assignments').get().n,0);assert.equal(w.sqlite.prepare("SELECT owner FROM lead_work_items WHERE id='EXIT-LEAD'").get().owner,'Unassigned');
 });
+
+for(const state of ['pending','future','cancelled'])test(`lead assignment remains available for ${state} exit`,async t=>{
+ const w=await world(t),assign=await leadFixture(w);
+ if(state==='pending')await request(w);
+ else {const id=await approved(w,{accessEndsAt:Date.now()+86400000});if(state==='cancelled')await exit.cancelEmployeeExit(w.db,{caseId:id,actorId:'manager@exit.test',reason:'Synthetic cancellation before cutoff'});}
+ const result=await assign();assert.equal(result.assignment.employee_email,'employee@exit.test');
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM lead_assignments').get().n,1);
+});
+test('the first exit approved during a cold lead-only assignment cannot bypass the write guard',async t=>{
+ const w=await world(t);w.sqlite.exec('DROP TABLE employee_exit_cases');const assign=await leadFixture(w),original=w.db.prepare;let injected=0;
+ assert.ok(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='employee_exit_cases'").get(),'lead bootstrap creates only the shared cutoff schema');
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM employee_exit_cases').get().n,0);
+ w.db.prepare=sql=>{const q=original(sql);if(!/^INSERT INTO lead_assignments /.test(sql))return q;
+  const wrap=s=>new Proxy(s,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='run')return async()=>{if(!injected++)await approved(w);return target.run();};return Reflect.get(target,key);}});return wrap(q);};
+ await assert.rejects(assign,e=>e instanceof Error&&e.name==='GovernedRefusal'&&e.status===409);
+ assert.equal(injected,1);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM lead_assignments').get().n,0);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM lead_assignment_events').get().n,0);
+ assert.equal(w.sqlite.prepare("SELECT owner FROM lead_work_items WHERE id='EXIT-LEAD'").get().owner,'Unassigned');
+});
+test('lead fallback uses the cutoff user id after a staff email change',async t=>{
+ const w=await world(t),assign=await leadFixture(w);await approved(w);
+ w.sqlite.exec("UPDATE app_users SET email='renamed@exit.test' WHERE id='EXIT-USER'; UPDATE lead_assignment_memberships SET employee_email='renamed@exit.test'; UPDATE employees SET work_email='renamed@exit.test',user_email='renamed@exit.test'");
+ const result=await assign();assert.equal(result.assignment.employee_email,null);assert.equal(result.assignment.fallback_queue,'exit-review');
+});

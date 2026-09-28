@@ -50,3 +50,22 @@ Continuous authenticated employee/MFA/browser acceptance remains unverified. The
 No hosted employee, real bank account, payroll configuration, staff-access record, staging deployment or production resource was mutated. Direct source/domain tests used synthetic local databases; no actual bank request or salary transfer was performed. Live salary activation, legal/statutory applicability, additional entitlements/deductions, provider offboarding and corrective payroll remain separate governed work.
 
 Raw local evidence: `Documents/PawSpace-audits/employee-exit-20260928/evidence/` (`exit-current.log`, `exit-final-related.log`, `exit-local-d1.log`, `exit-build.log`, `exit-surface.log`, `exit-contract-update.json`, and the anonymous browser snapshots/screenshots).
+
+## Cutoff repair — 28 September 2026 continuation
+
+The two retained assignment blockers were reproduced on `a9e5ed55` and repaired without changing their assertions. Employee eligibility now calls the existing approved-exit cutoff helper. The lead INSERT itself uses that same cutoff predicate, so a cutoff approved after selection cannot create an assignment, owner projection or assignment event. A retry selects the configured fallback queue.
+
+The canonical exit-case DDL is shared between lead bootstrap and exit bootstrap. Lead-only schema initialization creates no exit, approval or employee records. This removes the cold-database gap where the first exit might otherwise appear after an optional table check. Account disabling is also rechecked by the assignment statement.
+
+The renamed-user-ID boundary remains enforced. Added positive controls preserve assignment for pending, future and cancelled exits. Added negative controls cover the first exit during a cold assignment and an approved exit after a login email change.
+
+The hosted CI log exposed a third failure: the customer appearance inventory incorrectly included the four new staff aliases. They are now classified explicitly as staff and their exact canonical page exports are checked. No customer page was removed from the appearance inventory.
+
+Executed before publication:
+- Existing exit suite before repair: 18 passed, 2 failed.
+- Expanded employee/routing/schema/appearance selection: 396 passed, 0 failed/cancelled/skipped across 54 files (includes 25 exit-domain tests).
+- Local Cloudflare D1: 4 passed, including the cutoff race and retry into fallback. D1 responses and application functions are not mocked; a transport wrapper pauses the statement so approval can complete first.
+- The original two D1 checks still verify exit rollback and final earned salary without restoring access.
+- Nine expected source fingerprints refreshed only for the intentionally changed lead module, after checking each old value against `a9e5ed55`.
+
+Full repository build/CI, final review and continuous authenticated employee-browser acceptance remain separate gates. No hosted employee was exited, no real payment was made and no production setting was changed during these tests. Earlier HOLD findings above are historical; the two cutoff assertions now pass.
