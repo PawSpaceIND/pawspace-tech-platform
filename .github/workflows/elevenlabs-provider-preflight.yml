@@ -991,3 +991,37 @@ jobs:
           path: audio-demo-${{ matrix.demo }}.json
           retention-days: 3
           if-no-files-found: warn
+  single-no-phone-audio-demo:
+    if: ${{ inputs.confirm == 'single-no-phone-audio-demo' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Install local synthetic speech tools
+        run: sudo apt-get update -qq && sudo apt-get install -y espeak-ng ffmpeg
+      - name: Four spoken enquiry turns, no telephone network
+        env:
+          NO_PHONE_DEMOS_APPROVED: 'true'
+          DEMO_ID: ${{ inputs.probe_input }}
+          EXPECTED_STAGING_SHA: ${{ inputs.expected_staging_sha }}
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/run-five-audio-demo.mjs
+      - name: Retain synthetic conversation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: no-phone-audio-demo-${{ inputs.probe_input }}
+          path: audio-demo-${{ inputs.probe_input }}.json
+          retention-days: 3
+          if-no-files-found: warn

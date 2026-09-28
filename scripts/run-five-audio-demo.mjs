@@ -35,7 +35,7 @@ try{
  if(!call?.customer_id||call.mode!=='uat'||call.phone_last4!==env.EXPECTED_DESTINATION_LAST4)throw Error('Known UAT context does not match');customerId=call.customer_id;
  const config=await api('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),eh);
  if(config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Agent is not using the certified staging backend');
- result.agentVersion=config.version_id;result.agentId=agentId;
+ result.agentVersion=config.version_id;result.agentId=agentId;result.agentCallLimits=config.platform_settings?.call_limits??null;result.runnerSha=env.GITHUB_SHA;
  threadId='THREAD-AUDIO-DEMO-'+env.GITHUB_RUN_ID+'-'+(env.GITHUB_RUN_ATTEMPT||'1')+'-'+scenario.id;
  if((await query('SELECT id FROM communication_threads WHERE id=?',[threadId])).length)throw Error('A fresh per-call context is required');
  const now=Date.now();
@@ -53,7 +53,7 @@ try{
  socket=new WebSocket(signed.signed_url);
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId},dynamic_variables:{pawspace_uat:'true'}})));
  socket.addEventListener('error',()=>{error=Error('Audio WebSocket transport failure');});
- socket.addEventListener('close',()=>{closed=true;});
+ socket.addEventListener('close',event=>{closed=true;result.closeCode=event.code;result.closeReason=String(event.reason||'').replace(/[\r\n]/g,' ').slice(0,400);});
  socket.addEventListener('message',event=>{try{
   const d=JSON.parse(String(event.data)),now=Date.now();
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
@@ -66,7 +66,7 @@ try{
    if(change==='audio'&&!firstReplyAudio)firstReplyAudio=now;
    if(change==='transcript')console.log('DEMO_ASR='+JSON.stringify({id:scenario.id,turn:result.turns.length+1,text:state.segments.at(-1)}));
   }
-  if(d.type==='error')throw Error('Agent returned a conversation error');
+  if(d.type==='error'||d.type==='client_error'){result.providerError=String(d.message||d.error?.message||d.error||d.client_error_event?.message||'unspecified').slice(0,400);throw Error('Agent returned a conversation error');}
  }catch(e){error=e;}});
  await waitFor(()=>format&&greeting&&greetingEnd>0&&Date.now()>greetingEnd+1000&&Date.now()-lastGreeting>1000,60000);
  result.greeting=greeting;phase='turn';
