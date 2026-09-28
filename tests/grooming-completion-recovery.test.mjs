@@ -41,3 +41,21 @@ test("R03 completion-history failure is recoverable without repeating money or s
   assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM finance_journal_entries WHERE source_id=? ORDER BY id").all(result.bookingId), journal);
   assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM booking_invoices WHERE booking_id=?").all(result.bookingId), invoices);
 });
+
+/** Decoder unit checks; the real-handler recovery scenario above supplies the lifecycle proof. */
+for (const raw of ['{', 'null', '[]', '42', '"legacy"', '{}']) {
+  test(`receipt decoder refuses malformed or legacy content: ${raw}`, async () => {
+    const { readGroomingCompletionReceipt } = await import("../lib/grooming-completion-recovery.ts");
+    const db = { prepare: () => ({ bind: () => ({
+      first: async () => ({ detail_json: raw, customer_id: "synthetic-customer" }),
+    }) }) };
+    assert.equal(await readGroomingCompletionReceipt(db, "synthetic-booking", "synthetic-provider"), null);
+  });
+}
+
+test("receipt database read errors are not mistaken for invalid JSON", async () => {
+  const { readGroomingCompletionReceipt } = await import("../lib/grooming-completion-recovery.ts");
+  const db = { prepare: () => { throw new Error("Synthetic receipt database failure"); } };
+  await assert.rejects(() => readGroomingCompletionReceipt(db, "synthetic-booking", "synthetic-provider"),
+    /Synthetic receipt database failure/);
+});

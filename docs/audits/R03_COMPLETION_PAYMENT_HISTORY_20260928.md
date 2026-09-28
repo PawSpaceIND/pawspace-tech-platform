@@ -197,3 +197,22 @@ application's governed cash API on isolated synthetic data. A combined patch com
 also returned an indeterminate safety result; read-only inspection confirmed no
 application changes from that attempt before smaller source-only edits were applied.
 No deployment, actual payment, payout, customer message or hosted record was changed.
+
+### Final receipt-decoding review
+
+Exact head `7bd6575b` completed the full 1,060-file suite: 9,126/9,126 assertions,
+10/10 separate certification and 685/685 alternate-loader related assertions, with
+zero failures, cancellations or skips. Build and artifact validation also passed;
+source identity and log hashes are retained in the local final-summary checkpoint.
+
+CodeAnt's exact-head re-review found no blocking issue in the input guard or durable
+recovery and independently resolved the history-recovery thread. CodeRabbit identified
+one additional minor issue: malformed stored receipt JSON returned a generic error.
+The isolated decoder probe reproduced two failures among six cases (syntax-invalid
+JSON and the valid JSON null). The parser now refuses invalid/non-object receipt
+content so the route uses its existing governed Operations-reconciliation response.
+Database reads remain outside the parse-error handler; database failures still throw.
+Seven decoder/error-propagation unit cases accompany the existing actual-handler
+recovery scenario. Only this reviewed helper's nine source fingerprints were changed.
+This final small follow-up has its own exact-head verification; earlier full results
+are not relabelled as evidence for a different commit.

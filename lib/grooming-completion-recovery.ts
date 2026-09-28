@@ -28,7 +28,11 @@ export async function readGroomingCompletionReceipt(db: D1Database, bookingId: s
     ORDER BY e.created_at DESC,e.id DESC LIMIT 1`).bind(bookingId, providerId)
     .first<{ detail_json: string; customer_id: string }>();
   if (!row) return null;
-  const parsed = JSON.parse(row.detail_json) as { detail?: { completionReceipt?: GroomingCompletionReceipt } };
+  let decoded: unknown;
+  try { decoded = JSON.parse(row.detail_json); }
+  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
+  const parsed = decoded as { detail?: { completionReceipt?: GroomingCompletionReceipt } };
   const receipt = parsed.detail?.completionReceipt;
   if (!receipt || receipt.version !== 1 || receipt.bookingId !== bookingId
       || receipt.providerId !== providerId || receipt.customerId !== row.customer_id
