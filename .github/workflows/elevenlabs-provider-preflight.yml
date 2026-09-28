@@ -328,6 +328,14 @@ jobs:
           if(!qr.ok||qb?.success===false||rows.length!==1)throw new Error('allowlisted recipient must resolve to exactly one booking-owning canonical customer');
           const customerId=String(rows[0].id||'').trim();
           if(!customerId)throw new Error('resolved canonical customer id missing');
+          const ownerSql=`SELECT id,merged_into,primary_phone,secondary_phone FROM canonical_customers`;
+          const or=await fetch(d1Url,{method:'POST',headers:{authorization:'Bearer '+cfToken,'content-type':'application/json'},body:JSON.stringify({sql:ownerSql}),signal:AbortSignal.timeout(20000)});
+          const ob=await or.json().catch(()=>({}));
+          const ownerRows=(Array.isArray(ob?.result)?ob.result:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
+          const norm=v=>String(v||'').replace(/\D/g,'').slice(-10);
+          const matching=ownerRows.filter(x=>[x.primary_phone,x.secondary_phone].some(v=>norm(v)===suffix));
+          console.log('CANONICAL_UAT_OWNER_DIAG='+JSON.stringify({matchingOwners:matching.length,selectedPresent:matching.some(x=>String(x.id||'')===customerId),mergedAliases:matching.filter(x=>String(x.merged_into||'').trim()).length,selectedMerged:Boolean(matching.find(x=>String(x.id||'')===customerId)?.merged_into)}));
+          if(matching.length!==1)throw new Error('canonical ownership collision diagnostics captured');
           console.log('CANONICAL_UAT_OWNER_RESOLVED=yes');
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
