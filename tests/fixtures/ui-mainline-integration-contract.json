@@ -51,7 +51,7 @@
     "lib/payment-stage-snapshot.ts": "1dce5a63b98e92079205afeaaeaba8110893c3646bf8c329e40fbf3ebf4a8603",
     "lib/provider-workspace.ts": "6dce0ccc971bb5302afae33b2b24d817e8e8f82ed9e6bcd4c43669a1d6d2f323",
     "lib/scheduling-calendar-reads.ts": "6e10965567ae1c0d3d7eff03500f602511a83474bf37de52abbfab7dbce42d6e",
-    "lib/v2/grooming-checkout-client.ts": "3b64cbe3314a247517d2addc90bbad3fdca385863582fbfc1a0e22b1942d7b60",
+    "lib/v2/grooming-checkout-client.ts": "bc22c130ffbb6fcc2a75c693fb3afc666eb74f42c97a193d6d2e5f45ed16620f",
     "lib/v2/grooming-selection.ts": "5a357b7ddadf0c8bd0840926ba3fa3a4e55f3fe0ad0fc0a9e52651fca4d2dedf",
     "lib/v2/route-scope.ts": "43ec9dfff1ff178f0b35257787fdffde120eb81fe5aee1b09e201360004d206e",
     "lib/voice-ai-browser-harness.ts": "054aa8d1603e529d03e5c9822187a43241413cabd1f72aff4a1eefeb787818d7",

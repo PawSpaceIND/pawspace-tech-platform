@@ -100,3 +100,21 @@ for (const response of [{ discount: 100.001, finalAmount: 1798.999 }, { discount
     assert.deepEqual(calls.map(call => call.url), ["/api/coupon-governance"]);
   });
 }
+
+for (const [name, change, message] of [
+  ["pet-count mismatch", value => { value.bundle.petCount = 2; }, /published package/],
+  ["unpublished bundle", value => { value.pkg.bundles = []; }, /published package/],
+  ["duplicate pets", value => { value.selectedPets.push(value.selectedPets[0]); }, /published package/],
+  ["pet outside the account", value => { value.account.pets = []; }, /signed-in account/],
+  ["invalid appointment date", value => { value.scheduledStart = "invalid"; }, /exact grooming time/],
+  ["appointment in the past", value => { value.scheduledStart = "2020-01-01T05:30:00Z"; }, /exact grooming time/],
+  ["duration mismatch", value => { value.bundle.slotMinutes = 90; }, /exact grooming time/],
+]) {
+  test(`invalid V2 input cannot create a coupon quote: ${name}`, async t => {
+    const calls = network(t);
+    const value = input({ quoteId: "CPQ-OLD", code: "GROOM200", discount: 200 });
+    change(value);
+    await assert.rejects(client.createV2GroomingBooking(value), message);
+    assert.deepEqual(calls, [], "all locally checkable validation precedes persisted quotes or reservation");
+  });
+}
