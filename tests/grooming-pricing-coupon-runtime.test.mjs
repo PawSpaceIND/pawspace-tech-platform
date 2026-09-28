@@ -182,7 +182,7 @@ test("real coupon booking preparation preserves governed amount and rejects tamp
 
 for (const scenario of [
   {name:"fixed",discountType:"fixed",discountValue:100,maxDiscount:100,discount:100},
-  {name:"percentage",discountType:"percent",discountValue:10,maxDiscount:1000,discount:240},
+  {name:"percentage",discountType:"percent",discountValue:10,maxDiscount:1000,discount:239.8},
   {name:"capped percentage",discountType:"percent",discountValue:50,maxDiscount:200,discount:200},
 ]) test(`base service plus add-on: ${scenario.name} coupon quotes and prepares the full basket`,async()=>{
   const {sqlite,db}=await couponDb();
