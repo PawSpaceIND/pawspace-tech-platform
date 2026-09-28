@@ -31,6 +31,7 @@ try{
  const vars=Object.fromEntries(bindings.filter(b=>b.type==='plain_text').map(b=>[b.name,b.text??b.value]));
  if(version.annotations?.['workers/message']!=='staging '+env.EXPECTED_STAGING_SHA||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true'||!bindings.some(b=>b.type==='d1'&&(b.id??b.database_id)===env.STAGING_D1_ID))throw Error('Exact certified staging isolation is not verified');
  result.deployedSha=env.EXPECTED_STAGING_SHA;result.workerVersion=versionId;
+ result.catalogue={grooming:await query("SELECT package_code,name,base_price,currency,version FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price"),training:await query("SELECT package_code,name,sessions,validity_days,base_price,currency,version FROM training_commercial_packages WHERE active=1 ORDER BY sessions")};
  const [call]=await query('SELECT customer_id,mode,phone_last4 FROM voice_call_orders WHERE id=?',[env.UAT_VOICE_CALL_ID]);
  if(!call?.customer_id||call.mode!=='uat'||call.phone_last4!==env.EXPECTED_DESTINATION_LAST4)throw Error('Known UAT context does not match');customerId=call.customer_id;
  const config=await api('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),eh);
