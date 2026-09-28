@@ -1,3 +1,4 @@
+import {employeeAccessHasEnded} from "./employee-exit-access";
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type IdentitySubjectType,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
@@ -82,6 +83,7 @@ export async function resolvePrimaryActor(request:Request):Promise<Authenticated
   const user=await db.prepare("SELECT id,email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
   if(!user)throw authFailure("Access has not been provisioned for this identity",403);
   if(user.status!=="active")throw authFailure("Identity is disabled",403);
+  if(await employeeAccessHasEnded(db,identity.email))throw authFailure("Employee access has ended",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
   if(!role)throw authFailure("Assigned role is unavailable",403);
   return {userId:String(user.id),email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
