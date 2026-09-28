@@ -23,3 +23,12 @@ Only the intentionally modified scheduling-route fingerprint is refreshed in exi
 G07 is partial: an explicit saved favourite-provider setting and its customer-facing explanation/controls are not introduced. History from a completed canonical Grooming visit is usable irrespective of purchase origin, but the subscription purchase UI, per-plan provider preference and address-change scope are not implemented or certified here. This is not a guarantee that the former groomer always wins: suitability and the governed weight still determine ranking. G01/G06 and the full G15–G19 provider-calendar workflows remain separate.
 
 Evidence: `Documents/PawSpace-fixes/g07-repeat-groomer-evidence-20260928/` on the authorized Mac.
+
+## Review correction after #1158 integration
+Merged/deployed #1158 (`89d483d9`) was integrated into this branch at `5044bb2e` without conflicts. Review then exposed that the first history-aware preview could seed assignment policy rows through `resolveAssignmentPolicy`; the existing warm-preview test did not exercise that cold-policy state.
+
+Two new executable cases failed against the pre-fix implementation: missing policy tables were created instead of refused, and an operator-only policy table gained seed rows during a preview. The shared policy resolver now supports a read-only mode. The history preview uses it; ordinary reservation policy resolution retains its existing initialization. No resolution SQL precedence, effective-date rule, default parsing, validator or operator-disablement rule is replaced.
+
+Missing or unavailable policy is an explicit configuration refusal; invalid policy and actual read failures remain failures, never an invented approved default. Tests additionally cover inactive/future/expired rows, invalid values, disabled/zero bonus, service/city precedence, no row/schema mutation, and normal reservation initialization. No alternate coupon, payment or assignment authority is introduced.
+
+The pre-review local full-suite run was deliberately stopped before editing source, retained as incomplete, and is not counted as passed. The pre-review compiled UI run passed 78/78. Final changed-source tests, build, full-suite and cloud checks must be attributed separately to their exact head. Current verification results and release status are recorded on PR #1159.

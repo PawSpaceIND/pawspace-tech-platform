@@ -78,3 +78,75 @@ test("G07 the server uses its policy bonus and never a caller-supplied repeat pr
   assert.equal(ranked.repeatProviderId, "familiar"); assert.equal(ranked.rankingWeights.repeatProviderBonus, 12);
   assert.equal(ranked.preferredProviderId, undefined); assert.equal(ranked.preferredProviderMode, undefined);
 });
+
+function policySnapshot(w) {
+  return { changes: w.sqlite.prepare("SELECT total_changes() n").get().n,
+    schema: w.sqlite.prepare("SELECT name,sql FROM sqlite_master ORDER BY name").all() };
+}
+async function policyWorld(t, changes = {}) {
+  const w = world(t); past(w);
+  const { ensureServicePolicyTables } = await import("../lib/service-policy-governance.ts");
+  await ensureServicePolicyTables(w.db);
+  const row = { id: "operator-grooming", policy_domain: "provider_assignment_policy", service_code: "grooming",
+    city_id: "blr", config_json: JSON.stringify(policy), notes: "Operator policy", active: 1, version: 3,
+    effective_from: "2026-08-01", effective_to: null, updated_by: "operator", updated_at: 1, ...changes };
+  w.sqlite.prepare(`INSERT INTO service_policy_configs (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+  return w;
+}
+test("G07 preview never creates missing policy tables or infers an approved policy", async t => {
+  const w = world(t); past(w); const before = policySnapshot(w);
+  await assert.rejects(groomingHistoryRanking(w.db, context), error => error instanceof Response && error.status === 409);
+  assert.deepEqual(policySnapshot(w), before);
+});
+test("G07 cold preview reads operator weights without inserting defaults or upgrading other services", async t => {
+  const w = await policyWorld(t); const before = policySnapshot(w);
+  const ranked = await groomingHistoryRanking(w.db, context);
+  assert.equal(ranked.repeatProviderId, "familiar"); assert.equal(ranked.rankingWeights.repeatProviderBonus, 12);
+  assert.deepEqual(policySnapshot(w), before);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM service_policy_configs").get().n, 1);
+});
+
+for (const changes of [{ active: 0 }, { effective_from: "2099-01-01" }, { effective_to: "2020-01-01" }])
+  test(`G07 preview refuses an unavailable policy without replacing it: ${JSON.stringify(changes)}`, async t => {
+    const w = await policyWorld(t, changes); const before = policySnapshot(w);
+    const error = await groomingHistoryRanking(w.db, context).catch(error => error);
+    assert.ok(error instanceof Response); assert.equal(error.status, 409);
+    assert.equal((await error.json()).code, "service_policy_configuration_required");
+    assert.deepEqual(policySnapshot(w), before);
+  });
+test("G07 read-only policy resolution keeps validation failures explicit", async t => {
+  const w = await policyWorld(t, { config_json: JSON.stringify({ ...policy, repeatProviderBonus: -1 }) });
+  const before = policySnapshot(w), error = await groomingHistoryRanking(w.db, context).catch(error => error);
+  assert.ok(error instanceof Response); assert.equal(error.status, 409);
+  assert.equal((await error.json()).code, "service_policy_configuration_invalid");
+  assert.deepEqual(policySnapshot(w), before);
+});
+for (const changes of [{ repeatProviderBonus: 0 }, { preferredProviderMode: "disabled" }])
+  test(`G07 preview respects stored operator opt-out without seeds: ${JSON.stringify(changes)}`, async t => {
+    const w = await policyWorld(t, { config_json: JSON.stringify({ ...policy, ...changes }) });
+    const before = policySnapshot(w); assert.deepEqual(await groomingHistoryRanking(w.db, context), {});
+    assert.deepEqual(policySnapshot(w), before);
+  });
+
+test("G07 read-only resolution preserves scoped operator precedence over a higher-version fallback", async t => {
+  const w = await policyWorld(t);
+  w.sqlite.exec(`INSERT INTO service_policy_configs
+    (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at)
+    SELECT 'fallback',policy_domain,service_code,'*',json_set(config_json,'$.repeatProviderBonus',99),notes,active,999,effective_from,effective_to,updated_by,999
+    FROM service_policy_configs WHERE id='operator-grooming'`);
+  const before = policySnapshot(w), result = await groomingHistoryRanking(w.db, context);
+  assert.equal(result.rankingWeights.repeatProviderBonus, 12); assert.deepEqual(policySnapshot(w), before);
+});
+test("G07 actual policy read failures propagate without seeding or inventing configuration", async () => {
+  const { resolveAssignmentPolicy } = await import("../lib/provider-assignment-policy.ts");
+  await assert.rejects(resolveAssignmentPolicy({ prepare() { throw new Error("policy database unavailable"); } },
+    "grooming", "blr", new Date(context.scheduledStart), { readOnly: true }), /policy database unavailable/);
+});
+test("G07 ordinary reservation policy resolution retains its governed initialization", async t => {
+  const w = world(t, false);
+  const { resolveAssignmentPolicy } = await import("../lib/provider-assignment-policy.ts");
+  const resolved = await resolveAssignmentPolicy(w.db, "grooming", "blr", new Date(context.scheduledStart));
+  assert.equal(resolved.config.assignmentMode, "auto"); assert.equal(resolved.config.repeatProviderBonus, 12);
+  assert.equal(resolved.config.preferredProviderMode, "preference");
+  assert.ok(w.sqlite.prepare("SELECT COUNT(*) n FROM service_policy_configs").get().n > 0);
+});

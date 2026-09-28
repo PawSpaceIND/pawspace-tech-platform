@@ -41,7 +41,7 @@ export async function groomingHistoryRanking(db: D1Database, context: HistoryCon
   if (config && (config.preferredProviderMode === "disabled" || config.repeatProviderBonus <= 0)) return {};
   const repeatProviderId = await previousCompletedGroomer(db, context);
   if (!repeatProviderId) return {};
-  const policy = config ?? (await resolveAssignmentPolicy(db, "grooming", String(context.cityId), new Date(context.scheduledStart))).config;
+  const policy = config ?? (await resolveAssignmentPolicy(db, "grooming", String(context.cityId), new Date(context.scheduledStart), { readOnly: true })).config;
   if (policy.preferredProviderMode === "disabled" || policy.repeatProviderBonus <= 0) return {};
   return { repeatProviderId, rankingWeights: {
     qualityWeight: policy.qualityWeight, fullTimeBonus: policy.fullTimeBonus,
