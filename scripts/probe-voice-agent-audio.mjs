@@ -20,7 +20,7 @@ const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signe
 const signed=await sr.json();if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
 console.log('::add-mask::'+signed.signed_url);
 const socket=new WebSocket(signed.signed_url);
-let conversationId,format,outputFormat,sending=false,finished=false,started=0,sentBytes=0;
+let conversationId,format,outputFormat,sending=false,finished=false,started=0,sentBytes=0,inputSpeechBytes=0;
 // Counts are keyed only by allowlisted event names (anything else is 'other'), never by raw socket data.
 const state=createAudioProbeState(),eventCounts=new Map();
 let greetingBytes=0,firstGreetingAudioAt=0,lastGreetingAudioAt=0;
@@ -33,6 +33,7 @@ await new Promise((resolve,reject)=>{
   // Fixed informational utterance: this probe cannot confirm or create a sale.
   if(format!=='pcm_16000')throw Error('Caller fixture requires negotiated pcm_16000 input');
   const audio=await readFile(new URL('./fixtures/amaya-caller.pcm',import.meta.url)),f=audioFormat(format);
+  inputSpeechBytes=audio.length;
   if(audio.length<1000||audio.length>f.rate*f.bytesPerSample*30)throw Error('Invalid synthetic caller audio size');
   while(!finished&&!greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreetingAudioAt,lastAudioAt:lastGreetingAudioAt,bytes:greetingBytes,format:outputFormat}))await delay(100);
   if(finished)return;started=Date.now();state.listening=true;
@@ -60,7 +61,7 @@ await new Promise((resolve,reject)=>{
  socket.addEventListener('error',()=>finish(Error('Agent audio transport error')));
  socket.addEventListener('close',()=>{if(!finished)finish(Error('Agent closed before audio proof'));});
 });
-const finalProof=await verifyFinalConversation({key,conversationId,agentId,turns:[{transcript:state.transcript,reply:state.reply}]});
+const finalProof=await verifyFinalConversation({key,conversationId,agentId,turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:inputSpeechBytes,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:audioProbeComplete(state,Date.now())}});
 const after=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'verify-voice-sale'});
 if(JSON.stringify(before.completedBookings)!==JSON.stringify(after.completedBookings))throw Error('Informational audio probe changed booking set');
 console.log('VOICE_AUDIO_PROOF='+JSON.stringify({passed:true,dialed:false,syntheticCaller:true,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,inputFormat:format,outputFormat,bookingSetUnchanged:true,finalProof}));

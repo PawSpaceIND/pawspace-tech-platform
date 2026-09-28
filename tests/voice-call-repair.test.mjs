@@ -43,3 +43,13 @@ test('repair refuses unsupported actions before any network operation',async()=>
  await assert.rejects(()=>repairStagingVoice({VOICE_REPAIR_ACTION:'production'},()=>{network++;}),/Explicit staging/);
  assert.equal(network,0);
 });
+
+test('recording-disabled sessions still require same-conversation live PCM proof and complete final transcript',()=>{
+ const d={...conversation(),conversation_id:'conv-live',has_user_audio:false,has_response_audio:false,metadata:{text_only:false}};
+ const evidence={conversationId:'conv-live',inputMode:'audio',inputBytes:32000,outputBytes:64000,nonSilentBytes:10000,playbackComplete:true};
+ assert.equal(assertFinalConversation(d,{agentId:'agent-test',turns,liveAudioEvidence:evidence}).audioEvidence,'observed_live_stream');
+ for(const change of [{conversationId:'other'},{inputMode:'text'},{inputBytes:0},{outputBytes:0},{nonSilentBytes:0},{playbackComplete:false}])assert.throws(()=>assertFinalConversation(d,{agentId:'agent-test',turns,liveAudioEvidence:{...evidence,...change}}));
+ const interrupted={...d,transcript:d.transcript.map((row,i)=>i===2?{...row,interrupted:true}:row)};
+ assert.throws(()=>assertFinalConversation(interrupted,{agentId:'agent-test',turns,liveAudioEvidence:evidence}),/interrupted/);
+ assert.throws(()=>assertFinalConversation({...d,metadata:{text_only:true}},{agentId:'agent-test',turns,liveAudioEvidence:evidence}));
+});
