@@ -14,8 +14,8 @@ type Dashboard = {
   note: string;
 };
 
-const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: 14, padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
-const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 14, color: "var(--staff-primary)", fontWeight: 700, borderBottom: "2px solid var(--staff-line)" };
+const card: React.CSSProperties = { border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 18, background: "var(--staff-surface)", marginBottom: 16 };
+const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 14, color: "var(--paw-link)", fontWeight: 700, borderBottom: "2px solid var(--staff-line)" };
 const td: React.CSSProperties = { padding: "8px 10px", fontSize: 15, borderBottom: "1px solid var(--staff-line)" };
 
 export default function ManagerDashboardPage() {
@@ -32,7 +32,7 @@ export default function ManagerDashboardPage() {
   return (
     <StaffModule><main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "inherit", color: "var(--staff-text)" }}>
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--staff-primary)" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "var(--paw-link)" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Manager / Founder dashboard</h1>
         <p style={{ maxWidth: 900, color: "var(--staff-muted)" }}>
           A real, complete company view before your meeting - only the people who actually report to you (managers), or everyone across every vertical (founders, People, Payroll, Audit).
@@ -61,7 +61,7 @@ export default function ManagerDashboardPage() {
           <section style={{...card,overflowX:"auto"}}>
             <h2 style={{marginTop:0,fontSize:16}}>Operations control</h2>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}} data-staff-grid="stats">
-              {[["Open cases",data.operations.openCases],["Critical",data.operations.criticalCases],["Response overdue",data.operations.firstResponseOverdue],["Resolution overdue",data.operations.resolutionOverdue],["Manager escalations",data.operations.managerEscalationsDue],["Refunds pending",data.operations.refundsPending],["Refunds failed",data.operations.refundsFailed],["Work queue",data.operations.workQueueOpen],["SOP pending",data.operations.sopPending],["Legacy tickets",data.operations.legacyTicketsOpen]].map(([label,value])=><div key={String(label)} style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:12}}><small style={{color:"var(--staff-muted)"}}>{label}</small><h3 style={{margin:"4px 0"}}>{value}</h3></div>)}
+              {[["Open cases",data.operations.openCases],["Critical",data.operations.criticalCases],["Response overdue",data.operations.firstResponseOverdue],["Resolution overdue",data.operations.resolutionOverdue],["Manager escalations",data.operations.managerEscalationsDue],["Refunds pending",data.operations.refundsPending],["Refunds failed",data.operations.refundsFailed],["Work queue",data.operations.workQueueOpen],["SOP pending",data.operations.sopPending],["Legacy tickets",data.operations.legacyTicketsOpen]].map(([label,value])=><div key={String(label)} style={{border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:12}}><small style={{color:"var(--staff-muted)"}}>{label}</small><h3 style={{margin:"4px 0"}}>{value}</h3></div>)}
             </div>
             <p style={{fontSize:14,color:"var(--staff-muted)",marginBottom:0}}>Founder-wide counts are shown only to all-scope roles. Line managers receive case counts restricted to their direct-report owners; finance/global queues remain hidden from scoped managers.</p>
           </section>

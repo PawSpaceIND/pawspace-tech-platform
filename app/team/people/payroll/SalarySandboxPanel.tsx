@@ -4,7 +4,7 @@ type Employee={id:string;display_name:string;employee_code:string};
 type Run={id:string;status:string};
 type Instruction={id:string;employeeId:string;runId:string;status:string;amountPaise:number;providerPayoutId:string|null;utr:string|null;error:string|null};
 type Props={employees:Employee[];runs:Run[];canApprove:boolean;onSaved:()=>Promise<void>};
-const inputStyle={display:"block",width:"100%",minHeight:44,padding:10,border:"1px solid var(--staff-line)",borderRadius:8,background:"var(--staff-surface)",color:"var(--staff-text)"};
+const inputStyle={display:"block",width:"100%",minHeight:44,padding:10,border:"1px solid var(--staff-line)",borderRadius:"calc(8px * var(--paw-radius-scale))",background:"var(--staff-surface)",color:"var(--staff-text)"};
 export default function SalarySandboxPanel({employees,runs,canApprove,onSaved}:Props){
  const[items,setItems]=useState<Instruction[]>([]),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[confirmed,setConfirmed]=useState(false);
  const[employeeId,setEmployeeId]=useState(""),[fund,setFund]=useState(""),[proof,setProof]=useState(""),[expiry,setExpiry]=useState(""),[runId,setRunId]=useState("");
@@ -12,7 +12,7 @@ export default function SalarySandboxPanel({employees,runs,canApprove,onSaved}:P
  useEffect(()=>{if(!canApprove)return;let active=true;void fetch("/api/payroll?mode=salary",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok)throw new Error(p.error||"Salary instructions unavailable");if(active)setItems(p.data?.instructions||[]);}).catch(e=>{if(active)setError(String(e.message));});return()=>{active=false};},[canApprove]);
  async function act(body:Record<string,unknown>){if(!confirmed){setError("Confirm TEST-only operation first");return;}setBusy(true);setError("");setMessage("");try{const r=await fetch("/api/payroll",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...body,confirmSandbox:true})}),p=await r.json();if(!r.ok)throw new Error(p.error||"Salary action failed");await refresh();await onSaved();setMessage(p.data?.reconciliationRequired?"Transport outcome requires reconciliation. This salary is not marked paid.":"TEST salary action recorded. Check provider status below.");}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
  if(!canApprove)return null;
- return <section aria-label="Employee salary sandbox" style={{border:"1px solid var(--staff-line)",borderRadius:12,padding:16,margin:"24px 0"}}>
+ return <section aria-label="Employee salary sandbox" style={{border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:16,margin:"24px 0"}}>
  <h2>Employee salary · TEST mode</h2><p>Separate employee instructions reuse the existing payout transport. Live salary is disabled. A prepared batch is not a confirmed salary deposit.</p>
  <label style={{display:"block",padding:12}}><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>{" "}I confirm these are TEST fund accounts and no live salary payment is authorized.</label>
  {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}

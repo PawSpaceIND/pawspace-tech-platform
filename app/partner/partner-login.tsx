@@ -4,7 +4,7 @@ import styles from "../components/marketing/premium-marketing.module.css";
 
 export type LoggedInProvider = { providerId: string; providerName: string; phone: string };
 
-const box: React.CSSProperties = { width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" };
+const box: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: 12, borderRadius: "calc(12px * var(--paw-radius-scale))", border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" };
 
 type Copy = { eyebrow?: string; title?: string; description?: string };
 /** Same OTP transport everywhere; only the framing copy differs between onboarding and the Partner app. */
@@ -80,7 +80,7 @@ export default function PartnerLogin({ onLoggedIn, eyebrow = "🐾 Become a care
         <>
           <p>Enter the 6-digit code sent to +91 {phone}.</p>
           {sandboxCode && (
-            <p style={{ fontSize: 12, background: "var(--ps-cream)", padding: 8, borderRadius: 8, marginTop: 8 }}>
+            <p style={{ fontSize: 12, background: "var(--ps-cream)", padding: 8, borderRadius: "calc(8px * var(--paw-radius-scale))", marginTop: 8 }}>
               Sandbox code (no real SMS yet): <b>{sandboxCode}</b>
             </p>
           )}

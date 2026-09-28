@@ -7,8 +7,8 @@ type FormState={customerName:string;phonePrimary:string;phoneSecondary:string;em
 
 const empty:FormState={customerName:"",phonePrimary:"",phoneSecondary:"",email:"",petType:"dog",relocationKind:"",pickupDate:"",pickupApproxTime:"",pickupLocation:"",dropLocation:"",expectedTravelDate:""};
 
-const page={maxWidth:640,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16} as const;
-const hero={background:"var(--ds-primary-500)",color:"#fff",borderRadius:"var(--ds-radius-lg)",padding:"24px 22px",display:"grid",gap:8} as const;
+const page={maxWidth:640,margin:"0 auto",padding:28,fontFamily:"var(--paw-font, system-ui)",display:"grid",gap:16} as const;
+const hero={background:"var(--paw-deep)",color:"#fff",borderRadius:"var(--ds-radius-lg)",padding:"24px 22px",display:"grid",gap:8} as const;
 const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:18,display:"grid",gap:14} as const;
 const label={display:"grid",gap:4,fontSize:14,color:"var(--ds-text)"} as const;
 const input={padding:"10px 12px",borderRadius:"var(--ds-radius-sm)",border:"1px solid var(--ds-border)",fontSize:15} as const;

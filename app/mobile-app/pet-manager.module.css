@@ -1,12 +1,12 @@
 /* Pet manager — Emerald #01261F / Gold #E6B34E, system fonts, mobile-first, embeddable. */
 
 .manager {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  border: 1px solid rgba(1, 38, 31, 0.18);
-  border-radius: 14px;
+  font-family: var(--paw-font);
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 18%, transparent);
+  border-radius: var(--paw-card-radius);
   padding: 14px;
-  background: #fff;
-  color: #01261f;
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   display: grid;
   gap: 10px;
 }
@@ -27,19 +27,19 @@
 .header span {
   display: block;
   font-size: 10px;
-  color: rgba(1, 38, 31, 0.6);
+  color: color-mix(in srgb, var(--ui-ink) 60%, transparent);
   margin-top: 2px;
 }
 
 .add {
   border: none;
-  background: #01261f;
-  color: #e6b34e;
-  border-radius: 10px;
+  background: var(--ui-brand-deep);
+  color: var(--ui-on-primary);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 8px 14px;
   font-size: 12px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -48,8 +48,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid rgba(1, 38, 31, 0.14);
-  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 14%, transparent);
+  border-radius: calc(12px * var(--paw-radius-scale));
   padding: 10px 12px;
 }
 
@@ -71,7 +71,7 @@
 
 .pet small {
   font-size: 11px;
-  color: rgba(1, 38, 31, 0.65);
+  color: color-mix(in srgb, var(--ui-ink) 65%, transparent);
   text-transform: capitalize;
 }
 
@@ -79,23 +79,23 @@
   font-style: normal;
   font-size: 10px;
   font-weight: 700;
-  color: #01261f;
-  background: rgba(230, 179, 78, 0.22);
-  border: 1px solid rgba(230, 179, 78, 0.55);
+  color: var(--ui-on-gold);
+  background: color-mix(in srgb, var(--ui-gold-soft) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-gold-soft) 55%, transparent);
   border-radius: 7px;
   padding: 1px 7px;
   justify-self: start;
 }
 
 .edit {
-  border: 1px solid #01261f;
-  background: #fff;
-  color: #01261f;
-  border-radius: 9px;
+  border: 1px solid var(--ui-brand-deep);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 6px 14px;
   font-size: 11px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -105,12 +105,12 @@
 }
 
 .form {
-  border: 2px solid #e6b34e;
-  border-radius: 12px;
+  border: 2px solid var(--ui-gold-soft);
+  border-radius: calc(12px * var(--paw-radius-scale));
   padding: 12px;
   display: grid;
   gap: 10px;
-  background: rgba(230, 179, 78, 0.07);
+  background: color-mix(in srgb, var(--ui-gold-soft) 7%, transparent);
 }
 
 .form > b {
@@ -126,9 +126,9 @@
 .photoPreview {
   width: 56px;
   height: 56px;
-  border-radius: 12px;
-  border: 1px solid rgba(1, 38, 31, 0.2);
-  background: rgba(230, 179, 78, 0.12);
+  border-radius: calc(12px * var(--paw-radius-scale));
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 20%, transparent);
+  background: color-mix(in srgb, var(--ui-gold-soft) 12%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -148,13 +148,13 @@
   gap: 4px;
   font-size: 10px;
   font-weight: 700;
-  color: rgba(1, 38, 31, 0.8);
+  color: color-mix(in srgb, var(--ui-ink) 80%, transparent);
 }
 
 .photoPick input[type="file"] {
   font-size: 11px;
-  font-family: inherit;
-  color: #01261f;
+  font-family: var(--paw-font);
+  color: var(--ui-ink);
 }
 
 .linkBtn {
@@ -162,10 +162,10 @@
   border: none;
   background: none;
   padding: 0;
-  color: #8c2f22;
+  color: var(--paw-link);
   font-size: 10px;
   font-weight: 700;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
   text-decoration: underline;
 }
@@ -173,7 +173,7 @@
 .avatar {
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--paw-radius-scale));
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -193,35 +193,35 @@
   gap: 4px;
   font-size: 10px;
   font-weight: 700;
-  color: rgba(1, 38, 31, 0.8);
+  color: color-mix(in srgb, var(--ui-ink) 80%, transparent);
 }
 
 .fields input,
 .fields select {
   padding: 9px 10px;
-  border: 1px solid rgba(1, 38, 31, 0.25);
-  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 25%, transparent);
+  border-radius: calc(9px * var(--paw-radius-scale));
   font-size: 13px;
-  font-family: inherit;
-  color: #01261f;
-  background: #fff;
+  font-family: var(--paw-font);
+  color: var(--ui-ink);
+  background: var(--ui-surface);
   width: 100%;
 }
 
 .fields input:focus,
 .fields select:focus {
   outline: none;
-  border-color: #e6b34e;
+  border-color: var(--ui-gold-soft);
   box-shadow: 0 0 0 2px rgba(230, 179, 78, 0.35);
 }
 
 .issues {
   margin: 0;
   padding: 8px 10px 8px 24px;
-  border-radius: 9px;
-  background: #fdf0ee;
-  border: 1px solid #ecc7c0;
-  color: #8c2f22;
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  border: 1px solid var(--ui-brand-line);
+  color: var(--paw-link);
   font-size: 11px;
   display: grid;
   gap: 3px;
@@ -235,13 +235,13 @@
 
 .primary {
   border: none;
-  background: #01261f;
-  color: #e6b34e;
-  border-radius: 10px;
+  background: var(--ui-brand-deep);
+  color: var(--ui-on-primary);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 10px 18px;
   font-size: 12px;
   font-weight: 800;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
@@ -252,21 +252,21 @@
 }
 
 .secondary {
-  border: 1px solid rgba(1, 38, 31, 0.35);
-  background: #fff;
-  color: #01261f;
-  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--ui-brand-deep) 35%, transparent);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 10px 14px;
   font-size: 12px;
   font-weight: 700;
-  font-family: inherit;
+  font-family: var(--paw-font);
   cursor: pointer;
 }
 
 .hint {
   margin: 0;
   font-size: 11px;
-  color: rgba(1, 38, 31, 0.6);
+  color: color-mix(in srgb, var(--ui-ink) 60%, transparent);
 }
 
 .error {

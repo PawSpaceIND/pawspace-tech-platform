@@ -1,5 +1,5 @@
 .grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px;margin:16px 0;min-width:0; }
-.card { min-width:0;padding:22px;border:1px solid var(--staff-line,var(--paw-line,#dfe7e2));border-radius:18px;background:var(--staff-surface,var(--paw-surface,#fff));color:var(--staff-text,var(--paw-text,#173c31)); }
+.card { min-width:0;padding:22px;border:1px solid var(--staff-line,var(--paw-line,#dfe7e2));border-radius:calc(18px * var(--paw-radius-scale));background:var(--staff-surface,var(--paw-surface,#fff));color:var(--staff-text,var(--paw-text,#173c31)); }
 .card h3 { font-size:16px;margin:0 0 8px;letter-spacing:-.02em; }
 .note { font-size:13px;line-height:1.6;color:var(--staff-muted,var(--paw-muted,#637b71));margin:0 0 14px; }
 .bars { display:grid;gap:18px;margin:18px 0 0; }

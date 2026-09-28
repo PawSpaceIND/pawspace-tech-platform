@@ -9,10 +9,11 @@ test("customer app offers Emerald kit and Brand book colours", async () => {
   const globals = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const brandLock = await readFile(new URL("../app/brand-lock.css", import.meta.url), "utf8");
   const appearance = await readFile(new URL("../app/components/pawspace-appearance.tsx", import.meta.url), "utf8");
-  const brandBook = await readFile(new URL("../app/brand-book-theme.css", import.meta.url), "utf8");
+  const brandBook = await readFile(new URL("../app/pawspace-design-system.css", import.meta.url), "utf8");
 
   assert.match(config, /id:"emerald"/);
   assert.match(config, /id:"signature"/);
+  assert.match(config, /id:"coral"/);
   assert.match(config, /resolveBrandTheme/);
   assert.match(config, /PLATFORM_THEME_STORAGE_KEY/);
   assert.doesNotMatch(config, /id:"midnight"/);
