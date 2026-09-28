@@ -33,7 +33,7 @@ const cr=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComp
 if(!cr.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Agent must use exact staging backend');
 const dir=await mkdtemp(join(tmpdir(),'amaya-spoken-'));
 async function pcm(text,name){const wav=join(dir,name+'.wav'),raw=join(dir,name+'.pcm');execFileSync('espeak-ng',['-s','150','-w',wav,text]);execFileSync('ffmpeg',['-loglevel','error','-y','-i',wav,'-ar','16000','-ac','1','-f','s16le',raw]);return readFile(raw);}
-const quoteAudio=await pcm('Please prepare an Essential Bath grooming booking for my saved dog Bruno, one healthy adult dog with no aggression or medical issues, at 12, 100 Feet Road, Indiranagar, Bengaluru, 560038, tomorrow at 11 AM. Please show the quote before booking.','quote');
+const quoteAudio=await pcm('Essential Bath for Bruno tomorrow 11 AM at 12 100 Feet Road Indiranagar Bengaluru 560038 healthy adult no aggression no medical issues show quote before booking','quote');
 const yesAudio=await pcm('Yes, proceed.','confirm');
 const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await sr.json();
 if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
