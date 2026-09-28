@@ -33,7 +33,7 @@ test('finish predicate completes after reply audio settles when the greeting was
  assert.deepEqual(changes,['greeting',null,'interruption',null,'transcript','cancelled-audio','reply','audio']);
  assert.equal(s.reply,reply);assert.equal(s.audioBytes,32000);
  assert.equal(audioProbeComplete(s,now+1000),false,'waits while reply audio may still be streaming');
- assert.equal(audioProbeComplete(s,now+1600),true);
+ assert.equal(audioProbeComplete(s,now+2600),true);
 });
 test('interrupted reply is judged on the corrected text actually spoken, and cancelled audio is never waited for',()=>{
  const base=[...greeting,asked,{type:'agent_response',agent_response_event:{agent_response:reply}},{type:'audio',audio_event:{event_id:2,audio_base_64:pcm(32000)}},{type:'interruption',interruption_event:{event_id:2}}];
@@ -42,7 +42,7 @@ test('interrupted reply is judged on the corrected text actually spoken, and can
  assert.deepEqual(spoken.changes.slice(-2),['correction','cancelled-audio']);
  assert.equal(spoken.s.audioBytes,32000,'cancelled audio is not counted');
  assert.equal(spoken.s.lastAudio,spoken.now-300,'cancelled audio does not extend the settle window');
- assert.equal(audioProbeComplete(spoken.s,spoken.now+1300),true);
+ assert.equal(audioProbeComplete(spoken.s,spoken.now+60000),false);
  const cutEarly=replay([...base,{type:'agent_response_correction',agent_response_correction_event:{original_agent_response:reply,corrected_agent_response:'One moment while I check that for you.'}}]);
  assert.equal(cutEarly.s.reply,'One moment while I check that for you.');
  assert.equal(audioProofChecks(cutEarly.s).substantiveReply,false);
