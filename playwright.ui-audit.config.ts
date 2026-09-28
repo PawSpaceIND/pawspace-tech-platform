@@ -9,6 +9,6 @@ export default defineConfig({
   reporter:[["list"],["json",{outputFile:"test-results/ui-audit-results.json"}]],
   use:{baseURL,headless:true,trace:"retain-on-failure",screenshot:"only-on-failure",video:"off",
     launchOptions:process.env.PW_CHROME_EXECUTABLE ? {executablePath:process.env.PW_CHROME_EXECUTABLE} : {}},
-  webServer:{command:"bash scripts/e2e/serve.sh",url:baseURL,reuseExistingServer:!process.env.CI,timeout:240_000,
+  webServer:{command:"bash scripts/e2e/serve.sh",url:baseURL,reuseExistingServer:false,timeout:240_000,
     env:{PW_PORT:port,PW_UAT_SERVICE_DATE:"2026-10-05",PAWSPACE_PAYMENT_ENV:"sandbox",PAWSPACE_PAYMENT_LIVE_APPROVED:"false",FORBID_PRODUCTION:"true"}},
 });

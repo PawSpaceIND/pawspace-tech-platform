@@ -268,3 +268,29 @@ test('canonical staff routes retain the shared table and utility repairs',async(
   await expect(page.locator('[data-paw-appearance-slot] .paw-appearance-trigger')).toHaveCSS('position','static');
  }
 });
+
+for(const viewport of viewports) test(`review corrections preserve text and region identity ${viewport.width}`,async({page},info)=>{
+ await page.setViewportSize(viewport);
+ for(const [route,names] of [
+  ['/v2/team/customer-reminders',['Outcomes by reminder type','Recent sweep events']],
+  ['/v2/team/finance',['By service','Bookings and their payment state']],
+ ] as const) {
+  await ready(page,route);
+  for(const name of names) {
+   const table=page.getByRole('region',{name:`${name}; scroll horizontally for all columns`,exact:true});
+   await expect(table).toHaveCount(1);await expect(table).toHaveAttribute('tabindex','0');
+   await expect(table).toHaveCSS('overflow-x','auto');
+  }
+ }
+ await page.route('**/api/admin/atlas-chat?*',route=>route.fulfill({json:{data:{messages:[{id:'UI-REVIEW-TEXT',role:'atlas',createdAt:0,content:'3. First\n5. Second\n5. Repeated\n1. Restart\n\nCustomer    Net amount\n**\n`'}]}}}));
+ await ready(page,'/v2/team/ai');
+ const formatted=page.locator('.paw-readable-text').first();
+ await expect(formatted.locator('ol li')).toHaveCount(4);
+ expect(await formatted.locator('ol li').evaluateAll(items=>items.map(item=>item.getAttribute('value')))).toEqual(['3','5','5','1']);
+ await expect(formatted).toHaveCSS('white-space','pre-wrap');
+ await expect(formatted.locator('p').first()).toHaveText('Customer    Net amount',{useInnerText:false});
+ expect(await formatted.locator('p').first().textContent()).toBe('Customer    Net amount');
+ await expect(formatted.locator('p').nth(1)).toHaveText('**');
+ await expect(formatted.locator('p').nth(2)).toHaveText('`');
+ await formatted.scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath(`review-text-${viewport.width}.png`)});
+});

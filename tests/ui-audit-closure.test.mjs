@@ -27,11 +27,11 @@ test('Atlas formatter treats content as text and retains the original response',
   assert.match(read('app/team/ai/atlas-chat.tsx'),/<ReadableText text=\{answer.content\}/);
 });
 
-import {uiImperativeContract} from '../scripts/ui-audit-logic-contract.mjs';
+import {uiProgramContract,uiJsxExpressions,uiImperativeContract} from '../scripts/ui-audit-logic-contract.mjs';
 const originalPrograms=JSON.parse(read('tests/fixtures/ui-audit-logic-contract.json'));
 for(const [file,expected] of Object.entries(originalPrograms.files)) {
  test(`UI audit preserves original state, calculations and request functions: ${file}`,()=>{
-  assert.equal(uiImperativeContract(read(file),file),expected);
+  assert.equal(uiProgramContract(read(file),file),expected);
  });
 }
 test('imperative guard rejects a changed employee request rather than approving new behavior',()=>{
@@ -70,7 +70,7 @@ test('Atlas rendering executes paragraphs, emphasis and inline references',()=>{
 });
 test('Atlas rendering preserves heading content and ordered-list starting numbers',()=>{
  const html=renderText('# Review summary\n- First item\n+ Second **item**\n\n3. Third step\n4. Fourth step');
- assert.equal(html,'<div class="paw-readable-text"><h3>Review summary</h3><ul><li>First item</li><li>Second <strong>item</strong></li></ul><ol start="3"><li>Third step</li><li>Fourth step</li></ol></div>');
+ assert.equal(html,'<div class="paw-readable-text"><h3>Review summary</h3><ul><li>First item</li><li>Second <strong>item</strong></li></ul><ol start="3"><li value="3">Third step</li><li value="4">Fourth step</li></ol></div>');
 });
 test('Atlas rendering never turns supplied markup or links into active controls',()=>{
  const html=renderText('<button type="submit">Confirm & pay</button>\n[Reference](https://example.invalid)');
@@ -93,4 +93,58 @@ test('Atlas rendering keeps repeated records without truncating long replies',()
  assert.equal((html.match(/<li>/g)||[]).length,200);
  assert.match(html,/<li>Record 0: ₹1<\/li>/);
  assert.match(html,/<li>Record 199: ₹200<\/li>/);
+});
+
+for(const [file,original] of Object.entries(originalPrograms.jsxOriginal)) {
+ test(`UI audit preserves JSX data expressions with explicit presentation deltas: ${file}`,()=>{
+  const expected=[...original];
+  for(const patch of [...(originalPrograms.jsxPresentationChanges[file]||[])].reverse()) {
+   assert.deepEqual(expected.slice(patch.index,patch.index+patch.remove.length),patch.remove,'Review patch must match its historical expression range');
+   expected.splice(patch.index,patch.remove.length,...patch.insert);
+  }
+  assert.deepEqual(uiJsxExpressions(read(file),file),expected);
+ });
+}
+test('JSX protection covers every original imperative baseline',()=>{
+ assert.deepEqual(Object.keys(originalPrograms.jsxOriginal).sort(),Object.keys(originalPrograms.files).sort());
+});
+test('JSX guard rejects unsigned custom-prop, child, nested and spread mutations',()=>{
+ const variants=[
+  ['<Card total={calculateAmount(row)}/>','calculateAmount','wrongAmount'],
+  ['<p>{calculateAmount(row)}</p>','calculateAmount','wrongAmount'],
+  ['<section>{rows.map(row=><Card total={calculateAmount(row)}/>)}</section>','calculateAmount','wrongAmount'],
+  ['<Card {...invoiceProps}/>','invoiceProps','otherProps'],
+  ['<Card fee={approved ? fee : 0}/>','approved','true'],
+  ['<Card data-audit-total={calculateAmount(row)}/>','calculateAmount','wrongAmount'],
+ ];
+ for(const [jsx,from,to] of variants) {
+  const before=`export default function View(){return ${jsx};}`,after=before.replace(from,to);
+  assert.notEqual(uiImperativeContract(before),uiImperativeContract(after),jsx);
+ }
+});
+test('control identities detect swapped handlers without rejecting visual wrappers',()=>{
+ const before='export default function View(){return <><button onClick={()=>approve()}>Approve</button><button onClick={()=>reject()}>Reject</button></>;}' ;
+ const swapped=before.replace('approve()','TEMP()').replace('reject()','approve()').replace('TEMP()','reject()');
+ assert.notDeepEqual(uiBehaviorSignatures(before),uiBehaviorSignatures(swapped));
+ assert.notEqual(uiImperativeContract(before),uiImperativeContract(swapped));
+ const wrapped=before.replace('<>','<section className="panel">').replace('</>','</section>');
+ assert.deepEqual(uiBehaviorSignatures(before),uiBehaviorSignatures(wrapped));
+ assert.equal(uiImperativeContract(before),uiImperativeContract(wrapped));
+});
+test('control signatures preserve whitespace inside string arguments',()=>{
+ const before='const view=<button onClick={()=>send("two  spaces")}>Send</button>;';
+ assert.notDeepEqual(uiBehaviorSignatures(before),uiBehaviorSignatures(before.replace('two  spaces','two spaces')));
+});
+test('Atlas rendering preserves non-consecutive and repeated ordered-list numbers',()=>{
+ const html=renderText('3. First\n5. Second\n5. Repeated\n1. Restart');
+ assert.equal(html,'<div class="paw-readable-text"><ol start="3"><li value="3">First</li><li value="5">Second</li><li value="5">Repeated</li><li value="1">Restart</li></ol></div>');
+});
+test('Atlas rendering preserves lone markers and aligned text',()=>{
+ for(const text of ['**','****','`','``','Customer    Net amount'])assert.equal(renderText(text),`<div class="paw-readable-text"><p>${text}</p></div>`);
+ const css=postcss.parse(read('app/pawspace-design-system.css'));
+ const rules=[];css.walkRules('.paw-readable-text',rule=>rule.walkDecls('white-space',decl=>rules.push(decl.value)));
+ assert.equal(rules.at(-1),'pre-wrap');
+});
+test('audit server cannot silently reuse a stale local process',()=>{
+ assert.match(read('playwright.ui-audit.config.ts'),/reuseExistingServer:false/);
 });

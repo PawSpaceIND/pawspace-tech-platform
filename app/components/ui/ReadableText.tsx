@@ -1,14 +1,15 @@
 import { Fragment, type ReactNode } from "react";
 
-// Text formatting only: no HTML parsing, executable content or link conversion.
+/** Format complete emphasis/code tokens while leaving unfinished markers as literal text. */
 function inline(text: string): ReactNode[] {
   return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index}>{part.slice(2, -2)}</strong>;
-    if (part.startsWith("`") && part.endsWith("`")) return <code key={index}>{part.slice(1, -1)}</code>;
+    if (/^\*\*[^*\n]+\*\*$/.test(part)) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    if (/^`[^`\n]+`$/.test(part)) return <code key={index}>{part.slice(1, -1)}</code>;
     return <Fragment key={index}>{part}</Fragment>;
   });
 }
 
+/** Render escaped response text without executing markup or changing numbered facts. */
 export default function ReadableText({ text }: { text: string }) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
@@ -29,11 +30,13 @@ export default function ReadableText({ text }: { text: string }) {
     const ordered = line.match(/^\s*(\d+)\.\s+(.+)$/);
     if (bullet || ordered) {
       const items: ReactNode[] = [];
-      const pattern = ordered ? /^\s*\d+\.\s+(.+)$/ : /^\s*[-*+]\s+(.+)$/;
+      const pattern = ordered ? /^\s*(\d+)\.\s+(.+)$/ : /^\s*[-*+]\s+(.+)$/;
       while (index < lines.length) {
         const item = lines[index].match(pattern);
         if (!item) break;
-        items.push(<li key={index}>{inline(item[1])}</li>);
+        items.push(ordered
+          ? <li key={index} value={Number(item[1])}>{inline(item[2])}</li>
+          : <li key={index}>{inline(item[1])}</li>);
         index++;
       }
       blocks.push(ordered ? <ol key={key} start={Number(ordered[1])}>{items}</ol> : <ul key={key}>{items}</ul>);
