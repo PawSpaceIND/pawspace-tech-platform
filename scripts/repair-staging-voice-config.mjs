@@ -1,6 +1,9 @@
 // Dedicated staging repair: never creates/deletes phone imports and never dials.
 import {writeFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
+export function exotelApiOrigin(host='api.exotel.com'){
+ switch(String(host||'api.exotel.com')){case 'api.exotel.com':return 'https://api.exotel.com';case 'api.in.exotel.com':return 'https://api.in.exotel.com';default:throw Error('Invalid Exotel host');}
+}
 export function indiaNumber(value){
  let digits=String(value||'').replace(/\D/g,'');
  if(digits.length===12&&digits.startsWith('91'))digits=digits.slice(2);
@@ -21,10 +24,9 @@ export function selectVoiceRepairConfig(exophones,imports){
 export async function repairStagingVoice(env=process.env,request=fetch){
  const action=env.VOICE_REPAIR_ACTION;
  if(!['prepare-staging-voice-config','sync-staging-voice-config'].includes(action))throw Error('Explicit staging repair action required');
- const host=env.EXOTEL_SUBDOMAIN||'api.exotel.com';
- if(!['api.exotel.com','api.in.exotel.com'].includes(host))throw Error('Invalid Exotel host');
+ const origin=exotelApiOrigin(env.EXOTEL_SUBDOMAIN);
  const read=async(url,headers,init={})=>{const r=await request(url,{headers,...init,signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('Voice configuration request refused: '+r.status);return r.json();};
- const ex=await read('https://'+host+'/v2_beta/Accounts/'+encodeURIComponent(env.EXOTEL_SID)+'/IncomingPhoneNumbers',{authorization:'Basic '+Buffer.from(env.EXOTEL_API_KEY+':'+env.EXOTEL_API_TOKEN).toString('base64')});
+ const ex=await read(origin+'/v2_beta/Accounts/'+encodeURIComponent(env.EXOTEL_SID)+'/IncomingPhoneNumbers',{authorization:'Basic '+Buffer.from(env.EXOTEL_API_KEY+':'+env.EXOTEL_API_TOKEN).toString('base64')});
  const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
  const el=await read('https://api.elevenlabs.io/v1/convai/phone-numbers',headers);
  const selected=selectVoiceRepairConfig(ex.incoming_phone_numbers||[],Array.isArray(el)?el:el.phone_numbers||[]);

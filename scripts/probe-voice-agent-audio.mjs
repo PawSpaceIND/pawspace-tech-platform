@@ -3,7 +3,7 @@ import {spokenInputComplete} from './voice-spoken-sale-guards.mjs';
 import {verifyFinalConversation} from './voice-final-conversation-proof.mjs';
 // Synthetic caller audio through real agent ASR/LLM/TTS; never uses a telephony dial API.
 import {setTimeout as delay} from 'node:timers/promises';
-import {readFile} from 'node:fs/promises';
+import {syntheticInfoAudio} from './voice-synthetic-audio.mjs';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProofChecks,createAudioProbeState,isHandoffReply} from './voice-audio-proof.mjs';
 // Remote values are stripped of CR/LF (explicitly, so log-injection scanners see it), other control
@@ -32,7 +32,7 @@ await new Promise((resolve,reject)=>{
   if(sending||!format||!state.greeting)return;sending=true;
   // Fixed informational utterance: this probe cannot confirm or create a sale.
   if(format!=='pcm_16000')throw Error('Caller fixture requires negotiated pcm_16000 input');
-  const audio=await readFile(new URL('./fixtures/amaya-caller.pcm',import.meta.url)),f=audioFormat(format);
+  const audio=syntheticInfoAudio(),f=audioFormat(format);
   inputSpeechBytes=audio.length;
   if(audio.length<1000||audio.length>f.rate*f.bytesPerSample*30)throw Error('Invalid synthetic caller audio size');
   while(!finished&&!greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreetingAudioAt,lastAudioAt:lastGreetingAudioAt,bytes:greetingBytes,format:outputFormat}))await delay(100);

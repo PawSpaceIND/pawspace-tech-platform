@@ -366,7 +366,7 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
           EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
-        run: node scripts/probe-voice-app-call.mjs
+        run: node --experimental-strip-types scripts/probe-voice-app-call.mjs
 
   repair-exotel-import:
     if: ${{ inputs.confirm == 'repair-exotel-import' }}

@@ -1,3 +1,5 @@
+import {testerCandidateQuery,resolveTesterCustomer} from './voice-app-tester.mjs';
+import {exotelApiOrigin} from './repair-staging-voice-config.mjs';
 // A staging demo through the same policy preview and request_call route as the staff app.
 // No direct provider dialing, import mutation, policy bypass, or payment operation.
 import {setTimeout as delay} from 'node:timers/promises';
@@ -22,9 +24,14 @@ if(!context.success)throw Error('Verified staging context query refused');
 const row=context.result?.[0]?.results?.[0];if(!row?.customer_id)throw Error('Canonical tester customer missing');
 const entries=String(env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').split(/[\s,;]+/).filter(Boolean);
 if(entries.length!==1||entries[0].replace(/\D/g,'').slice(-4)!==env.EXPECTED_DESTINATION_LAST4)throw Error('Confirmed single tester required');
-const intent={useCase:'grooming_sales',phone:entries[0],cityId:row.city_id||'blr',customerId:row.customer_id};
+const candidates=await read(base+'/query',ch,{method:'POST',body:JSON.stringify(testerCandidateQuery(entries[0]))});
+if(!candidates.success||candidates.result?.some(r=>r.success===false))throw Error('Tester ownership read refused');
+const customerId=resolveTesterCustomer(candidates.result.flatMap(r=>r.results||[]),entries[0]);
+console.log('APP_VOICE_TESTER='+JSON.stringify({uniqueCanonicalOwner:true,legacyContextMatches:customerId===row.customer_id,dialed:false}));
+const intent={useCase:'grooming_sales',phone:entries[0],cityId:row.city_id||'blr',customerId};
 const policy=(await app({action:'policy_preview',...intent})).data;
 console.log('APP_VOICE_POLICY='+JSON.stringify({allowed:policy.allowed,blockedBy:policy.blockedBy,blockedDetail:policy.blockedDetail,dialled:false}));
+if(!policy.allowed)throw Error('App policy refused demo: '+policy.blockedBy);
 if(env.VOICE_SALE_ACTION==='inspect-app-voice'){console.log('APP_VOICE_INSPECTION_COMPLETE='+JSON.stringify({allowed:policy.allowed,dialed:false}));process.exit(0);}
 if(!policy.allowed)throw Error('App policy refused demo: '+policy.blockedBy);
 if(!/^\d+$/.test(env.GITHUB_RUN_ID||''))throw Error('Stable workflow idempotency key required');
@@ -32,12 +39,12 @@ console.log('APP_VOICE_DIAL_READY='+JSON.stringify({destinationLast4:env.EXPECTE
 const call=(await app({action:'request_call',idempotencyKey:'voice-app-demo:'+env.GITHUB_RUN_ID,...intent})).data;
 if(!call?.providerCallId||String(call.state).startsWith('blocked_'))throw Error('App did not accept a provider call');
 console.log('APP_VOICE_CALL_ACCEPTED='+JSON.stringify({callId:call.callId,state:call.state,provider:call.provider,providerCallSuffix:call.providerCallId.slice(-8)}));
-const exHost=env.EXOTEL_SUBDOMAIN||'api.exotel.com';if(!['api.exotel.com','api.in.exotel.com'].includes(exHost))throw Error('Invalid carrier host');
+const exOrigin=exotelApiOrigin(env.EXOTEL_SUBDOMAIN);
 const exHeaders={authorization:'Basic '+Buffer.from(env.EXOTEL_API_KEY+':'+env.EXOTEL_API_TOKEN).toString('base64')};
 let carrier;
 for(let i=0;i<36;i++){
  await delay(5000);
- const b=await read('https://'+exHost+'/v1/Accounts/'+encodeURIComponent(env.EXOTEL_SID)+'/Calls/'+encodeURIComponent(call.providerCallId)+'.json',exHeaders);
+ const b=await read(exOrigin+'/v1/Accounts/'+encodeURIComponent(env.EXOTEL_SID)+'/Calls/'+encodeURIComponent(call.providerCallId)+'.json',exHeaders);
  const c=b.Call||b.call||b;carrier={status:String(c.Status||c.status||''),duration:Number(c.Duration||c.duration||0)};
  console.log('APP_VOICE_CARRIER='+JSON.stringify(carrier));
  if(['no-answer','busy','failed','canceled'].includes(carrier.status))throw Error('Carrier did not connect: '+carrier.status);

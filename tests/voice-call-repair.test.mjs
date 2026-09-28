@@ -1,3 +1,7 @@
+import {syntheticInfoAudio} from '../scripts/voice-synthetic-audio.mjs';
+import {SPOKEN_INFO_TEXT} from '../scripts/voice-spoken-fixtures.mjs';
+import {exotelApiOrigin} from '../scripts/repair-staging-voice-config.mjs';
+import {testerCandidateQuery,resolveTesterCustomer} from '../scripts/voice-app-tester.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SPOKEN_QUOTE_TEXT,SPOKEN_QUOTE_EXPECTED} from '../scripts/voice-spoken-fixtures.mjs';
@@ -52,4 +56,29 @@ test('recording-disabled sessions still require same-conversation live PCM proof
  const interrupted={...d,transcript:d.transcript.map((row,i)=>i===2?{...row,interrupted:true}:row)};
  assert.throws(()=>assertFinalConversation(interrupted,{agentId:'agent-test',turns,liveAudioEvidence:evidence}),/interrupted/);
  assert.throws(()=>assertFinalConversation({...d,metadata:{text_only:true}},{agentId:'agent-test',turns,liveAudioEvidence:evidence}));
+});
+
+test('carrier origin is an exact fixed endpoint, never a hostname substring',()=>{
+ assert.equal(exotelApiOrigin('api.exotel.com'),'https://api.exotel.com');
+ assert.equal(exotelApiOrigin('api.in.exotel.com'),'https://api.in.exotel.com');
+ for(const host of ['api.exotel.com.evil.test','evil.test/api.exotel.com','https://api.exotel.com','api.exotel.com@evil.test','api.exotel.com/path'])assert.throws(()=>exotelApiOrigin(host),/Invalid/);
+});
+test('audio sent to the provider is generated from the fixed fixture without file input',()=>{
+ const calls=[];
+ const pcm=syntheticInfoAudio((command,args,options)=>{calls.push({command,args,options});return Buffer.alloc(command==='ffmpeg'?2000:256,7);});
+ assert.equal(pcm.length,2000);assert.equal(calls[0].command,'espeak-ng');
+ assert.deepEqual(calls[0].args,['--stdout','-s','150',SPOKEN_INFO_TEXT]);
+ assert.equal(calls[1].command,'ffmpeg');assert.equal(calls[1].args[calls[1].args.indexOf('-i')+1],'pipe:0');
+ assert.equal(calls[1].args.at(-1),'pipe:1');assert.ok(Buffer.isBuffer(calls[1].options.input));
+ assert.throws(()=>syntheticInfoAudio(()=>Buffer.alloc(1)),/invalid/);
+});
+test('tester discovery uses actual canonical phone ownership and never rewrites records',()=>{
+ const phone='+919876543210';
+ assert.equal(resolveTesterCustomer([{id:'actual',primary_phone:'9876543210'},{id:'legacy',primary_phone:'9999999999'}],phone),'actual');
+ assert.equal(resolveTesterCustomer([{id:'secondary',primary_phone:'9999999999',secondary_phone:'09876543210'}],phone),'secondary');
+ assert.throws(()=>resolveTesterCustomer([{id:'a',primary_phone:phone},{id:'b',secondary_phone:phone}],phone),/2 canonical owners/);
+ assert.throws(()=>resolveTesterCustomer([{id:'foreign',primary_phone:'+19876543210'}],phone),/0 canonical owners/);
+ assert.throws(()=>resolveTesterCustomer(Array.from({length:101},()=>({id:'x',primary_phone:phone})),phone),/incomplete/);
+ const query=testerCandidateQuery(phone);assert.match(query.sql,/^SELECT /);assert.deepEqual(query.params,['%3210%','%3210%']);
+ assert.throws(()=>testerCandidateQuery('not-a-phone'),/canonicalised/);
 });
