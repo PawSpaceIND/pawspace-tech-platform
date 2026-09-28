@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {featuresFor,normaliseEngagement} from '../lib/workforce-classification.ts';
+
+test('workforce parity executes the canonical engagement policy',()=>{
+ assert.equal(normaliseEngagement('contract_provider'),'contract');
+ assert.equal(featuresFor('direct').surface,'employee_portal');
+ assert.equal(featuresFor('contract').surface,'partner_app');
+ assert.equal(featuresFor('commission').surface,'commission_dashboard');
+});
 
 test('V2 employee self-service reuses the canonical employee portal',()=>{
  const source=fs.readFileSync('app/v2/employee/page.tsx','utf8').trim();
