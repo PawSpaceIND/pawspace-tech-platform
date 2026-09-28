@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 type Fixture = {
-  bookingCount?: number; offersUnavailable?: boolean;
+  bookingCount?: number; offersUnavailable?: boolean; normalOffers?: boolean; offerGate?: Promise<void>; offerReads?: number; offerValues?: Array<{code:string;savings:number}>; couponDiscounts?: Record<string,number>;
   bookingWrites: number; orderWrites: number; locationWrites: number; locationFailures: number;
   providers?: Array<{ id: string; name: string; model: string; rating: number }>;
   couponGate?: Promise<void>; couponStarted: boolean; couponValid?: boolean; couponDiscount?: number; couponFinalOverride?: number; couponInputs: Array<{code:string;orderValue:number}>;
@@ -55,15 +55,19 @@ async function fixture(page: Page) {
       state.reservation = body; if(state.reserveRefusal)return route.fulfill({status:409,json:{error:state.reserveRefusal}}); return reply({ groupId: body.clientRequestId, provider:state.assignedProvider||provider });
     }
     if (path === "/api/customer-offers") {
+      state.offerReads=(state.offerReads||0)+1;
+      if(state.offerGate)await state.offerGate;
       if(state.offersUnavailable)return route.fulfill({status:503,json:{error:"Available offers are temporarily unavailable"}});
       const count=state.bookingCount||0;
-      return reply({normalCouponsAllowed:count<3,bookingCount:count,coupons:count<3?[{code:"NORMAL",name:"Normal grooming offer",discountType:"fixed",discountValue:200,maxDiscount:200,minOrder:500,description:"₹200 off on orders above ₹500",autoApply:false,savings:200,finalAmount:Number(url.searchParams.get("orderValue"))-200}]:[],message:count>=3?"Normal offers are available for your first three bookings. Use a special code issued to your account.":undefined});
+      // Most original booking tests explicitly have no promotion. Dedicated auto-offer cases opt in.
+      const coupons=count<3&&state.normalOffers?(state.offerValues||[{code:"NORMAL",savings:200}]).map(item=>({code:item.code,name:item.code==="NORMAL"?"Normal grooming offer":item.code,discountType:"fixed",discountValue:item.savings,maxDiscount:item.savings,minOrder:500,description:`₹${item.savings} off on orders above ₹500`,autoApply:false,savings:item.savings,finalAmount:Number(url.searchParams.get("orderValue"))-item.savings})):[];
+      return reply({normalCouponsAllowed:count<3,bookingCount:count,coupons,autoApply:coupons[0]||null,message:count>=3?"Normal offers are available for your first three bookings. Use a special code issued to your account.":undefined});
     }
     if (path === "/api/coupon-governance") {
       const input = body.input as { code: string; orderValue: number }, valid = state.couponValid !== false && !(input.code==="NORMAL" && (state.bookingCount||0)>=3);
       state.couponStarted = true; state.couponInputs.push(input);
       if (state.couponGate) await state.couponGate;
-      const discount = state.couponDiscount ?? 200;
+      const discount = state.couponDiscounts?.[input.code] ?? state.couponDiscount ?? 200;
       return reply(valid ? { valid: true, code: input.code, discount, quoteId: `CPQ-${input.code}`, finalAmount: state.couponFinalOverride ?? (Math.round(input.orderValue * 100) - Math.round(discount * 100)) / 100 }
         : { valid: false, discount: 0, error: "The previous coupon is no longer available" });
     }
@@ -410,8 +414,8 @@ for (const bad of [{discount:100.001,final:1798.999},{discount:100,final:1700}])
 });
 
 
-test("G11: an eligible offer applies without typing and can be removed",async({page})=>{
-  const state=await fixture(page);await previewCare(page);
+test("G11: the best eligible offer applies automatically and can be removed",async({page})=>{
+  const state=await fixture(page);state.normalOffers=true;await previewCare(page);
   const box=page.getByRole("group",{name:"Coupon code",exact:true});
   await expect(box.getByRole("heading",{name:"Available offers"})).toBeVisible();
   const size=await box.getByRole("region",{name:"Available offers"}).boundingBox();
@@ -419,8 +423,8 @@ test("G11: an eligible offer applies without typing and can be removed",async({p
   expect(size?.height).toBeLessThan(500);
 
   await expect(box.getByRole("textbox")).toBeHidden();
-  await box.getByRole("button",{name:"Apply NORMAL",exact:true}).click();
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await expect(box.getByRole("button",{name:"Apply NORMAL",exact:true})).toBeDisabled();
   expect(state.couponInputs.at(-1)?.code).toBe("NORMAL");
   await box.getByRole("button",{name:"Remove coupon"}).click();
   await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0);
@@ -428,7 +432,7 @@ test("G11: an eligible offer applies without typing and can be removed",async({p
   await page.screenshot({path:test.info().outputPath("g11-available-offers.png"),fullPage:true});
 });
 test("G12/G14: fourth booking hides normal offers but retains separate special-code entry",async({page})=>{
-  const state=await fixture(page);state.bookingCount=3;await previewCare(page);
+  const state=await fixture(page);state.normalOffers=true;state.bookingCount=3;await previewCare(page);
   const box=page.getByRole("group",{name:"Coupon code",exact:true});
   await expect(box.getByText(/first three bookings/)).toBeVisible();
   await expect(box.getByRole("button",{name:"Apply NORMAL"})).toHaveCount(0);
@@ -437,11 +441,9 @@ test("G12/G14: fourth booking hides normal offers but retains separate special-c
   await expect(page.getByText(/Coupon PRIVATE/)).toBeVisible();
   expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
 });
-test("G11: an offer withdrawn after browsing cannot become an applied coupon",async({page})=>{
-  const state=await fixture(page);await previewCare(page);
+test("G11: an offer refused during automatic validation cannot become an applied coupon",async({page})=>{
+  const state=await fixture(page);state.normalOffers=true;state.couponValid=false;await previewCare(page);
   const box=page.getByRole("group",{name:"Coupon code",exact:true});
-  await expect(box.getByRole("button",{name:"Apply NORMAL"})).toBeVisible();state.couponValid=false;
-  await box.getByRole("button",{name:"Apply NORMAL"}).click();
   await expect(box.getByRole("alert")).toContainText("no longer available");
   await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
   await box.getByRole("button",{name:"Remove coupon"}).click();
@@ -450,12 +452,12 @@ test("G11: an offer withdrawn after browsing cannot become an applied coupon",as
   expect(state.bookingWrites).toBe(0);expect(state.orderWrites).toBe(0);
 });
 test("G11: offer lookup failure stays honest and supports retry without applying anything",async({page})=>{
-  const state=await fixture(page);state.offersUnavailable=true;await previewCare(page);
+  const state=await fixture(page);state.normalOffers=true;state.offersUnavailable=true;await previewCare(page);
   const box=page.getByRole("group",{name:"Coupon code",exact:true});
   await expect(box.getByText(/temporarily unavailable/)).toBeVisible();
   await expect(box.getByRole("button",{name:"Apply NORMAL"})).toHaveCount(0);state.offersUnavailable=false;
   await box.getByRole("button",{name:"Retry offers"}).click();await expect(box.getByRole("button",{name:"Apply NORMAL"})).toBeVisible();
-  expect(state.couponStarted).toBe(false);expect(state.bookingWrites).toBe(0);
+  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();expect(state.couponInputs).toHaveLength(1);expect(state.bookingWrites).toBe(0);
 });
 
 test("V2 auto groomer choice accepts a new server match and names that person on the booking",async({page})=>{
@@ -499,4 +501,71 @@ test("V2 automatic matching preserves the staged extras and coupon payable", asy
   expect(state.couponInputs.map(input=>input.orderValue)).toEqual([2398,2398]);
   expect(state.booking?.totalAmount).toBe(2158.2);
   expect(state.bookingWrites).toBe(1); expect(state.orderWrites).toBe(0);
+});
+
+
+test("G09: a delayed offer lookup cannot overwrite a customer-entered special coupon",async({page})=>{
+ const state=await fixture(page);state.normalOffers=true;
+ let release!:()=>void;state.offerGate=new Promise(resolve=>{release=resolve;});
+ await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
+ await expect.poll(()=>state.offerReads||0).toBe(1);
+ await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
+ await box.getByText("Have a special code?",{exact:true}).click();await box.getByRole("textbox").fill("PRIVATE");
+ await box.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.getByText(/Coupon PRIVATE/)).toBeVisible();
+ release();await expect(box.getByRole("button",{name:"Apply NORMAL",exact:true})).toBeVisible();
+ expect(state.couponInputs.map(x=>x.code)).toEqual(["PRIVATE"]);await expect(page.getByText(/Coupon PRIVATE/)).toBeVisible();
+});
+test("G09: Remove cancels a pending automatic quote and survives a fresh price check",async({page})=>{
+ const state=await fixture(page);state.normalOffers=true;let release!:()=>void;
+ state.couponGate=new Promise(resolve=>{release=resolve;});await previewCare(page);
+ const box=page.getByRole("group",{name:"Coupon code",exact:true});await expect.poll(()=>state.couponStarted).toBe(true);
+ await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
+ await box.getByRole("button",{name:"Remove coupon"}).click();release();state.couponGate=undefined;
+ await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeEnabled();
+ await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await expect.poll(()=>state.offerReads||0).toBe(2);
+ await expect(box.getByRole("button",{name:"Apply NORMAL",exact:true})).toBeEnabled();
+ await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0);expect(state.couponInputs).toHaveLength(1);
+});
+test("G09: a customer's chosen offer is revalidated instead of replaced by a larger default",async({page})=>{
+ const state=await fixture(page);state.normalOffers=true;state.offerValues=[{code:"NORMAL",savings:300},{code:"SECOND",savings:100}];state.couponDiscounts={NORMAL:300,SECOND:100};
+ await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
+ await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+ await box.getByRole("button",{name:"Apply SECOND",exact:true}).click();await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
+ await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
+ await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await expect(page.getByText("₹2,298",{exact:true})).toBeVisible();
+ expect(state.couponInputs.map(x=>x.code)).toEqual(["NORMAL","SECOND","SECOND"]);
+ expect(state.couponInputs.at(-1)?.orderValue).toBe(2398);expect(state.bookingWrites).toBe(0);
+});
+test("G09: automatic selection recomputes the best savings for the changed basket",async({page})=>{
+ const state=await fixture(page);state.normalOffers=true;await previewCare(page);
+ await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+ state.offerValues=[{code:"BETTER",savings:350},{code:"NORMAL",savings:200}];state.couponDiscounts={BETTER:350};
+ await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
+ await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await expect(page.getByText(/Coupon BETTER/)).toBeVisible();await expect(page.getByText("₹2,048",{exact:true})).toBeVisible();
+ expect(state.couponInputs.map(x=>x.code)).toEqual(["NORMAL","BETTER"]);
+});
+test("G09: losing eligibility on a changed basket cannot silently enable full-price checkout",async({page})=>{
+ const state=await fixture(page);state.normalOffers=true;await previewCare(page);
+ await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();state.bookingCount=3;
+ await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
+ await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ const box=page.getByRole("group",{name:"Coupon code",exact:true});await expect(box.getByRole("alert")).toContainText("no longer matches");
+ await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
+ await box.getByRole("button",{name:"Remove coupon"}).click();await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeEnabled();
+ expect(state.couponInputs).toHaveLength(1);expect(state.bookingWrites).toBe(0);
+});
+
+
+test("G09: typing a private code is not treated as consent to apply it on a new basket",async({page})=>{
+ const state=await fixture(page);await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
+ await box.getByText("Have a special code?",{exact:true}).click();await box.getByRole("textbox").fill("PRIVATE");
+ await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await expect.poll(()=>state.offerReads||0).toBe(2);
+ await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
+ await box.getByText("Have a special code?",{exact:true}).click();await expect(box.getByRole("textbox")).toHaveValue("PRIVATE");
+ expect(state.couponInputs).toHaveLength(0);await box.getByRole("button",{name:"Apply",exact:true}).click();
+ await expect(page.getByText(/Coupon PRIVATE/)).toBeVisible();expect(state.couponInputs).toHaveLength(1);
 });

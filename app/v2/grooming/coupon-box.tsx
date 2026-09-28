@@ -1,16 +1,19 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { quoteGovernedCoupon } from "../../../lib/coupon-governance-client";
 import { groomingCouponPayable } from "../../../lib/v2/grooming-money";
 import { loadV2GroomingOffers, type V2GroomingOffers } from "../../../lib/v2/grooming-offers-client";
 import styles from "./grooming.module.css";
 import offersStyle from "./offers.module.css";
 
-type Props = {customerId:string;cityId:string;packageCode:string;orderValue:number;onChange:(discount:number,code:string,quoteId?:string)=>void};
+export type V2CouponIntent = {customerId:string;mode:"automatic"|"manual"|"editing"|"removed";code:string};
+type Props = {customerId:string;cityId:string;packageCode:string;orderValue:number;contextKey:string;
+  intentRef:{current:V2CouponIntent};onChecked:(contextKey:string)=>void;
+  onChange:(discount:number,code:string,quoteId?:string)=>void};
 const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:0,maximumFractionDigits:2}).format(value);
 
 /** Only the server can approve a discount. Offer browsing is read-only and private codes stay unlisted. */
-export default function V2GroomingCouponBox({customerId,cityId,packageCode,orderValue,onChange}:Props){
+export default function V2GroomingCouponBox({customerId,cityId,packageCode,orderValue,contextKey,intentRef,onChecked,onChange}:Props){
   const [code,setCode]=useState(""),[applied,setApplied]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
   const offerKey=JSON.stringify([customerId,cityId,packageCode,orderValue]);
   const [offersResult,setOffersResult]=useState<{key:string;data:V2GroomingOffers}|null>(null);
@@ -18,27 +21,52 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
   const offers=offersResult?.key===offerKey?offersResult.data:null;
   const offersError=offersFailure?.key===offerKey?offersFailure.text:"";
   const version=useRef(0);
-  useEffect(()=>()=>{version.current++;},[]);
-  useEffect(()=>{
-    const controller=new AbortController();let current=true;
-    loadV2GroomingOffers({customerId,cityId,packageCode,orderValue},controller.signal)
-      .then(value=>{if(current)setOffersResult({key:offerKey,data:value});})
-      .catch(error=>{if(current)setOffersFailure({key:offerKey,text:error instanceof Error?error.message:"Available offers could not be checked."});});
-    return()=>{current=false;controller.abort();};
-  },[customerId,cityId,packageCode,orderValue,offerKey,retry]);
-  const remove=()=>{version.current++;setBusy(false);setCode("");setApplied("");setMessage("");onChange(0,"");};
-  const apply=async(value=code)=>{
-    const normalized=value.trim().toUpperCase();if(!normalized||busy)return;
-    const current=++version.current;setCode(normalized);setBusy(true);setApplied("");setMessage("");onChange(0,normalized);
+  const invalidateRequest=useCallback(()=>{version.current++;},[]);
+  const apply=useCallback(async(value:string,mode:"automatic"|"manual"="manual")=>{
+    const normalized=value.trim().toUpperCase();if(!normalized)return;
+    const current=++version.current;
+    intentRef.current={customerId,mode,code:normalized};
+    setCode(normalized);setBusy(true);setApplied("");setMessage("");onChange(0,normalized);
     try{
       const result=await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode:"full",isSubscription:false });
       if(current!==version.current)return;
-      if(!result.valid||!result.code||!result.quoteId){onChange(0,normalized);setMessage(result.error||"This coupon is not eligible for this booking.");return;}
+      if(!result.valid||result.code!==normalized||!result.quoteId){onChange(0,normalized);setMessage(result.error||"This coupon is not eligible for this booking. Remove it or choose another offer.");return;}
       groomingCouponPayable(orderValue,result);
-      setApplied(result.code);setMessage(`${result.code} applied. You save ${money(result.discount)}.`);onChange(result.discount,result.code,result.quoteId);
+      setApplied(result.code);setMessage(`${result.code} ${mode==="automatic"?"automatically applied":"applied"}. You save ${money(result.discount)}.`);onChange(result.discount,result.code,result.quoteId);
     }catch(error){if(current!==version.current)return;onChange(0,normalized);setMessage(error instanceof Error?error.message:"We could not check this coupon.");}
-    finally{if(current===version.current)setBusy(false);}
-  };
+    finally{if(current===version.current){setBusy(false);onChecked(contextKey);}}
+  },[customerId,cityId,packageCode,orderValue,contextKey,intentRef,onChange,onChecked]);
+  useEffect(()=>{
+    const controller=new AbortController();let current=true;const initialVersion=version.current;
+    loadV2GroomingOffers({customerId,cityId,packageCode,orderValue},controller.signal)
+      .then(value=>{
+        if(!current)return;
+        setOffersResult({key:offerKey,data:value});setOffersFailure(null);
+        // A manual choice, typing or Remove during the read always wins over late auto-application.
+        if(version.current!==initialVersion)return;
+        const intent=intentRef.current.customerId===customerId?intentRef.current:{customerId,mode:"automatic" as const,code:""};
+        intentRef.current=intent;
+        if(intent.mode==="removed"){onChange(0,"");onChecked(contextKey);return;}
+        if(intent.mode==="editing"){setCode(intent.code);onChange(0,intent.code);onChecked(contextKey);return;}
+        if(intent.mode==="manual"){if(intent.code)void apply(intent.code,"manual");else{onChange(0,"");onChecked(contextKey);}return;}
+        const best=value.normalCouponsAllowed?value.coupons[0]:undefined;
+        if(best){void apply(best.code,"automatic");return;}
+        if(intent.code){setCode(intent.code);setMessage("Your previous coupon no longer matches this booking. Remove it or choose another offer.");onChange(0,intent.code);}
+        else onChange(0,"");
+        onChecked(contextKey);
+      })
+      .catch(error=>{
+        if(!current)return;
+        setOffersFailure({key:offerKey,text:error instanceof Error?error.message:"Available offers could not be checked."});
+        if(version.current!==initialVersion)return;
+        const intent=intentRef.current;
+        if(intent.customerId===customerId&&intent.mode!=="removed"&&intent.code){setCode(intent.code);onChange(0,intent.code);}
+        onChecked(contextKey);
+      });
+    return()=>{current=false;controller.abort();invalidateRequest();};
+  },[customerId,cityId,packageCode,orderValue,offerKey,retry,contextKey,intentRef,apply,onChange,onChecked,invalidateRequest]);
+  const remove=()=>{version.current++;intentRef.current={customerId,mode:"removed",code:""};setBusy(false);setCode("");setApplied("");setMessage("Coupon removed. Choose an offer to apply a discount again.");onChange(0,"");onChecked(contextKey);};
+  const editCode=(value:string)=>{version.current++;intentRef.current={customerId,mode:"editing",code:value.trim().toUpperCase()};setBusy(false);setCode(value);setApplied("");setMessage("");onChange(0,value.trim().toUpperCase());onChecked(contextKey);};
   return <div className={`${styles.addressBox} ${offersStyle.offers}`} role="group" aria-label="Coupon code">
     <section aria-label="Available offers">
       <h3>Available offers</h3>
@@ -52,11 +80,11 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
       </article>)}
     </section>
     <details><summary>Have a special code?</summary>
-      <label>Special code<input value={code} disabled={busy} autoComplete="off" placeholder="Enter your privately shared code" onChange={event=>{version.current++;setCode(event.target.value);setApplied("");setMessage("");onChange(0,"");}} /></label>
-      <button type="button" disabled={busy||!code.trim()} onClick={()=>void apply()}>{busy?"Checking…":applied?"Applied":"Apply"}</button>
+      <label>Special code<input value={code} disabled={busy} autoComplete="off" placeholder="Enter your privately shared code" onChange={event=>editCode(event.target.value)} /></label>
+      <button type="button" disabled={busy||!code.trim()} onClick={()=>void apply(code)}>{busy?"Checking…":applied?"Applied":"Apply"}</button>
     </details>
-    {message&&<p role={applied?"status":"alert"} className={applied?styles.helper:styles.inlineError}>{message}</p>}
+    {message&&<p role={applied||!code?"status":"alert"} className={applied?styles.helper:styles.inlineError}>{message}</p>}
     {(applied||code)&&<button type="button" onClick={remove}>Remove coupon</button>}
-    <small>One offer per booking. Changing your basket rechecks eligibility.</small>
+    <small>The best eligible normal offer applies automatically. Change or remove it at any time. One offer per booking.</small>
   </div>;
 }
