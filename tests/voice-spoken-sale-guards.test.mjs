@@ -34,5 +34,6 @@ test('spoken input stops once the intended turn is recognized or the agent repli
  const expected=/(?=.*grooming)(?=.*bruno)(?=.*tomorrow)(?=.*11)(?=.*quote)/i;
  assert.equal(spokenInputComplete('grooming for Bruno tomorrow at 11, please show the quote','',expected),true);
  assert.equal(spokenInputComplete('grooming for Bruno tomorrow at 11','',expected),false);
- assert.equal(spokenInputComplete('partial transcript','One moment while I check that for you.',expected),true);
+ assert.equal(spokenInputComplete('partial transcript','One moment while I check that for you.',expected),false);
+ assert.equal(spokenInputComplete('partial transcript','I found the Essential Bath options for Bruno.',expected),true);
 });

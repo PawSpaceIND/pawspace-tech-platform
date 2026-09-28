@@ -1,3 +1,4 @@
+import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
 // Fail-closed persisted-evidence gates for the separate, explicitly authorized spoken-sale probe.
 export function assertSaleBaseline(report) {
   if (report.aiPaused || report.dialed !== false) throw Error('Unpaused no-phone context required');
@@ -27,5 +28,5 @@ export function assertSandboxSale(report, bookingId) {
 
 export function spokenInputComplete(transcript, reply, expected) {
   const text=String(transcript||'');
-  return Boolean((expected instanceof RegExp && expected.test(text)) || String(reply||'').trim());
+  return Boolean((expected instanceof RegExp && expected.test(text)) || isSubstantiveVoiceReply(reply));
 }
