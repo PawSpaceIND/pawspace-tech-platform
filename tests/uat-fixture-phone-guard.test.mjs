@@ -79,3 +79,81 @@ test('CLI rejection never prints a phone or raw malformed inventory', () => {
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// Exercise the real dispatch-boundary resolver, not only the script preflight.
+// All records below live in a disposable in-memory SQLite database.
+import { installAiHooks, freshAiDb, seedCustomer } from './helpers/ai-harness.mjs';
+import { canonicalDialNumber } from '../lib/voice-call-gate.ts';
+installAiHooks();
+const { resolveCanonicalRecipientOwnership } = await import('../lib/canonical-recipient-ownership.ts');
+for (const [index, value] of variants.entries()) {
+  test(`actual recipient resolver agrees with guard normalization ${index}`, async t => {
+    const { sqlite, db } = freshAiDb();
+    t.after(() => sqlite.close());
+    seedCustomer(sqlite, 'LOCAL-OWNER', 'Disposable owner', value);
+    const before = sqlite.prepare('SELECT * FROM canonical_customers').all();
+    assert.equal(canonicalDialNumber({}, value), phone);
+    const resolved = await resolveCanonicalRecipientOwnership(db, {}, {
+      customerId: 'LOCAL-OWNER', phone, requireSuppliedPhone: true,
+    });
+    assert.equal(resolved.customerId, 'LOCAL-OWNER');
+    assert.equal(resolved.dialNumber, phone);
+    assert.equal(resolved.phoneSource, 'primary');
+    assert.throws(() => assertFixturePhoneAvailable(inventory(before), phone), /already belongs/);
+    assert.deepEqual(sqlite.prepare('SELECT * FROM canonical_customers').all(), before);
+  });
+}
+for (const [index, value] of variants.entries()) {
+  for (const field of ['primary_phone', 'secondary_phone']) {
+    test(`actual resolver rejects duplicate ${field} formatting ${index} without changing records`, async t => {
+      const { sqlite, db } = freshAiDb();
+      t.after(() => sqlite.close());
+      seedCustomer(sqlite, 'LOCAL-OWNER', 'Disposable owner', phone);
+      seedCustomer(sqlite, WHATSAPP_FIXTURE_ID, 'Disposable fixture', '+919876543211');
+      sqlite.prepare(`UPDATE canonical_customers SET ${field}=? WHERE id=?`).run(value, WHATSAPP_FIXTURE_ID);
+      const before = sqlite.prepare('SELECT * FROM canonical_customers ORDER BY id').all();
+      await assert.rejects(() => resolveCanonicalRecipientOwnership(db, {}, {
+        customerId: 'LOCAL-OWNER', phone, requireSuppliedPhone: true,
+      }), /not uniquely owned/);
+      assert.throws(() => assertFixturePhoneAvailable(inventory(before), phone), /reuse or reactivation/);
+      assert.deepEqual(sqlite.prepare('SELECT * FROM canonical_customers ORDER BY id').all(), before);
+    });
+  }
+}
+test('actual resolver accepts the sole secondary owner without choosing another identity', async t => {
+  const { sqlite, db } = freshAiDb();
+  t.after(() => sqlite.close());
+  seedCustomer(sqlite, 'LOCAL-SECONDARY', 'Disposable owner', '+919876543211');
+  sqlite.prepare('UPDATE canonical_customers SET secondary_phone=? WHERE id=?').run('09876543210', 'LOCAL-SECONDARY');
+  const result = await resolveCanonicalRecipientOwnership(db, {}, { customerId: 'LOCAL-SECONDARY', phone });
+  assert.equal(result.phoneSource, 'secondary');
+  assert.equal(result.customerId, 'LOCAL-SECONDARY');
+  assert.equal(result.dialNumber, phone);
+});
+test('actual resolver refuses wrong identity, foreign-country and missing-phone requests', async t => {
+  const { sqlite, db } = freshAiDb();
+  t.after(() => sqlite.close());
+  seedCustomer(sqlite, 'LOCAL-OWNER', 'Disposable owner', phone);
+  seedCustomer(sqlite, 'LOCAL-OTHER', 'Other disposable owner', '+919876543211');
+  const before = sqlite.prepare('SELECT * FROM canonical_customers ORDER BY id').all();
+  for (const input of [
+    { customerId: 'LOCAL-OTHER', phone },
+    { customerId: 'LOCAL-MISSING', phone },
+    { customerId: 'LOCAL-OWNER', phone: '+449876543210' },
+    { customerId: 'LOCAL-OWNER', requireSuppliedPhone: true },
+  ]) await assert.rejects(() => resolveCanonicalRecipientOwnership(db, {}, input), {
+    name: 'CanonicalRecipientOwnershipError', code: 'canonical_recipient_ownership_refused',
+  });
+  assert.deepEqual(sqlite.prepare('SELECT * FROM canonical_customers ORDER BY id').all(), before);
+});
+test('actual resolver refuses a booking owned by a different customer', async t => {
+  const { sqlite, db } = freshAiDb();
+  t.after(() => sqlite.close());
+  seedCustomer(sqlite, 'LOCAL-OWNER', 'Disposable owner', phone);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount) VALUES (?,?,?,'Test','confirmed','2030-01-01T09:00:00Z','2030-01-01T10:00:00Z',0)")
+    .run('LOCAL-BOOKING', 'LOCAL-OTHER', 'grooming');
+  await assert.rejects(() => resolveCanonicalRecipientOwnership(db, {}, {
+    customerId: 'LOCAL-OWNER', phone, bookingId: 'LOCAL-BOOKING',
+  }), /Booking\/customer ownership mismatch/);
+  assert.equal(sqlite.prepare('SELECT customer_id FROM canonical_bookings WHERE id=?').get('LOCAL-BOOKING').customer_id, 'LOCAL-OTHER');
+});
