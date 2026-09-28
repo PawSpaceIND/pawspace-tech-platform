@@ -20,7 +20,7 @@ const OUTCOMES:Array<[string,string]>=[
  ["Invalid","Invalid number - close the lead"],
  ["Opt-out","Asked not to be contacted - close the lead"],
 ];
-const box={margin:"12px 16px",padding:12,display:"grid",gap:8,border:"1px solid var(--staff-line, #e4dce9)",borderRadius:12,background:"var(--staff-surface, #fff)"} as const;
+const box={margin:"12px 16px",padding:12,display:"grid",gap:8,border:"1px solid var(--staff-line, #e4dce9)",borderRadius:"calc(12px * var(--paw-radius-scale))",background:"var(--staff-surface, #fff)"} as const;
 const field={display:"grid",gap:4,fontSize:13} as const;
 
 export default function LeadWorkPanel({leadId,onSaved}:{leadId:string;onSaved:(message:string)=>void}){

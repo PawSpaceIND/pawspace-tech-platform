@@ -30,7 +30,7 @@ export default function CustomerTestAccess({ code }: { code: string }) {
     <h2 style={{ fontSize: 17 }}>Test customers - no OTP</h2>
     <p style={{ fontSize: 13 }}>Isolated staging only. Switch to a fixed synthetic customer with normal customer permissions. This replaces the current staff session. No real phone ownership is asserted.</p>
     <div style={{ display: "grid", gap: 8 }}>{personas.map(persona => <button key={persona.key} type="button" disabled={busy}
-      onClick={() => void select(persona.key)} style={{ padding: 12, cursor: "pointer", borderRadius: 8 }}>
+      onClick={() => void select(persona.key)} style={{ padding: 12, cursor: "pointer", borderRadius: "calc(8px * var(--paw-radius-scale))" }}>
       {busy ? "Starting test session..." : persona.name}
     </button>)}</div>
     {message ? <p role="alert">{message}</p> : null}

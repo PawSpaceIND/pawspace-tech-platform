@@ -70,7 +70,7 @@ export default function GroomingPage() {
   };
   return (
     <main className={styles.stage} data-theme="emerald" data-mode="light" style={{ display: "block", padding: 16 }}>
-      <section style={{ maxWidth: 620, margin: "0 auto", background: "var(--ps-surface)", borderRadius: 24, padding: 16 }}>
+      <section style={{ maxWidth: 620, margin: "0 auto", background: "var(--ps-surface)", borderRadius: "calc(24px * var(--paw-radius-scale))", padding: 16 }}>
         <Link href="/mobile-app">My PawSpace</Link>
         <h1 style={{ fontSize: 28, fontWeight: 700, margin: "16px 0" }}>Grooming</h1>
         {sessionChecked

@@ -58,9 +58,9 @@ test("flow is standalone: no imports from other flow/checkout files, no globalTh
 });
 
 test("flow styling uses the Emerald/Gold palette with system fonts", () => {
-  assert.match(flowCss, /#01261f/i);
-  assert.match(flowCss, /#e6b34e/i);
-  assert.match(flowCss, /system-ui/);
+  assert.match(flowCss, /var\(--ui-brand-deep\)/);
+  assert.match(flowCss, /var\(--ui-gold-soft\)/);
+  assert.match(flowCss, /var\(--paw-font\)/);
 });
 
 // --- Real execution: the new cart helpers drive the REAL food governance code over real SQLite ---

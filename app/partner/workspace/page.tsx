@@ -15,7 +15,7 @@ type WS={linked:boolean;email?:string;engagement?:string;features?:{surface:stri
     statements?:Array<Record<string,unknown>>};pendingProof?:Pending[]};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",green:"#3ecf8e"};
+const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",panel2:"var(--paw-raised)",line:"var(--paw-line)",orange:"var(--paw-gold)",purple:"var(--paw-primary)",gold:"var(--paw-gold)",green:"#3ecf8e"};
 async function load(){const r=await fetch("/api/provider-workspace",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as WS;}
 
 export default function PartnerWorkspacePage(){
@@ -25,14 +25,14 @@ export default function PartnerWorkspacePage(){
   async function post(payload:Record<string,unknown>){const r=await fetch("/api/provider-workspace",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const b=await r.json() as{error?:string};if(!r.ok)throw new Error(b.error||"Failed");}
   async function act(payload:Record<string,unknown>,okMsg:string){setBusy(true);setMsg("");try{await post(payload);setMsg(okMsg);await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
 
-  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18,marginTop:14};
+  const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18,marginTop:14};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:C.gold,margin:"0 0 12px"};
-  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.orange,color:"#01261F",fontWeight:700,cursor:"pointer"};
+  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:"calc(9px * var(--paw-radius-scale))",border:"none",background:C.orange,color:"var(--paw-link)",fontWeight:700,cursor:"pointer"};
   const chip=(t:string,c:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:c,color:t});
   const payColor=(s:string)=>s==="captured"||s==="paid"?C.green:["failed"].includes(s)?"#ff9a9a":C.gold;
   const row=(b:Booking)=><div key={b.bookingId} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.line}`,padding:"8px 0",flexWrap:"wrap",gap:6}}><span><b>{b.serviceCode}</b> · {b.package} <small style={{color:C.dim}}>{b.start.slice(0,16).replace("T"," ")}</small></span><span style={{display:"flex",gap:10,alignItems:"center"}}>{INR(b.orderValue)} <span style={chip(payColor(b.paymentStatus),"rgba(255,255,255,0.06)")}>{b.paymentStatus}</span></span></div>;
 
-  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif"}}>
+  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"var(--paw-font, system-ui)"}}>
     <div style={{maxWidth:1000,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/partner" style={{color:C.dim,textDecoration:"none"}}>← Partner hub</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · PARTNER WORKSPACE</p>

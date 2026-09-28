@@ -24,7 +24,7 @@ type View={
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
 const day=(v?:number)=>v?new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"numeric"}):"—";
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",emerald:"#01261F"};
+const C={ink:"var(--paw-text)",dim:"var(--paw-muted)",ground:"var(--paw-bg)",panel:"var(--paw-surface)",panel2:"var(--paw-raised)",line:"var(--paw-line)",orange:"var(--paw-gold)",purple:"var(--paw-primary)",gold:"var(--paw-gold)",emerald:"var(--paw-primary)"};
 
 async function loadView(){const r=await fetch("/api/me",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as View;}
 
@@ -39,11 +39,11 @@ export default function MyPortalPage(){
   async function clock(action:"check_in"|"check_out"){setBusy(true);setMsg("");try{await post({action});setMsg(action==="check_in"?"Checked in.":"Checked out.");await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   async function submitLeave(){if(!leave.leaveCode.trim()||!leave.startDate||!leave.endDate||leave.reason.trim().length<4){setMsg("Fill leave type, dates and a reason (4+ chars).");return;}setBusy(true);setMsg("");try{await post({action:"apply_leave",leaveCode:leave.leaveCode.trim(),startDate:leave.startDate,endDate:leave.endDate,units:Number(leave.units)||1,reason:leave.reason.trim()});setMsg("Leave request submitted for manager approval.");setLeave({leaveCode:"",startDate:"",endDate:"",units:"1",reason:""});await refresh();}catch(e){setMsg(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
 
-  const card:React.CSSProperties={background:`var(--staff-surface, ${C.panel})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:16,padding:18};
-  const stat:React.CSSProperties={background:`var(--staff-raised, ${C.panel2})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:14,padding:16};
+  const card:React.CSSProperties={background:`var(--staff-surface, ${C.panel})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:"calc(16px * var(--paw-radius-scale))",padding:18};
+  const stat:React.CSSProperties={background:`var(--staff-raised, ${C.panel2})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:`var(--staff-primary, ${C.gold})`,margin:"28px 0 12px"};
-  const inp:React.CSSProperties={display:"block",width:"100%",padding:10,marginTop:4,borderRadius:8,border:`1px solid ${`var(--staff-line, ${C.line})`}`,background:`var(--staff-bg, ${C.ground})`,color:`var(--staff-text, ${C.ink})`,boxSizing:"border-box"};
-  const btn:React.CSSProperties={fontSize:15,minHeight:44,padding:"10px 18px",borderRadius:10,border:"none",background:`var(--staff-gold, ${C.orange})`,color:"var(--staff-on-gold, #251b08)",fontWeight:700,cursor:"pointer"};
+  const inp:React.CSSProperties={display:"block",width:"100%",padding:10,marginTop:4,borderRadius:"calc(8px * var(--paw-radius-scale))",border:`1px solid ${`var(--staff-line, ${C.line})`}`,background:`var(--staff-bg, ${C.ground})`,color:`var(--staff-text, ${C.ink})`,boxSizing:"border-box"};
+  const btn:React.CSSProperties={fontSize:15,minHeight:44,padding:"10px 18px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"none",background:`var(--staff-gold, ${C.orange})`,color:"var(--staff-on-gold, #251b08)",fontWeight:700,cursor:"pointer"};
 
   const e=data?.employee;
   return <StaffModule><main style={{minHeight:"100vh",background:`var(--staff-bg, ${C.ground})`,color:`var(--staff-text, ${C.ink})`,fontFamily:"var(--staff-font, system-ui,-apple-system,Segoe UI,sans-serif)"}}>
@@ -126,7 +126,7 @@ export default function MyPortalPage(){
             <button disabled={busy} style={{...btn,marginTop:12}} onClick={()=>void submitLeave()}>{busy?"Working…":"Submit for approval"}</button>
           </div>
           <div style={card}>
-            <b>Balances</b>{data.leave?.balances.length?<div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"8px 0 14px"}}>{data.leave.balances.map(b=><span key={b.leaveCode} style={{background:`var(--staff-raised, ${C.panel2})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:10,padding:"6px 12px"}}>{b.leaveCode}: <b>{b.balance}</b></span>)}</div>:<p style={{color:`var(--staff-muted, ${C.dim})`}}>No leave balances configured yet.</p>}
+            <b>Balances</b>{data.leave?.balances.length?<div style={{display:"flex",gap:14,flexWrap:"wrap",margin:"8px 0 14px"}}>{data.leave.balances.map(b=><span key={b.leaveCode} style={{background:`var(--staff-raised, ${C.panel2})`,border:`1px solid ${`var(--staff-line, ${C.line})`}`,borderRadius:"calc(10px * var(--paw-radius-scale))",padding:"6px 12px"}}>{b.leaveCode}: <b>{b.balance}</b></span>)}</div>:<p style={{color:`var(--staff-muted, ${C.dim})`}}>No leave balances configured yet.</p>}
             <b>My requests</b>{data.leave?.requests.length?<div style={{display:"grid",gap:6,marginTop:8}}>{data.leave.requests.map(r=><div key={r.id} style={{fontSize:14,borderBottom:`1px solid ${`var(--staff-line, ${C.line})`}`,padding:"5px 0"}}>{r.leaveCode} · {r.startDate}→{r.endDate} · {r.units}d · <span style={{color:r.status==="approved"?`var(--staff-primary, ${C.gold})`:r.status==="rejected"?"var(--staff-danger)":`var(--staff-muted, ${C.dim})`}}>{r.status}</span></div>)}</div>:<p style={{color:`var(--staff-muted, ${C.dim})`,marginBottom:0}}>No requests yet.</p>}
           </div>
         </div>

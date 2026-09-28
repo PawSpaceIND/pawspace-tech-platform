@@ -83,7 +83,7 @@ export default function TeamHome() {
         <div><p>ONE TEAM WORKSPACE</p><h1>{greeting(data?.actor.name ?? "")}</h1><span>Sales, CX, Operations, Finance, HR and Marketing now work from one front door. Your role controls what you can open.</span></div>
         <Link href="/team/operations/bookings">Open Booking Command Center <b>→</b></Link>
       </section>
-      {error && <p role="alert" style={{ margin: "0 auto 12px", maxWidth: 1180, color: "#b42318" }}>{error}</p>}
+      {error && <p role="alert" style={{ margin: "0 auto 12px", maxWidth: 1180, color: "var(--paw-danger)" }}>{error}</p>}
       <section className={styles.commandStrip} aria-label="Today at PawSpace">
         <article><span>Revenue actions</span><b>{show(strip?.revenueActions)}</b><small>ranked and assigned</small></article>
         <article><span>First-response SLA</span><b>{sla}</b><small>{slaNote}</small></article>

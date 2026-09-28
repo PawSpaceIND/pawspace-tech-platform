@@ -1,7 +1,7 @@
 /* V2 audit closure: opt-in canvas and control variants; V1 is never selected. */
 .canvas {
   composes: palette from "../components/brand/brand-surface.module.css";
-  --v2-control-radius: 14px;
+  --v2-control-radius: var(--paw-control-radius);
   --v2-control-height: 48px;
   min-height: 100dvh;
   background: var(--brand-bg);
@@ -20,7 +20,7 @@
 }
 .canvas.canvas [data-v2-action] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;
-  font: 800 16px/1.35 "PawSpaceNunito", system-ui, sans-serif;
+  font: 800 16px/1.35 var(--paw-font);
   padding: 12px 18px; white-space: normal;
 }
 .canvas.canvas [data-v2-action]:disabled { cursor: not-allowed; }
@@ -32,19 +32,19 @@
 }
 /* Global utilities are siblings of the V2 boundary. Scope their tokens by route DOM. */
 :global(body:has([data-pawspace-v2])) {
-  --v2-utility-bg: #fff; --v2-utility-text: #173c31; --v2-utility-line: #d7e3dc;
-  --v2-canvas-bg: #fff8ee; background: var(--v2-canvas-bg) !important;
+  --v2-utility-bg: var(--paw-surface); --v2-utility-text: var(--paw-text); --v2-utility-line: var(--paw-line);
+  --v2-canvas-bg: var(--paw-bg); background: var(--v2-canvas-bg) !important;
 }
 :global(html[data-paw-theme="signature"] body:has([data-pawspace-v2])) {
-  --v2-canvas-bg: #f7f3ff; --v2-utility-text: #252525; --v2-utility-line: #e3d8f3;
+  --v2-canvas-bg: var(--paw-bg); --v2-utility-text: var(--paw-text); --v2-utility-line: var(--paw-line);
 }
 :global(html[data-paw-mode="dark"] body:has([data-pawspace-v2])) {
-  --v2-canvas-bg: #0c1e18; --v2-utility-bg: #152d24;
-  --v2-utility-text: #ecf5ef; --v2-utility-line: #446354;
+  --v2-canvas-bg: var(--paw-bg); --v2-utility-bg: var(--paw-surface);
+  --v2-utility-text: var(--paw-text); --v2-utility-line: var(--paw-line);
 }
 :global(html[data-paw-theme="signature"][data-paw-mode="dark"] body:has([data-pawspace-v2])) {
-  --v2-canvas-bg: #191322; --v2-utility-bg: #261d33;
-  --v2-utility-text: #f5effb; --v2-utility-line: #5d4974;
+  --v2-canvas-bg: var(--paw-bg); --v2-utility-bg: var(--paw-surface);
+  --v2-utility-text: var(--paw-text); --v2-utility-line: var(--paw-line);
 }
 :global(body:has([data-pawspace-v2]) .paw-appearance-trigger),
 :global(body:has([data-pawspace-v2]) .paw-appearance-dialog),
@@ -54,6 +54,8 @@
   border-color: var(--v2-utility-line) !important;
 }
 :global(body:has([data-pawspace-v2]) .ps-order-fab [role="dialog"] button) { color: inherit; }
+/* An open notifications panel must sit above the separate appearance FAB so its close control stays clickable. */
+:global(body:has([data-pawspace-v2]) .ps-order-fab:has([role="dialog"])) { z-index: 120 !important; }
 @media (max-width: 820px) {
   .canvas { padding-bottom: calc(176px + env(safe-area-inset-bottom, 0px)); }
   :global(body:has([data-pawspace-v2]) .paw-appearance-trigger),
@@ -116,7 +118,7 @@
 /* Shared OTP components expose a neutral hook; only V2 gives it this variant. */
 .canvas.canvas [data-paw-action="primary"] {
   min-height: var(--v2-control-height); border-radius: var(--v2-control-radius) !important;
-  padding: 12px 18px; font: 800 16px/1.35 "PawSpaceNunito", system-ui, sans-serif;
+  padding: 12px 18px; font: 800 16px/1.35 var(--paw-font);
 }
 /* Decorative package art is not a profile photo and follows the style preference. */
 :global(html[data-paw-style="professional"]) .canvas img[src^="/assets/pawspace-"][src$="-cartoon.webp"] { display: none; }
@@ -124,14 +126,11 @@
   .canvas :where(button, a) { transition-duration: 0s !important; }
 }
 /* Legal, consent and appearance surfaces are part of the V2 page too. */
-:global(body:has([data-pawspace-v2])) { --v2-utility-primary:#01261f; --v2-utility-on-primary:#fff; --v2-utility-raised:#eff5f1; --v2-utility-muted:#526b61; }
-:global(html[data-paw-theme="signature"] body:has([data-pawspace-v2])) { --v2-utility-primary:#894aed; --v2-utility-raised:#f0e8fc; --v2-utility-muted:#655b72; }
-:global(html[data-paw-mode="dark"] body:has([data-pawspace-v2])) { --v2-utility-primary:#c2e6d1; --v2-utility-on-primary:#01261f; --v2-utility-raised:#203e32; --v2-utility-muted:#b8cec1; }
-:global(html[data-paw-theme="signature"][data-paw-mode="dark"] body:has([data-pawspace-v2])) { --v2-utility-primary:#d3b8ff; --v2-utility-on-primary:#32164f; --v2-utility-raised:#382a49; --v2-utility-muted:#d0c0df; }
+:global(body:has([data-pawspace-v2])) { --v2-utility-primary:var(--paw-primary); --v2-utility-on-primary:var(--paw-on-primary); --v2-utility-raised:var(--paw-raised); --v2-utility-muted:var(--paw-muted); }
+:global(html[data-paw-theme="signature"] body:has([data-pawspace-v2])) { --v2-utility-primary:var(--paw-primary); --v2-utility-raised:var(--paw-raised); --v2-utility-muted:var(--paw-muted); }
+:global(html[data-paw-mode="dark"] body:has([data-pawspace-v2])) { --v2-utility-primary:var(--paw-primary); --v2-utility-on-primary:var(--paw-on-primary); --v2-utility-raised:var(--paw-raised); --v2-utility-muted:var(--paw-muted); }
+:global(html[data-paw-theme="signature"][data-paw-mode="dark"] body:has([data-pawspace-v2])) { --v2-utility-primary:var(--paw-primary); --v2-utility-on-primary:var(--paw-on-primary); --v2-utility-raised:var(--paw-raised); --v2-utility-muted:var(--paw-muted); }
 :global(body:has([data-pawspace-v2]) .paw-appearance-dialog) {
-  --paw-bg:var(--v2-canvas-bg); --paw-surface:var(--v2-utility-bg); --paw-text:var(--v2-utility-text);
-  --paw-line:var(--v2-utility-line); --paw-primary:var(--v2-utility-primary); --paw-on-primary:var(--v2-utility-on-primary);
-  --paw-raised:var(--v2-utility-raised); --paw-muted:var(--v2-utility-muted);
   color-scheme:inherit;
 }
 :global(body:has([data-pawspace-v2]) .legal-footer),
