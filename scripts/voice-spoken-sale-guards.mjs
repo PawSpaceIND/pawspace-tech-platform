@@ -24,3 +24,8 @@ export function assertSandboxSale(report, bookingId) {
   const b = report.booking;
   if (b?.id !== bookingId || b.booking_status !== 'confirmed' || b.payment_status !== 'captured' || !b.gateway_order_id || b.currency !== 'INR' || !(Number(b.payment_amount) > 0) || Number(b.total_amount) !== Number(b.payment_amount)) throw Error('Canonical booking/payment evidence mismatch');
 }
+
+export function spokenInputComplete(transcript, reply, expected) {
+  const text=String(transcript||'');
+  return Boolean((expected instanceof RegExp && expected.test(text)) || String(reply||'').trim());
+}

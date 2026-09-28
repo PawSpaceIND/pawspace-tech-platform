@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assertSaleBaseline,assertSpokenQuote,assertSpokenBooking,assertSandboxSale} from '../scripts/voice-spoken-sale-guards.mjs';
+import {assertSaleBaseline,assertSpokenQuote,assertSpokenBooking,assertSandboxSale,spokenInputComplete} from '../scripts/voice-spoken-sale-guards.mjs';
 import {voiceCalendarContext} from '../lib/voice-calendar-context.ts';
 const baseline=()=>({aiPaused:false,dialed:false,pendingOffers:[],completedBookings:['OLD']});
 test('refuses paused contexts and pre-existing offers before sending speech',()=>{
@@ -28,4 +28,11 @@ test('requires exact canonical booking and synthetic payment capture with replay
 test('spoken sale guard executes production voice context code',()=>{
  const context=voiceCalendarContext(Date.UTC(2026,8,27,18,0,0));
  assert.ok(context && typeof context==='object');
+});
+
+test('spoken input stops once the intended turn is recognized or the agent replies',()=>{
+ const expected=/(?=.*grooming)(?=.*bruno)(?=.*tomorrow)(?=.*11)(?=.*quote)/i;
+ assert.equal(spokenInputComplete('grooming for Bruno tomorrow at 11, please show the quote','',expected),true);
+ assert.equal(spokenInputComplete('grooming for Bruno tomorrow at 11','',expected),false);
+ assert.equal(spokenInputComplete('partial transcript','One moment while I check that for you.',expected),true);
 });
