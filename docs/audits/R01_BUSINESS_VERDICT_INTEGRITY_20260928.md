@@ -76,3 +76,28 @@ The quality detector, exemptions and 160-file limit are byte-for-byte unchanged.
 The related Node 22.16.0 selection including both quality checks passed 51/51,
 zero failures, cancellations, skips or todos. Evidence: `quality-repair-focused.log`.
 This is focused validation; a fresh integrated full run and cloud gates are required.
+
+## Review closure — exact identity and bounded gate self-tests
+
+Both 28 September review findings were reproduced or measured before merging.
+The old count/uniqueness verdict accepted a different unique PASS probe replacing a
+required probe: the new replacement control failed before the repair (24/25 assertions
+passed, one meta-test failed). The gate now checks the exact sorted module/area pairs
+against a fixed, committed 81-probe manifest, not an inventory inferred at runtime.
+The manifest was reconciled with the prior successful matrix and source literals;
+count and uniqueness checks remain in addition to exact identity matching.
+
+All nine original verdict cases plus replacement remain subprocess exit-code tests.
+They use a copy of actual validated parent evidence and execute the same verdict
+function. Two full-matrix children (healthy and replacement) separately prove terminal
+wiring, instead of repeating all business probes for every mutation. Fault setup must
+pass first; each negative child must fail only E2E-999, not crash or time out. The
+parent has 27 assertions, including 15 business-suite tests and 12 gate checks.
+
+The first lightweight stdin transport stalled under the Node test-runner child and
+was not counted as a pass. The repaired child receives only the synthetic matrix
+snapshot through a scoped test environment value; the parent never reads that value.
+On Node 22.16.0 the repaired platform plus unchanged quality checks passed 29/29 in
+8.05 seconds. The earlier replacement reproduction took 24.68 seconds. These are
+individual local measurements, not a guaranteed speedup or new unique coverage.
+Final exact-commit full-suite and remote checks must pass before this PR can merge.

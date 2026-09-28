@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { makePlatformScaleD1 } from "./helpers/platform-scale-d1.mjs";
+import { assertPlatformMatrix } from "./helpers/platform-matrix-verdict.mjs";
 import { isPlatformMatrixGateChild, registerPlatformMatrixGateTests } from "./helpers/platform-matrix-gate-tests.mjs";
 
 installWorkersHooks("__E2E_DB__", "__E2E_ENV__");
@@ -1066,14 +1067,7 @@ test("E2E-999 result matrix", () => {
   const lines = RESULTS.map((r) => `  ${r.status.padEnd(4)} ${r.module}/${r.area}${r.detail ? ` - ${r.detail}` : ""}`);
   console.log("\n===== E2E PLATFORM MATRIX =====\n" + lines.join("\n") +
     `\n\nPASS ${by("PASS").length}  FAIL ${by("FAIL").length}  GAP ${by("GAP").length}  HARNESS ${by("HARNESS").length}\n`);
-  assert.ok(RESULTS.length > 0, "Required E2E probe evidence is missing");
-  const blockers = RESULTS.filter((row) => row.status !== "PASS");
-  assert.equal(blockers.length, 0,
-    "Required E2E probes did not pass:\n" + blockers.map((row) =>
-      `${row.status} ${row.module}/${row.area}: ${row.detail}`).join("\n"));
-  assert.equal(RESULTS.length, 81, "Required E2E probe inventory changed; review coverage explicitly");
-  const identities = new Set(RESULTS.map((row) => JSON.stringify([row.module, row.area])));
-  assert.equal(identities.size, RESULTS.length, "Required E2E probe identities must be unique");
+  assertPlatformMatrix(RESULTS);
 });
 
 /*
@@ -1083,6 +1077,6 @@ test("E2E-999 result matrix", () => {
  */
 
 
-// Run the same nine verdict checks from this executable suite. Child fixtures still
-// execute all 81 business probes but do not recursively launch their own children.
-if (!isPlatformMatrixGateChild()) registerPlatformMatrixGateTests();
+// The verdict cases reuse real parent evidence; two integration children still run
+// the full matrix to prove actual terminal-test wiring without recursive meta-tests.
+if (!isPlatformMatrixGateChild()) registerPlatformMatrixGateTests(RESULTS);
