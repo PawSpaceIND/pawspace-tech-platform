@@ -1,3 +1,4 @@
+import {employeeExitAccessSchema,EMPLOYEE_EXIT_CUTOFF_SQL} from "./employee-exit-access";
 import{employeeWorkAvailability}from"./employee-work-availability";
 import {governedRefusal} from "./governed-http-error";
 import{ensureLeadWorkItemsTable}from"./lead-conversion-attribution";
@@ -17,6 +18,7 @@ const positiveInt=(value:unknown,name:string)=>{const n=Number(value);if(!Number
 
 /* Once per isolate (lib/d1-ensure-once.js): every assignment, rotation and roster read called this. */
 export async function ensureLeadAssignmentTables(db:Db){return ensureD1Once(db,"lead_assignment_tables",async()=>{await ensureLeadWorkItemsTable(db);await db.batch([
+ ...employeeExitAccessSchema(db),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,max_active_workload INTEGER NOT NULL,continuity_enabled INTEGER NOT NULL DEFAULT 1,require_shift INTEGER NOT NULL DEFAULT 0,fallback_queue TEXT NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,approval_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policy_versions (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_memberships (id TEXT PRIMARY KEY,employee_email TEXT NOT NULL,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,workload_cap_override INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(employee_email,team_code))"),
@@ -116,7 +118,13 @@ export async function assignLead(db:Db,input:{leadId:string;idempotencyKey:strin
  if(Number(policy.continuity_enabled)===1&&lead.legacyOwner&&lead.legacyOwner!=="Unassigned"){selected=candidates.find(candidate=>text(candidate.employee_email).toLowerCase()===lead.legacyOwner.toLowerCase()||text(candidate.user_name).toLowerCase()===lead.legacyOwner.toLowerCase());if(selected)selectionReason="continuity";}
  if(input.preferredEmployeeEmail){const preferred=candidates.find(candidate=>text(candidate.employee_email).toLowerCase()===input.preferredEmployeeEmail!.trim().toLowerCase());if(!preferred)throw governedRefusal("Preferred lead owner is not currently eligible");selected=preferred;selectionReason=input.reason==="manager_override"?"manager_override":input.reason;}
  selected=selected||candidates[0];const assignmentId=uid("LAS"),fallbackQueue=text(policy.fallback_queue),employeeEmail=selected?text(selected.employee_email):null,detail={selection:employeeEmail?"eligible_lowest_workload":"fallback_queue",candidateCount:candidates.length,activeLoad:selected?.activeLoad??null,effectiveCap:selected?.effectiveCap??null,legacyOwnerProjection:lead.legacyOwner||null,canonicalOwnerAuthority:"lead_assignments"};
- try{await db.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,fallback_queue,assigned_at,detail_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?, 'current',?,?,?,?,?)").bind(assignmentId,input.idempotencyKey,input.leadId,employeeEmail,policy.team_code,policy.id,policy.version,selectionReason,employeeEmail?null:fallbackQueue,now,JSON.stringify(detail),input.actorId,now).run();}
+ try{
+  // Schema is initialized above even on a cold lead-only database. The eligibility read is helpful
+  // for fallback selection, but only this statement can prevent approval arriving before the write.
+  const inserted=await db.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,fallback_queue,assigned_at,detail_json,created_by,created_at) SELECT ?,?,?,?,?,?,?,?, 'current',?,?,?,?,? WHERE ? IS NULL OR (EXISTS(SELECT 1 FROM app_users WHERE lower(email)=? AND status='active') AND NOT EXISTS("+EMPLOYEE_EXIT_CUTOFF_SQL+"))")
+    .bind(assignmentId,input.idempotencyKey,input.leadId,employeeEmail,policy.team_code,policy.id,policy.version,selectionReason,employeeEmail?null:fallbackQueue,now,JSON.stringify(detail),input.actorId,now,employeeEmail,employeeEmail||"",employeeEmail||"",employeeEmail||"",now).run();
+  if(Number(inserted.meta.changes)!==1)throw governedRefusal("Selected employee access has ended or changed. Refresh lead assignment before retrying.");
+ }
  catch(error){
   // Raced loser: the UNIQUE(idempotency_key) or the one-current-per-lead partial index rejected the
   // INSERT because a concurrent call won. Return the winner's assignment as a governed duplicate

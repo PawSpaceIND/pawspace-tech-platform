@@ -1,8 +1,10 @@
+import {employeeAccessHasEnded} from "./employee-exit-access";
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
 /** Shared HR eligibility for staff lead routing. Existing staff-only identities are preserved;
  * once an employee record exists, inactive employment and approved leave must be respected. */
 export async function employeeWorkAvailability(db:D1Database,email:string,asOf:number){
+ if(await employeeAccessHasEnded(db,email,asOf))return{available:false,reason:"approved_exit_cutoff"};
  const tables=(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('employees','leave_requests','employee_shift_assignments','shift_policies')").all<Row>()).results;
  const has=new Set(tables.map(row=>text(row.name)));
  if(!has.has("employees"))return{available:true,reason:"staff_identity_only"};
