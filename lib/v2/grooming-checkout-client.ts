@@ -97,6 +97,20 @@ export async function createV2GroomingBooking(
   if ((input.addOns ?? []).some(label => !allowedAddOns.includes(label)) || new Set(input.addOns ?? []).size !== (input.addOns ?? []).length) throw new Error("Choose add-ons available for this pet.");
   if ((input.specialInstructions ?? "").length > 300) throw new Error("Keep groomer notes under 300 characters.");
   if (input.coupon && (!input.coupon.quoteId || !input.coupon.code)) throw new Error("Reapply the coupon before booking.");
+  // Reject locally invalid bookings before requesting a persisted coupon quote.
+  if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
+      input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
+    throw new Error("The published package must match the selected pets.");
+  }
+  if (input.selectedPets.some(pet => !input.account.pets.some(owned => owned.id === pet.id))) throw new Error("Use pets from your signed-in account.");
+  const start = Date.parse(input.scheduledStart), end = Date.parse(input.scheduledEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start <= Date.now() || end <= start ||
+      end - start !== input.bundle.slotMinutes * 60_000) throw new Error("Refresh the exact grooming time before booking.");
+  if (input.pkg.audience === "young" && serviceDate) {
+    const youngIssue = v2YoungPackageIssue(input.selectedPets, serviceDate);
+    if (youngIssue) throw new Error(youngIssue.message);
+  }
+
   // The shown quote may have expired (15 minutes) or been used up since it was applied. Re-quote it now,
   // before anything is reserved, and book with the server's fresh discount and quote - never the
   // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
@@ -110,18 +124,6 @@ export async function createV2GroomingBooking(
     ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
     ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
   ];
-  if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
-      input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
-    throw new Error("The published package must match the selected pets.");
-  }
-  if (input.selectedPets.some(pet => !input.account.pets.some(owned => owned.id === pet.id))) throw new Error("Use pets from your signed-in account.");
-  const start = Date.parse(input.scheduledStart), end = Date.parse(input.scheduledEnd);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start <= Date.now() || end <= start ||
-      end - start !== input.bundle.slotMinutes * 60_000) throw new Error("Refresh the exact grooming time before booking.");
-  if (input.pkg.audience === "young" && serviceDate) {
-    const youngIssue = v2YoungPackageIssue(input.selectedPets, serviceDate);
-    if (youngIssue) throw new Error(youngIssue.message);
-  }
 
   const decision = await reserveUatSchedule({
     clientRequestId: idempotencyKey,

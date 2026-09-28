@@ -84,3 +84,46 @@ test("separate staff consumption also refuses ordinary coupons on booking four",
   await assert.rejects(coupons.consumeCouponQuote(db,{quoteId:q.quoteId,bookingId:"b-3",customerId:"C1",idempotencyKey:"late-staff"}),/first three bookings/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions").get().n,0);
 });
+
+// Concurrent requests share a barrier so both finish preflight before either commits.
+// The database still executes each atomic batch serially, as SQLite/D1 requires.
+for (const ids of [["request-a", "request-b"], ["request-b", "request-a"]]) {
+  test(`overlapping coupon requests reserve only one third booking: ${ids.join(",")}`, { timeout: 30000 }, async t => {
+    const { db, sqlite } = await world(t);
+    await booking(db, "prior-one").run(); await booking(db, "prior-two").run();
+    let release, active = 0, peak = 0;
+    const barrier = new Promise(resolve => { release = resolve; });
+    const ready = [], attempted = [];
+    const requests = ids.map(async id => {
+      active++; peak = Math.max(peak, active);
+      try {
+        const q = await quote(db);
+        assert.equal(q.valid, true); assert.equal(q.policySnapshot.orderCount, 2);
+        const p = await prepared(db, q, id);
+        ready.push({ id, quoteId: q.quoteId });
+        if (ready.length === ids.length) release();
+        await barrier;
+        assert.equal(ready.length, 2, "both preflights complete before either commit");
+        attempted.push(id);
+        atomic(sqlite, [booking(db, id), p.redemptionStatement, p.claimStatement]);
+        return { id, quoteId: q.quoteId };
+      } finally { active--; }
+    });
+    const outcomes = await Promise.allSettled(requests);
+    assert.equal(peak, 2); assert.equal(active, 0); assert.equal(attempted.length, 2);
+    const winners = outcomes.filter(result => result.status === "fulfilled");
+    const failures = outcomes.filter(result => result.status === "rejected");
+    assert.equal(winners.length, 1); assert.equal(failures.length, 1);
+    assert.match(String(failures[0].reason), /NOT NULL constraint failed: coupon_redemptions.campaign_id/);
+    assert.doesNotMatch(String(failures[0].reason), /busy|locked|within a transaction/i);
+    const winner = winners[0].value, loser = ready.find(item => item.id !== winner.id);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n, 3);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions").get().n, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE id=?").get(loser.id).n, 0);
+    assert.equal(sqlite.prepare("SELECT status FROM coupon_quotes WHERE id=?").get(loser.quoteId).status, "open");
+    assert.equal(sqlite.prepare("SELECT status FROM coupon_quotes WHERE id=?").get(winner.quoteId).status, "consumed");
+    const replay = await quote(db, { bookingKey: `key-${winner.id}` });
+    assert.equal(replay.valid, true); assert.equal(replay.quoteId, winner.quoteId);
+    assert.equal((await quote(db, { bookingKey: `key-${loser.id}` })).valid, false);
+  });
+}
