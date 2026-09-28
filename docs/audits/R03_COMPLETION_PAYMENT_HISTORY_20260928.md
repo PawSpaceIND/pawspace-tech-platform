@@ -92,3 +92,25 @@ logs and exits, and exact source snapshot provenance. Broader and exact-head res
 are reported separately in the PR once complete. The earlier tool-blocked checkpoints
 above remain historical; neither a passing local check nor a successful snapshot
 update is a deployment, live-money operation or hosted journey acceptance.
+
+## Full-run follow-up: referral source-contract location
+
+The complete 1,058-file run on exact head `27ad5d6d` finished with 9,042 passed and
+one failed assertion (zero cancelled/skipped/todo). Its source stayed clean and
+unchanged. The remaining failure was `referral-booking-governance-uat.test.mjs`:
+it still searched the route for the `service_completed` literal, now held by the
+extracted completion-event writer. The isolated referral suite reproduced 14/15,
+exit 1. The earlier hook-path source-hash failures no longer occurred in this run.
+
+The source contract now checks the actual imported writer, its awaited call after
+referral qualification, and its INSERT/bound service_completed event name. All other
+referral/payment assertions remain, and the test is labelled as a source contract.
+No runtime or financial rule was changed. The repaired referral/event/invoice/golden/
+integrity selection passed 46/46; this count overlaps the broader selection.
+
+The full 9,042/1 result is retained as a pre-correction checkpoint, NOT relabelled a
+9,043-pass run. Fresh current-head CI is required after the source-contract correction.
+CodeAnt raised the pre-existing collection/finalization race and post-commit event
+recovery limits; both threads were acknowledged and left unresolved. The finance/
+finalization section was verified byte-identical to base f9128593. CodeRabbit's
+requested review was rate-limited and is not counted as a completed review.
