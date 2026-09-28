@@ -340,7 +340,17 @@ jobs:
           const details=(Array.isArray(dbdy?.result)?dbdy.result:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
           const safeMatches=matching.map(x=>{const d=details.find(v=>String(v.id||'')===String(x.id||''))||{};return{selected:String(x.id||'')===customerId,merged:Boolean(String(x.merged_into||'').trim()),source:String(d.source||'')||null,bookingCount:Number(d.booking_count||0),createdAt:Number(d.created_at||0)||null,updatedAt:Number(d.updated_at||0)||null};});
           console.log('CANONICAL_UAT_OWNER_DIAG='+JSON.stringify({matchingOwners:matching.length,rows:safeMatches}));
-          if(matching.length!==1)throw new Error('canonical ownership collision diagnostics captured');
+          if(matching.length>1){
+            const stale=matching.filter(x=>{const d=details.find(v=>String(v.id||'')===String(x.id||''))||{};return String(d.source||'')==='uat_certification'&&Number(d.booking_count||0)===0;});
+            if(stale.length!==matching.length-1||!matching.some(x=>String(x.id||'')===customerId))throw new Error('canonical ownership collision diagnostics captured');
+            for(const row of stale){
+              const id=String(row.id||'').trim(); if(!id)throw new Error('stale certification customer id missing');
+              const cleanSql=`UPDATE canonical_customers SET primary_phone=CASE WHEN substr(replace(replace(replace(replace(replace(COALESCE(primary_phone,''),' ',''),'-',''),'+',''),'(',''),')',''),-10)=? THEN NULL ELSE primary_phone END, secondary_phone=CASE WHEN substr(replace(replace(replace(replace(replace(COALESCE(secondary_phone,''),' ',''),'-',''),'+',''),'(',''),')',''),-10)=? THEN NULL ELSE secondary_phone END, updated_at=? WHERE id=? AND source='uat_certification' AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.customer_id=canonical_customers.id)`;
+              const cr=await fetch(d1Url,{method:'POST',headers:{authorization:'Bearer '+cfToken,'content-type':'application/json'},body:JSON.stringify({sql:cleanSql,params:[suffix,suffix,Date.now(),id]}),signal:AbortSignal.timeout(20000)});
+              const cb=await cr.json().catch(()=>({})); if(!cr.ok||cb?.success===false)throw new Error('stale UAT certification phone cleanup failed');
+            }
+            console.log('STALE_UAT_CERTIFICATION_PHONE_CLEANED='+stale.length);
+          }
           console.log('CANONICAL_UAT_OWNER_RESOLVED=yes');
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
