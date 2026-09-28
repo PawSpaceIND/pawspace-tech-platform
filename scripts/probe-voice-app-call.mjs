@@ -6,6 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 import {conversationEvidence} from './voice-uat-evidence.mjs';
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
+if(env.VOICE_SALE_ACTION!=='inspect-app-voice')throw Error('This diagnostic revision never dials');
 if(!['inspect-app-voice','direct-grooming-call'].includes(env.VOICE_SALE_ACTION))throw Error('Explicit app voice action required');
 await verifyVoiceSale({...env,VOICE_SALE_ACTION:'probe-agent-socket'});
 const read=async(url,headers,init={})=>{const r=await fetch(url,{headers,...init,signal:AbortSignal.timeout(30000)});const b=await r.json();if(!r.ok)throw Error('Voice demo request refused: '+r.status);return b;};
@@ -26,6 +27,13 @@ const entries=String(env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').split(/[\s,;]+/).filt
 if(entries.length!==1||entries[0].replace(/\D/g,'').slice(-4)!==env.EXPECTED_DESTINATION_LAST4)throw Error('Confirmed single tester required');
 const candidates=await read(base+'/query',ch,{method:'POST',body:JSON.stringify(testerCandidateQuery(entries[0]))});
 if(!candidates.success||candidates.result?.some(r=>r.success===false))throw Error('Tester ownership read refused');
+const ownerIds=[];
+for(const candidate of candidates.result.flatMap(r=>r.results||[])){try{ownerIds.push(resolveTesterCustomer([candidate],entries[0]));}catch{}}
+if(ownerIds.length){
+ const sql='SELECT c.id,c.name,c.source,c.city_id,c.created_at,c.updated_at,substr(c.primary_phone,-4) primary_last4,substr(c.secondary_phone,-4) secondary_last4,(SELECT count(*) FROM canonical_bookings b WHERE b.customer_id=c.id) booking_count,(SELECT count(*) FROM canonical_pets p WHERE p.customer_id=c.id) pet_count FROM canonical_customers c WHERE c.id IN ('+ownerIds.map(()=>'?').join(',')+')';
+ const diagnostics=await read(base+'/query',ch,{method:'POST',body:JSON.stringify({sql,params:ownerIds})});
+ console.log('APP_TESTER_DUPLICATE_RECORDS='+JSON.stringify(diagnostics.result?.flatMap(r=>r.results||[]).map(r=>({...r,legacyContextOwner:r.id===row.customer_id}))));
+}
 const customerId=resolveTesterCustomer(candidates.result.flatMap(r=>r.results||[]),entries[0]);
 console.log('APP_VOICE_TESTER='+JSON.stringify({uniqueCanonicalOwner:true,legacyContextMatches:customerId===row.customer_id,dialed:false}));
 const intent={useCase:'grooming_sales',phone:entries[0],cityId:row.city_id||'blr',customerId};
