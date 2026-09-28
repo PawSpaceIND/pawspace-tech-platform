@@ -141,6 +141,15 @@ export async function employeeExitDirectory(db:D1Database){await ensureEmployeeE
 export async function runApprovedEmployeeExitSweep(db:D1Database,asOf=Date.now()){
  if(!await tableExists(db,"employee_exit_cases"))return{processed:0,reviewRequired:[],enabled:false};
  const due=(await db.prepare("SELECT id FROM employee_exit_cases WHERE status='approved' AND access_ends_at<=? ORDER BY access_ends_at,id LIMIT 20").bind(asOf).all<Row>()).results;
- let processed=0;const reviewRequired:string[]=[];for(const row of due){try{await executeEmployeeExit(db,{caseId:text(row.id),actorId:"system:approved-employee-exit",asOf});processed++;}catch{reviewRequired.push(text(row.id));}}
+ let processed=0;const reviewRequired:string[]=[];
+ for(const row of due){
+  try{const result=await executeEmployeeExit(db,{caseId:text(row.id),actorId:"system:approved-employee-exit",asOf});if(!result.duplicatePrevented)processed++;}
+  catch{
+   // A concurrent worker may already have committed the same exit. That is not a review failure.
+   // An unavailable re-read remains a visible failure; never infer success from a transport error.
+   let completed=false;try{const current=await db.prepare("SELECT status FROM employee_exit_cases WHERE id=?").bind(row.id).first<Row>();completed=!!current&&["access_revoked","settled_sandbox"].includes(text(current.status));}catch{}
+   if(!completed)reviewRequired.push(text(row.id));
+  }
+ }
  return{processed,reviewRequired,enabled:true,livePaymentEnabled:false};
 }

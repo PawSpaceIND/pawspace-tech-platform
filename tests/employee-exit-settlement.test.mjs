@@ -14,6 +14,8 @@ const uat=await import('../lib/uat-staging-auth.ts');
 const START=Date.parse('2026-09-01T00:00:00+05:30'),END=Date.parse('2026-10-01T00:00:00+05:30'),CUTOFF=Date.parse('2026-09-16T00:00:00+05:30');
 const env={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'isolated-employee-exit-signing-key-not-a-live-secret',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',RAZORPAYX_KEY_ID_SANDBOX:'rzp_test_exit',RAZORPAYX_KEY_SECRET_SANDBOX:'isolated-test-secret',RAZORPAYX_ACCOUNT_NUMBER_SANDBOX:'isolated-test-account',RAZORPAYX_WEBHOOK_SECRET_SANDBOX:'isolated-exit-webhook'};
 async function world(t){
+ // The complete synthetic September payroll/exit fixture is independent of the machine date.
+ t.mock.timers.enable({apis:['Date'],now:END+86400000});
  const w=employeeAuditD1(t);globalThis.__EXIT_DB__=w.db;globalThis.__EXIT_ENV__={...env,DB:w.db};await exit.ensureEmployeeExitTables(w.db);
  const employee=await people.upsertEmployee(w.db,{employeeCode:'EXIT-QA',displayName:'Synthetic Exit Employee',workEmail:'employee@exit.test',userEmail:'employee@exit.test',joinedAt:START-31*86400000,actorId:'hr@exit.test'});
  await people.addEmploymentVersion(w.db,{employeeId:employee.id,effectiveFrom:START-31*86400000,employmentType:'direct_employee',teamCode:'sales',reason:'Isolated test employment',actorId:'hr@exit.test'});
@@ -151,4 +153,14 @@ test('lead fallback uses the cutoff user id after a staff email change',async t=
  const w=await world(t),assign=await leadFixture(w);await approved(w);
  w.sqlite.exec("UPDATE app_users SET email='renamed@exit.test' WHERE id='EXIT-USER'; UPDATE lead_assignment_memberships SET employee_email='renamed@exit.test'; UPDATE employees SET work_email='renamed@exit.test',user_email='renamed@exit.test'");
  const result=await assign();assert.equal(result.assignment.employee_email,null);assert.equal(result.assignment.fallback_queue,'exit-review');
+});
+
+test('blank linked email falls back to work email for approved sales incentives',async t=>{
+ const w=await world(t),period=await import('../lib/daily-incentive-accrual.ts');
+ await period.salesIncentivePeriodTruth(w.db,{employeeId:'employee@exit.test',monthStart:'2026-09-01'});
+ w.sqlite.prepare("UPDATE employees SET user_email='   ' WHERE id=?").run(w.employeeId);
+ w.sqlite.exec("INSERT INTO sales_incentive_period_results (id,employee_id,month_start,daily_accrued_total,monthly_achieved_value,monthly_bonus,approved_total,status,generated_by,generated_at,approved_by,approved_at) VALUES ('WORKEMAIL-INCENTIVE','employee@exit.test','2026-09-01',1000,30000,0,1000,'approved','maker@exit.test',1,'finance@exit.test',2)");
+ const result=await payroll.calculatePayroll(w.db,{periodStart:START,periodEnd:END,idempotencyKey:'WORKEMAIL-PAYROLL',actorId:'maker@exit.test'});
+ assert.equal(result.results[0].net_pay,31000);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM sales_incentive_payroll_links WHERE result_id='WORKEMAIL-INCENTIVE'").get().n,1);
 });

@@ -69,3 +69,15 @@ Executed before publication:
 - Nine expected source fingerprints refreshed only for the intentionally changed lead module, after checking each old value against `a9e5ed55`.
 
 Full repository build/CI, final review and continuous authenticated employee-browser acceptance remain separate gates. No hosted employee was exited, no real payment was made and no production setting was changed during these tests. Earlier HOLD findings above are historical; the two cutoff assertions now pass.
+
+## Review corrections — same-day continuation
+
+A review-identified whitespace-only linked email reproduced a missing approved sales incentive. Payroll now trims each identity before falling back to the employee's work email; the synthetic regression verifies the extra INR 1,000 is included once in INR 31,000 net pay.
+
+The September exit-domain fixture now uses a test-local deterministic Date clock. Native D1 tests pass the explicit cutoff to execution; no production clock, duration or approval policy was changed.
+
+Three concurrent native-D1 exit sweeps reproduced false review-required results for workers that lost the execution race. The exit sweep now counts only the worker that actually executed the exit and re-reads a concurrent completion before reporting failure. A failed re-read still reports review required. The actual employee/session/audit writes remain transactional, with one revocation event. This hardens the employee task; it is not a replacement or certification of the entire shared scheduler's locking scheme.
+
+Validation: before these corrections, the combined domain/native-D1 selection had 29 passes and 2 failures; afterward 31/31 passed (26 domain cases and 5 native D1 cases). TypeScript and changed-file lint passed. These selections overlap earlier results.
+
+The platform-session review concern was checked against the actual type and permission model: platform sessions resolve only customer/provider permissions, not privileged staff. Both staff authentication paths enforce employee cutoff. A former employee's separately held personal customer identity is not a staff-access grant; it has not been disabled by this change.
