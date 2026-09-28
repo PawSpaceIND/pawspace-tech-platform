@@ -79,7 +79,7 @@ try{
   const spoken={number:index+1,question,transcript:state.transcript,reply:state.reply,inputAudioBytes:audio.length,outputAudioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,asrSegments:state.segments.length,interrupted:state.replyInterrupted,playbackComplete:true,elapsedMs:Date.now()-started,replyAudioAfterInputMs:firstReplyAudio?Math.max(0,firstReplyAudio-lastSpeechAt):null};
   result.turns.push(spoken);console.log('DEMO_TURN='+JSON.stringify({id:scenario.id,...spoken}));
   if(state.replyInterrupted||state.segments.length!==1){result.issues.push('Interrupted or split/duplicate user turn '+(index+1));break;}
-  if(isHandoffReply(state.reply)&&scenario.expectedHandoffAt!==index+1){result.issues.push('Unexpected human handoff at turn '+(index+1));break;}
+  if(isHandoffReply(state.reply)&&scenario.expectedHandoffAt!==index+1)result.issues.push('Unexpected human handoff at turn '+(index+1)); // Continue fixed questions, never resume or bypass the staff pause.
  }
 }catch(e){result.issues.push(String(e.message||e));if(state?.transcript||state?.reply)result.partialTurn={question:scenario.questions[result.turns.length],transcript:state.transcript,reply:state.reply,outputAudioBytes:state.audioBytes,interrupted:state.replyInterrupted};}
 finally{clearInterval(pump);if(socket&&socket.readyState<2)socket.close(1000,'no-phone demo complete');}

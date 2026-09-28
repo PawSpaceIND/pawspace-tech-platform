@@ -1,0 +1,151 @@
+{
+  "id": 4,
+  "title": "Availability enquiries, rescheduling and refunds",
+  "agent": "grooming",
+  "dialed": false,
+  "startedAt": "2026-09-28T11:47:40.196Z",
+  "questionsPlanned": 4,
+  "turns": [
+    {
+      "number": 1,
+      "question": "This is an enquiry only. I live in Indiranagar, Bengaluru. What do you need to check home grooming availability at my address?",
+      "transcript": "This is an inquiry only. I live in Indiranagar, Bengaluru. What do you need to check home grooming availability at my address?",
+      "reply": "To check home grooming availability, I need your complete service address, six-digit PIN code, preferred date and time, and which grooming package you want for Bruno. Which grooming result are you looking for: a bath and coat care, hygiene care with a basic trim, just a trim, or a complete makeover?",
+      "inputAudioBytes": 273378,
+      "outputAudioBytes": 576118,
+      "nonSilentBytes": 525501,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 32329,
+      "replyAudioAfterInputMs": 3635,
+      "recognitionCoverage": 0.9230769230769231
+    },
+    {
+      "number": 2,
+      "question": "Do not reserve a slot. Bruno is an adult dog and I prefer mornings. What details do you need before showing a final grooming quote?",
+      "transcript": "Do not reserve a slot. Bruno is an adult dog, and I prefer mornings. What details do you need before showing a final grooming quote?",
+      "reply": "For a final grooming quote for Bruno, I need the grooming result you want, your complete service address with six-digit PIN code, and your preferred morning date and time. Bruno’s breed and adult age are already noted. Which would you prefer: Essential Bath, Bath & Basic, Just Trim, or Complete Makeover?",
+      "inputAudioBytes": 286662,
+      "outputAudioBytes": 590642,
+      "nonSilentBytes": 531964,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 32929,
+      "replyAudioAfterInputMs": 3416,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 3,
+      "question": "Do not change any booking. If I later need to reschedule grooming, what process and charges apply?",
+      "transcript": "Do not change any booking. If I later need to reschedule grooming, what process and charges apply?",
+      "reply": "If you later need to reschedule grooming, PawSpace will confirm the existing booking, your new date and time, and what needs changing. Any fee or revised amount depends on the booking terms and available capacity, so I can’t quote a charge in advance. A human review may be needed for refund eligibility.",
+      "inputAudioBytes": 222940,
+      "outputAudioBytes": 573696,
+      "nonSilentBytes": 519109,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 30912,
+      "replyAudioAfterInputMs": 3912,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 4,
+      "question": "Do not issue a refund. If I cancel later or the groomer does not arrive, how is a refund reviewed?",
+      "transcript": "Do not issue a refund. If I cancel later or the groomer does not arrive, how is a refund reviewed?",
+      "reply": "This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.",
+      "inputAudioBytes": 208098,
+      "outputAudioBytes": 171864,
+      "nonSilentBytes": 155146,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 14653,
+      "replyAudioAfterInputMs": 620,
+      "recognitionCoverage": 1
+    }
+  ],
+  "issues": [
+    "Unexpected human handoff at turn 4"
+  ],
+  "finalTranscript": [
+    {
+      "role": "agent",
+      "message": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "This is an inquiry only. I live in Indiranagar, Bengaluru. What do you need to check home grooming availability at my address?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "To check home grooming availability, I need your complete service address, six-digit PIN code, preferred date and time, and which grooming package you want for Bruno. Which grooming result are you looking for: a bath and coat care, hygiene care with a basic trim, just a trim, or a complete makeover?",
+      "timeInCallSeconds": 12,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Do not reserve a slot. Bruno is an adult dog, and I prefer mornings. What details do you need before showing a final grooming quote?",
+      "timeInCallSeconds": 33,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "For a final grooming quote for Bruno, I need the grooming result you want, your complete service address with six-digit PIN code, and your preferred morning date and time. Bruno’s breed and adult age are already noted. Which would you prefer: Essential Bath, Bath & Basic, Just Trim, or Complete Makeover?",
+      "timeInCallSeconds": 45,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Do not change any booking. If I later need to reschedule grooming, what process and charges apply?",
+      "timeInCallSeconds": 66,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "If you later need to reschedule grooming, PawSpace will confirm the existing booking, your new date and time, and what needs changing. Any fee or revised amount depends on the booking terms and available capacity, so I can’t quote a charge in advance. A human review may be needed for refund eligibility.",
+      "timeInCallSeconds": 76,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Do not issue a refund. If I cancel later or the groomer does not arrive, how is a refund reviewed?",
+      "timeInCallSeconds": 97,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "This conversation is waiting for a PawSpace team member. I cannot continue the booking while it is with the team.",
+      "timeInCallSeconds": 104,
+      "interrupted": false
+    }
+  ],
+  "passed": false,
+  "deployedSha": "db2c97003837663c7370e6ada2d9d1bf574e443e",
+  "workerVersion": "c469441e-5630-4394-a5ab-be3d2490caf6",
+  "agentVersion": "agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs",
+  "agentId": "agent_9201m39vfcjjec4sya7rat0cerct",
+  "syntheticProfile": true,
+  "hasDialableNumber": false,
+  "threadId": "THREAD-AUDIO-DEMO-36417330242-1-4",
+  "conversationId": "conv_4701m3kxfbxdf54szz1h6be8snek",
+  "greeting": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+  "providerStatus": "done",
+  "durationSeconds": 119,
+  "finalTranscriptMatched": true,
+  "businessStateUnchanged": true,
+  "nonVoiceMessages": 0,
+  "handoffs": [
+    {
+      "status": "queued",
+      "reason": "refund_payment_dispute"
+    }
+  ],
+  "finishedAt": "2026-09-28T11:49:57.868Z"
+}
