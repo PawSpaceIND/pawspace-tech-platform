@@ -1,0 +1,56 @@
+name: V2 launch compatibility and offline recovery
+on:
+  pull_request:
+    paths:
+      - 'app/partner-app/**'
+      - 'lib/bounded-fetch.ts'
+      - 'lib/partner-status-queue.ts'
+      - 'lib/provider-proof-offline-queue.ts'
+      - 'app/v2/**'
+      - 'e2e/v2-*.spec.ts'
+      - 'playwright.launch-readiness.config.ts'
+      - 'tests/v2-network-recovery.test.mjs'
+      - 'tests/provider-proof-offline-queue.test.mjs'
+      - 'tests/booking-fanout-atomicity*'
+      - 'tests/scheduling-rules-authorization*'
+      - 'wrangler.scheduling-rules-authorization.jsonc'
+      - 'package-lock.json'
+      - '.github/workflows/v2-launch-resilience.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v2-launch-resilience-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      PW_PORT: '4291'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
+      - run: npm run typecheck
+      - name: Offline transport and storage regressions
+        env:
+          NODE_ENV: test
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/v2-network-recovery.test.mjs tests/provider-proof-offline-queue.test.mjs tests/uat-phase3-partner-tracking.test.mjs tests/frontend-chaos-hardening.test.mjs tests/global-chaos-hardening-source-contract.test.mjs tests/partner-app-login-gate.test.mjs tests/partner-proof-upload-chain.test.mjs tests/service-proof-verification-wiring.test.mjs tests/booking-fanout-atomicity-real-d1.test.mjs tests/scheduling-rules-authorization-real-d1.test.mjs
+      - name: Three browser engines and seven device profiles
+        run: node node_modules/@playwright/test/cli.js test --config playwright.launch-readiness.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v2-launch-compatibility-${{ github.sha }}
+          path: artifacts/launch-readiness/
+          retention-days: 7
