@@ -2,7 +2,7 @@
 
 Date: 28 September 2026. Base: f9128593c40cd339cb7e2fe150af1b6b1743f23a (#1164).
 Branch: fix/r03-completion-payment-history-20260928.
-Status: local implementation; final verification and protected-source refresh blocked.
+Status: source-integrity CI repair applied; full exact-head verification and review pending.
 Not merged, deployed, production-certified or a completed hosted booking-to-accounts test.
 
 ## Reproduced defect
@@ -63,3 +63,32 @@ deploy the accepted revision and complete hosted acceptance. Existing finance-be
 finalization and post-commit event failure recovery are separate open work under #17.
 The single event-write snapshot is not whole-completion transaction atomicity, historical
 backfill, bank reconciliation, actual payout proof or global launch approval.
+
+## PR #1170 CI-repair checkpoint — 28 September 2026
+
+The retained hook-path job 109027351512 in Release CI 36451437268 failed exactly
+these two checks: Inbox source preservation and integrated business source preservation.
+Both expected the old Grooming lifecycle SHA-256 `6161f260…`; the actual reviewed
+R03 route was `b64d292f…`. Build, artifact validation, lint and typecheck on that
+original head passed. The complete source-identity mismatch was reproduced locally:
+the six-test Inbox suite had four passes and two failures with process exit 1.
+
+Before updating expectations, all 25 handler/event/golden regressions passed,
+including the formerly unexecuted database-write-error case. Each of the nine
+retained manifest values was checked against the exact merged base `f9128593`.
+The permitted CI-repair operation updated only the reviewed route fingerprint and
+added `lib/grooming-completion-event.ts` as a protected source in every manifest.
+Every other protected entry and all test logic, thresholds and workflows are unchanged.
+No application code was changed in this CI repair.
+
+The repaired Inbox suite passed 6/6. A controlled local comment appended to the new
+helper made those same two integrity assertions fail (4/6, exit 1); restoring the
+exact helper bytes returned the unchanged suite to 6/6. This verifies that the
+updated source protection is still enforced, including the newly extracted helper.
+
+Evidence for this repair is under `pr1170-ci-repair-20260928/` in the R03 evidence
+directory: sanitized failed-job log, 25-test baseline, before/after/negative-control
+logs and exits, and exact source snapshot provenance. Broader and exact-head results
+are reported separately in the PR once complete. The earlier tool-blocked checkpoints
+above remain historical; neither a passing local check nor a successful snapshot
+update is a deployment, live-money operation or hosted journey acceptance.
