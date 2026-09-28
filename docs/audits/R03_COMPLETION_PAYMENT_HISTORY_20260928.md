@@ -140,3 +140,60 @@ The integrated focused selection passed 58/58, including that cash path and the
 R02/R03/referral/integrity cases. Broader current-head results remain separate gates.
 Integration provenance and logs are in `pr1170-main-integration-20260928/` under the
 R03 evidence directory. Earlier pre-integration results are not current-main proof.
+
+## Review closure after latest-main integration
+
+Current main integration includes `3a37d67e` (#1169) without replacing its fixture or
+browser changes. The two previously deferred review findings are now addressed in
+this PR, rather than being resolved merely because older CI passed.
+
+### Collection/finalization race
+
+A one-statement snapshot captures the existing booking/payment, reconciliation,
+cash/override, refund and customer-funding inputs before collection and finance are
+evaluated. The same source predicates are checked inside the final lifecycle batch.
+A correction or payment/refund change refuses finalization and leaves no new
+completion or settlement-readiness projection. Existing monetary formulae and
+payment-provider authorization are unchanged. Missing optional source tables must
+stay absent; newly created sources require a fresh attempt instead of being ignored.
+
+A real-handler test uses the existing governed cash-recording API to correct a
+synthetic entry at the finalization boundary. Before the fix completion returned 200
+with stale accrued readiness. After the fix it returns 409, remains in service, and
+retry records the existing shortfall policy as withheld. A second test covers the
+opposite order: an in-flight correction cannot overwrite cash after completion;
+the cash INSERT now checks the open booking/provider/amount at execution time.
+
+This protects the final decision, not whole-finance rollback. A financial journal
+posted before an aborted finalization still requires the existing reconciliation
+policy; the response names that boundary and never represents it as a released payout.
+
+### Durable history recovery
+
+The existing atomic `provider_lifecycle_events` transition now retains a versioned,
+server-authored completion receipt. It freezes finance, the collection decision,
+recorded cash, consumed-session count, completion time and the stable history ID.
+No new public endpoint or schema is introduced. A permitted retry for the same
+completed booking uses only its matching stored receipt; it does not repeat finance,
+service-state changes or subscription consumption. Historical completions without
+such a receipt still require Operations reconciliation, not fabricated backfill.
+
+The history writer accepts the receipt's deterministic event ID and preserves an
+already recorded same-booking event. Existing cash posting and referral processing
+remain idempotent; the standard provider projection still protects returned data.
+The injected history-write-failure test reproduced an unrecoverable 409 before repair.
+It now recovers on retry and remains safe on another replay, with exactly one history
+and provider-completion event and unchanged invoice/journal rows.
+
+The expanded focused selection passed 49/49 on Node 22.16.0 after these repairs;
+counts overlap broader runs. Typecheck and changed-source lint passed. Current-head
+full tests, review and cloud CI remain merge gates and are reported in the PR rather
+than inferred here. Existing source manifests retain all entries and protect both
+new helpers plus the deliberately modified route/event/cash sources.
+
+A broader initial test append containing direct financial fixture updates was not
+permitted and those operations were not performed. The accepted test uses the
+application's governed cash API on isolated synthetic data. A combined patch command
+also returned an indeterminate safety result; read-only inspection confirmed no
+application changes from that attempt before smaller source-only edits were applied.
+No deployment, actual payment, payout, customer message or hosted record was changed.
