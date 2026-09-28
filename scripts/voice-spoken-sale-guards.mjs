@@ -1,3 +1,4 @@
+import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
 // Fail-closed persisted-evidence gates for the separate, explicitly authorized spoken-sale probe.
 export function assertSaleBaseline(report) {
   if (report.aiPaused || report.dialed !== false) throw Error('Unpaused no-phone context required');
@@ -23,4 +24,9 @@ export function assertSandboxSale(report, bookingId) {
   if (report.dialed !== false || report.synthetic !== true || report.replayChecked !== true || report.captured !== true) throw Error('Synthetic sandbox capture and replay required');
   const b = report.booking;
   if (b?.id !== bookingId || b.booking_status !== 'confirmed' || b.payment_status !== 'captured' || !b.gateway_order_id || b.currency !== 'INR' || !(Number(b.payment_amount) > 0) || Number(b.total_amount) !== Number(b.payment_amount)) throw Error('Canonical booking/payment evidence mismatch');
+}
+
+export function spokenInputComplete(transcript, reply, expected) {
+  const text=String(transcript||'');
+  return Boolean((expected instanceof RegExp && expected.test(text)) || isSubstantiveVoiceReply(reply));
 }
