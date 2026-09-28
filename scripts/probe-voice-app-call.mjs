@@ -1,3 +1,5 @@
+// Explicit suffix inventory is read-only and cannot reach the dialing path.
+if(process.env.VOICE_SALE_ACTION==='inspect-app-voice'&&process.env.EXPECTED_DESTINATION_LAST4==='6690'){await import('./inspect-approved-demo-recipients.mjs');process.exit(0);}
 import {testerCandidateQuery,resolveTesterCustomer} from './voice-app-tester.mjs';
 import {exotelApiOrigin} from './repair-staging-voice-config.mjs';
 // A staging demo through the same policy preview and request_call route as the staff app.
