@@ -1,0 +1,144 @@
+{
+  "id": 3,
+  "title": "Puppy training programme and realistic expectations",
+  "agent": "training",
+  "dialed": false,
+  "startedAt": "2026-09-28T11:44:54.414Z",
+  "questionsPlanned": 4,
+  "turns": [
+    {
+      "number": 1,
+      "question": "This is an enquiry only. My puppy pulls on walks and jumps on visitors. Explain your dog training programme and how it is delivered.",
+      "transcript": "This is an inquiry only. My puppy pulls on walks and jumps on visitors. Explain your dog training program and how it is delivered.",
+      "reply": "PawSpace dog training happens at home through structured sessions with Bruno, along with coaching for your family. It uses positive, reward-based methods, without punishment or shock collars.\n\nFor leash pulling, the Leash Obedience Plan offers 8 sessions over 62 days, while the Puppy Training Plan offers 4 sessions over 31 days and can cover puppy manners such as jumping on visitors. A separate Trainer Meet & Greet is available for assessment. Short daily practice between sessions is important, and results depend on Bruno and the family’s consistency. How old is Bruno, and has he shown any biting or serious aggression?",
+      "inputAudioBytes": 303170,
+      "outputAudioBytes": 1159502,
+      "nonSilentBytes": 1050125,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 59718,
+      "replyAudioAfterInputMs": 11911,
+      "recognitionCoverage": 0.8461538461538461
+    },
+    {
+      "number": 2,
+      "question": "I am comparing options, not enrolling. What is included in the training package, and how are sessions scheduled?",
+      "transcript": "I am comparing options, not enrolling. What is included in the training package, and how are sessions scheduled?",
+      "reply": "The package includes structured at-home sessions with Bruno and coaching for your family, using positive, reward-based methods. Options include the Starter Plan with 2 sessions over 31 days, the Puppy Training Plan with 4 sessions over 31 days, and longer obedience plans with 8, 12, or 16 sessions. There is also a separate one-session Trainer Meet & Greet, valid for 7 days.\n\nSessions are scheduled across the plan’s validity with an available trainer. Your preferred day and time is a request until availability is confirmed.",
+      "inputAudioBytes": 246040,
+      "outputAudioBytes": 982792,
+      "nonSilentBytes": 904926,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 48465,
+      "replyAudioAfterInputMs": 8037,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 3,
+      "question": "Can you guarantee my puppy will be perfectly trained after the course? What practice is expected from me?",
+      "transcript": "Can you guarantee my puppy will be perfectly trained after the course? What practice is expected from me?",
+      "reply": "No, we can’t guarantee perfect training or a fixed result. Please plan for short practice sessions of about 5–10 minutes a few times each day, with a family member attending and practising the same cues between visits. Progress depends on Bruno’s needs and your household’s consistency.",
+      "inputAudioBytes": 222346,
+      "outputAudioBytes": 474448,
+      "nonSilentBytes": 437618,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 27398,
+      "replyAudioAfterInputMs": 3454,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 4,
+      "question": "Do not book anything. Do you offer weekend socialisation or support between training sessions?",
+      "transcript": "Do not book anything. Do you offer weekend socialization or support between training sessions?",
+      "reply": "Weekend sessions may be requested, but weekend availability is confirmed only when scheduling is checked. Between sessions, PawSpace recommends short daily practice of about 5–10 minutes, a few times a day, with family participation. Gentle socialisation can be included where suitable, while following your vet’s vaccination advice.",
+      "inputAudioBytes": 211200,
+      "outputAudioBytes": 568856,
+      "nonSilentBytes": 520951,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 30487,
+      "replyAudioAfterInputMs": 4024,
+      "recognitionCoverage": 0.8888888888888888
+    }
+  ],
+  "issues": [],
+  "finalTranscript": [
+    {
+      "role": "agent",
+      "message": "Hi, I'm PawSpace's AI dog-training assistant. What would you most like help with for your dog?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "This is an inquiry only. My puppy pulls on walks and jumps on visitors. Explain your dog training program and how it is delivered.",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "PawSpace dog training happens at home through structured sessions with Bruno, along with coaching for your family. It uses positive, reward-based methods, without punishment or shock collars.\n\nFor leash pulling, the Leash Obedience Plan offers 8 sessions over 62 days, while the Puppy Training Plan offers 4 sessions over 31 days and can cover puppy manners such as jumping on visitors. A separate Trainer Meet & Greet is available for assessment. Short daily practice between sessions is important, and results depend on Bruno and the family’s consistency. How old is Bruno, and has he shown any biting or serious aggression?",
+      "timeInCallSeconds": 21,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "I am comparing options, not enrolling. What is included in the training package, and how are sessions scheduled?",
+      "timeInCallSeconds": 60,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "The package includes structured at-home sessions with Bruno and coaching for your family, using positive, reward-based methods. Options include the Starter Plan with 2 sessions over 31 days, the Puppy Training Plan with 4 sessions over 31 days, and longer obedience plans with 8, 12, or 16 sessions. There is also a separate one-session Trainer Meet & Greet, valid for 7 days.\n\nSessions are scheduled across the plan’s validity with an available trainer. Your preferred day and time is a request until availability is confirmed.",
+      "timeInCallSeconds": 75,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Can you guarantee my puppy will be perfectly trained after the course? What practice is expected from me?",
+      "timeInCallSeconds": 109,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "No, we can’t guarantee perfect training or a fixed result. Please plan for short practice sessions of about 5–10 minutes a few times each day, with a family member attending and practising the same cues between visits. Progress depends on Bruno’s needs and your household’s consistency.",
+      "timeInCallSeconds": 119,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Do not book anything. Do you offer weekend socialization or support between training sessions?",
+      "timeInCallSeconds": 136,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "Weekend sessions may be requested, but weekend availability is confirmed only when scheduling is checked. Between sessions, PawSpace recommends short daily practice of about 5–10 minutes, a few times a day, with family participation. Gentle socialisation can be included where suitable, while following your vet’s vaccination advice.",
+      "timeInCallSeconds": 146,
+      "interrupted": false
+    }
+  ],
+  "passed": true,
+  "deployedSha": "db2c97003837663c7370e6ada2d9d1bf574e443e",
+  "workerVersion": "c469441e-5630-4394-a5ab-be3d2490caf6",
+  "agentVersion": "agtvrsn_5001m39x43h4fnrassbq3py6tn5x",
+  "agentId": "agent_2501m39vqwhpf4g94v4djvry31fw",
+  "syntheticProfile": true,
+  "hasDialableNumber": false,
+  "threadId": "THREAD-AUDIO-DEMO-36417330242-1-3",
+  "conversationId": "conv_3401m3kxa76te6fv3mnv89tc11pg",
+  "greeting": "Hi, I'm PawSpace's AI dog-training assistant. What would you most like help with for your dog?",
+  "providerStatus": "done",
+  "durationSeconds": 174,
+  "finalTranscriptMatched": true,
+  "businessStateUnchanged": true,
+  "nonVoiceMessages": 0,
+  "handoffs": [],
+  "finishedAt": "2026-09-28T11:48:02.086Z"
+}

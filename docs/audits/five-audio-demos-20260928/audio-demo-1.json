@@ -1,0 +1,144 @@
+{
+  "id": 1,
+  "title": "Grooming package selection and home visit",
+  "agent": "grooming",
+  "dialed": false,
+  "startedAt": "2026-09-28T11:43:57.510Z",
+  "questionsPlanned": 4,
+  "turns": [
+    {
+      "number": 1,
+      "question": "This is an enquiry only. Explain the grooming packages for my dog Bruno and how they differ.",
+      "transcript": "This is an inquiry only. Explain the grooming packages for my dog, Bruno, and how they differ.",
+      "reply": "One moment while I check that for you. For Bruno, there are four one-time grooming options:\n\nEssential Bath costs ₹1,349 and covers bathing, conditioning, deshedding, drying, combing and brushing. Bath & Basic costs ₹1,899 and adds nail clipping, paw massage, teeth cleaning, ear and eye cleaning, sanitary trimming, and minor face and paw trimming. Complete Makeover costs ₹2,399 and adds hair styling and full-body trimming. Just Trim costs ₹1,599 and includes a haircut, nail clipping and ear cleaning, but no bath.\n\nChoose Essential Bath for coat maintenance, Bath & Basic for broader hygiene, Complete Makeover for a full haircut, or Just Trim if Bruno only needs trimming without a bath.",
+      "inputAudioBytes": 203806,
+      "outputAudioBytes": 1430618,
+      "nonSilentBytes": 1315585,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 63599,
+      "replyAudioAfterInputMs": 4085,
+      "recognitionCoverage": 0.8888888888888888
+    },
+    {
+      "number": 2,
+      "question": "Which grooming package includes a full haircut, and how is that different from a bath with basic grooming?",
+      "transcript": "Which grooming package includes a full haircut, and how is that different from a bath with basic grooming?",
+      "reply": "For Bruno, the Complete Makeover is the package with a full-body haircut. It includes the Bath & Basic services, plus hair styling and full-body trimming, and costs ₹2,399. Bath & Basic costs ₹1,899 and includes bathing, coat care, nails, teeth cleaning, ear and eye cleaning, sanitary trimming, and minor face and paw trimming, but not a full haircut.",
+      "inputAudioBytes": 208424,
+      "outputAudioBytes": 723778,
+      "nonSilentBytes": 660940,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 35602,
+      "replyAudioAfterInputMs": 4337,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 3,
+      "question": "For home grooming, what should I provide and what equipment does your groomer bring?",
+      "transcript": "For home grooming, what should I provide, and what equipment does your groomer bring?",
+      "reply": "For home grooming, please provide a suitable space such as a bathroom or balcony, along with water and electricity. The groomer brings professional tools and grooming products, and cleans up afterwards. Please keep a towel handy, mention any access rules, and tell the groomer about Bruno’s fears, scratching or biting history, skin concerns, or vet restrictions. A short walk and toilet break beforehand is helpful, and avoid a heavy meal in the hour before.",
+      "inputAudioBytes": 173328,
+      "outputAudioBytes": 835130,
+      "nonSilentBytes": 764100,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 37818,
+      "replyAudioAfterInputMs": 4118,
+      "recognitionCoverage": 1
+    },
+    {
+      "number": 4,
+      "question": "How long should I allow for grooming, and can you guarantee an exact finishing time?",
+      "transcript": "How long should I allow for grooming, and can you guarantee an exact finishing time?",
+      "reply": "Grooming time can vary with the package, Bruno’s coat, and his comfort during the appointment. I can’t guarantee an exact finishing time, so please allow some flexibility; the groomer can provide an estimate after assessing him.",
+      "inputAudioBytes": 170928,
+      "outputAudioBytes": 389724,
+      "nonSilentBytes": 358124,
+      "asrSegments": 1,
+      "interrupted": false,
+      "playbackComplete": true,
+      "elapsedMs": 23379,
+      "replyAudioAfterInputMs": 3702,
+      "recognitionCoverage": 1
+    }
+  ],
+  "issues": [],
+  "finalTranscript": [
+    {
+      "role": "agent",
+      "message": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "This is an inquiry only. Explain the grooming packages for my dog, Bruno, and how they differ.",
+      "timeInCallSeconds": 0,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "One moment while I check that for you. For Bruno, there are four one-time grooming options:\n\nEssential Bath costs ₹1,349 and covers bathing, conditioning, deshedding, drying, combing and brushing. Bath & Basic costs ₹1,899 and adds nail clipping, paw massage, teeth cleaning, ear and eye cleaning, sanitary trimming, and minor face and paw trimming. Complete Makeover costs ₹2,399 and adds hair styling and full-body trimming. Just Trim costs ₹1,599 and includes a haircut, nail clipping and ear cleaning, but no bath.\n\nChoose Essential Bath for coat maintenance, Bath & Basic for broader hygiene, Complete Makeover for a full haircut, or Just Trim if Bruno only needs trimming without a bath.",
+      "timeInCallSeconds": 10,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "Which grooming package includes a full haircut, and how is that different from a bath with basic grooming?",
+      "timeInCallSeconds": 64,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "For Bruno, the Complete Makeover is the package with a full-body haircut. It includes the Bath & Basic services, plus hair styling and full-body trimming, and costs ₹2,399. Bath & Basic costs ₹1,899 and includes bathing, coat care, nails, teeth cleaning, ear and eye cleaning, sanitary trimming, and minor face and paw trimming, but not a full haircut.",
+      "timeInCallSeconds": 75,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "For home grooming, what should I provide, and what equipment does your groomer bring?",
+      "timeInCallSeconds": 100,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "For home grooming, please provide a suitable space such as a bathroom or balcony, along with water and electricity. The groomer brings professional tools and grooming products, and cleans up afterwards. Please keep a towel handy, mention any access rules, and tell the groomer about Bruno’s fears, scratching or biting history, skin concerns, or vet restrictions. A short walk and toilet break beforehand is helpful, and avoid a heavy meal in the hour before.",
+      "timeInCallSeconds": 109,
+      "interrupted": false
+    },
+    {
+      "role": "user",
+      "message": "How long should I allow for grooming, and can you guarantee an exact finishing time?",
+      "timeInCallSeconds": 137,
+      "interrupted": false
+    },
+    {
+      "role": "agent",
+      "message": "Grooming time can vary with the package, Bruno’s coat, and his comfort during the appointment. I can’t guarantee an exact finishing time, so please allow some flexibility; the groomer can provide an estimate after assessing him.",
+      "timeInCallSeconds": 146,
+      "interrupted": false
+    }
+  ],
+  "passed": true,
+  "deployedSha": "db2c97003837663c7370e6ada2d9d1bf574e443e",
+  "workerVersion": "c469441e-5630-4394-a5ab-be3d2490caf6",
+  "agentVersion": "agtvrsn_8401m3bjm19xe6ste8eeg4dvpsqs",
+  "agentId": "agent_9201m39vfcjjec4sya7rat0cerct",
+  "syntheticProfile": true,
+  "hasDialableNumber": false,
+  "threadId": "THREAD-AUDIO-DEMO-36417330242-1-1",
+  "conversationId": "conv_3301m3kx8gbte23vhc2tbrag47g8",
+  "greeting": "Hi, this is PawSpace's grooming assistant. How can I help with grooming today?",
+  "providerStatus": "done",
+  "durationSeconds": 167,
+  "finalTranscriptMatched": true,
+  "businessStateUnchanged": true,
+  "nonVoiceMessages": 0,
+  "handoffs": [],
+  "finishedAt": "2026-09-28T11:47:01.961Z"
+}
