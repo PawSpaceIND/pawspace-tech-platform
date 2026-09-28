@@ -16,7 +16,7 @@ export type DefaultsView = { services: ServiceDefaultRow[]; today: string; block
 export type ApprovalNeeded = { termId: string; providerId: string | null; serviceCode: string; pawspaceCommissionPercent: number | null; effectiveFrom: string; createdBy: string; label: string };
 export type DefaultProposal = { serviceCode: string; pawspaceCommissionPercent: string; effectiveFrom: string; reason: string };
 
-const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: 14, padding: 16, marginBottom: 14 } as const;
+const box = { background: "var(--staff-surface)", border: "1px solid var(--staff-line)", borderRadius: "calc(14px * var(--paw-radius-scale))", padding: 16, marginBottom: 14 } as const;
 const muted = { color: "var(--staff-muted)" } as const;
 const serviceLabel = (code: string) => code.replaceAll("_", " ");
 const percentText = (term: DefaultTerm) => term.pawspaceCommissionPercent == null ? "no share (full-time)" : `PawSpace ${term.pawspaceCommissionPercent}%`;
@@ -94,7 +94,7 @@ export default function CommissionDefaultsPanel({ defaults, approvalNeeded = [],
       <button type="button" disabled={busy || problems.length > 0} onClick={() => void propose()}>{busy ? "Saving…" : "Save default for approval"}</button>
     </div>
     {problems.length > 0 && (reason || percent !== String(PAWSPACE_COMMISSION_DEFAULT_PERCENT)) && <ul role="alert" style={{ margin: "10px 0 0", paddingLeft: 20, color: "var(--staff-danger)" }}>{problems.map(problem => <li key={problem}>{problem}</li>)}</ul>}
-    <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "var(--staff-raised)" }}>
+    <div style={{ marginTop: 14, padding: 12, borderRadius: "calc(10px * var(--paw-radius-scale))", background: "var(--staff-raised)" }}>
       <label>Approval reference<br /><input value={approvalReference} onChange={event => setApprovalReference(event.target.value)} placeholder="e.g. FIN-APR-0142" /></label>
       {waiting.length > 1 && <button type="button" style={{ marginLeft: 8 }} disabled={busy || !referenceReady} onClick={() => void approve(waiting.map(term => term.termId))}>Approve all waiting ({waiting.length})</button>}
       <small style={{ display: "block", marginTop: 6, ...muted }}>You approve exactly the changes listed above. The person who proposed a change cannot approve it. Approving needs Finance access.</small>

@@ -1,18 +1,18 @@
 .mediaBanner {
   min-height: 142px;
-  border-radius: 20px;
+  border-radius: var(--paw-card-radius);
   padding: 15px 16px 12px;
-  background: linear-gradient(135deg, #173f35, #216e58);
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-deep));
   color: white;
   box-shadow: 0 9px 24px #2f154216;
   overflow: hidden;
   position: relative;
 }
 .mediaBanner.training {
-  background: linear-gradient(135deg, #351051, #7527ad);
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-primary));
 }
 .mediaBanner.sponsored {
-  background: linear-gradient(135deg, #1b314f, #2878a9);
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-primary));
 }
 .mediaMeta {
   display: flex;
@@ -21,7 +21,7 @@
 }
 .mediaMeta span {
   font-size: 6.5px;
-  color: #ffd475;
+  color: var(--ui-soft-ink);
   font-weight: 900;
   letter-spacing: 0.08em;
 }
@@ -46,7 +46,7 @@
 .mediaBody p {
   max-width: 245px;
   margin: 0;
-  color: #e2f0eb;
+  color: var(--ui-on-primary);
   font-size: 7.5px;
   line-height: 1.45;
 }
@@ -54,9 +54,9 @@
   margin-top: 9px;
   padding: 7px 9px;
   border: 0;
-  border-radius: 8px;
-  background: #ffb52c;
-  color: #321b03;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-gold-primary);
+  color: var(--ui-on-gold);
   font-size: 7px;
   font-weight: 900;
 }
@@ -65,8 +65,8 @@
   height: 50px;
   display: grid;
   place-items: center;
-  border-radius: 16px;
-  background: #ffffff18;
+  border-radius: var(--paw-card-radius);
+  background: color-mix(in srgb, var(--ui-surface) 9.41%, transparent);
   font-size: 21px;
   font-style: normal;
   font-weight: 900;
@@ -82,15 +82,15 @@
   padding: 0;
   border: 0;
   border-radius: 4px;
-  background: #ffffff4a;
+  background: color-mix(in srgb, var(--ui-surface) 29.02%, transparent);
 }
 .mediaDots button.active {
   width: 25px;
-  background: #ffbe43;
+  background: var(--ui-gold-soft);
 }
 .mediaDisclosure {
   margin: 5px 3px 10px;
-  color: #8a7f91;
+  color: var(--ui-muted);
   font-size: 6px;
   text-align: center;
 }

@@ -12,7 +12,7 @@
   font-size: 16px;
 }
 .head small {
-  color: #83788b;
+  color: var(--ui-muted);
   font-size: 8px;
 }
 .trainingSteps {
@@ -23,16 +23,16 @@
 }
 .trainingSteps span {
   height: 22px;
-  border-radius: 8px;
-  background: #e7e1eb;
-  color: #82778a;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--ui-muted);
   display: grid;
   place-items: center;
   font-size: 8px;
   font-weight: 900;
 }
 .trainingSteps span.active {
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
 }
 .assessmentPet {
@@ -40,9 +40,9 @@
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  background: white;
+  background: var(--ui-surface);
   padding: 12px;
-  border-radius: 14px;
+  border-radius: var(--paw-card-radius);
 }
 .assessmentPet > i {
   font-size: 27px;
@@ -53,14 +53,14 @@
 }
 .assessmentPet span {
   font-size: 8px;
-  color: #81758a;
+  color: var(--paw-link);
 }
 .assessmentPet button {
   border: 0;
-  background: #eee5f8;
-  color: #6523a8;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   padding: 7px;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--paw-radius-scale));
   font-size: 8px;
   font-weight: 900;
 }
@@ -74,11 +74,11 @@
 .field select,
 .field textarea {
   width: 100%;
-  border: 1px solid #e2dbe7;
-  background: white;
-  border-radius: 11px;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  border-radius: calc(11px * var(--paw-radius-scale));
   padding: 10px;
-  color: #33263c;
+  color: var(--ui-ink);
   font-size: 9px;
 }
 .field textarea {
@@ -92,10 +92,10 @@
   margin-top: 11px;
 }
 .goalGrid button {
-  border: 1px solid #e3dce8;
-  background: white;
-  color: #3b2e44;
-  border-radius: 10px;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
+  border-radius: calc(10px * var(--paw-radius-scale));
   padding: 9px;
   text-align: left;
   font-size: 8px;
@@ -112,25 +112,25 @@
   width: 17px;
   height: 17px;
   border-radius: 5px;
-  background: #eee7f3;
-  color: #6624a6;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   font-style: normal;
   margin-right: 0;
 }
 .goalGrid button.selected {
-  border: 2px solid #6523aa;
-  background: #efe3ff;
-  color: #421076;
+  border: 2px solid var(--ui-brand-primary);
+  background: var(--ui-brand-canvas);
+  color: var(--ui-ink);
   box-shadow: 0 0 0 2px rgba(101, 35, 170, 0.12), 0 5px 12px rgba(76, 25, 126, 0.10);
   font-weight: 900;
 }
 .goalGrid button.selected i {
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
 }
 .goalGrid button b {
   border-radius: 999px;
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
   padding: 3px 5px;
   font-size: 6px;
@@ -143,10 +143,10 @@
 }
 .requirementActions > button {
   justify-self: start;
-  border: 1px dashed #8c5db7;
-  background: #fbf8ff;
-  color: #6523aa;
-  border-radius: 9px;
+  border: 1px dashed var(--ui-brand-primary);
+  background: var(--ui-surface);
+  color: var(--paw-link);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 8px 10px;
   font-size: 8px;
   font-weight: 900;
@@ -158,28 +158,28 @@
 }
 .requirementActions input {
   min-width: 0;
-  border: 1px solid #b79bcf;
-  border-radius: 9px;
+  border: 1px solid var(--ui-brand-soft);
+  border-radius: calc(9px * var(--paw-radius-scale));
   padding: 8px;
-  color: #30223a;
+  color: var(--ui-ink);
   font-size: 8px;
 }
 .requirementActions div button {
   border: 0;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--paw-radius-scale));
   padding: 8px;
-  background: #6523aa;
+  background: var(--ui-brand-primary);
   color: white;
   font-size: 7px;
   font-weight: 900;
 }
 .requirementActions div button:last-child {
-  background: #eee7f3;
-  color: #5f5069;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
 }
 .requirementActions div button:disabled { opacity: .45; }
 .requirementActions small {
-  color: #75697d;
+  color: var(--paw-link);
   font-size: 7px;
 }
 @media (max-width: 420px) {
@@ -189,9 +189,9 @@
 .primary {
   width: 100%;
   border: 0;
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--paw-radius-scale));
   padding: 12px;
   font-size: 10px;
   font-weight: 900;
@@ -203,7 +203,7 @@
 .back {
   border: 0;
   background: none;
-  color: #6824aa;
+  color: var(--paw-link);
   padding: 12px;
   font-size: 9px;
 }
@@ -212,26 +212,26 @@
   gap: 8px;
 }
 .trainingPlans button {
-  border: 1px solid #e4dde9;
-  background: white;
-  color: #30223a;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   text-align: left;
   padding: 12px;
-  border-radius: 14px;
+  border-radius: var(--paw-card-radius);
 }
 .trainingPlans button.selected,
 .trainers button.selected,
 .trainingTimes button.selected,
 .paymentOptions button.selected {
-  border-color: #6523aa;
-  background: #faf6ff;
+  border-color: var(--ui-brand-primary);
+  background: var(--ui-surface);
 }
 .trainingPlans > button > span {
   font-size: 6px;
-  background: #fff0ca;
-  color: #956000;
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink);
   padding: 4px 5px;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--paw-radius-scale));
 }
 .trainingPlans h4 {
   margin: 7px 0 3px;
@@ -239,7 +239,7 @@
 .trainingPlans p {
   font-size: 8px;
   line-height: 1.4;
-  color: #82778a;
+  color: var(--ui-muted);
   margin: 0;
 }
 .trainingPlans button > div {
@@ -249,16 +249,16 @@
 }
 .trainingPlans button > div b {
   font-size: 7px;
-  background: #f3eef6;
+  background: var(--ui-canvas);
   padding: 5px;
   border-radius: 7px;
 }
 .trainingPlans strong {
-  color: #01261F;
+  color: var(--ui-ink);
 }
 .editable {
   font-size: 7px;
-  color: #8b8192;
+  color: var(--ui-muted);
   text-align: center;
   line-height: 1.4;
 }
@@ -272,11 +272,11 @@
   gap: 9px;
   align-items: center;
   text-align: left;
-  border: 1px solid #e3dbe8;
-  background: white;
-  color: #30223a;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   padding: 11px;
-  border-radius: 14px;
+  border-radius: var(--paw-card-radius);
 }
 .trainers > button > i {
   width: 38px;
@@ -284,7 +284,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
   font-style: normal;
   font-weight: 900;
@@ -295,7 +295,7 @@
 }
 .trainers div span {
   font-size: 6px;
-  color: #128159;
+  color: var(--ui-ink);
   font-weight: 900;
 }
 .trainers h4 {
@@ -305,7 +305,7 @@
 .trainers p,
 .trainers small {
   font-size: 7px;
-  color: #82778a;
+  color: var(--ui-muted);
   margin: 0;
 }
 .trainers em {
@@ -314,7 +314,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
   font-style: normal;
 }
@@ -322,15 +322,15 @@
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 8px;
-  background: #fff7e6;
-  border: 1px solid #f1d28f;
+  background: var(--ui-gold-canvas);
+  border: 1px solid var(--ui-gold-line);
   padding: 10px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--paw-radius-scale));
   margin-top: 10px;
 }
 .protection > i {
   font-style: normal;
-  color: #b97800;
+  color: var(--ui-gold-ink);
 }
 .protection div {
   display: grid;
@@ -340,7 +340,7 @@
 }
 .protection span {
   font-size: 7px;
-  color: #837668;
+  color: var(--ui-gold-ink);
   line-height: 1.4;
 }
 .trainingTimes {
@@ -350,22 +350,22 @@
   margin-top: 11px;
 }
 .trainingTimes button {
-  border: 1px solid #e4dde9;
-  background: white;
-  color: #30233a;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   padding: 9px 5px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--paw-radius-scale));
   font-size: 7px;
   display: grid;
   gap: 3px;
 }
 .trainingTimes small {
   font-size: 6px;
-  color: #138157;
+  color: var(--ui-ink);
 }
 .calendarPreview {
-  background: white;
-  border-radius: 14px;
+  background: var(--ui-surface);
+  border-radius: var(--paw-card-radius);
   padding: 12px;
   margin-top: 10px;
   display: grid;
@@ -385,20 +385,20 @@
   width: 18px;
   height: 18px;
   border-radius: 6px;
-  background: #eee5f8;
-  color: #6423a7;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   display: grid;
   place-items: center;
   font-style: normal;
 }
 .calendarPreview em {
   font-style: normal;
-  color: #7e7386;
+  color: var(--ui-muted);
 }
 .review {
   display: grid;
-  background: white;
-  border-radius: 14px;
+  background: var(--ui-surface);
+  border-radius: var(--paw-card-radius);
   padding: 12px;
   gap: 7px;
 }
@@ -409,7 +409,7 @@
 }
 .review span {
   font-size: 8px;
-  color: #877d8f;
+  color: var(--ui-muted);
 }
 .review b {
   text-align: right;
@@ -426,16 +426,16 @@
   gap: 9px;
   align-items: center;
   text-align: left;
-  border: 1px solid #e4dce9;
-  background: white;
-  color: #30223a;
+  border: 1px solid var(--ui-line);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   padding: 11px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--paw-radius-scale));
 }
 .paymentOptions > button > i {
   width: 20px;
   height: 20px;
-  border: 1px solid #dacfe2;
+  border: 1px solid var(--ui-line);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -443,7 +443,7 @@
   color: white;
 }
 .paymentOptions > button.selected > i {
-  background: #01261F;
+  background: var(--ui-brand-deep);
 }
 .paymentOptions div {
   display: grid;
@@ -453,7 +453,7 @@
 }
 .paymentOptions span {
   font-size: 7px;
-  color: #81768a;
+  color: var(--paw-link);
 }
 .consent {
   display: flex;
@@ -470,7 +470,7 @@
   background: linear-gradient(135deg, #0b4b3e, #11805f);
   color: white;
   padding: 15px;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--paw-radius-scale));
 }
 .trainingSuccess > i {
   width: 35px;
@@ -495,9 +495,9 @@
   margin: 0;
 }
 .trainingSummary {
-  background: white;
+  background: var(--ui-surface);
   padding: 13px;
-  border-radius: 14px;
+  border-radius: var(--paw-card-radius);
   margin-top: 9px;
 }
 .trainingSummary > div {
@@ -507,29 +507,29 @@
 .trainingSummary span {
   display: grid;
   font-size: 7px;
-  color: #82778a;
+  color: var(--ui-muted);
 }
 .trainingSummary span b {
   font-size: 11px;
-  color: #32253b;
+  color: var(--ui-ink);
   margin-top: 3px;
 }
 .trainingSummary progress,
 .milestones progress {
   width: 100%;
   height: 6px;
-  accent-color: #01261F;
+  accent-color: var(--ui-brand-deep);
 }
 .trainingSummary > small {
   font-size: 7px;
-  color: #82778a;
+  color: var(--ui-muted);
 }
 .trainingTabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  background: #eae4ee;
+  background: var(--ui-canvas);
   padding: 4px;
-  border-radius: 11px;
+  border-radius: calc(11px * var(--paw-radius-scale));
   margin: 10px 0;
 }
 .trainingTabs button {
@@ -539,21 +539,21 @@
   font-size: 8px;
 }
 .trainingTabs button.selected {
-  background: white;
-  border-radius: 8px;
+  background: var(--ui-surface);
+  border-radius: calc(8px * var(--paw-radius-scale));
 }
 .nextSession,
 .homework,
 .report {
-  background: white;
+  background: var(--ui-surface);
   padding: 13px;
-  border-radius: 14px;
+  border-radius: var(--paw-card-radius);
   margin-top: 8px;
 }
 .nextSession > span,
 .homework > span {
   font-size: 7px;
-  color: #138159;
+  color: var(--ui-ink);
   font-weight: 900;
 }
 .nextSession h4,
@@ -564,7 +564,7 @@
 .homework p,
 .report p {
   font-size: 8px;
-  color: #81768a;
+  color: var(--paw-link);
   line-height: 1.5;
 }
 .nextSession div,
@@ -576,18 +576,18 @@
 .homework button,
 .moods button {
   border: 0;
-  background: #efe5f8;
-  color: #01261F;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   padding: 7px;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--paw-radius-scale));
   font-size: 7px;
   font-weight: 900;
 }
 .cancelRule {
   display: grid;
-  background: #fff7e5;
-  border: 1px solid #f1d08d;
-  border-radius: 12px;
+  background: var(--ui-gold-canvas);
+  border: 1px solid var(--ui-gold-line);
+  border-radius: calc(12px * var(--paw-radius-scale));
   padding: 10px;
   margin-top: 8px;
 }
@@ -596,13 +596,13 @@
 }
 .cancelRule span {
   font-size: 7px;
-  color: #817568;
+  color: var(--ui-gold-ink);
   line-height: 1.4;
 }
 .sessionList {
   display: grid;
-  background: white;
-  border-radius: 14px;
+  background: var(--ui-surface);
+  border-radius: var(--paw-card-radius);
   margin-top: 8px;
   padding: 8px;
 }
@@ -611,7 +611,7 @@
   grid-template-columns: auto 1fr auto;
   gap: 8px;
   align-items: center;
-  border-bottom: 1px solid #eee8f1;
+  border-bottom: 1px solid var(--ui-canvas);
   padding: 7px;
   font-size: 8px;
 }
@@ -619,15 +619,15 @@
   width: 19px;
   height: 19px;
   border-radius: 6px;
-  background: #eee5f8;
-  color: #01261F;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   display: grid;
   place-items: center;
   font-style: normal;
 }
 .sessionList em {
   font-size: 6px;
-  color: #128159;
+  color: var(--ui-ink);
   font-style: normal;
 }
 .moods {
@@ -638,8 +638,8 @@
   gap: 7px;
 }
 .milestones article {
-  background: white;
-  border-radius: 12px;
+  background: var(--ui-surface);
+  border-radius: calc(12px * var(--paw-radius-scale));
   padding: 10px;
 }
 .milestones article > div {
@@ -648,20 +648,20 @@
   font-size: 8px;
 }
 .milestones article span {
-  color: #01261F;
+  color: var(--ui-ink);
   font-weight: 900;
 }
 .report span {
   font-size: 7px;
-  color: #128159;
+  color: var(--ui-ink);
 }
 .renew {
   width: 100%;
-  border: 1px solid #01261F;
-  background: white;
-  color: #01261F;
+  border: 1px solid var(--ui-brand-deep);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   padding: 11px;
-  border-radius: 11px;
+  border-radius: calc(11px * var(--paw-radius-scale));
   margin-top: 8px;
   font-size: 9px;
   font-weight: 900;
@@ -673,8 +673,8 @@
   align-items: center;
   margin-bottom: 8px;
   padding: 12px;
-  border-radius: 15px;
-  background: linear-gradient(135deg, #32104e, #6b24ac);
+  border-radius: var(--paw-card-radius);
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-primary));
   color: white;
   box-shadow: 0 10px 24px rgba(79, 27, 117, 0.16);
 }
@@ -683,7 +683,7 @@
   gap: 3px;
 }
 .planRecommendation span {
-  color: #ffd36b;
+  color: var(--ui-soft-ink);
   font-size: 6px;
   font-weight: 900;
   letter-spacing: 0.08em;
@@ -694,15 +694,15 @@
 }
 .planRecommendation p {
   margin: 0;
-  color: #e5d9ed;
+  color: var(--ui-on-primary);
   font-size: 7px;
   line-height: 1.4;
 }
 .planRecommendation > b {
   padding: 7px;
-  border-radius: 9px;
-  background: #ffffff18;
-  color: #ffd36b;
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: color-mix(in srgb, var(--ui-surface) 9.41%, transparent);
+  color: var(--ui-soft-ink);
   font-size: 8px;
   white-space: nowrap;
 }
@@ -723,9 +723,9 @@
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  border: 1px solid #bfe2cf;
-  background: #eaf8f0;
-  color: #116e4c;
+  border: 1px solid var(--ui-brand-line);
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 6.5px;
   font-weight: 900;
 }
@@ -735,29 +735,29 @@
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  background: #14825a;
+  background: var(--ui-brand-deep);
   color: white;
   font-style: normal;
   font-size: 6px;
 }
 .trainingPlans button.selected {
-  border: 2px solid #01261F;
-  background: linear-gradient(180deg, #fcf9ff, #f6effc);
+  border: 2px solid var(--ui-brand-deep);
+  background: linear-gradient(180deg, var(--ui-surface), var(--ui-canvas));
   box-shadow: 0 8px 20px rgba(100, 35, 170, .14);
 }
 .trainingPlans button > header > i {
   width: auto;
   min-width: 42px;
   padding: 5px 7px;
-  border-radius: 8px;
-  background: #eee7f4;
-  color: #6e5e79;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   font-size: 6px;
   font-style: normal;
   font-weight: 900;
 }
 .trainingPlans button.selected > header > i {
-  background: #01261F;
+  background: var(--ui-brand-deep);
   color: white;
 }
 .couponSaving {
@@ -765,9 +765,9 @@
   justify-content: space-between;
   margin-top: 7px;
   padding: 8px 10px;
-  border-radius: 9px;
-  background: #e9f8f0;
-  color: #116f4d;
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 7px;
   font-weight: 900;
 }
@@ -783,9 +783,9 @@
   gap: 2px 5px;
   align-items: center;
   padding: 7px;
-  border: 1px solid #e6deeb;
-  border-radius: 10px;
-  background: white;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-surface);
 }
 .planGuide i {
   grid-row: 1 / 3;
@@ -794,8 +794,8 @@
   display: grid;
   place-items: center;
   border-radius: 6px;
-  background: #eee5f8;
-  color: #01261F;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 6px;
   font-style: normal;
   font-weight: 900;
@@ -804,7 +804,7 @@
   font-size: 8px;
 }
 .planGuide small {
-  color: #83788b;
+  color: var(--ui-muted);
   font-size: 6.5px;
   line-height: 1.25;
 }
@@ -818,14 +818,14 @@
   font-size: 9px;
 }
 .planListHead span {
-  color: #83788b;
+  color: var(--ui-muted);
   font-size: 6px;
 }
 .goalSummary span {
   padding: 5px 7px;
-  border-radius: 10px;
-  background: #eaf7f1;
-  color: #177354;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
 }
 .trainingPlans {
   display: grid;
@@ -840,9 +840,9 @@
   box-sizing: border-box;
   padding: 0;
   overflow: hidden;
-  border: 1px solid #ded4e5;
-  border-radius: 15px;
-  background: #fff;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-surface);
   text-align: left;
   box-shadow: 0 4px 14px rgba(50, 26, 68, 0.05);
 }
@@ -866,8 +866,8 @@
   width: max-content;
   padding: 3px 5px;
   border-radius: 7px;
-  background: #fff0ca;
-  color: #8d5b00;
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink);
   font-size: 7px;
   font-weight: 900;
   letter-spacing: 0.05em;
@@ -882,10 +882,10 @@
   align-items: center;
   gap: 5px;
   padding: 5px 7px;
-  border: 1px solid #d8cce1;
+  border: 1px solid var(--ui-brand-line);
   border-radius: 999px;
-  background: #f5f0f7;
-  color: #66566f;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   font-size: 6.5px;
   font-weight: 900;
   letter-spacing: 0;
@@ -896,28 +896,28 @@
   height: 14px;
   display: grid;
   place-items: center;
-  border: 1px solid #bbaec4;
+  border: 1px solid var(--ui-brand-soft);
   border-radius: 50%;
-  background: #fff;
+  background: var(--ui-surface);
   color: #fff;
   font-size: 7px;
   font-style: normal;
 }
 .trainingPlans button.selected > header .planSelectState {
-  border-color: #01261F;
-  background: #01261F;
+  border-color: var(--ui-brand-deep);
+  background: var(--ui-brand-deep);
   color: #fff;
 }
 .trainingPlans button.selected .planSelectState i {
-  border-color: #fff;
-  background: #fff;
-  color: #01261F;
+  border-color: var(--ui-surface);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
 }
 .trainingPlans .planDescription {
   min-height: 0;
   margin: 0;
   padding: 0 11px 9px;
-  color: #685d70;
+  color: var(--ui-muted);
   font-size: 7.5px;
   line-height: 1.45;
 }
@@ -927,7 +927,7 @@
   gap: 4px;
   margin: 0;
   padding: 8px 11px;
-  background: #f6f1f8;
+  background: var(--ui-canvas);
 }
 .planMetrics b {
   display: grid;
@@ -937,20 +937,20 @@
   font-size: 9px !important;
 }
 .planMetrics small {
-  color: #82768a;
+  color: var(--paw-link);
   font-size: 6.5px;
   font-weight: 500;
 }
 .planMetrics strong {
   align-self: center;
-  color: #01261F;
+  color: var(--ui-ink);
   font-size: 15px;
   white-space: nowrap;
 }
 .trainingPlans button > p {
   min-height: 0;
   margin: 9px 11px 6px;
-  color: #5c5263;
+  color: var(--ui-muted);
   font-size: 7px;
 }
 .planExpanded {
@@ -958,17 +958,17 @@
   gap: 7px !important;
   margin: 0 !important;
   padding: 9px 11px 11px;
-  border-top: 1px solid #eee7f2;
-  background: #fff;
+  border-top: 1px solid var(--ui-canvas);
+  background: var(--ui-surface);
 }
 .planExpanded > p {
   margin: 0;
-  color: #5c5263;
+  color: var(--ui-muted);
   font-size: 8px;
   line-height: 1.45;
 }
 .planExpanded > p b {
-  color: #30223a;
+  color: var(--ui-ink);
 }
 .planExpanded .outcomes {
   padding: 0;
@@ -982,8 +982,8 @@
 .planIncludes span {
   padding: 5px;
   border-radius: 7px;
-  background: #f4f0f6;
-  color: #665b6e;
+  background: var(--ui-canvas);
+  color: var(--ui-muted);
   font-size: 7px;
   line-height: 1.3;
 }
@@ -993,7 +993,7 @@
 .tapDetails {
   display: block;
   padding: 7px 11px 9px;
-  color: #0a4a3c;
+  color: var(--ui-ink);
   font-size: 7px;
   font-weight: 900;
 }
@@ -1013,9 +1013,9 @@
 }
 .outcomes em {
   padding: 4px 6px;
-  border-radius: 8px;
-  background: #edf8f3;
-  color: #177354;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 7px;
   font-style: normal;
 }
@@ -1023,17 +1023,17 @@
   display: block;
   margin: 0 11px 10px;
   padding: 6px 8px;
-  border-radius: 8px;
-  background: #fff6df;
-  color: #8c5d08;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink);
   font-size: 6px;
   font-weight: 900;
 }
 .selectedPlanSummary {
   margin-top: 10px;
   padding: 12px;
-  border-radius: 15px;
-  background: #241034;
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-brand-deep);
   color: white;
 }
 .selectedPlanSummary header {
@@ -1042,12 +1042,12 @@
   align-items: center;
 }
 .selectedPlanSummary header span {
-  color: #cdb9db;
+  color: var(--ui-soft-ink);
   font-size: 6px;
   font-weight: 900;
 }
 .selectedPlanSummary header strong {
-  color: #ffd36b;
+  color: var(--ui-soft-ink);
   font-size: 15px;
 }
 .selectedPlanSummary h4 {
@@ -1056,7 +1056,7 @@
 }
 .selectedPlanSummary > p {
   margin: 0 0 9px;
-  color: #d8c9e1;
+  color: var(--ui-on-primary);
   font-size: 7px;
 }
 .selectedPlanSummary > div {
@@ -1068,9 +1068,9 @@
   display: grid;
   gap: 1px;
   padding: 7px;
-  border-radius: 8px;
-  background: #ffffff12;
-  color: #cdbdd7;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: color-mix(in srgb, var(--ui-surface) 7.06%, transparent);
+  color: var(--ui-soft-ink);
   font-size: 5.8px;
 }
 .selectedPlanSummary > div b {
@@ -1080,7 +1080,7 @@
 .selectedPlanSummary > small {
   display: block;
   margin-top: 8px;
-  color: #c9b8d3;
+  color: var(--ui-soft-ink);
   font-size: 6px;
   line-height: 1.45;
 }
@@ -1093,16 +1093,16 @@
   min-width: 0;
   padding: 14px;
   overflow: hidden;
-  border: 1px solid #ded5e4;
-  border-radius: 16px;
-  background: #fff;
-  color: #2f2039;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   text-align: left;
   box-shadow: 0 5px 16px rgba(47, 25, 64, .06);
 }
 .trainingPlans .planCardSelected {
-  border: 2px solid #2d103f;
-  background: #281038;
+  border: 2px solid var(--ui-brand-deep);
+  background: var(--ui-brand-deep);
   color: #fff;
   box-shadow: 0 10px 26px rgba(42, 15, 59, .22);
 }
@@ -1126,13 +1126,13 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #7227b3;
+  color: var(--paw-link);
   font-size: 7px;
   font-weight: 900;
   letter-spacing: .08em;
 }
 .trainingPlans .planCardSelected .planCardBadge {
-  color: #d6c1e3;
+  color: var(--ui-on-primary);
 }
 .trainingPlans .planCardHeader h4 {
   margin: 0;
@@ -1144,23 +1144,23 @@
 .trainingPlans .planCardPrice {
   flex: 0 0 auto;
   align-self: flex-start;
-  color: #6723a8;
+  color: var(--paw-link);
   font-size: 17px;
   line-height: 1.1;
   white-space: nowrap;
 }
 .trainingPlans .planCardSelected .planCardPrice {
-  color: #ffd466;
+  color: var(--ui-soft-ink);
 }
 .trainingPlans .planCardDescription {
   margin: 7px 0 11px;
   padding: 0;
-  color: #706477;
+  color: var(--ui-muted);
   font-size: 8px;
   line-height: 1.45;
 }
 .trainingPlans .planCardSelected .planCardDescription {
-  color: #d6c6df;
+  color: var(--ui-on-primary);
 }
 .trainingPlans .planCardMetrics {
   display: grid;
@@ -1175,20 +1175,20 @@
   gap: 2px;
   min-width: 0;
   padding: 8px;
-  border-radius: 10px;
-  background: #f3edf6;
-  color: #75677d;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--paw-link);
   font-size: 6.5px;
   line-height: 1.3;
 }
 .trainingPlans .planCardSelected .planCardMetrics > span {
-  background: #ffffff12;
-  color: #cdbbd7;
+  background: color-mix(in srgb, var(--ui-surface) 7.06%, transparent);
+  color: var(--ui-soft-ink);
 }
 .trainingPlans .planCardMetrics b {
   padding: 0;
   background: transparent;
-  color: #34243e;
+  color: var(--ui-ink);
   font-size: 8px;
 }
 .trainingPlans .planCardSelected .planCardMetrics b {
@@ -1202,19 +1202,19 @@
 .trainingPlans .planCardIncludes {
   display: block;
   margin: 10px 0 0;
-  color: #7a6d81;
+  color: var(--paw-link);
   font-size: 6.5px;
   line-height: 1.45;
 }
 .trainingPlans .planCardSelected .planCardIncludes {
-  color: #cdbbd7;
+  color: var(--ui-soft-ink);
 }
 .trainingPlans .planCardExpanded {
   display: grid;
   gap: 7px;
   margin: 10px 0 0;
   padding: 10px 0 0;
-  border-top: 1px solid #ffffff22;
+  border-top: 1px solid color-mix(in srgb, var(--ui-surface) 13.33%, transparent);
   background: transparent;
 }
 .trainingPlans .planCardExpanded p {
@@ -1230,17 +1230,17 @@
 }
 .trainingPlans .planCardExpanded em {
   padding: 4px 6px;
-  border-radius: 8px;
-  background: #ffffff12;
-  color: #d9cae2;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: color-mix(in srgb, var(--ui-surface) 7.06%, transparent);
+  color: var(--ui-on-primary);
   font-size: 6.5px;
   font-style: normal;
 }
 .trainingPlans .planCardExpanded > small {
   padding: 6px 8px;
-  border-radius: 8px;
-  background: #fff0bd;
-  color: #745000;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-gold-wash);
+  color: var(--ui-ink);
   font-size: 6.5px;
   font-weight: 900;
 }
@@ -1251,17 +1251,17 @@
   gap: 6px;
   margin-top: 11px;
   padding: 9px;
-  border: 1px solid #d9cde1;
-  border-radius: 10px;
-  background: #faf7fc;
-  color: #01261F;
+  border: 1px solid var(--ui-brand-line);
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   font-size: 7.5px;
   font-weight: 900;
 }
 .trainingPlans .planCardSelected .planCardAction {
-  border-color: #ffd466;
-  background: #ffd466;
-  color: #2c103d;
+  border-color: var(--ui-gold-soft);
+  background: var(--ui-gold-soft);
+  color: var(--ui-on-gold);
 }
 .trainingPlans .planCardAction i {
   display: grid;
@@ -1303,10 +1303,10 @@
   gap: 6px;
   align-items: center;
   padding: 8px;
-  border: 1px solid #e3dce8;
-  border-radius: 11px;
-  background: white;
-  color: #34273d;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(11px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   text-align: left;
 }
 .trainingPetGrid i {
@@ -1320,11 +1320,11 @@
   font-size: 8px;
 }
 .trainingPetGrid small {
-  color: #83788b;
+  color: var(--ui-muted);
   font-size: 5.5px;
 }
 .trainingPetGrid em {
-  color: #01261F;
+  color: var(--ui-ink);
   font-size: 8px;
   font-style: normal;
   font-weight: 900;
@@ -1334,14 +1334,14 @@
   gap: 2px;
   margin: 7px 0 0;
   padding: 8px 9px;
-  border-radius: 10px;
-  background: #eee5f8;
-  color: #01261F;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 7px;
   font-weight: 900;
 }
 .durationRule span {
-  color: #716579;
+  color: var(--paw-link);
   font-size: 6px;
   font-weight: 500;
 }
@@ -1350,9 +1350,9 @@
   gap: 7px;
   margin-top: 9px;
   padding: 10px;
-  border: 1px solid #d7c7e6;
-  border-radius: 13px;
-  background: white;
+  border: 1px solid var(--ui-brand-line);
+  border-radius: calc(13px * var(--paw-radius-scale));
+  background: var(--ui-surface);
 }
 .meetTrainer > label {
   display: grid;
@@ -1361,7 +1361,7 @@
   align-items: center;
 }
 .meetTrainer input {
-  accent-color: #01261F;
+  accent-color: var(--ui-brand-deep);
 }
 .meetTrainer label span {
   display: grid;
@@ -1372,14 +1372,14 @@
 }
 .meetTrainer label small,
 .meetTrainer > p {
-  color: #81768a;
+  color: var(--paw-link);
   font-size: 6px;
   line-height: 1.4;
 }
 .meetTrainer > p {
   margin: 0;
 }
-.meetPitch{display:grid;gap:3px;padding:10px;border-radius:10px;background:linear-gradient(135deg,#2b103e,#6423a7);color:#fff}.meetPitch span{color:#ffd36b;font-size:6px;font-weight:900;letter-spacing:.08em}.meetPitch h4{margin:0;font-size:11px;line-height:1.3}.meetPitch p{margin:0;color:#dfd1e8;font-size:6.5px;line-height:1.45}.meetOnly{width:100%;border:1px solid #6423a7;border-radius:9px;background:#fff;color:#6423a7;padding:9px;font-size:7px;font-weight:900}.meetOnly:disabled{opacity:.5}.meetConfirmed{display:grid;gap:2px;padding:9px;border-radius:9px;background:#e8f7ef;color:#116f4d}.meetConfirmed b{font-size:8px}.meetConfirmed span,.meetConfirmed small{font-size:6px;line-height:1.4}
+.meetPitch{display:grid;gap:3px;padding:10px;border-radius:calc(10px * var(--paw-radius-scale));background:linear-gradient(135deg,var(--ui-brand-deep),var(--ui-brand-primary));color:#fff}.meetPitch span{color:var(--ui-soft-ink);font-size:6px;font-weight:900;letter-spacing:.08em}.meetPitch h4{margin:0;font-size:11px;line-height:1.3}.meetPitch p{margin:0;color:var(--ui-on-primary);font-size:6.5px;line-height:1.45}.meetOnly{width:100%;border:1px solid var(--ui-brand-primary);border-radius:calc(9px * var(--paw-radius-scale));background:var(--ui-surface);color:var(--paw-link);padding:9px;font-size:7px;font-weight:900}.meetOnly:disabled{opacity:.5}.meetConfirmed{display:grid;gap:2px;padding:9px;border-radius:calc(9px * var(--paw-radius-scale));background:#e8f7ef;color:#116f4d}.meetConfirmed b{font-size:8px}.meetConfirmed span,.meetConfirmed small{font-size:6px;line-height:1.4}
 .meetSlots {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1389,14 +1389,14 @@
   display: grid;
   gap: 2px;
   padding: 7px 4px;
-  border: 1px solid #e4ddea;
-  border-radius: 9px;
-  background: white;
-  color: #33263c;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   font-size: 6px;
 }
 .meetSlots small {
-  color: #14815b;
+  color: var(--ui-ink);
   font-size: 5px;
 }
 .sessionLogic {
@@ -1404,15 +1404,15 @@
   gap: 4px;
   margin-top: 9px;
   padding: 10px;
-  border-radius: 12px;
-  background: #e9f6ef;
+  border-radius: calc(12px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
 }
 .sessionLogic b {
-  color: #116b4b;
+  color: var(--ui-ink);
   font-size: 8px;
 }
 .sessionLogic span {
-  color: #61776d;
+  color: var(--paw-link);
   font-size: 6.5px;
   line-height: 1.45;
 }

@@ -2,15 +2,15 @@
   min-height: 100vh;
   display: grid;
   grid-template-columns: 225px 1fr;
-  background: #f5f2f7;
-  color: #21152d;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
 }
 .shell > aside {
   height: 100vh;
   position: sticky;
   top: 0;
   padding: 18px 13px;
-  background: #201039;
+  background: var(--ui-brand-deep);
   color: white;
 }
 .shell > aside img {
@@ -25,17 +25,17 @@
   gap: 10px;
   margin: 22px 4px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-surface) 8%, transparent);
+  border-radius: calc(12px * var(--paw-radius-scale));
 }
 .host > span {
   width: 35px;
   height: 35px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: #f0a11d;
-  color: #351b00;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-gold-primary);
+  color: var(--ui-on-gold);
   font-size: 11px;
   font-weight: 950;
 }
@@ -48,7 +48,7 @@
 }
 .host small {
   font-size: 8px;
-  color: #bfb0ca;
+  color: var(--ui-soft-ink);
 }
 .shell nav {
   display: flex;
@@ -61,9 +61,9 @@
   gap: 10px;
   padding: 11px;
   border: 0;
-  border-radius: 9px;
+  border-radius: calc(9px * var(--paw-radius-scale));
   background: transparent;
-  color: #bcaec8;
+  color: var(--ui-soft-ink);
   text-align: left;
   font-size: 10px;
   font-weight: 800;
@@ -76,11 +76,11 @@
   margin-left: auto;
   padding: 3px 6px;
   border-radius: 99px;
-  background: #f3a01d;
-  color: #291400;
+  background: var(--ui-gold-primary);
+  color: var(--ui-on-gold);
 }
 .shell nav .active {
-  background: #6530a0;
+  background: var(--ui-brand-primary);
   color: white;
 }
 .sideFoot {
@@ -96,7 +96,7 @@
 .sideFoot button {
   border: 0;
   background: transparent;
-  color: #b9aac5;
+  color: var(--ui-soft-ink);
   text-decoration: none;
   text-align: left;
   font-size: 9px;
@@ -115,7 +115,7 @@
 .panelHead span,
 .profileGrid aside > span {
   margin: 0;
-  color: #75697e;
+  color: var(--paw-link);
   font-size: 8px;
   font-weight: 900;
   letter-spacing: 0.12em;
@@ -128,8 +128,8 @@
 .live {
   padding: 8px 11px;
   border-radius: 99px;
-  background: #e5f5ed;
-  color: #16704f;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 9px;
   font-weight: 850;
 }
@@ -141,15 +141,15 @@
 }
 .metrics article {
   padding: 16px;
-  border: 1px solid #e6ddeb;
-  border-radius: 14px;
-  background: white;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-surface);
   display: flex;
   flex-direction: column;
 }
 .metrics span {
   font-size: 9px;
-  color: #796f81;
+  color: var(--ui-muted);
 }
 .metrics strong {
   font-size: 21px;
@@ -157,7 +157,7 @@
 }
 .metrics small {
   font-size: 8px;
-  color: #8a7f91;
+  color: var(--ui-muted);
 }
 .todayGrid,
 .requestLayout,
@@ -176,9 +176,9 @@
 }
 .panel {
   padding: 20px;
-  border: 1px solid #e5dce9;
-  border-radius: 16px;
-  background: white;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--paw-card-radius);
+  background: var(--ui-surface);
   box-shadow: 0 6px 22px rgba(42, 19, 61, 0.04);
 }
 .panelHead {
@@ -194,9 +194,9 @@
 }
 .panelHead button {
   border: 0;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--paw-radius-scale));
   padding: 8px 10px;
-  background: #5b2494;
+  background: var(--ui-brand-primary);
   color: white;
   font-size: 9px;
   font-weight: 850;
@@ -206,8 +206,8 @@
   align-items: center;
   gap: 11px;
   padding: 14px;
-  border-radius: 13px;
-  background: linear-gradient(135deg, #321052, #6c2ba1);
+  border-radius: calc(13px * var(--paw-radius-scale));
+  background: linear-gradient(135deg, var(--ui-brand-deep), var(--ui-brand-primary));
   color: white;
 }
 .petHero > span {
@@ -215,9 +215,9 @@
   height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 13px;
-  background: #f0a11d;
-  color: #321800;
+  border-radius: calc(13px * var(--paw-radius-scale));
+  background: var(--ui-gold-primary);
+  color: var(--ui-on-gold);
   font-weight: 950;
 }
 .petHero h3 {
@@ -227,12 +227,12 @@
 .petHero p {
   margin: 3px 0;
   font-size: 8px;
-  color: #d7c6e3;
+  color: var(--ui-on-primary);
 }
 .petHero button {
   margin-left: auto;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ui-surface) 30%, transparent);
+  border-radius: calc(8px * var(--paw-radius-scale));
   background: transparent;
   color: white;
   padding: 8px;
@@ -248,8 +248,8 @@
   align-items: center;
   gap: 10px;
   border: 0;
-  border-bottom: 1px solid #eee8f1;
-  background: white;
+  border-bottom: 1px solid var(--ui-canvas);
+  background: var(--ui-surface);
   text-align: left;
 }
 .tasks i {
@@ -258,8 +258,8 @@
   display: grid;
   place-items: center;
   border-radius: 7px;
-  background: #e9f7f0;
-  color: #14704e;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-style: normal;
 }
 .tasks div {
@@ -272,7 +272,7 @@
 }
 .tasks small {
   font-size: 8px;
-  color: #81768a;
+  color: var(--paw-link);
   margin-top: 2px;
 }
 .quick {
@@ -283,10 +283,10 @@
 }
 .quick button {
   padding: 9px 4px;
-  border: 1px solid #dfd4e6;
-  border-radius: 8px;
-  background: #f9f6fb;
-  color: #502078;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--ui-ink);
   font-size: 8px;
   font-weight: 800;
 }
@@ -295,11 +295,11 @@
   grid-template-columns: 58px 1fr;
   gap: 9px;
   padding: 13px 0;
-  border-top: 1px solid #eee8f1;
+  border-top: 1px solid var(--ui-canvas);
 }
 .timeline b {
   font-size: 9px;
-  color: #5b2494;
+  color: var(--paw-link);
 }
 .timeline div {
   display: flex;
@@ -310,17 +310,17 @@
 }
 .timeline small {
   font-size: 8px;
-  color: #807489;
+  color: var(--paw-link);
   margin-top: 3px;
 }
 .emergency {
   width: 100%;
   margin-top: 14px;
   padding: 10px;
-  border: 1px solid #e7b2b8;
-  border-radius: 9px;
-  background: #fff7f7;
-  color: #af2636;
+  border: 1px solid var(--ui-brand-line);
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--paw-link);
   font-size: 9px;
   font-weight: 850;
 }
@@ -332,8 +332,8 @@
   gap: 10px;
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 11px;
-  background: #faf8fb;
+  border-radius: calc(11px * var(--paw-radius-scale));
+  background: var(--ui-surface);
   text-align: left;
   margin-bottom: 7px;
 }
@@ -342,9 +342,9 @@
   height: 35px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: #e9ddf2;
-  color: #55227f;
+  border-radius: calc(10px * var(--paw-radius-scale));
+  background: var(--ui-brand-wash);
+  color: var(--paw-link);
   font-size: 10px;
   font-weight: 950;
 }
@@ -357,34 +357,34 @@
 }
 .request small {
   font-size: 8px;
-  color: #80758a;
+  color: var(--paw-link);
   margin-top: 3px;
 }
 .request b {
   font-size: 8px;
-  color: #17704f;
+  color: var(--ui-ink);
 }
 .request.selected {
-  border-color: #8a59b3;
-  background: #f6effb;
+  border-color: var(--ui-brand-primary);
+  background: var(--ui-canvas);
 }
 .match {
   padding: 5px 8px;
   border-radius: 99px;
-  background: #e7f6ef;
-  color: #14704e;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 8px;
   font-weight: 900;
 }
 .panel > p {
   font-size: 10px;
   line-height: 1.6;
-  color: #786d81;
+  color: var(--paw-link);
 }
 .careNotes {
   padding: 13px;
-  border-radius: 11px;
-  background: #f7f3f9;
+  border-radius: calc(11px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -394,7 +394,7 @@
 }
 .careNotes span {
   font-size: 8px;
-  color: #6f6478;
+  color: var(--paw-link);
 }
 .panel dl {
   margin: 15px 0;
@@ -403,11 +403,11 @@
   display: flex;
   justify-content: space-between;
   padding: 9px 0;
-  border-top: 1px solid #ece5ef;
+  border-top: 1px solid var(--ui-canvas);
 }
 .panel dt {
   font-size: 9px;
-  color: #7d7285;
+  color: var(--ui-muted);
 }
 .panel dd {
   margin: 0;
@@ -421,16 +421,16 @@
 }
 .actions button {
   padding: 10px;
-  border: 1px solid #d9cee1;
-  border-radius: 8px;
-  background: white;
-  color: #53227b;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-surface);
+  color: var(--paw-link);
   font-size: 8px;
   font-weight: 900;
 }
 .actions button:last-child {
-  border-color: #5d2494;
-  background: #5d2494;
+  border-color: var(--ui-brand-primary);
+  background: var(--ui-brand-primary);
   color: white;
 }
 .calendar {
@@ -441,11 +441,11 @@
 .calendar button {
   min-height: 68px;
   padding: 8px;
-  border: 1px solid #e6ddea;
-  border-radius: 9px;
-  background: #f4fbf7;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-surface);
   text-align: left;
-  color: #21694f;
+  color: var(--ui-ink);
 }
 .calendar button span {
   display: block;
@@ -455,34 +455,34 @@
   font-size: 7px;
 }
 .calendar .booked {
-  background: #eee4f6;
-  color: #56217f;
+  background: var(--ui-canvas);
+  color: var(--paw-link);
 }
 .calendar .pending {
   background: #fff4dd;
   color: #8a5406;
 }
 .calendar .blocked {
-  background: #eeecef;
-  color: #7f7884;
+  background: var(--ui-canvas);
+  color: var(--ui-muted);
 }
 .legend {
   display: flex;
   gap: 16px;
   margin-top: 13px;
   font-size: 8px;
-  color: #796f81;
+  color: var(--ui-muted);
 }
 .earning {
   display: grid;
   grid-template-columns: 100px 1fr 120px 90px;
   gap: 10px;
   padding: 12px 5px;
-  border-top: 1px solid #ece5ef;
+  border-top: 1px solid var(--ui-canvas);
   font-size: 9px;
 }
 .earning small {
-  color: #7c7184;
+  color: var(--ui-muted);
 }
 .earning strong {
   text-align: right;
@@ -497,7 +497,7 @@
   min-height: 120px;
   margin: 0;
   overflow: hidden;
-  border-radius: 11px;
+  border-radius: calc(11px * var(--paw-radius-scale));
 }
 .photos img {
   width: 100%;
@@ -513,7 +513,7 @@
   left: 8px;
   padding: 6px 8px;
   border-radius: 7px;
-  background: #21112bbd;
+  background: color-mix(in srgb, var(--ui-brand-deep) 74.12%, transparent);
   color: white;
   font-size: 8px;
   font-weight: 850;
@@ -530,8 +530,8 @@
 .badges span {
   padding: 6px 8px;
   border-radius: 7px;
-  background: #eaf7f1;
-  color: #156a4c;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
   font-size: 8px;
   font-weight: 800;
 }
@@ -542,16 +542,16 @@
   align-items: center;
   margin-top: 14px;
   padding: 12px;
-  border: 1px solid #d8c7e4;
-  border-radius: 12px;
-  background: #f4eef8;
+  border: 1px solid var(--ui-brand-line);
+  border-radius: calc(12px * var(--paw-radius-scale));
+  background: var(--ui-canvas);
 }
 .marketSync b {
-  color: #552080;
+  color: var(--paw-link);
   font-size: 10px;
 }
 .marketSync span {
-  color: #706479;
+  color: var(--paw-link);
   font-size: 8px;
   line-height: 1.45;
 }
@@ -559,8 +559,8 @@
   grid-column: 2;
   grid-row: 1 / 3;
   border: 0;
-  border-radius: 8px;
-  background: #6423a8;
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: var(--ui-brand-primary);
   color: white;
   padding: 9px 11px;
   font-size: 8px;
@@ -572,8 +572,8 @@
   right: 20px;
   bottom: 20px;
   padding: 11px 15px;
-  border-radius: 9px;
-  background: #17704f;
+  border-radius: calc(9px * var(--paw-radius-scale));
+  background: var(--ui-brand-deep);
   color: white;
   font-size: 9px;
   font-weight: 900;

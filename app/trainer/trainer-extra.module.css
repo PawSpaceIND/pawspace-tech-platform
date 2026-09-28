@@ -3,12 +3,12 @@
   gap: 6px;
   margin-bottom: 9px;
   padding: 11px;
-  border: 1px solid #efd08d;
-  border-radius: 11px;
-  background: #fff7e5;
+  border: 1px solid var(--ui-gold-line);
+  border-radius: calc(11px * var(--paw-radius-scale));
+  background: var(--ui-gold-canvas);
 }
 .meetRequest > span {
-  color: #9a6400;
+  color: var(--ui-gold-ink);
   font-size: 7px;
   font-weight: 900;
   letter-spacing: .08em;
@@ -17,7 +17,7 @@
   font-size: 9px;
 }
 .meetRequest > small {
-  color: #766a5f;
+  color: var(--ui-gold-ink);
   font-size: 7px;
 }
 .meetRequest > div {
@@ -28,8 +28,8 @@
   padding: 7px;
   border: 0;
   border-radius: 7px;
-  background: #f0a21f;
-  color: #321800;
+  background: var(--ui-gold-primary);
+  color: var(--ui-on-gold);
   font-size: 7px;
   font-weight: 900;
 }

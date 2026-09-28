@@ -17,7 +17,7 @@ const HEADS=["igst","cgst","sgst","cess"] as const;
 const HEAD_LABEL:Record<string,string>={igst:"IGST",cgst:"CGST",sgst:"SGST",cess:"Cess"};
 const money=(v:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(Number(v||0));
 const previousMonth=()=>{const d=new Date(Date.now()+330*60_000);d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()-1);return d.toISOString().slice(0,7);};
-const box={background:"var(--staff-raised)",border:"1px solid var(--staff-line)",borderRadius:12,padding:14};
+const box={background:"var(--staff-raised)",border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:14};
 const cell={padding:"6px 8px",borderTop:"1px solid var(--staff-line)",textAlign:"left" as const,fontVariantNumeric:"tabular-nums" as const};
 const wide={width:"100%",boxSizing:"border-box" as const},capped={maxWidth:"80vw"};
 const CREDITABLE=["eligible","common_rule_42"];
@@ -70,7 +70,7 @@ export default function InputTaxPanel({entities,registrations}:{entities:Row[];r
  const figures=summary?.saved?.figures??summary?.live??null,live=summary?.live??null;
  const field=(label:string,control:React.ReactNode)=><label style={{display:"grid",gap:4,minWidth:0}}>{label}{control}</label>;
  const set=(key:keyof typeof emptyBill)=>(e:{target:{value:string}})=>setForm(f=>({...f,[key]:e.target.value}));
- return <section style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",padding:18,borderRadius:14,marginBottom:16}}>
+ return <section style={{background:"var(--staff-surface)",border:"1px solid var(--staff-line)",padding:18,borderRadius:"calc(14px * var(--paw-radius-scale))",marginBottom:16}}>
   <h2 style={{marginTop:0}}>Input tax credit and GST payment</h2>
   <p style={{color:"var(--staff-muted)"}}>GST charged by vendors (for example Google Ads or software) is credited only when the bill has its tax split into CGST, SGST, IGST and cess and the invoice is in GSTR-2B (or Finance confirms it with a reason). Blocked credit (section 17(5)) stays in the expense. Reverse-charge tax is paid in cash. The month&apos;s credit is set off against the GST payable in the Rule 88A order before the cash is paid.</p>
   <div style={{display:"flex",gap:12,alignItems:"end",flexWrap:"wrap",marginBottom:12}}>

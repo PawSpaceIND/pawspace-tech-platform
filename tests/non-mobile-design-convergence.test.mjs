@@ -18,9 +18,9 @@ test("non-mobile workspaces use the shared convergence layer", () => {
 
 test("shared convergence layer uses PawSpace emerald and gold tokens", () => {
   const css = read("app/components/ui/workspace-convergence.module.css");
-  assert.match(css, /--ws-deep:\s*#01261f/i);
-  assert.match(css, /--ws-gold:\s*#e6b34e/i);
-  assert.match(css, /--ws-line:\s*#d8e6e0/i);
+  assert.match(css, /--ws-deep:\s*var\(--ui-brand-deep\)/);
+  assert.match(css, /--ws-gold:\s*var\(--ui-gold-soft\)/);
+  assert.match(css, /--ws-line:\s*var\(--ui-line\)/);
   assert.match(css, /\.crm\b/);
   assert.match(css, /\.control\b/);
   assert.match(css, /\.operations\b/);

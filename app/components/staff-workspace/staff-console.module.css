@@ -11,10 +11,10 @@
   --ds-text-xs:.8125rem; --ds-text-sm:.875rem; --ds-text-base:1rem; --ds-text-lg:1.125rem; --ds-text-2xl:1.75rem; --ds-text-3xl:2rem;
   --ds-radius-full:10px; --ds-radius-lg:16px; --ds-shadow-sm:var(--staff-shadow); --ds-shadow-md:var(--staff-shadow);
   --line:var(--staff-line); --purple:var(--staff-primary); --ink:var(--staff-text); --muted:var(--staff-muted);
-  color:var(--staff-text); background:var(--staff-bg); font-family:"PawSpaceStaffNunito",system-ui,sans-serif; font-size:1rem; line-height:1.55;
+  color:var(--staff-text); background:var(--staff-bg); font-family:var(--paw-font); font-size:1rem; line-height:1.55;
   min-width:0;
 }
-.console :where(h1,h2,h3,h4,button,input,textarea,select) { font-family:inherit; }
+.console :where(h1,h2,h3,h4,button,input,textarea,select) { font-family:var(--paw-font); }
 .console :where(h1) { font-size:2rem; line-height:1.25; }
 .console :where(h2) { font-size:1.25rem; }
 .console :where(h3) { font-size:1.125rem; }
@@ -27,7 +27,7 @@
 .console :where(button,a,input,select,textarea,summary):focus-visible { outline:3px solid var(--staff-gold); outline-offset:3px; }
 @media(max-width:720px) { .console :where(h1) { font-size:1.75rem; } }
 /* Give previously unstyled native fields the same readable form treatment. */
-.console :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),select,textarea) { border:1px solid var(--staff-line); border-radius:9px; padding:9px 11px; font-size:.9375rem; line-height:1.5; }
+.console :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),select,textarea) { border:1px solid var(--staff-line); border-radius:calc(9px * var(--paw-radius-scale)); padding:9px 11px; font-size:.9375rem; line-height:1.5; }
 .console :where(label:has(>input:not([type="checkbox"]):not([type="radio"])),label:has(>select),label:has(>textarea)) { display:grid; gap:6px; min-width:0; align-content:start; }
 .console :where(h1) { font-weight:750; }
 .console :where(h2,h3) { font-weight:700; }

@@ -23,7 +23,7 @@ export default function GlobalError({
           alignItems: "center",
           justifyContent: "center",
           padding: "32px 20px",
-          background: "#f7faf8",
+          background: "var(--paw-surface, #f7faf8)",
           fontFamily:
             'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
         }}
@@ -32,10 +32,10 @@ export default function GlobalError({
           <div aria-hidden="true" style={{ fontSize: 40, marginBottom: 14 }}>
             ⌾
           </div>
-          <h1 style={{ fontSize: 20, margin: "0 0 8px", color: "#06231c" }}>
+          <h1 style={{ fontSize: 20, margin: "0 0 8px", color: "var(--paw-primary, #01261F)" }}>
             PawSpace couldn&apos;t start this page
           </h1>
-          <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 20px", color: "#5b6b66" }}>
+          <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 20px", color: "var(--paw-text, #18382F)" }}>
             This is unexpected. Reloading usually clears it. If it keeps happening, quote the
             reference below.
           </p>
@@ -44,19 +44,19 @@ export default function GlobalError({
             onClick={reset}
             style={{
               padding: "11px 20px",
-              borderRadius: 12,
+              borderRadius: "calc(12px * var(--paw-radius-scale, 1))",
               border: "none",
               cursor: "pointer",
               fontSize: 14,
               fontWeight: 600,
               color: "#ffffff",
-              background: "#01261F",
+              background: "var(--paw-deep, #01261F)",
             }}
           >
             Reload
           </button>
           {error.digest ? (
-            <p style={{ fontSize: 11, marginTop: 18, color: "#8a9a95" }}>
+            <p style={{ fontSize: 11, marginTop: 18, color: "var(--paw-muted, #556B63)" }}>
               Reference: <code>{error.digest}</code>
             </p>
           ) : null}

@@ -290,7 +290,7 @@ export default function PartnerOnboardingUatPage() {
                 <input type="email" value={form.workEmail} onChange={e => setForm({ ...form, workEmail: e.target.value })} placeholder="name@pawspace.in" />
               </label> : null}
               <label className={styles.field}><span>Your bio</span>
-                <textarea rows={4} style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid var(--ps-border)", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} placeholder="A short, friendly line about you - or draft one with AI below and edit it." />
+                <textarea rows={4} style={{ width: "100%", padding: "11px 13px", borderRadius: "calc(10px * var(--paw-radius-scale))", border: "1px solid var(--ps-border)", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} placeholder="A short, friendly line about you - or draft one with AI below and edit it." />
               </label>
               <button className={styles.btnGhost} disabled={bioBusy || !form.displayName} onClick={() => void draftBioWithAi()}>
                 {bioBusy ? "Drafting…" : "✨ Draft with AI"}
