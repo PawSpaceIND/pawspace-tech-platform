@@ -6,6 +6,8 @@ import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{uatLoginEnabled}from"../../../lib/uat-staging-auth";
 import{billHasSplit,billPostingLines,billTaxColumns,billTaxLocked,ensureInputTaxTables,entityHomeState,hasBillTaxInput,isIsoDate,istToday,syncBillLedger,type BillTaxColumns}from"../../../lib/gst-input-tax";
+import{ensureCollectionLedgerTables} from "../../../lib/collection-ledger";
+import{ensureCanonicalBookingCoreTables} from "../../../lib/canonical-booking-core-schema";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -40,6 +42,8 @@ async function ensureSchema(db:Db){
  await repairSchemaDrift(db);
  await ensureFinanceEntityScope(db);
  await ensureInputTaxTables(db);
+ await ensureCollectionLedgerTables(db);
+ await ensureCanonicalBookingCoreTables(db);
  await db.prepare("INSERT OR IGNORE INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) SELECT source_type,source_id,'legacy:'||source_type||':'||source_id,MIN(created_at) FROM finance_journal_entries GROUP BY source_type,source_id").run();
 }
 
@@ -89,11 +93,11 @@ async function seed(db:Db){
  await db.prepare("INSERT OR IGNORE INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES ('2026-07','review','[\"Bank reconciled\",\"GST reviewed\",\"Payroll posted\",\"Accruals approved\"]',NULL,NULL,?)").bind(createdAt).run();
 }
 
-export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();await seed(db);const[expenses,bills,vendors,journals,bank,budgets,periods,audits]=await Promise.all([
- db.prepare("SELECT * FROM finance_expenses ORDER BY updated_at DESC LIMIT 50").all(),db.prepare("SELECT b.*,v.name vendor_name FROM finance_bills b LEFT JOIN finance_vendors v ON v.id=b.vendor_id ORDER BY b.updated_at DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_vendors ORDER BY name").all(),db.prepare("SELECT * FROM finance_journal_entries ORDER BY created_at DESC LIMIT 60").all(),db.prepare("SELECT * FROM finance_bank_transactions ORDER BY updated_at DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_budgets ORDER BY period_code DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_close_periods ORDER BY period_code DESC").all(),db.prepare("SELECT * FROM finance_audit_events ORDER BY created_at DESC LIMIT 30").all()]);
+export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();await seed(db);const[expenses,bills,vendors,journals,bank,budgets,periods,audits,collections]=await Promise.all([
+ db.prepare("SELECT * FROM finance_expenses ORDER BY updated_at DESC LIMIT 50").all(),db.prepare("SELECT b.*,v.name vendor_name FROM finance_bills b LEFT JOIN finance_vendors v ON v.id=b.vendor_id ORDER BY b.updated_at DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_vendors ORDER BY name").all(),db.prepare("SELECT * FROM finance_journal_entries ORDER BY created_at DESC LIMIT 60").all(),db.prepare("SELECT * FROM finance_bank_transactions ORDER BY updated_at DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_budgets ORDER BY period_code DESC LIMIT 50").all(),db.prepare("SELECT * FROM finance_close_periods ORDER BY period_code DESC").all(),db.prepare("SELECT * FROM finance_audit_events ORDER BY created_at DESC LIMIT 30").all(),db.prepare("SELECT c.*,p.booking_id,b.customer_id,b.service_code,b.city_id FROM collection_ledger_postings c LEFT JOIN booking_payments p ON p.id=c.payment_id LEFT JOIN canonical_bookings b ON b.id=p.booking_id ORDER BY c.created_at DESC LIMIT 100").all()]);
  const registry=await listIntegrationReadiness(db).catch(()=>({items:[] as Array<Record<string,unknown>>}));
  const summary=financeControlSummary({expenses:expenses.results as never,bills:bills.results as never,journals:journals.results as never,bank:bank.results as never});
- return json({data:{expenses:expenses.results,bills:bills.results,vendors:vendors.results,journals:journals.results,bank:bank.results,budgets:budgets.results,periods:periods.results,audits:audits.results,summary,sourceStatus:financeSourceStatus(registry.items as never)},actor:{email:actor.email,roleCode:actor.roleCode}});}catch(error){return authError(error,"Unable to load finance control");}}
+ return json({data:{expenses:expenses.results,bills:bills.results,vendors:vendors.results,journals:journals.results,bank:bank.results,budgets:budgets.results,periods:periods.results,audits:audits.results,collections:collections.results,summary,sourceStatus:financeSourceStatus(registry.items as never)},actor:{email:actor.email,roleCode:actor.roleCode}});}catch(error){return authError(error,"Unable to load finance control");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database();await seed(db);const body=await request.json()as Record<string,unknown>,entity=String(body.entity??""),entityId=String(body.entityId??DEFAULT_ENTITY_ID),createdAt=Date.now();
  if(entity==="expense"){

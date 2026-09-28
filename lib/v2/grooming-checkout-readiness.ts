@@ -7,10 +7,10 @@ import type { CustomerConfirmationProjection } from "../customer-checkout-client
 /** Read-only composition of canonical booking, payment-stage and governed doorstep authorities. */
 export async function readV2GroomingCheckoutReadiness(db: D1Database, customerId: string, bookingId: string) {
   const booking = await db.prepare(`SELECT b.id,b.customer_id,b.provider_id,b.status,p.id payment_id,
-    p.status payment_status,p.amount_due_now,w.status work_order_status
+    p.status payment_status,p.amount_due_now,p.mode payment_mode,w.status work_order_status
     FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id AND p.customer_id=b.customer_id
     JOIN provider_work_orders w ON w.booking_id=b.id AND w.provider_id=b.provider_id
-    WHERE b.id=? AND b.customer_id=? AND b.service_code='grooming' AND p.mode='prepaid'`)
+    WHERE b.id=? AND b.customer_id=? AND b.service_code='grooming' AND p.mode IN ('prepaid','pay_after_service')`)
     .bind(bookingId, customerId).first<Record<string, unknown>>();
   if (!booking) throw new Response("Grooming checkout was not found for your account.", { status: 404 });
   const table = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='booking_service_locations'").first();
@@ -23,7 +23,8 @@ export async function readV2GroomingCheckoutReadiness(db: D1Database, customerId
   const stage = await paymentStageAmount(db, bookingId);
   const events = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('payment_gateway_events','payment_intents')").all();
   // Both supported capture authorities count, but only for the matching stored customer/order/amount.
-  const evidence = events.results.length === 2 ? await db.prepare(`SELECT e.gateway_order_id,e.gateway_payment_id
+  const paymentMode = String(booking.payment_mode);
+  const evidence = paymentMode === "prepaid" && events.results.length === 2 ? await db.prepare(`SELECT e.gateway_order_id,e.gateway_payment_id
     FROM payment_gateway_events e JOIN payment_intents i ON i.booking_id=e.booking_id AND i.payment_id=e.payment_id
       AND i.gateway_order_id=e.gateway_order_id AND i.customer_id=? AND i.provider=e.provider AND i.environment=e.environment
       AND i.amount_paise=e.amount_subunits AND i.currency=e.currency
@@ -33,9 +34,9 @@ export async function readV2GroomingCheckoutReadiness(db: D1Database, customerId
         json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api'))
     ORDER BY e.received_at DESC LIMIT 1`).bind(customerId, bookingId, booking.payment_id).first<Record<string, unknown>>() : null;
   const confirmation: CustomerConfirmationProjection = {
-    ready: Boolean(stage && stage.dueNow <= 0 && evidence && locationReady), bookingId,
+    ready: Boolean(stage && stage.dueNow <= 0 && locationReady && (paymentMode === "pay_after_service" || evidence)), bookingId,
     serviceCode: "grooming", packageName: canonical.packageName || "", bookingStatus: String(booking.status),
-    paymentId: String(booking.payment_id), paymentMode: "prepaid", paymentStatus: String(booking.payment_status),
+    paymentId: String(booking.payment_id), paymentMode, paymentStatus: String(booking.payment_status),
     transactionId: evidence?.gateway_payment_id ? String(evidence.gateway_payment_id) : null,
     amountDueNow: stage?.dueNow ?? Number(booking.amount_due_now), totalAmount: canonical.totalAmount, currency: canonical.currency,
     providerId: canonical.providerId || "", providerName: canonical.providerName || "", providerModel: canonical.providerModel || "",

@@ -201,7 +201,7 @@ export async function postCollectionEvent(db:Db,input:CollectionEventInput){
  * Makes a manually entered collection final. Only a finance role may, and the reason is kept - a figure
  * that becomes authoritative on somebody's say-so should say whose, and why.
  */
-export async function verifyManualCollection(db:Db,input:{groupKey:string;actorId:string;actorPermissions:readonly string[];reason:string}){
+export async function verifyManualCollection(db:Db,input:{groupKey:string;actorId:string;actorPermissions:readonly string[];reason:string;expectedVersion:number}){
   await ensureCollectionLedgerTables(db);
   const row=await db.prepare("SELECT * FROM collection_ledger_postings WHERE group_key=?").bind(input.groupKey).first<Row>();
   if(!row)throw Response.json({error:"Collection posting not found"},{status:404});
@@ -209,12 +209,18 @@ export async function verifyManualCollection(db:Db,input:{groupKey:string;actorI
   const allowed=input.actorPermissions.includes("*")||policy.config.financeVerificationPermissions.some(permission=>input.actorPermissions.includes(permission));
   if(!allowed)throw Response.json({error:"Verifying a collection requires a finance role",code:"finance_verification_not_permitted",required:policy.config.financeVerificationPermissions},{status:403});
   if(!text(input.reason)||text(input.reason).length<5)throw Response.json({error:"A clear verification reason is required"},{status:400});
+  if(!Number.isFinite(input.expectedVersion)||Number(row.created_at)!==input.expectedVersion)throw Response.json({error:"Collection changed since it was loaded; refresh before verifying"},{status:412});
   if(text(row.verification_status)!=="pending_finance_verification")throw Response.json({error:`This posting is ${text(row.verification_status)}, not awaiting verification`},{status:409});
   const now=Date.now();
-  await db.batch([
-    db.prepare("UPDATE collection_ledger_postings SET verification_status='verified',verified_by=?,verified_at=?,verification_reason=? WHERE group_key=?").bind(input.actorId,now,text(input.reason),input.groupKey),
-    db.prepare("UPDATE finance_journal_entries SET verification_status='verified',verified_by=?,verified_at=? WHERE id LIKE ?").bind(input.actorId,now,`${input.groupKey}-%`),
+  const results=await db.batch([
+    db.prepare("UPDATE collection_ledger_postings SET verification_status='verified',verified_by=?,verified_at=?,verification_reason=? WHERE group_key=? AND verification_status='pending_finance_verification' AND created_at=?").bind(input.actorId,now,text(input.reason),input.groupKey,input.expectedVersion),
+    db.prepare("UPDATE finance_journal_entries SET verification_status='verified',verified_by=?,verified_at=? WHERE id LIKE ? AND EXISTS (SELECT 1 FROM collection_ledger_postings WHERE group_key=? AND verification_status='verified' AND verified_by=? AND verified_at=?)").bind(input.actorId,now,`${input.groupKey}-%`,input.groupKey,input.actorId,now),
   ]);
+  if(Number(results[0]?.meta?.changes||0)!==1){
+    const latest=await db.prepare("SELECT verification_status,created_at FROM collection_ledger_postings WHERE group_key=?").bind(input.groupKey).first<Row>();
+    if(Number(latest?.created_at)!==input.expectedVersion)throw Response.json({error:"Collection changed since it was loaded; refresh before verifying"},{status:412});
+    throw Response.json({error:`This posting is ${text(latest?.verification_status)||"no longer pending"}, not awaiting verification`},{status:409});
+  }
   return{groupKey:input.groupKey,verificationStatus:"verified",verifiedBy:input.actorId,verifiedAt:now};
 }
 
