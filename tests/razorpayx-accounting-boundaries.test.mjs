@@ -8,6 +8,7 @@ const accounting=await import("../lib/razorpayx-payout-accounting.ts");
 const accounts=await import("../lib/finance-accounts.ts");
 const salary=await import("../lib/employee-payroll-payout.ts"),payroll=await import("../lib/payroll-engine.ts"),people=await import("../lib/people-foundation.ts"),finance=await import("../lib/people-finance-integration.ts");
 async function salaryWorld(t){
+ t.mock.method(Date,"now",()=>Date.parse("2026-09-28T12:00:00Z"));
  const w=employeeAuditD1(t);globalThis.__RX_ACCOUNT_BOUND_DB__=w.db;globalThis.__RX_ACCOUNT_BOUND_ENV__={DB:w.db};
  const start=Date.parse("2026-08-01T00:00:00+05:30"),end=Date.parse("2026-09-01T00:00:00+05:30");
  await people.ensurePeopleTables(w.db);const employee=await people.upsertEmployee(w.db,{employeeCode:"RX-MONTH",displayName:"Synthetic payroll month close",workEmail:"rx-month@qa.test",joinedAt:start-86400000,actorId:"hr@qa.test"});
@@ -27,7 +28,7 @@ test("previously posted payroll may be paid in an open month without rewriting t
  assert.equal(w.sqlite.prepare("SELECT COALESCE(SUM(credit-debit),0) n FROM finance_journal_entries WHERE account_code='2116-Employee Salary Payouts in Transit'").get().n,10000);
 });
 test("a closed payout month still refuses a new salary release",async t=>{
- const w=await salaryWorld(t);lock(w,new Date().toISOString().slice(0,7));
+ const w=await salaryWorld(t);lock(w,new Date(Date.now()).toISOString().slice(0,7));
  await assert.rejects(()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"finance@qa.test"}),/period_locked/);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
 });
