@@ -1,3 +1,4 @@
+import {employeeAccessHasEnded} from "./employee-exit-access";
 /**
  * Staging-ONLY UAT sign-in. On the isolated staging worker there is no workspace identity proxy, so
  * protected pages would 401 for a browser tester. This module lets a tester authenticate with a shared
@@ -77,6 +78,7 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  if(!email)return null;
  const user=await readUatActorRow(db,email);
  if(!user||String(user.status)!=="active")return null;
+ if(await employeeAccessHasEnded(db,email))return null;
  const roleCode=String(user.role_code||"").trim();
  if(!roleCode||user.permissions_json===null||user.permissions_json===undefined)return null;
  const permissions=parsePermissions(user.permissions_json);
@@ -86,6 +88,7 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
 export async function uatStaffIdentityAllowed(db:Db,email:string){
  const row=await readStaffDirectory(()=>db.prepare("SELECT status,role_code FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>());
  if(!row||String(row.status)!=="active")return false;
+ if(await employeeAccessHasEnded(db,email))return false;
  const roleCode=String(row.role_code||"").trim();
  if(!roleCode)return false;
  const role=await readStaffDirectory(()=>db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(roleCode).first<Row>());

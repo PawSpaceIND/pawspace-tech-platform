@@ -9,6 +9,7 @@ type Employee={id:string;employee_code:string;display_name:string;work_email:str
 
 const WORKSPACES=[
  ["/team/people/onboarding","Employee onboarding"],
+ ["/team/people/offboarding","Employee exits & settlement"],
  ["/team/people/time","Attendance & leave"],
  ["/team/people/payroll","Payroll"],
  ["/team/people/incentives","Incentives"],

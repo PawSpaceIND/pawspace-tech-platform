@@ -1,3 +1,4 @@
+import {employeeAccessHasEnded} from "./employee-exit-access";
 import { defaultRoles, hasPermission, type Permission } from "./platform-security";
 import{isDevelopmentPreviewRequest}from"./development-preview";
 import { resolveUatStaffActor, signInRequiredResponse, uatLoginEnabled } from "./uat-staging-auth";
@@ -56,6 +57,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/razorpayx-test-dispatch")return "finance.manage";
   if(url.pathname==="/api/provider-commercial-terms")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/employee-offboarding")return "people.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
   if(url.pathname==="/api/identity-bindings")return "users.manage";
   if(url.pathname==="/api/communications/voice/bridge")return null;
@@ -233,7 +235,7 @@ export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promis
   if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return permissionDeniedResponse(request,env,actor);}return {actor,permission};}
   const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});await ensureGatewayTables(env);
   const user=await env.DB.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Record<string,unknown>>();
-  if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled"},{status:403});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
+  if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled"},{status:403});if(await employeeAccessHasEnded(env.DB,email))return Response.json({error:"Employee access has ended"},{status:403,headers:{"cache-control":"no-store"}});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
   const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return permissionDeniedResponse(request,env,actor);}return {actor,permission};}
 
 export async function auditApiResponse(env:GatewayEnv,actor:GatewayActor,permission:Permission|null,request:Request,response:Response){if(!permission||actor.roleCode==="public")return;await audit(env,actor,request,response.ok?"allowed":"failed",{permission,status:response.status});}
