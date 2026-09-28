@@ -102,6 +102,8 @@ for (const theme of ["emerald", "signature"] as const) for (const mode of ["ligh
     for (const route of ["/v2/boarding", "/v2/sitting"]) {
       await visit(page, route, appearance);
       const links = page.locator('[class*="modeSwitch"] a'); await expect(links).toHaveCount(2);
+      // The RSC client may replace SSR CSS after the shared shell is ready. Wait for this component, not a passing contrast value.
+      await expect(page.locator('[class*="modeSwitch"]')).toHaveCSS("display", "flex");
       for (const link of await links.all()) {
         const pair = await link.evaluate(e => ({ color: getComputedStyle(e).color, bg: getComputedStyle(e).backgroundColor,
           hero: getComputedStyle(e.closest('section')!).backgroundColor }));
