@@ -69,3 +69,8 @@ The same PR is being prepared for fresh cloud checks, not a new feature PR. Code
 
 ### Recovery checkpoint before push
 The same 43-file selection also passed **515/515 on the forced-loader compatibility path**, with zero failures/cancellations/skips. This repeats coverage, not 515 additional unique cases. Current targeted lint passed with zero errors and the existing unused `executive` warning in the Worker. Current typecheck passed. The full suite was started with a clean environment that carries no provider credentials and rebuilds the application before testing; its result is still pending at this checkpoint.
+
+### Broad-suite database policy finding and final helper reuse
+The broad run exposed the platform guard `no library builds an IN list straight from a result set any more`: the payout directory had a locally bounded 80-item loop, but the repository requires the shared `chunkedIn` helper. The directory now reuses `lib/d1-chunked-in.ts` for both its bound-parameter limit and query concurrency. The guard, its mutation checks and every unrelated expectation are unchanged; only this source's protected hash was updated.
+
+Expanded final selection: **44 files, 525/525 passed on the direct path and 525/525 on the forced-loader path**, zero failures/cancellations/skips. These runs overlap. The dedicated D1/directory boundary selection passed 13/13 and overlaps them too. Typecheck and targeted lint passed after this refactor. The preceding broad run began before this final helper correction and is interim diagnostic evidence, not a passing full-suite certificate for the final source. Fresh final-head cloud checks are required.
