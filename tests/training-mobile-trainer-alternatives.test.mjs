@@ -75,7 +75,7 @@ const reserveStart = flow.indexOf('const schedule:Omit<UatScheduleRequest,"clien
 const reserveBlock = flow.slice(reserveStart, flow.indexOf("const canonical=await createCanonicalLifecycle", reserveStart));
 
 test("app: a refused trainer leads to a preview of the same calendar, never to a reservation for someone else", () => {
-  assert.match(policy, /serviceCode:"dog_training",cityId:"\*",config:\{assignmentMode:"customer_select",preferredProviderMode:"strict"\}/);
+  assert.match(policy, /serviceCode:"dog_training",cityId:"\*",config:\{assignmentMode:"auto",preferredProviderMode:"strict"\}/);
   assert.ok(reserveStart > 0 && reserveBlock.length > 0, "the programme reservation");
   assert.equal((reserveBlock.match(/reserveUatSchedule\(/g) || []).length, 1, "one reservation, for the chosen trainer only");
   assert.match(reserveBlock, /reserveUatSchedule\(\{\.\.\.schedule,clientRequestId:requestId,preferredProviderId:selectedTrainer\?\.id\}\)/);
