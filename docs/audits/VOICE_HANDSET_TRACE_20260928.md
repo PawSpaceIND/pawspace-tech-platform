@@ -64,3 +64,19 @@ Delivery limitation: ElevenLabs currently documents automatic retries only for `
 Sources checked: https://elevenlabs.io/docs/eleven-agents/workflows/post-call-webhooks and https://elevenlabs.io/docs/eleven-api/resources/webhooks .
 
 The previously documented draft holds remain. No blocked live-inspection or refinement operation was repeated, no phone-record cleanup was repeated, and no call, provider change, knowledge activation, shared deployment, or customer/payment mutation was performed. This patch improves forward-looking callback correctness, not proof of handset connectivity or a resolved historical failed leg.
+
+## PR #1171 CodeQL correction — 28 September 2026
+
+Current-head check `109063661656` on `5f201592c9b90536da7e27acead14b81c076d12b` failed with two high-severity `Incomplete URL substring sanitization` annotations, both in `tests/voice-handset-evidence.test.mjs` (then lines 106 and 124). The separate CodeQL SAST workflow had completed successfully; that did not mean its uploaded analysis passed the CodeQL result gate.
+
+Both findings were broad URL-prefix comparisons in simulated carrier-response error injection. Replaced them with one exact expected evidence-endpoint predicate, covering the scheme, host, account, call ID and query. The normal stub dispatch uses the same predicate; the app-audit fixture URL now also uses full equality. No security finding was dismissed and no scanner, rule, workflow or production implementation was weakened.
+
+Added nine executable regressions: one verifies the intended error injection and eight reject a lookalike host, user-info hostname confusion, HTTP downgrade, alternate port, different account, different call, dial endpoint and extra query. All requests remain in-memory stubs, with no external provider contact.
+
+Validation on the corrected source:
+- Node 22.16.0: 227/227 focused handset/callback/ownership/policy/authority/test-quality tests passed, no skips.
+- Same selection with forced loader fallback: 227/227 passed, no skips.
+- Focused test-file ESLint: zero errors and warnings; typecheck and diff checks passed.
+- Current main observed: `3a37d67e4a6fa47971e1187de483fa7496777abe`, already incorporated in the branch.
+
+Only the handset test and this audit note are changed by this correction. Fresh CodeQL and full CI must validate the pushed head; the earlier failure is not relabelled passed. Existing draft review holds remain independent. No handset call, remote database/configuration change, recording enablement, knowledge activation, deployment or PR merge was performed.

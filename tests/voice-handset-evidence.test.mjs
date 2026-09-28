@@ -80,11 +80,14 @@ test('transition parser never invents legacy IDs or exports raw payloads', () =>
 });
 const readEnv = { EXOTEL_SUBDOMAIN:'api.exotel.com', EXOTEL_SID:'local-account', EXOTEL_API_KEY:'local-key', EXOTEL_API_TOKEN:'local-token', ELEVENLABS_API_KEY:'local-eleven-key' };
 const context = { ...expected, cookie:'pawspace_uat=local-test-session' };
+const CARRIER_EVIDENCE_URL = 'https://api.exotel.com/v1/Accounts/local-account/Calls/carrier-local.json?details=true';
+// Exact fixture endpoint: a host prefix can also match an unrelated destination.
+const isCarrierEvidenceRequest = url => url === CARRIER_EVIDENCE_URL;
 function reader(f, calls, override) { return async (url, init) => {
   calls.push({url,init}); assert.equal(init.method,'GET'); assert.equal(init.redirect,'error');
   if (override) { const response = override(url, init); if (response) return response; }
-  if (url.startsWith('https://pawspace-staging.karthik-fce.workers.dev/api/voice-outbound?scope=audit&callId=VCALL-LOCAL')) return jsonResponse({data:f.appAudit});
-  if (url === 'https://api.exotel.com/v1/Accounts/local-account/Calls/carrier-local.json?details=true') return jsonResponse(f.carrier);
+  if (url === 'https://pawspace-staging.karthik-fce.workers.dev/api/voice-outbound?scope=audit&callId=VCALL-LOCAL') return jsonResponse({data:f.appAudit});
+  if (isCarrierEvidenceRequest(url)) return jsonResponse(f.carrier);
   if (url === 'https://api.elevenlabs.io/v1/convai/conversations/conv-local') return jsonResponse(f.conversation);
   throw Error('Unexpected endpoint: no listing or dial allowed');
 }; }
@@ -103,7 +106,7 @@ test('legacy audit aborts before any provider request instead of guessing latest
 });
 for(const status of [401,403,404,429,500]) test('provider HTTP '+status+' stops without fallback or redial',async()=>{
  const calls=[];
- await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(fixture(),calls,url=>url.startsWith('https://api.exotel.com')?jsonResponse({},status):null)}),/read refused/);
+ await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(fixture(),calls,url=>isCarrierEvidenceRequest(url)?jsonResponse({},status):null)}),/read refused/);
  assert.equal(calls.length,2);
 });
 test('polling exhaustion with initiated/zero-turn conversation fails, not green',async()=>{
@@ -121,7 +124,7 @@ for(const host of ['api.exotel.com.evil.test','evil.test','https://api.exotel.co
 });
 test('oversized or malformed provider evidence never passes',async()=>{
  for(const body of ['not-json','x'.repeat(1048577)]){
-  const calls=[];await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(fixture(),calls,url=>url.startsWith('https://api.exotel.com')?new Response(body):null)}));assert.equal(calls.length,2);
+  const calls=[];await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(fixture(),calls,url=>isCarrierEvidenceRequest(url)?new Response(body):null)}));assert.equal(calls.length,2);
  }
 });
 test('actual app adapter preserves both provider IDs separately',async t=>{
@@ -160,4 +163,28 @@ test('specialist workflow is wired to exact-call proof instead of timestamp-base
  assert.match(block,/idempotencyKey:.*GITHUB_RUN_ID/);
  assert.doesNotMatch(block,/conversations\?agent_id|start_time_unix_secs|let detail=null/);
  assert.ok(block.indexOf('Exact existing canonical customer required')<block.indexOf("const call=await fetch"));
+});
+
+// These exercise only the in-memory response stub; no external requests are made.
+test('carrier error injection applies only to the exact expected evidence URL', async () => {
+ const calls=[], request=reader(fixture(),calls,url=>isCarrierEvidenceRequest(url)?jsonResponse({},503):null);
+ assert.equal(isCarrierEvidenceRequest(CARRIER_EVIDENCE_URL),true);
+ assert.equal((await request(CARRIER_EVIDENCE_URL,{method:'GET',redirect:'error'})).status,503);
+ assert.equal(calls.length,1);
+});
+const rejectedEvidenceUrls = [
+ 'https://api.exotel.com.untrusted.invalid/v1/Accounts/local-account/Calls/carrier-local.json?details=true',
+ 'https://api.exotel.com@untrusted.invalid/v1/Accounts/local-account/Calls/carrier-local.json?details=true',
+ 'http://api.exotel.com/v1/Accounts/local-account/Calls/carrier-local.json?details=true',
+ 'https://api.exotel.com:8443/v1/Accounts/local-account/Calls/carrier-local.json?details=true',
+ 'https://api.exotel.com/v1/Accounts/other-account/Calls/carrier-local.json?details=true',
+ 'https://api.exotel.com/v1/Accounts/local-account/Calls/other-call.json?details=true',
+ 'https://api.exotel.com/v1/Accounts/local-account/Calls/connect.json',
+ CARRIER_EVIDENCE_URL + '&unexpected=1',
+];
+for (const [index,url] of rejectedEvidenceUrls.entries()) test('carrier evidence stub rejects non-exact destination '+index, async () => {
+ assert.equal(isCarrierEvidenceRequest(url),false);
+ const calls=[], request=reader(fixture(),calls,value=>isCarrierEvidenceRequest(value)?jsonResponse({},503):null);
+ await assert.rejects(()=>request(url,{method:'GET',redirect:'error'}),/Unexpected endpoint/);
+ assert.equal(calls.length,1);
 });
