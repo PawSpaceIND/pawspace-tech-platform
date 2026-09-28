@@ -78,6 +78,7 @@ export default function V2GroomingPage() {
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerError, setProviderError] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [providerSelection, setProviderSelection] = useState<"auto" | "specific">("auto");
   const [booking, setBooking] = useState<V2GroomingBooking | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -165,7 +166,7 @@ export default function V2GroomingPage() {
     setScheduledStart(""); setScheduledEnd("");
     setQuote(null); setCoupon({ discount: 0, code: "", quoteId: "" });
     setProviders(null);
-    setSelectedProviderId("");
+    if (providerSelection === "auto") setSelectedProviderId("");
     setProviderError("");
   };
   useEffect(() => { invalidateCare(); }, [selectedPetIds, selectedPackageCode, coverage?.zoneId, date, slotIndex]);
@@ -208,12 +209,12 @@ export default function V2GroomingPage() {
 
   const beginSecureCheckout = async () => {
     if (checkoutLock.current || providerBusy || mixedAudience || youngIssue) return;
-    const provider = providers?.providers.find(item => item.id === selectedProviderId);
+    const provider = providerSelection === "auto" ? providers?.providers[0] : providers?.providers.find(item => item.id === selectedProviderId);
     if (!account || !selectedPackage || !bundle || !quote || !coverage || !provider || !scheduledStart || !scheduledEnd) return;
     checkoutLock.current = true; setCheckoutBusy(true); setCheckoutError("");
     try {
       await createV2GroomingBooking({
-        account, selectedPets, pkg: selectedPackage, bundle, quote, provider,
+        account, selectedPets, pkg: selectedPackage, bundle, quote, provider, providerSelection,
         address, pincode: coverage.pincode, cityName: coverage.city, cityId: coverage.cityId, zoneId: coverage.zoneId,
         scheduledStart, scheduledEnd, saveAddress: saveAddress && !savedAddressId,
         addOns: addOns.filter(label => availableAddOns.some(item => item.label === label)), comfort, specialInstructions,
@@ -237,7 +238,7 @@ export default function V2GroomingPage() {
     setProviderBusy(true);
     setProviderError("");
     setProviders(null);
-    setSelectedProviderId("");
+    if (providerSelection === "auto") setSelectedProviderId("");
     try {
       if (!groomingSlotAvailable(date, slotIndex, bundle.slotMinutes)) throw new Error("That grooming slot can no longer be booked. Pick another time.");
       const priced = await quoteV2Grooming({ bundle, isoDate: date, slotIndex, cityId: coverage.cityId, zoneId: coverage.zoneId });
@@ -255,7 +256,8 @@ export default function V2GroomingPage() {
       if (!mounted.current || version !== careVersion.current) return;
       setQuote(priced.quote); setScheduledStart(priced.scheduledStart); setScheduledEnd(priced.scheduledEnd);
       setProviders(preview);
-      setSelectedProviderId(suggestedGroomerId(preview));
+      if (providerSelection === "auto") setSelectedProviderId(suggestedGroomerId(preview));
+      else if (!preview.providers.some(item => item.id === selectedProviderId)) setProviderError("Your chosen groomer is unavailable for this slot. Choose another groomer or ask PawSpace to match one.");
       if (!preview.providers.length) setProviderError("No groomer is available for this exact slot. Try another time.");
     } catch (problem) {
       if (!mounted.current || version !== careVersion.current) return;
@@ -389,11 +391,12 @@ export default function V2GroomingPage() {
 
           {providers && providers.providers.length > 0 && <section className={styles.step}>
             <div className={styles.stepHead}><span>05</span><div><small>CARE PROFESSIONAL</small><h2>Available for this exact slot</h2></div></div>
-            <p className={styles.helper}>PawSpace has preselected the top-ranked available groomer. You can choose another below. Availability is checked again before reservation.</p>
-            <div className={styles.providerGrid}>{providers.providers.map(provider => <button key={provider.id} className={`${styles.providerCard} ${selectedProviderId === provider.id ? styles.providerSelected : ""}`} onClick={() => setSelectedProviderId(provider.id)}>
+            <p className={styles.helper}>PawSpace can choose the best eligible groomer at reservation, or you can select one person. A specific choice is never silently replaced.</p>
+            <button type="button" className={`${styles.providerCard} ${providerSelection === "auto" ? styles.providerSelected : ""}`} aria-pressed={providerSelection === "auto"} onClick={() => { setProviderSelection("auto"); setProviderError(""); }}>PawSpace chooses the best available groomer</button>
+            <div className={styles.providerGrid}>{providers.providers.map(provider => <button key={provider.id} className={`${styles.providerCard} ${providerSelection === "specific" && selectedProviderId === provider.id ? styles.providerSelected : ""}`} aria-pressed={providerSelection === "specific" && selectedProviderId === provider.id} onClick={() => { setProviderSelection("specific"); setSelectedProviderId(provider.id); setProviderError(""); }}>
               <span className={styles.providerAvatar}>{provider.name.slice(0, 1).toUpperCase()}</span>
               <div><b>{provider.name}</b><small>{provider.model === "full_time" ? "PawSpace care professional" : "Verified care partner"}</small>{provider.rating ? <em>★ {provider.rating.toFixed(1)}</em> : <em>Availability verified</em>}</div>
-              <strong>{selectedProviderId === provider.id ? "✓" : "Choose"}</strong>
+              <strong>{providerSelection === "specific" && selectedProviderId === provider.id ? "✓" : "Choose"}</strong>
             </button>)}</div>
           </section>}
         </fieldset>
@@ -405,13 +408,13 @@ export default function V2GroomingPage() {
             <div><span>Package</span><b>{selectedPackage?.name || "—"}</b></div>
             <div><span>Doorstep</span><b>{coverage ? `${address.trim()}, ${coverage.pincode}` : "Verify address"}</b></div>
             <div><span>When</span><b>{summaryWhen}</b></div>
-            <div><span>Groomer</span><b>{providers?.providers.find(item => item.id === selectedProviderId)?.name || (providers ? "Choose groomer" : "Checked after slot")}</b></div>
+            <div><span>Groomer</span><b>{providerSelection === "auto" ? "PawSpace chooses · confirmed at reservation" : providers?.providers.find(item => item.id === selectedProviderId)?.name || "Selected groomer unavailable"}</b></div>
           </div>
           <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
           {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={`${basketTotal}|${bundle.packageCode}|${scheduledStart}|${coverage.cityId}|${coverage.zoneId}`} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} onChange={onCouponChange} />}
           {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; payment opens only after its doorstep is verified.</p></div>
-          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !selectedProviderId || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponNeedsReapply(coupon.code, coupon.quoteId)} aria-describedby={blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : "Reserve & review payment"} <span>→</span></button>
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
