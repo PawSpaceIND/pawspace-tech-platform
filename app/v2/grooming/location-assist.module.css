@@ -1,0 +1,9 @@
+.assist.location { display:block; min-width:0; max-width:100%; margin:12px 0; padding:14px; box-sizing:border-box; border:1px solid var(--brand-line); border-radius:calc(14px * var(--paw-radius-scale)); background:var(--brand-surface); color:var(--brand-text); }
+.assist.location p { margin:0 0 10px; line-height:1.55; overflow-wrap:anywhere; font-size:13px; }
+.assist.location strong { display:block; overflow-wrap:anywhere; }
+.assist.location .actions { display:flex; flex-wrap:wrap; gap:8px; min-width:0; }
+.assist.location button { width:auto; max-width:100%; min-height:44px; padding:10px 12px; white-space:normal; border:1px solid var(--brand-line); border-radius:var(--paw-control-radius); background:var(--brand-surface); color:var(--brand-text); font:inherit; font-size:13px; font-weight:700; cursor:pointer; }
+.assist.location button:focus-visible { outline:3px solid var(--brand-gold); outline-offset:2px; }
+.assist.location button:disabled { opacity:.6; cursor:not-allowed; }
+.assist.location .suggestion { margin-top:12px; padding-top:12px; border-top:1px solid var(--brand-line); }
+.assist.location [role="alert"] { margin-top:12px; font-weight:600; }
