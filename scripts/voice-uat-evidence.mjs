@@ -20,3 +20,10 @@ export function isSubstantiveVoiceReply(reply){
  const text=String(reply||'').replace(/^(?:(?:I'm checking the details|One moment while I check that for you|Just a moment|Please wait)[. …]*\s*)+/i,'').trim();
  return Boolean(text)&&!/^(one moment|just a moment|let me check|please wait)/i.test(text);
 }
+
+// A finished model session cannot stand in for a carrier-confirmed connected call.
+export function assertCompletedCarrier(carrier){
+ const duration=Number(carrier?.duration);
+ if(String(carrier?.status||'').toLowerCase()!=='completed'||!Number.isFinite(duration)||duration<=0)throw Error('Carrier has not confirmed a completed connected call');
+ return true;
+}
