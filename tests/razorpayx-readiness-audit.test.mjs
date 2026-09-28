@@ -118,3 +118,20 @@ for(const responseFails of [false,true])test(`RX-AUDIT a late creation response 
  assert.equal(calls,1);assert.equal(status(w),"payout_processed_sandbox");assert.equal(remoteStatus(w),"processed");
  assert.equal(sent.connected,true);assert.equal(sent.providerStatus,"processed");
 });
+
+for(const brokenBooks of [false,true])test(`RX-REVIEW accepted payout reports accounting review without resending (${brokenBooks?'read failure':'missing release'})`,async t=>{
+ const w=await world(t);w.sqlite.exec("DELETE FROM razorpayx_payout_provider_state; UPDATE provider_order_payouts SET status='queued_sandbox'");
+ let calls=0;const errors=[];t.mock.method(console,"error",(...args)=>errors.push(args));
+ t.mock.method(globalThis,"fetch",async()=>{calls++;return Response.json(JSON.parse(event().rawBody).payload.payout.entity);});
+ const prepare=w.db.prepare.bind(w.db);
+ if(brokenBooks)t.mock.method(w.db,"prepare",sql=>{if(sql.startsWith("SELECT * FROM razorpayx_payout_accounting"))throw new Error("private-accounting-diagnostic-fa_SECRET");return prepare(sql);});
+ const first=await runtime.dispatchRazorpayXSandboxPayout(w.db,env,{payoutId:"RPX-AUDIT"});
+ assert.equal(first.connected,true,"accepted transfer must not be reported as a failed send");
+ assert.equal(first.reconciliationRequired,true,"accounting failure must be explicit to API and Finance");
+ assert.match(first.accounting.status,/review_required|reconciliation_required/);
+ assert.equal(status(w),"payout_processed_sandbox");assert.equal(first.providerPayoutId,"pout_AUDIT");
+ const again=await runtime.dispatchRazorpayXSandboxPayout(w.db,env,{payoutId:"RPX-AUDIT"});
+ assert.equal(again.duplicatePrevented,true);assert.equal(again.reconciliationRequired,true);assert.equal(calls,1);
+ assert.doesNotMatch(JSON.stringify({first,again,errors}),/private-accounting-diagnostic|fa_SECRET/);
+ if(brokenBooks)assert.ok(errors.length>0,"accounting error must surface as a sanitized operational diagnostic");
+});

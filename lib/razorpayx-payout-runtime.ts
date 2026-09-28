@@ -1,3 +1,4 @@
+import {razorpayXDispatchNeedsReview} from "./razorpayx-dispatch-notice";
 import {prepareRazorpayXPayoutAccounting} from "./razorpayx-payout-accounting";
 import {ensureContractorPayoutTables,contractorDispatchGuard} from "./contractor-payout";
 import {razorpayXPayoutIdentityProblem} from "./razorpayx-payout-identity";
@@ -77,13 +78,22 @@ export async function clearRazorpayXLiveReconciliationHold(db:Db,input:{payoutId
  return{payoutId:id,status:"CLEARED_BY_HUMAN" as const,automaticRetryAllowed:false,requeueRequired:true,clearedBy:actor};
 }
 
+async function dispatchAccountingReport(db:Db,env:Env,payoutId:string){
+ try{const accounting=await reconcileRecordedRazorpayXPayout(db,env,payoutId);return{accounting,reconciliationRequired:razorpayXDispatchNeedsReview({accounting})};}
+ catch{
+  // The transfer already has a provider identity. Report the bookkeeping exception, never mislabel it as an unsent payout.
+  console.error(JSON.stringify({event:"razorpayx_payout_accounting_review",environment:"sandbox",reason:"accounting_exception"}));
+  return{accounting:{status:"reconciliation_required",reason:"Accounting could not be confirmed; Finance must recheck the original payout books. Do not send again.",principalOnly:true,bankStatementReconciled:false},reconciliationRequired:true};
+ }
+}
+
 export async function dispatchRazorpayXSandboxPayout(db:Db,env:Env,input:{payoutId:string}){
  await ensureRazorpayXPayoutRuntime(db);const id=text(input.payoutId),resolved=await resolvePayoutSource(db,id);if(!resolved)throw new Response("Sandbox payout record not found",{status:404});const{source,row}=resolved;
  if(text(row.environment)!=="sandbox")throw new Response("Only sandbox payout records may reach RazorpayX TEST",{status:409});
  const readiness=razorpayXSandboxReadiness(env);if(!readiness.ready)throw new Response(`RazorpayX TEST is not configured: ${readiness.problems.join("; ")}`,{status:503});
  const prior=await db.prepare("SELECT * FROM razorpayx_payout_provider_state WHERE local_payout_id=?").bind(id).first<Row>();
- if(prior&&text(prior.provider_payout_id))return{connected:true,duplicatePrevented:true,payoutId:id,source,providerPayoutId:text(prior.provider_payout_id),providerStatus:text(prior.provider_status),environment:"sandbox",liveMoney:false};
- const status=text(row.status);if(sourceTerminal(status))return{connected:true,duplicatePrevented:true,payoutId:id,source,providerPayoutId:text(row.provider_reference)||null,providerStatus:status,environment:"sandbox",liveMoney:false};
+ if(prior&&text(prior.provider_payout_id))return{connected:true as const,duplicatePrevented:true,payoutId:id,source,providerPayoutId:text(prior.provider_payout_id),providerStatus:text(prior.provider_status),...await dispatchAccountingReport(db,env,id),environment:"sandbox",liveMoney:false};
+ const status=text(row.status);if(sourceTerminal(status))return{connected:true as const,duplicatePrevented:true,payoutId:id,source,providerPayoutId:text(row.provider_reference)||null,providerStatus:status,...await dispatchAccountingReport(db,env,id),environment:"sandbox",liveMoney:false};
  if(!sourceReady(source,status))throw new Response(`Payout is not ready for RazorpayX TEST dispatch (${status||"unknown"})`,{status:409});
  const fund=text(row.razorpayx_fund_account_id);if(!/^fa_[A-Za-z0-9]+$/.test(fund))throw new Response("Verified RazorpayX TEST fund account is required",{status:409});
  const paise=rupeesToPaise(row.amount),key=text(row.idempotency_key);if(!key)throw new Response("Payout idempotency key is required",{status:409});
@@ -92,12 +102,12 @@ export async function dispatchRazorpayXSandboxPayout(db:Db,env:Env,input:{payout
  if(Number(claimed.meta?.changes||0)!==1)throw new Response("Another RazorpayX TEST dispatch already owns this payout",{status:409});
  const createdAt=now();await db.prepare("INSERT INTO razorpayx_payout_provider_state (local_payout_id,source_type,booking_id,statement_id,provider_id,amount_paise,currency,fund_account_id,idempotency_key,provider_payout_id,provider_status,last_utr,last_error,last_payload_sha256,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,'dispatching',NULL,NULL,NULL,?,?) ON CONFLICT(local_payout_id) DO UPDATE SET provider_status='dispatching',last_error=NULL,updated_at=excluded.updated_at").bind(id,source,row.booking_id||null,row.statement_id||null,text(row.provider_id),paise,text(row.currency)||"INR",fund,key,createdAt,createdAt).run();
  const result=await createRazorpayXSandboxPayout(env,{localPayoutId:id,bookingId:text(row.booking_id)||null,statementId:text(row.statement_id)||null,providerId:text(row.provider_id),fundAccountId:fund,amountPaise:paise,currency:text(row.currency)||"INR",idempotencyKey:key});
- if(!result.connected){await db.batch([db.prepare(`UPDATE ${sourceTable(source)} SET status='retry_pending_sandbox',${source!=="commission"?"last_error=?,":""}updated_at=? WHERE id=? AND status='provider_dispatching_sandbox'`).bind(...(source!=="commission"?[result.reason,now(),id]:[now(),id])),db.prepare("UPDATE razorpayx_payout_provider_state SET provider_status='retry_pending',last_error=?,updated_at=? WHERE local_payout_id=? AND provider_status='dispatching' AND provider_payout_id IS NULL").bind(result.reason,now(),id)]);const observed=await db.prepare("SELECT provider_payout_id,provider_status FROM razorpayx_payout_provider_state WHERE local_payout_id=?").bind(id).first<Row>();if(text(observed?.provider_payout_id))return{connected:true,duplicatePrevented:false,payoutId:id,source,providerPayoutId:text(observed?.provider_payout_id),providerStatus:text(observed?.provider_status),environment:"sandbox",liveMoney:false};return{connected:false,reason:result.reason,payoutId:id,source,environment:"sandbox",liveMoney:false};}
+ if(!result.connected){await db.batch([db.prepare(`UPDATE ${sourceTable(source)} SET status='retry_pending_sandbox',${source!=="commission"?"last_error=?,":""}updated_at=? WHERE id=? AND status='provider_dispatching_sandbox'`).bind(...(source!=="commission"?[result.reason,now(),id]:[now(),id])),db.prepare("UPDATE razorpayx_payout_provider_state SET provider_status='retry_pending',last_error=?,updated_at=? WHERE local_payout_id=? AND provider_status='dispatching' AND provider_payout_id IS NULL").bind(result.reason,now(),id)]);const observed=await db.prepare("SELECT provider_payout_id,provider_status FROM razorpayx_payout_provider_state WHERE local_payout_id=?").bind(id).first<Row>();if(text(observed?.provider_payout_id))return{connected:true as const,duplicatePrevented:false,payoutId:id,source,providerPayoutId:text(observed?.provider_payout_id),providerStatus:text(observed?.provider_status),...await dispatchAccountingReport(db,env,id),environment:"sandbox",liveMoney:false};return{connected:false as const,reason:result.reason,payoutId:id,source,environment:"sandbox",liveMoney:false};}
  const payout=result.payout,providerId=text(payout.id),pStatus=providerStatus(payout.status),next=sourceStatus(source,pStatus),utr=text(payout.utr)||null,hash=await sha256Hex(JSON.stringify(payout));
  await db.batch([db.prepare(`UPDATE ${sourceTable(source)} SET provider_reference=?,status=?,${source!=="commission"?"last_error=NULL,":""}updated_at=? WHERE id=? AND status='provider_dispatching_sandbox'`).bind(providerId,next,now(),id),db.prepare("UPDATE razorpayx_payout_provider_state SET provider_payout_id=?,provider_status=?,last_utr=?,last_error=NULL,last_payload_sha256=?,updated_at=? WHERE local_payout_id=? AND provider_status='dispatching' AND provider_payout_id IS NULL").bind(providerId,pStatus,utr,hash,now(),id)]);
  const observed=await db.prepare("SELECT provider_payout_id,provider_status FROM razorpayx_payout_provider_state WHERE local_payout_id=?").bind(id).first<Row>();
- const accounting=await reconcileRecordedRazorpayXPayout(db,env,id).catch(()=>({status:"review_required",principalOnly:true,bankStatementReconciled:false}));
- return{connected:true,duplicatePrevented:false,payoutId:id,source,providerPayoutId:text(observed?.provider_payout_id)||providerId,providerStatus:text(observed?.provider_status)||pStatus,accounting,environment:"sandbox",liveMoney:false};
+ const reporting=await dispatchAccountingReport(db,env,id);
+ return{connected:true as const,duplicatePrevented:false,payoutId:id,source,providerPayoutId:text(observed?.provider_payout_id)||providerId,providerStatus:text(observed?.provider_status)||pStatus,...reporting,environment:"sandbox",liveMoney:false};
 }
 
 export function razorpayXWebhookGate(env:Env){const readiness=razorpayXSandboxReadiness(env),secret=text(env.RAZORPAYX_WEBHOOK_SECRET_SANDBOX);if(!readiness.ready)return{ok:false as const,status:503,reason:`RazorpayX TEST is not configured: ${readiness.problems.join("; ")}`};if(!secret)return{ok:false as const,status:503,reason:"RAZORPAYX_WEBHOOK_SECRET_SANDBOX is not configured"};return{ok:true as const,secret,environment:"sandbox" as const};}
