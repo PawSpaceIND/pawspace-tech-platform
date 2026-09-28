@@ -313,5 +313,6 @@ for(const width of [390,768,1440,1920])test(`reviewed statistic grid and shared 
  const names=await regions.evaluateAll(items=>items.map(item=>item.getAttribute('aria-label')));
  expect(names.length).toBeGreaterThanOrEqual(2);expect(new Set(names).size).toBe(names.length);
  expect(names).toContain('Table: Setting / State / Detail; scroll horizontally for all columns');
+ await expect(page.getByRole('combobox',{name:'Use case',exact:true})).toHaveCount(1);
  await page.screenshot({path:info.outputPath(`shared-table-landmarks-${width}.png`)});
 });
