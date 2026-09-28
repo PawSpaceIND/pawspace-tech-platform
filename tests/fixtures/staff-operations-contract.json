@@ -765,7 +765,7 @@
     "lib/live-leaderboard.ts": "bc578fefca6f8ab3c48fdc939feaec5040264abdf7d05f87f47d159cda762e48",
     "lib/live-pricing-resolver.ts": "d390111aeb250a9c042e189eca27cd5ccc5d903c285fcad71ca537e05efdcc4f",
     "lib/live-refresh.ts": "64c82a4b309369484c768c7d59e557ac1d91e6faddf067cf01f2b160f1e519f4",
-    "lib/manager-dashboard.ts": "d25cc97ee812bfc090d207835b2cbb471913ab4509d088ff4e30b30685cb8973",
+    "lib/manager-dashboard.ts": "1ab1e03c5dfa4711974d086f4a2d0fe19f11508950b8ad8558e5a9fdff67fcc6",
     "lib/marketing-ad-atomic-sync.ts": "7aebb04a939a3e4bb8b81c413a7dd5fb610b5aed5850506b3e96af42b4f8afad",
     "lib/marketing-ad-connectors.ts": "f32b8a72885b691ef9eae072411b377efe764572ba57fc4ae75344fb3c43d48d",
     "lib/marketing-agent-gateway.ts": "16c76559be32864d133aa858b592fc1589ade2ac8fac6490c781b480dec136fd",

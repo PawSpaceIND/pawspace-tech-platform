@@ -58,12 +58,12 @@
           "const pretty = (value: unknown) => String(value || \"Not recorded\").replaceAll(\"_\", \" \").replace(/\\b\\w/g, letter => letter.toUpperCase());\n/** A customer's paid reschedule, in words Ops can act on. */\nconst rescheduleStatus = (value: unknown) => ({ quoted: \"Price shown, not paid\", awaiting_payment: \"Customer paying, time held\", paid: \"Paid, moving\", applying: \"Paid, moving\", applied: \"Paid and moved\", expired: \"Hold lapsed, not paid\", cancelled: \"Booking cancelled\", refund_requested: \"Could not move, refund raised\", refunded: \"Could not move, refunded\", move_failed: \"Could not move, needs support\" } as Record<string, string>)[String(value)] ?? pretty(value);"
         ],
         [
-          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} · {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} · ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article></div></div>}",
-          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} · {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} · ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article><article><span>Reschedule payments</span><b>{selected.rescheduleRequests?.length ?? 0}</b><p>{selected.rescheduleRequests?.[0] ? `${rescheduleStatus(selected.rescheduleRequests[0].status)} · ${money(selected.rescheduleRequests[0].difference_amount)} more for ${when(selected.rescheduleRequests[0].to_start)}` : \"No paid reschedule\"}</p></article></div></div>}"
+          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} \u00b7 {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} \u00b7 ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article></div></div>}",
+          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} \u00b7 {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} \u00b7 ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article><article><span>Reschedule payments</span><b>{selected.rescheduleRequests?.length ?? 0}</b><p>{selected.rescheduleRequests?.[0] ? `${rescheduleStatus(selected.rescheduleRequests[0].status)} \u00b7 ${money(selected.rescheduleRequests[0].difference_amount)} more for ${when(selected.rescheduleRequests[0].to_start)}` : \"No paid reschedule\"}</p></article></div></div>}"
         ],
         [
-          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} · {pretty(item.status)} · Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk →</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>Refund · {pretty(item.status)}</b><p>{money(item.amount)} · {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking · {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}",
-          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} · {pretty(item.status)} · Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk →</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>{item.purpose === \"reschedule_difference\" ? \"Reschedule difference refund\" : \"Refund\"} · {pretty(item.status)}</b><p>{money(item.amount)} · {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}{item.gateway_payment_id ? ` · to payment ${String(item.gateway_payment_id)}` : \"\"}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking · {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}"
+          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} \u00b7 {pretty(item.status)} \u00b7 Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk \u2192</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>Refund \u00b7 {pretty(item.status)}</b><p>{money(item.amount)} \u00b7 {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking \u00b7 {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}",
+          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} \u00b7 {pretty(item.status)} \u00b7 Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk \u2192</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>{item.purpose === \"reschedule_difference\" ? \"Reschedule difference refund\" : \"Refund\"} \u00b7 {pretty(item.status)}</b><p>{money(item.amount)} \u00b7 {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}{item.gateway_payment_id ? ` \u00b7 to payment ${String(item.gateway_payment_id)}` : \"\"}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking \u00b7 {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}"
         ],
         [
           "import ServiceProofReview from \"./service-proof-review\";\n",
@@ -91,7 +91,7 @@
         ],
         [
           "<small>Due now across records</small>",
-          "<small>Available to collect · may be due later</small>"
+          "<small>Available to collect \u00b7 may be due later</small>"
         ],
         [
           "<article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway:",
@@ -112,19 +112,19 @@
           "<section className={styles.metrics} aria-label=\"Control snapshot metrics\" aria-busy={tower.loading}>"
         ],
         [
-          "tower.loading?\"—\":tower.data?.headline.signalsTracked??0",
+          "tower.loading?\"\u2014\":tower.data?.headline.signalsTracked??0",
           "snapshotMetric(tower.data?.headline.signalsTracked,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"—\":tower.data?.headline.needsAttention??0",
+          "tower.loading?\"\u2014\":tower.data?.headline.needsAttention??0",
           "snapshotMetric(tower.data?.headline.needsAttention,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"—\":tower.data?.headline.signalsClear??0",
+          "tower.loading?\"\u2014\":tower.data?.headline.signalsClear??0",
           "snapshotMetric(tower.data?.headline.signalsClear,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"—\":tower.data?.headline.openItems??0",
+          "tower.loading?\"\u2014\":tower.data?.headline.openItems??0",
           "snapshotMetric(tower.data?.headline.openItems,tower.loading,tower.error)"
         ],
         [
@@ -132,12 +132,12 @@
           "<i data-signal-severity={s.severity}>{controlSignalLabel(s.severity)}</i>"
         ],
         [
-          "{tower.loading?\"Loading governance signals…\":\"No connected signal currently needs display.\"}",
-          "{tower.loading?\"Loading governance signals…\":tower.error?\"Governance signals unavailable. Reload after access or connectivity is restored.\":\"No connected signal currently needs display.\"}"
+          "{tower.loading?\"Loading governance signals\u2026\":\"No connected signal currently needs display.\"}",
+          "{tower.loading?\"Loading governance signals\u2026\":tower.error?\"Governance signals unavailable. Reload after access or connectivity is restored.\":\"No connected signal currently needs display.\"}"
         ],
         [
           "<p className={styles.muted}>No governed changes recorded yet.</p>",
-          "<p className={styles.muted}>{tower.loading?\"Loading governed changes…\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
+          "<p className={styles.muted}>{tower.loading?\"Loading governed changes\u2026\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
         ],
         [
           "<details data-staff-context=\"true\"><summary>Control sections</summary>",
@@ -147,7 +147,7 @@
     },
     "app/components/staff-workspace/StaffWorkspace.tsx": {
       "beforeHash": "782fad57d5f95378d92be920e02076b0baa67bd07ef5d185a45783e38c9bfd0f",
-      "afterHash": "217ea533f89d3f5ff0f448462d63b38d39651a0963cb06b36133fced34779f46",
+      "afterHash": "72b8dc89e0a0205b6b4b07a8a52a802837b9bdd12969f10487e1626a8fb93236",
       "changes": [
         [
           "import styles from \"./staff-workspace.module.css\";",
@@ -220,6 +220,10 @@
         [
           "<div className={styles.content} id=\"staff-workspace-content\" tabIndex={-1}>{children}</div>",
           "<div className={styles.content} id=\"staff-workspace-content\" tabIndex={-1}>{staffSignInNeeded && <p className={styles.signInNotice} role=\"alert\">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>"
+        ],
+        [
+          "        <details><summary>Other experiences</summary><Link href=\"/\">Customer home</Link><Link href=\"/v2\">Customer app</Link><Link href=\"/partner\">Partner workspace</Link></details>",
+          "        <details><summary>Other experiences</summary><Link href=\"/\">Customer home</Link><Link href=\"/v2\">Customer app</Link><Link href=\"/v2/employee\">Employee workspace</Link><Link href=\"/partner\">Partner workspace</Link><Link href=\"/v2/partner\">V2 Partner workspace</Link></details>"
         ]
       ]
     },
@@ -556,7 +560,7 @@
     "app/components/sales/UnifiedWorkQueue.tsx": "405b8c167832439bea490ad36e9b226b2e5b2282ca9a0754ffaf35b4ce028ad4",
     "app/components/sales/cross-sell-command-center.module.css": "04777cef4214e3c49594c1547ea29e28032ce793048dd8e5c9478e1d92d948c8",
     "app/components/staff-workspace/StaffModule.tsx": "e1eae8900de5022ca777e46fbc97c94961e4ab5e8c438f7b96ed53e91087366d",
-    "app/components/staff-workspace/navigation.ts": "03733d863d688a0aa486c8e67b105fd908d64b67f7d0d1d8efe324055e42b661",
+    "app/components/staff-workspace/navigation.ts": "2d4730c7a555c4fa33856ce3da7915418687e6f34397a0d37ff693f04d186bd4",
     "app/components/staff-workspace/staff-console.module.css": "d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3",
     "app/components/staff-workspace/staff-module.module.css": "afb8d1ce8db28af68d7eda7cb851e394cecb773956763004ffd8d808b387a6f2",
     "app/components/staff-workspace/staff-workspace.module.css": "b78ede82f6fdd6d7b9cce7e3f60372bec588e36b98630acff16cb98dccfee06e",
@@ -889,7 +893,7 @@
     "app/team/people/incentives/page.tsx": "ab943562d3ca113006ef677a2b954e4a1585079da1b3c7dd9ec0aa9ad8c147dc",
     "app/team/people/manager-dashboard/page.tsx": "ad78fb1df50018e1f6cc866b336b775b604aee43d7d7ff70c6decc2ada190476",
     "app/team/people/onboarding/page.tsx": "4447aad68ddd1a0d99781dba64ceec2d557d664adc12ed9073644a37bec87ff0",
-    "app/team/people/page.tsx": "c01e8842000e52c86323b590389833a02e3935de89c25a2553823201dada570c",
+    "app/team/people/page.tsx": "48f3a4bc80a6dfe4cd511e11fa11bbfe9419998139a43fa98808a3b5563e851e",
     "app/team/people/payroll/page.tsx": "19dac8aa831d155e5c2bab40df05358ba89f2674184f589bfb8f4094c27ede39",
     "app/team/people/provider-training/page.tsx": "186c498655adee997fa5a50d030a156938747e935f9a2621ad95c90920c58317",
     "app/team/people/reports/page.tsx": "982bf9eb432149cfb2f1cbc7e26f4e0740e1abecdd847cac53576140f7db7dde",
@@ -1293,7 +1297,7 @@
     "lib/live-leaderboard.ts": "bc578fefca6f8ab3c48fdc939feaec5040264abdf7d05f87f47d159cda762e48",
     "lib/live-pricing-resolver.ts": "d390111aeb250a9c042e189eca27cd5ccc5d903c285fcad71ca537e05efdcc4f",
     "lib/live-refresh.ts": "64c82a4b309369484c768c7d59e557ac1d91e6faddf067cf01f2b160f1e519f4",
-    "lib/manager-dashboard.ts": "d25cc97ee812bfc090d207835b2cbb471913ab4509d088ff4e30b30685cb8973",
+    "lib/manager-dashboard.ts": "1ab1e03c5dfa4711974d086f4a2d0fe19f11508950b8ad8558e5a9fdff67fcc6",
     "lib/marketing-ad-atomic-sync.ts": "7aebb04a939a3e4bb8b81c413a7dd5fb610b5aed5850506b3e96af42b4f8afad",
     "lib/marketing-ad-connectors.ts": "f32b8a72885b691ef9eae072411b377efe764572ba57fc4ae75344fb3c43d48d",
     "lib/marketing-agent-gateway.ts": "16c76559be32864d133aa858b592fc1589ade2ac8fac6490c781b480dec136fd",

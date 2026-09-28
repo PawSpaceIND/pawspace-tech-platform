@@ -48,13 +48,22 @@ async function employeesInScope(db:Db,scope:Scope){
  * falls back to matching "trainer" in their real title/team_code - flagged honestly as a heuristic
  * in the result rather than presented with the same confidence as the other two.
  */
+async function canonicalProviderServicesForEmployee(db:Db,employeeId:string){
+  if(!employeeId||!await tableExists(db,"provider_people_links")||!await tableExists(db,"provider_capacity_profiles"))return[] as string[];
+  const rows=await db.prepare("SELECT p.services_json FROM provider_people_links l JOIN provider_capacity_profiles p ON p.id=l.provider_id WHERE l.employee_id=? AND l.status='active' AND p.status='active'").bind(employeeId).all<Row>();
+  const services=new Set<string>();
+  for(const row of rows.results){try{for(const service of JSON.parse(text(row.services_json)||"[]"))services.add(String(service));}catch{}}
+  return[...services];
+}
+
 async function classifyEmployee(db:Db,employee:Row,today:string){
-  const email=text(employee.user_email||employee.work_email).toLowerCase(),title=text(employee.title).toLowerCase(),teamCode=text(employee.team_code).toLowerCase();
+  const email=text(employee.user_email||employee.work_email).toLowerCase();
   const salesBase=await currentSalesBase(db,email,today);
   if(salesBase)return{vertical:"sales" as const,basis:"governed_registry" as const,detail:salesBase.baseVertical};
   const groomerBracket=await currentGroomerBracket(db,email,today);
   if(groomerBracket)return{vertical:"groomer" as const,basis:"governed_registry" as const,detail:groomerBracket.bracket};
-  if(title.includes("trainer")||teamCode.includes("training"))return{vertical:"trainer" as const,basis:"title_heuristic" as const,detail:null};
+  const providerServices=await canonicalProviderServicesForEmployee(db,text(employee.id));
+  if(providerServices.includes("dog_training"))return{vertical:"trainer" as const,basis:"provider_people_link" as const,detail:"dog_training"};
   return{vertical:"other" as const,basis:"unclassified" as const,detail:null};
 }
 
@@ -140,6 +149,6 @@ export async function buildManagerDashboard(db:Db,input:{actorEmail:string;permi
     asOf,today,scope:scope.mode,employeeCount:employees.length,operations,
     verticals:{sales,groomers,trainers,other},
     classificationBasis,
-    note:"Sales and Groomer classification comes from a real governed registry (their configured base vertical / bracket). Trainer classification falls back to matching 'trainer' in their real job title or team code, since no dedicated trainer registry exists yet - flagged in classificationBasis as title_heuristic rather than presented with equal confidence.",
+    note:"Sales and Groomer classification comes from governed incentive registries. Trainer classification comes from the active People-to-Provider link and the provider capacity profile offering dog_training. Unlinked workers remain unclassified rather than being guessed from a title.",
   };
 }

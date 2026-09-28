@@ -25,3 +25,17 @@ test('one failed day makes the week unavailable instead of a believable partial 
  const row=(await buildManagerDashboard(broken,input)).verticals.sales[0];assert.equal(failed,1);assert.equal(row.weekly,null);assert.equal(row.daily.achievedValue,800);assert.equal(row.monthly.achievedValue,3500);assert.ok(row.unavailableMetrics.includes('weekly'));});
 test('an entirely successful empty week stays a genuine zero',async t=>{const {db}=await world(t,{bookings:false});const row=(await buildManagerDashboard(db,input)).verticals.sales[0];assert.equal(row.weekly.achievedValue,0);assert.ok(!row.unavailableMetrics.includes('weekly'));});
 test('missing historical base configuration cannot produce a complete weekly total',async t=>{const {db}=await world(t,{effectiveFrom:'2026-09-08'});const row=(await buildManagerDashboard(db,input)).verticals.sales[0];assert.equal(row.daily.achievedValue,800);assert.equal(row.weekly,null);assert.equal(row.monthly,null);assert.ok(row.unavailableMetrics.includes('weekly'));});
+test('trainer classification uses canonical People-provider service linkage and never title guessing',async t=>{
+ const {sqlite,db}=await world(t,{bookings:false});
+ const add=(id,email,team)=>{sqlite.prepare("INSERT INTO employees(id,employee_code,display_name,work_email,user_email,employment_status,joined_at,created_at,updated_at) VALUES(?,?,?,?,?,'active',?,?,?)").run(id,id,id,email,email,ASOF,ASOF,ASOF);sqlite.prepare("INSERT INTO employee_employment_versions(id,employee_id,version,effective_from,effective_until,manager_employee_id,team_code,title,reason,actor_id,created_at) VALUES(?,?,1,?,NULL,'M',?,?, 'test fixture','test',?)").run('V-'+id,id,ASOF,team,team==='training'?'Trainer':'Care specialist',ASOF);};
+ add('T','trainer@test.invalid','care');add('H','heuristic@test.invalid','training');
+ sqlite.exec("CREATE TABLE provider_people_links(provider_id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,status TEXT NOT NULL); CREATE TABLE provider_capacity_profiles(id TEXT PRIMARY KEY,services_json TEXT NOT NULL,status TEXT NOT NULL)");
+ sqlite.prepare("INSERT INTO provider_people_links VALUES('P-TRAIN','T','active')").run();
+ sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES('P-TRAIN','[\"dog_training\"]','active')").run();
+ const result=await buildManagerDashboard(db,input);
+ assert.equal(result.verticals.trainers.length,1);
+ assert.equal(result.verticals.trainers[0].employeeEmail,'trainer@test.invalid');
+ assert.equal(result.classificationBasis['trainer@test.invalid'],'provider_people_link');
+ assert.ok(result.verticals.other.some(row=>row.employeeEmail==='heuristic@test.invalid'));
+ assert.equal(result.classificationBasis['heuristic@test.invalid'],'unclassified');
+});
