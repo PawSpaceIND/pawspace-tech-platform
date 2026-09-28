@@ -334,7 +334,12 @@ jobs:
           const ownerRows=(Array.isArray(ob?.result)?ob.result:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
           const norm=v=>String(v||'').replace(/\D/g,'').slice(-10);
           const matching=ownerRows.filter(x=>[x.primary_phone,x.secondary_phone].some(v=>norm(v)===suffix));
-          console.log('CANONICAL_UAT_OWNER_DIAG='+JSON.stringify({matchingOwners:matching.length,selectedPresent:matching.some(x=>String(x.id||'')===customerId),mergedAliases:matching.filter(x=>String(x.merged_into||'').trim()).length,selectedMerged:Boolean(matching.find(x=>String(x.id||'')===customerId)?.merged_into)}));
+          const detailSql=`SELECT c.id,c.source,c.created_at,c.updated_at,COUNT(b.id) AS booking_count FROM canonical_customers c LEFT JOIN canonical_bookings b ON b.customer_id=c.id GROUP BY c.id,c.source,c.created_at,c.updated_at`;
+          const dr=await fetch(d1Url,{method:'POST',headers:{authorization:'Bearer '+cfToken,'content-type':'application/json'},body:JSON.stringify({sql:detailSql}),signal:AbortSignal.timeout(20000)});
+          const dbdy=await dr.json().catch(()=>({}));
+          const details=(Array.isArray(dbdy?.result)?dbdy.result:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
+          const safeMatches=matching.map(x=>{const d=details.find(v=>String(v.id||'')===String(x.id||''))||{};return{selected:String(x.id||'')===customerId,merged:Boolean(String(x.merged_into||'').trim()),source:String(d.source||'')||null,bookingCount:Number(d.booking_count||0),createdAt:Number(d.created_at||0)||null,updatedAt:Number(d.updated_at||0)||null};});
+          console.log('CANONICAL_UAT_OWNER_DIAG='+JSON.stringify({matchingOwners:matching.length,rows:safeMatches}));
           if(matching.length!==1)throw new Error('canonical ownership collision diagnostics captured');
           console.log('CANONICAL_UAT_OWNER_RESOLVED=yes');
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
