@@ -36,7 +36,7 @@ test("V2 re-quotes the coupon before reserving and books the server's fresh disc
   const calls = network(t);
   await client.createV2GroomingBooking(input({ quoteId: "CPQ-1", code: "GROOM200", discount: 999 }));
   assert.deepEqual(calls.map((call) => call.url), ["/api/coupon-governance", "/api/uat-scheduling", "/api/canonical-bookings", "/api/grooming-service-location"]);
-  assert.deepEqual(calls[0].body.input, { code: "GROOM200", customerId: "C1", serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
+  assert.deepEqual(calls[0].body.input, { code: "GROOM200", customerId: "C1", serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false, bookingKey: await client.v2GroomingIdempotencyKey(input({quoteId:"CPQ-1",code:"GROOM200",discount:999})) });
   const sent = calls.find((call) => call.url === "/api/canonical-bookings").body;
   assert.equal(sent.totalAmount, 1699, "the client's shown discount is never trusted"); assert.equal(sent.amountDueNow, 1699);
   assert.deepEqual(sent.pricing, { discount: 200, couponCode: "GROOM200", couponQuoteId: "CPQ-FRESH" });
@@ -69,7 +69,10 @@ test("a coupon still waiting for its quote, or a server discount above the price
 test("the V2 page quotes coupons through its own box and blocks checkout while a code awaits its quote", async () => {
   const page = await readFile(new URL("../app/v2/grooming/page.tsx", import.meta.url), "utf8");
   const box = await readFile(new URL("../app/v2/grooming/coupon-box.tsx", import.meta.url), "utf8");
-  assert.match(page, /<V2GroomingCouponBox key=\{`\$\{basketTotal\}\|\$\{bundle\.packageCode\}\|\$\{scheduledStart\}\|\$\{coverage\.cityId\}\|\$\{coverage\.zoneId\}`\}/);
+  assert.match(page, /<V2GroomingCouponBox key=\{couponContextKey\}/);
+  assert.match(page, /couponContextKey = JSON\.stringify\(\[account\?\.customerId, basketTotal, bundle\?\.packageCode, scheduledStart, coverage\?\.cityId, coverage\?\.zoneId\]\)/);
+  assert.match(page, /couponChecking = Boolean\(quote && couponCheckedKey !== couponContextKey\)/);
+  assert.match(page, /intentRef=\{couponIntentRef\} onChecked=\{setCouponCheckedKey\}/);
   assert.match(page, /couponNeedsReapply\(coupon\.code, coupon\.quoteId\)/);
   assert.match(box, /quoteGovernedCoupon\(\{ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue/);
   assert.doesNotMatch(page + box, /from ["'][^"']*mobile-app\//);
@@ -98,5 +101,23 @@ for (const response of [{ discount: 100.001, finalAmount: 1798.999 }, { discount
     const calls = network(t, { valid: true, quoteId: "CPQ-INVALID", code: "INVALID", ...response });
     await assert.rejects(client.createV2GroomingBooking(input({ quoteId: "CPQ-OLD", code: "INVALID", discount: 100 })), /Reapply the coupon/);
     assert.deepEqual(calls.map(call => call.url), ["/api/coupon-governance"]);
+  });
+}
+
+for (const [name, change, message] of [
+  ["pet-count mismatch", value => { value.bundle.petCount = 2; }, /published package/],
+  ["unpublished bundle", value => { value.pkg.bundles = []; }, /published package/],
+  ["duplicate pets", value => { value.selectedPets.push(value.selectedPets[0]); }, /published package/],
+  ["pet outside the account", value => { value.account.pets = []; }, /signed-in account/],
+  ["invalid appointment date", value => { value.scheduledStart = "invalid"; }, /exact grooming time/],
+  ["appointment in the past", value => { value.scheduledStart = "2020-01-01T05:30:00Z"; }, /exact grooming time/],
+  ["duration mismatch", value => { value.bundle.slotMinutes = 90; }, /exact grooming time/],
+]) {
+  test(`invalid V2 input cannot create a coupon quote: ${name}`, async t => {
+    const calls = network(t);
+    const value = input({ quoteId: "CPQ-OLD", code: "GROOM200", discount: 200 });
+    change(value);
+    await assert.rejects(client.createV2GroomingBooking(value), message);
+    assert.deepEqual(calls, [], "all locally checkable validation precedes persisted quotes or reservation");
   });
 }

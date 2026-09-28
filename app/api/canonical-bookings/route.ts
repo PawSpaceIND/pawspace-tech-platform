@@ -1,3 +1,4 @@
+import { NORMAL_COUPON_LIMIT_MESSAGE } from "../../../lib/coupon-eligibility-policy";
 import { youngGroomingEligibility } from "../../../lib/grooming-package-eligibility";
 import { groomingAddOnsValid } from "../../../lib/grooming-add-ons";
 import { ensureCustomerAccountTables } from "../../../lib/customer-account";
@@ -585,6 +586,6 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
     }).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});
   }
   canonicalBookingWarm.add(db);try{if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);}finally{await crmProjection;}/* Lead attribution and the answer's read touch different rows, so they run together; an attribution failure still fails the request. */const attribution=attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId}),bundle=db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>().then(booking=>readBundle(db,booking!,false));bundle.catch(()=>undefined);await attribution;return json({data:await bundle},201);
-}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
+}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}if(error instanceof Error&&[NORMAL_COUPON_LIMIT_MESSAGE,"Coupon is for the first booking only"].includes(error.message))return json({error:error.message},409);return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
 
 export async function POST(request:Request){return inRequestD1Metrics(request,()=>executeCanonicalBookingRequest(request));}

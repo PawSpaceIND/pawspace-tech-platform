@@ -52,12 +52,19 @@ const variants = [
   { name: "desktop-emerald-illustrated-light", width: 1440, height: 1000, theme: "emerald", style: "cartoon", mode: "light" },
   { name: "mobile-brand-professional-light", width: 390, height: 844, theme: "signature", style: "professional", mode: "light" },
 ] as const;
-for (const variant of variants) test(`V2 route matrix: ${variant.name}`, async ({ page }, info) => {
-  test.setTimeout(480_000);
+// Keep every route and appearance; bounded groups have independent clocks and browser contexts.
+const ROUTES_PER_CASE = 8;
+if (!routes.length) throw new Error("No PawSpace V2 routes were discovered for compatibility verification.");
+const routeBatches = Array.from({ length: Math.ceil(routes.length / ROUTES_PER_CASE) }, (_, index) =>
+  routes.slice(index * ROUTES_PER_CASE, (index + 1) * ROUTES_PER_CASE));
+for (const variant of variants) for (const [index, batch] of routeBatches.entries()) test(
+  `V2 route matrix: ${variant.name} [batch ${index + 1}/${routeBatches.length}]`, async ({ page }, info) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: variant.width, height: variant.height });
   await choose(page, variant);
   const evidence: object[] = [];
-  for (const route of routes) {
+  try {
+  for (const route of batch) {
     await visit(page, route, variant);
     await page.waitForTimeout(450);
     const state = await page.evaluate(() => ({ url: location.pathname, theme: { ...document.documentElement.dataset },
@@ -71,7 +78,9 @@ for (const variant of variants) test(`V2 route matrix: ${variant.name}`, async (
     evidence.push({ route, ...state });
     await page.screenshot({ path: info.outputPath(route.replaceAll("/", "_") + ".jpg"), type: "jpeg", quality: 65 });
   }
+  } finally {
   await info.attach("v2-route-evidence", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+  }
 });
 for (const theme of ["emerald", "signature"] as const) for (const mode of ["light", "dark"] as const) {
   for (const style of ["cartoon", "professional"] as const) test(`Home artwork and contrast: ${theme}/${mode}/${style}`, async ({ page }) => {

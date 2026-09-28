@@ -1,3 +1,4 @@
+import { couponEligibilityIssue, NORMAL_COUPON_BOOKING_LIMIT, NORMAL_COUPON_LIMIT_MESSAGE } from "./coupon-eligibility-policy";
 // Customer-facing "available offers" browsing surface. This EXTENDS lib/coupon-governance.ts,
 // it never replaces it: reuses the same coupon_campaigns table, the same ensureCouponTables/
 // seedUatCoupons DDL+seed, and the same customerFacts/rowToCampaign helpers (both now exported
@@ -10,7 +11,7 @@
 // campaign management. A customer must not need a staff permission just to see which coupon codes
 // exist, so this module is read-only and deliberately has no save/quote/consume surface of its own.
 
-import { ensureCouponTables, seedUatCoupons, customerFacts, rowToCampaign, UNLISTED_COUPON_CAMPAIGN_IDS, type CouponCampaign } from "./coupon-governance";
+import { ensureCouponTables, seedUatCoupons, customerFacts, rowToCampaign, UNLISTED_COUPON_CAMPAIGN_IDS, couponAmounts, type CouponQuoteInput, type CouponCampaign } from "./coupon-governance";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -28,6 +29,9 @@ export type CustomerOffer = {
   minOrder: number;
   description: string;
   autoApply: boolean;
+  savings?: number;
+  finalAmount?: number;
+  validUntil?: number;
 };
 
 // Idempotent, same INSERT OR IGNORE pattern as seedUatCoupons - safe to call on every request.
@@ -95,29 +99,35 @@ function toOffer(campaign: CouponCampaign, autoApply: boolean): CustomerOffer {
 // known before a service/package is chosen: customer kind and first-order-only status - both from
 // the same real customerFacts() the checkout quote uses, so "new" here means the same thing "new"
 // means when the coupon is actually redeemed.
-export async function listAvailableCoupons(db: Db, input: { customerId: string }): Promise<{ coupons: CustomerOffer[]; autoApply: CustomerOffer | null }> {
-  const customerId = String(input?.customerId || "").trim();
-  if (!customerId) throw new Error("customerId is required");
-  await ensureCouponTables(db);
-  await seedUatCoupons(db);
-  await seedWelcomeCoupon(db);
-
-  const facts = await customerFacts(db, customerId);
-  const now = Date.now();
-  const rows = await db
-    .prepare("SELECT * FROM coupon_campaigns WHERE status='active' AND valid_from<=? AND valid_until>=? ORDER BY created_at ASC")
-    .bind(now, now)
-    .all<Row>();
-
-  const eligible = rows.results
-    .map(rowToCampaign)
-    .filter((campaign) => campaign.customerKinds.includes(facts.kind))
-    .filter((campaign) => !campaign.firstOrderOnly || facts.orderCount === 0)
-    // GROOM400 and GROOM200 reach a customer through the WATI bot or PawSpace AI; they are typed at
-    // checkout, not advertised here to every customer.
-    .filter((campaign) => !UNLISTED_COUPON_CAMPAIGN_IDS.includes(campaign.id));
-
-  const coupons = eligible.map((campaign) => toOffer(campaign, campaign.code === WELCOME_COUPON_CODE && facts.orderCount === 0));
-  const autoApply = coupons.find((offer) => offer.autoApply) ?? null;
-  return { coupons, autoApply };
+export type CustomerOfferContext = Omit<CouponQuoteInput, "code" | "customerId" | "bookingKey">;
+export async function listAvailableCoupons(db: Db, input: { customerId: string; context?: CustomerOfferContext; liveApproved?: boolean }): Promise<{ coupons: CustomerOffer[]; autoApply: CustomerOffer | null; normalCouponsAllowed: boolean; bookingCount: number; message?: string }> {
+  const customerId=String(input?.customerId||"").trim();
+  if(!customerId)throw new Error("customerId is required");
+  await seedUatCoupons(db); await seedWelcomeCoupon(db);
+  const facts=await customerFacts(db,customerId),now=Date.now();
+  if(facts.orderCount>=NORMAL_COUPON_BOOKING_LIMIT)return{coupons:[],autoApply:null,normalCouponsAllowed:false,bookingCount:facts.orderCount,message:NORMAL_COUPON_LIMIT_MESSAGE};
+  // One read for campaigns and usage; never create throw-away coupon_quotes just to display savings.
+  const rows=await db.prepare("SELECT c.*,(SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=c.id AND r.status='consumed') total_used,(SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=c.id AND r.customer_id=? AND r.status='consumed') customer_used FROM coupon_campaigns c WHERE c.status='active' AND c.valid_from<=? AND c.valid_until>=? ORDER BY c.created_at ASC").bind(customerId,now,now).all<Row>();
+  const coupons:CustomerOffer[]=[];
+  for(const row of rows.results){
+    const campaign=rowToCampaign(row);
+    // Privately issued codes are never enumerated here, including the intended customer's own code.
+    if(campaign.customerIds?.length||UNLISTED_COUPON_CAMPAIGN_IDS.includes(campaign.id))continue;
+    if(!campaign.customerKinds.includes(facts.kind)||campaign.firstOrderOnly&&facts.orderCount>0)continue;
+    if(!campaign.testOnly&&!input.liveApproved)continue;
+    if(input.context){
+      const context={...input.context,code:campaign.code,customerId};
+      const issue=couponEligibilityIssue(campaign,context,facts,{totalUsed:Number(row.total_used),customerUsed:Number(row.customer_used)},{now,liveApproved:input.liveApproved});
+      if(issue)continue;
+      const amount=couponAmounts(context.orderValue,campaign);
+      if(amount.discount<=0)continue;
+      coupons.push({...toOffer(campaign,false),savings:amount.discount,finalAmount:amount.finalAmount,validUntil:campaign.validUntil});
+    }else{
+      if(Number(row.total_used)>=campaign.totalLimit||Number(row.customer_used)>=campaign.perCustomerLimit)continue;
+      coupons.push(toOffer(campaign,campaign.code===WELCOME_COUPON_CODE&&facts.orderCount===0));
+    }
+  }
+  if(input.context)coupons.sort((a,b)=>(b.savings||0)-(a.savings||0)||a.code.localeCompare(b.code));
+  const autoApply=input.context?(coupons[0]||null):(coupons.find(offer=>offer.autoApply)||null);
+  return{coupons,autoApply,normalCouponsAllowed:true,bookingCount:facts.orderCount};
 }

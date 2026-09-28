@@ -97,18 +97,7 @@ export async function createV2GroomingBooking(
   if ((input.addOns ?? []).some(label => !allowedAddOns.includes(label)) || new Set(input.addOns ?? []).size !== (input.addOns ?? []).length) throw new Error("Choose add-ons available for this pet.");
   if ((input.specialInstructions ?? "").length > 300) throw new Error("Keep groomer notes under 300 characters.");
   if (input.coupon && (!input.coupon.quoteId || !input.coupon.code)) throw new Error("Reapply the coupon before booking.");
-  // The shown quote may have expired (15 minutes) or been used up since it was applied. Re-quote it now,
-  // before anything is reserved, and book with the server's fresh discount and quote - never the
-  // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
-  const basketTotal = v2GroomingTotal(input);
-  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false }) : null;
-  if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
-  const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
-  const discount = coupon ? coupon.discount : 0;
-  const addOns = input.addOns ?? [], requirements = [
-    ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
-    ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
-  ];
+  // Reject locally invalid bookings before requesting a persisted coupon quote.
   if (input.selectedPets.length > 4 || new Set(input.selectedPets.map(pet => pet.id)).size !== input.selectedPets.length ||
       input.bundle.petCount !== input.selectedPets.length || !input.pkg.bundles.some(bundle => bundle.packageCode === input.bundle.packageCode)) {
     throw new Error("The published package must match the selected pets.");
@@ -121,7 +110,21 @@ export async function createV2GroomingBooking(
     const youngIssue = v2YoungPackageIssue(input.selectedPets, serviceDate);
     if (youngIssue) throw new Error(youngIssue.message);
   }
+
+  // The shown quote may have expired (15 minutes) or been used up since it was applied. Re-quote it now,
+  // before anything is reserved, and book with the server's fresh discount and quote - never the
+  // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
+  const basketTotal = v2GroomingTotal(input);
   const idempotencyKey = await v2GroomingIdempotencyKey(input);
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false, bookingKey: idempotencyKey }) : null;
+  if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
+  const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
+  const discount = coupon ? coupon.discount : 0;
+  const addOns = input.addOns ?? [], requirements = [
+    ...(input.comfort ? [`grooming_safety:${input.comfort}`] : []),
+    ...((input.specialInstructions ?? "").trim() ? [`grooming_special:${(input.specialInstructions ?? "").trim()}`] : []),
+  ];
+
   const decision = await reserveUatSchedule({
     clientRequestId: idempotencyKey,
     customerId: input.account.customerId,

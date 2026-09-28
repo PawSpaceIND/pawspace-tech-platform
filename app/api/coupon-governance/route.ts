@@ -1,3 +1,4 @@
+import { NORMAL_COUPON_LIMIT_MESSAGE } from "../../../lib/coupon-eligibility-policy";
 import{authError,authFailure,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{consumeCouponQuote,listCouponCampaigns,quoteCoupon,saveCouponCampaign,type CouponCampaign,type CouponQuoteInput}from"../../../lib/coupon-governance";
 
@@ -8,6 +9,8 @@ async function couponsLiveApproved(){const{env}=await import("cloudflare:workers
 // These are governed customer/operator outcomes, not internal exceptions. Only this exact allow-list
 // may cross the HTTP boundary; SQL/stack/runtime messages continue through authError's generic 500.
 const couponFailures=[
+  {message:NORMAL_COUPON_LIMIT_MESSAGE,status:409},
+  {message:"Coupon is for the first booking only",status:409},
   {message:"Coupon customer eligibility is temporarily unavailable",status:503},
   {message:"Coupon customer scope is invalid",status:400},
   {message:"Coupon amount configuration is invalid",status:409},
