@@ -264,7 +264,7 @@ test("GRM-06 payment: an unsigned gateway event is refused and writes nothing", 
   stage("Payment forgery guard", "PASS", "unsigned event refused with no record written; the same event signed is accepted");
 });
 
-test("GRM-07 pay-later: a post-service payment request is gated on completion, assignment and mode", async () => {
+test("GRM-07 pay-later: a post-service payment request is gated on service proof, assignment and mode", async () => {
   /* CORRECTED. My first run reported "Post-service payment can be requested only after service
    * completion" as a GAP. It is not a gap - it is the rule. The fixture booking was `confirmed`
    * and already `captured`, so the module refused exactly as it should. The real test is that
@@ -276,10 +276,10 @@ test("GRM-07 pay-later: a post-service payment request is gated on completion, a
   const call = (bookingId, providerId = PROVIDER) => attempt(() =>
     pay.createPostServicePaymentRequest(db, {}, { bookingId, providerId, actorId: "ops@pawspace.test" }));
 
-  // Gate 1: not completed.
+  // Gate 1: service proof is not complete yet.
   const tooEarly = await call(BOOKING);
   assert.equal(tooEarly.ok, false);
-  assert.match(String(tooEarly.body ?? ""), /only after service completion/i);
+  assert.match(String(tooEarly.body ?? ""), /only after service proof is complete/i);
 
   // Gate 2: not this provider's booking.
   sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id=?").run(BOOKING);
@@ -305,7 +305,7 @@ test("GRM-07 pay-later: a post-service payment request is gated on completion, a
   sqlite.prepare("UPDATE booking_payments SET mode='pay_after_service' WHERE booking_id=?").run(BOOKING);
   const eligible = await call(BOOKING);
   const body = String(eligible.body ?? "");
-  assert.ok(!/only after service completion|not assigned to this provider|already paid|not configured for pay after service/i.test(body),
+  assert.ok(!/only after service proof is complete|not assigned to this provider|already paid|not configured for pay after service/i.test(body),
     `an eligible booking must clear the governance gates, got: ${body.slice(0, 160)}`);
   stage("Pay-later", "PASS",
     eligible.ok ? "all four gates fire; eligible booking issues a request"

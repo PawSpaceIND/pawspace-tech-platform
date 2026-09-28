@@ -197,6 +197,7 @@ function PartnerMobileAppContent() {
   const [paymentPollKey, setPaymentPollKey] = useState(0);
   const [mediaMessage, setMediaMessage] = useState("");
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
+  const [cashRecordedFor, setCashRecordedFor] = useState("");
   const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
   const [earningsNotice, setEarningsNotice] = useState("");
   const [engagement, setEngagement] = useState("");
@@ -448,6 +449,12 @@ function PartnerMobileAppContent() {
   };
 
   const requestPayment = async () => { if (!selected) return; setBusy(true); setError(""); try { const response = await fetch("/api/grooming-payment-sandbox", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, action: "request_after_service" }) }); const body = await response.json() as { data?: PaymentRequest; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to create payment request"); setPaymentRequest(body.data ?? null); setPaymentPollKey(current=>current+1); } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to create payment request"); } finally { setBusy(false); } };
+  const recordCashReceived = async () => { if (!selected || selected.status !== "in_service") return; setBusy(true); setError(""); try {
+    const amount = Number(selected.payment.amount || selected.totalAmount || 0);
+    const response = await fetch("/api/grooming-lifecycle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, action: "record_cash_collection", collectedAmount: amount, collectionMethod: "cash" }) });
+    const body = await response.json() as { error?: string }; if (!response.ok) throw new Error(body.error || "Unable to record cash collection");
+    setCashRecordedFor(selected.bookingId); setRefreshKey(value => value + 1);
+  } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to record cash collection"); } finally { setBusy(false); } };
 
   const reportOperation = async (action: "package_upgrade" | "service_overrun" | "running_late" | "vehicle_issue" | "rebook_requested") => {
     if (!selected || operationBusy) return;
@@ -553,7 +560,7 @@ function PartnerMobileAppContent() {
   // never sees the previous one's jobs, earnings, payment request or media before their own loads.
   const resetAccountState = () => {
     setIdentity(null); setJobs([]); setJobsLoaded(false); setSelectedId(""); setTab("home"); setOperationResult(null); setOperationBusy(false);
-    setPaymentRequest(null); setPaymentPollKey(0); setEarnings(null); setMediaMessage(""); setMediaAssets([]); setMediaAssetsError(""); setMediaPollKey(0);
+    setPaymentRequest(null); setPaymentPollKey(0); setCashRecordedFor(""); setEarnings(null); setMediaMessage(""); setMediaAssets([]); setMediaAssetsError(""); setMediaPollKey(0);
     setBusy(false); setRefreshKey(0); lifecycleLock.current = false;
     // The workspace state that arrives with the earnings payload belongs to the same account and is
     // dropped with it. pendingProof names the previous partner's BOOKING IDS, so leaving it behind
@@ -713,10 +720,11 @@ function PartnerMobileAppContent() {
               <div className={styles.primaryActions}><button type="button" disabled={busy} onClick={() => setMediaPollKey(value => value + 1)}>Refresh proof status</button></div>
               {bothApproved && <p><b>Both photos approved.</b> Tap “Add service proof” below, then “Complete job”.</p>}
               {mediaAssetsError && <p role="alert">{mediaAssetsError}</p>}{mediaMessage && <p>{mediaMessage}</p>}</section>}
-            {!isTraining && selected.status === "completed" && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
+            {!isTraining && (selected.status === "completed" || (selected.status === "in_service" && Boolean(selected.proof?.beforePhotoRef) && Boolean(selected.proof?.afterPhotoRef))) && selected.payment.mode === "pay_after_service" && !SETTLED_PAYMENT_STATUSES.includes(selected.payment.status) && <section className={styles.notice}>
               <b>Payment due after service</b>
+              {selected.status === "in_service" && <div className={styles.primaryActions}><button type="button" disabled={busy || cashRecordedFor === selected.bookingId} onClick={() => void recordCashReceived()}>{cashRecordedFor === selected.bookingId ? "Cash recorded · complete job" : `Record ${money(collectAtDoor)} cash received`}</button></div>}
               {!paymentRequest ? <>
-                <p>Create a collectable Razorpay sandbox payment link and QR payload. This does not capture money.</p>
+                <p>Create a collectable Razorpay sandbox payment link / UPI QR after service proof is ready. A verified capture satisfies the completion payment gate; cash can be recorded instead.</p>
                 <button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button>
               </> : <>
                 <p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p>

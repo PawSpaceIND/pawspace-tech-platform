@@ -70,11 +70,11 @@ test("the V2 page quotes coupons through its own box and blocks checkout while a
   const page = await readFile(new URL("../app/v2/grooming/page.tsx", import.meta.url), "utf8");
   const box = await readFile(new URL("../app/v2/grooming/coupon-box.tsx", import.meta.url), "utf8");
   assert.match(page, /<V2GroomingCouponBox key=\{couponContextKey\}/);
-  assert.match(page, /couponContextKey = JSON\.stringify\(\[account\?\.customerId, basketTotal, bundle\?\.packageCode, scheduledStart, coverage\?\.cityId, coverage\?\.zoneId\]\)/);
+  assert.match(page, /couponContextKey = JSON\.stringify\(\[account\?\.customerId, basketTotal, bundle\?\.packageCode, scheduledStart, coverage\?\.cityId, coverage\?\.zoneId, paymentMode\]\)/);
   assert.match(page, /couponChecking = Boolean\(quote && couponCheckedKey !== couponContextKey\)/);
   assert.match(page, /intentRef=\{couponIntentRef\} onChecked=\{setCouponCheckedKey\}/);
   assert.match(page, /couponNeedsReapply\(coupon\.code, coupon\.quoteId\)/);
-  assert.match(box, /quoteGovernedCoupon\(\{ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue/);
+  assert.match(box, /paymentMode:paymentMode==="prepaid"\?"full":"after_service"/);
   assert.doesNotMatch(page + box, /from ["'][^"']*mobile-app\//);
 });
 

@@ -12,6 +12,8 @@ import { openMobileRazorpayCheckout } from "../mobile/razorpay";
 import { reserveUatSchedule, type ProviderPreview } from "../uat-scheduling-client";
 import type { V2GroomingBundle, V2GroomingPackage, V2GroomingQuote } from "./grooming-client";
 
+export type V2GroomingPaymentChoice = "prepaid" | "pay_after_service";
+
 export type V2GroomingCheckoutInput = {
   account: CustomerAccountRecord;
   selectedPets: CustomerAccountRecord["pets"];
@@ -21,6 +23,8 @@ export type V2GroomingCheckoutInput = {
   provider: ProviderPreview["providers"][number];
   /** Omitted by older callers: preserve their exact-provider behavior and retry key. */
   providerSelection?: "auto" | "specific";
+  /** V1 parity: pay now by Razorpay/UPI, or settle after the service by secure link/UPI or cash. */
+  paymentMode?: V2GroomingPaymentChoice;
   address: string;
   pincode: string;
   cityName?: string;
@@ -67,6 +71,7 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     input.comfort ?? "",
     (input.specialInstructions ?? "").trim(),
     input.providerSelection === "auto" ? "pawspace:automatic-choice" : input.provider.id,
+    `payment:${input.paymentMode ?? "prepaid"}`,
     ...input.selectedPets.map(pet => pet.id).sort(),
     // The code, not its quote: a retry re-quotes the coupon but must keep the same booking.
     ...(input.coupon ? [`coupon:${input.coupon.code}`] : []),
@@ -115,8 +120,11 @@ export async function createV2GroomingBooking(
   // before anything is reserved, and book with the server's fresh discount and quote - never the
   // client's copy - so a coupon that no longer qualifies is refused without holding the slot.
   const basketTotal = v2GroomingTotal(input);
+  const paymentMode = input.paymentMode ?? "prepaid";
+  if (paymentMode !== "prepaid" && paymentMode !== "pay_after_service") throw new Error("Choose Pay now or Pay after service for Grooming.");
+  const couponPaymentMode = paymentMode === "prepaid" ? "full" : "after_service";
   const idempotencyKey = await v2GroomingIdempotencyKey(input);
-  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: "full", isSubscription: false, bookingKey: idempotencyKey }) : null;
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: couponPaymentMode, isSubscription: false, bookingKey: idempotencyKey }) : null;
   if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
   const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
   const discount = coupon ? coupon.discount : 0;
@@ -169,12 +177,14 @@ export async function createV2GroomingBooking(
     scheduledEnd: input.scheduledEnd,
     provider: decision.provider,
     totalAmount: payable,
-    amountDueNow: payable,
+    amountDueNow: paymentMode === "prepaid" ? payable : 0,
     payment: {
-      method: "upi",
-      mode: "prepaid",
+      method: paymentMode === "prepaid" ? "upi" : "cash",
+      mode: paymentMode,
       status: "created",
-      detail: "PawSpace V2 secure Razorpay sandbox checkout; capture requires verified gateway evidence",
+      detail: paymentMode === "prepaid"
+        ? "PawSpace V2 secure Razorpay sandbox checkout; capture requires verified gateway evidence"
+        : "Pay after service; settle by governed Razorpay/UPI request or cash collection",
     },
     // Same fields the in-app flow sends: add-ons are priced by the server; notes reach the groomer's job card;
     // a coupon is re-checked and consumed by the booking.
@@ -186,9 +196,11 @@ export async function createV2GroomingBooking(
   const booking = { ...canonical, idempotencyKey, providerName: decision.provider.name };
   // Publish durable identity BEFORE another network step can fail. UI freezes and retries this ID.
   onCreated?.(booking);
-  if (canonical.status !== "payment_pending") return booking; // replay: read server state, never repay
+  // A confirmed PREPAID replay has already crossed this boundary; never rewrite its doorstep. A new
+  // pay-after-service booking is confirmed immediately, so it still needs the one verified doorstep write.
+  if (canonical.status !== "payment_pending" && paymentMode === "prepaid") return booking;
   await saveV2GroomingDoorstep(booking.bookingId, input.account.customerId, input.address, input.pincode, input.saveAddress === true);
-  return booking;
+  return booking; // replays read the same durable booking; no gateway payment is started here
 }
 
 export async function saveV2GroomingDoorstep(bookingId: string, customerId: string, address: string, pincode: string, saveAddress = false) {
