@@ -7,7 +7,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dispatchQueuedProof, flushProviderProofQueue, isProviderProofInFlight, providerProofQueueId, queueProviderProof, discardProviderProof, clearProviderProofQueue } from "../lib/provider-proof-offline-queue.ts";
+import { dispatchQueuedProof, flushProviderProofQueue, isProviderProofInFlight, providerProofFailure, providerProofQueueId, queueProviderProof, discardProviderProof, clearProviderProofQueue } from "../lib/provider-proof-offline-queue.ts";
 
 // --- a minimal IndexedDB: one store keyed by id, requests settle on a microtask like the real thing ---
 const rows = new Map();
@@ -19,7 +19,21 @@ const store = {
   clear: () => settle(() => { rows.clear(); return undefined; }),
   getAll: () => settle(() => [...rows.values()]),
 };
-const database = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: () => ({ objectStore: () => store }), close() {} };
+// Model request success AND the subsequent commit/abort separately; the former alone is not durable.
+let abortNextWrite = false;
+let beforeCommit = null;
+const database = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: (_store, mode) => {
+  const before = new Map(rows);
+  const abort = mode === "readwrite" && abortNextWrite;
+  if (abort) abortNextWrite = false;
+  const transaction = { objectStore: () => store, oncomplete: null, onabort: null, onerror: null, error: null };
+  queueMicrotask(() => queueMicrotask(() => {
+    beforeCommit?.();
+    if (abort) { rows.clear(); for (const [key, row] of before) rows.set(key, row); transaction.error = new DOMException("Storage quota exhausted", "QuotaExceededError"); transaction.onabort?.(); }
+    else transaction.oncomplete?.();
+  }));
+  return transaction;
+}, close() {} };
 globalThis.indexedDB = { open: () => { const req = { onupgradeneeded: null, onsuccess: null, onerror: null, result: database }; queueMicrotask(() => { req.onupgradeneeded?.(); req.onsuccess?.(); }); return req; } };
 Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true, writable: true });
 
@@ -154,4 +168,73 @@ test("a session boundary stops a running flush: rows read before logout are neit
   assert.deepEqual(calls, [first.id], "the second row, read before logout, was never sent on behalf of the ended session");
   assert.deepEqual(result, { uploaded: 0, pending: 0, discarded: 0, skipped: 1 });
   assert.equal(rows.size, 0, "the transient failure did not resurrect the ended session's photo in the cleared queue");
+});
+
+
+test("a request success followed by quota abort is never reported as saved", async () => {
+  abortNextWrite = true;
+  await assert.rejects(queueProviderProof(photo("before_service")), /quota exhausted/);
+  assert.equal(rows.size, 0, "an aborted transaction has no durable photo");
+});
+
+test("saved confirmation waits for the transaction commit, not just the put request", async () => {
+  let returned = false;
+  beforeCommit = () => assert.equal(returned, false, "the save promise must not settle before commit");
+  try { await queueProviderProof(photo("before_service")).then(() => { returned = true; }); }
+  finally { beforeCommit = null; }
+  assert.equal(returned, true);
+});
+
+test("an offline flush truthfully reports saved photos still waiting", async () => {
+  await queueProviderProof(photo("before_service"));
+  navigator.onLine = false;
+  try { assert.deepEqual(await flushProviderProofQueue(async () => assert.fail("offline must not send")), { uploaded: 0, pending: 1, discarded: 0, skipped: 0 }); }
+  finally { navigator.onLine = true; }
+});
+
+test("a stale direct-dispatch object cannot overwrite the current queued bytes", async () => {
+  const item = await queueProviderProof(photo("before_service"));
+  const stale = { ...item, fileName: "stale-name.jpg" };
+  await dispatchQueuedProof(stale, async row => assert.equal(row.fileName, item.fileName));
+});
+
+test("completion of an old session upload does not delete a newly queued copy", async () => {
+  const item = await queueProviderProof(photo("before_service"));
+  const gate = deferred();
+  const sending = dispatchQueuedProof(item, async () => gate.promise);
+  await tick();
+  await clearProviderProofQueue();
+  const replacement = await queueProviderProof(photo("before_service"));
+  gate.resolve();
+  assert.equal(await sending, "withdrawn");
+  assert.equal(rows.has(replacement.id), true);
+});
+
+
+test("binary persistence uses ArrayBuffer while dispatch reconstructs the original Blob bytes", async () => {
+ const row = await queueProviderProof(photo("before_service"));
+ assert.equal(rows.get(row.id).file instanceof ArrayBuffer, true);
+ await dispatchQueuedProof(row, async item => { assert.equal(item.file instanceof Blob, true); assert.equal(await item.file.text(), "jpeg"); assert.equal(item.mimeType, "image/jpeg"); });
+});
+
+test("legacy Blob queue records remain readable after the storage format upgrade", async () => {
+ const row = await queueProviderProof(photo("before_service"));
+ rows.set(row.id, { ...row, file: new Blob(["legacy-jpeg"], {type:"image/jpeg"}) });
+ await dispatchQueuedProof(row, async item => assert.equal(await item.file.text(), "legacy-jpeg"));
+});
+
+
+test("expired authentication preserves the photo for the same partner's reauthentication", async () => {
+ const row = await queueProviderProof(photo("before_service"));
+ const result = await flushProviderProofQueue(async () => { throw providerProofFailure(401, "Sign in again"); });
+ assert.equal(result.pending, 1); assert.equal(result.discarded, 0); assert.equal(rows.has(row.id), true);
+ for (const status of [408,425,429,503]) assert.equal(providerProofFailure(status,"Retry").permanent,false);
+ for (const status of [400,403,413,415]) assert.equal(providerProofFailure(status,"Refused").permanent,true);
+});
+
+test("logout during binary serialization cannot resurrect the ended session's queue", async () => {
+ const gate=deferred();const file=new Blob(["jpeg"]);file.arrayBuffer=()=>gate.promise;
+ const saving=queueProviderProof({...photo("before_service"),file});
+ await clearProviderProofQueue();gate.resolve(new ArrayBuffer(4));
+ await assert.rejects(saving,/Session changed/);assert.equal(rows.size,0);
 });
