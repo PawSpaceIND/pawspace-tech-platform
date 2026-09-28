@@ -46,7 +46,8 @@ export function watchNetwork(flow) {
     if (wants) body = await res.json().catch(() => null);
     net.calls.push({ m: method, p: path, s: res.status(), ms: t === undefined ? null : Date.now() - t, at: new Date().toISOString() });
     const post = String(req.postData() || "");
-    if (path === "/api/boarding-commercial" && method === "POST" && body?.data?.quoteId) net.quotes.push({ http: res.status(), ...body.data });
+    let postJson = null; try { postJson = JSON.parse(post || "null"); } catch {}
+    if (path === "/api/boarding-commercial" && method === "POST" && body?.data?.quoteId) net.quotes.push({ http: res.status(), req: postJson, ...body.data });
     if (path === "/api/boarding-commercial" && method === "GET" && Array.isArray(body?.data?.hosts) && /scheduledStart=/.test(url)) net.hostLists.push({ url: url.replace(BASE, ""), hosts: body.data.hosts.map(h => ({ providerId: h.providerId, name: h.name, available: h.availableGuestPets, capacity: h.capacity })) });
     if (path === "/api/uat-scheduling" && method === "POST" && !/"action":"preview"/.test(post)) net.reserve.push({ http: res.status(), code: body?.code || null, error: body?.error || null, providerId: body?.data?.provider?.id || null, groupId: body?.data?.groupId || null });
     if (path === "/api/canonical-bookings" && method === "POST") net.canonical.push({ http: res.status(), bookingId: body?.data?.bookingId || null, status: body?.data?.status || null, error: body?.error || null });

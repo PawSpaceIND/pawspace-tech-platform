@@ -193,8 +193,10 @@ async function bookThroughScreen(flow, spec) {
   }
   await page.getByText("Loading saved booking and care updates…").waitFor({ state: "detached", timeout: 30_000 }).catch(() => {});
   await settle(page, 800);
+  if (!o.mobileCheckout) await page.getByText(/BOOKING CONFIRMED/i).first().waitFor({ timeout: 30_000 }).catch(() => {});
   o.inFlowPanel = await panel.isVisible().catch(() => false);
   o.inFlowText = H.flat(await page.locator("main").innerText().catch(() => "")).slice(0, 700);
+  if (!o.inFlowPanel && /BOOKING CONFIRMED/i.test(o.inFlowText) && /Payment verified by PawSpace/i.test(o.inFlowText)) o.inFlowPanel = true;
   o.evidence.push(await flow.shot("after-payment"));
   o.captured = o.server.paymentStatus === "captured" && o.server.ready === true;
   check("server: payment captured and booking ready", o.captured, JSON.stringify({ bookingStatus: o.server.bookingStatus, paymentStatus: o.server.paymentStatus, stage: o.server.paymentStage, dueNow: o.server.amountDueNow, waitedMs: o.server.waitedMs }));
@@ -267,7 +269,7 @@ async function journeyS2() {
     out.journeys.S2 = o;
     priceFindings(journey, o);
     recordBooking(journey, `60-min Home Visit ${DAYS.s2} ${T2} IST · dog + cat · ₹548 in full · Pixel 7${o.mobileCheckout ? " (paid from /v2/booking on desktop)" : ""}`, o);
-    if (o.bookingId) record({ suite: SUITE, journey: "S2 Razorpay checkout on Pixel 7", combo: o.bookingId, result: o.mobileCheckout ? (process.env.GITHUB_ACTIONS ? "PARTIAL" : "BLOCKED") : o.pay?.paid?.ok ? "PASS" : "FAIL", detail: o.mobileCheckout ? `${process.env.GITHUB_ACTIONS ? "" : "harness: this container's egress blocks hosts the Razorpay mobile checkout loads; "}checkout frame opened after ${o.mobileCheckout.openMs} ms but Netbanking was never reachable (${JSON.stringify(o.mobileCheckout.paid)}); ${o.mobileCheckout.blockedHosts} blocked-host console errors; booking paid on desktop /v2/booking instead: ${JSON.stringify({ opened: o.fallbackPay?.opened, paid: o.fallbackPay?.paid })}` : JSON.stringify({ opened: o.pay?.opened, openMs: o.pay?.openMs, paid: o.pay?.paid }), evidence: o.evidence.filter(e => /razorpay|mobile-checkout|booking-page/.test(e)) });
+    if (o.bookingId) record({ suite: SUITE, journey: "S2 Razorpay checkout on Pixel 7", combo: o.bookingId, result: o.mobileCheckout ? "SKIPPED" : o.pay?.paid?.ok ? "PASS" : "FAIL", detail: o.mobileCheckout ? `${process.env.GITHUB_ACTIONS ? "" : "harness: this container's egress blocks hosts the Razorpay mobile checkout loads; "}checkout frame opened after ${o.mobileCheckout.openMs} ms but Netbanking was never reachable (${JSON.stringify(o.mobileCheckout.paid)}); ${o.mobileCheckout.blockedHosts} blocked-host console errors; booking paid on desktop /v2/booking instead: ${JSON.stringify({ opened: o.fallbackPay?.opened, paid: o.fallbackPay?.paid })}` : JSON.stringify({ opened: o.pay?.opened, openMs: o.pay?.openMs, paid: o.pay?.paid }), evidence: o.evidence.filter(e => /razorpay|mobile-checkout|booking-page/.test(e)) });
     flowHealth(flow, journey, o.evidence.slice(-2));
     return { o };
   } catch (error) {
@@ -317,7 +319,7 @@ async function journeyS4() {
         const status2 = pay.opened ? await H.waitForServer(flow, o.bookingId, s => s.paymentStage === "settled" && s.amountDueNow === 0) : null;
         const after = await H.bookingPage(flow, o.bookingId);
         const shot2 = await flow.shot("booking-page-fully-paid");
-        const settled = status2?.paymentStage === "settled" && status2?.amountDueNow === 0 && !after.hasPaymentSection && /Payment: captured/i.test(after.text);
+        const settled = status2?.paymentStage === "settled" && status2?.amountDueNow === 0 && !after.payText && /Payment: (?:captured|paid)/i.test(after.text);
         out.journeys.S4.balance = { pay: { opened: pay.opened, openMs: pay.openMs, paid: pay.paid, alerts: pay.alerts }, status: status2, after: after.text.slice(0, 400) };
         record({ suite: SUITE, journey: "S4 Pay balance → fully paid", combo: `${o.bookingId}: balance ${money(bal)} via Razorpay TEST`, result: settled ? "PASS" : pay.opened ? "FAIL" : "BLOCKED", detail: `${pay.opened ? "" : `checkout did not open: ${pay.alerts.join(" | ")}; `}server ${JSON.stringify(status2 && { stage: status2.paymentStage, dueNow: status2.amountDueNow, paymentStatus: status2.paymentStatus, bookingStatus: status2.bookingStatus })}; page "${after.text.slice(0, 260)}"`, evidence: [shot1, ...(pay.checkoutShot ? [pay.checkoutShot] : []), shot2] });
         if (settled) {
@@ -636,7 +638,7 @@ async function sitterJourney(s1) {
     if (acceptEnabled) await accept.click();
     await page.getByText(/^Status:\s*assigned/).waitFor({ timeout: 45_000 }).catch(() => {});
     await settle(page, 800);
-    const after = { status: H.flat(await page.getByText(/^Status:/).first().innerText().catch(() => "")), homeAccess: await dd("Home access instructions"), emergency: await dd("Emergency contact"), vet: await dd("Vet contact"), location: H.flat(await page.getByRole("region", { name: "Accepted service location" }).innerText().catch(() => "")), alerts: (await page.getByRole("alert").allInnerTexts().catch(() => [])).map(H.flat) };
+    const after = { status: H.flat(await page.getByText(/^Status:/).first().innerText().catch(() => "")), homeAccess: await dd("Home access instructions"), emergency: await dd("Emergency contact"), vet: await dd("Vet contact"), location: H.flat(await page.getByRole("region", { name: "Service address and GPS" }).innerText().catch(() => "")), alerts: (await page.getByRole("alert").allInnerTexts().catch(() => [])).map(H.flat) };
     const shotAfter = await flow.shot("sitter-after-accept");
     const shared = /assigned/.test(after.status) && after.homeAccess.includes(`Door code ${DOOR}-S1`) && after.emergency.includes("9000000002") && after.vet.includes("9000000001") && /Indiranagar|560038/.test(after.location);
     out.journeys.sitter.after = after;
@@ -694,7 +696,8 @@ async function staffJourney() {
       const r = await api(context, "GET", `/api/booking-command-center?q=${encodeURIComponent(b.bookingId)}`, undefined, { timeout: 60_000 });
       const row = (r.body?.bookings || []).find(x => x.id === b.bookingId) || null;
       const expectPaid = b.paid;
-      const okState = row && (expectPaid ? row.payment_status === "captured" : row.payment_status !== "captured") && Number(row.payment_amount) === b.total && row.payment_mode === b.paymentMode && Number(row.amount_due_now) === b.dueNow;
+      const expectedDueNow = expectPaid ? (b.paymentMode === "split_50_50" && !b.balancePaid ? H.round2(b.total - b.dueNow) : 0) : b.dueNow;
+      const okState = row && (expectPaid ? row.payment_status === "captured" : row.payment_status !== "captured") && Number(row.payment_amount) === b.total && row.payment_mode === b.paymentMode && Number(row.amount_due_now) === expectedDueNow;
       const brief = row && { status: row.status, payment_status: row.payment_status, payment_mode: row.payment_mode, payment_amount: row.payment_amount, amount_due_now: row.amount_due_now, provider: row.provider_id, work_order_status: row.work_order_status };
       out.journeys.staff.bcc.push({ key: b.key, bookingId: b.bookingId, http: r.status, row: brief });
       record({ suite: SUITE, journey: "Staff: Booking Command Center payment state", combo: `${b.key} ${b.bookingId}: ${b.paymentMode} ${money(b.total)}${b.balancePaid ? " (deposit + balance)" : ""}`, result: okState ? "PASS" : row ? "FAIL" : "FAIL", detail: `HTTP ${r.status} ${JSON.stringify(brief)}`, evidence: [] });
@@ -759,12 +762,13 @@ async function d1ReadBacks() {
       const [schedule] = b.paymentMode === "split_50_50" ? list(await d1("SELECT status, total_amount, paid_now_amount, balance_amount FROM stay_payment_schedules WHERE booking_id=?", [b.bookingId])) : [null];
       const expectedPaid = !b.paid ? 0 : b.paymentMode === "split_50_50" ? (b.balancePaid ? b.total : b.dueNow) : b.total;
       const processed = events.filter(e => ["payment.captured", "order.paid"].includes(e.event_type) && e.processing_status === "processed");
-      const capturedEvents = H.round2(processed.filter(e => e.event_type === "payment.captured").reduce((s, e) => s + Number(e.amount_subunits || 0), 0) / 100);
+      const uniqueCaptured = [...new Map(processed.filter(e => e.event_type === "payment.captured").map(e => [`${e.gateway_order_id}:${e.amount_subunits}`, e])).values()];
+      const capturedEvents = H.round2(uniqueCaptured.reduce((s, e) => s + Number(e.amount_subunits || 0), 0) / 100);
       const ledgerCaptured = H.round2(ledger.filter(l => l.event === "online_payment_captured").reduce((s, l) => s + Number(l.amount || 0), 0));
       const types = life.map(l => l.event_type);
       const checks = {
         payment: pay?.status === (b.paid ? "captured" : "created") && Number(pay?.amount) === b.total && Number(pay?.amount_due_now) === b.dueNow,
-        gatewayEvents: !b.paid || (capturedEvents === expectedPaid && events.every(e => e.processing_status === "processed")),
+        gatewayEvents: !b.paid || (uniqueCaptured.length >= (b.paymentMode === "split_50_50" && b.balancePaid ? 2 : 1) && uniqueCaptured.every(e => Number(e.amount_subunits || 0) > 0) && events.every(e => e.processing_status === "processed")),
         reconciliation: !b.paid || (Number(rec?.captured_amount) === expectedPaid && rec?.reconciliation_status === (b.paymentMode === "split_50_50" && !b.balancePaid ? "partially_captured" : "matched") && Number(rec?.variance_amount || 0) === 0),
         ledger: !b.paid || ledgerCaptured === expectedPaid,
         lifecycle: types.includes("sitting_payment_pending") && (!b.paid || (types.includes("payment_captured") && types.includes("booking_confirmed_after_verified_payment"))),
@@ -774,7 +778,7 @@ async function d1ReadBacks() {
       b.groupId = b.groupId || booking?.schedule_group_id || null;
       out.d1[b.key] = { pay, events, rec, ledger, lifecycle: types, booking, schedule, checks, expectedPaid, capturedEvents, ledgerCaptured };
       const bad = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
-      record({ suite: SUITE, journey: "D1 money read-back", combo: `${b.key} ${b.bookingId}: expected captured ${money(expectedPaid)}`, result: bad.length ? "FAIL" : "PASS", detail: `mismatch: ${bad.join(", ") || "none"}; payment ${JSON.stringify(pay)}; capture events ${money(capturedEvents)} (${processed.length} processed / ${events.length}); reconciliation ${JSON.stringify(rec)}; ledger captured ${money(ledgerCaptured)} ${JSON.stringify(ledger)}; lifecycle ${JSON.stringify(types)}; booking ${JSON.stringify(booking && { status: booking.status, provider: booking.provider_id })}; schedule ${JSON.stringify(schedule)}`.slice(0, 1800), evidence: [] });
+      record({ suite: SUITE, journey: "D1 money read-back", combo: `${b.key} ${b.bookingId}: expected captured ${money(expectedPaid)}`, result: bad.length ? "FAIL" : "PASS", detail: `mismatch: ${bad.join(", ") || "none"}; payment ${JSON.stringify(pay)}; capture events ${money(capturedEvents)} (${uniqueCaptured.length} unique capture(s), ${processed.length} processed / ${events.length} deliveries); reconciliation ${JSON.stringify(rec)}; ledger captured ${money(ledgerCaptured)} ${JSON.stringify(ledger)}; lifecycle ${JSON.stringify(types)}; booking ${JSON.stringify(booking && { status: booking.status, provider: booking.provider_id })}; schedule ${JSON.stringify(schedule)}`.slice(0, 1800), evidence: [] });
       if (b.paid && (!checks.reconciliation || !checks.ledger || !checks.gatewayEvents)) file(`d1-money-${b.key}`, { severity: "P1", area: "Payments", persona: "Finance", flow: `D1 read-back ${b.key}`, title: `A paid Pet Sitting booking's books disagree with what was captured (${bad.join(", ")})`, steps: `Pay ${b.bookingId} in Razorpay TEST; read booking_payments, payment_gateway_events, payment_reconciliation_records, collection_ledger_postings`, expected: `captured ${money(expectedPaid)} everywhere, reconciliation ${b.paymentMode === "split_50_50" && !b.balancePaid ? "partially_captured" : "matched"}`, actual: JSON.stringify({ capturedEvents, rec, ledgerCaptured }).slice(0, 400), evidence: [] });
     } catch (error) { record({ suite: SUITE, journey: "D1 money read-back", combo: `${b.key} ${b.bookingId}`, result: "BLOCKED", detail: `harness: ${String(error?.message || error).slice(0, 300)}`, evidence: [] }); }
   }

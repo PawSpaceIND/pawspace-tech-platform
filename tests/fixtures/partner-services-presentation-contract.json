@@ -320,7 +320,7 @@
     "app/api/whatsapp/meta-admin/route.ts": "a2a816f96abaf1e5131b9411e6500724f2d4cefe26cc00288cfd715dee5dc0d5",
     "app/api/whatsapp/meta-webhook/route.ts": "c802759377c4885fd9b97c1897ecf7eb12e528d848dc822e4ed39f2125d065b9",
     "app/api/whatsapp/templates/route.ts": "0f8f3b2b6d46c1103de7266ea9a02f54be90c2fb84b578eb5f90ae0d57eee30c",
-    "app/assisted-booking/assisted-taxi-panel.tsx": "beffac81ee3bbe3bafefb6bc9147c24cfb2da9d62e06765ffca38e865fd1ce22",
+    "app/assisted-booking/assisted-taxi-panel.tsx": "25490881cba546ec8c77403f7d459188ceabb0692ad5c6a2c46e7bb591552a20",
     "app/assisted-booking/assisted.module.css": "140d3f38303af5843a7bb8349c6b5077a5cfebb4028b769f3e337197e1cb53c8",
     "app/assisted-booking/page.tsx": "b89268936542d52b3c6f6d51e6554429e4ab96c35fb7ed7cbe76c0cf10aa7456",
     "app/boarding/layout.tsx": "bacc6c04625d9ac72cd0a221dd58f3e8f28c9bf470f9a97a5f1d2e89a02ef4bf",
