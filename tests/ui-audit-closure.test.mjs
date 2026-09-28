@@ -54,3 +54,43 @@ test('appearance placement cannot introduce network calls or identity storage',(
  const allowed=new Set(['THEME_STORAGE_KEY','APPEARANCE_STORAGE_KEY','STYLE_STORAGE_KEY']);
  for(const match of source.matchAll(/localStorage\.setItem\(([^,]+),/g))assert.ok(allowed.has(match[1].trim()),match[1]);
 });
+
+// Execute the actual new presentation component as well as preserving source contracts.
+import 'react/jsx-runtime';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__UI_AUDIT_RENDER_DB__');
+const {default:ReadableText}=await import('../app/components/ui/ReadableText.tsx');
+const renderText=text=>renderToStaticMarkup(createElement(ReadableText,{text}));
+
+test('Atlas rendering executes paragraphs, emphasis and inline references',()=>{
+ const html=renderText('First paragraph\r\n\r\n**Review required**: use `PS-123` for ₹1,349.');
+ assert.equal(html,'<div class="paw-readable-text"><p>First paragraph</p><p><strong>Review required</strong>: use <code>PS-123</code> for ₹1,349.</p></div>');
+});
+test('Atlas rendering preserves heading content and ordered-list starting numbers',()=>{
+ const html=renderText('# Review summary\n- First item\n+ Second **item**\n\n3. Third step\n4. Fourth step');
+ assert.equal(html,'<div class="paw-readable-text"><h3>Review summary</h3><ul><li>First item</li><li>Second <strong>item</strong></li></ul><ol start="3"><li>Third step</li><li>Fourth step</li></ol></div>');
+});
+test('Atlas rendering never turns supplied markup or links into active controls',()=>{
+ const html=renderText('<button type="submit">Confirm & pay</button>\n[Reference](https://example.invalid)');
+ assert.match(html,/&lt;button type=&quot;submit&quot;&gt;Confirm &amp; pay&lt;\/button&gt;/);
+ assert.match(html,/\[Reference\]\(https:\/\/example\.invalid\)/);
+ assert.doesNotMatch(html,/<button|<a\s/);
+});
+test('Atlas rendering keeps fenced examples literal and handles an unfinished fence',()=>{
+ const html=renderText('```text\n<strong>literal</strong>\n**not emphasis**\n```\nAfter the example');
+ assert.equal(html,'<div class="paw-readable-text"><pre><code>&lt;strong&gt;literal&lt;/strong&gt;\n**not emphasis**</code></pre><p>After the example</p></div>');
+ assert.equal(renderText('```\nunfinished'),'<div class="paw-readable-text"><pre><code>unfinished</code></pre></div>');
+});
+test('Atlas rendering keeps unclosed inline markers and empty responses safe',()=>{
+ assert.equal(renderText('**unclosed\n`reference'),'<div class="paw-readable-text"><p>**unclosed</p><p>`reference</p></div>');
+ assert.equal(renderText(' \r\n\r\n'),'<div class="paw-readable-text"></div>');
+});
+test('Atlas rendering keeps repeated records without truncating long replies',()=>{
+ const text=Array.from({length:200},(_,i)=>`- Record ${i}: ₹${i+1}`).join('\n');
+ const html=renderText(text);
+ assert.equal((html.match(/<li>/g)||[]).length,200);
+ assert.match(html,/<li>Record 0: ₹1<\/li>/);
+ assert.match(html,/<li>Record 199: ₹200<\/li>/);
+});
