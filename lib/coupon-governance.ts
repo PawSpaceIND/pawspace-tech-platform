@@ -1,8 +1,44 @@
-// Coupon totals can be zero, but must still be exact, finite paise amounts.
-function sameMoney(left:number,right:number){
-  const paise=(value:number)=>{if(!Number.isFinite(value)||value<0||!/^\d+(?:\.\d{1,2})?$/.test(String(value)))return null;const cents=Math.round(value*100);return Number.isSafeInteger(cents)?cents:null;};
-  const amount=paise(left);return amount!==null&&amount===paise(right);
+import { CANONICAL_BOOKING_CORE_DDL } from "./canonical-booking-core-schema";
+import { CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL } from "./subscription-wallet";
+import { groomingPricingPackageCode } from "./grooming-pricing-code";
+
+// Coupon monetary values are calculated in integer paise, including percentage rounding.
+function couponPaise(value:unknown):number|null{
+  if(typeof value!=="number"||!Number.isFinite(value)||value<0||!/^\d+(?:\.\d{1,2})?$/.test(String(value)))return null;
+  const[whole,fraction=""]=String(value).split("."),paise=BigInt(whole)*BigInt(100)+BigInt(fraction.padEnd(2,"0"));
+  return paise<=BigInt(Number.MAX_SAFE_INTEGER)?Number(paise):null;
 }
+function sameMoney(left:number,right:number){const amount=couponPaise(left);return amount!==null&&amount===couponPaise(right);}
+function couponAmounts(orderValue:number,campaign:CouponCampaign){
+  const order=couponPaise(orderValue),cap=campaign.maxDiscount===null?null:couponPaise(campaign.maxDiscount);
+  if(order===null||(campaign.maxDiscount!==null&&cap===null))throw new Error("Coupon amount configuration is invalid");
+  let raw:number;
+  if(campaign.discountType==="fixed"){
+    const fixed=couponPaise(campaign.discountValue);
+    if(fixed===null||fixed<=0)throw new Error("Coupon amount configuration is invalid");
+    raw=fixed;
+  }else if(campaign.discountType==="percent"&&Number.isFinite(campaign.discountValue)&&campaign.discountValue>0&&campaign.discountValue<=100){
+    // Treat the stored decimal rate as a rational number, avoiding half-paise floating point errors.
+    const[coefficient,exponent="0"]=String(campaign.discountValue).toLowerCase().split("e");
+    const[whole,fraction=""]=coefficient.split("."),scale=fraction.length-Number(exponent);
+    let numerator=BigInt(whole+fraction),denominator=BigInt(100);
+    if(scale>=0)denominator*=BigInt(10)**BigInt(scale);else numerator*=BigInt(10)**BigInt(-scale);
+    raw=Number((BigInt(order)*numerator+denominator/BigInt(2))/denominator);
+  }else throw new Error("Coupon amount configuration is invalid");
+  const discounted=Math.min(raw,cap??raw,order);
+  return {discount:discounted/100,finalAmount:(order-discounted)/100};
+}
+function validCustomerIds(value:unknown):string[]{
+  if(!Array.isArray(value)||value.some(id=>typeof id!=="string"||!id.trim()))throw new Error("Coupon customer scope is invalid");
+  return [...new Set(value.map(id=>id.trim()))];
+}
+function storedCustomerIds(value:unknown):string[]{
+  // Legacy in-memory projections may omit this optional column; persisted schemas are migrated first.
+  if(value===undefined)return [];
+  try{return validCustomerIds(JSON.parse(String(value)));}catch{throw new Error("Coupon customer scope is invalid");}
+}
+// Check the latest customer restriction again inside the same transaction as redemption.
+const customerCouponScopeSql="json_valid(c.customer_ids_json)=1 AND json_type(c.customer_ids_json)='array' AND NOT EXISTS (SELECT 1 FROM json_each(c.customer_ids_json) scope WHERE scope.type!='text' OR length(trim(scope.value))=0) AND (json_array_length(c.customer_ids_json)=0 OR EXISTS (SELECT 1 FROM json_each(c.customer_ids_json) scope WHERE scope.value=q.customer_id))";
 export type CouponService="grooming"|"dog_training"|"boarding"|"pet_sitting";
 export type CouponChannel="customer_app"|"website"|"assisted_staff"|"whatsapp"|"partner_app";
 export type CouponCustomerKind="new"|"existing"|"subscriber";
@@ -64,15 +100,30 @@ const jsonList=(value:unknown)=>{try{return JSON.parse(String(value||"[]")) as s
 const normalize=(value:string)=>value.trim().toUpperCase().replace(/\s+/g,"");
 const isCouponService=(value:string):value is CouponService=>couponServices.includes(value as CouponService);
 
+const couponSetupInflight=new WeakMap<Db,Promise<void>>();
 export async function ensureCouponTables(db:Db){
-  await db.batch([
+  const pending=couponSetupInflight.get(db);
+  if(pending)return pending;
+  // Publish the promise before work begins so the complete cold setup and migrations are shared.
+  const setup=Promise.resolve().then(()=>ensureCouponTablesOnce(db));
+  couponSetupInflight.set(db,setup);
+  try{await setup;}finally{if(couponSetupInflight.get(db)===setup)couponSetupInflight.delete(db);}
+}
+async function ensureCouponTablesOnce(db:Db){
+  // Cold history schemas travel in the existing coupon setup round trip. Mark them ready only
+  // after that batch succeeds; warm quotes retain their prior D1 request budget.
+  const initializeAuthority=!customerAuthorityReady.has(db);
+  try{await db.batch([
+    ...(initializeAuthority?[...CANONICAL_BOOKING_CORE_DDL,CUSTOMER_GROOMING_SUBSCRIPTIONS_DDL].map(sql=>db.prepare(sql)):[]),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_campaigns (id TEXT PRIMARY KEY,code TEXT NOT NULL UNIQUE,name TEXT NOT NULL,status TEXT NOT NULL,test_only INTEGER NOT NULL DEFAULT 1,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,channels_json TEXT NOT NULL,customer_kinds_json TEXT NOT NULL,package_scope TEXT NOT NULL,package_codes_json TEXT NOT NULL DEFAULT '[]',first_order_only INTEGER NOT NULL DEFAULT 0,min_order REAL NOT NULL,max_order REAL,subscription_eligible INTEGER NOT NULL DEFAULT 0,full_payment_only INTEGER NOT NULL DEFAULT 0,discount_type TEXT NOT NULL,discount_value REAL NOT NULL,max_discount REAL,per_customer_limit INTEGER NOT NULL,total_limit INTEGER NOT NULL,valid_from INTEGER NOT NULL,valid_until INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_quotes (id TEXT PRIMARY KEY,code TEXT NOT NULL,campaign_id TEXT NOT NULL,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,channel TEXT NOT NULL,package_code TEXT NOT NULL,order_value REAL NOT NULL,discount_amount REAL NOT NULL,final_amount REAL NOT NULL,policy_snapshot_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',expires_at INTEGER NOT NULL,booking_id TEXT UNIQUE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS coupon_redemptions (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,quote_id TEXT NOT NULL UNIQUE,campaign_id TEXT NOT NULL,code TEXT NOT NULL,customer_id TEXT NOT NULL,booking_id TEXT NOT NULL UNIQUE,discount_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'consumed',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-  ]);
+  ]);}catch(error){if(initializeAuthority)throw new Error("Coupon customer eligibility is temporarily unavailable");throw error;}
+  if(initializeAuthority)customerAuthorityReady.set(db,Promise.resolve());
   const columns=await db.prepare("PRAGMA table_info(coupon_campaigns)").all<Row>();
   if(!columns.results.some(row=>String(row.name)==="cross_sell_from_services_json")){
-    await db.prepare("ALTER TABLE coupon_campaigns ADD COLUMN cross_sell_from_services_json TEXT NOT NULL DEFAULT '[]'").run();
+    try{await db.prepare("ALTER TABLE coupon_campaigns ADD COLUMN cross_sell_from_services_json TEXT NOT NULL DEFAULT '[]'").run();}
+    catch(error){const again=await db.prepare("PRAGMA table_info(coupon_campaigns)").all<Row>();if(!again.results.some(row=>String(row.name)==="cross_sell_from_services_json"))throw error;}
   }
   // Customer-bound campaigns (the Training grooming bonus): an empty list means any eligible customer, as
   // before. A concurrent request may add the column first; only a column still missing is an error.
@@ -82,7 +133,7 @@ export async function ensureCouponTables(db:Db){
   }
 }
 
-export function rowToCampaign(row:Row):CouponCampaign{return{id:String(row.id),code:String(row.code),name:String(row.name),status:String(row.status) as CouponCampaign["status"],testOnly:Number(row.test_only)===1,serviceCodes:jsonList(row.service_codes_json).filter(isCouponService),cityIds:jsonList(row.city_ids_json),channels:jsonList(row.channels_json) as CouponChannel[],customerKinds:jsonList(row.customer_kinds_json) as CouponCustomerKind[],packageScope:String(row.package_scope) as CouponPackageScope,packageCodes:jsonList(row.package_codes_json),crossSellFromServices:jsonList(row.cross_sell_from_services_json).filter(isCouponService),firstOrderOnly:Number(row.first_order_only)===1,minOrder:Number(row.min_order),maxOrder:row.max_order==null?null:Number(row.max_order),subscriptionEligible:Number(row.subscription_eligible)===1,fullPaymentOnly:Number(row.full_payment_only)===1,discountType:String(row.discount_type) as CouponDiscountType,discountValue:Number(row.discount_value),maxDiscount:row.max_discount==null?null:Number(row.max_discount),perCustomerLimit:Number(row.per_customer_limit),totalLimit:Number(row.total_limit),validFrom:Number(row.valid_from),validUntil:Number(row.valid_until),createdAt:Number(row.created_at),updatedAt:Number(row.updated_at),customerIds:jsonList(row.customer_ids_json)}};
+export function rowToCampaign(row:Row):CouponCampaign{return{id:String(row.id),code:String(row.code),name:String(row.name),status:String(row.status) as CouponCampaign["status"],testOnly:Number(row.test_only)===1,serviceCodes:jsonList(row.service_codes_json).filter(isCouponService),cityIds:jsonList(row.city_ids_json),channels:jsonList(row.channels_json) as CouponChannel[],customerKinds:jsonList(row.customer_kinds_json) as CouponCustomerKind[],packageScope:String(row.package_scope) as CouponPackageScope,packageCodes:jsonList(row.package_codes_json),crossSellFromServices:jsonList(row.cross_sell_from_services_json).filter(isCouponService),firstOrderOnly:Number(row.first_order_only)===1,minOrder:Number(row.min_order),maxOrder:row.max_order==null?null:Number(row.max_order),subscriptionEligible:Number(row.subscription_eligible)===1,fullPaymentOnly:Number(row.full_payment_only)===1,discountType:String(row.discount_type) as CouponDiscountType,discountValue:Number(row.discount_value),maxDiscount:row.max_discount==null?null:Number(row.max_discount),perCustomerLimit:Number(row.per_customer_limit),totalLimit:Number(row.total_limit),validFrom:Number(row.valid_from),validUntil:Number(row.valid_until),createdAt:Number(row.created_at),updatedAt:Number(row.updated_at),customerIds:storedCustomerIds(row.customer_ids_json)}};
 
 export async function seedUatCoupons(db:Db){
   await ensureCouponTables(db);const now=Date.now(),start=now-DAY,end=now+120*DAY;const seeds:CouponCampaign[]=[
@@ -97,18 +148,41 @@ export async function seedUatCoupons(db:Db){
 
 export async function listCouponCampaigns(db:Db){await seedUatCoupons(db);const rows=await db.prepare("SELECT c.*,(SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=c.id AND r.status='consumed') used_count FROM coupon_campaigns c ORDER BY c.created_at DESC").all<Row>();return rows.results.map(row=>({...rowToCampaign(row),used:Number(row.used_count||0)}));}
 
+const customerAuthorityReady=new WeakMap<Db,Promise<void>>();
+async function ensureCouponCustomerAuthority(db:Db){
+  const ready=customerAuthorityReady.get(db);
+  if(ready){await ready;return;}
+  await ensureCouponTables(db);
+}
+
+/** Coupons keep the exact pricing scope; a single-pet code never silently becomes a bundle code. */
+function bookingCouponPackage(serviceCode:string,packageCode:string,petCount=1){
+  return serviceCode==="grooming"&&!packageCode.startsWith("sub-")?groomingPricingPackageCode(packageCode,petCount):packageCode;
+}
+
 export async function customerFacts(db:Db,customerId:string){
-  const [count,subscriptions,history]=await Promise.all([
-    db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=?").bind(customerId).first<Row>().catch(()=>null),
-    db.prepare("SELECT COUNT(*) count FROM customer_grooming_subscriptions WHERE customer_id=? AND status IN ('active','paused')").bind(customerId).first<Row>().catch(()=>null),
-    db.prepare("SELECT DISTINCT service_code FROM canonical_bookings WHERE customer_id=? AND status='completed'").bind(customerId).all<Row>().catch(()=>({results:[] as Row[]})),
-  ]);
-  const orderCount=Number(count?.count||0),subscriber=Number(subscriptions?.count||0)>0,previousServices=history.results.map(row=>String(row.service_code||"")).filter(isCouponService);
-  return{orderCount,kind:(subscriber?"subscriber":orderCount===0?"new":"existing") as CouponCustomerKind,previousServices};
+  try{
+    if(!customerId.trim())throw new Error("Missing customer");
+    await ensureCouponCustomerAuthority(db);
+    const [count,subscriptions,history]=await Promise.all([
+      db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=?").bind(customerId).first<Row>(),
+      db.prepare("SELECT COUNT(*) count FROM customer_grooming_subscriptions WHERE customer_id=? AND status IN ('active','paused')").bind(customerId).first<Row>(),
+      db.prepare("SELECT DISTINCT service_code FROM canonical_bookings WHERE customer_id=? AND status='completed'").bind(customerId).all<Row>(),
+    ]);
+    const checkedCount=(row:Row|null)=>{
+      const value=row?.count;
+      if((typeof value!=="number"&&typeof value!=="string")||!/^\d+$/.test(String(value))||!Number.isSafeInteger(Number(value)))throw new Error("Invalid authoritative count");
+      return Number(value);
+    };
+    const orderCount=checkedCount(count),subscriber=checkedCount(subscriptions)>0;
+    if(!Array.isArray(history.results))throw new Error("Invalid authoritative history");
+    const previousServices=history.results.map(row=>String(row.service_code||"")).filter(isCouponService);
+    return{orderCount,kind:(subscriber?"subscriber":orderCount===0?"new":"existing") as CouponCustomerKind,previousServices};
+  }catch{throw new Error("Coupon customer eligibility is temporarily unavailable");}
 }
 
 export async function quoteCoupon(db:Db,input:CouponQuoteInput,opts:{liveApproved?:boolean}={}){
-  await seedUatCoupons(db);const code=normalize(input.code);if(!code||!input.customerId||!input.serviceCode||!input.cityId||!input.channel||!input.packageCode)return{valid:false,discount:0,error:"Complete coupon context is required"};if(!Number.isFinite(input.orderValue)||input.orderValue<0)return{valid:false,discount:0,error:"Order value must be valid"};const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE code=?").bind(code).first<Row>();if(!row)return{valid:false,discount:0,error:"Coupon not found"};const campaign=rowToCampaign(row),now=Date.now();if(campaign.status!=="active")return{valid:false,discount:0,error:"Coupon is paused"};if(campaign.customerIds?.length&&!campaign.customerIds.includes(input.customerId))return{valid:false,discount:0,error:"This coupon belongs to another account"};if(!campaign.testOnly&&!opts.liveApproved)return{valid:false,discount:0,error:"Live coupons are not enabled in this environment (PAWSPACE_COUPONS_LIVE_APPROVED not set)"};if(now<campaign.validFrom||now>campaign.validUntil)return{valid:false,discount:0,error:"Coupon is outside its validity window"};if(!campaign.serviceCodes.includes(input.serviceCode))return{valid:false,discount:0,error:"Coupon is not eligible for this service"};if(!campaign.cityIds.includes(input.cityId))return{valid:false,discount:0,error:"Coupon is not eligible in this city"};if(!campaign.channels.includes(input.channel))return{valid:false,discount:0,error:"Coupon is not eligible on this channel"};const facts=await customerFacts(db,input.customerId);if(!campaign.customerKinds.includes(facts.kind))return{valid:false,discount:0,error:"Customer is not eligible for this coupon"};if(campaign.firstOrderOnly&&facts.orderCount>0)return{valid:false,discount:0,error:"Coupon is for the first booking only"};if(campaign.crossSellFromServices.length&&!campaign.crossSellFromServices.some(service=>facts.previousServices.includes(service)))return{valid:false,discount:0,error:"This cross-sell coupon requires an eligible previous service"};if(input.isSubscription&&!campaign.subscriptionEligible)return{valid:false,discount:0,error:"Coupon is not eligible for subscriptions"};if(campaign.packageScope==="subscription"&&!input.isSubscription)return{valid:false,discount:0,error:"Coupon requires a subscription package"};if(campaign.packageScope==="single_session"&&input.isSubscription)return{valid:false,discount:0,error:"Coupon is limited to single-session packages"};if(campaign.packageScope==="selected"&&!campaign.packageCodes.includes(input.packageCode))return{valid:false,discount:0,error:"Coupon is not eligible for this package"};if(campaign.fullPaymentOnly&&input.paymentMode!=="full")return{valid:false,discount:0,error:"Coupon requires full payment"};if(input.orderValue<campaign.minOrder)return{valid:false,discount:0,error:"Minimum order value not met"};if(campaign.maxOrder!=null&&input.orderValue>campaign.maxOrder)return{valid:false,discount:0,error:"Maximum order value exceeded"};const [totalUsed,customerUsed]=await Promise.all([db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(campaign.id).first<Row>(),db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(campaign.id,input.customerId).first<Row>()]);if(Number(totalUsed?.count||0)>=campaign.totalLimit)return{valid:false,discount:0,error:"Coupon has reached its total redemption limit"};if(Number(customerUsed?.count||0)>=campaign.perCustomerLimit)return{valid:false,discount:0,error:"Customer has reached this coupon's usage limit"};const raw=campaign.discountType==="fixed"?campaign.discountValue:Math.round(input.orderValue*campaign.discountValue/100),discount=Math.max(0,Math.min(raw,campaign.maxDiscount??raw,input.orderValue)),quoteId=`CPQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,expiresAt=now+15*60_000,snapshot={campaignId:campaign.id,code:campaign.code,discountType:campaign.discountType,discountValue:campaign.discountValue,maxDiscount:campaign.maxDiscount,perCustomerLimit:campaign.perCustomerLimit,totalLimit:campaign.totalLimit,customerKind:facts.kind,orderCount:facts.orderCount,crossSellFromServices:campaign.crossSellFromServices,previousServices:facts.previousServices,testOnly:campaign.testOnly};await db.prepare("INSERT INTO coupon_quotes (id,code,campaign_id,customer_id,service_code,city_id,channel,package_code,order_value,discount_amount,final_amount,policy_snapshot_json,status,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',?,?,?)").bind(quoteId,campaign.code,campaign.id,input.customerId,input.serviceCode,input.cityId,input.channel,input.packageCode,input.orderValue,discount,input.orderValue-discount,JSON.stringify(snapshot),expiresAt,now,now).run();return{valid:true,quoteId,code:campaign.code,discount,finalAmount:input.orderValue-discount,expiresAt,testOnly:campaign.testOnly,liveMoney:!campaign.testOnly,policySnapshot:snapshot};
+  await seedUatCoupons(db);const code=normalize(input.code);if(!code||!input.customerId||!input.serviceCode||!input.cityId||!input.channel||!input.packageCode)return{valid:false,discount:0,error:"Complete coupon context is required"};if(couponPaise(input.orderValue)===null)return{valid:false,discount:0,error:"Order value must be valid"};const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE code=?").bind(code).first<Row>();if(!row)return{valid:false,discount:0,error:"Coupon not found"};const campaign=rowToCampaign(row),now=Date.now();if(campaign.status!=="active")return{valid:false,discount:0,error:"Coupon is paused"};if(campaign.customerIds?.length&&!campaign.customerIds.includes(input.customerId))return{valid:false,discount:0,error:"This coupon belongs to another account"};if(!campaign.testOnly&&!opts.liveApproved)return{valid:false,discount:0,error:"Live coupons are not enabled in this environment (PAWSPACE_COUPONS_LIVE_APPROVED not set)"};if(now<campaign.validFrom||now>campaign.validUntil)return{valid:false,discount:0,error:"Coupon is outside its validity window"};if(!campaign.serviceCodes.includes(input.serviceCode))return{valid:false,discount:0,error:"Coupon is not eligible for this service"};if(!campaign.cityIds.includes(input.cityId))return{valid:false,discount:0,error:"Coupon is not eligible in this city"};if(!campaign.channels.includes(input.channel))return{valid:false,discount:0,error:"Coupon is not eligible on this channel"};const facts=await customerFacts(db,input.customerId);if(!campaign.customerKinds.includes(facts.kind))return{valid:false,discount:0,error:"Customer is not eligible for this coupon"};if(campaign.firstOrderOnly&&facts.orderCount>0)return{valid:false,discount:0,error:"Coupon is for the first booking only"};if(campaign.crossSellFromServices.length&&!campaign.crossSellFromServices.some(service=>facts.previousServices.includes(service)))return{valid:false,discount:0,error:"This cross-sell coupon requires an eligible previous service"};if(input.isSubscription&&!campaign.subscriptionEligible)return{valid:false,discount:0,error:"Coupon is not eligible for subscriptions"};if(campaign.packageScope==="subscription"&&!input.isSubscription)return{valid:false,discount:0,error:"Coupon requires a subscription package"};if(campaign.packageScope==="single_session"&&input.isSubscription)return{valid:false,discount:0,error:"Coupon is limited to single-session packages"};if(campaign.packageScope==="selected"&&!campaign.packageCodes.includes(input.packageCode))return{valid:false,discount:0,error:"Coupon is not eligible for this package"};if(campaign.fullPaymentOnly&&input.paymentMode!=="full")return{valid:false,discount:0,error:"Coupon requires full payment"};if(input.orderValue<campaign.minOrder)return{valid:false,discount:0,error:"Minimum order value not met"};if(campaign.maxOrder!=null&&input.orderValue>campaign.maxOrder)return{valid:false,discount:0,error:"Maximum order value exceeded"};const [totalUsed,customerUsed]=await Promise.all([db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(campaign.id).first<Row>(),db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(campaign.id,input.customerId).first<Row>()]);if(Number(totalUsed?.count||0)>=campaign.totalLimit)return{valid:false,discount:0,error:"Coupon has reached its total redemption limit"};if(Number(customerUsed?.count||0)>=campaign.perCustomerLimit)return{valid:false,discount:0,error:"Customer has reached this coupon's usage limit"};const {discount,finalAmount}=couponAmounts(input.orderValue,campaign),quoteId=`CPQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,expiresAt=now+15*60_000,snapshot={campaignId:campaign.id,code:campaign.code,discountType:campaign.discountType,discountValue:campaign.discountValue,maxDiscount:campaign.maxDiscount,perCustomerLimit:campaign.perCustomerLimit,totalLimit:campaign.totalLimit,customerKind:facts.kind,orderCount:facts.orderCount,crossSellFromServices:campaign.crossSellFromServices,previousServices:facts.previousServices,testOnly:campaign.testOnly};await db.prepare("INSERT INTO coupon_quotes (id,code,campaign_id,customer_id,service_code,city_id,channel,package_code,order_value,discount_amount,final_amount,policy_snapshot_json,status,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'open',?,?,?)").bind(quoteId,campaign.code,campaign.id,input.customerId,input.serviceCode,input.cityId,input.channel,input.packageCode,input.orderValue,discount,finalAmount,JSON.stringify(snapshot),expiresAt,now,now).run();return{valid:true,quoteId,code:campaign.code,discount,finalAmount,expiresAt,testOnly:campaign.testOnly,liveMoney:!campaign.testOnly,policySnapshot:snapshot};
 }
 
 export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:string;customerId:string;idempotencyKey:string}){
@@ -124,7 +198,14 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   const booking=await db.prepare("SELECT id,customer_id,service_code,city_id,package_code,total_amount,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
   if(!booking||String(booking.customer_id)!==input.customerId)throw new Error("Canonical booking does not belong to this customer");
   const amount=Number(booking.total_amount),amountMatches=[Number(quote.order_value),Number(quote.final_amount)].some(value=>sameMoney(value,amount));
-  if(String(booking.service_code)!==String(quote.service_code)||String(booking.city_id)!==String(quote.city_id)||String(booking.package_code)!==String(quote.package_code)||!amountMatches)throw new Error("Canonical booking does not match the coupon quote context");
+  let expectedPackage=String(booking.package_code);
+  if(String(booking.service_code)==="grooming"&&String(quote.service_code)==="grooming"&&/^.+__[2-4]_pets$/.test(String(quote.package_code))){
+    const pets=await db.prepare("SELECT pet_ids_json FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+    const ids=JSON.parse(String(pets?.pet_ids_json||"null"));
+    if(!Array.isArray(ids)||!ids.length||ids.length>4||ids.some(id=>typeof id!=="string"||!id)||new Set(ids).size!==ids.length)throw new Error("Canonical booking does not match the coupon quote context");
+    expectedPackage=bookingCouponPackage("grooming",expectedPackage,ids.length);
+  }
+  if(String(booking.service_code)!==String(quote.service_code)||String(booking.city_id)!==String(quote.city_id)||expectedPackage!==String(quote.package_code)||!amountMatches)throw new Error("Canonical booking does not match the coupon quote context");
   const [totalUsed,customerUsed,campaignRow]=await Promise.all([
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(quote.campaign_id).first<Row>(),
     db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(quote.campaign_id,input.customerId).first<Row>(),
@@ -132,6 +213,7 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   ]);
   if(!campaignRow)throw new Error("Coupon campaign not found");
   const campaign=rowToCampaign(campaignRow);
+  if(campaign.customerIds?.length&&!campaign.customerIds.includes(input.customerId))throw new Error("Coupon quote customer mismatch");
   if(Number(totalUsed?.count||0)>=campaign.totalLimit)throw new Error("Coupon total redemption limit reached");
   if(Number(customerUsed?.count||0)>=campaign.perCustomerLimit)throw new Error("Customer coupon limit reached");
   const now=Date.now(),redemptionId=`CPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
@@ -140,7 +222,7 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
       db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open'").bind(input.bookingId,now,input.quoteId),
       // campaign_id is NOT NULL. If the quote claim or either limit guard loses a race, the subquery
       // returns NULL and aborts this entire D1 batch, rolling the quote claim back with the insert.
-      db.prepare("INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.status='consumed' AND q.booking_id=? AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit),?,?,?,?, 'consumed',?,?)").bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.bookingId,input.customerId,quote.code,input.customerId,input.bookingId,quote.discount_amount,now,now),
+      db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.status='consumed' AND q.booking_id=? AND ${customerCouponScopeSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.bookingId,input.customerId,quote.code,input.customerId,input.bookingId,quote.discount_amount,now,now),
     ]);
     if(Number(results[0]?.meta?.changes||0)!==1||Number(results[1]?.meta?.changes||0)!==1)throw new Error("Coupon quote is no longer open");
   }catch(error){
@@ -170,12 +252,15 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
  * aborts the batch, and D1 rolls the booking back with it. This prevents an orphan booking or an
  * unconsumed discount while retaining friendly validation errors before the transaction.
  */
-export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number}):Promise<CouponBookingPreparation>{
+export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number;petCount?:number}):Promise<CouponBookingPreparation>{
   await ensureCouponTables(db);
-  const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
+  const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit,c.customer_ids_json campaign_customer_ids_json FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
   if(!quote)throw new Error("Coupon quote not found");
   if(String(quote.customer_id)!==input.customerId)throw new Error("Coupon quote customer mismatch");
-  if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==input.packageCode)throw new Error("Coupon quote does not match this booking");
+  const customerIds=storedCustomerIds(quote.campaign_customer_ids_json);
+  if(customerIds.length&&!customerIds.includes(input.customerId))throw new Error("Coupon quote customer mismatch");
+  const couponPackageCode=bookingCouponPackage(input.serviceCode,input.packageCode,input.petCount);
+  if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==couponPackageCode)throw new Error("Coupon quote does not match this booking");
   if(String(quote.status)!=="open"||String(quote.campaign_status)!=="active")throw new Error("Coupon quote is no longer open");
   if(Number(quote.expires_at)<input.now)throw new Error("Coupon quote has expired");
   const discount=Number(quote.discount_amount),orderValue=Number(quote.order_value),finalAmount=Number(quote.final_amount);
@@ -187,8 +272,8 @@ export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId
   if(Number(totalUsed?.count||0)>=Number(quote.total_limit))throw new Error("Coupon total redemption limit reached");
   if(Number(customerUsed?.count||0)>=Number(quote.per_customer_limit))throw new Error("Customer coupon limit reached");
   const redemptionId=`CPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-  const eligibleCampaign="SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit";
-  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,input.packageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
+  const eligibleCampaign=`SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND ${customerCouponScopeSql} AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit`;
+  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,couponPackageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
   const claimStatement=db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open' AND EXISTS (SELECT 1 FROM coupon_redemptions WHERE id=? AND booking_id=?)").bind(input.bookingId,input.now,input.quoteId,redemptionId,input.bookingId);
   return{quoteId:input.quoteId,code:String(quote.code),campaignId:String(quote.campaign_id),discount,orderValue,finalAmount,redemptionId,redemptionStatement,claimStatement};
 }
@@ -196,6 +281,7 @@ export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId
 export async function saveCouponCampaign(db:Db,input:Omit<CouponCampaign,"createdAt"|"updatedAt"|"testOnly">&{id?:string;live?:boolean},opts:{liveApproved?:boolean}={}){
   await ensureCouponTables(db);const code=normalize(input.code),now=Date.now(),crossSellFromServices=(input.crossSellFromServices??[]).filter(isCouponService);if(!code||!input.name.trim())throw new Error("Coupon code and name are required");if(!input.serviceCodes.length||!input.cityIds.length||!input.channels.length||!input.customerKinds.length)throw new Error("Coupon eligibility scope is required");if(input.discountValue<=0||input.perCustomerLimit<1||input.totalLimit<1)throw new Error("Coupon discount and limits must be positive");if(input.discountType==="percent"&&input.discountValue>100)throw new Error("Percentage discount cannot exceed 100");if(input.maxOrder!=null&&input.maxOrder<input.minOrder)throw new Error("Maximum order cannot be below minimum order");if(input.validUntil<=input.validFrom)throw new Error("Coupon validity window is invalid");
   // governed live path: a LIVE (non-UAT) coupon can only be created when live coupons are explicitly approved for this environment (staging first).
+  const hasCustomerScope=input.customerIds!==undefined,customerIds=hasCustomerScope?validCustomerIds(input.customerIds):[];
   const wantLive=input.live===true;if(wantLive&&!opts.liveApproved)throw new Error("Live coupons are not approved (set PAWSPACE_COUPONS_LIVE_APPROVED=\"true\" - in isolated staging first)");const testOnlyFlag=wantLive?0:1;const id=input.id||`coupon-${crypto.randomUUID()}`;
-  await db.prepare("INSERT INTO coupon_campaigns (id,code,name,status,test_only,service_codes_json,city_ids_json,channels_json,customer_kinds_json,package_scope,package_codes_json,cross_sell_from_services_json,first_order_only,min_order,max_order,subscription_eligible,full_payment_only,discount_type,discount_value,max_discount,per_customer_limit,total_limit,valid_from,valid_until,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,status=excluded.status,test_only=excluded.test_only,service_codes_json=excluded.service_codes_json,city_ids_json=excluded.city_ids_json,channels_json=excluded.channels_json,customer_kinds_json=excluded.customer_kinds_json,package_scope=excluded.package_scope,package_codes_json=excluded.package_codes_json,cross_sell_from_services_json=excluded.cross_sell_from_services_json,first_order_only=excluded.first_order_only,min_order=excluded.min_order,max_order=excluded.max_order,subscription_eligible=excluded.subscription_eligible,full_payment_only=excluded.full_payment_only,discount_type=excluded.discount_type,discount_value=excluded.discount_value,max_discount=excluded.max_discount,per_customer_limit=excluded.per_customer_limit,total_limit=excluded.total_limit,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at").bind(id,code,input.name.trim(),input.status,testOnlyFlag,JSON.stringify(input.serviceCodes),JSON.stringify(input.cityIds),JSON.stringify(input.channels),JSON.stringify(input.customerKinds),input.packageScope,JSON.stringify(input.packageCodes),JSON.stringify(crossSellFromServices),input.firstOrderOnly?1:0,input.minOrder,input.maxOrder,input.subscriptionEligible?1:0,input.fullPaymentOnly?1:0,input.discountType,input.discountValue,input.maxDiscount,input.perCustomerLimit,input.totalLimit,input.validFrom,input.validUntil,now,now).run();const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE id=?").bind(id).first<Row>();return rowToCampaign(row!);
+  await db.prepare("INSERT INTO coupon_campaigns (id,code,name,status,test_only,service_codes_json,city_ids_json,channels_json,customer_kinds_json,package_scope,package_codes_json,cross_sell_from_services_json,first_order_only,min_order,max_order,subscription_eligible,full_payment_only,discount_type,discount_value,max_discount,per_customer_limit,total_limit,valid_from,valid_until,created_at,updated_at,customer_ids_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,status=excluded.status,test_only=excluded.test_only,service_codes_json=excluded.service_codes_json,city_ids_json=excluded.city_ids_json,channels_json=excluded.channels_json,customer_kinds_json=excluded.customer_kinds_json,package_scope=excluded.package_scope,package_codes_json=excluded.package_codes_json,cross_sell_from_services_json=excluded.cross_sell_from_services_json,first_order_only=excluded.first_order_only,min_order=excluded.min_order,max_order=excluded.max_order,subscription_eligible=excluded.subscription_eligible,full_payment_only=excluded.full_payment_only,discount_type=excluded.discount_type,discount_value=excluded.discount_value,max_discount=excluded.max_discount,per_customer_limit=excluded.per_customer_limit,total_limit=excluded.total_limit,valid_from=excluded.valid_from,valid_until=excluded.valid_until,updated_at=excluded.updated_at,customer_ids_json=CASE WHEN ?=1 THEN excluded.customer_ids_json ELSE coupon_campaigns.customer_ids_json END").bind(id,code,input.name.trim(),input.status,testOnlyFlag,JSON.stringify(input.serviceCodes),JSON.stringify(input.cityIds),JSON.stringify(input.channels),JSON.stringify(input.customerKinds),input.packageScope,JSON.stringify(input.packageCodes),JSON.stringify(crossSellFromServices),input.firstOrderOnly?1:0,input.minOrder,input.maxOrder,input.subscriptionEligible?1:0,input.fullPaymentOnly?1:0,input.discountType,input.discountValue,input.maxDiscount,input.perCustomerLimit,input.totalLimit,input.validFrom,input.validUntil,now,now,JSON.stringify(customerIds),hasCustomerScope?1:0).run();const row=await db.prepare("SELECT * FROM coupon_campaigns WHERE id=?").bind(id).first<Row>();return rowToCampaign(row!);
 }
