@@ -1,6 +1,9 @@
+import {SPOKEN_INFO_EXPECTED} from './voice-spoken-fixtures.mjs';
+import {spokenInputComplete} from './voice-spoken-sale-guards.mjs';
+import {verifyFinalConversation} from './voice-final-conversation-proof.mjs';
 // Synthetic caller audio through real agent ASR/LLM/TTS; never uses a telephony dial API.
 import {setTimeout as delay} from 'node:timers/promises';
-import {readFile} from 'node:fs/promises';
+import {syntheticInfoAudio} from './voice-synthetic-audio.mjs';
 import {verifyVoiceSale} from './verify-voice-sale.mjs';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProofChecks,createAudioProbeState,isHandoffReply} from './voice-audio-proof.mjs';
 // Remote values are stripped of CR/LF (explicitly, so log-injection scanners see it), other control
@@ -17,7 +20,7 @@ const sr=await fetch('https://api.elevenlabs.io/v1/convai/conversation/get-signe
 const signed=await sr.json();if(!sr.ok||!signed.signed_url)throw Error('Agent socket authorization refused');
 console.log('::add-mask::'+signed.signed_url);
 const socket=new WebSocket(signed.signed_url);
-let format,outputFormat,sending=false,finished=false,started=0,sentBytes=0;
+let conversationId,format,outputFormat,sending=false,finished=false,started=0,sentBytes=0,inputSpeechBytes=0;
 // Counts are keyed only by allowlisted event names (anything else is 'other'), never by raw socket data.
 const state=createAudioProbeState(),eventCounts=new Map();
 let greetingBytes=0,firstGreetingAudioAt=0,lastGreetingAudioAt=0;
@@ -29,19 +32,21 @@ await new Promise((resolve,reject)=>{
   if(sending||!format||!state.greeting)return;sending=true;
   // Fixed informational utterance: this probe cannot confirm or create a sale.
   if(format!=='pcm_16000')throw Error('Caller fixture requires negotiated pcm_16000 input');
-  const audio=await readFile(new URL('./fixtures/amaya-caller.pcm',import.meta.url)),f=audioFormat(format);
+  const audio=syntheticInfoAudio(),f=audioFormat(format);
+  inputSpeechBytes=audio.length;
   if(audio.length<1000||audio.length>f.rate*f.bytesPerSample*30)throw Error('Invalid synthetic caller audio size');
   while(!finished&&!greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreetingAudioAt,lastAudioAt:lastGreetingAudioAt,bytes:greetingBytes,format:outputFormat}))await delay(100);
   if(finished)return;started=Date.now();state.listening=true;
   const chunk=Math.floor(f.rate*f.bytesPerSample/10),input=Buffer.concat([Buffer.alloc(f.rate*f.bytesPerSample/2,f.silence),audio,Buffer.alloc(f.rate*f.bytesPerSample*2,f.silence)]);
-  for(let i=0;i<input.length&&!finished;i+=chunk){socket.send(JSON.stringify({user_audio_chunk:input.subarray(i,i+chunk).toString('base64')}));sentBytes+=Math.min(chunk,input.length-i);await delay(100);}
+  // Model a microphone: send the fixture once, then only silence while the reply plays.
+  for(let i=0;!finished;i+=chunk){const stopSpeech=spokenInputComplete(state.transcript,state.reply,SPOKEN_INFO_EXPECTED);const frame=!stopSpeech&&i<input.length?input.subarray(i,i+chunk):Buffer.alloc(chunk,f.silence);socket.send(JSON.stringify({user_audio_chunk:frame.toString('base64')}));sentBytes+=frame.length;await delay(100);}
  }
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_voice_call_id:callId},dynamic_variables:{pawspace_voice_call_id:callId,pawspace_uat:'true'}})));
  socket.addEventListener('message',event=>{try{
   const d=JSON.parse(String(event.data)),kind=audioEventKind(d.type);eventCounts.set(kind,(eventCounts.get(kind)||0)+1);
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
   if(d.type==='conversation_initiation_metadata'){
-   const m=d.conversation_initiation_metadata_event;format=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(format);audioFormat(outputFormat);
+   const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;format=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(format);audioFormat(outputFormat);
    if(m.conversation_id)console.log('::add-mask::'+logSafe(m.conversation_id));
    console.log('VOICE_AUDIO_FORMATS='+JSON.stringify({input:format,output:outputFormat}));void sendAudio().catch(finish);
   }
@@ -56,6 +61,7 @@ await new Promise((resolve,reject)=>{
  socket.addEventListener('error',()=>finish(Error('Agent audio transport error')));
  socket.addEventListener('close',()=>{if(!finished)finish(Error('Agent closed before audio proof'));});
 });
+const finalProof=await verifyFinalConversation({key,conversationId,agentId,turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:inputSpeechBytes,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:audioProbeComplete(state,Date.now())}});
 const after=await verifyVoiceSale({...process.env,VOICE_SALE_ACTION:'verify-voice-sale'});
 if(JSON.stringify(before.completedBookings)!==JSON.stringify(after.completedBookings))throw Error('Informational audio probe changed booking set');
-console.log('VOICE_AUDIO_PROOF='+JSON.stringify({passed:true,dialed:false,syntheticCaller:true,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,inputFormat:format,outputFormat,bookingSetUnchanged:true}));
+console.log('VOICE_AUDIO_PROOF='+JSON.stringify({passed:true,dialed:false,syntheticCaller:true,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,inputFormat:format,outputFormat,bookingSetUnchanged:true,finalProof}));
