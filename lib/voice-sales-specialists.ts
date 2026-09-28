@@ -57,9 +57,14 @@ function petIds(value: unknown) {
 async function quoteSalesCoupon(db: D1Database, input: { code: string; customerId: string; cityId: string; quote: Row; channel: "website" | "whatsapp" }) {
  const { approvedSalesOffers, couponsLiveApproved } = await import("./ai-sales-offers");
  const { quoteCoupon } = await import("./coupon-governance");
- const approved = await approvedSalesOffers(db, { customerId: input.customerId, channel: input.channel });
- if (!approved.some(offer => offer.code === input.code)) throw refusal("That coupon is not an offer PawSpace AI can apply for this customer", 400);
- const result = await quoteCoupon(db, { code: input.code, customerId: input.customerId, serviceCode: "grooming", cityId: input.cityId, channel: input.channel, packageCode: text(input.quote.packageCode), orderValue: Number(input.quote.totalAmount), paymentMode: "full", isSubscription: input.quote.offerType === "subscription" }, { liveApproved: await couponsLiveApproved() });
+ const petCount=Number(input.quote.petCount);
+ if(!Number.isSafeInteger(petCount)||petCount<1||petCount>4)throw refusal("Coupon needs a verified pet-count quote",400);
+ const {groomingPricingPackageCode}=await import("./grooming-pricing-code");
+ const packageCode=input.quote.offerType==="subscription"?text(input.quote.packageCode):groomingPricingPackageCode(text(input.quote.packageCode),petCount);
+ const context={serviceCode:"grooming" as const,cityId:input.cityId,channel:input.channel,packageCode,orderValue:Number(input.quote.totalAmount),paymentMode:"full" as const,isSubscription:input.quote.offerType==="subscription"};
+ const approved=await approvedSalesOffers(db,{customerId:input.customerId,channel:input.channel,context});
+ if(!approved.some(offer=>offer.code===input.code&&offer.package_code===packageCode))throw refusal("That coupon is not an offer PawSpace AI can apply for this customer",400);
+ const result=await quoteCoupon(db,{...context,code:input.code,customerId:input.customerId},{liveApproved:await couponsLiveApproved()});
  if (!result.valid || !("quoteId" in result) || !result.quoteId) throw refusal(`The coupon could not be applied: ${result.error || "not eligible for this booking"}`);
  return { quoteId: result.quoteId, code: result.code, discount: Number(result.discount), finalAmount: Number(result.finalAmount) };
 }

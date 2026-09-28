@@ -1,3 +1,4 @@
+import { groomingCouponPayable } from "./grooming-money";
 import type { CustomerOffer } from "../customer-offers";
 export type V2GroomingOffers = { coupons: CustomerOffer[]; normalCouponsAllowed: boolean; bookingCount: number; message?: string };
 export async function loadV2GroomingOffers(input: {customerId:string;cityId:string;packageCode:string;orderValue:number}, signal?:AbortSignal):Promise<V2GroomingOffers>{
@@ -5,5 +6,12 @@ export async function loadV2GroomingOffers(input: {customerId:string;cityId:stri
   const response=await fetch(`/api/customer-offers?${query}`,{cache:"no-store",signal});
   const body=await response.json() as {data?:V2GroomingOffers;error?:string};
   if(!response.ok||!body.data||!Array.isArray(body.data.coupons)||typeof body.data.normalCouponsAllowed!=="boolean")throw new Error(body.error||"Available offers could not be checked. Try again.");
+  if(!Number.isSafeInteger(body.data.bookingCount)||body.data.bookingCount<0||(!body.data.normalCouponsAllowed&&body.data.coupons.length))throw new Error("Available offers could not be verified. Try again.");
+  const codes=new Set<string>();
+  for(const offer of body.data.coupons){
+    if(typeof offer.code!=="string"||!offer.code.trim()||codes.has(offer.code)||typeof offer.name!=="string"||typeof offer.description!=="string"||typeof offer.savings!=="number"||offer.savings<=0)throw new Error("Available offers could not be verified. Try again.");
+    groomingCouponPayable(input.orderValue,{discount:offer.savings,finalAmount:offer.finalAmount});codes.add(offer.code);
+  }
+  if(body.data.coupons.some(offer=>(offer.savings||0)>(body.data!.coupons[0]?.savings||0)))throw new Error("The best available offer could not be verified. Try again.");
   return body.data;
 }

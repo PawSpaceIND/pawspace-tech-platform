@@ -22,12 +22,18 @@ function makeD1(sqlite) {
   });
   return { prepare: (sql) => statement(sql, []), batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; }, exec: async (sql) => { sqlite.exec(sql); } };
 }
-const fresh = () => { const sqlite = new DatabaseSync(":memory:"); return { sqlite, db: makeD1(sqlite) }; };
+const fresh = () => {
+  const sqlite = new DatabaseSync(":memory:");
+  // These pricing/output-guard tests now run as a verified known account. Anonymous eligibility has
+  // separate negative coverage; no unverified visitor is silently assumed to be a new customer.
+  sqlite.exec("CREATE TABLE canonical_customers (id TEXT PRIMARY KEY, city_id TEXT); INSERT INTO canonical_customers VALUES ('CUS-DEFAULT','blr')");
+  return { sqlite, db: makeD1(sqlite) };
+};
 const ASOF = Date.UTC(2026, 9, 1);
 
 test("the approved offers are the business's numbers, built from the live campaigns and the catalogue", async () => {
   const { db } = fresh();
-  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   const closing = Object.fromEntries(offers.filter((offer) => offer.code === "GROOM200").map((offer) => [offer.package_code, [offer.regular_price, offer.offer_price]]));
   assert.deepEqual(closing, { "dog-bath": [1349, 1149], "dog-basic": [1899, 1699], "dog-makeover": [2399, 2199], "cat-basic": [1899, 1699], "cat-makeover": [2399, 2199] });
   const crossSell = offers.filter((offer) => offer.code === "GROOM400");
@@ -37,15 +43,15 @@ test("the approved offers are the business's numbers, built from the live campai
 
 test("a paused or expired campaign is no longer an offer the AI may give", async () => {
   const { db, sqlite } = fresh();
-  await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   sqlite.prepare("UPDATE coupon_campaigns SET status='paused' WHERE code='GROOM200'").run();
-  assert.ok(!(await offersModule.approvedSalesOffers(db, { asOf: ASOF })).some((offer) => offer.code === "GROOM200"), "paused in Control > Coupons");
-  assert.deepEqual(await offersModule.approvedSalesOffers(db, { asOf: Date.UTC(2027, 5, 1) }), [], "past the validity window");
+  assert.ok(!(await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" })).some((offer) => offer.code === "GROOM200"), "paused in Control > Coupons");
+  assert.deepEqual(await offersModule.approvedSalesOffers(db, { asOf: Date.UTC(2027, 5, 1), customerId: "CUS-DEFAULT" }), [], "past the validity window");
 });
 
 test("an offer price grounds a reply only when the reply names its code; a discount is never a price", async () => {
   const { db } = fresh();
-  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
   const priced = (reply) => runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts(reply, offers), catalogue);
   assert.equal(priced("With code GROOM200, Essential Bath comes to ₹1,149 instead of ₹1,349."), true);
@@ -57,7 +63,7 @@ test("an offer price grounds a reply only when the reply names its code; a disco
 
 test("invented coupon codes are refused however they are written; other sales wording is left alone", async () => {
   const { db } = fresh();
-  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   const ok = (reply) => offersModule.offerClaimsApproved(reply, offers);
   assert.equal(ok("With code GROOM200, Complete Makeover comes to ₹2,199."), true);
   assert.equal(ok("You get ₹400 off with GROOM400."), true);
@@ -69,11 +75,11 @@ test("invented coupon codes are refused however they are written; other sales wo
 
 test("an offer is only listed while this customer can redeem it on this channel", async () => {
   const { db, sqlite } = fresh();
-  await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY, city_id TEXT)");
   sqlite.prepare("INSERT INTO canonical_customers (id, city_id) VALUES ('CUS-USED','blr'), ('CUS-HYD','hyd'), ('CUS-NEW','blr')").run();
   sqlite.prepare("INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES ('R1','K1','Q1','sales-coupon-groom200','GROOM200','CUS-USED','BK1',200,'consumed',1,1)").run();
-  const codes = async (input) => [...new Set((await offersModule.approvedSalesOffers(db, { asOf: ASOF, ...input })).map((offer) => offer.code))].sort();
+  const codes = async (input) => [...new Set((await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT", ...input })).map((offer) => offer.code))].sort();
   assert.deepEqual(await codes({ customerId: "CUS-NEW", channel: "website" }), ["GROOM200", "GROOM400"]);
   assert.deepEqual(await codes({ customerId: "CUS-USED", channel: "website" }), ["GROOM400"], "GROOM200 is once per customer");
   assert.deepEqual(await codes({ customerId: "CUS-HYD", channel: "whatsapp" }), [], "the campaigns serve Bangalore");
@@ -86,10 +92,10 @@ test("an offer is only listed while this customer can redeem it on this channel"
 
 test("a renamed code is still found by its campaign, and does not re-seed on every turn", async () => {
   const { db, sqlite } = fresh();
-  await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   sqlite.prepare("UPDATE coupon_campaigns SET code='GROOM250' WHERE id='sales-coupon-groom200'").run();
   const before = sqlite.prepare("SELECT COUNT(*) n FROM coupon_campaigns").get().n;
-  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   assert.ok(offers.some((offer) => offer.code === "GROOM250" && offer.usage === "closing"));
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_campaigns").get().n, before, "no new GROOM200 row is seeded beside the renamed one");
 });
@@ -104,7 +110,7 @@ test("the web chat and WhatsApp prompts carry the coupon rules without overridin
 
 test("an approved '₹N off' only counts in the sentence that names its code", async () => {
   const { db } = fresh();
-  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF });
+  const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
   const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
   assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts("Use GROOM200 for ₹200 off grooming. Your taxi also gets ₹200 off today.", offers), catalogue), false, "the taxi's ₹200 off is not hidden by the grooming code");
   assert.equal(offersModule.offerClaimsApproved("With GROOM400 you get ₹400 off.\nAnd the sitting gets ₹400 off too.", offers), true, "a sentence without a code is left to the price check");

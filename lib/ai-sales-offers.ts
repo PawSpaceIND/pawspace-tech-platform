@@ -1,4 +1,5 @@
-import{customerFacts,rowToCampaign,seedUatCoupons,type CouponCampaign,type CouponChannel}from"./coupon-governance";
+import{customerFacts,rowToCampaign,seedUatCoupons,couponAmounts,type CouponChannel,type CouponQuoteInput}from"./coupon-governance";
+import{couponEligibilityIssue}from"./coupon-eligibility-policy";
 import{groomingCatalogue}from"./grooming-governance";
 
 type Row=Record<string,unknown>;
@@ -14,7 +15,7 @@ type Row=Record<string,unknown>;
  * neither the customer's nor the campaign's redemption limit is used up. Staff pause, extend, re-limit or
  * even rename a code in Control > Coupons; the campaigns are found by their seeded ids.
  */
-export type ApprovedSalesOffer={name:string;code:string;usage:"closing"|"cross_sell";package_code:string;package_name:string;regular_price:number;discount_amount:number;offer_price:number;valid_until:string;city_ids:string[]};
+export type ApprovedSalesOffer={name:string;code:string;usage:"closing"|"cross_sell";package_code:string;package_name:string;regular_price:number;discount_amount:number;offer_price:number;valid_until:string;city_ids:string[];price_basis?:"booking_quote"|"catalogue_estimate";requires_checkout_validation?:boolean};
 
 const CAMPAIGN_USAGE:Record<string,ApprovedSalesOffer["usage"]>={"sales-coupon-groom200":"closing","sales-coupon-groom400":"cross_sell"};
 const CAMPAIGN_IDS=Object.keys(CAMPAIGN_USAGE);
@@ -29,32 +30,44 @@ async function readCampaigns(db:D1Database){
  await seedUatCoupons(db);return read();
 }
 
-async function redemptionCounts(db:D1Database,customerId:string|null){
- const rows=await db.prepare(`SELECT campaign_id,COUNT(*) total,SUM(CASE WHEN customer_id=? THEN 1 ELSE 0 END) mine FROM coupon_redemptions WHERE status='consumed' AND campaign_id IN (${SQL_IDS}) GROUP BY campaign_id`).bind(customerId??"",...CAMPAIGN_IDS).all<Row>().then(result=>result.results,()=>[] as Row[]);
- return new Map(rows.map(row=>[String(row.campaign_id),{total:Number(row.total||0),mine:Number(row.mine||0)}]));
+async function redemptionCounts(db:D1Database,customerId:string){
+ const result=await db.prepare(`SELECT campaign_id,COUNT(*) total,SUM(CASE WHEN customer_id=? THEN 1 ELSE 0 END) mine FROM coupon_redemptions WHERE status='consumed' AND campaign_id IN (${SQL_IDS}) GROUP BY campaign_id`).bind(customerId,...CAMPAIGN_IDS).all<Row>();
+ if(!Array.isArray(result.results))throw new Error("AI coupon eligibility is temporarily unavailable");
+ return new Map(result.results.map(row=>{
+  const total=Number(row.total),mine=Number(row.mine);
+  if(row.total==null||row.mine==null||!Number.isSafeInteger(total)||!Number.isSafeInteger(mine)||total<0||mine<0||mine>total)throw new Error("AI coupon eligibility is temporarily unavailable");
+  return[String(row.campaign_id),{total,mine}];
+ }));
 }
-
-export async function approvedSalesOffers(db:D1Database,input:{asOf?:number;customerId?:string|null;channel?:CouponChannel}={}):Promise<ApprovedSalesOffer[]>{
- const asOf=input.asOf??Date.now(),customerId=input.customerId||null;
- const campaigns=(await readCampaigns(db)).map(rowToCampaign).filter(campaign=>campaign.status==="active"&&asOf>=campaign.validFrom&&asOf<=campaign.validUntil&&campaign.discountType==="fixed"&&campaign.serviceCodes.includes("grooming")&&(!input.channel||campaign.channels.includes(input.channel)));
- if(!campaigns.length)return[];
- const[counts,customer]=await Promise.all([redemptionCounts(db,customerId),customerId?db.prepare("SELECT city_id FROM canonical_customers WHERE id=?").bind(customerId).first<Row>().catch(()=>null):Promise.resolve(null)]);
- const kind=customerId&&campaigns.some(campaign=>campaign.customerKinds.length<3)?(await customerFacts(db,customerId)).kind:null;
- const redeemable=(campaign:CouponCampaign)=>{
-  const used=counts.get(campaign.id)??{total:0,mine:0};
-  if(used.total>=campaign.totalLimit)return false;
-  if(customerId&&used.mine>=campaign.perCustomerLimit)return false;
-  if(kind&&!campaign.customerKinds.includes(kind))return false;
-  const city=String(customer?.city_id||"");if(city&&!campaign.cityIds.includes(city))return false;
-  return true;
- };
+export type SalesOfferContext=Omit<CouponQuoteInput,"code"|"customerId"|"bookingKey">;
+export async function approvedSalesOffers(db:D1Database,input:{asOf?:number;customerId?:string|null;channel?:CouponChannel;context?:SalesOfferContext}={}):Promise<ApprovedSalesOffer[]>{
+ const customerId=String(input.customerId||"").trim(),asOf=input.asOf??Date.now();
+ // Anonymous visitors have no authoritative booking count or private entitlement. Ask for sign-in;
+ // never invent a new-customer history or expose a privately restricted campaign in public chat.
+ if(!customerId)return[];
+ if(input.context&&input.channel&&input.context.channel!==input.channel)return[];
+ const campaigns=(await readCampaigns(db)).map(rowToCampaign);
+ const [counts,facts,liveApproved]=await Promise.all([
+  redemptionCounts(db,customerId),
+  customerFacts(db,customerId,{includeCustomer:true}),couponsLiveApproved(),
+ ]);
+ if(!facts.customerExists)return[];
+ const cityId=String(input.context?.cityId||facts.cityId||"").trim();if(!cityId)return[];
+ const channel=input.context?.channel??input.channel??"website";
  const offers:ApprovedSalesOffer[]=[];
- for(const campaign of campaigns.filter(redeemable)){
-  for(const code of campaign.packageCodes){
-   const item=groomingCatalogue.find(row=>row.code===code&&row.active);if(!item||item.singlePrice<campaign.minOrder)continue;
-   const discount=Math.min(campaign.discountValue,campaign.maxDiscount??campaign.discountValue,item.singlePrice);
+ for(const campaign of campaigns){
+  const codes=input.context?[input.context.packageCode]:campaign.packageCodes;
+  for(const code of codes){
+   const baseCode=code.replace(/__[2-4]_pets$/,"");
+   const item=groomingCatalogue.find(row=>row.code===baseCode&&row.active);
+   if(!item||(!input.context&&baseCode!==code))continue;
+   const context:CouponQuoteInput={serviceCode:"grooming",cityId,channel,packageCode:code,orderValue:item.singlePrice,paymentMode:"full",isSubscription:false,...input.context,code:campaign.code,customerId};
+   const used=counts.get(campaign.id)??{total:0,mine:0};
+   if(couponEligibilityIssue(campaign,context,facts,{totalUsed:used.total,customerUsed:used.mine},{now:asOf,liveApproved}))continue;
+   const amount=couponAmounts(context.orderValue,campaign);if(amount.discount<=0)continue;
    const pet=item.eligiblePetTypes.includes("cat")&&!item.eligiblePetTypes.includes("dog")?"cat":"dog";
-   offers.push({name:campaign.code,code:campaign.code,usage:CAMPAIGN_USAGE[campaign.id],package_code:item.code,package_name:`${item.name} (${pet}, 1 pet)`,regular_price:item.singlePrice,discount_amount:discount,offer_price:item.singlePrice-discount,valid_until:new Date(campaign.validUntil).toISOString().slice(0,10),city_ids:campaign.cityIds});
+   const petCount=code.match(/__([2-4])_pets$/)?.[1]||"1";
+   offers.push({name:campaign.code,code:campaign.code,usage:CAMPAIGN_USAGE[campaign.id],package_code:code,package_name:`${item.name} (${pet}, ${petCount} pet${petCount==="1"?"":"s"})`,regular_price:context.orderValue,discount_amount:amount.discount,offer_price:amount.finalAmount,valid_until:new Date(campaign.validUntil).toISOString().slice(0,10),city_ids:campaign.cityIds,price_basis:input.context?"booking_quote":"catalogue_estimate",requires_checkout_validation:true});
   }
  }
  return offers;
@@ -67,7 +80,7 @@ export async function activeCrossSell(db:D1Database,input:{customerId?:string|nu
 }
 
 /** How the AI may use approvedOffers - shared by web chat, WhatsApp and public chat prompts. */
-export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: state its code with that package's regular_price and offer_price exactly as listed (for example "With code <code>, Essential Bath comes to ₹1,149 instead of ₹1,349"). Mention the offer with usage "cross_sell" only when the customer's details already carry its code. The customer enters the code at checkout. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
+export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: state its code with that package's regular_price and offer_price exactly as listed (for example "With code <code>, Essential Bath comes to ₹1,149 instead of ₹1,349"). Mention the offer with usage "cross_sell" only when the customer's details already carry its code. Offers marked catalogue_estimate are conditional catalogue estimates, not a promise of the final appointment total: date, add-ons, payment and pet-count changes require a fresh server quote. If the customer is not verified, ask them to sign in before discussing a coupon. The customer enters the code at checkout. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
 
 /* Codes follow "code", "coupon", "promo", "voucher", or "coupon code" / "promo code" / "voucher code" /
  * "discount code" / "offer code" - matched as a whole, so the word "code" is never taken for the code. */

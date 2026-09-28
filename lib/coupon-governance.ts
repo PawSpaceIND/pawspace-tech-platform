@@ -161,12 +161,14 @@ function bookingCouponPackage(serviceCode:string,packageCode:string,petCount=1){
   return serviceCode==="grooming"&&!packageCode.startsWith("sub-")?groomingPricingPackageCode(packageCode,petCount):packageCode;
 }
 
-export async function customerFacts(db:Db,customerId:string){
+export async function customerFacts(db:Db,customerId:string,options:{includeCustomer?:boolean}={}){
   try{
     if(!customerId.trim())throw new Error("Missing customer");
     await ensureCouponCustomerAuthority(db);
     const [count,subscriptions,history]=await Promise.all([
-      db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=? AND status NOT IN ('cancelled','failed')").bind(customerId).first<Row>(),
+      options.includeCustomer
+        ? db.prepare("SELECT COUNT(*) count,(SELECT city_id FROM canonical_customers WHERE id=?) customer_city,(SELECT COUNT(*) FROM canonical_customers WHERE id=?) customer_exists FROM canonical_bookings WHERE customer_id=? AND status NOT IN ('cancelled','failed')").bind(customerId,customerId,customerId).first<Row>()
+        : db.prepare("SELECT COUNT(*) count FROM canonical_bookings WHERE customer_id=? AND status NOT IN ('cancelled','failed')").bind(customerId).first<Row>(),
       db.prepare("SELECT COUNT(*) count FROM customer_grooming_subscriptions WHERE customer_id=? AND status IN ('active','paused')").bind(customerId).first<Row>(),
       db.prepare("SELECT DISTINCT service_code FROM canonical_bookings WHERE customer_id=? AND status='completed'").bind(customerId).all<Row>(),
     ]);
@@ -178,7 +180,7 @@ export async function customerFacts(db:Db,customerId:string){
     const orderCount=checkedCount(count),subscriber=checkedCount(subscriptions)>0;
     if(!Array.isArray(history.results))throw new Error("Invalid authoritative history");
     const previousServices=history.results.map(row=>String(row.service_code||"")).filter(isCouponService);
-    return{orderCount,kind:(subscriber?"subscriber":orderCount===0?"new":"existing") as CouponCustomerKind,previousServices};
+    return{orderCount,kind:(subscriber?"subscriber":orderCount===0?"new":"existing") as CouponCustomerKind,previousServices,...(options.includeCustomer?{customerExists:Number(count?.customer_exists)===1,cityId:String(count?.customer_city||"")}: {})};
   }catch{throw new Error("Coupon customer eligibility is temporarily unavailable");}
 }
 
