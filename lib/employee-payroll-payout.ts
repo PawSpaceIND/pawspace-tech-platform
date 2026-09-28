@@ -1,3 +1,4 @@
+import {razorpayXPayoutIdentityProblem} from "./razorpayx-payout-identity";
 import{ensurePayrollTables}from"./payroll-engine";
 import{appendPayrollCheck,completePayrollResults,payrollIntegrityConflict}from"./payroll-integrity";
 import{createRazorpayXSandboxPayout,fetchRazorpayXSandboxPayout,razorpayXSandboxReadiness}from"./razorpayx-client";
@@ -46,7 +47,8 @@ export async function queueEmployeeSalary(db:D1Database,input:{runId:string;acto
 }
 async function salaryInstruction(db:D1Database,id:string){await ensureEmployeeSalaryTables(db);const row=await db.prepare("SELECT * FROM employee_salary_instructions WHERE id=?").bind(id).first<Row>();if(!row)throw refusal("Employee salary instruction not found",404);return row;}
 async function applySalaryProviderState(db:D1Database,row:Row,payout:Row,actorId:string,event?:{id:string;hash:string}){
- if(text(payout.reference_id)!==text(row.id)||text(payout.fund_account_id)!==text(row.fund_account_id)||Number(payout.amount)!==Number(row.amount_paise)||text(payout.currency)!=="INR"||!/^pout_[A-Za-z0-9]+$/.test(text(payout.id))||(row.provider_payout_id&&text(row.provider_payout_id)!==text(payout.id)))throw refusal("Salary provider identity, amount, beneficiary or currency mismatch");
+ const identityProblem=razorpayXPayoutIdentityProblem(payout,{localPayoutId:text(row.id),fundAccountId:text(row.fund_account_id),amountPaise:Number(row.amount_paise),currency:"INR",providerPayoutId:text(row.provider_payout_id)||null});
+ if(identityProblem)throw refusal(identityProblem);
  const statuses=new Set(["queued","pending","initiated","processing","processed","failed","reversed","rejected","cancelled"]);const incoming=text(payout.status);if(!statuses.has(incoming))throw refusal("Unsupported salary payout state",400);
  const current=text(row.status),next=incoming==="processed"?"paid_sandbox":["failed","reversed","rejected","cancelled"].includes(incoming)?`${incoming}_sandbox`:"processing_sandbox";
  const terminal=["paid_sandbox","failed_sandbox","rejected_sandbox","cancelled_sandbox","reversed_sandbox"];
