@@ -80,9 +80,18 @@ export const cityOffsetMinutes=(cityId:string)=>{
 };
 const localDate=(value:string,cityId:string)=>new Date(new Date(value).getTime()+cityOffsetMinutes(cityId)*msMinute);
 const dateKey = (value:string,cityId:string) => localDate(value,cityId).toISOString().slice(0,10);
-const minutesOfDay = (value:string,cityId:string) => { const d=localDate(value,cityId); return d.getUTCHours()*60+d.getUTCMinutes(); };
+// Keep seconds/milliseconds and express the instant relative to the local date being checked.
+const minutesOnDate=(value:string,date:string,cityId:string)=>(Date.parse(value)+cityOffsetMinutes(cityId)*msMinute-Date.parse(`${date}T00:00:00.000Z`))/msMinute;
 const overlaps = (aStart:number,aEnd:number,bStart:number,bEnd:number) => aStart < bEnd && bStart < aEnd;
-const windowCovers=(window:string,start:number,end:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]);const to=Number(match[3])*60+Number(match[4]);return start>=from&&end<=to;};
+function publishedWindow(window:unknown):{from:number;to:number}|null {
+  if(typeof window!=="string")return null;
+  const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return null;
+  const a=Number(match[1]),b=Number(match[2]),c=Number(match[3]),d=Number(match[4]),from=a*60+b,to=c*60+d;
+  // Midnight is an end boundary only. Invalid or reversed rows must not invent an open slot.
+  if(a>23||b>59||c>24||d>59||(c===24&&d!==0)||from>=to)return null;
+  return{from,to};
+}
+const windowCovers=(window:unknown,start:number,end:number)=>{const range=publishedWindow(window);return Boolean(range&&start<end&&start>=range.from&&end<=range.to);};
 
 /** How many buffer-overlapping appointments a provider may hold: 1 unless parallelAppointments is declared, never below 1. */
 export const parallelAppointmentCapacity=(provider:Pick<Provider,"capacity">,input:Pick<ScheduleRequest,"parallelAppointments">)=>input.parallelAppointments?Math.max(1,Math.floor(Number(provider.capacity??1))||1):1;
@@ -144,13 +153,22 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
   if(input.serviceCode==="boarding"&&pets.some(p=>p.vaccinationStatus!=="verified")){eligible=false;reasons.push("Boarding requires verified vaccination");}
   for(const occurrence of occurrences){
     if(repository.providerUnavailableForWindow&&await repository.providerUnavailableForWindow(provider.id,occurrence.start,occurrence.end)){eligible=false;reasons.push("Provider is unavailable during the requested interval");}
-    const dates=datesTouched(occurrence.start,occurrence.end,input.cityId);
+    // Visits occupy [start,end); midnight belongs to the preceding day's 24:00 boundary.
+    // Stays retain their existing day-level roster contract, including the checkout date.
+    const dates=datesTouched(occurrence.start,overnight?occurrence.end:new Date(Date.parse(occurrence.end)-1).toISOString(),input.cityId);
     for(const date of dates){
       const roster=await repository.listAvailability(provider.id,date);
       if(!roster.length){eligible=false;reasons.push(`No published availability on ${date}`);continue;}
-      if(!overnight){
-        const start=minutesOfDay(occurrence.start,input.cityId); const end=minutesOfDay(occurrence.end,input.cityId);
-        const covered=roster.some(r=>r.zoneId===input.zoneId&&r.windows.some(w=>windowCovers(w,start,end)));
+      // Authored provider/Ops/roster rows are authoritative for their provider-date. A broad synthetic
+      // UAT fallback must never widen a narrower published calendar if a repository returns both.
+      const authored=roster.filter(r=>["partner_app","operations","roster"].includes(String(r.source)));
+      const authoritative=authored.length?authored:roster;
+      const localRoster=authoritative.filter(r=>r.zoneId===input.zoneId&&Array.isArray(r.windows));
+      if(overnight){
+        if(!localRoster.some(r=>r.windows.some(w=>publishedWindow(w)))){eligible=false;reasons.push(`No open availability in the requested zone on ${date}`);}
+      }else{
+        const start=Math.max(0,minutesOnDate(occurrence.start,date,input.cityId)),end=Math.min(1440,minutesOnDate(occurrence.end,date,input.cityId));
+        const covered=localRoster.some(r=>r.windows.some(w=>windowCovers(w,start,end)));
         if(!covered){eligible=false;reasons.push(`Requested time is outside roster on ${date}`);}
       }
     }
