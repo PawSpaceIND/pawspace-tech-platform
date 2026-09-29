@@ -29,20 +29,25 @@ export async function saveEmployeeSalaryBeneficiary(db:D1Database,input:{employe
 }
 const instructionView=(r:Row)=>({id:text(r.id),runId:text(r.run_id),resultId:text(r.result_id),employeeId:text(r.employee_id),amountPaise:Number(r.amount_paise),status:text(r.status),providerPayoutId:r.provider_payout_id?text(r.provider_payout_id):null,utr:r.utr?text(r.utr):null,error:r.last_error?text(r.last_error):null,environment:"sandbox"});
 export async function employeeSalaryDirectory(db:D1Database,runId?:string){await ensureEmployeeSalaryTables(db);const instructions=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE (?='' OR run_id=?) ORDER BY created_at DESC LIMIT 500").bind(runId||"",runId||"").all<Row>()).results;return{instructions:instructions.map(instructionView),payoutAccounting:await razorpayXPayoutAccountingDirectory(db,instructions.map(r=>text(r.id))),environment:"sandbox",liveSalaryEnabled:false};}
-export async function queueEmployeeSalary(db:D1Database,input:{runId:string;actorId:string}){
+export async function queueEmployeeSalary(db:D1Database,input:{runId:string;actorId:string;resultIds?:string[]}){
  await ensureEmployeeSalaryTables(db);const run=await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(input.runId).first<Row>();
  if(!run||text(run.status)!=="payment_prepared")throw refusal("Approve payroll and prepare its sandbox batch before authorizing salary instructions");
  if([run.created_by,run.reviewed_by].some(v=>text(v).toLowerCase()===input.actorId.toLowerCase()))throw refusal("Payroll maker/reviewer cannot authorize salary instructions");
  const results=await completePayrollResults(db,run),existing=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE run_id=?").bind(input.runId).all<Row>()).results;
- const payable=results.filter(r=>Number(r.net_pay)>0);if(!payable.length)throw refusal("No positive employee salaries are payable");
- if(existing.length){if(existing.length!==payable.length||existing.some(row=>!payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))throw payrollIntegrityConflict();return{instructions:existing.map(instructionView),duplicatePrevented:true,environment:"sandbox"};}
+ const allPayable=results.filter(r=>Number(r.net_pay)>0),requested=input.resultIds?.length?new Set(input.resultIds.map(text).filter(Boolean)):null;
+ const payable=requested?allPayable.filter(r=>requested.has(text(r.id))):allPayable;if(!payable.length)throw refusal("No positive employee salaries are payable for this release");
+ if(requested&&payable.length!==requested.size)throw payrollIntegrityConflict();
+ const selectedExisting=existing.filter(row=>payable.some(r=>text(r.id)===text(row.result_id)));
+ if(selectedExisting.some(row=>!payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))throw payrollIntegrityConflict();
+ if(selectedExisting.length===payable.length)return{instructions:selectedExisting.map(instructionView),duplicatePrevented:true,environment:"sandbox"};
+ const pendingPayable=payable.filter(r=>!selectedExisting.some(row=>text(row.result_id)===text(r.id)));
  const periodCode=new Date(Number(run.period_end)).toISOString().slice(0,7);
  await ensurePeopleFinanceTables(db);const existingPost=await db.prepare("SELECT payroll_run_id FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat'").bind(input.runId).first<Row>();
  // A previously accrued salary can be paid in a later open month without reopening or reposting its closed accrual month.
  if(!existingPost){try{await postPayrollJournal(db,{runId:input.runId,periodCode,actorId:input.actorId});}catch(error){if(!/UNIQUE constraint failed: people_payroll_finance_posts/.test(error instanceof Error?error.message:String(error)))throw error;}}
  const mapping=await db.prepare("SELECT account_code FROM people_finance_account_mappings WHERE source_key='payroll.net_pay_payable'").first<Row>();if(!mapping?.account_code)throw refusal("Approved payroll Finance account mapping is required before salary preparation");
  const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat') AND ABS(COALESCE((SELECT SUM(credit-debit) FROM finance_journal_entries WHERE source_type='payroll_run' AND source_id=? AND account_code=? AND posted=1),0)-(SELECT COALESCE(SUM(net_pay),0) FROM employee_payroll_results WHERE run_id=?))<0.005",[input.runId,input.runId,mapping.account_code,input.runId]);appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM payroll_runs WHERE id=? AND status='payment_prepared') AND (SELECT COUNT(*) FROM payroll_payment_batches WHERE run_id=? AND external_transmission=0)=1",[input.runId,input.runId]);
- for(const result of payable){
+ for(const result of pendingPayable){
   const beneficiary=await db.prepare("SELECT * FROM employee_salary_beneficiaries WHERE employee_id=? AND environment='sandbox' AND expires_at>?").bind(result.employee_id,now).first<Row>();
   if(!beneficiary)throw refusal("Every payable employee needs unexpired reviewed TEST beneficiary evidence");
   const amount=Math.round(Number(result.net_pay)*100);if(!Number.isSafeInteger(amount)||amount<100)throw refusal("Salary amounts must be integer paise of at least one rupee");
@@ -51,8 +56,8 @@ export async function queueEmployeeSalary(db:D1Database,input:{runId:string;acto
   writes.push(...release.statements);
   writes.push(db.prepare("INSERT INTO employee_salary_instructions (id,result_id,run_id,employee_id,amount_paise,currency,fund_account_id,beneficiary_snapshot_json,idempotency_key,status,approved_by,created_at,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,'approved_sandbox',?,?,?)").bind(uid("SALPAY"),result.id,input.runId,result.employee_id,amount,beneficiary.fund_account_id,JSON.stringify(beneficiary),`salary:${text(result.id)}`,input.actorId,now,now));
  }
- writes.push(db.prepare("INSERT INTO employee_salary_events (id,instruction_id,action,actor_id,detail_json,created_at) VALUES (?,NULL,'run_authorized',?,?,?)").bind(uid("SE"),input.actorId,JSON.stringify({runId:input.runId,count:payable.length}),now));
- try{await db.batch(writes);}catch(error){const rows=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE run_id=?").bind(input.runId).all<Row>()).results;if(rows.length===payable.length&&rows.every(row=>payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))return{instructions:rows.map(instructionView),duplicatePrevented:true,environment:"sandbox"};throw error;}
+ writes.push(db.prepare("INSERT INTO employee_salary_events (id,instruction_id,action,actor_id,detail_json,created_at) VALUES (?,NULL,'run_authorized',?,?,?)").bind(uid("SE"),input.actorId,JSON.stringify({runId:input.runId,count:pendingPayable.length,selectedResultIds:payable.map(r=>text(r.id))}),now));
+ try{await db.batch(writes);}catch(error){const rows=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE run_id=?").bind(input.runId).all<Row>()).results,selected=rows.filter(row=>payable.some(r=>text(r.id)===text(row.result_id)));if(selected.length===payable.length&&selected.every(row=>payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))return{instructions:selected.map(instructionView),duplicatePrevented:true,environment:"sandbox"};throw error;}
  return{...(await employeeSalaryDirectory(db,input.runId)),duplicatePrevented:false};
 }
 async function salaryInstruction(db:D1Database,id:string){await ensureEmployeeSalaryTables(db);const row=await db.prepare("SELECT * FROM employee_salary_instructions WHERE id=?").bind(id).first<Row>();if(!row)throw refusal("Employee salary instruction not found",404);return row;}
