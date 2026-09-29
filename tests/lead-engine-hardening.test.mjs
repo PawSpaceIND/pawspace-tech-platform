@@ -190,6 +190,7 @@ test("outbound batching never assigns an opted-out lead", async () => {
 
   const batch = await mod.assignNextOutboundBatch(db, { repEmail: "rep.one@pawspace.in", batchSize: 10, actorId: "system", asOf: NOW });
   assert.ok(batch.assignedLeadIds.includes("LEAD-OK"), "the consenting lead is worked");
+  assert.equal(sqlite.prepare("SELECT employee_email FROM lead_assignments WHERE lead_id=\'LEAD-OK\' AND status=\'current\'").get().employee_email,"rep.one@pawspace.in","the rep whose batch is filled owns the lead");
   assert.ok(!batch.assignedLeadIds.includes("LEAD-OPTOUT"), "the opted-out lead must never be dialled");
   const optOutAssignment = sqlite.prepare("SELECT COUNT(*) c FROM lead_assignments WHERE lead_id='LEAD-OPTOUT'").get();
   assert.equal(optOutAssignment.c, 0);

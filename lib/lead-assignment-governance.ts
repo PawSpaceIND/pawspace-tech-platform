@@ -228,7 +228,7 @@ export async function assignNextOutboundBatch(db:Db,input:{repEmail:string;batch
   for(const row of candidates.results){
     const leadId=text(row.id);
     try{
-      const result=await assignLead(db,{leadId,idempotencyKey:`outbound-batch:${leadId}`,reason:"auto_workload",actorId:input.actorId,asOf:now});
+      const result=await assignLead(db,{leadId,idempotencyKey:`outbound-batch:${leadId}`,reason:"auto_workload",actorId:input.actorId,preferredEmployeeEmail:input.repEmail,asOf:now});
       if(!(result as{duplicatePrevented?:boolean}).duplicatePrevented){assigned++;assignedLeadIds.push(leadId);}
     }catch{/* a lead that fails to assign (e.g. city mismatch surfaced only at assignLead time) is simply skipped, not fatal to the rest of the batch */}
   }
