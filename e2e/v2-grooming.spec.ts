@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { chooseFirstNamedGroomer } from "./helpers/v2-groomer-selection";
 
 type Fixture = {
   reverseCalls: number; reverseGate?: Promise<void>; reverseResult?: Record<string, unknown>;
@@ -479,7 +480,7 @@ test("V2 auto groomer choice accepts a new server match and names that person on
 });
 test("V2 specific groomer selection never silently uses a replacement",async({page})=>{
  const state=await fixture(page);await previewCare(page);
- await page.getByRole("button",{name:/Arjun - PawSpace Care/}).click();
+ expect(await chooseFirstNamedGroomer(page)).toBe("Arjun - PawSpace Care");
  state.reserveRefusal="SELECTED_PROVIDER_UNAVAILABLE";
  await page.getByRole("button",{name:/Reserve & review payment/}).click();
  await expect(page.getByRole("alert")).toContainText("selected provider");
@@ -703,4 +704,20 @@ test("G05: Change address preserves the care draft and the customer's removed-co
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
   await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0); noLocationMutations(state);
+});
+
+
+test("R05 named groomer helper skips automatic matching and preserves the exact reservation", async ({ page }) => {
+  const state = await fixture(page); await previewCare(page);
+  await expect(page.getByRole("button", { name: "PawSpace chooses the best available groomer", exact: true }))
+    .toHaveAttribute("aria-pressed", "true");
+  expect(await chooseFirstNamedGroomer(page)).toBe("Arjun - PawSpace Care");
+  expect(state.reservation).toBeNull();
+  expect(state.bookingWrites).toBe(0); expect(state.orderWrites).toBe(0);
+  await page.getByRole("button", { name: /Reserve & review payment/ }).click();
+  await expect(page).toHaveURL(/bookingId=B1/);
+  expect(state.reservation?.providerSelection).toBe("specific");
+  expect(state.reservation?.preferredProviderId).toBe("PRV1");
+  expect(state.booking?.provider).toMatchObject({ id: "PRV1", name: "Arjun - PawSpace Care" });
+  expect(state.bookingWrites).toBe(1); expect(state.orderWrites).toBe(0);
 });
