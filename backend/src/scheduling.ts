@@ -162,6 +162,10 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
       // Authored provider/Ops/roster rows are authoritative for their provider-date. A broad synthetic
       // UAT fallback must never widen a narrower published calendar if a repository returns both.
       const authored=roster.filter(r=>["partner_app","operations","roster"].includes(String(r.source)));
+      // Commission providers opt in through an explicit Open calendar (self-service, Ops or an approved
+      // roster). Synthetic UAT fallback is allowed only for non-commission providers; it cannot silently
+      // turn a commission provider into an eligible candidate.
+      if(provider.model==="commission"&&!authored.length){eligible=false;reasons.push(`Commission provider has no explicitly Open calendar on ${date}`);continue;}
       const authoritative=authored.length?authored:roster;
       const localRoster=authoritative.filter(r=>r.zoneId===input.zoneId&&Array.isArray(r.windows));
       if(overnight){

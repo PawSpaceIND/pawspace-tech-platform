@@ -246,7 +246,7 @@
     "app/api/pricing-rules/route.ts": "8349c4cd925cba7c3ec86fa13d61fae0c29f7864a0266e6777e9b2fe5af453b9",
     "app/api/privacy-erasure/route.ts": "1b295616fc13316b41efd47438c84dfeb852a1174fe13533569395db96d367cc",
     "app/api/provider-assignment-recovery/route.ts": "02f0ef997086f5b3007dab7c7d3ea6315d488f33ad86cf9909609380dfe25923",
-    "app/api/provider-availability/route.ts": "abceb3714da90bf889bde54c178aa01f573838da8409a2c9acafe2c9d1aa57d9",
+    "app/api/provider-availability/route.ts": "148270ab011b3a095f2ff14308c3c28091f3017aeace6a0dc4756b4f86965f05",
     "app/api/provider-capacity-control/route.ts": "bf35938fcf6174f6325becd600fccbdb11145ce916ae9b910821ec1e8f4559aa",
     "app/api/provider-chat/route.ts": "1a8fb0f34282330eb48915c81a6b7abd9c062a3fff900eccee59fb1c9db03ba5",
     "app/api/provider-commercial-terms/route.ts": "bc2e3b73d2f34613e71651527f314ba9a18c8464c8918276a16cd54caeeda489",

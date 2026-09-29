@@ -77,3 +77,15 @@ test('G17/G18 an authored Blocked stay day cannot be reopened by a synthetic wid
  ];
  refused(await schedule(repo(rows),stay('boarding')));
 });
+
+
+test('G17 commission providers are not opened by synthetic UAT fallback alone',async()=>{
+ const synthetic=row('2026-10-05',['09:00-19:00'],{source:'uat_roster'});
+ refused(await schedule(repo([synthetic],'commission'),request('grooming','2026-10-05T10:00:00+05:30','2026-10-05T12:00:00+05:30')));
+});
+
+test('G15 full-time UAT fallback remains usable when no authored roster exists',async()=>{
+ const synthetic=row('2026-10-05',['09:00-19:00'],{source:'uat_roster'});
+ const result=await schedule(repo([synthetic],'full_time'),request('grooming','2026-10-05T10:00:00+05:30','2026-10-05T12:00:00+05:30'));
+ assert.equal(result.provider?.id,'CALENDAR-P');assert.equal(result.mode,'automatic');
+});

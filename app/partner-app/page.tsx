@@ -14,6 +14,7 @@ import {useDutyTracking} from "./use-duty-tracking";
 import {BEFORE_SERVICE,AFTER_SERVICE,checklistComplete,isGroomerOnDuty} from "../../lib/partner-job-checklists";
 import GroomingRouteCard from "./grooming-route-card";
 import PartnerLogin from "../partner/partner-login";
+import ProviderCalendarCard from "./provider-calendar-card";
 import styles from "./partner.module.css";
 import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
 import { clearProviderProofQueue, discardProviderProof, dispatchQueuedProof, flushProviderProofQueue, isPermanentProofError, providerProofFailure, queueProviderProof, type QueuedProviderProof } from "../../lib/provider-proof-offline-queue";
@@ -814,6 +815,7 @@ function PartnerMobileAppContent() {
         {tab === "more" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
           <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
+          {identity?.subjectId&&<ProviderCalendarCard key={identity.subjectId} providerId={identity.subjectId}/>}
           <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link><button type="button" onClick={() => void signOut()} disabled={accountBusy}><i>⎋</i><span><b>{signingOut ? "Signing out…" : "Sign out / switch partner"}</b><small>Ends this session; the next partner enters their own phone and OTP</small></span><em>›</em></button></div>
           {!uatProviders && uatRosterError && <p role="status" className={styles.empty}>Switch UAT provider is unavailable right now: {uatRosterError}</p>}
           {uatProviders && <section className={styles.uatSwitch} aria-label="Switch UAT provider">
