@@ -17,8 +17,8 @@ export function conversationEvidence(detail, carrier, expectedAgentId) {
 
 // Progress keeps the stream active but cannot prove that the agent answered the caller.
 export function isSubstantiveVoiceReply(reply){
- const text=String(reply||'').replace(/^(?:(?:I'm checking the details|One moment while I check that for you|Just a moment|Please wait)[. …]*\s*)+/i,'').trim();
- return Boolean(text)&&!/^(one moment|just a moment|let me check|please wait)/i.test(text);
+ const text=String(reply||'').replace(/^(?:(?:I'm checking the details|One moment while I check that for you|Sure, give me a second|Give me a second|Just a moment|Please wait)[. …,!]*\s*)+/i,'').trim();
+ return Boolean(text)&&!/^(?:sure[, ]*)?(?:one moment|just a moment|give me a second|let me check|please wait)/i.test(text);
 }
 
 // A finished model session cannot stand in for a carrier-confirmed connected call.
