@@ -747,6 +747,8 @@ jobs:
           const current=await read.json().catch(()=>({}));
           if(!read.ok) throw new Error('agent read failed '+read.status);
           const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
+          const pawspaceKeywords=['PawSpace','Salarpuria Greenage','German Shepherd','Essential Bath','Bath and Basic','Just Trim','Complete Makeover','UPI'];
+          const existingKeywords=Array.isArray(currentAsr.keywords)?currentAsr.keywords:[];
           const voiceId=currentTts.voice_id;
           if(!voiceId) throw new Error('agent voice_id missing');
           const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
@@ -762,7 +764,7 @@ jobs:
               },
               asr:{
                 ...currentAsr,
-                keywords:[...new Set([...(Array.isArray(currentAsr.keywords)?currentAsr.keywords:[]),'PawSpace','Salarpuria Greenage','German Shepherd','Essential Bath','Bath and Basic','Just Trim','Complete Makeover','UPI'])].slice(0,100)
+                keywords:[...new Set([...pawspaceKeywords,...existingKeywords])].slice(0,100)
               },
               tts:{
                 ...currentTts,
