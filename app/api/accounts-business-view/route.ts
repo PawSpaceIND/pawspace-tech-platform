@@ -8,7 +8,9 @@ export async function GET(request: Request) {
     const actor = await resolveActor(request);
     requirePermission(actor, "finance.view");
     const db = await database();
-    const data = await buildAccountsBusinessView(db);
+    const bookingId = new URL(request.url).searchParams.get("bookingId")?.trim() || "";
+    if (bookingId.length > 160) return json({ error: "Booking ID is invalid" }, 400);
+    const data = await buildAccountsBusinessView(db, bookingId ? { bookingId } : {});
     return json({ data, source: "booking_invoices_and_payments" });
   } catch (error) {
     return authError(error, "Unable to load accounts business view");

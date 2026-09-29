@@ -43,9 +43,12 @@ const SETTLEMENT_LEDGER_VERTICALS = [
  * payment_reconciliation_records, aggregated per-payment rather than as a discrete ledger) and are
  * not forced into the same union, which would risk silently misclassifying their real records.
  */
-export async function buildAccountsBusinessView(db: Db) {
+export async function buildAccountsBusinessView(db: Db, options: { bookingId?: string } = {}) {
   const degradation = createDegradationLog();
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
+  const bookingId = String(options.bookingId ?? "").trim();
+  const bookings = bookingId
+    ? await safeAll(db, "SELECT id,service_code,total_amount,updated_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled') AND id=?", [bookingId], degradation, "bookings")
+    : await safeAll(db, "SELECT id,service_code,total_amount,updated_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
@@ -56,6 +59,7 @@ export async function buildAccountsBusinessView(db: Db) {
   }
   const invoiceByBooking = new Map(invoices.map(i => [String(i.booking_id), i]));
   const paymentByBooking = new Map(payments.map(p => [String(p.booking_id), p]));
+  const updatedAtByBooking = new Map(bookings.map(b => [String(b.id), Number(b.updated_at || 0)]));
 
   const paidAmount = (bookingId: string) => { const p = paymentByBooking.get(bookingId); return p && ["captured", "paid"].includes(String(p.status)) ? Number(p.amount || 0) : 0; };
   const receivable = bookings.reduce((sum, b) => { const total = Number(b.total_amount || 0), paid = paidAmount(String(b.id)); return sum + Math.max(0, total - paid); }, 0);
@@ -66,13 +70,21 @@ export async function buildAccountsBusinessView(db: Db) {
 
   let refundPending = 0, refundPendingCount = 0, providerPayable = 0, providerPayableCount = 0;
   for (const { table } of REFUND_LEDGER_VERTICALS) {
-    const rows = await safeAll(db, `SELECT amount FROM ${table} WHERE status='sandbox_pending'`);
+    const scopedSql = bookingId
+      ? `SELECT amount FROM ${table} WHERE status='sandbox_pending' AND booking_id=?`
+      : `SELECT amount FROM ${table} WHERE status='sandbox_pending'`;
+    const scopedBinds = bookingId ? [bookingId] : [];
+    const rows = await safeAll(db, scopedSql, scopedBinds);
     for (const r of rows) { refundPending += Number(r.amount || 0); refundPendingCount++; }
   }
   // 'queued_for_release' is written by the provider payout queue (lib/provider-payout-queue.ts): the payout
   // is waiting for Finance's release click, so the money is still owed to the provider.
   for (const { table } of SETTLEMENT_LEDGER_VERTICALS) {
-    const rows = await safeAll(db, `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL`);
+    const scopedSql = bookingId
+      ? `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL AND booking_id=?`
+      : `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL`;
+    const scopedBinds = bookingId ? [bookingId] : [];
+    const rows = await safeAll(db, scopedSql, scopedBinds);
     for (const r of rows) { providerPayable += Number(r.payout_amount || 0); providerPayableCount++; }
   }
 
@@ -91,10 +103,15 @@ export async function buildAccountsBusinessView(db: Db) {
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
-    .sort((a, b) => (a.bookingId < b.bookingId ? 1 : -1))
+    // The ledger is a display window, not the summary source. Show recent operational work instead of
+    // lexicographically large IDs; exact booking lookup remains available outside this 100-row window.
+    .sort((a, b) => (updatedAtByBooking.get(b.bookingId) || 0) - (updatedAtByBooking.get(a.bookingId) || 0) || b.bookingId.localeCompare(a.bookingId))
     .slice(0, 100);
 
   return {
+    scope: bookingId
+      ? { kind: "booking" as const, bookingId }
+      : { kind: "all_records" as const, ledgerLimit: 100, ledgerOrder: "booking_updated_at_desc" as const },
     degraded: degradationNotice(degradation.entries()),
     receivable, gstPayable,
     refundQueue: { amount: refundPending, count: refundPendingCount, verticalsCovered: REFUND_LEDGER_VERTICALS.map(v => v.vertical) },
