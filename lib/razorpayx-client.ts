@@ -1,3 +1,4 @@
+import {razorpayXPayoutIdentityProblem} from "./razorpayx-payout-identity";
 /** Sandbox-only RazorpayX payout provider boundary. No live credential path exists here. */
 type Env=Record<string,unknown>;
 export type RazorpayXPayoutMode="IMPS"|"NEFT"|"RTGS";
@@ -82,6 +83,8 @@ export async function createRazorpayXSandboxPayout(env:Env,input:{localPayoutId:
   const{response,body}=await request(env,"/v1/payouts",{method:"POST",headers:{authorization:auth(c.keyId,c.keySecret),"content-type":"application/json","X-Payout-Idempotency":idempotency},body:JSON.stringify({account_number:c.accountNumber,fund_account_id:input.fundAccountId,amount:input.amountPaise,currency:"INR",mode,purpose:input.payroll?"salary":"payout",queue_if_low_balance:true,reference_id:safeReference(input.localPayoutId),narration:input.payroll?"PawSpace Salary":"PawSpace Partner",notes:{pawspace_payout_id:input.localPayoutId,...(input.payroll?{employee_id:input.payroll.employeeId,payroll_run_id:input.payroll.runId}:{booking_id:input.bookingId||"",statement_id:input.statementId||"",provider_id:input.providerId}),pawspace_environment:"sandbox"}})});
   if(!response.ok)return{connected:false,environment:"sandbox",reason:`RazorpayX TEST payout create failed (${response.status}): ${String((body.error as Record<string,unknown>|undefined)?.description||"request failed")}`};
   if(!String(body.id||"").startsWith("pout_"))return{connected:false,environment:"sandbox",reason:"RazorpayX did not return a payout id"};
+  const identityProblem=razorpayXPayoutIdentityProblem(body,{localPayoutId:input.localPayoutId,fundAccountId:input.fundAccountId,amountPaise:input.amountPaise,currency:input.currency});
+  if(identityProblem)return{connected:false,environment:"sandbox",reason:identityProblem+"; reconciliation required"};
   return{connected:true,environment:"sandbox",payout:body};
  }catch(error){return{connected:false,environment:"sandbox",reason:`RazorpayX TEST request failed: ${error instanceof Error?error.message:String(error)}`};}
 }
