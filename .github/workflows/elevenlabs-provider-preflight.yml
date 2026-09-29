@@ -27,9 +27,9 @@ on:
         required: false
         default: ""
       audio_profile:
-        description: 'Human-call TTS profile: flash_v2 (English Agent), flash_v2_5, or v3_conversational'
+        description: 'Human-call TTS profile: v3_conversational (recommended human-like), flash_v2_5, or flash_v2'
         required: false
-        default: 'flash_v2'
+        default: 'v3_conversational'
       attended_statement:
         description: 'After the call only: exact participant statement documented in VOICE_HANDSET_TRACE. Never infer confirmation.'
         required: false
@@ -740,21 +740,31 @@ jobs:
           node --input-type=module <<'NODE'
           import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
           const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
-          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'flash_v2_5');
+          const profile=humanCallProfile(process.env.AUDIO_PROFILE||'v3_conversational');
           if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
           const headers={'xi-api-key':key,'content-type':'application/json'};
           const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
           const current=await read.json().catch(()=>({}));
           if(!read.ok) throw new Error('agent read failed '+read.status);
-          const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{};
+          const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
+          const pawspaceKeywords=['PawSpace','Salarpuria Greenage','German Shepherd','Essential Bath','Bath and Basic','Just Trim','Complete Makeover','UPI'];
+          const existingKeywords=Array.isArray(currentAsr.keywords)?currentAsr.keywords:[];
           const voiceId=currentTts.voice_id;
           if(!voiceId) throw new Error('agent voice_id missing');
+          const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+          const voiceMeta=await voiceRead.json().catch(()=>({}));
+          if(voiceRead.ok) console.log('GROOMING_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
           const body={
             conversation_config:{
               agent:{
                 ...currentAgent,
                 first_message:"Hi, this is Maya from PawSpace. How can I help with your pet today?",
+                max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
                 prompt:{...currentPrompt,prompt:humanCallPrompt(currentPrompt?.prompt)}
+              },
+              asr:{
+                ...currentAsr,
+                keywords:[...new Set([...pawspaceKeywords,...existingKeywords])].slice(0,100)
               },
               tts:{
                 ...currentTts,
@@ -763,18 +773,23 @@ jobs:
                 stability:profile.stability,
                 similarity_boost:profile.similarityBoost,
                 speed:profile.speed,
-                optimize_streaming_latency:profile.optimizeStreamingLatency
+                optimize_streaming_latency:profile.optimizeStreamingLatency,
+                expressive_mode:profile.expressiveMode===true
+              },
+              conversation:{
+                ...(current?.conversation_config?.conversation||{}),
+                max_duration_seconds:600
               },
               turn:{
                 ...currentTurn,
-                turn_timeout:12,
-                silence_end_call_timeout:60,
+                turn_timeout:10,
+                silence_end_call_timeout:90,
                 turn_eagerness:'normal',
                 turn_model:'turn_v3',
                 soft_timeout_config:{
                   ...(currentTurn?.soft_timeout_config||{}),
-                  timeout_seconds:2.5,
-                  message:"One moment while I check that for you.",
+                  timeout_seconds:3,
+                  message:"Sure, give me a second.",
                   max_soft_timeouts_per_generation:1
                 }
               }
@@ -796,7 +811,9 @@ jobs:
             turnTimeout:turn.turn_timeout??null,
             silenceEndCallTimeout:turn.silence_end_call_timeout??null,
             turnModel:turn.turn_model||null,
-            softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null
+            softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null,
+            expressiveMode:tts.expressive_mode===true,
+            maxDurationSeconds:cc?.conversation?.max_duration_seconds??null
           }));
           NODE
 
