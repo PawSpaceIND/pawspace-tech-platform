@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
-installWorkersHooks('__G15_G19_CALENDAR_DB__');
+installWorkersHooks('__G15_G19_CALENDAR_DB__', undefined, { authoredRosterFixture: false });
 const {schedule}=await import('../backend/src/scheduling.ts');
 const provider=(model='commission')=>({id:'CALENDAR-P',cityId:'blr',name:'Synthetic calendar provider',model,services:['grooming','boarding','pet_sitting'],zones:['blr-east'],live:true,rating:5,qualityScore:100,capacity:4,travelBufferMinutes:30,maxDailyJobs:6});
 const row=(date,windows,extra={})=>({id:'OPEN-'+date,providerId:'CALENDAR-P',cityId:'blr',zoneId:'blr-east',date,windows,source:'partner_app',updatedAt:'2026-09-29T00:00:00Z',...extra});

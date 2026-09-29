@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import * as h from "./helpers/stay-taxi-latency-harness.mjs";
 
-installWorkersHooks("__STAY_BOOKING_DB__", "__STAY_BOOKING_ENV__");
+installWorkersHooks("__STAY_BOOKING_DB__", "__STAY_BOOKING_ENV__", { authoredRosterFixture: false });
 h.stubGeocoding();
 const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
