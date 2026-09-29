@@ -280,7 +280,7 @@ test("under the gate with RazorpayX TEST ready, the same click sends the TEST pa
     const released = await queue.releaseProviderPayouts(db, { bookingIds: ["BK-UAT-SEND"], actor: FINANCE, reason: "UAT payout run", env });
     assert.deepEqual(released.refused, []);
     const [done] = released.released;
-    assert.deepEqual(done.dispatch, { attempted: true, connected: true, providerPayoutId: "pout_UATTEST001", providerStatus: "processing", duplicatePrevented: false });
+    assert.deepEqual(done.dispatch, { attempted: true, connected: true, providerPayoutId: "pout_UATTEST001", providerStatus: "processing", duplicatePrevented: false, reconciliationRequired: false, accounting: { status: "awaiting_provider", reason: null, principalOnly: true, bankStatementReconciled: false } });
     assert.equal(provider.calls.length, 1, "one TEST payout create call");
     assert.equal(provider.calls[0].body.fund_account_id, FA);
     assert.equal(provider.calls[0].body.amount, 70000, "Rs 700 in paise");

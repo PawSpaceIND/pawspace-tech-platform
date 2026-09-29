@@ -1,3 +1,4 @@
+import {configureSalaryFinanceFixture} from "./helpers/salary-finance-fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import http from "node:http";
@@ -19,6 +20,7 @@ async function world(t){
  await payroll.reviewPayroll(w.db,{runId:run.run.id,actorId:"reviewer@qa.test"});
  await payroll.approvePayroll(w.db,{runId:run.run.id,actorId:"approver@qa.test"});
  await payroll.prepareSandboxPaymentBatch(w.db,{runId:run.run.id,actorId:"finance@qa.test"});
+ await configureSalaryFinanceFixture(w.db);
  return{...w,employeeId:employee.id,runId:run.run.id};
 }
 async function instructions(w){
@@ -110,4 +112,61 @@ test("enabled TEST sweep processes only already-authorized instructions",async t
  assert.equal(result.enabled,true);assert.equal(result.processed,1);assert.equal(provider.calls.filter(r=>r.method==="POST").length,1);
  await salary.runEmployeeSalarySandboxSweep(w.db,{...provider.env,PAWSPACE_EMPLOYEE_SALARY_SANDBOX_AUTODISPATCH:"on"});
  assert.equal(provider.calls.filter(r=>r.method==="POST").length,1,"later sweeps reconcile instead of creating another payout");
+});
+
+test("salary principal clears the configured payable and transit, and a reversal returns principal without a second payout",async t=>{
+ const w=await world(t),provider=await transport(t),queued=await instructions(w),instructionId=queued.instructions[0].id;
+ const balance=account=>w.sqlite.prepare("SELECT COALESCE(SUM(debit-credit),0) amount FROM finance_journal_entries WHERE account_code=?").get(account).amount;
+ assert.equal(balance("2120-Employee Salary Payable"),0);assert.equal(balance("2116-Employee Salary Payouts in Transit"),-30000);
+ await salary.dispatchEmployeeSalarySandbox(w.db,provider.env,{instructionId,actorId:"finance@qa.test"});
+ const input=webhook(provider.env,provider.payout());await salary.processEmployeeSalaryWebhook(w.db,provider.env,input);await salary.processEmployeeSalaryWebhook(w.db,provider.env,input);
+ assert.equal(balance("1010-Bank"),-30000);assert.equal(balance("2116-Employee Salary Payouts in Transit"),0);
+ await salary.processEmployeeSalaryWebhook(w.db,provider.env,webhook(provider.env,provider.payout(),"payout.reversed","salary-reversal-ledger"));
+ assert.equal(balance("1010-Bank"),0);assert.equal(balance("2116-Employee Salary Payouts in Transit"),-30000);
+ assert.equal((await salary.employeeSalaryDirectory(w.db,w.runId)).payoutAccounting[0].status,"reconciliation_required");
+ assert.equal(provider.calls.filter(r=>r.method==="POST").length,1);
+});
+test("salary refuses instructions without the configured Finance mapping instead of inventing an account",async t=>{
+ const w=await world(t);w.sqlite.exec("DELETE FROM people_finance_account_mappings");
+ await assert.rejects(()=>instructions(w),/finance account mapping missing/);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+test("enabled salary sweep surfaces review failures for scheduler diagnostics",async t=>{
+ const w=await world(t),provider=await transport(t);await instructions(w);w.sqlite.exec("UPDATE employee_salary_instructions SET beneficiary_snapshot_json=json_set(beneficiary_snapshot_json,'$.expires_at',1)");
+ const result=await salary.runEmployeeSalarySandboxSweep(w.db,{...provider.env,PAWSPACE_EMPLOYEE_SALARY_SANDBOX_AUTODISPATCH:"on"});
+ assert.equal(result.failed,1);assert.equal(provider.calls.length,0);
+});
+
+test("salary accounting moves only approved net pay through its own transit and reverses once",async t=>{
+ const w=await world(t),provider=await transport(t),queued=await instructions(w),id=queued.instructions[0].id;
+ const balance=account=>w.sqlite.prepare("SELECT COALESCE(SUM(debit-credit),0) amount FROM finance_journal_entries WHERE account_code=? AND posted=1").get(account).amount;
+ assert.equal(balance("2116-Employee Salary Payouts in Transit"),-30000);assert.equal(balance("1010-Bank"),0);
+ await salary.dispatchEmployeeSalarySandbox(w.db,provider.env,{instructionId:id,actorId:"finance@qa.test"});
+ const paid=webhook(provider.env,provider.payout());await salary.processEmployeeSalaryWebhook(w.db,provider.env,paid);await salary.processEmployeeSalaryWebhook(w.db,provider.env,paid);
+ assert.equal(balance("2116-Employee Salary Payouts in Transit"),0);assert.equal(balance("1010-Bank"),-30000);
+ const reverse=webhook(provider.env,provider.payout(),"payout.reversed","reverse-books");await salary.processEmployeeSalaryWebhook(w.db,provider.env,reverse);await salary.processEmployeeSalaryWebhook(w.db,provider.env,reverse);
+ assert.equal(balance("2116-Employee Salary Payouts in Transit"),-30000);assert.equal(balance("1010-Bank"),0);
+ const view=await salary.employeeSalaryDirectory(w.db,w.runId);assert.equal(view.payoutAccounting[0].status,"reconciliation_required");assert.match(view.payoutAccounting[0].reason,/automatic reissue forbidden/);
+});
+test("salary preparation refuses missing approved finance mappings without creating transfer authority",async t=>{
+ const w=await world(t);w.sqlite.exec("DELETE FROM people_finance_account_mappings WHERE source_key='payroll.net_pay_payable'");
+ await assert.rejects(()=>instructions(w),/finance account mapping/);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+test("changed salary beneficiary is held before dispatch rather than silently paying the old bank",async t=>{
+ const w=await world(t),provider=await transport(t),queued=await instructions(w),instructionId=queued.instructions[0].id;
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:"fa_CHANGED",verificationReference:"NEW-REVIEW-EVIDENCE",expiresAt:Date.now()+86400000,actorId:"finance@qa.test"});
+ await assert.rejects(()=>salary.dispatchEmployeeSalarySandbox(w.db,provider.env,{instructionId,actorId:"finance@qa.test"}));assert.equal(provider.calls.length,0);
+});
+
+test("salary lost creation response preserves an already accepted signed confirmation",async t=>{
+ const w=await world(t),provider=await transport(t),queued=await instructions(w),instructionId=queued.instructions[0].id;
+ t.mock.method(globalThis,"fetch",async(_url,init)=>{
+  const request=JSON.parse(init.body),payout={...request,id:"pout_RACE",status:"processed"};
+  await salary.processEmployeeSalaryWebhook(w.db,provider.env,webhook(provider.env,payout,"payout.processed","salary-race-paid"));
+  throw new Error("Injected lost response after accepted signed callback");
+ });
+ const result=await salary.dispatchEmployeeSalarySandbox(w.db,provider.env,{instructionId,actorId:"finance@qa.test"});
+ assert.notEqual(result.connected,false);assert.equal(result.instruction.status,"paid_sandbox");
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='razorpayx_payout_settlement'").get().n,2);
 });

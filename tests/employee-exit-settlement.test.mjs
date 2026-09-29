@@ -1,3 +1,4 @@
+import {configureSalaryFinanceFixture} from "./helpers/salary-finance-fixture.mjs";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHmac} from 'node:crypto';
@@ -61,6 +62,7 @@ async function paidExit(w){
  const caseId=await executed(w),run=await payroll.calculatePayroll(w.db,{periodStart:START,periodEnd:END,idempotencyKey:'FINAL-PAID',actorId:'maker@exit.test'}),runId=run.run.id;
  await payroll.reviewPayroll(w.db,{runId,actorId:'reviewer@exit.test'});await payroll.approvePayroll(w.db,{runId,actorId:'approver@exit.test'});await payroll.prepareSandboxPaymentBatch(w.db,{runId,actorId:'finance@exit.test'});
  await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:'fa_ExitFinal',verificationReference:'FINANCE-TEST-REVIEW',expiresAt:Date.now()+86400000,actorId:'finance@exit.test'});
+ await configureSalaryFinanceFixture(w.db);
  const queued=await salary.queueEmployeeSalary(w.db,{runId,actorId:'finance@exit.test'}),instruction=queued.instructions[0];
  const send=async(status,id)=>{const rawBody=JSON.stringify({event:`payout.${status}`,payload:{payout:{entity:{id:'pout_ExitFinal',reference_id:instruction.id,fund_account_id:'fa_ExitFinal',amount:instruction.amountPaise,currency:'INR',status,utr:'SYNTHETIC-NOT-A-BANK-PAYMENT'}}}});const signature=createHmac('sha256',env.RAZORPAYX_WEBHOOK_SECRET_SANDBOX).update(rawBody).digest('hex');return salary.processEmployeeSalaryWebhook(w.db,env,{rawBody,signature,eventId:id});};
  await send('processed','EXIT-PAID');return{caseId,runId,instruction,send};

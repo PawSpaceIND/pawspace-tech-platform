@@ -469,9 +469,12 @@ test("the Worker's scheduled tick seeds a missing default, reports a failure, lo
   const fanout = worker.indexOf("=await Promise.allSettled([");
   const seed = worker.indexOf("seedMissingServiceCommissionDefaults(env.DB)", fanout), payout = worker.indexOf("runProviderPayoutQueueSweep(env.DB", fanout);
   assert.ok(fanout > 0 && seed > fanout && payout > seed && !worker.slice(seed, payout).includes("),\n        run"), "the seed is in the scheduled fan-out, right before the payout queue sweep");
-  assert.match(worker, /,partnerHeartbeat,commissionDefaults,providerPayoutQueue\]=await Promise\.allSettled\(\[/);
+  assert.match(worker, /,partnerHeartbeat,commissionDefaults,providerPayoutQueue,employeeSalary\]=await Promise\.allSettled\(\[/);
   assert.match(worker, /if\(commissionDefaults\.status==="rejected"\)errors\.push\(`commission defaults: /, "a failing seed is reported, not swallowed");
   assert.match(worker, /else if\(commissionDefaults\.value\.blocked\)console\.warn\(`\[scheduled\] commission defaults not seeded: \$\{commissionDefaults\.value\.blocked\}`\)/, "a locked month is logged");
+
+  assert.match(worker, /if\(employeeSalary\.status==="rejected"\)errors\.push/, "salary execution failures also reach scheduled diagnostics");
+  assert.match(worker, /else if\(employeeSalary\.value\.failed\)errors\.push/, "salary review failures are not silently swallowed");
 
   // What the tick runs.
   const { sqlite, db } = defaultsWorld();

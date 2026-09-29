@@ -6,6 +6,8 @@
 import { callRecordingApproved, statusCallbackUrl, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 import { ProviderResponseTooLarge, readBoundedText as readBoundedResponseText } from "./provider-response-bounds";
 
+import { voiceProviderCorrelation, type VoiceProviderCorrelation } from "./voice-handset-evidence";
+
 type Env = Record<string, unknown>;
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
 
@@ -26,7 +28,7 @@ export type TelephonyCallIntent = {
   useCase?: string | null;
 };
 
-export type TelephonyCallHandle = { accepted: boolean; providerCallId: string; providerStatus: string; productionCall: boolean };
+export type TelephonyCallHandle = { accepted: boolean; providerCallId: string; providerStatus: string; productionCall: boolean; providerCorrelation?: VoiceProviderCorrelation };
 export type TelephonyProviderEvent = { providerEventId: string; kind: TelephonyEventKind; callRef: string | null; providerCallId: string | null; providerStatus: string | null; dtmfDigits: string | null; recordingRef: string | null; durationSeconds: number | null };
 export type TelephonyWebhookVerification = { verified: boolean; mechanism: string | null; reason: string | null };
 export type TelephonyProvider = {
@@ -275,7 +277,11 @@ export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
         try { parsed = JSON.parse(raw) as typeof parsed; } catch { throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned a malformed response"); }
         const providerCallId = String(parsed.callSid || parsed.conversation_id || "").trim();
         if (!parsed.success || !providerCallId) throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned no accepted call identifier");
-        return { accepted: true, providerCallId, providerStatus: "queued", productionCall: true };
+        const providerCorrelation = voiceProviderCorrelation({ carrierCallId: parsed.callSid, conversationId: parsed.conversation_id, agentId });
+        // A partial acknowledgement is not a refusal: keep the reservation and reconcile exact IDs.
+        return { accepted: true, providerCallId,
+          providerStatus: providerCorrelation.carrierCallId && providerCorrelation.conversationId ? "queued" : "acceptance_incomplete",
+          productionCall: true, providerCorrelation };
       } finally { clearTimeout(timer); }
     },
     async verifyWebhook() { return { verified: false, mechanism: null, reason: "ElevenLabs callbacks are verified on the dedicated signed post-call endpoint" }; },

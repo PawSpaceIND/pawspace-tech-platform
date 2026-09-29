@@ -119,7 +119,9 @@ test("Track 3 retained downstream batching removes redundant finance-policy wait
   const ledger=fs.readFileSync(new URL("../lib/collection-ledger.ts",import.meta.url),"utf8");
   const finance=fs.readFileSync(new URL("../lib/finance-accounts.ts",import.meta.url),"utf8");
   assert.match(ledger,/const\[,policy\]=await Promise\.all/);
-  assert.match(finance,/const\[period,existing\]=await Promise\.all/);
+  assert.match(finance,/const\[period,replay\]=await Promise\.all/);
+  assert.match(finance,/const\[period,replay\]=await Promise\.all\(\[[\s\S]*?finance_close_periods[\s\S]*?journalReplayState\(db, journalGroup, expected\)/,
+    "the period read and full-journal replay read must remain concurrent");
 });
 
 test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger",()=>{
