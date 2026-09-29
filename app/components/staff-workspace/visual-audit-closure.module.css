@@ -1,0 +1,25 @@
+/* Audited staff presentation only. Preserve native tables and every existing action. */
+.scope.scope :is(div,section,article,details):has(> table) { min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+.scope.scope table { width:100% !important; min-width:42rem !important; max-width:none !important; table-layout:auto !important; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.scope.scope :is(th,td) { min-width:7rem !important; white-space:normal !important; overflow-wrap:normal !important; word-break:normal; vertical-align:top; }
+.scope.scope th { white-space:nowrap !important; }
+.scope.scope :is(th,td) :is(button,a) { overflow-wrap:normal !important; word-break:normal; }
+.scope.scope :is(button,a,summary) { word-break:normal; overflow-wrap:normal; }
+.scope.scope select { white-space:nowrap !important; overflow-wrap:normal !important; }
+.scope.scope :is(article,section,aside) { min-width:0; }
+.scope.scope :is(h1,h2,h3,h4,code,pre) { overflow-wrap:anywhere; }
+.scope.scope [data-audit-identifier] { overflow-wrap:anywhere; }
+.scope.scope [data-audit-queue-row] { display:grid !important; grid-template-columns:minmax(0,1fr) auto !important; align-items:center; gap:12px; }
+.scope.scope [data-audit-queue-row] > button { white-space:nowrap; justify-self:end; }
+.scope.scope [data-audit-list-detail] { align-items:start; }
+.scope.scope [data-audit-list-detail] > aside { max-height:72dvh; overflow-y:auto !important; overscroll-behavior-y:contain; scrollbar-gutter:stable; }
+.scope.scope [data-audit-list-detail] > section { align-self:start; }
+.utility { display:flex; justify-content:flex-end; align-items:center; min-height:56px; padding:6px 20px; border-bottom:1px solid var(--paw-line); background:var(--paw-surface); }
+.scope .utility :global(.paw-appearance-trigger) { position:static !important; inset:auto !important; transform:none !important; margin:0; box-shadow:none; }
+@media(max-width:800px) { .utility { min-height:48px; padding:4px 14px; } }
+@media(max-width:600px) {
+ .scope.scope [data-audit-queue-row] { grid-template-columns:minmax(0,1fr) !important; }
+ .scope.scope [data-audit-queue-row] > button { justify-self:start; }
+ .scope.scope [data-audit-list-detail] > aside { max-height:45dvh; }
+}
+@media print { .scope.scope table { min-width:0 !important; } .utility { display:none; } }

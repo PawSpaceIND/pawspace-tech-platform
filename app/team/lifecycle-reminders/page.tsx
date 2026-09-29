@@ -117,7 +117,7 @@ export default function LifecycleRemindersPage() {
     <section className={styles.panel}>
       <div className={styles.panelHead}><h2>Business-rule matrix</h2><Button size="sm" variant="secondary" disabled={busy} onClick={() => { void runNow(); }}>{busy ? "Running…" : "Run confirmed reminders now"}</Button></div>
       <p className={styles.panelNote}>Grooming rebooking and the existing grooming-subscription rules inherit their current governed cadence. New-customer, existing-customer and other-service rules are present but remain inactive until a real business cadence/template is approved.</p>
-      {directory?.rules.length ? <div className={styles.tableWrap}><table className={styles.table}>
+      {directory?.rules.length ? <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
         <thead><tr><th>Segment</th><th>Service</th><th>Trigger</th><th>Delay</th><th>Repeat</th><th>Status</th></tr></thead>
         <tbody>{directory.rules.map((rule) => <tr key={rule.id} onClick={() => setSelectedId(rule.id)} style={{ cursor: "pointer" }}>
           <td>{words(rule.segment)}</td><td>{rule.service_code ? words(rule.service_code) : "all"}</td><td>{words(rule.trigger_code)}</td>

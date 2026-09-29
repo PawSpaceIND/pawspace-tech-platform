@@ -18,12 +18,12 @@
 .module :where(div:has(>table),section:has(>table)) { min-width:0; max-width:100%; overflow-x:auto; }
 .module [data-staff-grid] { min-width:0; }
 .module [data-staff-grid] > * { min-width:0; }
-.module [data-staff-grid="stats"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)) !important; }
-.module [data-staff-grid="record"] { overflow-x:auto; }
-@media(max-width:1180px) { .module [data-staff-grid="split"] { grid-template-columns:minmax(0,1fr) !important; } }
+.module.module [data-staff-grid="stats"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)) !important; }
+.module.module [data-staff-grid="record"] { overflow-x:auto; }
+@media(max-width:1180px) { .module.module [data-staff-grid="split"] { grid-template-columns:minmax(0,1fr) !important; } }
 @media(max-width:600px) {
   .module > main { padding:20px 14px !important; }
-  .module [data-staff-grid="stats"] { grid-template-columns:minmax(0,1fr) !important; }
+  .module.module [data-staff-grid="stats"] { grid-template-columns:minmax(0,1fr) !important; }
   .module :where(header > div) { max-width:100%; }
   .module :where(h1) { font-size:1.75rem; }
 }
@@ -41,9 +41,9 @@
 
 /* Additional opt-in layouts for the remaining Team forms and report grids. */
 .module { --staff-on-gold:#251b08; }
-.module [data-staff-grid="form"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)) !important; align-items:end; }
-.module [data-staff-grid="panels"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)) !important; }
-.module [data-staff-grid="record"] > * { overflow-wrap:anywhere; }
+.module.module [data-staff-grid="form"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)) !important; align-items:end; }
+.module.module [data-staff-grid="panels"] { grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)) !important; }
+.module.module [data-staff-grid="record"] > * { overflow-wrap:anywhere; }
 @media(max-width:600px) {
-  .module [data-staff-grid="form"],.module [data-staff-grid="panels"] { grid-template-columns:minmax(0,1fr) !important; }
+  .module.module [data-staff-grid="form"],.module.module [data-staff-grid="panels"] { grid-template-columns:minmax(0,1fr) !important; }
 }

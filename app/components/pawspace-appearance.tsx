@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { usePathname } from "next/navigation";
 import { DEFAULT_STYLE, STYLE_STORAGE_KEY, resolveVisualStyle, type VisualStyle, APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, DEFAULT_THEME, PLATFORM_THEME_STORAGE_KEY, THEME_STORAGE_KEY, isAppearanceMode, isOfferedTheme, resolveBrandTheme, themes, type ThemeId, type AppearanceMode } from "../mobile-app/theme-config";
 
 /** Device-local presentation only. Never reads or writes account/service data. */
@@ -9,6 +11,15 @@ export default function PawSpaceAppearance() {
   const [mode, setMode] = useState<AppearanceMode>(DEFAULT_APPEARANCE);
   const [visualStyle, setVisualStyle] = useState<VisualStyle>(DEFAULT_STYLE);
   const dialog = useRef<HTMLDialogElement>(null);
+  const pathname = usePathname();
+  const [utilitySlot, setUtilitySlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const locate = () => setUtilitySlot(document.querySelector<HTMLElement>('[data-paw-appearance-slot][data-paw-appearance-ready="true"]'));
+    locate();
+    const observer = new MutationObserver(locate);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-paw-appearance-ready"] });
+    return () => observer.disconnect();
+  }, [pathname]);
   useEffect(() => {
     const sync = (event?: Event) => {
       let chosen: ThemeId = DEFAULT_THEME, appearance: AppearanceMode = DEFAULT_APPEARANCE;
@@ -48,8 +59,9 @@ export default function PawSpaceAppearance() {
     try { localStorage.setItem(THEME_STORAGE_KEY, brand); localStorage.setItem(APPEARANCE_STORAGE_KEY, appearance); } catch { /* Session-only preference. */ }
     window.dispatchEvent(new CustomEvent("pawspace-appearance-change", {detail: {theme:brand, mode:appearance, style:visualStyle}}));
   }
+  const trigger = <button className="paw-appearance-trigger" aria-label="Change PawSpace appearance" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">◐</span><span>Appearance</span></button>;
   return <>
-    <button className="paw-appearance-trigger" aria-label="Change PawSpace appearance" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">◐</span><span>Appearance</span></button>
+    {utilitySlot ? createPortal(trigger, utilitySlot) : trigger}
     <dialog ref={dialog} className="paw-appearance-dialog" aria-labelledby="paw-appearance-title">
       <div className="paw-appearance-head"><img src="/assets/pawspace-icon.jpeg" alt="PawSpace"/><button aria-label="Close appearance settings" onClick={() => dialog.current?.close()}>×</button></div>
       <h2 id="paw-appearance-title">Make PawSpace yours.</h2><p>Two styles. Three colour palettes. Choose a look that feels like you.</p>

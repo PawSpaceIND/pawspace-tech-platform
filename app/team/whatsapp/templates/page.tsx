@@ -150,7 +150,7 @@ export default function WhatsAppTemplatesPage() {
         {[["all", "All"], ["draft", "Draft"], ["submitted", "Submitted"], ["approved", "Approved"], ["rejected", "Rejected"], ["paused", "Paused"]].map(([key, label]) => <Button key={key} type="button" size="sm" variant={filter === key ? "primary" : "secondary"} onClick={() => setFilter(key)}>{label}{key === "all" ? ` ${templates.length}` : ` ${counts[key] || 0}`}</Button>)}
       </div>
 
-      {visible.length === 0 ? <EmptyState title="No templates in this view." body="Create a governed draft above to start the lifecycle." /> : <div className={teamStyles.tableWrap}>
+      {visible.length === 0 ? <EmptyState title="No templates in this view." body="Create a governed draft above to start the lifecycle." /> : <div className={teamStyles.tableWrap} role="region" aria-label="Templates table; scroll horizontally for all columns" tabIndex={0}>
         <table className={teamStyles.table}>
           <thead><tr><th>Template</th><th>Status</th><th>Preview</th><th>Meta verification</th><th>Usage</th><th>Actions</th></tr></thead>
           <tbody>{visible.map((row) => {

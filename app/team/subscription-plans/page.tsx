@@ -100,7 +100,7 @@ export default function SubscriptionPlansPage() {
     {shown.length === 0 ? <EmptyState
       title={rows.length ? `No ${service.replaceAll("_", " ")} plans yet` : "No subscription plans yet"}
       body={rows.length ? "Pick another service, or add a plan for this one above." : "Add the first plan above — service, city, price, sessions and the validity window."}
-    /> : <div className={styles.tableWrap}><table className={styles.table}>
+    /> : <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
       <thead><tr><th>Plan</th><th>Service · city</th><th className={styles.numeric}>Sessions</th><th>Validity</th><th>Status</th><th className={styles.numeric}>Price</th></tr></thead>
       <tbody>{shown.map((plan) => <tr key={plan.id}>
         <td><div className={styles.stack}><b>{plan.name}</b><small>{plan.planCode}</small></div></td>

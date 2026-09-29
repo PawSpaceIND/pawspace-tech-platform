@@ -722,3 +722,6 @@
 :global([data-staff-module]) .customerList strong,:global([data-staff-module]) .overview dd { font-size:14px !important; }
 :global([data-staff-module]) .follow-up { background:var(--staff-warning-bg) !important; color:var(--staff-warning) !important; }
 @media(max-width:650px){:global([data-staff-module]) .main>header h1{font-size:28px !important;}}
+
+:global([data-staff-module]) .customerList { max-height:72dvh; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; }
+@media(max-width:900px) { :global([data-staff-module]) .customerList { max-height:48dvh; } }

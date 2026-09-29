@@ -83,9 +83,9 @@
     "baseSha": "2cceca14eccc6fc0db432034662dbca7dc6e0f6a",
     "files": {
       "app/components/pawspace-appearance.tsx": {
-        "sha256": "0e28da674a4b926fdb6879f4da0b62c49ab703d4c287d71140135425c0eb7230",
-        "functions": 11,
-        "declarations": 14,
+        "sha256": "075c4a1d12b65c0cef315f539b23e9391868346d63a2d99a77504dcba7a138a2",
+        "functions": 14,
+        "declarations": 18,
         "interactionProps": 16,
         "conditions": 6
       },
@@ -104,6 +104,11 @@
         "conditions": 5
       }
     },
-    "logoSha256": "88bc7b6f6634739e64da2931ab456f0d0c5c650da3a945ec84d274e60c199bd2"
+    "logoSha256": "88bc7b6f6634739e64da2931ab456f0d0c5c650da3a945ec84d274e60c199bd2",
+    "uiAuditReview": {
+      "base": "d8ad4a321cc6277b072c82fb1297f4cad0af9dc4",
+      "file": "app/components/pawspace-appearance.tsx",
+      "change": "Hydrated staff utility-slot presentation only; original preference handlers and field guards remain independently checked."
+    }
   }
 }
