@@ -14,3 +14,20 @@
 /* Native app only (html[data-pawspace-native], set by native-shell.tsx): the canvas adds the status-bar inset above the pane, so its fixed height gives it back and the composer stays clear of the dock. */
 :global(html[data-pawspace-native]) .page .chatShell { height:calc(100vh - 110px - env(safe-area-inset-top,0px)) !important; }
 @media (max-width:640px) { :global(html[data-pawspace-native]) .page .chatShell { height:calc(100dvh - 84px - env(safe-area-inset-top,0px)) !important; } }
+
+/* UI-24/25/26: only the V2 chat page; message, account and booking behavior is untouched. */
+.page { min-height:0; padding-bottom:16px; }
+:global([data-pawspace-v2]):has(.page) { min-height:0; padding-bottom:0; }
+.page .chatShell { min-height:0; }
+.page .modeBar :is(button,a) { min-width:0; overflow-wrap:normal !important; word-break:normal !important; line-height:1.25; }
+.page .modeBar .back { display:grid; place-items:center; white-space:nowrap; }
+.page :global(#v2-chat-message) { box-sizing:border-box; height:calc(3em + 20px); min-height:calc(3em + 20px); line-height:1.5; padding:10px 14px; }
+/* Keep utilities in normal flow and clear of the dock, grouped at the footer's right margin. */
+:global(body):has(.page) > :global(.paw-appearance-trigger),
+:global(body):has(.page) > :global(.ps-order-fab) { margin:12px 16px calc(80px + env(safe-area-inset-bottom,0px)) auto !important; }
+
+@media(max-width:640px) {
+ .page .modeBar { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto; align-items:stretch; }
+ .page .modeBar button { padding:10px !important; }
+ .page .modeBar .back { margin-left:0; }
+}
