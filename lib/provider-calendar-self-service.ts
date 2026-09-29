@@ -41,6 +41,14 @@ function rangeProblem(from:string,to:string){
  if(span>62)return"Calendar range is limited to 62 days";
  return"";
 }
+const IST_OFFSET_MS=330*60_000;
+function selfServiceDateProblem(date:string,now=Date.now()){
+ if(!realDate(date))return"A valid calendar date is required";
+ const today=new Date(now+IST_OFFSET_MS).toISOString().slice(0,10);
+ const max=new Date(Date.parse(today+"T00:00:00.000Z")+30*86_400_000).toISOString().slice(0,10);
+ if(date<today||date>max)return"Self-service calendar dates must be today or within the next 30 days";
+ return"";
+}
 
 export async function providerCalendarSnapshot(db:Db,input:{providerId:string;from:string;to:string}){
  await ensureProviderSelfCalendarTable(db);
@@ -57,7 +65,7 @@ export async function providerCalendarSnapshot(db:Db,input:{providerId:string;fr
 
 export async function saveProviderCalendarDay(db:Db,input:{providerId:string;date:string;zoneId:string;state:"open"|"blocked";windows?:unknown}){
  await ensureProviderSelfCalendarTable(db);
- if(!realDate(input.date))http("A valid calendar date is required",400);
+ const dateProblem=selfServiceDateProblem(input.date);if(dateProblem)http(dateProblem,400);
  const profile=await activeProfile(db,input.providerId);
  if(profile.providerModel!=="commission")http("Dated Open / Blocked self-service is only for commission providers",409);
  if(!profile.zones.includes(input.zoneId))http("Choose one of this provider's service zones",400);

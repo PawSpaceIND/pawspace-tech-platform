@@ -14,6 +14,7 @@ const COMMISSION="groom_kiran",FULL_TIME="groom_arun";
 const COMMISSION_EMAIL="kiran.calendar@providers.pawspace.test";
 const FULL_TIME_EMAIL="arun.calendar@providers.pawspace.test";
 const DAY="2026-10-15";
+const dateOffset=days=>new Date(Date.now()+330*60_000+days*86_400_000).toISOString().slice(0,10);
 
 async function world(t){
  const w=employeeAuditD1(t);globalThis.__G17_CALENDAR_DB__=w.db;globalThis.__G17_CALENDAR_ENV__={};
@@ -115,4 +116,14 @@ test("G17 self-service Blocked/Open writes are consumed by the canonical schedul
  assert.equal((await decide()).provider,null);
  assert.equal((await put(COMMISSION_EMAIL,{providerId:COMMISSION,date:DAY,zoneId:"blr-east",state:"open",windows:["09:00-19:00"]})).response.status,200);
  assert.equal((await decide()).provider?.id,COMMISSION);
+});
+
+
+test("G17 self-service refuses past and beyond-30-day dates without writing rows",async t=>{
+ const w=await world(t);
+ for(const date of [dateOffset(-1),dateOffset(31)]){
+  const result=await put(COMMISSION_EMAIL,{providerId:COMMISSION,date,zoneId:"blr-east",state:"blocked",windows:[]});
+  assert.equal(result.response.status,400);assert.match(result.json.error,/today or within the next 30 days/);
+ }
+ assert.deepEqual(rows(w),[]);
 });
