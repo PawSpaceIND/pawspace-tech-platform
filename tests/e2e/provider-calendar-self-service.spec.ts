@@ -1,12 +1,12 @@
-import {expect,test} from "@playwright/test";
+import {expect,test,type Page,type Route} from "@playwright/test";
 
 const providerId="groom_kiran";
 const day=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(Date.now()+86_400_000));
 const feed={needsAction:[],today:[],upcoming:[],completed:[],needsOperations:[],past:[],counts:{}};
 
-async function mount(page,{editable=true,locked=false}:{editable?:boolean;locked?:boolean}={}){
+async function mount(page:Page,{editable=true,locked=false}:{editable?:boolean;locked?:boolean}={}){
  const writes:unknown[]=[];
- await page.route("**/api/**",async route=>{
+ await page.route("**/api/**",async (route:Route)=>{
   const request=route.request(),url=new URL(request.url()),method=request.method();
   if(url.pathname==="/api/identity-session")return route.fulfill({json:{data:{subjectType:"provider",subjectId:providerId,roleCode:"service_provider"}}});
   if(url.pathname==="/api/uat-provider-switch")return route.fulfill({status:404,json:{error:"disabled"}});
