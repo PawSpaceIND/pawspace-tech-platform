@@ -61,9 +61,9 @@ export async function deriveV2Lop(db:Db,input:{runId:string;employeeId:string;ac
  const paid=new Set(jsonList(policy.paid_leave_codes_json)),unpaid=new Set(jsonList(policy.unpaid_leave_codes_json));
  const leaves=(await db.prepare("SELECT leave_code,start_date,end_date,units FROM leave_requests WHERE employee_id=? AND status='approved' AND end_date>=? AND start_date<=?").bind(input.employeeId,start,end).all<Row>()).results;
  let unpaidUnits=0;for(const leave of leaves){const code=text(leave.leave_code);if(unpaid.has(code))unpaidUnits+=num(leave.units);}
- const approvedPaidDates=new Set<string>();
- for(const leave of leaves){if(!paid.has(text(leave.leave_code)))continue;let d=new Date(text(leave.start_date)+"T00:00:00Z"),last=new Date(text(leave.end_date)+"T00:00:00Z");while(d<=last){approvedPaidDates.add(d.toISOString().slice(0,10));d=new Date(d.getTime()+86400000);}}
- const absenceUnits=days.filter(d=>text(d.status)==="absent"&&!approvedPaidDates.has(text(d.work_date))).length;
+ const approvedLeaveDates=new Set<string>();
+ for(const leave of leaves){const code=text(leave.leave_code);if(!paid.has(code)&&!unpaid.has(code))continue;let d=new Date(text(leave.start_date)+"T00:00:00Z");const last=new Date(text(leave.end_date)+"T00:00:00Z");while(d<=last){approvedLeaveDates.add(d.toISOString().slice(0,10));d=new Date(d.getTime()+86400000);}}
+ const absenceUnits=days.filter(d=>text(d.status)==="absent"&&!approvedLeaveDates.has(text(d.work_date))).length;
  const units=money(absenceUnits+unpaidUnits);if(units<=0)return{units:0,amount:0,created:false};
  const componentCodes=new Set(jsonList(policy.lop_component_codes_json));
  const lines=(await db.prepare("SELECT component_code,amount FROM payroll_result_lines WHERE result_id=? AND kind='earning'").bind(result.id).all<Row>()).results;
