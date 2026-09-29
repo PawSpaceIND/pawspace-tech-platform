@@ -1,0 +1,52 @@
+name: V2 customer chat visual audit
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'e2e/ui-audit-customer-chat.spec.ts'
+      - 'playwright.ui-chat.config.ts'
+      - 'scripts/ui-audit-server.mjs'
+      - 'tests/ui-chat-presentation.test.mjs'
+      - 'tests/fixtures/*contract.json'
+      - '.github/workflows/ui-chat-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chat-visual-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PW_UAT_SERVICE_DATE: '2026-10-05'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm run install:ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify preserved sources and existing presentation contracts
+        run: |
+          node --test tests/ui-chat-presentation.test.mjs
+          node --experimental-strip-types --test tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
+      - name: Check TypeScript
+        run: npm run typecheck
+      - name: Render V2 chat matrix and UI states with synthetic responses
+        run: npx playwright test --config playwright.ui-chat.config.ts
+      - name: Upload synthetic screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-chat-ui-${{ github.sha }}
+          path: |
+            test-results/ui-chat-results.json
+            test-results/ui-chat
+          retention-days: 7
