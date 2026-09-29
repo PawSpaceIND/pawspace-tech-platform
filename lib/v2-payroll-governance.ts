@@ -154,3 +154,11 @@ export async function queueDueV2SalaryInstructions(db:Db,input:{runId:string;asO
  await event(db,{runId:input.runId,action:"due_salary_instructions_queued",actorId:input.actorId,detail:{asOf,count:due.length,batches:[...new Set(due.map(row=>text(row.batch_code)))]}});
  return{runId:input.runId,queued:due.length,instructions:data.instructions,duplicatePrevented:Boolean(data.duplicatePrevented)};
 }
+
+export async function runV2SalaryReleaseSweep(db:Db,input:{asOf:number;actorId:string}){
+ await ensureV2PayrollGovernance(db);
+ const plans=(await db.prepare("SELECT run_id FROM v2_salary_release_plans WHERE status='approved' AND salary_date<=? ORDER BY salary_date LIMIT 25").bind(input.asOf).all<Row>()).results;
+ const results:Array<{runId:string;queued:number;error?:string}>=[];
+ for(const plan of plans){const runId=text(plan.run_id);try{const result=await queueDueV2SalaryInstructions(db,{runId,asOf:input.asOf,actorId:input.actorId});results.push({runId,queued:num(result.queued)});}catch(error){results.push({runId,queued:0,error:error instanceof Response?await error.text():error instanceof Error?error.message:String(error)});}}
+ return{processed:plans.length,queued:results.reduce((sum,row)=>sum+row.queued,0),failed:results.filter(row=>row.error).length,results,liveMoneyEnabled:false};
+}

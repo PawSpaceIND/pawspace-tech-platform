@@ -43,6 +43,7 @@ import{runDpdpRetentionSweep}from"../lib/dpdp-retention";
 import{handleEdgeHealth}from"../lib/edge-health";
 import{runProviderPayoutQueueSweep}from"../lib/provider-payout-queue";
 import{runEmployeeSalarySandboxSweep}from"../lib/employee-payroll-payout";
+import{runV2SalaryReleaseSweep}from"../lib/v2-payroll-governance";
 import{seedMissingServiceCommissionDefaults}from"../lib/service-commission-defaults";
 import{createRequestD1Metrics,runWithRequestD1Metrics,withRequestD1MetricsEnv}from"../lib/request-d1-metrics";
 
@@ -234,7 +235,7 @@ const worker = {
       const executiveTask=controller.cron==="*/15 * * * *"?runExecutiveDecisionLoop(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due"});
       const atlasDailyTask=controller.cron==="15 2 * * *"?runAtlasDailyAnalysis(env.DB,{asOf:controller.scheduledTime}):Promise.resolve({status:"not_due_on_five_minute_cron"});
       const dpdpRetentionTask=controller.cron==="15 2 * * *"?runDpdpRetentionSweep(env.DB,{asOf:controller.scheduledTime,requestedBy:"system:dpdp-retention",runtime:env}):Promise.resolve({status:"not_due_on_five_minute_cron",processed:0,erased:0,failed:0,remaining:0,ledgerPreserved:true});
-      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,commissionDefaults,providerPayoutQueue,employeeSalary]=await Promise.allSettled([
+      const [cleanup,gatewayInbound,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,razorpayCaptureRecovery,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,exotelVoiceReconciliation,trustSafety,executive,atlasDaily,dpdpRetention,partnerHeartbeat,commissionDefaults,providerPayoutQueue,v2SalaryRelease,employeeSalary]=await Promise.allSettled([
         // UAT only (PAWSPACE_SCHEDULING_ENV=uat): also free groomers held by V2 checkouts abandoned unpaid for 30 min.
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime).then(async result=>({...result,uatAbandoned:await releaseAbandonedUatCheckouts(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime)})),
         gatewayInboundTask,
@@ -264,10 +265,13 @@ const worker = {
         // (PAWSPACE_SCHEDULING_ENV=uat with RazorpayX TEST) a seeded groomer with no payout beneficiary is given one as
         // its booking is assessed (lib/uat-payout-beneficiaries.ts); the env is what decides that, nothing else changes.
         runProviderPayoutQueueSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker",env:env as unknown as Record<string,unknown>}),
+        // V2-only: queue approved, due, non-held salary release items. This does not transmit live money.
+        runV2SalaryReleaseSweep(env.DB,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
         // Existing approved-only TEST salary routine; disabled by default, never enables live salary.
         runEmployeeSalarySandboxSweep(env.DB,env as unknown as Record<string,unknown>),
       ]);
       const errors:string[]=[];
+      if(v2SalaryRelease.status==="rejected")errors.push("V2 salary release sweep: execution failed");else if(v2SalaryRelease.value.failed)errors.push(`V2 salary release sweep: ${v2SalaryRelease.value.failed} release plan(s) require review`);
       if(employeeSalary.status==="rejected")errors.push("finance employee salary sweep: configuration or execution failed");else if(employeeSalary.value.failed)errors.push(`finance employee salary sweep: ${employeeSalary.value.failed} instruction(s) require review`);
       if(partnerHeartbeat.status==="rejected")errors.push(`partner heartbeat: ${String(partnerHeartbeat.reason)}`);
       // A locked month is not a failure: the defaults are seeded once the month is open again, and the reason is logged.
