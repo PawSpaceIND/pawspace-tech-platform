@@ -203,7 +203,7 @@ test("voice operator console exercises every governed control without a live dia
   await expect(page.getByRole("heading", { name: "Automated outbound calling" })).toBeVisible();
   await expect(page.getByText("ENABLED", { exact: true })).toBeVisible();
 
-  await page.getByLabel("Use case").selectOption(useCase.code);
+  await page.getByRole("combobox", { name: "Use case", exact: true }).selectOption(useCase.code);
   await page.getByLabel("Recipient number").fill("+919999991234");
   await page.getByLabel("Customer ID").fill("CUS-E2E");
   await page.getByLabel("Booking ID").fill("BOOK-E2E");

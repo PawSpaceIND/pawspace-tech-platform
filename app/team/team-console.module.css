@@ -112,3 +112,6 @@
 .recoveryFields legend { font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .recoveryFields input, .recoveryFields select, .recoveryFields textarea { min-width: 0; width: 100%; box-sizing: border-box; }
 .recoveryFields textarea { resize: vertical; min-height: 72px; }
+
+.fieldRow { align-items:end; }
+.tableWrap { min-width:0; max-width:100%; }

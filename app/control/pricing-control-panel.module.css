@@ -146,3 +146,7 @@
 :global([data-staff-module]) .warning p {
     color: var(--staff-danger, #6e5432) !important
 }
+
+.split { align-items:start; }
+.split > .list { min-width:0; max-height:72dvh; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; }
+@media(max-width:900px) { .split > .list { max-height:48dvh; } }
