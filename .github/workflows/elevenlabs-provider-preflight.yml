@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls, measure-voice-llm, specialist-call, or direct-grooming-call.'
+        description: 'Type no-calls, premium-maya-readiness, discover-premium-voices, measure-voice-llm, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
       uat_voice_call_id:
@@ -735,87 +735,154 @@ jobs:
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
           AUDIO_PROFILE: ${{ inputs.audio_profile }}
+          ELEVENLABS_VOICE_HI_ID: ${{ vars.ELEVENLABS_VOICE_HI_ID }}
+          ELEVENLABS_VOICE_TA_ID: ${{ vars.ELEVENLABS_VOICE_TA_ID }}
+          ELEVENLABS_VOICE_ML_ID: ${{ vars.ELEVENLABS_VOICE_ML_ID }}
+          ELEVENLABS_VOICE_TE_ID: ${{ vars.ELEVENLABS_VOICE_TE_ID }}
+          ELEVENLABS_VOICE_PA_ID: ${{ vars.ELEVENLABS_VOICE_PA_ID }}
+          ELEVENLABS_VOICE_MR_ID: ${{ vars.ELEVENLABS_VOICE_MR_ID }}
+          ELEVENLABS_VOICE_BN_ID: ${{ vars.ELEVENLABS_VOICE_BN_ID }}
+          ELEVENLABS_VOICE_KN_ID: ${{ vars.ELEVENLABS_VOICE_KN_ID }}
         run: |
           node --input-type=module <<'NODE'
           import {humanCallProfile, humanCallPrompt} from './lib/elevenlabs-human-call-profile.mjs';
-          const key=String(process.env.ELEVENLABS_API_KEY||'').trim(),agentId=String(process.env.GROOMING_AGENT_ID||'').trim();
+          import {premiumLanguagePresets,languageDetectionTool,premiumLanguagePrompt,premiumLanguageReadiness} from './lib/elevenlabs-language-profile.mjs';
+          const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
+          const agents=[
+            {label:'GROOMING',agentId:String(process.env.GROOMING_AGENT_ID||'').trim(),keywords:['PawSpace','Salarpuria Greenage','German Shepherd','Essential Bath','Bath and Basic','Just Trim','Complete Makeover','UPI']},
+            {label:'TRAINING',agentId:String(process.env.TRAINING_AGENT_ID||'').trim(),keywords:['PawSpace','Dog Training','Puppy Training','Meet and Greet','toilet training','walking','basic cues','UPI']}
+          ];
           const profile=humanCallProfile(process.env.AUDIO_PROFILE||'v3_conversational');
-          if(!key||!agentId) throw new Error('ElevenLabs tuning prerequisites missing');
+          const voiceIds={hi:process.env.ELEVENLABS_VOICE_HI_ID,ta:process.env.ELEVENLABS_VOICE_TA_ID,ml:process.env.ELEVENLABS_VOICE_ML_ID,te:process.env.ELEVENLABS_VOICE_TE_ID,pa:process.env.ELEVENLABS_VOICE_PA_ID,mr:process.env.ELEVENLABS_VOICE_MR_ID,bn:process.env.ELEVENLABS_VOICE_BN_ID,kn:process.env.ELEVENLABS_VOICE_KN_ID};
+          const languagePresets=premiumLanguagePresets(voiceIds);
+          if(!key||agents.some(agent=>!agent.agentId)) throw new Error('ElevenLabs specialist tuning prerequisites missing');
           const headers={'xi-api-key':key,'content-type':'application/json'};
-          const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
-          const current=await read.json().catch(()=>({}));
-          if(!read.ok) throw new Error('agent read failed '+read.status);
-          const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
-          const pawspaceKeywords=['PawSpace','Salarpuria Greenage','German Shepherd','Essential Bath','Bath and Basic','Just Trim','Complete Makeover','UPI'];
-          const existingKeywords=Array.isArray(currentAsr.keywords)?currentAsr.keywords:[];
-          const voiceId=currentTts.voice_id;
-          if(!voiceId) throw new Error('agent voice_id missing');
-          const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
-          const voiceMeta=await voiceRead.json().catch(()=>({}));
-          if(voiceRead.ok) console.log('GROOMING_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
-          const body={
-            conversation_config:{
-              agent:{
-                ...currentAgent,
-                first_message:"Hi, this is Maya from PawSpace. How can I help with your pet today?",
-                max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
-                prompt:{...currentPrompt,prompt:humanCallPrompt(currentPrompt?.prompt)}
-              },
-              asr:{
-                ...currentAsr,
-                keywords:[...new Set([...pawspaceKeywords,...existingKeywords])].slice(0,100)
-              },
-              tts:{
-                ...currentTts,
-                model_id:profile.modelId,
-                voice_id:voiceId,
-                stability:profile.stability,
-                similarity_boost:profile.similarityBoost,
-                speed:profile.speed,
-                optimize_streaming_latency:profile.optimizeStreamingLatency,
-                expressive_mode:profile.expressiveMode===true
-              },
-              conversation:{
-                ...(current?.conversation_config?.conversation||{}),
-                max_duration_seconds:600
-              },
-              turn:{
-                ...currentTurn,
-                turn_timeout:10,
-                silence_end_call_timeout:90,
-                turn_eagerness:'normal',
-                turn_model:'turn_v3',
-                soft_timeout_config:{
-                  ...(currentTurn?.soft_timeout_config||{}),
-                  timeout_seconds:3,
-                  message:"Sure, give me a second.",
-                  max_soft_timeouts_per_generation:1
+          for(const {label,agentId,keywords} of agents){
+            const read=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+            const current=await read.json().catch(()=>({}));
+            if(!read.ok) throw new Error(label+' agent read failed '+read.status);
+            const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
+            const voiceId=currentTts.voice_id;
+            if(!voiceId) throw new Error(label+' agent voice_id missing');
+            const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
+            const voiceMeta=await voiceRead.json().catch(()=>({}));
+            if(voiceRead.ok) console.log(label+'_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
+            const body={
+              conversation_config:{
+                agent:{
+                  ...currentAgent,
+                  first_message:"Hi, this is Maya from PawSpace. How can I help with your pet today?",
+                  hinglish_mode:true,
+                  max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
+                  prompt:{
+                    ...currentPrompt,
+                    prompt:premiumLanguagePrompt(humanCallPrompt(currentPrompt?.prompt)),
+                    built_in_tools:{
+                      ...(currentPrompt?.built_in_tools||{}),
+                      language_detection:languageDetectionTool(currentPrompt?.built_in_tools?.language_detection)
+                    }
+                  }
+                },
+                asr:{
+                  ...currentAsr,
+                  keywords:[...new Set([...keywords,...(Array.isArray(currentAsr.keywords)?currentAsr.keywords:[])])].slice(0,100)
+                },
+                tts:{
+                  ...currentTts,
+                  model_id:profile.modelId,
+                  voice_id:voiceId,
+                  stability:profile.stability,
+                  similarity_boost:profile.similarityBoost,
+                  speed:profile.speed,
+                  optimize_streaming_latency:profile.optimizeStreamingLatency,
+                  expressive_mode:profile.expressiveMode===true
+                },
+                conversation:{
+                  ...(current?.conversation_config?.conversation||{}),
+                  max_duration_seconds:600
+                },
+                language_presets:languagePresets,
+                turn:{
+                  ...currentTurn,
+                  turn_timeout:10,
+                  silence_end_call_timeout:90,
+                  turn_eagerness:'normal',
+                  turn_model:'turn_v3',
+                  soft_timeout_config:{
+                    ...(currentTurn?.soft_timeout_config||{}),
+                    timeout_seconds:3,
+                    message:"Sure, give me a second.",
+                    max_soft_timeouts_per_generation:1
+                  }
                 }
               }
-            }
-          };
-          const patch=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{
-            method:'PATCH',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(30000)
-          });
-          const result=await patch.json().catch(()=>({}));
-          if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error('agent update failed '+patch.status);}
-          const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
-          console.log('GROOMING_AUDIO_TUNED='+JSON.stringify({
-            profile:profile.id,
-            firstMessage:agent.first_message||null,
-            modelId:tts.model_id||null,
-            stability:tts.stability??null,
-            similarityBoost:tts.similarity_boost??null,
-            speed:tts.speed??null,
-            turnTimeout:turn.turn_timeout??null,
-            silenceEndCallTimeout:turn.silence_end_call_timeout??null,
-            turnModel:turn.turn_model||null,
-            softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null,
-            expressiveMode:tts.expressive_mode===true,
-            maxDurationSeconds:cc?.conversation?.max_duration_seconds??null
-          }));
+            };
+            const patch=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(agentId),{
+              method:'PATCH',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(30000)
+            });
+            const result=await patch.json().catch(()=>({}));
+            if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error(label+' agent update failed '+patch.status);}
+            const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+            const languageReady=premiumLanguageReadiness(cc);
+            if(!languageReady.allLanguagesConfigured||!languageReady.languageDetection)throw new Error(label+' premium multilingual configuration did not persist');
+            console.log(label+'_MULTILINGUAL_READY='+JSON.stringify({
+              configuredCodes:languageReady.configuredCodes,
+              languageDetection:languageReady.languageDetection,
+              localizedVoiceCodes:languageReady.localizedVoiceCodes,
+              localizedVoicesComplete:languageReady.localizedVoicesComplete,
+              premiumCertified:languageReady.premiumCertified
+            }));
+            console.log(label+'_AUDIO_TUNED='+JSON.stringify({
+              profile:profile.id,
+              firstMessage:agent.first_message||null,
+              modelId:tts.model_id||null,
+              stability:tts.stability??null,
+              similarityBoost:tts.similarity_boost??null,
+              speed:tts.speed??null,
+              turnTimeout:turn.turn_timeout??null,
+              silenceEndCallTimeout:turn.silence_end_call_timeout??null,
+              turnModel:turn.turn_model||null,
+              softTimeoutSeconds:turn?.soft_timeout_config?.timeout_seconds??null,
+              expressiveMode:tts.expressive_mode===true,
+              maxDurationSeconds:cc?.conversation?.max_duration_seconds??null
+            }));
+          }
           NODE
+
+  discover-premium-voices:
+    if: ${{ inputs.confirm == 'discover-premium-voices' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Discover premium Indian-language voice candidates without dialing
+        env:
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: node scripts/discover-premium-maya-voices.mjs
+
+  premium-maya-readiness:
+    if: ${{ inputs.confirm == 'premium-maya-readiness' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Verify premium multilingual Maya without dialing
+        env:
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node scripts/verify-premium-maya.mjs
 
   resume-uat-voice:
     if: ${{ inputs.confirm == 'resume-uat-voice' }}
