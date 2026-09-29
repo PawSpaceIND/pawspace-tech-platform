@@ -28,8 +28,14 @@ export async function resolveElevenLabsFailureCall(db: D1Database, input: {
   catch { throw new Response("Invalid persisted ElevenLabs failure correlation", { status: 409 }); }
   const correlation = voiceProviderCorrelation(detail.providerCorrelation);
   const callId = text(accepted.id);
+  const rawCorrelation = detail.providerCorrelation as Row | undefined;
+  const providerIdMatches = correlation.carrierCallId
+    ? correlation.carrierCallId === text(accepted.provider_call_id)
+    : rawCorrelation?.carrierCallId === null && correlation.conversationId === text(accepted.provider_call_id);
+  // A signed initiation failure is also conclusive for a uniquely accepted conversation-only receipt.
+  // Preserve its missing carrier ID; never substitute a guessed carrier or another call.
   if (!validId(callId) || correlation.conversationId !== conversationId || correlation.agentId !== agentId ||
-      !correlation.carrierCallId || correlation.carrierCallId !== text(accepted.provider_call_id) ||
+      !providerIdMatches ||
       (claimedCallId && claimedCallId !== callId)) {
     throw new Response("ElevenLabs failure does not match the accepted call", { status: 409 });
   }

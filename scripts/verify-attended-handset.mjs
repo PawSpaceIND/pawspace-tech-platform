@@ -24,7 +24,7 @@ export async function verifyAttendedHandset(env, options={}) {
  const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
  if(login.status!==200||!/^pawspace_uat=[^\r\n;]+$/.test(cookie))throw Error('Staging staff login refused');
  const attendedReport={schemaVersion:1,source:'participant_report',participant:'recipient',appCallId,recordedBy,reportedAtMs,statement:env.ATTENDED_STATEMENT};
- const result=await verifyHandsetAttempt({appCallId,agentId,phone,cookie},env,{fetchImpl:request,maxAttempts:1,attendedReport});
+ const result=await verifyHandsetAttempt({appCallId,agentId,phone,cookie},env,{fetchImpl:request,maxAttempts:15,delay:options.delay,attendedReport});
  if(!result.attendedPassed)throw Error('Attended exchange is not verified');
  return result;
 }

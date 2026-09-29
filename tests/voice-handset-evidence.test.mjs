@@ -78,7 +78,7 @@ test('transition parser never invents legacy IDs or exports raw payloads', () =>
   assert.equal(correlationFromVoiceTransitions([t,t]),null);
   assert.deepEqual(voiceProviderCorrelation({carrierCallId:'https://bad.test/token',conversationId:{},agentId:'wrong\nvalue'}),{carrierCallId:null,conversationId:null,agentId:null});
 });
-const readEnv = { EXOTEL_SUBDOMAIN:'api.exotel.com', EXOTEL_SID:'local-account', EXOTEL_API_KEY:'local-key', EXOTEL_API_TOKEN:'local-token', ELEVENLABS_API_KEY:'local-eleven-key' };
+const readEnv = { ELEVENLABS_API_BASE:'https://api.elevenlabs.io', EXOTEL_SUBDOMAIN:'api.exotel.com', EXOTEL_SID:'local-account', EXOTEL_API_KEY:'local-key', EXOTEL_API_TOKEN:'local-token', ELEVENLABS_API_KEY:'local-eleven-key' };
 const context = { ...expected, cookie:'pawspace_uat=local-test-session' };
 const CARRIER_EVIDENCE_URL = 'https://api.exotel.com/v1/Accounts/local-account/Calls/carrier-local.json?details=true';
 // Exact fixture endpoint: a host prefix can also match an unrelated destination.
@@ -328,4 +328,83 @@ const rejectedProviderLocations=[
 ];
 for(const [index,[key,value]] of rejectedProviderLocations.entries())test('exact provider destination rejects embedded/lookalike URL '+index,()=>{
  assert.throws(()=>handsetVerifierConfig({...demoEnv,[key]:value}),/region/);
+});
+
+function participantEnv(report){return {...demoEnv,UAT_VOICE_CALL_ID:expected.appCallId,GITHUB_ACTOR:report.recordedBy,
+ ATTENDED_STATEMENT:report.statement,ATTENDED_REPORTED_AT:new Date(report.reportedAtMs).toISOString()};}
+function attendedReader(f,requests,override){const read=reader(f,[],override);return async(url,init)=>{
+ requests.push({url,method:init.method});
+ if(url==='https://pawspace-staging.karthik-fce.workers.dev/api/staging-login')return new Response('{}',{status:200,headers:{'set-cookie':'pawspace_uat=local-test-session; Secure; HttpOnly'}});
+ return read(url,init);
+};}
+const exactConversationUrl='https://api.elevenlabs.io/v1/convai/conversations/conv-local';
+test('attended verification waits for exact processing-to-done conversation without a second login or dial',async()=>{
+ const {f,report}=attendedFixture(),requests=[];let reads=0,waits=0;
+ const fetchImpl=attendedReader(f,requests,url=>{if(url===exactConversationUrl&&++reads===1)return jsonResponse({...f.conversation,status:'processing'});});
+ const result=await verifyAttendedHandset(participantEnv(report),{fetchImpl,delay:async()=>{waits++;}});
+ assert.equal(result.attendedPassed,true);assert.equal(result.passed,false);assert.equal(reads,2);assert.equal(waits,1);
+ assert.deepEqual(requests.map(r=>r.method),['POST','GET','GET','GET','GET','GET']);
+ assert.equal(requests.filter(r=>r.method==='POST').length,1);
+});
+for(const status of [401,403,429])test('attended polling stops immediately on HTTP '+status,async()=>{
+ const {f,report}=attendedFixture(),requests=[];let waits=0;
+ const fetchImpl=attendedReader(f,requests,url=>url===exactConversationUrl?jsonResponse({},status):null);
+ await assert.rejects(()=>verifyAttendedHandset(participantEnv(report),{fetchImpl,delay:async()=>{waits++;}}),/read refused/);
+ assert.equal(requests.length,4);assert.equal(waits,0);
+});
+test('attended processing never becomes success after the bounded polling budget',async()=>{
+ const {f,report}=attendedFixture(),requests=[];f.conversation.status='processing';let waits=0;
+ await assert.rejects(()=>verifyAttendedHandset(participantEnv(report),{fetchImpl:attendedReader(f,requests),delay:async()=>{waits++;}}),/not verified/);
+ assert.equal(requests.length,32);assert.equal(waits,14);assert.equal(requests.filter(r=>r.method==='POST').length,1);
+});
+
+for(const configured of [undefined,'','https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io','https://api.elevenlabs.io/'])test('verifier region matches actual adapter for '+String(configured),async t=>{
+ const env={...demoEnv,ELEVENLABS_API_BASE:configured,PAWSPACE_VOICE_RUNTIME:'elevenlabs',ELEVENLABS_AGENT_ID:expected.agentId,ELEVENLABS_AGENT_PHONE_NUMBER_ID:'phone-local'};
+ const network=stubFetch(()=>jsonResponse({success:true,callSid:correlation.carrierCallId,conversation_id:correlation.conversationId}));t.after(()=>network.restore());
+ await telephony.selectTelephonyProvider(env).createCall({callRef:expected.appCallId,toNumber:expected.phone,statusCallbackUrl:'https://example.test/callback',recordingAllowed:false});
+ assert.equal(network.calls.length,1);assert.equal(new URL(network.calls[0].url).origin,handsetVerifierConfig(env).elevenOrigin);
+});
+function partialFixture(){const f=fixture();f.appAudit.providerCorrelation.carrierCallId=null;
+ f.appAudit.call.providerCallId=correlation.conversationId;
+ f.conversation.conversation_initiation_client_data={dynamic_variables:{pawspace_voice_call_id:expected.appCallId}};return f;}
+test('partial acceptance is recovered from exact conversation and carrier evidence without rewriting its audit',async()=>{
+ const f=partialFixture(),before=structuredClone(f.appAudit),calls=[];
+ const result=await verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(f,calls),maxAttempts:1});
+ assert.equal(result.passed,true);assert.equal(result.correlationSource,'exact_conversation_metadata');
+ assert.deepEqual(f.appAudit,before);assert.equal(calls.length,3);
+ assert.equal(calls[1].url,exactConversationUrl);assert.equal(calls[2].url,CARRIER_EVIDENCE_URL);
+});
+test('partial acknowledgement polls only its accepted conversation until carrier metadata is available',async()=>{
+ const f=partialFixture(),calls=[];let reads=0,waits=0;
+ const fetchImpl=reader(f,calls,url=>{if(url===exactConversationUrl&&++reads===1)return jsonResponse({...f.conversation,status:'processing',metadata:{}});});
+ const result=await verifyHandsetAttempt(context,readEnv,{fetchImpl,maxAttempts:3,delay:async()=>{waits++;}});
+ assert.equal(result.passed,true);assert.equal(reads,2);assert.equal(waits,1);assert.equal(calls.length,4);
+});
+test('partial acknowledgement with permanently missing metadata never certifies or searches another call',async()=>{
+ const f=partialFixture(),calls=[];f.conversation.metadata={};f.conversation.status='processing';
+ await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(f,calls),maxAttempts:3,delay:async()=>{}}),/partial_acceptance_unresolved/);
+ assert.equal(calls.length,4);assert.ok(calls.slice(1).every(c=>c.url===exactConversationUrl));
+});
+
+const badPartialBindings=[['conversation',f=>{f.conversation.conversation_id='conv-wrong';}],
+ ['agent',f=>{f.conversation.agent_id='agent-wrong';}],
+ ['app call',f=>{f.conversation.conversation_initiation_client_data.dynamic_variables.pawspace_voice_call_id='VCALL-WRONG';}],
+ ['recipient',f=>{f.conversation.metadata.phone_call.external_number='+919000000001';}],
+ ['direction',f=>{f.conversation.metadata.phone_call.direction='inbound';}],
+ ['provider',f=>{f.conversation.metadata.phone_call.type='twilio';}],
+ ['carrier URL',f=>{f.conversation.metadata.phone_call.call_sid='https://untrusted.invalid';}]];
+for(const [name,change] of badPartialBindings)test('partial acknowledgement rejects conflicting '+name+' without a carrier request',async()=>{
+ const f=partialFixture(),calls=[];change(f);
+ await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(f,calls),delay:async()=>{throw Error('must not poll conflict');}}),/Partial/);
+ assert.equal(calls.length,2);assert.equal(inspectHandsetEvidence(f).passed,false);
+});
+for(const status of [401,403,429])test('partial reconciliation refuses HTTP '+status+' without alternate-region requests',async()=>{
+ const f=partialFixture(),calls=[];
+ await assert.rejects(()=>verifyHandsetAttempt(context,readEnv,{fetchImpl:reader(f,calls,url=>url===exactConversationUrl?jsonResponse({},status):null)}),/read refused/);
+ assert.equal(calls.length,2);
+});
+test('partial evidence cannot certify a carrier with a different call ID or number',()=>{
+ for(const mutate of [f=>{f.carrier.Call.Sid='carrier-wrong';},f=>{f.carrier.Call.From='+919000000001';}]){
+  const f=partialFixture();mutate(f);assert.equal(inspectHandsetEvidence(f).passed,false);
+ }
 });

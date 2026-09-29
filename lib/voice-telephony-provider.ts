@@ -277,8 +277,11 @@ export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
         try { parsed = JSON.parse(raw) as typeof parsed; } catch { throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned a malformed response"); }
         const providerCallId = String(parsed.callSid || parsed.conversation_id || "").trim();
         if (!parsed.success || !providerCallId) throw new TelephonyProviderUnavailable("ElevenLabs outbound provider returned no accepted call identifier");
-        return { accepted: true, providerCallId, providerStatus: "queued", productionCall: true,
-          providerCorrelation: voiceProviderCorrelation({ carrierCallId: parsed.callSid, conversationId: parsed.conversation_id, agentId }) };
+        const providerCorrelation = voiceProviderCorrelation({ carrierCallId: parsed.callSid, conversationId: parsed.conversation_id, agentId });
+        // A partial acknowledgement is not a refusal: keep the reservation and reconcile exact IDs.
+        return { accepted: true, providerCallId,
+          providerStatus: providerCorrelation.carrierCallId && providerCorrelation.conversationId ? "queued" : "acceptance_incomplete",
+          productionCall: true, providerCorrelation };
       } finally { clearTimeout(timer); }
     },
     async verifyWebhook() { return { verified: false, mechanism: null, reason: "ElevenLabs callbacks are verified on the dedicated signed post-call endpoint" }; },

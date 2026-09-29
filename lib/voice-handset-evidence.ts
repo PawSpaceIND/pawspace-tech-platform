@@ -49,18 +49,28 @@ export type HandsetEvidenceInput = {
 /** Pure evaluation of an exact call. This function cannot dial, change consent, or repair records. */
 export function inspectHandsetEvidence(input: HandsetEvidenceInput) {
   const audit = row(input.appAudit), call = row(audit.call);
-  const correlation = voiceProviderCorrelation(audit.providerCorrelation);
+  let correlation = voiceProviderCorrelation(audit.providerCorrelation);
+  let correlationSource = "provider_acceptance";
   const carrierBody = row(input.carrier), carrier = row(carrierBody.Call ?? carrierBody.call ?? carrierBody);
   const conversation = row(input.conversation), metadata = row(conversation.metadata), phoneCall = row(metadata.phone_call);
   const status = safeStatus(carrier.Status ?? carrier.status, carrierStatuses);
   const transcript = Array.isArray(conversation.transcript) ? conversation.transcript.map(row) : [];
-  const result = (reason: string, passed = false) => ({ passed, reason, carrierStatus: status || null,
+  const result = (reason: string, passed = false) => ({ passed, reason, correlationSource, carrierStatus: status || null,
     conversationStatus: safeStatus(conversation.status, conversationStatuses), turns: transcript.length, humanQuality: "not_assessed" as const });
   const expectedPhone = canonicalEvidencePhone(input.phone);
   if (!identifier(input.appCallId) || !identifier(input.agentId) || !expectedPhone) return result("invalid_expected_context");
   if (call.callId !== input.appCallId || call.provider !== "elevenlabs_exotel" || call.dialed !== true) return result("app_call_not_verified");
+  if (!correlation.carrierCallId && correlation.conversationId && call.providerCallId === correlation.conversationId) {
+    try {
+      const recovered = partialHandsetCarrier(input);
+      if (!recovered) return result("provider_correlation_missing");
+      correlation = { ...correlation, carrierCallId: recovered };
+      correlationSource = "exact_conversation_metadata";
+    } catch { return result("partial_acceptance_identity_mismatch"); }
+  }
   if (!correlation.carrierCallId || !correlation.conversationId || correlation.agentId !== input.agentId) return result("provider_correlation_missing");
-  if (call.providerCallId !== correlation.carrierCallId || text(carrier.Sid ?? carrier.sid) !== correlation.carrierCallId) return result("carrier_call_identity_mismatch");
+  const persistedId = correlationSource === "provider_acceptance" ? correlation.carrierCallId : correlation.conversationId;
+  if (call.providerCallId !== persistedId || text(carrier.Sid ?? carrier.sid) !== correlation.carrierCallId) return result("carrier_call_identity_mismatch");
   if (canonicalEvidencePhone(carrier.From ?? carrier.from) !== expectedPhone) return result("carrier_recipient_mismatch");
   // Exotel Connect dials From first. This states the carrier outcome, not whether a handset visibly rang.
   if (["no-answer", "no_answer", "from_leg_unanswered"].includes(status)) return result("recipient_leg_not_answered");
@@ -115,4 +125,29 @@ export function inspectAttendedHandsetEvidence(input: HandsetEvidenceInput, repo
  const endedAt = (start + duration) * 1000;
  if (reported < endedAt || reported > asOf || asOf - reported > 86_400_000 || reported - endedAt > 86_400_000) return output('attendance_outside_call_confirmation_window');
  return output('attended_exchange_confirmed',true);
+}
+
+/** Recover only from the exact accepted conversation and its app/agent/recipient bindings.
+ * Missing post-processing metadata may be polled; conflicting identity is never retried.
+ * This is read-only evidence, not a replacement of the persisted acceptance record.
+ */
+export function partialHandsetCarrier(input: Pick<HandsetEvidenceInput, 'appCallId'|'agentId'|'phone'|'appAudit'|'conversation'>): string | null {
+ const audit=row(input.appAudit),call=row(audit.call),accepted=voiceProviderCorrelation(audit.providerCorrelation);
+ const conversation=row(input.conversation),meta=row(conversation.metadata),phoneCall=row(meta.phone_call);
+ const vars=row(row(conversation.conversation_initiation_client_data).dynamic_variables);
+ if(call.callId!==input.appCallId||call.provider!=='elevenlabs_exotel'||call.dialed!==true||
+    row(audit.providerCorrelation).carrierCallId!==null||accepted.carrierCallId||!accepted.conversationId||accepted.agentId!==input.agentId||
+    call.providerCallId!==accepted.conversationId)throw Error('Partial acceptance identity mismatch');
+ if(conversation.conversation_id!==accepted.conversationId||conversation.agent_id!==input.agentId)
+  throw Error('Partial conversation identity mismatch');
+ if((vars.pawspace_voice_call_id!=null&&vars.pawspace_voice_call_id!==input.appCallId)||
+    (phoneCall.type!=null&&phoneCall.type!=='exotel')||(phoneCall.direction!=null&&phoneCall.direction!=='outbound')||
+    (phoneCall.external_number!=null&&canonicalEvidencePhone(phoneCall.external_number)!==canonicalEvidencePhone(input.phone)))
+  throw Error('Partial conversation binding mismatch');
+ const carrierId=identifier(phoneCall.call_sid);
+ if(phoneCall.call_sid!=null&&!carrierId)throw Error('Partial conversation carrier identifier is malformed');
+ if(!canonicalEvidencePhone(input.phone)||vars.pawspace_voice_call_id!==input.appCallId||
+    phoneCall.type!=='exotel'||phoneCall.direction!=='outbound'||
+    canonicalEvidencePhone(phoneCall.external_number)!==canonicalEvidencePhone(input.phone))return null;
+ return carrierId;
 }

@@ -7,7 +7,7 @@ installWorkersHooks('__FAILURE_DB__', '__FAILURE_ENV__');
 const gov = await import('../lib/voice-outbound-governance.ts');
 const post = await import('../lib/elevenlabs-post-call.ts');
 const route = await import('../app/api/webhooks/elevenlabs/post-call/route.ts');
-async function world(t) {
+async function world(t, partial = false) {
   const sqlite = freshSqlite(), db = makeD1(sqlite); t.after(() => sqlite.close());
   const env = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT:'', PAWSPACE_VOICE_RUNTIME:'elevenlabs', ELEVENLABS_API_KEY:'test-key',
     ELEVENLABS_AGENT_ID:'agent-failure', ELEVENLABS_AGENT_PHONE_NUMBER_ID:'phone-test', ELEVENLABS_WEBHOOK_SECRET:'test-signature-key' });
@@ -15,7 +15,7 @@ async function world(t) {
   const { ensureSecurityTables } = await import('../lib/server-auth.ts'); await ensureSecurityTables(db);
   await gov.ensureVoiceCallTables(db); await gov.seedVoiceCallScripts(db); seedRecipient(sqlite);
   await gov.recordVoiceConsent(db,{phone:'9876543210',subjectType:'customer',subjectId:'CON-V1',granted:true,source:'test',actorId:'test'});
-  const network=stubFetch(()=>jsonResponse({success:true,callSid:'carrier-failure',conversation_id:'conv-failure'})); t.after(()=>network.restore());
+  const network=stubFetch(()=>jsonResponse(partial?{success:true,conversation_id:'conv-failure'}:{success:true,callSid:'carrier-failure',conversation_id:'conv-failure'})); t.after(()=>network.restore());
   const call=await gov.requestOutboundVoiceCall(db,env,{idempotencyKey:'local-failure',useCase:'booking_confirmation',phone:'9876543210',
     cityId:'blr',customerId:'CON-V1',leadId:null,bookingId:'BKG-V1',actorId:'test',actorPermissions:['*'],asOf:DAYTIME});
   assert.equal(call.dialled,true);
@@ -110,4 +110,40 @@ test('a processed-marker write failure can retry without another disposition or 
  assert.equal(marker(w),'processing');assert.equal(order(w).state,'provider_error');
  assert.equal((await post.reconcileElevenLabsPostCall(w.db,w.payload)).status,'processed');
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM crm_tasks').get().n,1);assert.equal(w.network.calls.length,1);
+});
+
+test('partial provider acceptance keeps its reservation, prevents redial and recovers only on an exact signed failure',async t=>{
+ const w=await world(t,true),before=w.sqlite.prepare('SELECT * FROM canonical_customers').all();
+ const audit=await gov.voiceCallAudit(w.db,w.call.callId);
+ assert.equal(audit.providerCorrelation.carrierCallId,null);assert.equal(audit.providerCorrelation.conversationId,'conv-failure');
+ assert.ok(audit.transitions.some(x=>String(x.reason).includes('acceptance_incomplete')));
+ const slot=()=>w.sqlite.prepare('SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?').get(w.call.callId);
+ assert.equal(slot().released_at,null);assert.equal(order(w).state,'dialing');
+ const replay=await gov.requestOutboundVoiceCall(w.db,w.env,{idempotencyKey:'local-failure',useCase:'booking_confirmation',phone:'9876543210',
+  cityId:'blr',customerId:'CON-V1',bookingId:'BKG-V1',actorId:'test',actorPermissions:['*'],asOf:DAYTIME});
+ assert.equal(replay.duplicatePrevented,true);assert.equal(w.network.calls.length,1);
+ await assert.rejects(()=>gov.retryVoiceCall(w.db,w.env,{callId:w.call.callId,actorId:'test',actorPermissions:['*'],asOf:DAYTIME}));
+ assert.equal(slot().released_at,null);assert.equal(w.network.calls.length,1);
+ const result=await route.POST(await signedRequest(w.payload,w.env.ELEVENLABS_WEBHOOK_SECRET));
+ assert.equal(result.status,200);assert.equal(order(w).state,'provider_error');assert.ok(slot().released_at);
+ const duplicate=await route.POST(await signedRequest(w.payload,w.env.ELEVENLABS_WEBHOOK_SECRET));
+ assert.equal(duplicate.status,200);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM crm_tasks').get().n,1);
+ assert.equal(w.network.calls.length,1);assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_customers').all(),before);
+});
+test('partial acceptance cannot be released by a signed event naming another agent',async t=>{
+ const w=await world(t,true);w.payload.data.agent_id='wrong-agent';
+ const result=await route.POST(await signedRequest(w.payload,w.env.ELEVENLABS_WEBHOOK_SECRET));
+ assert.equal(result.status,409);assert.equal(order(w).state,'dialing');
+ assert.equal(w.sqlite.prepare('SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?').get(w.call.callId).released_at,null);
+ assert.equal(w.network.calls.length,1);
+});
+
+for(const carrierValue of ['not/an/id',undefined])test('malformed or absent stored carrier field is not a conversation-only receipt: '+String(carrierValue),async t=>{
+ const w=await world(t,true);
+ const accepted=w.sqlite.prepare("SELECT id,detail_json FROM voice_call_state_transitions WHERE to_state='dialing'").get();
+ const detail=JSON.parse(accepted.detail_json);detail.providerCorrelation.carrierCallId=carrierValue;
+ w.sqlite.prepare('UPDATE voice_call_state_transitions SET detail_json=? WHERE id=?').run(JSON.stringify(detail),accepted.id);
+ const result=await route.POST(await signedRequest(w.payload,w.env.ELEVENLABS_WEBHOOK_SECRET));
+ assert.equal(result.status,409);assert.equal(order(w).state,'dialing');
+ assert.equal(w.sqlite.prepare('SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?').get(w.call.callId).released_at,null);
 });

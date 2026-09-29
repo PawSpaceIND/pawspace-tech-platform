@@ -1110,7 +1110,7 @@
     "lib/voice-provider-adapter.ts": "11d0fa1d94e966f9093549e617004d2f3bce29b0d9d5bea1790908e545929ff5",
     "lib/voice-safe-fetch.ts": "f44e83939789fadad6d8f4360fb0ea70862e47717694511a74ae6e1d07e4a8c8",
     "lib/voice-speech-failures.ts": "9ca66a15473869579f0cf980b42686d3c1ea9e30accd713f90836dcda223160d",
-    "lib/voice-telephony-provider.ts": "d825138ed5daf9bba64b910c92dbf318d07018e733cc73fc87ef70a1e10f4548",
+    "lib/voice-telephony-provider.ts": "87af5f707efdff9760f812ce0b933d948e7a84e2715ae74059984b6495558ea7",
     "lib/voice-workers-ai.ts": "b2441a6ea3cc946453521f06cb6da75e1e3757bf6a6daa97fdb3d75613ae6b44",
     "lib/walking-booking-client.ts": "fe38f493d154a2d9971f9a2b45a8401dec5521631d8c5317c63f36d785ebe696",
     "lib/walking-commercial-client.ts": "aa0deda371889de492d631c93a69602a015303bc07c986050adf13390b6de307",
