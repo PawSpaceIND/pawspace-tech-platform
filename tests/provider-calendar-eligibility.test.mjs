@@ -59,3 +59,21 @@ test('G18 existing leave overlap wins over published windows, preference and man
 test('G18 no calendar remains unavailable rather than inventing working hours',async()=>{
  refused(await schedule(repo([]),request('grooming','2026-10-05T10:00:00+05:30','2026-10-05T12:00:00+05:30')));
 });
+
+
+test('G17/G18 authored appointment windows override broader synthetic rows from the same repository',async()=>{
+ const rows=[
+  row('2026-10-05',['09:00-11:00'],{source:'operations',id:'OPS-NARROW'}),
+  row('2026-10-05',['09:00-19:00'],{source:'uat_roster',id:'UAT-WIDE'}),
+ ];
+ refused(await schedule(repo(rows),request('grooming','2026-10-05T15:00:00+05:30','2026-10-05T17:00:00+05:30')));
+});
+
+test('G17/G18 an authored Blocked stay day cannot be reopened by a synthetic wide row',async()=>{
+ const rows=[
+  row('2026-10-05',['09:00-19:00']),
+  row('2026-10-06',[],{source:'operations',id:'OPS-BLOCKED'}),
+  row('2026-10-06',['00:00-24:00'],{source:'uat_roster',id:'UAT-WIDE'}),
+ ];
+ refused(await schedule(repo(rows),stay('boarding')));
+});

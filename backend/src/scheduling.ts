@@ -159,7 +159,11 @@ async function evaluateProvider(repository:SchedulingRepository,provider:Provide
     for(const date of dates){
       const roster=await repository.listAvailability(provider.id,date);
       if(!roster.length){eligible=false;reasons.push(`No published availability on ${date}`);continue;}
-      const localRoster=roster.filter(r=>r.zoneId===input.zoneId&&Array.isArray(r.windows));
+      // Authored provider/Ops/roster rows are authoritative for their provider-date. A broad synthetic
+      // UAT fallback must never widen a narrower published calendar if a repository returns both.
+      const authored=roster.filter(r=>["partner_app","operations","roster"].includes(String(r.source)));
+      const authoritative=authored.length?authored:roster;
+      const localRoster=authoritative.filter(r=>r.zoneId===input.zoneId&&Array.isArray(r.windows));
       if(overnight){
         if(!localRoster.some(r=>r.windows.some(w=>publishedWindow(w)))){eligible=false;reasons.push(`No open availability in the requested zone on ${date}`);}
       }else{

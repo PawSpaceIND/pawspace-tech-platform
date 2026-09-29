@@ -29,10 +29,11 @@ The new diagnostic selection first produced **13 failing cases / 10 passing cont
 - A stay day now needs at least one valid open window in the requested zone; an empty, malformed or wrong-zone row is not availability.
 - Appointment coverage is checked separately for every occupied local date, retaining fractional minutes. Midnight is the preceding day's `24:00` endpoint; a visit's end is exclusive.
 - Published clocks are validated (`00:00`–`23:59`, with `24:00` permitted only as an end); reversed/zero-width windows do not qualify.
+- If a repository returns both authored (`partner_app` / `operations` / `roster`) and synthetic availability for the same provider-date, the authored rows are authoritative; synthetic UAT rows cannot widen them.
 - Valid normal appointments, real cross-midnight windows, full-time automatic assignment, commission offers, preferred-provider rules, explicit leave, capacity, travel buffers and ranking weights retain their existing behavior.
 - Existing Boarding/overnight Sitting **day-level** availability semantics are retained: this patch does not reinterpret a host's open day as a new 24-hour shift or change checkout-day policy.
 
-`tests/provider-calendar-eligibility.test.mjs` executes the actual shared scheduler.
+`tests/provider-calendar-eligibility.test.mjs` executes the actual shared scheduler, including mixed authored/synthetic authority cases.
 `tests/provider-calendar-reservation.test.mjs` executes the real Ops publish and reservation routes against SQLite through the existing D1 adapter. It verifies blocked stays create no reservation or offer, while valid stays still reserve and generate the original commission offer. External requests are forbidden in those fixtures.
 Early route-fixture attempts omitted mandatory named-host selection and expected a generic rather than selected-provider refusal code. Those fixture issues were corrected; they were not counted as application failures.
 
