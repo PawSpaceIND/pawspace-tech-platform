@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import {resolveUiAuditServer} from "./scripts/ui-audit-server.mjs";
 const {port,baseURL}=resolveUiAuditServer({PW_PORT:process.env.PW_PORT,PW_BASE_URL:process.env.PW_BASE_URL});
 export default defineConfig({
-  testDir:"./e2e", testMatch:"ui-audit-closure.spec.ts", timeout:180_000,
+  testDir:"./e2e", testMatch:["ui-audit-closure.spec.ts","ui-audit-finance-feedback.spec.ts"], timeout:180_000,
   fullyParallel:true, workers:1, retries:0, forbidOnly:!!process.env.CI,
   expect:{timeout:20_000}, outputDir:"test-results/ui-audit",
   reporter:[["list"],["json",{outputFile:"test-results/ui-audit-results.json"}]],
