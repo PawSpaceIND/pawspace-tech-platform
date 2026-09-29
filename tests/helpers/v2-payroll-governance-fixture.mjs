@@ -1,5 +1,5 @@
 // Synthetic local-only fixture; canonical employee, payroll and approval functions.
-export async function v2PayrollFixture(db) {
+export async function v2PayrollFixture(db, options = {}) {
   const people = await import("../../lib/people-foundation.ts");
   const payroll = await import("../../lib/payroll-engine.ts");
   const governance = await import("../../lib/v2-payroll-governance.ts");
@@ -12,7 +12,7 @@ export async function v2PayrollFixture(db) {
   await payroll.assignCompensation(db, { employeeId: employee.id, structureId: structure.id, effectiveFrom: start - 86400000,
     reason: "Synthetic local V2 governance check", actorId: "hr@v2-payroll.test" });
   const calculated = await payroll.calculatePayroll(db, { periodStart: start, periodEnd: end,
-    idempotencyKey: "v2-payroll-local-test", actorId: "maker@v2-payroll.test" });
+    idempotencyKey: "v2-payroll-local-test", actorId: "maker@v2-payroll.test", governanceScope: options.governanceScope });
   const runId = calculated.run.id, employeeId = employee.id;
   const policy = { salaryDay: 7, cutoffDay: 28, paidLeaveCodes: ["CL"], unpaidLeaveCodes: ["LOP"],
     lopDeductibleComponentCodes: ["BASIC"], authorizedDeductionEnabled: true,

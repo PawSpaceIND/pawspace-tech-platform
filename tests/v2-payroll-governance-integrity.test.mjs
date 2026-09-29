@@ -5,11 +5,11 @@ import { employeeAuditD1 } from "./helpers/employee-audit-d1.mjs";
 import { v2PayrollFixture } from "./helpers/v2-payroll-governance-fixture.mjs";
 installWorkersHooks("__V2PG_DB__", "__V2PG_ENV__");
 const invalid = error => error instanceof Response && [400,409].includes(error.status);
-async function world(t) {
+async function world(t, governanceScope) {
   const w = employeeAuditD1(t);
   globalThis.__V2PG_DB__ = w.db;
   globalThis.__V2PG_ENV__ = { DB:w.db, PAWSPACE_DEPLOYMENT_ENV:"staging", PAWSPACE_WORKSPACE_IDENTITY_TRUST:"openai-dispatch", PAWSPACE_PAYMENT_ENV:"sandbox", FORBID_PRODUCTION:"true" };
-  return { ...w, ...await v2PayrollFixture(w.db) };
+  return { ...w, ...await v2PayrollFixture(w.db, { governanceScope }) };
 }
 test("V2 deductions: one approved adjustment applies once and exact replay changes nothing", async t => {
   const w=await world(t); await w.adjustment(); assert.equal((await w.apply()).applied,1);
@@ -124,4 +124,68 @@ test("V2 salary hold edits invalidate earlier HR approval before Finance can app
  assert.equal(w.sqlite.prepare("SELECT hold_status FROM v2_salary_release_items").get().hold_status,"held");
  const plan=w.sqlite.prepare("SELECT * FROM v2_salary_release_plans").get();assert.equal(plan.status,"draft");assert.equal(plan.hr_approved_by,null);
  await assert.rejects(()=>w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"other-finance@v2-payroll.test"}),invalid);
+});
+
+test("V2 review closure: zero-adjustment calculation records its release governance at creation",async t=>{
+ const w=await world(t,"v2");
+ const run=w.sqlite.prepare("SELECT * FROM payroll_runs WHERE id=?").get(w.runId);
+ assert.equal(JSON.parse(run.input_snapshot_json).payrollScope,"v2");
+ assert.equal((await w.result()).net_pay,30000);assert.equal((await w.lines()).length,0);
+ await w.approve();await w.payroll.prepareSandboxPaymentBatch(w.db,{runId:w.runId,actorId:"finance@v2-payroll.test"});
+ await configureSalaryFinanceFixture(w.db);
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:"fa_V2NODQ",verificationReference:"LOCAL-TEST-ONLY",expiresAt:Date.now()+86400000,actorId:"finance@v2-payroll.test"});
+ // No plan exists, even though V2 has no deduction to apply. Neither path may fall back to V1.
+ await assert.rejects(()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"salary-approver@v2-payroll.test"}),invalid);
+ w.sqlite.exec("DROP TABLE v2_salary_release_plans");
+ await assert.rejects(()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"salary-approver@v2-payroll.test"}),invalid);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+test("V2 review closure: a V1 calculation key cannot silently be replayed as governed V2",async t=>{
+ const w=await world(t);const before=w.sqlite.prepare("SELECT * FROM payroll_runs").all();
+ await assert.rejects(()=>w.payroll.calculatePayroll(w.db,{periodStart:w.start,periodEnd:w.end,idempotencyKey:"v2-payroll-local-test",actorId:"maker@v2-payroll.test",governanceScope:"v2"}),invalid);
+ assert.deepEqual(w.sqlite.prepare("SELECT * FROM payroll_runs").all(),before);
+});
+for(const action of ["apply_empty","propose"])test(`V2 review closure: ${action} records enrollment before an applied adjustment`,async t=>{
+ const w=await world(t);
+ if(action==="apply_empty")assert.equal((await w.apply()).applied,0);
+ else await w.governance.proposeV2AuthorizedDeduction(w.db,{runId:w.runId,employeeId:w.employeeId,amount:500,reason:"Synthetic reviewed request",evidenceReference:"QA-ONLY",actorId:"hr@v2-payroll.test"});
+ assert.equal(JSON.parse(w.sqlite.prepare("SELECT input_snapshot_json FROM payroll_runs WHERE id=?").get(w.runId).input_snapshot_json).payrollScope,"v2");
+});
+
+test("V2 review closure: held-salary schedule amendment requires fresh approvals and preserves future gating",async t=>{
+ const w=await releaseWorld(t,"held"),future=Date.now()+86400000;
+ const change=await w.governance.releaseHeldV2Salary(w.db,{runId:w.runId,employeeId:w.employeeId,releaseAt:future,actorId:"finance@v2-payroll.test"});
+ assert.equal(change.approvalRequired,true);
+ const plan=w.sqlite.prepare("SELECT * FROM v2_salary_release_plans").get();
+ assert.equal(plan.status,"draft");assert.equal(plan.hr_approved_by,null);assert.equal(plan.finance_approved_by,null);
+ await assert.rejects(w.queue,invalid);
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"hr",actorId:"new-hr@v2-payroll.test"});
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"new-finance@v2-payroll.test"});
+ await assert.rejects(w.queue,invalid);
+ assert.equal(w.sqlite.prepare("SELECT release_at FROM v2_salary_release_items").get().release_at,future);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+for(const fault of ["unknown","duplicate","missing","null_item","not_array"])test(`V2 review closure: release-plan rejects ${fault} employee overrides without writing a plan`,async t=>{
+ const w=await world(t);await w.approve();
+ const input={runId:w.runId,salaryDate:Date.now()+86400000,actorId:"plan-maker@v2-payroll.test"};
+ input.items=fault==="unknown"?[{employeeId:"another-employee"}]:fault==="duplicate"?[{employeeId:w.employeeId},{employeeId:w.employeeId}]:fault==="missing"?[{}]:fault==="null_item"?[null]:{};
+ await assert.rejects(()=>w.governance.createV2SalaryReleasePlan(w.db,input),invalid);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM v2_salary_release_plans").get().n,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM v2_salary_release_items").get().n,0);
+});
+
+test("V2 review closure: governed calculation reuses one canonical complete run",async t=>{
+ const w=await world(t,"v2"),before=w.sqlite.prepare("SELECT * FROM employee_payroll_results").all();
+ const again=await w.governance.calculateV2Payroll(w.db,{periodStart:w.start,periodEnd:w.end,idempotencyKey:"v2-payroll-local-test",actorId:"maker@v2-payroll.test"});
+ assert.equal(again.duplicatePrevented,true);assert.equal(again.run.id,w.runId);
+ assert.equal(JSON.parse(again.run.input_snapshot_json).payrollScope,"v2");
+ assert.deepEqual(w.sqlite.prepare("SELECT * FROM employee_payroll_results").all(),before);
+});
+test("V2 review closure: due held-salary amendment queues only after both renewed approvals",async t=>{
+ const w=await releaseWorld(t,"held");await w.governance.releaseHeldV2Salary(w.db,{runId:w.runId,employeeId:w.employeeId,releaseAt:Date.now(),actorId:"finance@v2-payroll.test"});
+ await assert.rejects(w.queue,invalid);
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"hr",actorId:"fresh-hr@v2-payroll.test"});await assert.rejects(w.queue,invalid);
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"fresh-finance@v2-payroll.test"});
+ const result=await w.queue();assert.equal(result.instructions.length,1);assert.equal(result.instructions[0].amountPaise,2900000);
+ assert.equal(result.instructions[0].status,"approved_sandbox");assert.equal((await w.queue()).duplicatePrevented,true);
 });

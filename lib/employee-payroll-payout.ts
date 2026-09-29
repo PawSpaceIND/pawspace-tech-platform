@@ -31,7 +31,7 @@ const instructionView=(r:Row)=>({id:text(r.id),runId:text(r.run_id),resultId:tex
 export async function employeeSalaryDirectory(db:D1Database,runId?:string){await ensureEmployeeSalaryTables(db);const instructions=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE (?='' OR run_id=?) ORDER BY created_at DESC LIMIT 500").bind(runId||"",runId||"").all<Row>()).results;return{instructions:instructions.map(instructionView),payoutAccounting:await razorpayXPayoutAccountingDirectory(db,instructions.map(r=>text(r.id))),environment:"sandbox",liveSalaryEnabled:false};}
 async function v2SalaryReleaseConditions(db:D1Database,run:Row,payable:Row[],asOf:number){
  const snapshot=JSON.parse(text(run.input_snapshot_json)||"{}");
- const enrolled=Object.hasOwn(snapshot,"v2PayrollAdjustments");
+ const enrolled=snapshot.payrollScope==="v2"||Object.hasOwn(snapshot,"v2PayrollAdjustments");
  const table=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='v2_salary_release_plans'").first<Row>();
  if(!table){if(enrolled)throw refusal("V2 salary release plan is required before queueing");return [];}
  const plan=await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(run.id).first<Row>();

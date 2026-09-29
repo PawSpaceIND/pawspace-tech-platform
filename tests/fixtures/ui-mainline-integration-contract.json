@@ -718,7 +718,7 @@
     "lib/payment-recovery-governance.ts": "10efa111ce04fe9664946a50eb710815c53b3d3bad7e3ccef58119a00752c4a3",
     "lib/payment-webhook-gate.ts": "44e5948a1d9e3c2154bb1a9bc84f996441a78ffa703079a0f396abcd3a037cdf",
     "lib/payout-beneficiary-verification.ts": "e41972d4dbe46811d9d6d2007753182f5f308d894f43157c18bb222ef79cedb6",
-    "lib/payroll-engine.ts": "fdfa763e8fdd10a0cc4e8d625138a225f2fe491f60b6271233cd10079cd591e5",
+    "lib/payroll-engine.ts": "edd4ee43e234b3efb9cc9e6a7dd2d4e019d1aaa038b5fb80f5f1f39ecfd953ed",
     "lib/payroll-live-disbursement.ts": "de144cb17d35ebe935be585cc7faf7030e31b3024c5b581d706a0f384f329bef",
     "lib/people-finance-integration.ts": "bbdf869e232cc6564856bd8f5cea5750a127aeccfe99775190848b3e0cd7ff5f",
     "lib/people-foundation.ts": "6f22e8ef3bc973519b69e0b1c4c60ece24e290e809fd88da6bf0f4eda57ec4d9",
@@ -1033,7 +1033,7 @@
     "app/team/finance/contractors/page.tsx": "37a1b0611065d42bee422a112dc08965dab39e9907fa581aab5bda0abbb05dc4",
     "app/team/finance/partners/page.tsx": "9027602ff8873e2f7fd0997e618133eab8de4ca0dd551562320af5c493bc231e",
     "lib/contractor-payout.ts": "d86872009313a0a928f1ec0a2ac91e6b64aa80993e301cef72aea1fe85384167",
-    "lib/employee-payroll-payout.ts": "93e135c98ea58ed1ef3220eddf207121516288e584cbd6a5c9039e37bf90a968",
+    "lib/employee-payroll-payout.ts": "0fa4e2a543f2700cda25aef65e339f86788689e50c34c28fffc2cb0f522595e2",
     "lib/razorpayx-payout-accounting.ts": "7e41f93df320d7a18af2419c6af948e7b1dac0b9d2f53d6b66f779c43f997d42",
     "lib/razorpayx-payout-identity.ts": "9d033969288d8f0f9b01b1eabf77c919e5b942a6063eccd344dd348e06d72a25",
     "worker/index.ts": "dc864151149d066204e69c136f40204d199d4e0b0ee8a4fa97328925db0b4e22",
@@ -1041,11 +1041,13 @@
     "lib/provider-payout-queue.ts": "e88b51f25bfc661f1d3e6aed54a34a80f8dd64c6a20e8d535cd746278492b817",
     "lib/razorpayx-dispatch-notice.ts": "bb48e53c1aa0b217b97ab40552c6de015493605ece0ee0dbcbd3bc289a232c82",
     "app/api/razorpayx-test-reconcile/route.ts": "9a5be21ff85c7e776e1c7c639468bd6329bdca846c25897b22790b63b51cb47b",
-    "app/api/v2/payroll-governance/route.ts": "4c5fa03bdd37e789f255f299705574c5da9b7c00a8b8000ba6c059f98e663244",
+    "app/api/v2/payroll-governance/route.ts": "b225a76987385c0ccf4b1ed56f5b7d677062ad595d316aaab5d8c4a47de85ecd",
     "lib/payroll-integrity.ts": "d194dc7a3b4336e7a19226ce4149b83b967e5047f4ad9d9838421f4e2dbd2cb3",
-    "lib/v2-payroll-governance.ts": "93c2e206c224a7938930ff599bad37ac5be6cfd0969998b59a090bad2bb254a8",
+    "lib/v2-payroll-governance.ts": "1b52e9f2a0ed372b32a98750a955dfde779b7285ed314a21c1243803bd8a88e7",
     "e2e/v2-staging-journey.spec.ts": "73e959d06e2f2daf8de7acc7415eb5c40faa49f5804cf0e8b9f5820d33497fd3",
-    "e2e/helpers/v2-groomer-selection.ts": "69b9f45538a52abca9adb092e9414369357b6484874295801bedcefce3952a65"
+    "e2e/helpers/v2-groomer-selection.ts": "69b9f45538a52abca9adb092e9414369357b6484874295801bedcefce3952a65",
+    "app/team/people/payroll/PayrollSetupPanel.tsx": "fb0271b7f63c3a3ee4ffa9a29ae096166934d59d6757589b7302ad38ad5941bd",
+    "app/v2/team/people/payroll/V2PayrollGovernancePanel.tsx": "ef385615f2111d67989f8d222430b8e17483ad2bdfeb03938517c15f78fb638b"
   },
   "presentation": {
     "app/team/ai/decision-commitments.tsx": {

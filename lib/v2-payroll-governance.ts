@@ -1,5 +1,5 @@
 import{completePayrollResults,appendPayrollCheck,isPayrollIntegrityConflict,payrollIntegrityConflict}from"./payroll-integrity";
-import{ensurePayrollTables}from"./payroll-engine";
+import{ensurePayrollTables,calculatePayroll}from"./payroll-engine";
 import{ensureAttendanceLeaveTables}from"./attendance-leave";
 import{queueEmployeeSalary}from"./employee-payroll-payout";
 
@@ -67,10 +67,29 @@ export async function saveV2PayrollPolicy(db:Db,input:V2PayrollPolicyInput){
  return{id,version};
 }
 
+/** Explicit V2 selection binds governance even when no deduction is ultimately applied. */
+async function enrollV2PayrollRun(db:Db,runId:string){
+ const run=await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(runId).first<Row>();
+ if(!run||text(run.status)!=="calculated")throw bad("Select V2 governance before payroll review");
+ const snapshot=JSON.parse(text(run.input_snapshot_json)) as Row;
+ if(snapshot.payrollScope==="v2")return;
+ if(snapshot.payrollScope!==undefined)throw payrollIntegrityConflict();
+ await completePayrollResults(db,run);
+ const updated=JSON.stringify({...snapshot,payrollScope:"v2"});
+ const saved=await db.prepare("UPDATE payroll_runs SET input_snapshot_json=? WHERE id=? AND status='calculated' AND input_snapshot_json=?").bind(updated,runId,run.input_snapshot_json).run();
+ if(num(saved.meta?.changes)!==1)throw payrollIntegrityConflict();
+}
+
+export async function calculateV2Payroll(db:Db,input:{periodStart:number;periodEnd:number;idempotencyKey:string;actorId:string}){
+ await ensureV2PayrollGovernance(db);
+ return calculatePayroll(db,{...input,governanceScope:"v2"});
+}
+
 export async function deriveV2Lop(db:Db,input:{runId:string;employeeId:string;actorId:string;evidenceReference:string}){
  await ensureV2PayrollGovernance(db);const policy=await activePolicy(db);if(!policy)throw bad("V2 payroll policy is not configured");
  const run=await db.prepare("SELECT * FROM payroll_runs WHERE id=? AND status='calculated'").bind(input.runId).first<Row>();if(!run)throw bad("Calculated payroll run is required");
  const result=await db.prepare("SELECT * FROM employee_payroll_results WHERE run_id=? AND employee_id=?").bind(input.runId,input.employeeId).first<Row>();if(!result)throw bad("Employee payroll result not found",404);
+ await enrollV2PayrollRun(db,input.runId);
  const start=new Date(num(run.period_start)).toISOString().slice(0,10),end=new Date(num(run.period_end)-1).toISOString().slice(0,10);
  const days=(await db.prepare("SELECT work_date,status FROM attendance_days WHERE employee_id=? AND work_date>=? AND work_date<=? ORDER BY work_date").bind(input.employeeId,start,end).all<Row>()).results;
  if(!days.length)throw bad("Attendance summary is required before deriving LOP");
@@ -96,6 +115,7 @@ export async function proposeV2AuthorizedDeduction(db:Db,input:{runId:string;emp
  if(!Number.isFinite(input.amount)||!Number.isSafeInteger(Math.round(input.amount*100))||money(input.amount)<=0||text(input.reason).length<8||text(input.evidenceReference).length<4)throw bad("Amount, reason and evidence are required",400);
  const result=await db.prepare("SELECT * FROM employee_payroll_results WHERE run_id=? AND employee_id=?").bind(input.runId,input.employeeId).first<Row>();if(!result)throw bad("Employee payroll result not found",404);
  const cap=money(num(result.gross_earnings)*num(policy.authorized_deduction_max_percent)/100);if(input.amount>cap)throw bad("Deduction exceeds the configured policy cap");
+ await enrollV2PayrollRun(db,input.runId);
  const id=uid("V2ADJ");await db.prepare("INSERT INTO v2_payroll_adjustments (id,run_id,employee_id,kind,units,amount,reason,evidence_reference,policy_version,status,requested_by,created_at) VALUES (?,?,?,?,0,?,?,?,?, 'pending_hr',?,?)").bind(id,input.runId,input.employeeId,"authorized_deduction",money(input.amount),text(input.reason),text(input.evidenceReference),num(policy.version),input.actorId,Date.now()).run();
  await event(db,{runId:input.runId,employeeId:input.employeeId,action:"authorized_deduction_proposed",actorId:input.actorId,detail:{amount:money(input.amount)}});
  return{id,status:"pending_hr"};
@@ -111,6 +131,7 @@ export async function decideV2Adjustment(db:Db,input:{adjustmentId:string;stage:
 
 export async function applyApprovedV2Adjustments(db:Db,input:{runId:string;actorId:string}){
  await ensureV2PayrollGovernance(db);
+ await enrollV2PayrollRun(db,input.runId);
  const run=await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(input.runId).first<Row>();
  if(!run||text(run.status)!=="calculated")throw bad("Adjustments must be applied before payroll review");
  const results=await completePayrollResults(db,run);
@@ -157,9 +178,17 @@ export async function createV2SalaryReleasePlan(db:Db,input:{runId:string;salary
  if(v2PayrollReleaseAt(input.salaryDate)<Date.now()-86400000)throw bad("Valid salary date is required",400);
  const prior=await db.prepare("SELECT id FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(prior)throw bad("Salary release plan already exists");
  const results=(await db.prepare("SELECT id,employee_id,net_pay FROM employee_payroll_results WHERE run_id=? AND net_pay>0 ORDER BY employee_id").bind(input.runId).all<Row>()).results;if(!results.length)throw bad("No payable salaries found");
- const planId=uid("V2PLAN"),now=Date.now(),requested=new Map((input.items||[]).map(x=>[x.employeeId,x]));
+ if(input.items!==undefined&&!Array.isArray(input.items))throw bad("Salary release items must be an array",400);
+ const requested=new Map<string,NonNullable<typeof input.items>[number]>();
+ for(const item of input.items??[]){
+  if(!item||typeof item!=="object"||Array.isArray(item)||typeof item.employeeId!=="string"||!text(item.employeeId))throw bad("Each salary release item needs a valid employee identity",400);
+  const employeeId=text(item.employeeId);
+  if(requested.has(employeeId)||results.filter(result=>text(result.employee_id)===employeeId).length!==1)throw bad("Salary release employee is unknown or duplicated",400);
+  requested.set(employeeId,item);
+ }
+ const planId=uid("V2PLAN"),now=Date.now();
  const statements:D1PreparedStatement[]=[db.prepare("INSERT INTO v2_salary_release_plans (id,run_id,salary_date,status,created_by,created_at,updated_at) VALUES (?,? ,?,'draft',?,?,?)").bind(planId,input.runId,input.salaryDate,input.actorId,now,now)];
- for(const result of results){const cfg=requested.get(text(result.employee_id)),releaseAt=v2PayrollReleaseAt(cfg?.releaseAt??input.salaryDate,input.salaryDate),held=v2PayrollBoolean(cfg?.hold??false,"Salary hold"),reason=text(cfg?.holdReason);if(held&&reason.length<8)throw bad("Held salary requires a clear reason",400);statements.push(db.prepare("INSERT INTO v2_salary_release_items (id,plan_id,result_id,employee_id,amount,batch_code,release_at,hold_status,hold_reason,held_by,held_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(uid("V2ITEM"),planId,result.id,result.employee_id,money(result.net_pay),text(cfg?.batchCode)||"BATCH-1",releaseAt,held?"held":"ready",held?reason:null,held?input.actorId:null,held?now:null,now,now));}
+ for(const result of results){const cfg=requested.get(text(result.employee_id)),releaseAt=v2PayrollReleaseAt(cfg?.releaseAt===undefined?input.salaryDate:cfg.releaseAt,input.salaryDate),held=v2PayrollBoolean(cfg?.hold===undefined?false:cfg.hold,"Salary hold"),reason=text(cfg?.holdReason);if(held&&reason.length<8)throw bad("Held salary requires a clear reason",400);statements.push(db.prepare("INSERT INTO v2_salary_release_items (id,plan_id,result_id,employee_id,amount,batch_code,release_at,hold_status,hold_reason,held_by,held_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(uid("V2ITEM"),planId,result.id,result.employee_id,money(result.net_pay),text(cfg?.batchCode)||"BATCH-1",releaseAt,held?"held":"ready",held?reason:null,held?input.actorId:null,held?now:null,now,now));}
  await db.batch(statements);await event(db,{runId:input.runId,action:"release_plan_created",actorId:input.actorId,detail:{salaryDate:input.salaryDate,count:results.length}});return{planId,status:"draft",count:results.length};
 }
 
@@ -196,10 +225,25 @@ export async function setV2SalaryHold(db:Db,input:{runId:string;employeeId:strin
 }
 
 export async function releaseHeldV2Salary(db:Db,input:{runId:string;employeeId:string;releaseAt:number;actorId:string}){
- v2PayrollReleaseAt(input.releaseAt);
- await ensureV2PayrollGovernance(db);const plan=await db.prepare("SELECT id,status,salary_date FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(!plan||text(plan.status)!=="approved")throw bad("Approved release plan is required");v2PayrollReleaseAt(input.releaseAt,num(plan.salary_date));const now=Date.now();
- const changed=await db.prepare("UPDATE v2_salary_release_items SET hold_status='ready',release_at=?,released_by=?,released_at=?,updated_at=? WHERE plan_id=? AND employee_id=? AND hold_status='held'").bind(input.releaseAt,input.actorId,now,now,plan.id,input.employeeId).run();if(!num(changed.meta?.changes))throw bad("Held salary item not found");
- await event(db,{runId:input.runId,employeeId:input.employeeId,action:"held_salary_released",actorId:input.actorId,detail:{releaseAt:input.releaseAt}});return{employeeId:input.employeeId,status:"ready",releaseAt:input.releaseAt};
+ v2PayrollReleaseAt(input.releaseAt);await ensureV2PayrollGovernance(db);
+ const plan=await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();
+ if(!plan||text(plan.status)!=="approved")throw bad("Approved release plan is required");
+ v2PayrollReleaseAt(input.releaseAt,num(plan.salary_date));
+ const item=await db.prepare("SELECT * FROM v2_salary_release_items WHERE plan_id=? AND employee_id=? AND hold_status='held'").bind(plan.id,input.employeeId).first<Row>();
+ if(!item)throw bad("Held salary item not found");
+ const now=Date.now(),statements:D1PreparedStatement[]=[];
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_plans WHERE id=? AND status='approved' AND hr_approved_by IS ? AND finance_approved_by IS ? AND updated_at=?)",[plan.id,plan.hr_approved_by??null,plan.finance_approved_by??null,plan.updated_at]);
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_items WHERE id=? AND plan_id=? AND employee_id=? AND hold_status='held' AND release_at=? AND updated_at=?)",[item.id,plan.id,input.employeeId,item.release_at,item.updated_at]);
+ const instructions=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='employee_salary_instructions'").first<Row>();
+ if(instructions)appendPayrollCheck(db,statements,"NOT EXISTS(SELECT 1 FROM employee_salary_instructions WHERE result_id=?)",[item.result_id]);
+ statements.push(db.prepare("UPDATE v2_salary_release_items SET hold_status='ready',release_at=?,released_by=?,released_at=?,updated_at=? WHERE id=?").bind(input.releaseAt,input.actorId,now,now,item.id));
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_items WHERE id=? AND hold_status='ready' AND release_at=?)",[item.id,input.releaseAt]);
+ // The schedule amendment is not a payment authorization: both approvers review the new plan.
+ statements.push(db.prepare("UPDATE v2_salary_release_plans SET status='draft',hr_approved_by=NULL,hr_approved_at=NULL,finance_approved_by=NULL,finance_approved_at=NULL,updated_at=? WHERE id=?").bind(now,plan.id));
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_plans WHERE id=? AND status='draft' AND hr_approved_by IS NULL AND finance_approved_by IS NULL)",[plan.id]);
+ statements.push(db.prepare("INSERT INTO v2_payroll_governance_events (id,run_id,employee_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,'held_salary_release_proposed',?,?,?)").bind(uid("V2PGE"),input.runId,input.employeeId,input.actorId,JSON.stringify({releaseAt:input.releaseAt,previousHrApproval:plan.hr_approved_by,previousFinanceApproval:plan.finance_approved_by,approvalRequired:true}),now));
+ try{await db.batch(statements);}catch(error){if(isPayrollIntegrityConflict(error))throw payrollIntegrityConflict();throw error;}
+ return{employeeId:input.employeeId,status:"pending_approval",releaseAt:input.releaseAt,approvalRequired:true};
 }
 
 export async function v2PayrollGovernanceDirectory(db:Db,runId?:string){

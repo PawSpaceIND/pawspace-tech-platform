@@ -66,3 +66,33 @@ The native suite additionally exercises held, future and approved-due salary pla
 through the shared queue. It creates isolated TEST instructions only and performs
 no provider dispatch, bank transfer, hosted payroll or employee-data modification.
 The final commit's broader and CI results must still be checked independently.
+
+## Independent review follow-up: explicit enrollment and release amendments
+
+Current-delta review 5888117996 identified no-deduction enrollment, held-item approval
+reuse, and ambiguous employee overrides. Ten new regressions reproduced these gaps:
+25/35 existing-plus-new SQLite cases passed before repair; all ten new cases failed.
+The fixes preserve V1 payroll and intentional future salary scheduling:
+
+- Explicit V2 calculation reuses the canonical engine and records `payrollScope:v2`
+  in the original transaction, including when there are no adjustments. A V2 retry
+  cannot claim an unmarked V1 calculation key. Existing calculated runs selecting
+  V2 deduction governance are enrolled before proposing/applying, even a zero apply.
+- The V2 calculation UI calls the permission-checked V2 endpoint; V1 retains its
+  canonical endpoint. The shared queue requires the marked run's release plan even
+  if the plan table is absent. No approval can be obtained from a client clock.
+- Releasing a hold is now a proposed schedule amendment. One transaction changes
+  the item and clears old HR/Finance approvals, returning the plan to draft. The UI
+  states that renewed approval is required. Future dates remain valid schedules,
+  but no instruction queues before both new approvals and its real due time.
+- Unknown, duplicate, missing or malformed employee overrides are rejected before
+  plan writes. Partial valid overrides retain server defaults for other payable
+  employees; final amounts still come from canonical payroll, never client items.
+
+Native local D1 also verifies no-deduction enforcement and a suppressed approval
+reset: the item amendment rolls back and a later retry requires fresh approvals.
+The source fingerprints were changed only for reviewed sources, with previous
+hashes verified against the committed candidate; no old protection was removed.
+The prior duplicate local full suite on 965aad82 was stopped for this new repair,
+not counted as a pass. Final-head full tests, CI and independent review remain gates.
+Evidence: `pr1176-ci-repair-evidence-20260929/review-closure/`.
