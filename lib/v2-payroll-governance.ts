@@ -164,16 +164,35 @@ export async function createV2SalaryReleasePlan(db:Db,input:{runId:string;salary
 }
 
 export async function approveV2SalaryReleasePlan(db:Db,input:{runId:string;stage:"hr"|"finance";actorId:string}){
+ if(!["hr","finance"].includes(input.stage))throw bad("Valid release approval stage is required",400);
  await ensureV2PayrollGovernance(db);const plan=await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(!plan)throw bad("Release plan not found",404);const now=Date.now();
- if(input.stage==="hr"){if(text(plan.hr_approved_by))throw bad("HR approval already recorded");if(text(plan.created_by).toLowerCase()===input.actorId.toLowerCase())throw bad("Plan creator cannot provide HR approval");await db.prepare("UPDATE v2_salary_release_plans SET status='pending_finance',hr_approved_by=?,hr_approved_at=?,updated_at=? WHERE id=?").bind(input.actorId,now,now,plan.id).run();return{status:"pending_finance"};}
- if(!text(plan.hr_approved_by))throw bad("HR approval is required first");if([plan.created_by,plan.hr_approved_by].some(v=>text(v).toLowerCase()===input.actorId.toLowerCase()))throw bad("Finance approval must be independent");await db.prepare("UPDATE v2_salary_release_plans SET status='approved',finance_approved_by=?,finance_approved_at=?,updated_at=? WHERE id=?").bind(input.actorId,now,now,plan.id).run();return{status:"approved"};
+ if(input.stage==="hr"){
+  if(text(plan.status)!=="draft"||text(plan.hr_approved_by))throw bad("Plan is not awaiting HR approval");
+  if(text(plan.created_by).toLowerCase()===input.actorId.toLowerCase())throw bad("Plan creator cannot provide HR approval");
+  const changed=await db.prepare("UPDATE v2_salary_release_plans SET status='pending_finance',hr_approved_by=?,hr_approved_at=?,updated_at=? WHERE id=? AND status='draft' AND hr_approved_by IS NULL AND finance_approved_by IS NULL").bind(input.actorId,now,now,plan.id).run();
+  if(num(changed.meta?.changes)!==1)throw bad("Release plan changed; refresh before approving");return{status:"pending_finance"};
+ }
+ if(text(plan.status)!=="pending_finance"||!text(plan.hr_approved_by)||!(num(plan.hr_approved_at)>0))throw bad("HR approval is required first");
+ if([plan.created_by,plan.hr_approved_by].some(v=>text(v).toLowerCase()===input.actorId.toLowerCase()))throw bad("Finance approval must be independent");
+ const changed=await db.prepare("UPDATE v2_salary_release_plans SET status='approved',finance_approved_by=?,finance_approved_at=?,updated_at=? WHERE id=? AND status='pending_finance' AND hr_approved_by=? AND hr_approved_at=? AND finance_approved_by IS NULL").bind(input.actorId,now,now,plan.id,plan.hr_approved_by,plan.hr_approved_at).run();
+ if(num(changed.meta?.changes)!==1)throw bad("Release plan changed; refresh before approving");return{status:"approved"};
 }
 
 export async function setV2SalaryHold(db:Db,input:{runId:string;employeeId:string;hold:boolean;reason?:string;releaseAt?:number;actorId:string}){
- await ensureV2PayrollGovernance(db);const plan=await db.prepare("SELECT id,status,salary_date FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(!plan)throw bad("Release plan not found",404);if(text(plan.status)==="approved")throw bad("Approved plan is immutable; create a governed release action instead");
+ await ensureV2PayrollGovernance(db);const plan=await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(!plan)throw bad("Release plan not found",404);
+ if(!["draft","pending_finance"].includes(text(plan.status)))throw bad("Approved plan is immutable; create a governed release action instead");
  v2PayrollBoolean(input.hold,"Salary hold");if(input.releaseAt!==undefined)v2PayrollReleaseAt(input.releaseAt,num(plan.salary_date));
  const now=Date.now(),reason=text(input.reason);if(input.hold&&reason.length<8)throw bad("Hold reason is required",400);
- await db.prepare("UPDATE v2_salary_release_items SET hold_status=?,hold_reason=?,held_by=?,held_at=?,release_at=COALESCE(?,release_at),updated_at=? WHERE plan_id=? AND employee_id=?").bind(input.hold?"held":"ready",input.hold?reason:null,input.hold?input.actorId:null,input.hold?now:null,input.releaseAt??null,now,plan.id,input.employeeId).run();return{employeeId:input.employeeId,hold:input.hold};
+ const statements:D1PreparedStatement[]=[];
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_plans WHERE id=? AND status=? AND hr_approved_by IS ? AND hr_approved_at IS ? AND finance_approved_by IS NULL)",[plan.id,plan.status,plan.hr_approved_by??null,plan.hr_approved_at??null]);
+ statements.push(db.prepare("UPDATE v2_salary_release_items SET hold_status=?,hold_reason=?,held_by=?,held_at=?,release_at=COALESCE(?,release_at),updated_at=? WHERE plan_id=? AND employee_id=?").bind(input.hold?"held":"ready",input.hold?reason:null,input.hold?input.actorId:null,input.hold?now:null,input.releaseAt??null,now,plan.id,input.employeeId));
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_items WHERE plan_id=? AND employee_id=? AND hold_status=? AND hold_reason IS ?)",[plan.id,input.employeeId,input.hold?"held":"ready",input.hold?reason:null]);
+ // A changed item requires the two independent approvers to review the revised plan.
+ statements.push(db.prepare("UPDATE v2_salary_release_plans SET status='draft',hr_approved_by=NULL,hr_approved_at=NULL,finance_approved_by=NULL,finance_approved_at=NULL,updated_at=? WHERE id=?").bind(now,plan.id));
+ appendPayrollCheck(db,statements,"EXISTS(SELECT 1 FROM v2_salary_release_plans WHERE id=? AND status='draft' AND hr_approved_by IS NULL AND finance_approved_by IS NULL)",[plan.id]);
+ statements.push(db.prepare("INSERT INTO v2_payroll_governance_events (id,run_id,employee_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,'release_plan_item_changed',?,?,?)").bind(uid("V2PGE"),input.runId,input.employeeId,input.actorId,JSON.stringify({hold:input.hold,releaseAt:input.releaseAt??null,previousHrApprovalInvalidated:Boolean(plan.hr_approved_by)}),now));
+ try{await db.batch(statements);}catch(error){if(isPayrollIntegrityConflict(error))throw payrollIntegrityConflict();throw error;}
+ return{employeeId:input.employeeId,hold:input.hold,approvalRequired:true};
 }
 
 export async function releaseHeldV2Salary(db:Db,input:{runId:string;employeeId:string;releaseAt:number;actorId:string}){

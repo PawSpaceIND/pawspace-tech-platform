@@ -49,3 +49,23 @@ test("native V2 payroll: review racing with application preserves the reviewed s
  await assert.rejects(()=>w.governance.applyApprovedV2Adjustments(observed,{runId:w.runId,actorId:"operator@v2-payroll.test"}),error=>error instanceof Response&&error.status===409);
  assert.equal(changed,true);assert.equal((await w.result()).net_pay,30000);assert.equal((await w.lines()).length,0);await noChecks(w.db);
 });
+
+for(const mode of ["due","held","future"])test(`native V2 salary queue observes ${mode} release evidence`,async t=>{
+ const w=await world(t);await w.adjustment();await w.apply();await w.approve();
+ const salaryDate=Date.now()+(mode==="future"?86400000:-1000);
+ await w.governance.createV2SalaryReleasePlan(w.db,{runId:w.runId,salaryDate,items:[{employeeId:w.employeeId,hold:mode==="held",holdReason:"Synthetic native hold"}],actorId:"maker@native-v2.test"});
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"hr",actorId:"hr@native-v2.test"});
+ await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"finance@native-v2.test"});
+ await w.payroll.prepareSandboxPaymentBatch(w.db,{runId:w.runId,actorId:"finance@v2-payroll.test"});
+ const {configureSalaryFinanceFixture}=await import("../helpers/salary-finance-fixture.mjs");await configureSalaryFinanceFixture(w.db);
+ const salary=await import("../../lib/employee-payroll-payout.ts");
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:"fa_NATIVEV2QA",verificationReference:"LOCAL-NATIVE-TEST",expiresAt:Date.now()+86400000,actorId:"finance@native-v2.test"});
+ const queue=()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"approver@native-v2.test"});
+ if(mode==="due"){
+  const first=await queue(),again=await queue();assert.equal(first.instructions.length,1);assert.equal(first.instructions[0].amountPaise,2900000);
+  assert.equal(again.duplicatePrevented,true);assert.equal((await w.db.prepare("SELECT status FROM employee_salary_instructions").first()).status,"approved_sandbox");
+ }else{
+  let error;try{await queue();}catch(e){error=e;}assert.ok(error instanceof Response);assert.match(await error.text(),/V2 salary release/);
+  assert.equal((await w.db.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").first()).n,0);
+ }
+});

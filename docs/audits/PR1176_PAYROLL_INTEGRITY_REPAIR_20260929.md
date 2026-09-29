@@ -44,3 +44,25 @@ Evidence: `Documents/PawSpace-fixes/pr1176-ci-repair-evidence-20260929/final-rep
 These are synthetic local tests, not an actual employee payroll or hosted bank test.
 The founder Chromium session was not used to issue any payroll action. Human HR,
 Finance, salary-provider and end-to-end employee acceptance remain open under #17.
+
+## Additional release-boundary closure
+
+Reviewing the shared salary queue found that calling it directly could bypass an
+existing V2 hold or future release date. Seven new checks reproduced six refusals
+that did not happen (one positive case passed). The canonical queue now enforces
+V2 enrollment/release-plan evidence, independent approval, exact employee/amount,
+ready hold status and real-server due time. The same checks guard instruction
+persistence inside its transaction. Unplanned, unenrolled V1 runs keep their existing
+path. Explicit empty selections refuse rather than selecting every employee.
+All existing instructions are checked for matching payroll identities and amounts.
+
+Concurrent HR/Finance plan approvals are now conditional; one checker cannot
+silently replace another. Draft or pending-Finance item edits invalidate earlier HR
+approval, requiring the revised plan to be reviewed again. A concurrent final
+Finance approval prevents the edit. Three new checks failed before these changes;
+the resulting combined payroll/salary/native-D1 checkpoint passed 47/47.
+
+The native suite additionally exercises held, future and approved-due salary plans
+through the shared queue. It creates isolated TEST instructions only and performs
+no provider dispatch, bank transfer, hosted payroll or employee-data modification.
+The final commit's broader and CI results must still be checked independently.

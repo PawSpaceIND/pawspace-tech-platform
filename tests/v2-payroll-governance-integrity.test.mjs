@@ -70,3 +70,58 @@ for(const damage of ["amount","approval","missing_marker","missing_line"])test(`
  await assert.rejects(()=>w.payroll.prepareSandboxPaymentBatch(w.db,{runId:w.runId,actorId:"finance@v2-payroll.test"}),invalid);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM payroll_payment_batches").get().n,0);
 });
+
+const salary=await import("../lib/employee-payroll-payout.ts");
+const {configureSalaryFinanceFixture}=await import("./helpers/salary-finance-fixture.mjs");
+async function releaseWorld(t,mode="due"){
+ const w=await world(t);await w.adjustment();await w.apply();await w.approve();
+ if(mode!=="missing_plan"){
+  const salaryDate=Date.now()+(mode==="future"?86400000:-1000);
+  await w.governance.createV2SalaryReleasePlan(w.db,{runId:w.runId,salaryDate,items:[{employeeId:w.employeeId,hold:mode==="held",holdReason:"Synthetic approved hold"}],actorId:"plan-maker@v2-payroll.test"});
+  await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"hr",actorId:"plan-hr@v2-payroll.test"});
+  if(mode!=="pending_finance")await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"plan-finance@v2-payroll.test"});
+ }
+ await w.payroll.prepareSandboxPaymentBatch(w.db,{runId:w.runId,actorId:"finance@v2-payroll.test"});
+ await configureSalaryFinanceFixture(w.db);
+ await salary.saveEmployeeSalaryBeneficiary(w.db,{employeeId:w.employeeId,fundAccountId:"fa_V2PAYQA",verificationReference:"LOCAL-TEST-ONLY",expiresAt:Date.now()+86400000,actorId:"finance@v2-payroll.test"});
+ return{...w,queue:()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"salary-approver@v2-payroll.test"})};
+}
+for(const mode of ["missing_plan","pending_finance","held","future"])test(`V2 salary release boundary: canonical queue refuses ${mode}`,async t=>{
+ const w=await releaseWorld(t,mode);let error;
+ try{await w.queue();}catch(e){error=e;}
+ assert.ok(error instanceof Response);assert.equal(error.status,409);
+ assert.match(await error.text(),/V2 salary release/);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+test("V2 salary release boundary: due approved salary queues once without dispatch",async t=>{
+ const w=await releaseWorld(t);const first=await w.queue(),again=await w.queue();
+ assert.equal(first.instructions.length,1);assert.equal(first.instructions[0].amountPaise,2900000);
+ assert.equal(again.duplicatePrevented,true);assert.equal(again.instructions[0].id,first.instructions[0].id);
+ assert.equal(w.sqlite.prepare("SELECT status FROM employee_salary_instructions").get().status,"approved_sandbox");
+});
+test("V2 salary release boundary: a hold arriving before queue commit refuses instructions",async t=>{
+ const w=await releaseWorld(t);const batch=w.db.batch;let changed=false;
+ w.db.batch=async statements=>{if(!changed&&statements.some(s=>s.sql.includes("INSERT INTO employee_salary_instructions"))){changed=true;w.sqlite.prepare("UPDATE v2_salary_release_items SET hold_status='held'").run();}return batch(statements);};
+ await assert.rejects(w.queue);assert.equal(changed,true);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+test("V2 salary release boundary: an explicit empty selection never queues everyone",async t=>{
+ const w=await releaseWorld(t);
+ await assert.rejects(()=>salary.queueEmployeeSalary(w.db,{runId:w.runId,actorId:"salary-approver@v2-payroll.test",resultIds:[]}));
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM employee_salary_instructions").get().n,0);
+});
+for(const stage of ["hr","finance"])test(`V2 release-plan ${stage} approval cannot be overwritten by a concurrent checker`,async t=>{
+ const w=await world(t);await w.approve();
+ await w.governance.createV2SalaryReleasePlan(w.db,{runId:w.runId,salaryDate:Date.now()+86400000,actorId:"plan-maker@v2-payroll.test"});
+ if(stage==="finance")await w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"hr",actorId:"plan-hr@v2-payroll.test"});
+ const outcomes=await Promise.allSettled(["a","b"].map(name=>w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage,actorId:`${name}@v2-payroll.test`})));
+ assert.equal(outcomes.filter(r=>r.status==="fulfilled").length,1);
+ assert.equal(outcomes.filter(r=>r.status==="rejected").length,1);
+});
+test("V2 salary hold edits invalidate earlier HR approval before Finance can approve",async t=>{
+ const w=await releaseWorld(t,"pending_finance");
+ await w.governance.setV2SalaryHold(w.db,{runId:w.runId,employeeId:w.employeeId,hold:true,reason:"Synthetic later request",actorId:"hr@v2-payroll.test"});
+ assert.equal(w.sqlite.prepare("SELECT hold_status FROM v2_salary_release_items").get().hold_status,"held");
+ const plan=w.sqlite.prepare("SELECT * FROM v2_salary_release_plans").get();assert.equal(plan.status,"draft");assert.equal(plan.hr_approved_by,null);
+ await assert.rejects(()=>w.governance.approveV2SalaryReleasePlan(w.db,{runId:w.runId,stage:"finance",actorId:"other-finance@v2-payroll.test"}),invalid);
+});
