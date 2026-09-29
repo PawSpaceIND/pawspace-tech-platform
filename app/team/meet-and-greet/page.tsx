@@ -87,7 +87,7 @@ export default function MeetAndGreetPage() {
       : <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
         <thead><tr><th>Request</th><th>Format · price</th><th>Preferred (IST)</th><th>Intended stay</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>{rows.map((item) => <tr key={item.id}>
-          <td><div className={styles.stack}>
+          <td><div className={`${styles.stack} ${styles.requestDetails}`}>
             <b>{item.customerId} → {item.hostProviderId}</b>
             <small>{item.id}</small>
             {item.bookingId ? <small>Booking {item.bookingId}</small> : null}

@@ -316,3 +316,32 @@ for(const width of [390,768,1440,1920])test(`reviewed statistic grid and shared 
  await expect(page.getByRole('combobox',{name:'Use case',exact:true})).toHaveCount(1);
  await page.screenshot({path:info.outputPath(`shared-table-landmarks-${width}.png`)});
 });
+
+// F-002 reopened on deployed staging: real customer IDs use unbroken hex segments.
+for (const viewport of viewports) {
+ test(`live retest keeps long request identifiers inside their cells ${viewport.width}`, async ({page}, info) => {
+  await page.setViewportSize(viewport);
+  const rows=fixtureFor(new URL('http://127.0.0.1/api/meet-and-greet')) as Array<Record<string,unknown>>;
+  const customerId='CUS-OTP-'+ 'A1B2C3D4'.repeat(4);
+  await page.route('**/api/meet-and-greet',route=>route.request().method()==='GET'
+   ? route.fulfill({json:{data:[{...rows[0],id:'MGR-'+ 'C9D8E7F6'.repeat(4),customerId,hostProviderId:'ui_host_grooming',bookingId:'PS-UAT-SIT-'+ 'B1C2D3E4'.repeat(3)},rows[0]]}})
+   : route.abort('blockedbyclient'));
+  await ready(page,'/v2/team/meet-and-greet');
+  const cell=page.locator('table tbody tr').first().locator('td').first();
+  await expect(cell).toContainText(customerId);
+  await cell.scrollIntoViewIfNeeded();
+  const spill=await cell.evaluate(element=>{
+   const box=element.getBoundingClientRect(),out:string[]=[];
+   const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);let node:Node|null;
+   while((node=walker.nextNode())) {
+    if(!node.textContent?.trim())continue;
+    const range=document.createRange();range.selectNodeContents(node);
+    if(Array.from(range.getClientRects()).some(r=>r.right>box.right+1||r.left<box.left-1))out.push(node.textContent);
+   }
+   return out;
+  });
+  await page.screenshot({path:info.outputPath(`long-request-${viewport.width}.png`)});
+  expect(spill,'Identifier text must not paint inside adjacent price/date columns').toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width+2);
+ });
+}
