@@ -246,3 +246,21 @@ test("the suites run on the Node the CI pins, not just the one on this machine",
   }
   assert.deepEqual(unguarded, [], "these suites install a resolver only on Node >=22.15 and will die on CI's Node — use installWorkersHooks from helpers/module-hooks.mjs");
 });
+
+test("accounts ledger keeps the most recently changed booking inside its 100-row display cap", async () => {
+  const sqlite = seedBookings();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL,status TEXT NOT NULL,gross_amount REAL NOT NULL,tax_amount REAL NOT NULL,net_amount REAL NOT NULL,issued_at INTEGER NOT NULL)");
+  const newest = Date.now() + 60_000;
+  // BK00000 sorts below 100 newer-looking booking ids lexically. Business recency, not identifier text,
+  // must decide which transactions a founder sees after the display cap is applied.
+  sqlite.prepare("UPDATE canonical_bookings SET updated_at=? WHERE id='BK00000'").run(newest);
+  sqlite.prepare("UPDATE booking_payments SET status='created', updated_at=? WHERE booking_id='BK00000'").run(newest);
+  sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at) VALUES ('INV-NEW','BK00000','CUS0000','PS-NEWEST','issued',1000,152.54,847.46,?)").run(newest);
+  const { buildAccountsBusinessView } = await import("../lib/accounts-business-view.ts");
+  const view = await buildAccountsBusinessView(globalThis.__FANOUT_DB__);
+  assert.equal(view.ledger.length, 100);
+  assert.equal(view.ledger[0]?.bookingId, "BK00000", "the newest business event must lead the capped ledger regardless of id text");
+  assert.equal(view.ledger[0]?.invoiceNumber, "PS-NEWEST");
+  assert.equal(view.ledger[0]?.status, "issued");
+  assert.equal(view.receivable, 1000, "the uncollected newest booking remains represented in receivables");
+});

@@ -45,7 +45,7 @@ const SETTLEMENT_LEDGER_VERTICALS = [
  */
 export async function buildAccountsBusinessView(db: Db) {
   const degradation = createDegradationLog();
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
+  const bookings = await safeAll(db, "SELECT id,service_code,total_amount,updated_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
@@ -56,6 +56,7 @@ export async function buildAccountsBusinessView(db: Db) {
   }
   const invoiceByBooking = new Map(invoices.map(i => [String(i.booking_id), i]));
   const paymentByBooking = new Map(payments.map(p => [String(p.booking_id), p]));
+  const updatedAtByBooking = new Map(bookings.map(b => [String(b.id), Number(b.updated_at || 0)]));
 
   const paidAmount = (bookingId: string) => { const p = paymentByBooking.get(bookingId); return p && ["captured", "paid"].includes(String(p.status)) ? Number(p.amount || 0) : 0; };
   const receivable = bookings.reduce((sum, b) => { const total = Number(b.total_amount || 0), paid = paidAmount(String(b.id)); return sum + Math.max(0, total - paid); }, 0);
@@ -91,7 +92,7 @@ export async function buildAccountsBusinessView(db: Db) {
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
-    .sort((a, b) => (a.bookingId < b.bookingId ? 1 : -1))
+    .sort((a, b) => (updatedAtByBooking.get(b.bookingId) || 0) - (updatedAtByBooking.get(a.bookingId) || 0) || b.bookingId.localeCompare(a.bookingId))
     .slice(0, 100);
 
   return {
