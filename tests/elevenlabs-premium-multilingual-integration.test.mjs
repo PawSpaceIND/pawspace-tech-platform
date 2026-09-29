@@ -14,12 +14,12 @@ test('ElevenLabs tuning wires all requested languages and automatic language det
  assert.match(y,/language_detection:languageDetectionTool/);
  assert.match(y,/TRAINING_AGENT_ID: \$\{\{ vars\.ELEVENLABS_TRAINING_AGENT_ID \}\}/);
  for(const code of ['HI','TA','ML','TE','PA','MR','BN','KN'])assert.match(y,new RegExp('ELEVENLABS_VOICE_'+code+'_ID'));
- assert.match(y,/GROOMING_MULTILINGUAL_READY/);
- assert.match(y,/TRAINING_MULTILINGUAL_READY/);
- assert.match(y,/Premium multilingual configuration did not persist/);
+ assert.match(y,/label:'GROOMING'/);
+ assert.match(y,/label:'TRAINING'/);
+ assert.match(y,/console\.log\(label\+'_MULTILINGUAL_READY='/);
+ assert.match(y,/premium multilingual configuration did not persist/i);
  assert.match(y,/hinglish_mode:true/);
  assert.match(y,/discover-premium-voices/);
- assert.match(y,/GROOMING_MULTILINGUAL_READY=/);
 });
 test('sales specialist keeps already confirmed booking facts across language switches',()=>{
  const s=readFileSync(new URL('../lib/voice-sales-specialists.ts',import.meta.url),'utf8');
