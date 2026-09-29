@@ -1,3 +1,4 @@
+import { correlationFromVoiceTransitions } from "./voice-handset-evidence";
 /**
  * Outbound voice calling: the pre-dial policy gate, the call ledger, and the provider-event receiver.
  *
@@ -471,7 +472,7 @@ function summarise(row: Row) {
     retryOf: row.retry_of ? text(row.retry_of) : null, retryAttempt: Number(row.retry_attempt || 0),
     handoffCaseId: row.handoff_case_id ? text(row.handoff_case_id) : null,
     transcriptRef: row.transcript_ref ? text(row.transcript_ref) : null,
-    phoneLast4: text(row.phone_last4), dialed: row.dialed_at != null,
+    phoneLast4: text(row.phone_last4), dialed: row.dialed_at != null, recordingAllowed: Number(row.recording_allowed) === 1,
   };
 }
 
@@ -559,7 +560,7 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
       bookingId: text(input.bookingId) || null, useCase: text(input.useCase) || null,
     });
     await db.prepare("UPDATE voice_call_orders SET provider_call_id=?,production_call=?,updated_at=? WHERE id=?").bind(handle.providerCallId, handle.productionCall ? 1 : 0, now, id).run();
-    await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall }, asOf: now });
+    await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall, ...(handle.providerCorrelation ? { providerCorrelation: handle.providerCorrelation } : {}) }, asOf: now });
   } catch (error) {
     const unavailable = error instanceof TelephonyProviderUnavailable;
     // The recipient was never reached, so the slot goes back rather than silently consuming their
@@ -878,6 +879,7 @@ export async function reconcileVerifiedElevenLabsCompletion(db:Db,input:{callId:
  if(VOICE_TERMINAL_STATES.includes(state))return{callId:input.callId,state,duplicatePrevented:true};
  if(!input.completed){
   if(canVoiceCallTransition(state,"provider_error")){await applyTransition(db,{callId:input.callId,to:"provider_error",reason:"Verified ElevenLabs call initiation failure",actor:"provider:elevenlabs_exotel",detail:{conversationId:input.conversationId},asOf:now});state="provider_error";}
+  if(state==="provider_error")await recordTerminalVoiceDisposition(db,input.callId,"provider_error",now);
   return{callId:input.callId,state,duplicatePrevented:false};
  }
  for(const next of ["dialing","ringing","connected","completed"]as VoiceCallState[]){
@@ -895,13 +897,14 @@ export async function voiceCallAudit(db: Db, callId: string) {
   const call = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
   if (!call) throw new Error("Voice call not found");
   const [transitions, decisions, events] = await Promise.all([
-    db.prepare("SELECT sequence,from_state,to_state,reason,reason_class,actor,created_at FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").bind(callId).all<Row>(),
+    db.prepare("SELECT sequence,from_state,to_state,reason,reason_class,detail_json,actor,created_at FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").bind(callId).all<Row>(),
     db.prepare("SELECT check_code,passed,detail,created_at FROM voice_call_policy_decisions WHERE call_id=? ORDER BY check_code").bind(callId).all<Row>(),
     db.prepare("SELECT provider,provider_event_id,event_kind,provider_status,signature_mechanism,payload_sha256,curated_json,applied,created_at FROM voice_call_provider_events WHERE call_id=? ORDER BY created_at").bind(callId).all<Row>(),
   ]);
   return {
     call: summarise(call),
-    transitions: transitions.results,
+    providerCorrelation: correlationFromVoiceTransitions(transitions.results),
+    transitions: transitions.results.map(transition => { const curated = { ...transition }; delete curated.detail_json; return curated; }),
     policyDecisions: decisions.results.map(row => ({ checkCode: text(row.check_code), passed: Number(row.passed) === 1, detail: text(row.detail), at: Number(row.created_at) })),
     providerEvents: events.results,
     truth: { rawProviderPayloadsStored: false, productionCallExecuted: Number(call.production_call) === 1 && call.dialed_at != null },

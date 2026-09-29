@@ -33,8 +33,24 @@ test("lead conversion attribution uses normalized service and lifecycle state",(
 
 test("leadless WhatsApp inbound initializes canonical lead before persisting message",()=>{
   const source=read("lib/whatsapp-uat-adapter.ts");
-  assert.match(source,/assignLeadOwner\(db,\{customerId,service:"general_inquiry"\}\)/);
+  assert.match(source,/routeNewLead\(db,\{leadId,actorId:"whatsapp_uat_webhook"/);
   assert.match(source,/ensureInboundLead\(db,\{customerId,source:`whatsapp:\$\{provider\}`/);
+  assert.match(source,/owner:"Unassigned"/);
   assert.match(source,/if\(!leadId\)throw new Error\("WhatsApp inbound could not initialize canonical lead tracking"\)/);
   assert.match(source,/JSON\.stringify\(\{\.\.\.detail,leadId\}\)/);
+});
+
+
+test("background scheduler auto-fills completed outbound lead batches",()=>{
+  const source=read("lib/background-scheduler.ts");
+  assert.match(source,/runOutboundLeadAssignmentSweep/);
+  assert.match(source,/assignNextOutboundBatch\(db,\{repEmail,actorId,asOf\}\)/);
+  assert.match(source,/outbound-batch:first-response:/);
+});
+
+test("manual CRM leads enter canonical assignment and SLA routing",()=>{
+  const source=read("app/api/crm/route.ts");
+  assert.match(source,/routeNewLead\(db,\{leadId,actorId:actor.email,asOf:now,keyPrefix:"staff-crm"\}\)/);
+  assert.match(source,/canonicalAssignment/);
+  assert.match(source,/canonicalSla/);
 });
