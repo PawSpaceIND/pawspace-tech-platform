@@ -25,3 +25,30 @@ payment assertions. Payment, pricing, scheduling, permission and UI code are unc
 After the workstation reconnected, the complete saved logs and exit files were read:
 4/4 desktop/mobile rendered-page cases passed, zero retries; typecheck and focused
 lint exited 0. These used synthetic API/payment doubles, not hosted transactions.
+
+## PR #1178 CI correction — 29 September 2026
+
+Failure baseline: `84397cc53158859b8bd7d25683374ddb2ecb8148`, containing checked
+main `428fa89954ae795494a92d16969ffd7d2d155705`. Release CI 36534856930,
+Pre-UAT 36534856907 and the loader-path job all report the same fingerprint
+assertion in `inbox-workspace-presentation.test.mjs`. The Web batch completed
+9,488 assertions: 9,487 passed, one failed; separate certification passed 10/10.
+The isolated six-case suite reproduced that failure locally: five passed, one failed.
+
+The UI-mainline manifest still pinned the pre-R05 `e2e/v2-grooming.spec.ts` bytes.
+After reviewing the exact selector/helper changes and verifying the old hash against
+upstream, updated that one existing fingerprint. Added protection for the shared
+selector helper and hosted journey as well: 1,039 existing entries are retained;
+1,041 are now protected. All other manifest sections and entries remain unchanged.
+No application, payment, permission, workflow, timeout, retry or assertion changed.
+
+The unchanged six-case suite now passes 6/6 on both Node 22.16.0 loader paths.
+Three temporary edits, one in each protected R05 test/helper file, each cause exactly
+that integrity test to fail with exit 1 (five passes, one failure). Every temporary
+edit was restored before committing. This verifies the guard was retained, not disabled.
+
+Evidence: `Documents/PawSpace-fixes/r05-hosted-booking-acceptance-20260929/`
+`pr1178-failure-fix/` contains failed CI logs, the local reproduction, fingerprint
+provenance and positive/negative guard logs. Final-head cloud CI/review remains a
+separate gate. This correction makes no hosted booking, payment, merge or deployment;
+full hosted booking-to-accounts acceptance under #17 remains open.

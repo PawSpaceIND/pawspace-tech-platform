@@ -29,7 +29,7 @@
     "docs/uat/2026-09-24-paid-journey-remediation.md": "e30fa3b5e4db36d006a92f6a30e944eff187f7e82e21fe33a4d334031f1eaae5",
     "e2e/paid-journey-remediation.spec.ts": "ade05702571c0bf81391a4fe1f997f5285e1d501cdd60e9bea351c9a07d1974b",
     "e2e/uat-btm-e2e.spec.ts": "be49be6edae58881d2abf06354feb839b46daad805500f588d722e74c903ffc8",
-    "e2e/v2-grooming.spec.ts": "0e57f3335f143f77e4c1c3be8a3af3b6f8b9b02d00842ded1f9e6ed2ebfc9233",
+    "e2e/v2-grooming.spec.ts": "d985c7238f51b90bbe65ca1bd056e05998504bb11c90db650d4c4efbb474c55d",
     "lib/ai-provider-adapter.ts": "0da78123bf7e5477b407f8bc1c060a8dccefe152a6e0840d291ea2df77a3a112",
     "lib/api-gateway.ts": "3e00cc1a972fff573173e2271ae87af26d9bae092b319d0b0f870a4553b38045",
     "lib/boarding-stay-lifecycle.ts": "ba09632bf6da58ad01ac5723b544a1806aa2f60b3ed30f064c6fbc5762b6edae",
@@ -1040,7 +1040,9 @@
     "app/team/people/payroll/SalarySandboxPanel.tsx": "10dcee0bf6f96b7a8e533b8f171c4930f0b2cb594b93e2ec19ca491b74678626",
     "lib/provider-payout-queue.ts": "e88b51f25bfc661f1d3e6aed54a34a80f8dd64c6a20e8d535cd746278492b817",
     "lib/razorpayx-dispatch-notice.ts": "bb48e53c1aa0b217b97ab40552c6de015493605ece0ee0dbcbd3bc289a232c82",
-    "app/api/razorpayx-test-reconcile/route.ts": "9a5be21ff85c7e776e1c7c639468bd6329bdca846c25897b22790b63b51cb47b"
+    "app/api/razorpayx-test-reconcile/route.ts": "9a5be21ff85c7e776e1c7c639468bd6329bdca846c25897b22790b63b51cb47b",
+    "e2e/v2-staging-journey.spec.ts": "73e959d06e2f2daf8de7acc7415eb5c40faa49f5804cf0e8b9f5820d33497fd3",
+    "e2e/helpers/v2-groomer-selection.ts": "69b9f45538a52abca9adb092e9414369357b6484874295801bedcefce3952a65"
   },
   "presentation": {
     "app/team/ai/decision-commitments.tsx": {
