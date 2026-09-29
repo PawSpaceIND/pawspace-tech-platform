@@ -68,3 +68,55 @@ for (const amount of [NaN, Infinity, -Infinity]) {
     assert.equal(w.rows().length, 0);
   });
 }
+
+test("R04: first-row absence does not permit repairing another surviving row", async t => {
+  const w = await world(t); await w.post();
+  w.sqlite.prepare("DELETE FROM finance_journal_entries WHERE debit>0").run();
+  const before = w.rows();
+  await assert.rejects(w.post, /integrity|incomplete|mismatch/i);
+  assert.deepEqual(w.rows(), before);
+});
+
+test("R04: different line counts and nested group keys remain distinct", async t => {
+  const w = await world(t); await w.post();
+  const parent = w.rows();
+  await w.accounts.postJournal(w.db, { ...w.input, groupKey: `${w.input.groupKey}-1` });
+  assert.equal(w.rows().length, 4);
+  assert.equal((await w.post()).duplicatePrevented, true);
+  w.input.lines.push({ accountCode: "1020-Payment Gateway Clearing", debit: 2, credit: 2 });
+  await assert.rejects(w.post, /integrity|mismatch|conflict/i);
+  assert.deepEqual(w.rows().filter(row => parent.some(original => original.id === row.id)), parent);
+});
+
+test("R04: Unicode and SQL wildcard characters in group keys remain literal", async t => {
+  const w = await world(t); w.input.groupKey = "R04-₹-🐾-%_?'";
+  assert.equal((await w.post()).posted, true);
+  assert.equal((await w.post()).duplicatePrevented, true);
+  assert.equal(w.rows().length, 2);
+});
+
+test("R04: exact replay survives month close, but changed financial identity does not", async t => {
+  const w = await world(t); await w.post(); const before = w.rows();
+  w.sqlite.exec("CREATE TABLE finance_close_periods (period_code TEXT PRIMARY KEY,status TEXT); INSERT INTO finance_close_periods VALUES ('2026-09','locked')");
+  w.input.narration = "Replay description may differ";
+  assert.equal((await w.post()).duplicatePrevented, true);
+  w.input.sourceId = "DIFFERENT-BOOKING";
+  await assert.rejects(w.post, /integrity|mismatch|conflict/i);
+  assert.deepEqual(w.rows(), before);
+});
+
+test("R04: established one-cent tolerance and signed reversal lines are retained", async t => {
+  const w = await world(t);
+  w.input.lines = [{ accountCode: w.accounts.ACCT.CASH, debit: -1.01 },
+    { accountCode: w.accounts.ACCT.REVENUE, credit: -1 }];
+  assert.equal((await w.post()).posted, true);
+  const rows = w.rows(); assert.equal(rows[0].debit, -1.01); assert.equal(rows[1].credit, -1);
+  assert.equal((await w.post()).duplicatePrevented, true);
+});
+
+test("R04: high-precision amounts that round to zero cannot create an empty journal", async t => {
+  const w = await world(t);
+  w.input.lines = [{ accountCode: w.accounts.ACCT.CASH, debit: 0.001 },
+    { accountCode: w.accounts.ACCT.REVENUE, credit: 0.001 }];
+  await assert.rejects(w.post, /non-zero|round/i); assert.equal(w.rows().length, 0);
+});

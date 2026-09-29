@@ -124,11 +124,24 @@ export type JournalMetadata = Partial<Record<"bookingId"|"customerId"|"cityId"|"
 
 export async function prepareJournalPosting(db: Db, input: { groupKey: string; entryDate: string; periodCode: string; sourceType: string; sourceId: string; narration: string; lines: JournalLine[]; metadata?: JournalMetadata }) {
   await ensureFinanceJournalTable(db);
-  const lines = input.lines.filter(l => (Number(l.debit) || 0) !== 0 || (Number(l.credit) || 0) !== 0);
-  if (!lines.length) throw new Error("A journal needs at least one non-zero line");
-  const totalDebit = round2(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0));
-  const totalCredit = round2(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0));
-  if (Math.abs(totalDebit - totalCredit) > 0.01) throw new Error(`Journal is not balanced: debit ${totalDebit} != credit ${totalCredit}`);
+  // Validate before filtering: NaN must not disappear as an apparently empty line.
+  const amount = (value: number | undefined) => {
+    const raw = Number(value ?? 0);
+    const rounded = round2(raw);
+    if (!Number.isFinite(raw) || !Number.isFinite(rounded) || !Number.isSafeInteger(Math.round(rounded * 100)))
+      throw new Error("journal_amount_invalid: money must be finite and safely representable in cents");
+    return rounded;
+  };
+  const lines = input.lines.map(l => ({ ...l, debit: amount(l.debit), credit: amount(l.credit) }))
+    .filter(l => l.debit !== 0 || l.credit !== 0);
+  if (!lines.length) throw new Error("A journal needs at least one non-zero line after rounding");
+  const debitCents = lines.reduce((sum, l) => sum + Math.round(l.debit * 100), 0);
+  const creditCents = lines.reduce((sum, l) => sum + Math.round(l.credit * 100), 0);
+  if (!Number.isSafeInteger(debitCents) || !Number.isSafeInteger(creditCents))
+    throw new Error("journal_amount_invalid: total money exceeds safe precision");
+  // Preserve the existing one-cent tolerance, but apply it to the values actually stored.
+  if (Math.abs(debitCents - creditCents) > 1)
+    throw new Error(`Journal is not balanced: debit ${debitCents / 100} != credit ${creditCents / 100} (rounded stored values)`);
   // A closed month is closed to the books as well. closeMonth writes finance_close_periods.status
   // ='locked', but nothing on the posting side ever read that row, so a manual journal dated into a
   // locked month posted cleanly and left the lock showing no sign it had been written into - which made
@@ -143,13 +156,19 @@ export async function prepareJournalPosting(db: Db, input: { groupKey: string; e
   // A missing finance_close_periods table means no period has ever been closed, so there is nothing to
   // violate - but a row that says 'locked' is decisive.
   const journalGroup = `JRN-${input.groupKey}`;
-  const[period,existing]=await Promise.all([
+  const expected: JournalExpectedRow[] = lines.map((line, i) => ({
+    id: `${journalGroup}-${i + 1}`, entry_date: input.entryDate, source_type: input.sourceType,
+    source_id: input.sourceId, account_code: line.accountCode, cost_centre: line.costCentre ?? null,
+    vertical: line.vertical ?? null, debit: line.debit, credit: line.credit,
+    period_code: input.periodCode, posted: 1,
+  }));
+  const[period,replay]=await Promise.all([
     db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null),
-    db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>(),
+    journalReplayState(db, journalGroup, expected),
   ]);
   // An already posted group is a read-only replay, including after month close. New groups
   // still require an open period; the date and balance checks above are never bypassed.
-  if (existing) return { journalGroup, statements: [] as D1PreparedStatement[], lines: lines.length };
+  if (replay === "complete") return { journalGroup, statements: [] as D1PreparedStatement[], lines: lines.length };
   if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   const now = Date.now();
   const meta = input.metadata ?? {};
@@ -157,11 +176,12 @@ export async function prepareJournalPosting(db: Db, input: { groupKey: string; e
   // no row before either writes, so the insert itself must be idempotent. D1 batches serialize the
   // complete journal; INSERT OR IGNORE makes the losing batch a clean duplicate instead of surfacing a
   // UNIQUE violation from finance_journal_entries.id.
-  const statements=lines.map((l, i) => db.prepare("INSERT OR IGNORE INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(`${journalGroup}-${i + 1}`, input.entryDate, input.sourceType, input.sourceId, l.accountCode, l.costCentre ?? null, l.vertical ?? null, round2(Number(l.debit) || 0), round2(Number(l.credit) || 0), input.narration, input.periodCode, now,
+  const guard = await journalIntegrityStatements(db, journalGroup, expected);
+  const inserts=lines.map((l, i) => db.prepare("INSERT OR IGNORE INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(`${journalGroup}-${i + 1}`, input.entryDate, input.sourceType, input.sourceId, l.accountCode, l.costCentre ?? null, l.vertical ?? null, l.debit, l.credit, input.narration, input.periodCode, now,
       meta.bookingId ?? null, meta.customerId ?? null, meta.cityId ?? null, meta.serviceCode ?? null, meta.paymentId ?? null, meta.settlementId ?? null, meta.paymentMethod ?? null,
       meta.taxAmount ?? null, meta.gatewayFee ?? null, meta.collectorId ?? null, meta.reversalReference ?? null, meta.transactionAt ?? null, meta.verificationStatus ?? null));
-  return { journalGroup, statements, lines: lines.length };
+  return { journalGroup, statements: [guard.before, ...inserts, guard.after, guard.cleanup], lines: lines.length };
 }
 
 /** Execute the canonical prepared journal; callers may also compose it into a larger transaction. */
@@ -169,9 +189,85 @@ export async function postJournal(db: Db, input: Parameters<typeof prepareJourna
   const plan = await prepareJournalPosting(db, input);
   if (!plan.statements.length) return { journalGroup: plan.journalGroup, posted: false, duplicatePrevented: true };
   const results = await db.batch(plan.statements);
-  if (Number(results[0]?.meta?.changes || 0) === 0) return { journalGroup: plan.journalGroup, posted: false, duplicatePrevented: true };
+  // The first result is the pre-write assertion; the next is the first financial line.
+  if (Number(results[1]?.meta?.changes || 0) === 0) return { journalGroup: plan.journalGroup, posted: false, duplicatePrevented: true };
   return { journalGroup: plan.journalGroup, posted: true, lines: plan.lines };
 }
 
 export const periodOf = (isoDate: string) => isoDate.slice(0, 7);
 export const round = round2;
+
+// Keep journal posting importable by existing standalone Node finance tools.
+/** Journal persistence checks. Existing financial rows are never repaired or overwritten here. */
+type JournalExpectedRow = {
+  id: string; entry_date: string; source_type: string; source_id: string;
+  account_code: string; cost_centre: string | null; vertical: string | null;
+  debit: number; credit: number; period_code: string; posted: number;
+};
+const ready = new WeakSet<D1Database>();
+const ensuring = new WeakMap<D1Database, Promise<void>>();
+
+/** Constraint failure aborts the entire caller-composed D1 batch, not just one journal row. */
+async function ensureJournalIntegrityTable(db: D1Database) {
+  if (ready.has(db)) return;
+  let pending = ensuring.get(db);
+  if (!pending) {
+    pending = db.prepare("CREATE TABLE IF NOT EXISTS finance_journal_integrity_checks (id TEXT PRIMARY KEY NOT NULL,ok INTEGER NOT NULL CHECK(ok=1))").run()
+      .then(() => { ready.add(db); })
+      .finally(() => { ensuring.delete(db); });
+    ensuring.set(db, pending);
+  }
+  await pending;
+}
+
+// An indexed prefix range plus numeric suffix excludes other keys such as GROUP-2-1.
+const GROUP_ROWS = `SELECT * FROM finance_journal_entries WHERE id>=? AND id<?
+  AND length(id)>? AND substr(id,?) NOT GLOB '*[^0-9]*'`;
+const MATCHES = `SELECT COUNT(*) FROM stored s JOIN json_each(?) e ON s.id=json_extract(e.value,'$.id')
+  WHERE s.entry_date IS json_extract(e.value,'$.entry_date')
+    AND s.source_type IS json_extract(e.value,'$.source_type')
+    AND s.source_id IS json_extract(e.value,'$.source_id')
+    AND s.account_code IS json_extract(e.value,'$.account_code')
+    AND s.cost_centre IS json_extract(e.value,'$.cost_centre')
+    AND s.vertical IS json_extract(e.value,'$.vertical')
+    AND s.debit IS json_extract(e.value,'$.debit')
+    AND s.credit IS json_extract(e.value,'$.credit')
+    AND s.period_code IS json_extract(e.value,'$.period_code')
+    AND s.posted IS json_extract(e.value,'$.posted')`;
+const OBSERVATION = `WITH stored AS (${GROUP_ROWS})
+  SELECT (SELECT COUNT(*) FROM stored) stored_count,(${MATCHES}) matching_count`;
+function parameters(group: string, rows: JournalExpectedRow[]) {
+  const prefix = `${group}-`;
+  // SQLite length/substr count Unicode code points, not JavaScript UTF-16 units.
+  const prefixLength = Array.from(prefix).length;
+  return [prefix, `${group}.`, prefixLength, prefixLength + 1, JSON.stringify(rows)] as const;
+}
+
+/** An exact replay may be acknowledged; missing or conflicting financial rows require reconciliation. */
+async function journalReplayState(db: D1Database, group: string, rows: JournalExpectedRow[]) {
+  const result = await db.prepare(OBSERVATION).bind(...parameters(group, rows))
+    .first<{ stored_count: number; matching_count: number }>();
+  if (!result) throw new Error("journal_integrity_unavailable: no journal evidence returned");
+  if (Number(result.stored_count) === 0) return "absent" as const;
+  if (Number(result.stored_count) !== rows.length || Number(result.matching_count) !== rows.length)
+    throw new Error(`journal_integrity_conflict: ${group} is incomplete or differs from the requested financial lines; Finance reconciliation is required`);
+  return "complete" as const;
+}
+
+/** Guard both ends of a prepared journal, including a competing batch between preflight and execution. */
+async function journalIntegrityStatements(db: D1Database, group: string, rows: JournalExpectedRow[]) {
+  await ensureJournalIntegrityTable(db);
+  const token = crypto.randomUUID();
+  const assertion = (allowAbsent: boolean, id: string) => db.prepare(`
+    INSERT INTO finance_journal_integrity_checks (id,ok)
+    SELECT ?,CASE WHEN ${allowAbsent ? "stored_count=0 OR " : ""}
+      (stored_count=? AND matching_count=?) THEN 1 ELSE 0 END
+    FROM (${OBSERVATION})
+  `).bind(id, rows.length, rows.length, ...parameters(group, rows));
+  return {
+    before: assertion(true, `${token}:before`),
+    after: assertion(false, `${token}:after`),
+    cleanup: db.prepare("DELETE FROM finance_journal_integrity_checks WHERE id IN (?,?)")
+      .bind(`${token}:before`, `${token}:after`),
+  };
+}

@@ -2,7 +2,8 @@
 
 Base: `3fd9f3b2be42bc565b3b80f750cc4c274d3166b3` (merged #1170).
 Branch: `fix/r04-financial-journal-integrity-20260929`.
-Status: TEST-FIRST / implementation blocked. Not merge-ready or deployed.
+Status: IMPLEMENTED LOCALLY / full current-head validation and review pending. Not merged or deployed.
+Historical blocked checkpoints below are superseded only by the final implementation section.
 
 ## Scope and reproduced checks
 
@@ -99,3 +100,53 @@ Evidence is in r04-financial-journal-evidence-20260929/continuation, including t
 native-d1-baseline.log and .exit and downloaded staging certificate. This branch remains
 TEST-FIRST, not merge-ready: the full journal-persistence implementation, its positive
 and fault/retry tests, related compatibility suites, full CI and review remain open.
+
+## Implementation checkpoint — 29 September 2026
+
+The transaction-guard implementation is now present on the R04 branch. This supersedes
+previous implementation-blocked checkpoints, not the outstanding merge/deployment gates.
+Only lib/finance-accounts.ts changes runtime behavior; standalone Node import compatibility
+is retained, with the new private helpers kept inside that module.
+
+- Validate every supplied monetary value before filtering, including NaN and infinities.
+- Round each persisted line using the existing rule, then validate integer-cent totals.
+  The established one-cent tolerance and signed correction amounts remain supported.
+- Compare every financial row and identity in an existing group, not merely its first row.
+  Partial, differently valued or differently identified groups require reconciliation.
+  Exact replays remain read-only, including after month close. Narration and mutable
+  verification metadata are intentionally not the immutable financial comparison.
+- Wrap prepared journal inserts in before/after persistence assertions within the caller's
+  D1 transaction. A suppressed balancing line aborts the batch; failed replay checks never
+  fill or rewrite historical rows. Constraint-check rows are removed before commit.
+- Add the existing native local-D1 regression to Financial Ledger Sandbox CI without
+  changing any original command, permissions, environment gate or threshold.
+- Refresh only finance-accounts.ts's nine protected-source snapshots after verifying each
+  old hash against deployed main 7008c856; all other entries and assertions are unchanged.
+
+The original eight tests plus all three native-D1 tests passed (11/11). Six additional
+SQLite cases cover absent first rows, group counts/prefixes, Unicode/wildcard identifiers,
+closed-month replay, signed/tolerated amounts and sub-cent zero-only journals.
+
+The Unicode test initially failed and was repaired by counting code points like SQLite,
+not JavaScript UTF-16 units. Broader compatibility first showed two failures (62/64):
+a new extensionless helper import broke an existing standalone test, and one error's
+wording changed. Keeping private helpers in the original module and preserving existing
+error prefixes repaired both without modifying those tests. The same selection then
+passed 64/64, zero failed/cancelled/skipped/todo, including the 17 R04 cases.
+
+An append proposing two further native concurrent-posting tests was tool-blocked and
+not reapplied by another interface. They are absent from the native test file and are
+not counted as executed. The native evidence currently consists of the three retained
+normal/replay, rounding and ignored-credit rollback/retry cases. Existing finance
+concurrency regressions were run unchanged in the broader selection; they are not a
+substitute claim for those two proposed new native cases. A later command returned an
+indeterminate safety status; no changes were observed, and one identical retry through
+the same execution tool succeeded. No blocked SQL was executed against a hosted database.
+
+New evidence: r04-financial-journal-evidence-20260929/implementation/ contains the
+first repair, expanded/Unicode and compatibility logs/exit files, source-snapshot
+provenance, typecheck/lint and subsequent exact-head results. Full current-head CI,
+review and any permitted additional coverage remain required before merge. Existing
+pre-completion finance/lifecycle atomicity and historical reconciliation are not closed
+by journal-row integrity. No hosted payment, payout, salary or financial-data repair
+was performed, and this branch has not been deployed.
