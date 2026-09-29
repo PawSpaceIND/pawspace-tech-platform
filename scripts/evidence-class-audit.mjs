@@ -279,8 +279,10 @@ function workerProcessSignals(source) {
         function strings(child) { const value = literalText(child); if (value != null) literals.push(value); else ts.forEachChild(child, strings); }
         strings(argument);
       }
+      const launchesWrangler = literals.includes("wrangler")
+        || literals.some(value => /(?:^|\/)wrangler\/bin\/wrangler\.js$/.test(value));
       if (/\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\s*\(/.test(call)
-          && literals.includes("wrangler") && literals.includes("dev")) {
+          && launchesWrangler && literals.includes("dev")) {
         for (const value of literals) if (/^wrangler\.[A-Za-z0-9._-]+\.jsonc$/.test(value)) configs.add(value);
       }
     }
