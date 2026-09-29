@@ -6,8 +6,8 @@ const credential = value => !!text(value) && !/[\r\n]/.test(value);
 export function handsetVerifierConfig(env) {
  const host = text(env.EXOTEL_SUBDOMAIN) || 'api.exotel.com';
  const elevenOrigin = text(env.ELEVENLABS_API_BASE) || 'https://api.elevenlabs.io';
- if (!['api.exotel.com','api.in.exotel.com'].includes(host) || !identifier(env.EXOTEL_SID)) throw Error('Approved carrier region/account required');
- if (!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].includes(elevenOrigin)) throw Error('Approved ElevenLabs region required');
+ if ((host !== 'api.exotel.com' && host !== 'api.in.exotel.com') || !identifier(env.EXOTEL_SID)) throw Error('Approved carrier region/account required');
+ if ((elevenOrigin !== 'https://api.elevenlabs.io' && elevenOrigin !== 'https://api.in.residency.elevenlabs.io')) throw Error('Approved ElevenLabs region required');
  if (![env.EXOTEL_API_KEY,env.EXOTEL_API_TOKEN,env.ELEVENLABS_API_KEY].every(credential)) throw Error('Read-only provider credentials missing or malformed');
  return { carrierOrigin:'https://'+host, elevenOrigin, accountId:text(env.EXOTEL_SID) };
 }

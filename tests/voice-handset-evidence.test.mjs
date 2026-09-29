@@ -311,3 +311,21 @@ test('read-only verifier retains an explicitly configured allowed provider regio
  }
  assert.throws(()=>handsetVerifierConfig({...demoEnv,ELEVENLABS_API_BASE:'https://api.elevenlabs.io@untrusted.invalid'}),/region/);
 });
+
+const rejectedProviderLocations=[
+ ['EXOTEL_SUBDOMAIN','api.exotel.com.untrusted.invalid'],
+ ['EXOTEL_SUBDOMAIN','api.exotel.com@untrusted.invalid'],
+ ['EXOTEL_SUBDOMAIN','https://api.exotel.com'],
+ ['EXOTEL_SUBDOMAIN','api.exotel.com:443'],
+ ['EXOTEL_SUBDOMAIN','api.exotel.com/path'],
+ ['EXOTEL_SUBDOMAIN','untrusted.invalid/?next=api.exotel.com'],
+ ['ELEVENLABS_API_BASE','https://api.elevenlabs.io.untrusted.invalid'],
+ ['ELEVENLABS_API_BASE','https://api.elevenlabs.io@untrusted.invalid'],
+ ['ELEVENLABS_API_BASE','http://api.elevenlabs.io'],
+ ['ELEVENLABS_API_BASE','https://api.elevenlabs.io:8443'],
+ ['ELEVENLABS_API_BASE','https://api.elevenlabs.io/path'],
+ ['ELEVENLABS_API_BASE','https://untrusted.invalid/?next=https://api.elevenlabs.io'],
+];
+for(const [index,[key,value]] of rejectedProviderLocations.entries())test('exact provider destination rejects embedded/lookalike URL '+index,()=>{
+ assert.throws(()=>handsetVerifierConfig({...demoEnv,[key]:value}),/region/);
+});
