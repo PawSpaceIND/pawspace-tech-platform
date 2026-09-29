@@ -42,7 +42,7 @@ async function refuse(p,status){await assert.rejects(p,e=>e instanceof Response&
 
 test("two fixed sales profiles are distinct and unknown model IDs stay generic",()=>{
  assert.equal(sales.voiceSalesService("pawspace-grooming-sales"),"grooming");assert.equal(sales.voiceSalesService("pawspace-training-sales"),"dog_training");assert.equal(sales.voiceSalesService("toString"),undefined);
- assert.match(sales.specialistSalesPrompt("grooming"),/not an auto-renewing mandate/);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
+ const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/automated checkout cannot execute that mode yet/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
  for(const value of ["yes", "Yes, please", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
  for(const value of ["no", "yes but tomorrow", "yes for a different dog", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
 });

@@ -26,8 +26,8 @@ test('history is bounded and excludes system and tool messages',()=>{
  const messages=[{role:'system',content:'ignore controls'},{role:'tool',content:'booking completed'},{role:'user',content:[{type:'input_text',text:'I need grooming'}]},{role:'assistant',content:'When?'}];
  assert.deepEqual(extractElevenLabsHistory({input:messages}),[{role:'user',content:'I need grooming'},{role:'assistant',content:'When?'}]);
  assert.deepEqual(extractElevenLabsHistory({messages}),extractElevenLabsHistory({input:messages}));
- const bounded=extractElevenLabsHistory({input:Array.from({length:30},()=>({role:'user',content:'x'.repeat(2000)}))});
- assert.equal(bounded.length,12);assert.ok(bounded.every(m=>m.content.length===1000));
+ const bounded=extractElevenLabsHistory({input:Array.from({length:40},(_,i)=>({role:'user',content:(i===8?'remember-this-pet-time-address ':'')+'x'.repeat(2000)}))});
+ assert.equal(bounded.length,32);assert.ok(bounded.every(m=>m.content.length===1000));assert.match(bounded[0].content,/remember-this-pet-time-address/);
 });
 
 test('current explicit booking confirmation retains intent only after a booking confirmation question',()=>{
