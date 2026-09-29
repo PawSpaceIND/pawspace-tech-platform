@@ -61,7 +61,7 @@ export function TeamStatGrid({ children }: { children: ReactNode }) {
 export function TeamTable({ head, rows, empty = "Nothing recorded yet." }: { head: ReactNode[]; rows: ReactNode[][]; empty?: ReactNode }) {
   if (rows.length === 0) return <p className={styles.tableEmpty}>{empty}</p>;
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} role="region" aria-label={`Table: ${head.filter(cell => typeof cell === "string" || typeof cell === "number").join(" / ")}; scroll horizontally for all columns`} tabIndex={0}>
       <table className={styles.table}>
         <thead><tr>{head.map((cell, index) => <th key={index}>{cell}</th>)}</tr></thead>
         <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, index) => <td key={index} className={index === 0 ? styles.tableKey : undefined}>{cell}</td>)}</tr>)}</tbody>

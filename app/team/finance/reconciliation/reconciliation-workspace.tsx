@@ -49,7 +49,7 @@ function Stat({ name, value, alert }: { name: string; value: number; alert?: boo
 }
 function Table({ title, headings, empty, children, count }: { title: string; headings: string[]; empty: string; children: ReactNode; count: number }) {
   return <section style={box}><div style={{ padding: "14px 18px", borderBottom: "1px solid var(--staff-line)" }}><b>{title}</b> <small style={{ color: "var(--staff-muted)" }}>({count})</small></div>
-    <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}><thead><tr>{headings.map(h => <th key={h} style={{ ...cell, textAlign: "left", background: "var(--staff-raised)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+    <div role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0} style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}><thead><tr>{headings.map(h => <th key={h} style={{ ...cell, textAlign: "left", background: "var(--staff-raised)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
       <tbody>{count === 0 ? <tr><td colSpan={headings.length} style={{ padding: 24, textAlign: "center", color: "var(--staff-muted)" }}>{empty}</td></tr> : children}</tbody></table></div></section>;
 }
 const bookingLink = (bookingId: string | null) => bookingId ? <Link href={`/team/operations/bookings?bookingId=${encodeURIComponent(bookingId)}`} style={{ color: "var(--paw-link)", fontWeight: 700 }}>{bookingId}</Link> : "—";

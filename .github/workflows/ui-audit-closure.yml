@@ -1,0 +1,62 @@
+name: UI audit closure (isolated display fixtures)
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'e2e/ui-audit*'
+      - 'playwright.ui-audit.config.ts'
+      - 'scripts/ui-audit-event-contract.mjs'
+      - 'scripts/ui-audit-logic-contract.mjs'
+      - 'scripts/ui-audit-server.mjs'
+      - 'scripts/ui-audit-history.mjs'
+      - 'tests/ui-audit-closure.test.mjs'
+      - 'tests/fixtures/ui-audit-event-contract.json'
+      - 'tests/fixtures/ui-audit-logic-contract.json'
+      - '.github/workflows/ui-audit-closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PW_UAT_SERVICE_DATE: '2026-10-05'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm run install:ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify immutable historical UI baselines
+        run: |
+          git fetch --no-tags --depth=1 origin 89d483d971b1ca1ceeaeb96bbff91898168081f2
+          node scripts/ui-audit-history.mjs
+      - name: Preserve original UI events and field constraints
+        run: node --test tests/ui-audit-closure.test.mjs
+      - name: Check TypeScript
+        run: npm run typecheck
+      - name: Check all fixture layouts with zero retries
+        run: npx playwright test --config playwright.ui-audit.config.ts --shard=${{ matrix.shard }}/2
+      - name: Upload synthetic visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-${{ github.sha }}-${{ matrix.shard }}
+          path: |
+            test-results/ui-audit-results.json
+            test-results/ui-audit
+          retention-days: 5

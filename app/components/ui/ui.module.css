@@ -52,3 +52,7 @@
 .emptyStateIcon { font-size: 34px; opacity: .55; }
 .emptyStateTitle { color: var(--ds-text); font-weight: 850; font-size: var(--ds-text-lg); margin: 4px 0 0; }
 .emptyStateBody { margin: 0; font-size: var(--ds-text-sm); max-width: 360px; }
+
+/* Staff status values can be long identifiers; retain the complete value inside its card. */
+:global([data-staff-workspace]) .statCard { min-width:0; }
+:global([data-staff-workspace]) .statValue { min-width:0; max-width:100%; overflow-wrap:anywhere; word-break:normal; }
