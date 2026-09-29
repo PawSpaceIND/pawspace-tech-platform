@@ -59,6 +59,7 @@ export async function buildAccountsBusinessView(db: Db, options: { bookingId?: s
   }
   const invoiceByBooking = new Map(invoices.map(i => [String(i.booking_id), i]));
   const paymentByBooking = new Map(payments.map(p => [String(p.booking_id), p]));
+  const updatedAtByBooking = new Map(bookings.map(b => [String(b.id), Number(b.updated_at || 0)]));
 
   const paidAmount = (bookingId: string) => { const p = paymentByBooking.get(bookingId); return p && ["captured", "paid"].includes(String(p.status)) ? Number(p.amount || 0) : 0; };
   const receivable = bookings.reduce((sum, b) => { const total = Number(b.total_amount || 0), paid = paidAmount(String(b.id)); return sum + Math.max(0, total - paid); }, 0);
@@ -91,15 +92,13 @@ export async function buildAccountsBusinessView(db: Db, options: { bookingId?: s
         net: invoice ? Number(invoice.net_amount) : Number(payment?.amount || 0),
         status: invoice ? String(invoice.status) : (payment ? String(payment.status) : "no_invoice"),
         method: payment ? String(payment.method) : null,
-        updatedAt: Number(b.updated_at || 0),
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
     // The ledger is a display window, not the summary source. Show recent operational work instead of
     // lexicographically large IDs; exact booking lookup remains available outside this 100-row window.
-    .sort((a, b) => (b.updatedAt - a.updatedAt) || (a.bookingId < b.bookingId ? 1 : a.bookingId > b.bookingId ? -1 : 0))
-    .slice(0, 100)
-    .map(({ updatedAt: _updatedAt, ...row }) => row);
+    .sort((a, b) => (updatedAtByBooking.get(b.bookingId) || 0) - (updatedAtByBooking.get(a.bookingId) || 0) || b.bookingId.localeCompare(a.bookingId))
+    .slice(0, 100);
 
   return {
     scope: bookingId
