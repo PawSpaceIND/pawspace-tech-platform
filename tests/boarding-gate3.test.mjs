@@ -204,8 +204,10 @@ test("Boarding Gate 3 refund ledger is sandbox-only and refuses a reused referen
 // ---------------------------------------------------------------------------------------------
 test("Boarding Gate 3 date change preserves the booking and charges no reschedule fee when the server price is unchanged", async () => {
   const world = await financeWorld({ amount: 499, amountDueNow: 499 });
-  const requestedStart = new Date(Date.now() + 72 * 3_600_000).toISOString();
-  const requestedEnd = new Date(Date.now() + 76 * 3_600_000).toISOString();
+  const requestedStartMs = Date.now() + 72 * 3_600_000;
+  const requestedStart = new Date(requestedStartMs).toISOString();
+  const requestedEnd = new Date(requestedStartMs + 4 * 3_600_000).toISOString();
+  assert.equal(Date.parse(requestedEnd) - Date.parse(requestedStart), 4 * 3_600_000, "fixture must be exactly four hours even when the clock advances");
   const before = await world.db.prepare("SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
 
   const requested = await world.act("request_date_change", {
