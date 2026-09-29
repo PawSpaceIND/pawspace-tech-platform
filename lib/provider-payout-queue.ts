@@ -388,7 +388,7 @@ async function dispatchOnUat(db:Db,env:Record<string,unknown>,outcome:Record<str
  if(!readiness.ready)return notSent(`RazorpayX TEST is not configured: ${readiness.problems.join("; ")}`);
  try{
   const sent=await dispatchRazorpayXSandboxPayout(db,env,{payoutId});
-  return{...outcome,dispatch:sent.connected?{attempted:true,connected:true,providerPayoutId:sent.providerPayoutId??null,providerStatus:sent.providerStatus??null,duplicatePrevented:sent.duplicatePrevented}:{attempted:true,connected:false,reason:scrubReason(sent.reason)}};
+  return{...outcome,dispatch:sent.connected?{attempted:true,connected:true,providerPayoutId:sent.providerPayoutId??null,providerStatus:sent.providerStatus??null,duplicatePrevented:sent.duplicatePrevented,reconciliationRequired:sent.reconciliationRequired,accounting:sent.accounting}:{attempted:true,connected:false,reason:scrubReason(sent.reason)}};
  }catch(error){if(error instanceof Response&&error.status===404)return notSent(NO_PAYOUT_RECORD);return{...outcome,dispatch:{attempted:true,connected:false,reason:scrubReason(await messageOf(error))}};}
 }
 async function releaseOne(db:Db,input:{bookingId:string;actor:string;reason:string|null;asOf:number;uat?:UatPayoutContext|null}){
