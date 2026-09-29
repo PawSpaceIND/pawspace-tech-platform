@@ -4,6 +4,7 @@ import { authError, authorize, database, securityAudit } from "../../../lib/serv
 import{maskName,maskPhone}from"../../../lib/platform-security";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import{assignLeadOwner}from"../../../lib/lead-owner-identity";
+import{routeNewLead}from"../../../lib/lead-routing";
 import{startWhatsAppAiLead}from"../../../lib/whatsapp-ai-lead-orchestration";
 import{ensureLeadIntakeAdAttribution,normalizeLeadAdAttribution,recordLeadIntakeAdAttribution}from"../../../lib/lead-intake-ad-attribution";
 import{CRM_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScope}from"../../../lib/organizational-scope";
@@ -91,7 +92,7 @@ export async function POST(request:Request){
   // CRM id, so the person's sign-in and booking land on the lead's customer (lib/lead-customer-identity.ts).
   const leadCustomer=await resolveStaffLeadCustomer(db,{proposedCustomerId:id,name:String(body.name),phone:String(body.primaryPhone),email:body.email?String(body.email):null,cityId,now});id=leadCustomer.customerId;
   const ownership=await assignLeadOwner(db,{customerId:id,service:String(body.service||body.opportunity||""),preferred:String(body.owner||"")});
-  const assignedOwner=ownership.owner;
+  let assignedOwner=ownership.owner;
   const leadId=`LEAD-${now}`;
   const nested=body.attribution&&typeof body.attribution==="object"&&!Array.isArray(body.attribution)?body.attribution as Record<string,unknown>:{};
   const value=(camel:string,snake:string)=>body[camel]??body[snake]??nested[snake]??nested[camel];
@@ -104,8 +105,10 @@ export async function POST(request:Request){
     db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`TASK-${now}`,id,"First response to new lead",assignedOwner,now+10*60*1000,"High","Open",now),
     db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?, ?,0,0,?,?)").bind(leadId,id,String(body.source||"Staff CRM"),String(body.service||"Discover requirement"),assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,0,0,now+10*60000,now,now),
   ]);
-  await securityAudit(db,actor,"create","crm_contact",id,"completed",{source:body.source||"Staff CRM",assignedOwner,firstResponseMinutes:10,managerAlertMinutes:30,cityId,teamCode,departmentCode,attributionBound:attribution.hasAttribution});
+  let canonicalRouting:null|Awaited<ReturnType<typeof routeNewLead>>=null;let canonicalRoutingError:string|null=null;
+  try{canonicalRouting=await routeNewLead(db,{leadId,actorId:actor.email,asOf:now,keyPrefix:"staff-crm"});assignedOwner=canonicalRouting.owner;await db.batch([db.prepare("UPDATE crm_contacts SET owner=?,updated_at=? WHERE id=?").bind(assignedOwner,now,id),db.prepare("UPDATE crm_tasks SET owner=? WHERE id=?").bind(assignedOwner,`TASK-${now}`)]);}catch(error){canonicalRoutingError=error instanceof Error?error.message:String(error);}
+  await securityAudit(db,actor,"create","crm_contact",id,"completed",{source:body.source||"Staff CRM",assignedOwner,canonicalAssignment:canonicalRouting?.assignment??"unavailable",canonicalSla:canonicalRouting?.sla??"unavailable",canonicalRoutingError,firstResponseMinutes:10,managerAlertMinutes:30,cityId,teamCode,departmentCode,attributionBound:attribution.hasAttribution});
   let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:String(body.whatsappConsentSource||"manual_crm"),consentEvidenceRef:String(body.whatsappConsentEvidence||""),actorId:actor.email,assignedTo:assignedOwner,cityId});}catch(error){whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};await securityAudit(db,actor,"whatsapp_ai.lead_trigger","lead",leadId,"rejected",{reason:error instanceof Error?error.message:"unknown"});}
   if(attribution.hasAttribution)await recordLeadIntakeAdAttribution(db,{contactId:id,leadId,threadId:clean(whatsappAi.thread_id,120)||null,origin:"staff_crm",gclid:attribution.gclid,fbclid:attribution.fbclid,wbraid:attribution.wbraid,gbraid:attribution.gbraid,utmSource:attribution.utmSource,utmMedium:attribution.utmMedium,utmCampaign:attribution.utmCampaign,utmContent:attribution.utmContent,utmTerm:attribution.utmTerm,campaignId:attribution.campaignId,adId:attribution.adId,landingUrl:attribution.landingUrl,now});
-  return Response.json({ok:true,id,leadId,existingCustomer:leadCustomer.existingCustomer,identityReview:leadCustomer.identityReview,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason,attributionBound:attribution.hasAttribution,organizationalScope:{cityId,teamCode,departmentCode},whatsappAi},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
+  return Response.json({ok:true,id,leadId,existingCustomer:leadCustomer.existingCustomer,identityReview:leadCustomer.identityReview,assignedOwner,ownerResolved:canonicalRouting?.assignment==="canonical"||(canonicalRouting==null&&ownership.resolved),ownerMappingException:canonicalRoutingError||(canonicalRouting?.assignment==="fallback_queue"?canonicalRouting.queue:null)||(!ownership.resolved?ownership.reason:null),attributionBound:attribution.hasAttribution,organizationalScope:{cityId,teamCode,departmentCode},whatsappAi},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
 }

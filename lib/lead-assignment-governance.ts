@@ -42,7 +42,8 @@ export async function saveLeadAssignmentMember(db:Db,input:{employeeEmail:string
 export async function setLeadAssignmentAvailability(db:Db,input:{employeeEmail:string;availableFrom:number;availableUntil:number;status?:"available"|"unavailable";reason?:string;actorId:string}){await ensureLeadAssignmentTables(db);const email=input.employeeEmail.trim().toLowerCase();if(!email||!Number.isFinite(input.availableFrom)||!Number.isFinite(input.availableUntil)||input.availableUntil<=input.availableFrom)throw governedRefusal("Valid employee availability window is required");const now=Date.now(),id=uid("LAV");await db.prepare("INSERT INTO lead_assignment_availability (id,employee_email,available_from,available_until,status,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,email,input.availableFrom,input.availableUntil,input.status||"available",input.reason?.trim()||null,input.actorId,now).run();return{id,employeeEmail:email,availableFrom:input.availableFrom,availableUntil:input.availableUntil,status:input.status||"available"};}
 
 async function leadContext(db:Db,leadId:string){const lead=await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email,k.city_id canonical_city_id FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id LEFT JOIN canonical_customers k ON k.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>().catch(()=>null)
- ??await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email,NULL canonical_city_id FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>();
+ ??await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,c.area,c.primary_phone,c.email,NULL canonical_city_id FROM lead_work_items l LEFT JOIN crm_contacts c ON c.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>().catch(()=>null)
+ ??await db.prepare("SELECT l.id,l.customer_id,l.service,l.source,l.status,l.owner,NULL area,k.primary_phone,k.email,k.city_id canonical_city_id FROM lead_work_items l LEFT JOIN canonical_customers k ON k.id=l.customer_id WHERE l.id=?").bind(leadId).first<Row>();
  if(!lead)throw governedRefusal("Lead not found");
  /* The canonical customer's city_id is the city id the rest of the platform routes on, so it wins where
   * there is one. crm_contacts.area is an area LABEL ("Indiranagar, Bengaluru") and is the fallback, run
@@ -228,7 +229,7 @@ export async function assignNextOutboundBatch(db:Db,input:{repEmail:string;batch
   for(const row of candidates.results){
     const leadId=text(row.id);
     try{
-      const result=await assignLead(db,{leadId,idempotencyKey:`outbound-batch:${leadId}`,reason:"auto_workload",actorId:input.actorId,asOf:now});
+      const result=await assignLead(db,{leadId,idempotencyKey:`outbound-batch:${leadId}`,reason:"auto_workload",actorId:input.actorId,preferredEmployeeEmail:input.repEmail,asOf:now});
       if(!(result as{duplicatePrevented?:boolean}).duplicatePrevented){assigned++;assignedLeadIds.push(leadId);}
     }catch{/* a lead that fails to assign (e.g. city mismatch surfaced only at assignLead time) is simply skipped, not fatal to the rest of the batch */}
   }

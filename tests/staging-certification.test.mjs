@@ -660,3 +660,84 @@ test("nothing in the staging pipeline addresses production", async () => {
     }
   }
 });
+
+// Voice deployment regression: synthetic provider responses only; never reads real routing settings.
+import { verifyStagingVoiceRouting } from '../scripts/verify-staging-voice-routing.mjs';
+const routingEnv = () => ({ PAWSPACE_DEPLOYMENT_ENV:'staging', PAWSPACE_PAYMENT_ENV:'sandbox', PAWSPACE_VOICE_RUNTIME:'elevenlabs',
+  EXOTEL_SUBDOMAIN:'api.exotel.com', EXOTEL_SID:'fixture-account', EXOTEL_API_KEY:'synthetic-key', EXOTEL_API_TOKEN:'synthetic-token',
+  ELEVENLABS_API_BASE:'https://api.elevenlabs.io', ELEVENLABS_API_KEY:'synthetic-eleven-key',
+  ELEVENLABS_AGENT_PHONE_NUMBER_ID:'phnum_Synthetic1196', EXOTEL_CALLER_ID:'+918000001196', EXOTEL_VOICE_APP_ID:'1347515' });
+const routingUrls = ['https://api.exotel.com/v2_beta/Accounts/fixture-account/IncomingPhoneNumbers',
+  'https://api.elevenlabs.io/v1/convai/phone-numbers', 'https://api.elevenlabs.io/v1/convai/phone-numbers/phnum_Synthetic1196'];
+function routingWorld() {
+  const phone={ provider:'exotel',phone_number:'+918000001196',phone_number_id:'phnum_Synthetic1196' };
+  const responses=[{incoming_phone_numbers:[{phone_number:'+918000001196',region:'KA',capabilities:{voice:true},voice_url:'https://fixture.invalid/start_voice/1347515'}]}, [phone], {...phone}];
+  const calls=[];
+  const request=async(url, init)=>{
+    calls.push({url,init});assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.body,undefined);
+    const index=routingUrls.indexOf(url);assert.ok(index>=0,'only exact provider metadata endpoints are allowed');
+    if(index===0){assert.ok(init.headers.authorization);assert.equal(init.headers['xi-api-key'],undefined);}
+    else {assert.ok(init.headers['xi-api-key']);assert.equal(init.headers.authorization,undefined);}
+    return responses[index] instanceof Response ? responses[index] : Response.json(responses[index]);
+  };
+  return {responses,calls,request};
+}
+test('staging routing guard verifies existing metadata without changing settings or calling',async()=>{
+  const env=routingEnv(),before=structuredClone(env),w=routingWorld();const result=await verifyStagingVoiceRouting(env,w.request);
+  assert.equal(result.checked,true);assert.equal(result.providerReadCount,3);assert.equal(result.dialed,false);assert.equal(result.configurationChanged,false);
+  assert.deepEqual(w.calls.map(x=>x.url),routingUrls);assert.deepEqual(env,before);
+  for(const field of ['EXOTEL_CALLER_ID','ELEVENLABS_AGENT_PHONE_NUMBER_ID','EXOTEL_API_TOKEN','ELEVENLABS_API_KEY'])assert.ok(!JSON.stringify(result).includes(env[field]));
+});
+for(const [field,value] of [['ELEVENLABS_AGENT_PHONE_NUMBER_ID','phnum_Stale'],['EXOTEL_CALLER_ID','+918000001111'],['EXOTEL_VOICE_APP_ID','1111111']])test('staging routing guard refuses stale '+field,async()=>{
+  const w=routingWorld(),env={...routingEnv(),[field]:value};
+  await assert.rejects(()=>verifyStagingVoiceRouting(env,w.request),error=>error.message.includes('stale_routing_settings')&&error.message.includes(field)&&!error.message.includes(value));
+  assert.equal(w.calls.length,2);
+});
+for(const field of ['ELEVENLABS_AGENT_PHONE_NUMBER_ID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','ELEVENLABS_API_KEY','EXOTEL_API_TOKEN'])test('routing prerequisites refuse missing '+field+' before provider reads',async()=>{
+  const w=routingWorld();await assert.rejects(()=>verifyStagingVoiceRouting({...routingEnv(),[field]:''},w.request));assert.equal(w.calls.length,0);
+});
+for(const override of [{PAWSPACE_DEPLOYMENT_ENV:'production'},{PAWSPACE_PAYMENT_ENV:'live'}])test('routing guard refuses non-staging scope '+JSON.stringify(override),async()=>{
+  const w=routingWorld();await assert.rejects(()=>verifyStagingVoiceRouting({...routingEnv(),...override},w.request),/isolated_staging_required/);assert.equal(w.calls.length,0);
+});
+test('non-ElevenLabs deployments do not require or contact that provider',async()=>{
+  const w=routingWorld();const result=await verifyStagingVoiceRouting({PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_PAYMENT_ENV:'sandbox'},w.request);
+  assert.equal(result.checked,false);assert.equal(result.reason,'elevenlabs_not_selected');assert.equal(w.calls.length,0);
+});
+for(const status of [401,403,404,429,500])test('routing HTTP '+status+' fails immediately without alternate-host retry',async()=>{
+  const w=routingWorld();w.responses[0]=new Response('provider response is not safe to log',{status});
+  await assert.rejects(()=>verifyStagingVoiceRouting(routingEnv(),w.request),new RegExp('provider_evidence_http_'+status));assert.equal(w.calls.length,1);
+});
+for(const mutation of [w=>{w.responses[0]={};},w=>{w.responses[1]={};},w=>{w.responses[1].push({...w.responses[1][0]});},w=>{w.responses[0].incoming_phone_numbers=[];}])test('incomplete or ambiguous provider inventory refuses routing certification',async()=>{
+  const w=routingWorld();mutation(w);await assert.rejects(()=>verifyStagingVoiceRouting(routingEnv(),w.request),/incomplete|ambiguous/);assert.equal(w.calls.length,2);
+});
+for(const override of [{phone_number:'+918000001111'},{phone_number_id:'phnum_Changed'},{provider:'other'}])test('changed exact import refuses certification '+Object.keys(override)[0],async()=>{
+  const w=routingWorld();Object.assign(w.responses[2],override);await assert.rejects(()=>verifyStagingVoiceRouting(routingEnv(),w.request),/import_identity_changed/);assert.equal(w.calls.length,3);
+});
+for(const raw of ['not-json','x'.repeat(1048577)])test('malformed or oversized routing evidence is rejected without echoing its body',async()=>{
+  const w=routingWorld();w.responses[0]=new Response(raw);
+  await assert.rejects(()=>verifyStagingVoiceRouting(routingEnv(),w.request),/provider_evidence_invalid_or_oversized/);assert.equal(w.calls.length,1);
+});
+test('normal staging deployment and voice repair resolve the same environment before any mutation',async()=>{
+  const fs=await import('node:fs'),yaml=await import('js-yaml');
+  const deployment=yaml.load(fs.readFileSync(new URL('../.github/workflows/deploy-staging.yml',import.meta.url),'utf8'));
+  const voice=yaml.load(fs.readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8'));
+  const job=deployment.jobs.deploy;assert.equal(job.environment,'pawspace-staging');assert.equal(job.environment,voice.jobs['repair-staging-voice-config'].environment);
+  const guardIndex=job.steps.findIndex(x=>x.name==='Verify existing staging voice routing before deployment');assert.ok(guardIndex>=0);
+  const guard=job.steps[guardIndex],deploy=job.steps.find(x=>x.name==='Deploy to staging');
+  assert.equal(guard.run,'node --experimental-strip-types scripts/verify-staging-voice-routing.mjs');
+  assert.equal(guard['continue-on-error'],undefined);assert.equal(guard.if,undefined);
+  for(const name of ['ELEVENLABS_AGENT_PHONE_NUMBER_ID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','ELEVENLABS_API_BASE','EXOTEL_SUBDOMAIN','PAWSPACE_VOICE_RUNTIME'])assert.equal(guard.env[name],deploy.env[name],name);
+  for(const name of ['Apply D1 migrations to staging','Deploy to staging','Load the staff directory into the staging D1'])assert.ok(guardIndex<job.steps.findIndex(x=>x.name===name),name);
+  assert.equal(deployment.on.workflow_dispatch.inputs.sms_smoke.default,'disabled');assert.equal(deployment.on.workflow_dispatch.inputs.atlas_smoke.default,false);
+  assert.equal(job.concurrency['cancel-in-progress'],false);assert.match(deploy.run,/"EXOTEL_SUBDOMAIN"/);
+});
+test('operator routing inspection is explicitly selected, uses deploy settings, and has no mutation credentials',async()=>{
+  const fs=await import('node:fs'),yaml=await import('js-yaml');
+  const deployment=yaml.load(fs.readFileSync(new URL('../.github/workflows/deploy-staging.yml',import.meta.url),'utf8'));
+  const voice=yaml.load(fs.readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8'));
+  const job=voice.jobs['verify-staging-voice-routing'];assert.equal(job.if,"${{ inputs.confirm == 'verify-staging-voice-routing' }}");
+  assert.equal(job.environment,'pawspace-staging');const step=job.steps.find(x=>x.run);
+  const guard=deployment.jobs.deploy.steps.find(x=>x.name==='Verify existing staging voice routing before deployment');
+  assert.deepEqual(step.env,guard.env);assert.equal(step.run,guard.run);
+  assert.ok(!Object.keys(step.env).some(name=>/CLOUDFLARE|ACCESS_CODE|VOICE_UAT_ALLOWLIST|RECORDING|LIVE_APPROVED/.test(name)));
+});
