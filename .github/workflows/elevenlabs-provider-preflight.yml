@@ -339,7 +339,7 @@ jobs:
         run: |
           node --experimental-strip-types <<'NODE'
           if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('One-shot demo cannot be rerun; inspect the first request instead');
-          if(process.env.EXPECTED_STAGING_SHA!=='d2aedf909b82dfee25d3780a07412d1baddae82a')throw Error('Exact approved deployed release required');
+          if(process.env.EXPECTED_STAGING_SHA!=='63775cae5773572d602de7d5d155e92c0f5d4bcd')throw Error('Exact approved deployed release required');
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
           const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
           const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
