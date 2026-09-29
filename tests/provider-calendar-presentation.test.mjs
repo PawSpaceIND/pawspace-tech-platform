@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import postcss from "postcss";
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
+installWorkersHooks("__G17_PRESENTATION_DB__");
+const {providerCalendarSnapshot}=await import("../lib/provider-calendar-self-service.ts");
 const read=path=>fs.readFileSync(path,"utf8");
+
+test("G17 presentation contract loads the real calendar engine",()=>{ assert.equal(typeof providerCalendarSnapshot,"function"); });
 
 test("G17 V2 reuses the canonical partner app and calendar component",()=>{
  const bridge=read("app/v2/partner/page.tsx"),page=read("app/partner-app/page.tsx");
