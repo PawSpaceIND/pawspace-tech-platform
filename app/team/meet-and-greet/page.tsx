@@ -84,7 +84,7 @@ export default function MeetAndGreetPage() {
 
     {loading ? <EmptyState title="Loading meet & greet requests" body="Reading the canonical request list…" />
       : rows.length === 0 ? <EmptyState title="No meet & greet requests yet" body="Requests appear here when a customer asks to meet a host before booking a stay — a free phone call, or a house visit." />
-      : <div className={styles.tableWrap}><table className={styles.table}>
+      : <div className={styles.tableWrap} role="region" aria-label="Data table; scroll horizontally for all columns" tabIndex={0}><table className={styles.table}>
         <thead><tr><th>Request</th><th>Format · price</th><th>Preferred (IST)</th><th>Intended stay</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>{rows.map((item) => <tr key={item.id}>
           <td><div className={styles.stack}>
