@@ -123,9 +123,11 @@ export async function processEmployeeSalaryWebhook(db:D1Database,env:Env,input:{
 export async function runEmployeeSalarySandboxSweep(db:D1Database,env:Env){
  if(text(env.PAWSPACE_EMPLOYEE_SALARY_SANDBOX_AUTODISPATCH)!=="on")return{enabled:false,processed:0,failed:0,environment:"sandbox",liveSalaryEnabled:false};
  sandbox(env);await ensureEmployeeSalaryTables(db);
+ const{runV2SalaryReleaseSweep}=await import("./v2-payroll-governance");
+ const release=await runV2SalaryReleaseSweep(db,{asOf:Date.now(),actorId:"system:scheduled-worker"});
  const pending=(await db.prepare("SELECT id,provider_payout_id FROM employee_salary_instructions WHERE status IN ('approved_sandbox','processing_sandbox') ORDER BY created_at LIMIT 10").all<Row>()).results;
  const results=[];
  for(const row of pending){try{const input={instructionId:text(row.id),actorId:"system:approved-salary-sandbox"};results.push(row.provider_payout_id?await reconcileEmployeeSalarySandbox(db,env,input):await dispatchEmployeeSalarySandbox(db,env,input));}catch{results.push({instructionId:text(row.id),reviewRequired:true});}}
- const failed=results.filter(result=>{const value=result as Record<string,unknown>;return value.reviewRequired===true||value.reconciliationRequired===true||value.connected===false;}).length;
- return{enabled:true,processed:pending.length,failed,results,environment:"sandbox",liveSalaryEnabled:false};
+ const failed=release.failed+results.filter(result=>{const value=result as Record<string,unknown>;return value.reviewRequired===true||value.reconciliationRequired===true||value.connected===false;}).length;
+ return{enabled:true,processed:pending.length,failed,release,results,environment:"sandbox",liveSalaryEnabled:false};
 }
