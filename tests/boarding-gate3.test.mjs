@@ -202,12 +202,15 @@ test("Boarding Gate 3 refund ledger is sandbox-only and refuses a reused referen
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Boarding Gate 3 date change preserves the booking and charges no reschedule fee when the server price is unchanged", async () => {
+test("Boarding Gate 3 date change preserves the booking and charges no reschedule fee when the server price is unchanged", async (t) => {
+  let clock = Date.now();
+  t.mock.method(Date, "now", () => clock++);
   const world = await financeWorld({ amount: 499, amountDueNow: 499 });
-  const requestedStartMs = Date.now() + 72 * 3_600_000;
-  const requestedStart = new Date(requestedStartMs).toISOString();
-  const requestedEnd = new Date(requestedStartMs + 4 * 3_600_000).toISOString();
-  assert.equal(Date.parse(requestedEnd) - Date.parse(requestedStart), 4 * 3_600_000, "fixture must be exactly four hours even when the clock advances");
+  // One captured start instant: two Date.now() calls can accidentally exceed the strict four-hour package by 1 ms.
+  const startMs = Date.now() + 72 * 3_600_000;
+  const requestedStart = new Date(startMs).toISOString();
+  const requestedEnd = new Date(startMs + 4 * 3_600_000).toISOString();
+  assert.equal(Date.parse(requestedEnd) - Date.parse(requestedStart), 4 * 3_600_000, "the unchanged-price fixture must be exactly four hours despite elapsed clock time");
   const before = await world.db.prepare("SELECT scheduled_start,scheduled_end,total_amount FROM canonical_bookings WHERE id=?").bind(world.bookingId).first();
 
   const requested = await world.act("request_date_change", {
@@ -352,4 +355,19 @@ test("Boarding finance API is a guarded route, not an open one", async () => {
   }));
   assert.ok(anonymous.status === 401 || anonymous.status === 403, `an anonymous approval is refused: ${anonymous.status}`);
   assert.equal((await world.refunds()).length, 0, "a refused request must not have moved money");
+});
+
+// The clock-fixture repair must not relax the application's strict package limit.
+test("Boarding Gate 3 still refuses a four-hour quote exceeded by one millisecond", async () => {
+  const world = await financeWorld({ amount: 499, amountDueNow: 499 });
+  const startMs = Date.now() + 72 * 3_600_000;
+  const governance = await import("../lib/boarding-governance.ts");
+  const rejected = await refusal(governance.createBoardingQuote(world.db, {
+    packageCode: "boarding-4h", petCount: 1,
+    scheduledStart: new Date(startMs).toISOString(),
+    scheduledEnd: new Date(startMs + 4 * 3_600_000 + 1).toISOString(),
+    paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east",
+  }));
+  assert.equal(rejected?.status, 409);
+  assert.match(rejected.message, /supports up to 4 hours/);
 });

@@ -1,3 +1,7 @@
+import {ensurePeopleFinanceTables,postPayrollJournal} from "./people-finance-integration";
+import {prepareJournalPosting,periodOf} from "./finance-accounts";
+import {prepareRazorpayXPayoutAccounting,razorpayXPayoutAccountingDirectory} from "./razorpayx-payout-accounting";
+import {razorpayXPayoutIdentityProblem} from "./razorpayx-payout-identity";
 import{ensurePayrollTables}from"./payroll-engine";
 import{appendPayrollCheck,completePayrollResults,payrollIntegrityConflict}from"./payroll-integrity";
 import{createRazorpayXSandboxPayout,fetchRazorpayXSandboxPayout,razorpayXSandboxReadiness}from"./razorpayx-client";
@@ -24,7 +28,7 @@ export async function saveEmployeeSalaryBeneficiary(db:D1Database,input:{employe
  ]);return{employeeId:input.employeeId,environment:"sandbox",reviewed:true,automaticallyVerified:false};
 }
 const instructionView=(r:Row)=>({id:text(r.id),runId:text(r.run_id),resultId:text(r.result_id),employeeId:text(r.employee_id),amountPaise:Number(r.amount_paise),status:text(r.status),providerPayoutId:r.provider_payout_id?text(r.provider_payout_id):null,utr:r.utr?text(r.utr):null,error:r.last_error?text(r.last_error):null,environment:"sandbox"});
-export async function employeeSalaryDirectory(db:D1Database,runId?:string){await ensureEmployeeSalaryTables(db);const instructions=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE (?='' OR run_id=?) ORDER BY created_at DESC LIMIT 500").bind(runId||"",runId||"").all<Row>()).results;return{instructions:instructions.map(instructionView),environment:"sandbox",liveSalaryEnabled:false};}
+export async function employeeSalaryDirectory(db:D1Database,runId?:string){await ensureEmployeeSalaryTables(db);const instructions=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE (?='' OR run_id=?) ORDER BY created_at DESC LIMIT 500").bind(runId||"",runId||"").all<Row>()).results;return{instructions:instructions.map(instructionView),payoutAccounting:await razorpayXPayoutAccountingDirectory(db,instructions.map(r=>text(r.id))),environment:"sandbox",liveSalaryEnabled:false};}
 export async function queueEmployeeSalary(db:D1Database,input:{runId:string;actorId:string}){
  await ensureEmployeeSalaryTables(db);const run=await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(input.runId).first<Row>();
  if(!run||text(run.status)!=="payment_prepared")throw refusal("Approve payroll and prepare its sandbox batch before authorizing salary instructions");
@@ -32,12 +36,19 @@ export async function queueEmployeeSalary(db:D1Database,input:{runId:string;acto
  const results=await completePayrollResults(db,run),existing=(await db.prepare("SELECT * FROM employee_salary_instructions WHERE run_id=?").bind(input.runId).all<Row>()).results;
  const payable=results.filter(r=>Number(r.net_pay)>0);if(!payable.length)throw refusal("No positive employee salaries are payable");
  if(existing.length){if(existing.length!==payable.length||existing.some(row=>!payable.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise))))throw payrollIntegrityConflict();return{instructions:existing.map(instructionView),duplicatePrevented:true,environment:"sandbox"};}
- const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM payroll_runs WHERE id=? AND status='payment_prepared') AND (SELECT COUNT(*) FROM payroll_payment_batches WHERE run_id=? AND external_transmission=0)=1",[input.runId,input.runId]);
+ const periodCode=new Date(Number(run.period_end)).toISOString().slice(0,7);
+ await ensurePeopleFinanceTables(db);const existingPost=await db.prepare("SELECT payroll_run_id FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat'").bind(input.runId).first<Row>();
+ // A previously accrued salary can be paid in a later open month without reopening or reposting its closed accrual month.
+ if(!existingPost){try{await postPayrollJournal(db,{runId:input.runId,periodCode,actorId:input.actorId});}catch(error){if(!/UNIQUE constraint failed: people_payroll_finance_posts/.test(error instanceof Error?error.message:String(error)))throw error;}}
+ const mapping=await db.prepare("SELECT account_code FROM people_finance_account_mappings WHERE source_key='payroll.net_pay_payable'").first<Row>();if(!mapping?.account_code)throw refusal("Approved payroll Finance account mapping is required before salary preparation");
+ const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM people_payroll_finance_posts WHERE payroll_run_id=? AND status='posted_uat') AND ABS(COALESCE((SELECT SUM(credit-debit) FROM finance_journal_entries WHERE source_type='payroll_run' AND source_id=? AND account_code=? AND posted=1),0)-(SELECT COALESCE(SUM(net_pay),0) FROM employee_payroll_results WHERE run_id=?))<0.005",[input.runId,input.runId,mapping.account_code,input.runId]);appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM payroll_runs WHERE id=? AND status='payment_prepared') AND (SELECT COUNT(*) FROM payroll_payment_batches WHERE run_id=? AND external_transmission=0)=1",[input.runId,input.runId]);
  for(const result of payable){
   const beneficiary=await db.prepare("SELECT * FROM employee_salary_beneficiaries WHERE employee_id=? AND environment='sandbox' AND expires_at>?").bind(result.employee_id,now).first<Row>();
   if(!beneficiary)throw refusal("Every payable employee needs unexpired reviewed TEST beneficiary evidence");
   const amount=Math.round(Number(result.net_pay)*100);if(!Number.isSafeInteger(amount)||amount<100)throw refusal("Salary amounts must be integer paise of at least one rupee");
   appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM employee_payroll_results WHERE id=? AND run_id=? AND employee_id=? AND ABS(net_pay*100-?)<0.001) AND EXISTS(SELECT 1 FROM employee_salary_beneficiaries WHERE employee_id=? AND fund_account_id=? AND verified_at=? AND expires_at>?)",[result.id,input.runId,result.employee_id,amount,result.employee_id,beneficiary.fund_account_id,beneficiary.verified_at,now]);
+  const date=new Date(now).toISOString().slice(0,10),release=await prepareJournalPosting(db,{groupKey:`SALARY-RELEASE-${text(result.id)}`,entryDate:date,periodCode:periodOf(date),sourceType:"employee_salary_release",sourceId:text(result.id),narration:"Approved employee salary TEST instruction; not bank paid",lines:[{accountCode:text(mapping.account_code),debit:amount/100},{accountCode:"2116-Employee Salary Payouts in Transit",credit:amount/100}],metadata:{verificationStatus:"sandbox",transactionAt:now}});
+  writes.push(...release.statements);
   writes.push(db.prepare("INSERT INTO employee_salary_instructions (id,result_id,run_id,employee_id,amount_paise,currency,fund_account_id,beneficiary_snapshot_json,idempotency_key,status,approved_by,created_at,updated_at) VALUES (?,?,?,?,?,'INR',?,?,?,'approved_sandbox',?,?,?)").bind(uid("SALPAY"),result.id,input.runId,result.employee_id,amount,beneficiary.fund_account_id,JSON.stringify(beneficiary),`salary:${text(result.id)}`,input.actorId,now,now));
  }
  writes.push(db.prepare("INSERT INTO employee_salary_events (id,instruction_id,action,actor_id,detail_json,created_at) VALUES (?,NULL,'run_authorized',?,?,?)").bind(uid("SE"),input.actorId,JSON.stringify({runId:input.runId,count:payable.length}),now));
@@ -46,19 +57,22 @@ export async function queueEmployeeSalary(db:D1Database,input:{runId:string;acto
 }
 async function salaryInstruction(db:D1Database,id:string){await ensureEmployeeSalaryTables(db);const row=await db.prepare("SELECT * FROM employee_salary_instructions WHERE id=?").bind(id).first<Row>();if(!row)throw refusal("Employee salary instruction not found",404);return row;}
 async function applySalaryProviderState(db:D1Database,row:Row,payout:Row,actorId:string,event?:{id:string;hash:string}){
- if(text(payout.reference_id)!==text(row.id)||text(payout.fund_account_id)!==text(row.fund_account_id)||Number(payout.amount)!==Number(row.amount_paise)||text(payout.currency)!=="INR"||!/^pout_[A-Za-z0-9]+$/.test(text(payout.id))||(row.provider_payout_id&&text(row.provider_payout_id)!==text(payout.id)))throw refusal("Salary provider identity, amount, beneficiary or currency mismatch");
+ const identityProblem=razorpayXPayoutIdentityProblem(payout,{localPayoutId:text(row.id),fundAccountId:text(row.fund_account_id),amountPaise:Number(row.amount_paise),currency:"INR",providerPayoutId:text(row.provider_payout_id)||null});
+ if(identityProblem)throw refusal(identityProblem);
  const statuses=new Set(["queued","pending","initiated","processing","processed","failed","reversed","rejected","cancelled"]);const incoming=text(payout.status);if(!statuses.has(incoming))throw refusal("Unsupported salary payout state",400);
  const current=text(row.status),next=incoming==="processed"?"paid_sandbox":["failed","reversed","rejected","cancelled"].includes(incoming)?`${incoming}_sandbox`:"processing_sandbox";
  const terminal=["paid_sandbox","failed_sandbox","rejected_sandbox","cancelled_sandbox","reversed_sandbox"];
  const preserve=terminal.includes(current)&&!(current==="paid_sandbox"&&next==="reversed_sandbox");const effective=preserve?current:next;
- const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM employee_salary_instructions WHERE id=? AND status=? AND COALESCE(provider_payout_id,'')=?)",[row.id,current,text(row.provider_payout_id)]);
+ const writes:D1PreparedStatement[]=[],now=Date.now();appendPayrollCheck(db,writes,"EXISTS(SELECT 1 FROM employee_salary_instructions WHERE id=? AND status=? AND COALESCE(provider_payout_id,'')=? AND environment='sandbox' AND run_id=? AND result_id=? AND employee_id=? AND amount_paise=? AND fund_account_id=? AND currency='INR')",[row.id,current,text(row.provider_payout_id),row.run_id,row.result_id,row.employee_id,row.amount_paise,row.fund_account_id]);
  if(event)writes.push(db.prepare("INSERT INTO employee_salary_webhook_events (event_id,payload_hash,instruction_id,status,created_at) VALUES (?,?,?,'processed',?)").bind(event.id,event.hash,row.id,now));
  writes.push(db.prepare("UPDATE employee_salary_instructions SET status=?,provider_payout_id=?,utr=COALESCE(?,utr),last_error=?,updated_at=? WHERE id=?").bind(effective,payout.id,text(payout.utr)||null,["failed_sandbox","reversed_sandbox","rejected_sandbox","cancelled_sandbox"].includes(effective)?effective:null,now,row.id));
  writes.push(db.prepare("UPDATE payslips SET status=? WHERE run_id=? AND employee_id=? AND result_id=?").bind(effective,row.run_id,row.employee_id,row.result_id));
  writes.push(db.prepare("UPDATE payroll_runs SET status='paid_sandbox' WHERE id=? AND status='payment_prepared' AND NOT EXISTS(SELECT 1 FROM employee_salary_instructions WHERE run_id=? AND status<>'paid_sandbox') AND (SELECT COUNT(*) FROM employee_salary_instructions WHERE run_id=?)=(SELECT COUNT(*) FROM employee_payroll_results WHERE run_id=? AND net_pay>0)").bind(row.run_id,row.run_id,row.run_id,row.run_id));
  if(effective==="reversed_sandbox")writes.push(db.prepare("UPDATE payroll_runs SET status='payment_prepared' WHERE id=? AND status='paid_sandbox'").bind(row.run_id));
  writes.push(db.prepare("INSERT INTO employee_salary_events (id,instruction_id,action,actor_id,detail_json,created_at) VALUES (?,?,'provider_state',?,?,?)").bind(uid("SE"),row.id,actorId,JSON.stringify({status:effective,providerPayoutId:payout.id,environment:"sandbox"}),now));
- await db.batch(writes);return{instruction:instructionView({...row,status:effective,provider_payout_id:payout.id,utr:text(payout.utr)||row.utr}),environment:"sandbox"};
+ const accounting=await prepareRazorpayXPayoutAccounting(db,{source:"salary",row:{...row,statement_id:row.result_id,amount:Number(row.amount_paise)/100},status:effective.replace(/_sandbox$/,"").replace(/^paid$/,"processed"),providerPayoutId:text(payout.id),at:now});
+ writes.push(...accounting.statements);
+ await db.batch(writes);return{instruction:instructionView({...row,status:effective,provider_payout_id:payout.id,utr:text(payout.utr)||row.utr}),accounting:{status:accounting.status,principalOnly:true,bankStatementReconciled:false},environment:"sandbox"};
 }
 export async function dispatchEmployeeSalarySandbox(db:D1Database,env:Env,input:{instructionId:string;actorId:string}){
  sandbox(env);const row=await salaryInstruction(db,input.instructionId),status=text(row.status),now=Date.now();
@@ -69,10 +83,10 @@ export async function dispatchEmployeeSalarySandbox(db:D1Database,env:Env,input:
  const results=await completePayrollResults(db,run);if(!results.some(r=>text(r.id)===text(row.result_id)&&Math.round(Number(r.net_pay)*100)===Number(row.amount_paise)))throw payrollIntegrityConflict();
  const beneficiary=JSON.parse(text(row.beneficiary_snapshot_json)) as Row;
  if(Number(beneficiary.expires_at)<=now)throw refusal("Approved beneficiary evidence expired before salary dispatch");
- const updated=await db.prepare("UPDATE employee_salary_instructions SET status='dispatching_sandbox',attempt_count=attempt_count+1,updated_at=? WHERE id=? AND status=? AND updated_at=?").bind(now,row.id,status,row.updated_at).run();
- if(!Number(updated.meta.changes))throw refusal("Another request owns this salary instruction");
+ const updated=await db.prepare("UPDATE employee_salary_instructions SET status='dispatching_sandbox',attempt_count=attempt_count+1,updated_at=? WHERE id=? AND status=? AND updated_at=? AND environment='sandbox' AND EXISTS(SELECT 1 FROM employee_salary_beneficiaries b WHERE b.employee_id=employee_salary_instructions.employee_id AND b.fund_account_id=employee_salary_instructions.fund_account_id AND b.verified_at=? AND b.expires_at>? AND b.environment='sandbox')").bind(now,row.id,status,row.updated_at,beneficiary.verified_at,now).run();
+ if(!Number(updated.meta.changes))throw refusal("Another request owns this salary instruction or its reviewed beneficiary changed; refresh and review before dispatch");
  const sent=await createRazorpayXSandboxPayout(env,{localPayoutId:text(row.id),payroll:{employeeId:text(row.employee_id),runId:text(row.run_id)},fundAccountId:text(row.fund_account_id),amountPaise:Number(row.amount_paise),currency:"INR",idempotencyKey:text(row.idempotency_key)});
- if(!sent.connected){await db.prepare("UPDATE employee_salary_instructions SET status='reconciliation_required',last_error=?,updated_at=? WHERE id=? AND status='dispatching_sandbox'").bind(sent.reason,Date.now(),row.id).run();return{connected:false,reconciliationRequired:true,environment:"sandbox"};}
+ if(!sent.connected){await db.prepare("UPDATE employee_salary_instructions SET status='reconciliation_required',last_error=?,updated_at=? WHERE id=? AND status='dispatching_sandbox'").bind(sent.reason,Date.now(),row.id).run();const observed=await salaryInstruction(db,text(row.id));if(observed.provider_payout_id&&["paid_sandbox","reversed_sandbox","failed_sandbox"].includes(text(observed.status)))return{connected:true,instruction:instructionView(observed),receiptAlreadyObserved:true,environment:"sandbox"};return{connected:false,reconciliationRequired:true,environment:"sandbox"};}
  try{return await applySalaryProviderState(db,await salaryInstruction(db,text(row.id)),sent.payout,input.actorId);}catch(error){await db.prepare("UPDATE employee_salary_instructions SET status='reconciliation_required',last_error='provider_response_requires_review',updated_at=? WHERE id=? AND status='dispatching_sandbox'").bind(Date.now(),row.id).run();throw error;}
 }
 export async function reconcileEmployeeSalarySandbox(db:D1Database,env:Env,input:{instructionId:string;actorId:string}){
@@ -102,10 +116,11 @@ export async function processEmployeeSalaryWebhook(db:D1Database,env:Env,input:{
  throw refusal("Concurrent salary webhook processing requires retry");
 }
 export async function runEmployeeSalarySandboxSweep(db:D1Database,env:Env){
- if(text(env.PAWSPACE_EMPLOYEE_SALARY_SANDBOX_AUTODISPATCH)!=="on")return{enabled:false,processed:0,environment:"sandbox",liveSalaryEnabled:false};
+ if(text(env.PAWSPACE_EMPLOYEE_SALARY_SANDBOX_AUTODISPATCH)!=="on")return{enabled:false,processed:0,failed:0,environment:"sandbox",liveSalaryEnabled:false};
  sandbox(env);await ensureEmployeeSalaryTables(db);
  const pending=(await db.prepare("SELECT id,provider_payout_id FROM employee_salary_instructions WHERE status IN ('approved_sandbox','processing_sandbox') ORDER BY created_at LIMIT 10").all<Row>()).results;
  const results=[];
  for(const row of pending){try{const input={instructionId:text(row.id),actorId:"system:approved-salary-sandbox"};results.push(row.provider_payout_id?await reconcileEmployeeSalarySandbox(db,env,input):await dispatchEmployeeSalarySandbox(db,env,input));}catch{results.push({instructionId:text(row.id),reviewRequired:true});}}
- return{enabled:true,processed:pending.length,results,environment:"sandbox",liveSalaryEnabled:false};
+ const failed=results.filter(result=>{const value=result as Record<string,unknown>;return value.reviewRequired===true||value.reconciliationRequired===true||value.connected===false;}).length;
+ return{enabled:true,processed:pending.length,failed,results,environment:"sandbox",liveSalaryEnabled:false};
 }
