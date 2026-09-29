@@ -187,9 +187,9 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  }
  clock.mark("handoffChecked");
  let actionProvider;
- const salesService=voiceSalesService(body.model);
- const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{salesService,fastVoice:!salesService,onTiming:clock.mark});clock.mark("provider");
  const conversationHistory=extractElevenLabsHistory(body);
+ const salesService=voiceSalesService(body.model,inputText,conversationHistory.map(item=>item.content));
+ const provider=await createGroundedAiRuntimeProvider(db,serviceActor,"voice",{salesService,fastVoice:!salesService,onTiming:clock.mark});clock.mark("provider");
  const intent=classifyVoiceFollowup(inputText,conversationHistory);
  const fastEligible=!salesService&&!detectPromptInjection(inputText).blocked&&!requiresImmediateHumanHandoff(inputText)&&!intent.policyRisk&&!["human_handoff","refund_review","unknown"].includes(intent.intent);
  if(fastEligible){
