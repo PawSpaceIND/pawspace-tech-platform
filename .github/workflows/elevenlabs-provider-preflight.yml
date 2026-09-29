@@ -339,7 +339,7 @@ jobs:
         run: |
           node --experimental-strip-types <<'NODE'
           if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('One-shot demo cannot be rerun; inspect the first request instead');
-          if(process.env.EXPECTED_STAGING_SHA!=='c1a5bd5ef0447beb3911ff52b31b55cf0c114376')throw Error('Exact approved deployed release required');
+          if(process.env.EXPECTED_STAGING_SHA!=='d2aedf909b82dfee25d3780a07412d1baddae82a')throw Error('Exact approved deployed release required');
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
           const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
           const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
@@ -360,10 +360,22 @@ jobs:
           const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
           console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
           if(call.status!==201||!body?.data?.callId||!dialed)throw new Error('specialist call was not accepted by PawSpace');
+          const exactId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,160}$/.test(value);
+          if(!exactId(body.data.callId)||!exactId(agentId))throw Error('Accepted attempt identifier is invalid; do not redial');
+          const {writeFileSync}=await import('node:fs');
+          writeFileSync('handset-attempt.json',JSON.stringify({schemaVersion:1,appCallId:body.data.callId,agentId,expectedStagingSha:process.env.EXPECTED_STAGING_SHA,workflowRunId:process.env.GITHUB_RUN_ID,acceptedAt:new Date().toISOString()}),{mode:0o600});
           console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
           const evidence=await verifyHandsetAttempt({appCallId:body.data.callId,agentId,phone,cookie},process.env,{log:result=>console.log('HANDSET_EVIDENCE='+JSON.stringify(result))});
           console.log('HANDSET_VERIFIED='+JSON.stringify(evidence));
           NODE
+      - name: Retain exact attempt identity without credentials or recipient data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attended-maya-attempt-${{ github.run_id }}
+          path: handset-attempt.json
+          retention-days: 1
+          if-no-files-found: ignore
 
   direct-grooming-call:
     if: ${{ inputs.confirm == 'direct-grooming-call' || inputs.confirm == 'inspect-app-voice' }}
