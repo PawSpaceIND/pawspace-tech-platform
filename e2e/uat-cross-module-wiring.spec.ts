@@ -206,9 +206,8 @@ test("grooming sandbox checkout propagates to Admin and CRM", async ({
       timeZone: "Asia/Kolkata",
     }).format(new Date(`${serviceDate}T12:00:00+05:30`));
     await page
-      .getByRole("button", {
-        name: new RegExp(`${serviceDay} ${serviceMonth}$`),
-      })
+      .locator("button[aria-pressed]")
+      .filter({ hasText: new RegExp(`${serviceDay} ${serviceMonth}$`) })
       .click();
     await page.getByRole("button", { name: /^3:00–5:00 PM/ }).click();
     await page.getByRole("button", { name: "Review booking" }).click();
