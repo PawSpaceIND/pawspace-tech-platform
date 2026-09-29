@@ -73,6 +73,10 @@ test("a booking completed before the owner's model keeps its month and its poste
   sqlite.prepare("INSERT INTO provider_payout_computations (booking_id,provider_id,service_code,order_value,provider_net_payout,platform_fee,platform_gst,provider_gst_deducted,pawspace_gst_on_order,breakdown_json,term_id,computed_by,computed_at) VALUES ('BK-LEGACY','PRV-TRAINER','dog_training',1000,593.22,254.24,45.76,152.54,0,?,?,'training_finance_read_model',?)").run(JSON.stringify(legacy), termId, july);
   await accounts.postJournal(db, { groupKey: "SERVICE-COMPLETION-BK-LEGACY", entryDate: "2026-07-10", periodCode: "2026-07", sourceType: "service_completion", sourceId: "BK-LEGACY", narration: "Legacy completion", metadata: { bookingId: "BK-LEGACY", serviceCode: "dog_training", transactionAt: july }, lines: [{ accountCode: "2230-Customer Collections", debit: 1000 }, { accountCode: "2110-Provider Payable", credit: 588.98 }, { accountCode: "2140-TCS Payable", credit: 4.24 }, { accountCode: "2130-GST Payable", credit: 198.3 }, { accountCode: "4000-Service Revenue", credit: 208.48 }] });
 
+  // The original journal is closed and must stay byte-for-byte unchanged on replay.
+  const originalJournal = sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code TEXT PRIMARY KEY,status TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO finance_close_periods VALUES ('2026-07','locked')").run();
   // September: the training read model re-runs completion finance with completedAt = now.
   const again = await completion.resolveServiceCompletionFinance(db, { bookingId: "BK-LEGACY", actorId: "training_finance_read_model", completedAt: COMPLETED });
   assert.deepEqual([again.providerPayoutAccrued, again.tcsWithheld, again.gstLiability, again.platformRevenueNetOfGst], [588.98, 4.24, 198.3, 208.48], "the re-run replays what the July journal posted");
@@ -83,6 +87,7 @@ test("a booking completed before the owner's model keeps its month and its poste
   assert.equal(payable(sqlite, "BK-LEGACY"), 588.98);
   await completion.resolveServiceCompletionFinance(db, { bookingId: "BK-LEGACY", actorId: "training_finance_read_model", completedAt: Date.parse("2026-10-02T12:00:00+05:30") });
   assert.equal(payoutRow(sqlite, "BK-LEGACY").computed_at, july, "every later re-read keeps it there too");
+  assert.deepEqual(sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all(), originalJournal, "closed legacy journal replay cannot rewrite any ledger row");
   const julyClose = await statutoryTcs.computeMonthlyTcsStatutory(db, { period: "2026-07", actorId: FINANCE });
   assert.equal(julyClose.totalTcs, 4.24, "the July GSTR-8 still files the July supply");
   assert.equal((await statutoryTcs.computeMonthlyTcsStatutory(db, { period: "2026-09", actorId: FINANCE })).totalTcs, 0, "and September does not pick it up");

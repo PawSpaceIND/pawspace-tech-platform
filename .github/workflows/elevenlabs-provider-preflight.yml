@@ -339,7 +339,7 @@ jobs:
         run: |
           node --experimental-strip-types <<'NODE'
           if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('One-shot demo cannot be rerun; inspect the first request instead');
-          if(process.env.EXPECTED_STAGING_SHA!=='566801bd456dd892d16101bcb3386c1d05a38f8d')throw Error('Exact approved deployed release required');
+          if(process.env.EXPECTED_STAGING_SHA!=='c1a5bd5ef0447beb3911ff52b31b55cf0c114376')throw Error('Exact approved deployed release required');
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
           const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
           const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
@@ -351,6 +351,10 @@ jobs:
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
           if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
+          const readyResponse=await fetch(origin+'/api/voice-outbound',{method:'GET',headers:{cookie},redirect:'error',signal:AbortSignal.timeout(15000)});
+          const readiness=(await readyResponse.json())?.data;
+          if(readyResponse.status!==200||readiness?.gate?.mode!=='uat'||readiness?.gate?.enabled!==true||readiness?.gate?.recordingApproved!==false||readiness?.gate?.allowlistSize!==1||readiness?.gate?.salesOutboundApproved!==true||readiness?.transport?.provider!=='elevenlabs_exotel'||readiness?.transport?.status!=='connected')throw Error('Serving app UAT/recording/provider prerequisites are not verified');
+          console.log('HANDSET_PRE_DIAL='+JSON.stringify({mode:readiness.gate.mode,recordingApproved:readiness.gate.recordingApproved,allowlistSize:readiness.gate.allowlistSize,provider:readiness.transport.provider,dialed:false}));
           const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'uat_specialist_sales_test',useCase,customerId,cityId:'blr'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
           const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);

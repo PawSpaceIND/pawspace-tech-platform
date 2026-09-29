@@ -36,3 +36,5 @@ jobs:
       - run: npm ci
       - name: Run dedicated financial lifecycle certification
         run: npm run test:financial-ledger
+      - name: Run native local D1 journal integrity checks
+        run: node --experimental-strip-types --test --test-concurrency=1 tests/integration/finance-journal-integrity.test.mjs
