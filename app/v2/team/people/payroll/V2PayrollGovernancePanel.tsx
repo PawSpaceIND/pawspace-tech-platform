@@ -7,8 +7,8 @@ type Adj={id:string;employee_id:string;kind:string;amount:number;units:number;re
 type Item={employee_id:string;amount:number;batch_code:string;release_at:number;hold_status:string;hold_reason?:string|null};
 type Data={policy?:Record<string,unknown>|null;run?:Run|null;results:Result[];adjustments:Adj[];releasePlan?:Record<string,unknown>&{items:Item[]}|null;truth:Record<string,unknown>};
 type Props={runs:Run[];employees:Emp[]};
-const box={border:"1px solid var(--staff-line)",borderRadius:12,padding:16,margin:"16px 0"};
-const input={display:"block",width:"100%",minHeight:42,padding:9,border:"1px solid var(--staff-line)",borderRadius:8,background:"var(--staff-surface)",color:"var(--staff-text)"};
+const box={border:"1px solid var(--staff-line)",borderRadius:"calc(12px * var(--paw-radius-scale))",padding:16,margin:"16px 0"};
+const input={display:"block",width:"100%",minHeight:42,padding:9,border:"1px solid var(--staff-line)",borderRadius:"calc(8px * var(--paw-radius-scale))",background:"var(--staff-surface)",color:"var(--staff-text)"};
 const day=(v:number)=>new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"});
 const at=(date:string)=>Date.parse(date+"T10:00:00+05:30");
 export default function V2PayrollGovernancePanel({runs,employees}:Props){
@@ -18,7 +18,7 @@ export default function V2PayrollGovernancePanel({runs,employees}:Props){
  const[salaryDate,setSalaryDate]=useState(""),[batchCode,setBatchCode]=useState("BATCH-1"),[holdReason,setHoldReason]=useState("");
  async function load(id=runId){if(!id)return;const r=await fetch("/api/v2/payroll-governance?runId="+encodeURIComponent(id),{cache:"no-store"}),p=await r.json();if(!r.ok)throw new Error(p.error||"V2 payroll governance load failed");setData(p.data);}
  async function act(body:Record<string,unknown>,success:string){setBusy(true);setErr("");setMsg("");try{const r=await fetch("/api/v2/payroll-governance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),p=await r.json();if(!r.ok)throw new Error(p.error||"Action failed");setMsg(success);await load();}catch(e){setErr(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
- useEffect(()=>{if(runId)void load(runId).catch(e=>setErr(e instanceof Error?e.message:String(e)));},[runId]);
+ useEffect(()=>{if(!runId)return;let active=true;void fetch("/api/v2/payroll-governance?runId="+encodeURIComponent(runId),{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok)throw new Error(p.error||"V2 payroll governance load failed");if(active)setData(p.data);}).catch(e=>{if(active)setErr(e instanceof Error?e.message:String(e));});return()=>{active=false;};},[runId]);
  const selected=useMemo(()=>data?.results.find(r=>r.employee_id===employeeId),[data,employeeId]);
  const approved=String(data?.releasePlan?.status||"")==="approved";
  const split=(v:string)=>v.split(",").map(x=>x.trim()).filter(Boolean);
