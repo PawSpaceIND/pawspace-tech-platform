@@ -25,5 +25,17 @@ test('chat additions are presentation-only and cannot hide document overflow or 
  sheet.walkDecls(decl=>{assert.doesNotMatch(decl.value,/expression\(|javascript:|https?:\/\//i);if(/^overflow/.test(decl.prop))assert.doesNotMatch(decl.value,/hidden|clip/);if(decl.prop==='display')assert.notEqual(decl.value,'none');});
 });
 test('chat audit isolates the browser from shared deployment and never reuses a stale server',()=>{
- const source=read('playwright.ui-chat.config.ts');assert.match(source,/resolveUiAuditServer/);assert.match(source,/reuseExistingServer:false/);assert.match(source,/retries:0/);assert.match(source,/PAWSPACE_PAYMENT_ENV:'sandbox'/);assert.match(source,/PAWSPACE_PAYMENT_LIVE_APPROVED:'false'/);
+ const source=read('playwright.ui-chat.config.ts');assert.match(source,/resolveUiChatServer/);assert.match(source,/reuseExistingServer:false/);assert.match(source,/retries:0/);assert.match(source,/PAWSPACE_PAYMENT_ENV:'sandbox'/);assert.match(source,/PAWSPACE_PAYMENT_LIVE_APPROVED:'false'/);
+});
+
+import {resolveUiChatServer} from '../scripts/ui-chat-server.mjs';
+test('chat test server uses explicit unprivileged local ports and refuses portless origins',()=>{
+ assert.deepEqual(resolveUiChatServer(),{port:'4209',baseURL:'http://127.0.0.1:4209'});
+ assert.deepEqual(resolveUiChatServer({PW_BASE_URL:'http://localhost:4318/'}),{port:'4318',baseURL:'http://localhost:4318'});
+ assert.deepEqual(resolveUiChatServer({PW_PORT:'4318'}),{port:'4318',baseURL:'http://127.0.0.1:4318'});
+ for(const PW_BASE_URL of ['http://localhost/','http://127.0.0.1','http://localhost:80','http://localhost:1023'])assert.throws(()=>resolveUiChatServer({PW_BASE_URL}),/unprivileged port/);
+ for(const PW_PORT of ['1','80','1023'])assert.throws(()=>resolveUiChatServer({PW_PORT}),/unprivileged port/);
+ assert.equal(resolveUiChatServer({PW_PORT:'1024'}).port,'1024');assert.equal(resolveUiChatServer({PW_PORT:'65535'}).port,'65535');
+ assert.throws(()=>resolveUiChatServer({PW_PORT:'4209',PW_BASE_URL:'http://localhost:4318'}),/must match/);
+ for(const PW_BASE_URL of ['https://localhost:4209','http://example.invalid:4209','http://localhost:4209/path','http://u:p@localhost:4209'])assert.throws(()=>resolveUiChatServer({PW_BASE_URL}),/loopback HTTP/);
 });

@@ -1,6 +1,6 @@
 import {defineConfig} from '@playwright/test';
-import {resolveUiAuditServer} from './scripts/ui-audit-server.mjs';
-const {port,baseURL}=resolveUiAuditServer({PW_PORT:process.env.PW_PORT||(process.env.PW_BASE_URL?undefined:'4209'),PW_BASE_URL:process.env.PW_BASE_URL});
+import {resolveUiChatServer} from './scripts/ui-chat-server.mjs';
+const {port,baseURL}=resolveUiChatServer({PW_PORT:process.env.PW_PORT,PW_BASE_URL:process.env.PW_BASE_URL});
 export default defineConfig({
  testDir:'./e2e',testMatch:'ui-audit-customer-chat.spec.ts',timeout:45_000,
  fullyParallel:true,workers:1,retries:0,forbidOnly:!!process.env.CI,

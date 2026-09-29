@@ -7,6 +7,7 @@ on:
       - 'e2e/ui-audit-customer-chat.spec.ts'
       - 'playwright.ui-chat.config.ts'
       - 'scripts/ui-audit-server.mjs'
+      - 'scripts/ui-chat-server.mjs'
       - 'tests/ui-chat-presentation.test.mjs'
       - 'tests/fixtures/*contract.json'
       - '.github/workflows/ui-chat-audit.yml'
