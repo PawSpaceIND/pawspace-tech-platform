@@ -737,6 +737,8 @@ jobs:
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
           AUDIO_PROFILE: ${{ inputs.audio_profile }}
+          ELEVENLABS_VOICE_EN_ID: ${{ vars.ELEVENLABS_VOICE_EN_ID }}
+          ELEVENLABS_CUSTOM_VOICE_ID: ${{ vars.ELEVENLABS_CUSTOM_VOICE_ID }}
           ELEVENLABS_VOICE_HI_ID: ${{ vars.ELEVENLABS_VOICE_HI_ID }}
           ELEVENLABS_VOICE_TA_ID: ${{ vars.ELEVENLABS_VOICE_TA_ID }}
           ELEVENLABS_VOICE_ML_ID: ${{ vars.ELEVENLABS_VOICE_ML_ID }}
@@ -764,8 +766,11 @@ jobs:
             const current=await read.json().catch(()=>({}));
             if(!read.ok) throw new Error(label+' agent read failed '+read.status);
             const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
-            const voiceId=currentTts.voice_id;
+            const configuredEnglishVoice=String(process.env.ELEVENLABS_VOICE_EN_ID||'').trim();
+            const configuredCustomVoice=String(process.env.ELEVENLABS_CUSTOM_VOICE_ID||'').trim();
+            const voiceId=configuredCustomVoice||configuredEnglishVoice||currentTts.voice_id;
             if(!voiceId) throw new Error(label+' agent voice_id missing');
+            console.log(label+'_VOICE_SELECTION='+JSON.stringify({source:configuredCustomVoice?'custom_admin_voice':configuredEnglishVoice?'configured_english_voice':'existing_agent_voice'}));
             const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
             const voiceMeta=await voiceRead.json().catch(()=>({}));
             if(voiceRead.ok) console.log(label+'_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
@@ -812,8 +817,8 @@ jobs:
                   turn_model:'turn_v3',
                   soft_timeout_config:{
                     ...(currentTurn?.soft_timeout_config||{}),
-                    timeout_seconds:3,
-                    message:"Sure, give me a second.",
+                    timeout_seconds:4.5,
+                    message:"I'm checking that now.",
                     max_soft_timeouts_per_generation:1
                   }
                 }

@@ -50,6 +50,16 @@ test("chat callback wiring uses canonical phone, persisted consent, Customer360 
  assert.match(route,/mode===\"public\"/);assert.match(route,/callbackAutomation:false/);assert.match(route,/isCustomerCallbackRequest/);
 });
 
+test("customer-requested timed callbacks are queued for the requested instant instead of dialled immediately",()=>{
+ const source=read("lib/ai-first-control-plane.ts"),dispatch=read("lib/outbound-ai-dispatch.ts"),voice=read("lib/voice-outbound-governance.ts");
+ assert.match(source,/detectAiOutboundEscalation\(input\.message,now\)/);
+ assert.match(source,/source_type,lane,priority_score[\s\S]*'ai'[\s\S]*'requested_callback'/);
+ assert.match(source,/callback_at,status[\s\S]*'queued'/);
+ assert.match(source,/scheduleLeadCallback/);
+ assert.match(dispatch,/requested_callback[\s\S]*customer_requested_callback/);
+ assert.match(voice,/code: "customer_requested_callback"[\s\S]*purpose: "transactional"[\s\S]*requiresSalesApproval: false/);
+});
+
 test("inbound carrier boundary verifies provider signature before STT-AI-TTS pipeline",()=>{
  const route=read("app/api/voice-provider-webhook/route.ts"),inbound=read("lib/inbound-ai-telephony.ts");
  assert.match(route,/provider\.verifyWebhook/);assert.match(route,/inbound_ai_start/);assert.match(route,/inbound_ai_turn/);assert.match(route,/inbound_ai_end/);

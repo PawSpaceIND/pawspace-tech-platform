@@ -61,7 +61,8 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
     * and the voice policy engine decide). When it cannot, the team is asked to call instead. */
    const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:"Please call me back",idempotencyKey:`${body.idempotencyKey}:call`});
    if(!callback.matched)await requestAiHumanHandoff(db,{actorEmail:actor.email,threadId:result.threadId,customerId,reason:"customer_requested_human",confidence:null});
-   await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,surface:"web_chat_bot"});
+   const immediateCallId=callback.matched&&"callback"in callback&&callback.callback?callback.callback.callId:null;
+   await securityAudit(db,actor,"ai.web_chat.callback","voice_call",immediateCallId,"completed",{customerId,matched:callback.matched,scheduled:callback.matched&&"scheduled"in callback?callback.scheduled:false,requestedAt:callback.matched&&"requestedAt"in callback?callback.requestedAt:null,surface:"web_chat_bot"});
    return json({data:{mode:"authenticated",...result,callback,transcript:await withTranscript()}},callback.matched?201:200);
   }
   const{handoff,...shown}="handoff"in result?result:{...result,handoff:undefined};
@@ -74,7 +75,8 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  // capture-only so an internet user cannot type somebody else's number and cause PawSpace to dial it.
  if(isCustomerCallbackRequest(body.message)){
   const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:body.message,idempotencyKey:body.idempotencyKey});
-  await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,consentSource:callback.matched?callback.consentSource:null,policyEngine:callback.matched?callback.policyEngine:null});
+  const immediateCallId=callback.matched&&"callback"in callback&&callback.callback?callback.callback.callId:null;
+ await securityAudit(db,actor,"ai.web_chat.callback","voice_call",immediateCallId,"completed",{customerId,matched:callback.matched,scheduled:callback.matched&&"scheduled"in callback?callback.scheduled:false,requestedAt:callback.matched&&"requestedAt"in callback?callback.requestedAt:null,consentSource:callback.matched?callback.consentSource:null,policyEngine:callback.matched?callback.policyEngine:null});
   return json({data:{mode:"authenticated",callback,autonomousExecution:callback.matched?"governed_customer_requested_callback":false}},callback.matched?201:200);
  }
  const data=await runAuthenticatedAiWebChat(db,{actor,customerId,text:body.message,idempotencyKey:body.idempotencyKey},{acceptWhileWithTeam:true});await securityAudit(db,actor,"ai.web_chat.turn","communication_thread",data.threadId,"completed",{duplicatePrevented:data.duplicatePrevented,withTeam:"withTeam"in data,autonomousExecution:false});return json({data},200);
