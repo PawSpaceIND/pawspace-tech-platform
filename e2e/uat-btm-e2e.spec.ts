@@ -874,3 +874,40 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     }
   } finally { await context.close(); }
 });
+test("6. Founder Finance — same booking appears in Grooming finance and Accounts with receivable outstanding", async ({ browser }) => {
+  test.setTimeout(120_000);
+  section("6. Founder Finance — invoice, receivable and Accounts projection");
+  expect(bookingId, "completed booking id").not.toEqual("");
+  const context = await browser.newContext();
+  try {
+    let page: Page | null = null;
+    for (const email of FOUNDER_EMAILS) { try { page = await staffSignIn(context, email); break; } catch { /* try next founder-capable fixture */ } }
+    expect(page, "founder-capable staff identity must sign in for Finance verification").not.toBeNull();
+    const finance = await page!.evaluate(async () => {
+      const response = await fetch("/api/grooming-finance", { cache: "no-store", credentials: "include" });
+      return { http: response.status, body: await response.json().catch(() => null) as unknown };
+    });
+    const financeBody = finance.body as { items?: Array<Record<string, unknown>> } | null;
+    const financeItem = (financeBody?.items || []).find(row => String(row.booking_id) === bookingId);
+    expect(finance.http, `Grooming finance: ${JSON.stringify(finance.body)}`).toBe(200);
+    expect(financeItem, `booking ${bookingId} must appear in Grooming finance`).toBeTruthy();
+    expect(String(financeItem?.booking_status)).toBe("completed");
+    expect(String(financeItem?.invoice_status)).toBe("issued");
+    expect(financeItem?.invoiced).toBe(true);
+    if (bookingMode === "pay_after" && JOURNEY_MODE === "pay_after_only") {
+      expect(Number(financeItem?.receivable), "uncollected pay-after booking remains a receivable").toBeGreaterThan(0);
+      expect(["captured", "paid"]).not.toContain(String(financeItem?.payment_status));
+    }
+    const accounts = await page!.evaluate(async () => {
+      const response = await fetch("/api/accounts-business-view", { cache: "no-store", credentials: "include" });
+      return { http: response.status, body: await response.json().catch(() => null) as unknown };
+    });
+    const accountsBody = accounts.body as { data?: { ledger?: Array<Record<string, unknown>> } } | null;
+    const accountsRow = (accountsBody?.data?.ledger || []).find(row => String(row.bookingId) === bookingId);
+    expect(accounts.http, `Accounts view: ${JSON.stringify(accounts.body)}`).toBe(200);
+    expect(accountsRow, `booking ${bookingId} must appear in the Accounts business ledger`).toBeTruthy();
+    expect(String(accountsRow?.invoiceNumber)).toBe(String(financeItem?.invoice_number));
+    expect(String(accountsRow?.status)).toBe("issued");
+    log(`✅ Same booking ${bookingId} reached Finance and Accounts: invoice ${String(financeItem?.invoice_number)}, receivable ₹${Number(financeItem?.receivable).toFixed(2)}.`);
+  } finally { await context.close(); }
+});
