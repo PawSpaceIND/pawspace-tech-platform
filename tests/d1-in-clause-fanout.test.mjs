@@ -127,6 +127,21 @@ test("real execution: the payment and invoice reads behind the accounts view sur
   assert.equal(view.ledger.reduce((sum, row) => sum + Number(row.gross || 0), 0), 100 * AMOUNT);
   // Rows past the first chunk are the ones the single query used to lose.
   assert.ok(view.ledger.some((row) => Number(String(row.bookingId).replace("BK", "")) > 90), "bookings beyond the first chunk are present");
+
+  sqlite.prepare("UPDATE canonical_bookings SET created_at=created_at+10000 WHERE id='BK00001'").run();
+  const recent = await build(globalThis.__FANOUT_DB__, {});
+  assert.equal(recent.ledger[0].bookingId, "BK00001", "the visible Accounts ledger is newest-first, not booking-id order");
+
+  const scoped = await build(globalThis.__FANOUT_DB__, { bookingId: "BK00000" });
+  assert.equal(scoped.ledger.length, 1, "booking drilldown is not limited by the 100-row display window");
+  assert.equal(scoped.ledger[0].bookingId, "BK00000");
+  assert.equal(scoped.ledger[0].status, "captured");
+});
+
+test("accounts API forwards an exact booking drilldown instead of relying on the 100-row window", async () => {
+  const source = await readFile("app/api/accounts-business-view/route.ts", "utf8");
+  assert.match(source, /searchParams\.get\("bookingId"\)/);
+  assert.match(source, /buildAccountsBusinessView\(db, \{ bookingId: bookingId \|\| undefined \}\)/);
 });
 
 test("real execution: customer names on the partner job feed survive the cap", async () => {

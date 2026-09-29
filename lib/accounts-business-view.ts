@@ -43,9 +43,10 @@ const SETTLEMENT_LEDGER_VERTICALS = [
  * payment_reconciliation_records, aggregated per-payment rather than as a discrete ledger) and are
  * not forced into the same union, which would risk silently misclassifying their real records.
  */
-export async function buildAccountsBusinessView(db: Db) {
+export async function buildAccountsBusinessView(db: Db, input: { bookingId?: string } = {}) {
   const degradation = createDegradationLog();
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
+  const requestedBookingId = String(input.bookingId || "").trim();
+  const bookings = await safeAll(db, "SELECT id,service_code,total_amount,created_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
@@ -76,7 +77,7 @@ export async function buildAccountsBusinessView(db: Db) {
     for (const r of rows) { providerPayable += Number(r.payout_amount || 0); providerPayableCount++; }
   }
 
-  const ledger = bookings
+  const ledgerRows = bookings
     .map(b => {
       const id = String(b.id), invoice = invoiceByBooking.get(id), payment = paymentByBooking.get(id);
       if (!invoice && !payment) return null;
@@ -88,11 +89,15 @@ export async function buildAccountsBusinessView(db: Db) {
         net: invoice ? Number(invoice.net_amount) : Number(payment?.amount || 0),
         status: invoice ? String(invoice.status) : (payment ? String(payment.status) : "no_invoice"),
         method: payment ? String(payment.method) : null,
+        createdAt: Number(b.created_at || 0),
       };
     })
-    .filter((row): row is NonNullable<typeof row> => row !== null)
-    .sort((a, b) => (a.bookingId < b.bookingId ? 1 : -1))
-    .slice(0, 100);
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+  const ledger = requestedBookingId
+    ? ledgerRows.filter(row => row.bookingId === requestedBookingId)
+    : ledgerRows
+        .sort((a, b) => (b.createdAt - a.createdAt) || b.bookingId.localeCompare(a.bookingId))
+        .slice(0, 100);
 
   return {
     degraded: degradationNotice(degradation.entries()),

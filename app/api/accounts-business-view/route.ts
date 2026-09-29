@@ -8,7 +8,10 @@ export async function GET(request: Request) {
     const actor = await resolveActor(request);
     requirePermission(actor, "finance.view");
     const db = await database();
-    const data = await buildAccountsBusinessView(db);
+    const url = new URL(request.url);
+    const bookingId = String(url.searchParams.get("bookingId") || "").trim();
+    if (bookingId.length > 160) return json({ error: "Booking ID is too long" }, 400);
+    const data = await buildAccountsBusinessView(db, { bookingId: bookingId || undefined });
     return json({ data, source: "booking_invoices_and_payments" });
   } catch (error) {
     return authError(error, "Unable to load accounts business view");
