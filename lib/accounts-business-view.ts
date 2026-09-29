@@ -70,13 +70,21 @@ export async function buildAccountsBusinessView(db: Db, options: { bookingId?: s
 
   let refundPending = 0, refundPendingCount = 0, providerPayable = 0, providerPayableCount = 0;
   for (const { table } of REFUND_LEDGER_VERTICALS) {
-    const rows = await safeAll(db, `SELECT amount FROM ${table} WHERE status='sandbox_pending'`);
+    const scopedSql = bookingId
+      ? `SELECT amount FROM ${table} WHERE status='sandbox_pending' AND booking_id=?`
+      : `SELECT amount FROM ${table} WHERE status='sandbox_pending'`;
+    const scopedBinds = bookingId ? [bookingId] : [];
+    const rows = await safeAll(db, scopedSql, scopedBinds);
     for (const r of rows) { refundPending += Number(r.amount || 0); refundPendingCount++; }
   }
   // 'queued_for_release' is written by the provider payout queue (lib/provider-payout-queue.ts): the payout
   // is waiting for Finance's release click, so the money is still owed to the provider.
   for (const { table } of SETTLEMENT_LEDGER_VERTICALS) {
-    const rows = await safeAll(db, `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL`);
+    const scopedSql = bookingId
+      ? `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL AND booking_id=?`
+      : `SELECT payout_amount FROM ${table} WHERE payout_status IN ('not_instructed','instructed','queued_for_release') AND payout_amount IS NOT NULL`;
+    const scopedBinds = bookingId ? [bookingId] : [];
+    const rows = await safeAll(db, scopedSql, scopedBinds);
     for (const r of rows) { providerPayable += Number(r.payout_amount || 0); providerPayableCount++; }
   }
 
