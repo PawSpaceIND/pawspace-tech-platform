@@ -46,7 +46,9 @@ const SETTLEMENT_LEDGER_VERTICALS = [
 export async function buildAccountsBusinessView(db: Db, input: { bookingId?: string } = {}) {
   const degradation = createDegradationLog();
   const requestedBookingId = String(input.bookingId || "").trim();
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount,created_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
+  const bookings = requestedBookingId
+    ? await safeAll(db, "SELECT id,service_code,total_amount,created_at FROM canonical_bookings WHERE id=? AND status NOT IN ('draft','cancelled')", [requestedBookingId], degradation, "bookings")
+    : await safeAll(db, "SELECT id,service_code,total_amount,created_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {

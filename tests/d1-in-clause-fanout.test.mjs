@@ -132,7 +132,14 @@ test("real execution: the payment and invoice reads behind the accounts view sur
   const recent = await build(globalThis.__FANOUT_DB__, {});
   assert.equal(recent.ledger[0].bookingId, "BK00001", "the visible Accounts ledger is newest-first, not booking-id order");
 
-  const scoped = await build(globalThis.__FANOUT_DB__, { bookingId: "BK00000" });
+  const scopedDb = {
+    ...globalThis.__FANOUT_DB__,
+    prepare(sql) {
+      if (sql.includes("FROM canonical_bookings") && !sql.includes("WHERE id=?")) throw new Error("scoped accounts lookup attempted a full booking scan");
+      return globalThis.__FANOUT_DB__.prepare(sql);
+    },
+  };
+  const scoped = await build(scopedDb, { bookingId: "BK00000" });
   assert.equal(scoped.ledger.length, 1, "booking drilldown is not limited by the 100-row display window");
   assert.equal(scoped.ledger[0].bookingId, "BK00000");
   assert.equal(scoped.ledger[0].status, "captured");
