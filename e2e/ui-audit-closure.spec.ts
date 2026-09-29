@@ -260,6 +260,37 @@ for(const viewport of viewports) {
  });
 }
 
+for(const viewport of viewports) {
+ test(`open audit follow-ups ${viewport.width}`,async({page},info)=>{
+  await page.setViewportSize(viewport);
+  await ready(page,"/v2/team/whatsapp/templates");
+  const row=page.locator("table tbody tr").first();
+  await expect(row).toBeVisible();
+  const overflow=await row.locator("td").evaluateAll(cells=>cells.slice(0,4).map((cell,index)=>{
+   const cellBox=cell.getBoundingClientRect();
+   const offenders=Array.from(cell.querySelectorAll("b,small,span")).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&(r.right>cellBox.right+1||r.left<cellBox.left-1);}).map(el=>({text:el.textContent?.trim(),right:el.getBoundingClientRect().right,cellRight:cellBox.right}));
+   return {index,cellWidth:cellBox.width,offenders};
+  }));
+  expect.soft(overflow.flatMap(cell=>cell.offenders),JSON.stringify(overflow)).toEqual([]);
+  await row.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("whatsapp-template-cells.png")});
+
+  await ready(page,"/v2/team/ai/handoff");
+  const detail=page.locator('[data-audit-list-detail] > article');
+  await expect(detail.getByText("No Gate-4 handoff is active or recorded for this thread.",{exact:true})).toBeVisible();
+  const detailBox=await detail.boundingBox();
+  expect.soft(detailBox!.height,"empty handoff detail should size to content instead of a large blank card").toBeLessThan(320);
+  await detail.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("handoff-empty-detail.png")});
+
+  await page.route("**/api/ai-human-handoff?threadId=**",route=>route.fulfill({json:{data:{current:{status:"staff_active",reason:"customer_request",queue_code:"customer_experience",confidence:.9,summary:{transcript:[{direction:"inbound",channel:"web",text:"Synthetic populated handoff"}]}},aiPaused:true,sameCanonicalThread:true}}}));
+  await ready(page,"/v2/team/ai/handoff");
+  expect.soft((await detail.boundingBox())!.height,"populated handoff detail keeps its established workspace depth").toBeGreaterThanOrEqual(560);
+  await detail.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("handoff-populated-detail.png")});
+ });
+}
+
 test('canonical staff routes retain the shared table and utility repairs',async({page})=>{
  await page.setViewportSize({width:390,height:844});
  for(const route of canonicalTableRoutes) {

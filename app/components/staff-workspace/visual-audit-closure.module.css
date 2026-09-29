@@ -13,7 +13,19 @@
 .scope.scope [data-audit-queue-row] > button { white-space:nowrap; justify-self:end; }
 .scope.scope [data-audit-list-detail] { align-items:start; }
 .scope.scope [data-audit-list-detail] > aside { max-height:72dvh; overflow-y:auto !important; overscroll-behavior-y:contain; scrollbar-gutter:stable; }
-.scope.scope [data-audit-list-detail] > section { align-self:start; }
+.scope.scope [data-audit-list-detail] > :is(section,article) { align-self:start; }
+.scope.scope [data-audit-list-detail] > article:has(> hr + p:last-child) { min-height:0 !important; }
+/* F-005: template IDs / Meta references stay inside their cells; the table itself scrolls instead of text painting into neighbours. */
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] table { min-width:125rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(1) { min-width:34rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(2) { min-width:9rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(3) { min-width:18rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(4) { min-width:32rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(5) { min-width:16rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(6) { min-width:16rem !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] td > div { min-width:0; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] td:nth-child(2) { white-space:nowrap !important; }
+.scope.scope [aria-label="Templates table; scroll horizontally for all columns"] td:is(:nth-child(1),:nth-child(4)) small:first-of-type { white-space:nowrap; overflow-wrap:normal !important; word-break:normal; }
 .utility { display:flex; justify-content:flex-end; align-items:center; min-height:56px; padding:6px 20px; border-bottom:1px solid var(--paw-line); background:var(--paw-surface); }
 .scope .utility :global(.paw-appearance-trigger) { position:static !important; inset:auto !important; transform:none !important; margin:0; box-shadow:none; }
 @media(max-width:800px) { .utility { min-height:48px; padding:4px 14px; } }
