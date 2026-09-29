@@ -85,7 +85,7 @@ async function openGrooming(page: Page, serviceDate: string, slot = "3:00–5:00
   await expect(page.getByText("Verified service doorstep", { exact: true })).toBeVisible();
   const serviceDay = Number(serviceDate.slice(-2));
   const serviceMonth = new Intl.DateTimeFormat("en-IN", { month: "short", timeZone: "Asia/Kolkata" }).format(new Date(`${serviceDate}T12:00:00+05:30`));
-  await page.getByRole("button", { name: new RegExp(`${serviceDay} ${serviceMonth}$`) }).click();
+  await page.locator("button[aria-pressed]").filter({ hasText: new RegExp(`${serviceDay} ${serviceMonth}$`) }).click();
   await page.getByRole("button", { name: new RegExp(`^${slot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).click();
   const preferredRegion = page.getByRole("region", { name: "Preferred groomer" });
   await expect(preferredRegion).toBeVisible();
