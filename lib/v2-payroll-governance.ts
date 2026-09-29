@@ -136,9 +136,10 @@ export async function releaseHeldV2Salary(db:Db,input:{runId:string;employeeId:s
 export async function v2PayrollGovernanceDirectory(db:Db,runId?:string){
  await ensureV2PayrollGovernance(db);const policy=await activePolicy(db),run=runId?await db.prepare("SELECT * FROM payroll_runs WHERE id=?").bind(runId).first<Row>():null;
  const adjustments=runId?(await db.prepare("SELECT * FROM v2_payroll_adjustments WHERE run_id=? ORDER BY created_at DESC").bind(runId).all<Row>()).results:[];
+ const results=runId?(await db.prepare("SELECT r.id,r.employee_id,r.gross_earnings,r.total_deductions,r.reimbursements,r.net_pay,e.employee_code,e.display_name FROM employee_payroll_results r LEFT JOIN employees e ON e.id=r.employee_id WHERE r.run_id=? ORDER BY COALESCE(e.display_name,r.employee_id)").bind(runId).all<Row>()).results:[];
  const plan=runId?await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(runId).first<Row>():null;
  const items=plan?(await db.prepare("SELECT * FROM v2_salary_release_items WHERE plan_id=? ORDER BY release_at,employee_id").bind(plan.id).all<Row>()).results:[];
- return{policy,run,adjustments,releasePlan:plan?{...plan,items}:null,truth:{scope:"pawspace_v2_only",requiresHrApproval:true,requiresIndependentFinanceApproval:true,automaticPunitiveFine:false,leaveAwareLop:true,scheduledSalaryRelease:true,batchRelease:true,selectiveHold:true,liveMoneyEnabled:false}};
+ return{policy,run,results,adjustments,releasePlan:plan?{...plan,items}:null,truth:{scope:"pawspace_v2_only",requiresHrApproval:true,requiresIndependentFinanceApproval:true,automaticPunitiveFine:false,leaveAwareLop:true,scheduledSalaryRelease:true,batchRelease:true,selectiveHold:true,liveMoneyEnabled:false}};
 }
 
 
