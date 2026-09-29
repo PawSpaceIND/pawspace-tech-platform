@@ -129,6 +129,28 @@ test("real execution: the payment and invoice reads behind the accounts view sur
   assert.ok(view.ledger.some((row) => Number(String(row.bookingId).replace("BK", "")) > 90), "bookings beyond the first chunk are present");
 });
 
+test("real execution: Accounts defaults to the most recently updated booking, not the largest booking ID", async () => {
+  const sqlite = seedBookings();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL,status TEXT NOT NULL,gross_amount REAL NOT NULL,tax_amount REAL NOT NULL,net_amount REAL NOT NULL,issued_at INTEGER NOT NULL)");
+  sqlite.prepare("UPDATE canonical_bookings SET updated_at=updated_at+1000 WHERE id='BK00000'").run();
+  const accounts = await import("../lib/accounts-business-view.ts");
+  const view = await accounts.buildAccountsBusinessView(globalThis.__FANOUT_DB__);
+  assert.equal(view.ledger.length, 100);
+  assert.equal(view.ledger[0].bookingId, "BK00000", "the newest operational booking remains visible even when its ID sorts below the display cap");
+});
+
+test("real execution: Accounts exact-booking lookup reaches records outside the 100-row display window", async () => {
+  const sqlite = seedBookings();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL,status TEXT NOT NULL,gross_amount REAL NOT NULL,tax_amount REAL NOT NULL,net_amount REAL NOT NULL,issued_at INTEGER NOT NULL)");
+  const accounts = await import("../lib/accounts-business-view.ts");
+  const view = await accounts.buildAccountsBusinessView(globalThis.__FANOUT_DB__, { bookingId: "BK00000" });
+  assert.deepEqual(view.scope, { kind: "booking", bookingId: "BK00000" });
+  assert.equal(view.ledger.length, 1);
+  assert.equal(view.ledger[0].bookingId, "BK00000");
+  assert.equal(view.ledger[0].status, "captured");
+  assert.equal(view.receivable, 0);
+});
+
 test("real execution: customer names on the partner job feed survive the cap", async () => {
   const sqlite = seedBookings();
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'seed',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
@@ -246,3 +268,18 @@ test("the suites run on the Node the CI pins, not just the one on this machine",
   }
   assert.deepEqual(unguarded, [], "these suites install a resolver only on Node >=22.15 and will die on CI's Node — use installWorkersHooks from helpers/module-hooks.mjs");
 });
+
+test("real execution: Accounts exact-booking scope excludes unrelated refund and provider-payable totals", async () => {
+  const sqlite = seedBookings();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS boarding_refund_ledger (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,amount REAL NOT NULL,status TEXT NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS boarding_host_settlement_ledger (booking_id TEXT PRIMARY KEY,payout_amount REAL,payout_status TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO boarding_refund_ledger (id,booking_id,amount,status) VALUES ('REF-OTHER','BK00149',50,'sandbox_pending')").run();
+  sqlite.prepare("INSERT INTO boarding_host_settlement_ledger (booking_id,payout_amount,payout_status) VALUES ('BK00149',75,'not_instructed')").run();
+  const accounts = await import("../lib/accounts-business-view.ts");
+  const scoped = await accounts.buildAccountsBusinessView(globalThis.__FANOUT_DB__, { bookingId: "BK00000" });
+  assert.equal(scoped.refundQueue.amount, 0, "exact booking scope must not include another booking's pending refund");
+  assert.equal(scoped.refundQueue.count, 0);
+  assert.equal(scoped.providerPayable.amount, 0, "exact booking scope must not include another booking's provider payable");
+  assert.equal(scoped.providerPayable.count, 0);
+});
+

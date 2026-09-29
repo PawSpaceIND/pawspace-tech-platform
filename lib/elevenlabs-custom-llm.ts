@@ -45,7 +45,7 @@ export type VoiceHistoryMessage={role:"user"|"assistant";content:string};
 export function extractElevenLabsHistory(body:Row):VoiceHistoryMessage[]{
  const rows=Array.isArray(body.input)?body.input:Array.isArray(body.messages)?body.messages:[];
  const history:VoiceHistoryMessage[]=[];
- for(const item of rows.slice(-12)){
+ for(const item of rows.slice(-32)){
   if(!item||typeof item!=="object")continue;
   const row=item as Row,role=text(row.role).toLowerCase(),content=stringContent(row.content??row.input).slice(0,1000);
   if(content&&(role==="user"||role==="assistant"))history.push({role,content});
