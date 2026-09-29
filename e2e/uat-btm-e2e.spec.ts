@@ -142,18 +142,16 @@ async function ensurePet(page: Page) {
 
 async function chooseRequestedGroomer(page: Page) {
   if (PROVIDER_MODE !== "commission_named") return;
-  const section = page.locator("section").filter({
-    has: page.getByRole("heading", { name: "Available for this exact slot", exact: true }),
-  });
-  await expect(section, "exact-slot groomer choices must render for commission-provider UAT").toHaveCount(1, { timeout: 30_000 });
-  const automatic = section.getByRole("button", { name: "PawSpace chooses the best available groomer", exact: true });
+  const section = page.getByRole("region", { name: "Preferred groomer" });
+  await expect(section, "preferred-groomer choices must render for commission-provider UAT").toHaveCount(1, { timeout: 30_000 });
+  const noPreference = section.getByRole("button", { name: "No preference", exact: true });
   const target = section.getByRole("button").filter({ hasText: COMMISSION_PROVIDER_NAME }).first();
   await expect(target, `${COMMISSION_PROVIDER_NAME} must be offered for this exact slot`).toBeVisible({ timeout: 30_000 });
   await expect(target).toBeEnabled();
   await target.click();
-  await expect(target).toHaveAttribute("aria-pressed", "true");
-  await expect(automatic).toHaveAttribute("aria-pressed", "false");
-  log(`✅ Commission-provider mode: explicitly selected ${COMMISSION_PROVIDER_NAME} (${COMMISSION_PROVIDER_ID}); automatic matching deselected.`);
+  await expect(target).toHaveClass(/selected/);
+  await expect(noPreference).not.toHaveClass(/selected/);
+  log(`✅ Commission-provider mode: explicitly selected ${COMMISSION_PROVIDER_NAME} (${COMMISSION_PROVIDER_ID}); no-preference matching deselected.`);
 }
 
 /** Walk grooming steps 1→4 for the BTM doorstep on SERVICE_DATE, stopping on the review step. Returns the slot used. */
