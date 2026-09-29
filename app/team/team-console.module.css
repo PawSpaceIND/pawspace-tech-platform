@@ -115,3 +115,7 @@
 
 .fieldRow { align-items:end; }
 .tableWrap { min-width:0; max-width:100%; }
+
+/* F-002 live retest: shrink table stack tracks; long IDs must not paint into the next cell. */
+.table .requestDetails { min-width:14rem; grid-template-columns:minmax(0,1fr); }
+.table .requestDetails > :is(b,small,span) { min-width:0; overflow-wrap:anywhere; }
