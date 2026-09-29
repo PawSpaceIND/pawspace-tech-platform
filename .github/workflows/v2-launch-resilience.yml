@@ -14,6 +14,7 @@ on:
       - 'tests/provider-proof-offline-queue.test.mjs'
       - 'tests/booking-fanout-atomicity*'
       - 'tests/scheduling-rules-authorization*'
+      - 'tests/helpers/wrangler-ready.mjs'
       - 'wrangler.scheduling-rules-authorization.jsonc'
       - 'package-lock.json'
       - '.github/workflows/v2-launch-resilience.yml'
