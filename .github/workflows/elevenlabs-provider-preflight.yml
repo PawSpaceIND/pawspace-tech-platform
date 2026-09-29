@@ -30,6 +30,18 @@ on:
         description: 'Human-call TTS profile: flash_v2 (English Agent), flash_v2_5, or v3_conversational'
         required: false
         default: 'flash_v2'
+      attended_statement:
+        description: 'After the call only: exact participant statement documented in VOICE_HANDSET_TRACE. Never infer confirmation.'
+        required: false
+        default: ''
+      attended_reported_at:
+        description: 'UTC time when the participant explicitly confirmed the exact call (ISO 8601 Z)'
+        required: false
+        default: ''
+      specialist_customer_id:
+        description: 'Exact existing canonical customer for the attended specialist demo; normal app ownership checks still apply'
+        required: false
+        default: ''
       specialist_use_case:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
@@ -296,6 +308,12 @@ jobs:
           node-version: '22.16.0'
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
           SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
@@ -303,45 +321,25 @@ jobs:
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
         run: |
-          node <<'NODE'
+          node --experimental-strip-types <<'NODE'
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
-          const useCase=String(process.env.SPECIALIST_USE_CASE||'').trim();
-          if(!['grooming_sales','training_sales'].includes(useCase))throw new Error('specialist use case must be grooming_sales or training_sales');
-          const access=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
-          const elevenKey=String(process.env.ELEVENLABS_API_KEY||'').trim();
-          const agentId=useCase==='grooming_sales'?String(process.env.GROOMING_AGENT_ID||'').trim():String(process.env.TRAINING_AGENT_ID||'').trim();
-          const allow=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim().split(/[\s,;]+/).filter(Boolean);
-          if(!access||!elevenKey||!agentId||allow.length!==1)throw new Error('specialist UAT secrets/agent id/allowlist unavailable');
-          const digits=allow[0].replace(/\D/g,''); const phone=allow[0].startsWith('+')?allow[0]:(digits.length===10?'+91'+digits:'+'+digits);
+          const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
+          const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
+          const {useCase,agentId,phone,customerId,idempotencyKey}=specialistDemoPreflight(process.env);
+          const access=process.env.PAWSPACE_UAT_ACCESS_CODE;
           console.log('::add-mask::'+phone);
-          const customerId='INBOUND-9513886363';
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
           if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
-          const before=Date.now();
-          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey:'voice-specialist-uat:'+useCase+':'+Date.now(),useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey,useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
           const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
           console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
           if(call.status!==201||!body?.data?.callId||!dialed)throw new Error('specialist call was not accepted by PawSpace');
           console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
-          let detail=null,conversationId='';
-          for(let attempt=0;attempt<40;attempt++){
-            await new Promise(r=>setTimeout(r,4000));
-            const lr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=20`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});
-            if(!lr.ok)continue;const list=await lr.json().catch(()=>({}));const rows=Array.isArray(list?.conversations)?list.conversations:[];
-            const candidate=rows.filter(x=>Number(x?.start_time_unix_secs||0)*1000>=before-15000).sort((a,b)=>Number(b?.start_time_unix_secs||0)-Number(a?.start_time_unix_secs||0))[0];
-            if(!candidate?.conversation_id)continue;conversationId=String(candidate.conversation_id);console.log('::add-mask::'+conversationId);
-            const dr=await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`,{headers:{'xi-api-key':elevenKey},signal:AbortSignal.timeout(20000)});if(!dr.ok)continue;detail=await dr.json().catch(()=>({}));
-            const tr=Array.isArray(detail?.transcript)?detail.transcript:[];console.log(`SPECIALIST_POLL useCase=${useCase} status=${String(detail?.status||'')} turns=${tr.length} hasAudio=${Boolean(detail?.has_audio)} userAudio=${Boolean(detail?.has_user_audio)} responseAudio=${Boolean(detail?.has_response_audio)}`);
-            if(String(detail?.status)==='failed'||String(detail?.status)==='done'||tr.length>=2||detail?.has_response_audio)break;
-          }
-          if(!detail||!conversationId)throw new Error('ElevenLabs specialist conversation not observed');
-          const tr=Array.isArray(detail.transcript)?detail.transcript:[];
-          console.log('SPECIALIST_RESULT='+JSON.stringify({useCase,status:detail.status,agentId:detail.agent_id,expectedAgentId:agentId,hasAudio:Boolean(detail.has_audio),hasUserAudio:Boolean(detail.has_user_audio),hasResponseAudio:Boolean(detail.has_response_audio),turns:tr.length,safeTranscript:tr.slice(0,10).map(t=>({role:t.role,message:String(t.message||'').replace(/\s+/g,' ').slice(0,500)}))}));
-          if(String(detail.agent_id)!==agentId)throw new Error('specialist call used the wrong ElevenLabs agent');
-          if(String(detail.status)==='failed')throw new Error('ElevenLabs specialist conversation failed');
+          const evidence=await verifyHandsetAttempt({appCallId:body.data.callId,agentId,phone,cookie},process.env,{log:result=>console.log('HANDSET_EVIDENCE='+JSON.stringify(result))});
+          console.log('HANDSET_VERIFIED='+JSON.stringify(evidence));
           NODE
 
   direct-grooming-call:
@@ -974,3 +972,57 @@ jobs:
           path: voice-repair-config.json
           retention-days: 1
           if-no-files-found: error
+
+  verify-attended-handset:
+    if: ${{ inputs.confirm == 'verify-attended-handset' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Verify an explicitly attended exact call without dialing or recording
+        env:
+          UAT_VOICE_CALL_ID: ${{ inputs.uat_voice_call_id }}
+          ATTENDED_STATEMENT: ${{ inputs.attended_statement }}
+          ATTENDED_REPORTED_AT: ${{ inputs.attended_reported_at }}
+          SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+        run: node --experimental-strip-types scripts/verify-attended-handset.mjs
+
+  verify-staging-voice-routing:
+    if: ${{ inputs.confirm == 'verify-staging-voice-routing' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect staging routing metadata without deploying or calling
+        env:
+          PAWSPACE_DEPLOYMENT_ENV: staging
+          PAWSPACE_PAYMENT_ENV: sandbox
+          PAWSPACE_VOICE_RUNTIME: ${{ vars.PAWSPACE_VOICE_RUNTIME }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+        run: node --experimental-strip-types scripts/verify-staging-voice-routing.mjs

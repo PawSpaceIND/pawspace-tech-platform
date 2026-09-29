@@ -203,6 +203,7 @@ test("a recompute never rewrites a completed booking's tax record or moves it in
   await complete(db, "BK-JULY", july);
   assert.equal(payoutRow(sqlite, "BK-JULY").computed_at, july, "completion pins the statutory period to the completion time");
 
+  const originalJournal = sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all();
   // August: Finance activates a new 80% term and someone recomputes the July booking.
   await activeTerm(db, { service: "dog_walking", model: "commission_standard", share: 0.80 });
   const recomputed = await terms.computeOrderPayout(db, { bookingId: "BK-JULY", actorId: FINANCE });
@@ -212,9 +213,13 @@ test("a recompute never rewrites a completed booking's tax record or moves it in
   const preview = await terms.computeOrderPayout(db, { bookingId: "BK-JULY", actorId: FINANCE, persist: false });
   assert.equal(preview.providerNetPayout, 800, "a non-persisting preview still shows the new term");
 
+  // Freeze July after the existing term-change/preview setup, then exercise read-only replay.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code TEXT PRIMARY KEY,status TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO finance_close_periods VALUES ('2026-07','locked')").run();
   // Re-running completion (training re-reads, walking settlement) replays the same figures.
   const again = await complete(db, "BK-JULY", Date.parse("2026-08-20T12:00:00+05:30"));
   assert.deepEqual([again.providerPayoutAccrued, again.tcsWithheld, again.gstLiability], [695, 5, 54]);
+  assert.deepEqual(sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all(), originalJournal, "replay preserves all original journal dates, dimensions and values");
   const julyClose = await statutoryTcs.computeMonthlyTcsStatutory(db, { period: "2026-07", actorId: FINANCE });
   assert.equal(julyClose.totalTcs, 5, "the July GSTR-8 keeps the July supply");
 });
@@ -248,3 +253,23 @@ test("funeral stays GST exempt even with its tax toggle on; relocation keeps its
   assert.equal(special.taxFromGrossMargin(300, on).taxAmount, 45.76, "relocation with tax on: unchanged, taken out of the GST-inclusive margin by the one helper");
   assert.equal(special.taxFromGrossMargin(300, { ...on, taxEnabled: false }).taxAmount, 0);
 });
+
+for (const damage of ["missing_first", "missing_credit", "wrong_amount", "wrong_source", "wrong_account"]) {
+  test(`R04 historical completion replay still refuses ${damage} without repairing books`, async () => {
+    const { sqlite, db } = gstWorld();
+    try {
+      await activeTerm(db, { service: "dog_walking", model: "commission_standard", share: 0.70 });
+      booking(sqlite, "BK-R04-DAMAGED", { service: "dog_walking", provider: "PRV-R04" });
+      await complete(db, "BK-R04-DAMAGED", COMPLETED);
+      const first = "JRN-SERVICE-COMPLETION-BK-R04-DAMAGED-1";
+      if (damage === "missing_first") sqlite.prepare("DELETE FROM finance_journal_entries WHERE id=?").run(first);
+      if (damage === "missing_credit") sqlite.prepare("DELETE FROM finance_journal_entries WHERE source_id=? AND account_code='4000-Service Revenue'").run("BK-R04-DAMAGED");
+      if (damage === "wrong_amount") sqlite.prepare("UPDATE finance_journal_entries SET debit=debit+1 WHERE id=?").run(first);
+      if (damage === "wrong_source") sqlite.prepare("UPDATE finance_journal_entries SET source_id='WRONG-BOOKING' WHERE id=?").run(first);
+      if (damage === "wrong_account") sqlite.prepare("UPDATE finance_journal_entries SET account_code='1010-Bank' WHERE id=?").run(first);
+      const before = sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all();
+      await assert.rejects(() => complete(db, "BK-R04-DAMAGED", Date.parse("2026-10-20T12:00:00+05:30")), /journal_integrity_conflict/);
+      assert.deepEqual(sqlite.prepare("SELECT * FROM finance_journal_entries ORDER BY id").all(), before);
+    } finally { sqlite.close(); }
+  });
+}
