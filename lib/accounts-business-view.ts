@@ -43,9 +43,12 @@ const SETTLEMENT_LEDGER_VERTICALS = [
  * payment_reconciliation_records, aggregated per-payment rather than as a discrete ledger) and are
  * not forced into the same union, which would risk silently misclassifying their real records.
  */
-export async function buildAccountsBusinessView(db: Db) {
+export async function buildAccountsBusinessView(db: Db, options: { bookingId?: string } = {}) {
   const degradation = createDegradationLog();
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
+  const bookingId = String(options.bookingId ?? "").trim();
+  const bookings = bookingId
+    ? await safeAll(db, "SELECT id,service_code,total_amount,updated_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled') AND id=?", [bookingId], degradation, "bookings")
+    : await safeAll(db, "SELECT id,service_code,total_amount,updated_at FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
@@ -88,13 +91,20 @@ export async function buildAccountsBusinessView(db: Db) {
         net: invoice ? Number(invoice.net_amount) : Number(payment?.amount || 0),
         status: invoice ? String(invoice.status) : (payment ? String(payment.status) : "no_invoice"),
         method: payment ? String(payment.method) : null,
+        updatedAt: Number(b.updated_at || 0),
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
-    .sort((a, b) => (a.bookingId < b.bookingId ? 1 : -1))
-    .slice(0, 100);
+    // The ledger is a display window, not the summary source. Show recent operational work instead of
+    // lexicographically large IDs; exact booking lookup remains available outside this 100-row window.
+    .sort((a, b) => (b.updatedAt - a.updatedAt) || (a.bookingId < b.bookingId ? 1 : a.bookingId > b.bookingId ? -1 : 0))
+    .slice(0, 100)
+    .map(({ updatedAt: _updatedAt, ...row }) => row);
 
   return {
+    scope: bookingId
+      ? { kind: "booking" as const, bookingId }
+      : { kind: "all_records" as const, ledgerLimit: 100, ledgerOrder: "booking_updated_at_desc" as const },
     degraded: degradationNotice(degradation.entries()),
     receivable, gstPayable,
     refundQueue: { amount: refundPending, count: refundPendingCount, verticalsCovered: REFUND_LEDGER_VERTICALS.map(v => v.vertical) },
