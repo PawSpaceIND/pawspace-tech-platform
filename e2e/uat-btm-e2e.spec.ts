@@ -23,6 +23,7 @@ import { dirname } from "node:path";
 
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
+const JOURNEY_MODE = process.env.PW_JOURNEY_MODE || "full";
 /**
  * Requested service date (IST). Default: the day after tomorrow. Every booking this proof makes holds a
  * groomer for its window plus the travel-buffer neighbours, so running it repeatedly on the date manual
@@ -567,6 +568,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 
 test("1. Customer — BTM Layout 560068 on the requested date, pay online through the Razorpay sandbox", async ({ browser }) => {
   test.setTimeout(600_000);
+  test.skip(JOURNEY_MODE === "pay_after_only", "Pay-after-only acceptance intentionally performs no checkout payment action.");
   section("1. Customer persona — BTM Layout checkout (online)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -829,7 +831,7 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     await shot(page, "partner-completed");
     const invoice = await page.getByText(/Invoice /).first().textContent().catch(() => "");
     if (invoice) log(`✅ ${invoice.trim()}`);
-    if (bookingMode === "pay_after") {
+    if (bookingMode === "pay_after" && JOURNEY_MODE !== "pay_after_only") {
       const request = page.getByRole("button", { name: "Create payment request" });
       if (await request.isVisible({ timeout: 10_000 }).catch(() => false)) {
         await request.click();
@@ -837,6 +839,8 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
         log(`${link ? "✅" : "⚠️"} Pay-after: Razorpay sandbox payment request ${link ? "created (checkout link + QR payload shown)" : "did not surface a checkout link"}.`);
         await shot(page, "partner-payment-request");
       }
+    } else if (bookingMode === "pay_after") {
+      log("ℹ️ Pay-after-only acceptance: payment request/checkout intentionally not created; collection remains pending for separate payment certification.");
     } else {
       log("✅ Prepaid booking: nothing further to collect after completion.");
     }
