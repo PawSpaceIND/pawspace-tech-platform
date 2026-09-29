@@ -1,6 +1,7 @@
 import { test, expect, type Frame, type Locator, type Page, type Response } from "@playwright/test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { chooseFirstNamedGroomer } from "./helpers/v2-groomer-selection";
 
 /**
  * V2 staging end-to-end journey, run on demand by .github/workflows/v2-staging-e2e.yml
@@ -256,11 +257,7 @@ async function findLiveCare(page: Page) {
 }
 
 async function chooseFirstGroomer(page: Page) {
-  const providers = stepSection(page, "Available for this exact slot");
-  const first = providers.getByRole("button").first();
-  const groomer = oneLine(await first.locator("b").first().innerText());
-  await first.click();
-  await expect(first).toContainText("✓");
+  const groomer = await chooseFirstNamedGroomer(page);
   const summary = page.locator("aside").filter({ hasText: "Your care plan" });
   await expect(summary).toContainText(groomer);
   await expect(summary).toContainText("Verified live price");
