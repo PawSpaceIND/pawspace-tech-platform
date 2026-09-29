@@ -12,7 +12,7 @@ export async function POST(request:Request){
   if(!payoutId)return json({error:"Payout ID is required"},400);
   const db=await database(),{env}=await import("cloudflare:workers");
   const data=await dispatchRazorpayXSandboxPayout(db,env as unknown as Record<string,unknown>,{payoutId});
-  await securityAudit(db,actor,"partner.payout.razorpayx_test_dispatch","payout",payoutId,data.connected?"completed":"blocked",{source:data.source,providerPayoutId:data.connected?data.providerPayoutId:null,environment:"sandbox",liveMoney:false,reason:data.connected?null:data.reason});
-  return json({data},data.connected?200:503);
+  await securityAudit(db,actor,"partner.payout.razorpayx_test_dispatch","payout",payoutId,data.connected?"completed":"blocked",{source:data.source,providerPayoutId:data.connected?data.providerPayoutId:null,environment:"sandbox",liveMoney:false,reconciliationRequired:Boolean(data.connected&&data.reconciliationRequired),accountingStatus:data.connected?data.accounting?.status:null,reason:data.connected?(data.reconciliationRequired?"accounting_review_required":null):data.reason});
+  return json({data},data.connected?(data.reconciliationRequired?202:200):503);
  }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to dispatch RazorpayX TEST payout");}
 }
