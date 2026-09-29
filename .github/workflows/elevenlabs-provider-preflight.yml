@@ -300,15 +300,31 @@ jobs:
     if: ${{ inputs.confirm == 'specialist-call' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
-    timeout-minutes: 5
+    timeout-minutes: 8
+    concurrency:
+      group: pawspace-attended-specialist-demo
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Install the locked read-only certification dependency
+        run: npm ci
+      - name: Verify the currently serving approved staging SHA before any call
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          EXPECTED_STAGING_SHA: ${{ inputs.expected_staging_sha }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
@@ -322,25 +338,44 @@ jobs:
           TRAINING_AGENT_ID: ${{ vars.ELEVENLABS_TRAINING_AGENT_ID }}
         run: |
           node --experimental-strip-types <<'NODE'
+          if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('One-shot demo cannot be rerun; inspect the first request instead');
+          if(process.env.EXPECTED_STAGING_SHA!=='63775cae5773572d602de7d5d155e92c0f5d4bcd')throw Error('Exact approved deployed release required');
           const origin='https://pawspace-staging.karthik-fce.workers.dev';
           const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
           const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
-          const {useCase,agentId,phone,customerId,idempotencyKey}=specialistDemoPreflight(process.env);
+          const {useCase,agentId,phone,customerId}=specialistDemoPreflight(process.env);
+          if(process.env.EXPECTED_DESTINATION_LAST4!=='7878'||phone.slice(-4)!=='7878')throw Error('Approved handset recipient mismatch');
           const access=process.env.PAWSPACE_UAT_ACCESS_CODE;
           console.log('::add-mask::'+phone);
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
           if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
-          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey,useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const readyResponse=await fetch(origin+'/api/voice-outbound',{method:'GET',headers:{cookie},redirect:'error',signal:AbortSignal.timeout(15000)});
+          const readiness=(await readyResponse.json())?.data;
+          if(readyResponse.status!==200||readiness?.gate?.mode!=='uat'||readiness?.gate?.enabled!==true||readiness?.gate?.recordingApproved!==false||readiness?.gate?.allowlistSize!==1||readiness?.gate?.salesOutboundApproved!==true||readiness?.transport?.provider!=='elevenlabs_exotel'||readiness?.transport?.status!=='connected')throw Error('Serving app UAT/recording/provider prerequisites are not verified');
+          console.log('HANDSET_PRE_DIAL='+JSON.stringify({mode:readiness.gate.mode,recordingApproved:readiness.gate.recordingApproved,allowlistSize:readiness.gate.allowlistSize,provider:readiness.transport.provider,dialed:false}));
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'uat_specialist_sales_test',useCase,customerId,cityId:'blr'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
           const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
           console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
           if(call.status!==201||!body?.data?.callId||!dialed)throw new Error('specialist call was not accepted by PawSpace');
+          const exactId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,160}$/.test(value);
+          if(!exactId(body.data.callId)||!exactId(agentId))throw Error('Accepted attempt identifier is invalid; do not redial');
+          const {writeFileSync}=await import('node:fs');
+          writeFileSync('handset-attempt.json',JSON.stringify({schemaVersion:1,appCallId:body.data.callId,agentId,expectedStagingSha:process.env.EXPECTED_STAGING_SHA,workflowRunId:process.env.GITHUB_RUN_ID,acceptedAt:new Date().toISOString()}),{mode:0o600});
           console.log('::add-mask::'+String(body.data.callId)); if(body.data.providerCallId)console.log('::add-mask::'+String(body.data.providerCallId));
           const evidence=await verifyHandsetAttempt({appCallId:body.data.callId,agentId,phone,cookie},process.env,{log:result=>console.log('HANDSET_EVIDENCE='+JSON.stringify(result))});
           console.log('HANDSET_VERIFIED='+JSON.stringify(evidence));
           NODE
+      - name: Retain exact attempt identity without credentials or recipient data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attended-maya-attempt-${{ github.run_id }}
+          path: handset-attempt.json
+          retention-days: 1
+          if-no-files-found: ignore
 
   direct-grooming-call:
     if: ${{ inputs.confirm == 'direct-grooming-call' || inputs.confirm == 'inspect-app-voice' }}
