@@ -1,5 +1,6 @@
 import{ensurePayrollTables}from"./payroll-engine";
 import{ensureAttendanceLeaveTables}from"./attendance-leave";
+import{queueEmployeeSalary}from"./employee-payroll-payout";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -138,4 +139,17 @@ export async function v2PayrollGovernanceDirectory(db:Db,runId?:string){
  const plan=runId?await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(runId).first<Row>():null;
  const items=plan?(await db.prepare("SELECT * FROM v2_salary_release_items WHERE plan_id=? ORDER BY release_at,employee_id").bind(plan.id).all<Row>()).results:[];
  return{policy,run,adjustments,releasePlan:plan?{...plan,items}:null,truth:{scope:"pawspace_v2_only",requiresHrApproval:true,requiresIndependentFinanceApproval:true,automaticPunitiveFine:false,leaveAwareLop:true,scheduledSalaryRelease:true,batchRelease:true,selectiveHold:true,liveMoneyEnabled:false}};
+}
+
+
+export async function queueDueV2SalaryInstructions(db:Db,input:{runId:string;asOf?:number;actorId:string}){
+ await ensureV2PayrollGovernance(db);const asOf=Number(input.asOf||Date.now());
+ const plan=await db.prepare("SELECT * FROM v2_salary_release_plans WHERE run_id=?").bind(input.runId).first<Row>();if(!plan||text(plan.status)!=="approved")throw bad("HR and Finance must approve the V2 salary release plan first");
+ if(asOf<num(plan.salary_date))return{runId:input.runId,queued:0,notDueYet:true,salaryDate:num(plan.salary_date)};
+ const run=await db.prepare("SELECT status FROM payroll_runs WHERE id=?").bind(input.runId).first<Row>();if(!run||text(run.status)!=="payment_prepared")throw bad("Canonical payroll payment batch must be prepared before salary queueing");
+ const due=(await db.prepare("SELECT result_id,employee_id,batch_code,release_at FROM v2_salary_release_items WHERE plan_id=? AND hold_status='ready' AND release_at<=? ORDER BY release_at,batch_code,employee_id").bind(plan.id,asOf).all<Row>()).results;
+ if(!due.length)return{runId:input.runId,queued:0,notDueYet:false};
+ const data=await queueEmployeeSalary(db,{runId:input.runId,actorId:input.actorId,resultIds:due.map(row=>text(row.result_id))});
+ await event(db,{runId:input.runId,action:"due_salary_instructions_queued",actorId:input.actorId,detail:{asOf,count:due.length,batches:[...new Set(due.map(row=>text(row.batch_code)))]}});
+ return{runId:input.runId,queued:due.length,instructions:data.instructions,duplicatePrevented:Boolean(data.duplicatePrevented)};
 }
