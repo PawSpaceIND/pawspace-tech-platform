@@ -120,3 +120,18 @@ test("R04: high-precision amounts that round to zero cannot create an empty jour
     { accountCode: w.accounts.ACCT.REVENUE, credit: 0.001 }];
   await assert.rejects(w.post, /non-zero|round/i); assert.equal(w.rows().length, 0);
 });
+
+for (const side of ["debit", "credit"]) {
+  test(`R04: ${side} intermediate overflow cannot be hidden by signed cancellation`, async t => {
+    const w = await world(t);
+    const large = 45_000_000_000_000;
+    const opposite = side === "debit" ? "credit" : "debit";
+    // Each line and the final total are safe, but the intermediate 3 * large is not.
+    w.input.lines = [large, large, large, -large, -large].map(value => ({
+      accountCode: w.accounts.ACCT.CUSTOMER_COLLECTIONS, [side]: value,
+    }));
+    w.input.lines.push({ accountCode: w.accounts.ACCT.REVENUE, [opposite]: large });
+    await assert.rejects(w.post, /precision|safe|overflow/i);
+    assert.equal(w.rows().length, 0);
+  });
+}

@@ -135,8 +135,17 @@ export async function prepareJournalPosting(db: Db, input: { groupKey: string; e
   const lines = input.lines.map(l => ({ ...l, debit: amount(l.debit), credit: amount(l.credit) }))
     .filter(l => l.debit !== 0 || l.credit !== 0);
   if (!lines.length) throw new Error("A journal needs at least one non-zero line after rounding");
-  const debitCents = lines.reduce((sum, l) => sum + Math.round(l.debit * 100), 0);
-  const creditCents = lines.reduce((sum, l) => sum + Math.round(l.credit * 100), 0);
+  // Check each addition, not just the final total: signed corrections can hide
+  // an unsafe intermediate sum after integer precision has already been lost.
+  const sumCents = (side: "debit" | "credit") => lines.reduce((sum, line) => {
+    const cents = Math.round(line[side] * 100);
+    if ((cents > 0 && sum > Number.MAX_SAFE_INTEGER - cents) ||
+        (cents < 0 && sum < Number.MIN_SAFE_INTEGER - cents))
+      throw new Error("journal_amount_invalid: intermediate money total exceeds safe precision");
+    return sum + cents;
+  }, 0);
+  const debitCents = sumCents("debit");
+  const creditCents = sumCents("credit");
   if (!Number.isSafeInteger(debitCents) || !Number.isSafeInteger(creditCents))
     throw new Error("journal_amount_invalid: total money exceeds safe precision");
   // Preserve the existing one-cent tolerance, but apply it to the values actually stored.

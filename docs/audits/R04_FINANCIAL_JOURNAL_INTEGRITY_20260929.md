@@ -150,3 +150,49 @@ review and any permitted additional coverage remain required before merge. Exist
 pre-completion finance/lifecycle atomicity and historical reconciliation are not closed
 by journal-row integrity. No hosted payment, payout, salary or financial-data repair
 was performed, and this branch has not been deployed.
+
+## PR #1172 failed-CI follow-up — 29 September
+
+Integrated latest checked main `1610115c` (#1167 payout receipts) into this branch;
+no upstream payout, UI, voice, permission or deployment behavior was discarded.
+The old Release CI run 36514185154 reported 9,228/9,231 assertions passed and three
+failures. Pre-UAT repeated the same three; hook-path certification repeated two.
+A local reproduction of those three suites produced 29 pass / 3 fail, exit 1.
+
+Two failures were genuine replay compatibility regressions: completion finance used
+the new read date rather than the posted journal's accounting date, and legacy
+journals did not have the modern vertical dimension. The caller now preserves the
+original date, period and accounting dimensions when replaying. It does NOT copy
+stored monetary lines as its expected values: amounts and source/account identities
+still derive from the frozen completion calculation, and the strict journal checker
+continues to compare every row. First-row-only acceptance has not been restored.
+Closed-month legacy/current replays now assert that every original journal row is
+unchanged. Five negative cases still refuse missing first/credit rows, changed
+amounts, wrong source identities and wrong accounts without repairing history.
+
+The third failure was a source contract expecting the old `existing` variable name.
+It now checks the current `replay` name and both concurrent period/replay reads.
+No existing assertion was removed. An attempted additional executable overlap test
+was tool-blocked and left unapplied; it is not included in any passing count.
+
+The reviewer also identified intermediate signed-sum overflow. Two new debit/credit
+regressions reproduced it (14/16 passed); each now refuses before the unsafe addition.
+The existing signed corrections, safe inputs and one-paise tolerance remain intact.
+Two native local-D1 concurrent tests are now implemented and pass: identical posts
+create one group; conflicting posts leave one complete winner and reject the other.
+They use ephemeral D1, no credentials and refused outbound access. Total native cases
+are now five; the earlier three-case boundary is superseded only for this candidate.
+
+The expanded nine-file selection passed 101/101 assertions with zero failed/skipped.
+A first expanded attempt failed because the new month-lock fixture preceded activation
+of the existing backdated test term; placing that fixture AFTER existing term setup
+preserved the real closed-period protection and the stronger replay assertions.
+Nine manifests were refreshed only for the two reviewed runtime sources, validating
+prior fingerprints against the integrated base and preserving all other entries.
+
+Full exact-head repository/build and cloud results remain separate verification gates.
+No historical ledger rewrite, live charge, refund, payout, salary, deployment or hosted
+booking was performed. These fixes do not certify whole-completion rollback, bank
+reconciliation, or production launch. Evidence: r04-financial-journal-evidence-20260929/
+pr1172-failure-fix/ (failed CI logs, 29/3 and overflow 14/2 reproductions, repairs and
+exact-source validation). Keep PR #1172 unmerged until final checks/review complete.
