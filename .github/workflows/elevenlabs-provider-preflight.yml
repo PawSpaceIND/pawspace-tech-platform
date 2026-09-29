@@ -331,8 +331,8 @@ jobs:
           const xb=await xr.json().catch(()=>({}));
           if(!xr.ok)throw Error('ExoPhone list failed '+xr.status);
           const phones=(Array.isArray(xb?.incoming_phone_numbers)?xb.incoming_phone_numbers:[]).filter(x=>Boolean(x?.capabilities?.voice)&&String(x.region||'').toUpperCase()==='KA'&&x?.phone_number);
-          const alt=phones.find(x=>digits(x.phone_number).slice(-4)==='9919');
-          if(!alt)throw Error('Reviewed alternate KA ExoPhone ending 9919 not found');
+          const alt=phones.find(x=>digits(x.phone_number).slice(-4)==='2185');
+          if(!alt)throw Error('Reviewed alternate KA ExoPhone ending 2185 not found');
           const rawCaller=text(alt.phone_number),rawDigits=digits(rawCaller);
           let e164='';
           if(rawDigits.length===12&&rawDigits.startsWith('91'))e164='+'+rawDigits;
@@ -350,7 +350,7 @@ jobs:
           if(!phoneId){
             const imp=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers',{
               method:'POST',headers:{...eh,'content-type':'application/json'},
-              body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT Alt 9919',phone_number:e164,account_sid:sid,api_key:key,api_token:token,api_subdomain:host,app_id:'1347515'}),
+              body:JSON.stringify({provider:'exotel',label:'PawSpace Voice UAT Alt 2185',phone_number:e164,account_sid:sid,api_key:key,api_token:token,api_subdomain:host,app_id:'1347515'}),
               signal:AbortSignal.timeout(30000)
             });
             const ib=await imp.json().catch(()=>({}));
@@ -358,10 +358,10 @@ jobs:
             phoneId=text(ib.phone_number_id);
           }
           const patch=await fetch('https://api.elevenlabs.io/v1/convai/phone-numbers/'+encodeURIComponent(phoneId),{
-            method:'PATCH',headers:{...eh,'content-type':'application/json'},body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT Alt 9919'}),signal:AbortSignal.timeout(30000)
+            method:'PATCH',headers:{...eh,'content-type':'application/json'},body:JSON.stringify({agent_id:agentId,label:'PawSpace Voice UAT Alt 2185'}),signal:AbortSignal.timeout(30000)
           });
           if(!patch.ok)throw Error('Alternate ExoPhone agent assignment failed '+patch.status);
-          console.log('ALT_KA_READY='+JSON.stringify({callerLast4:'9919',appId:'1347515'}));
+          console.log('ALT_KA_READY='+JSON.stringify({callerLast4:'2185',appId:'1347515'}));
           const params=new URLSearchParams({From:phone,CallerId:rawCaller,Url:'http://my.exotel.com/'+sid+'/exoml/start_voice/1347515',CallType:'trans',TimeOut:'60',Record:'false'});
           const dial=await fetch('https://'+host+'/v1/Accounts/'+encodeURIComponent(sid)+'/Calls/connect.json',{
             method:'POST',headers:{authorization:auth,'content-type':'application/x-www-form-urlencoded'},body:params.toString(),signal:AbortSignal.timeout(30000)
@@ -371,7 +371,7 @@ jobs:
           const call=db.Call||db.call||{},callSid=text(call.Sid||call.sid);
           if(!callSid)throw Error('Alternate KA direct dial returned no CallSid');
           console.log('::add-mask::'+callSid);
-          console.log('ALT_DIRECT_ACCEPTED='+JSON.stringify({status:call.Status||call.status||null,callerLast4:'9919',recipientLast4:expected,appId:'1347515'}));
+          console.log('ALT_DIRECT_ACCEPTED='+JSON.stringify({status:call.Status||call.status||null,callerLast4:'2185',recipientLast4:expected,appId:'1347515'}));
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           let finalStatus='',duration=0;
           for(let i=0;i<96;i++){
