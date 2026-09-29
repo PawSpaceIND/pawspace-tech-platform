@@ -1477,7 +1477,7 @@
     "lib/voice-carrier-uat-scheduler.ts": "be208170398ebe80d3b4f251836399dbc60d9139c534d91b4e4ee7157b4d2f6e",
     "lib/voice-operator-console.ts": "8d8674cf2b37c068b0ea9dd1f382326ad43e2cdd989b5016fff820c748076b92",
     "lib/voice-outbound-canonical.ts": "1d5f51273e91f94eefd87296d878724b890f6d757f3b5de8b72bfb54df97563e",
-    "lib/voice-outbound-governance.ts": "351bf775f41e26eb11fa5eb7c4f7b1caebcb39574986928a3d098ef668888ad7",
+    "lib/voice-outbound-governance.ts": "af836707e6e4261fd50b7444ea5467f9ac655bc1bdd3b1b04c630ad6b957f0ba",
     "lib/voice-provider-adapter.ts": "11d0fa1d94e966f9093549e617004d2f3bce29b0d9d5bea1790908e545929ff5",
     "lib/voice-safe-fetch.ts": "f44e83939789fadad6d8f4360fb0ea70862e47717694511a74ae6e1d07e4a8c8",
     "lib/voice-speech-failures.ts": "9ca66a15473869579f0cf980b42686d3c1ea9e30accd713f90836dcda223160d",

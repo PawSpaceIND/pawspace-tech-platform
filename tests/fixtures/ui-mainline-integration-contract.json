@@ -3,7 +3,7 @@
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
     ".github/workflows/deploy-staging.yml": "f1b9f91d8140248b9f18a831c950f43ae6f3ba6c6bc8a66a42f3737e3eadf969",
-    ".github/workflows/elevenlabs-provider-preflight.yml": "4fdedd07f33089588224f882f8ea4f2e8afe77c63d50699bc313bc9ee24381b8",
+    ".github/workflows/elevenlabs-provider-preflight.yml": "1b8b368cd8100807457d0f665d0214804bcc9645db1af506ae2c295391dd760e",
     ".github/workflows/voice-uat-staging.yml": "1e02d3186125b727c8318be6d0a8831081d855f8b282e83b4a216e879f858539",
     ".gitleaksignore": "42321d1ea122ebb8bd828806de526bbc1e198cf31965553de188a762212d788b",
     "app/api/ai-intelligence/route.ts": "46f58d684819ba40a9fbb937cb2d37b8ab88a7eb5c33f5308367721fe78424d7",
@@ -57,7 +57,7 @@
     "lib/voice-ai-browser-harness.ts": "054aa8d1603e529d03e5c9822187a43241413cabd1f72aff4a1eefeb787818d7",
     "lib/voice-ai-self-test.ts": "cc096cc354844c059f43129ed241388a9340040453eefd91dfaaacad3db78484",
     "lib/voice-outbound-canonical.ts": "1d5f51273e91f94eefd87296d878724b890f6d757f3b5de8b72bfb54df97563e",
-    "lib/voice-outbound-governance.ts": "351bf775f41e26eb11fa5eb7c4f7b1caebcb39574986928a3d098ef668888ad7",
+    "lib/voice-outbound-governance.ts": "af836707e6e4261fd50b7444ea5467f9ac655bc1bdd3b1b04c630ad6b957f0ba",
     "lib/voice-telephony-provider.ts": "d825138ed5daf9bba64b910c92dbf318d07018e733cc73fc87ef70a1e10f4548",
     "playwright.config.ts": "9cb4b327cd72cb14837228d58f6fce9a55dc7e5889b34787459ce20a449c953d",
     "scripts/elevenlabs-provider-preflight.mjs": "efca6623e6c32ade73f4721f914a8e0b1ffc6c3e667b1bb0d5f90781e951d81c",

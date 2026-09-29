@@ -472,7 +472,7 @@ function summarise(row: Row) {
     retryOf: row.retry_of ? text(row.retry_of) : null, retryAttempt: Number(row.retry_attempt || 0),
     handoffCaseId: row.handoff_case_id ? text(row.handoff_case_id) : null,
     transcriptRef: row.transcript_ref ? text(row.transcript_ref) : null,
-    phoneLast4: text(row.phone_last4), dialed: row.dialed_at != null,
+    phoneLast4: text(row.phone_last4), dialed: row.dialed_at != null, recordingAllowed: Number(row.recording_allowed) === 1,
   };
 }
 
@@ -904,7 +904,7 @@ export async function voiceCallAudit(db: Db, callId: string) {
   return {
     call: summarise(call),
     providerCorrelation: correlationFromVoiceTransitions(transitions.results),
-    transitions: transitions.results.map(({ detail_json: _detail, ...transition }) => transition),
+    transitions: transitions.results.map(transition => { const curated = { ...transition }; delete curated.detail_json; return curated; }),
     policyDecisions: decisions.results.map(row => ({ checkCode: text(row.check_code), passed: Number(row.passed) === 1, detail: text(row.detail), at: Number(row.created_at) })),
     providerEvents: events.results,
     truth: { rawProviderPayloadsStored: false, productionCallExecuted: Number(call.production_call) === 1 && call.dialed_at != null },

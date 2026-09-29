@@ -3,6 +3,16 @@ export type VoiceProviderCorrelation = { carrierCallId: string | null; conversat
 const row = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const identifier = (value: unknown) => /^[A-Za-z0-9_-]{1,160}$/.test(text(value)) ? text(value) : null;
+const carrierStatuses = new Set(["queued", "initiated", "dialing", "ringing", "in-progress", "in_progress", "completed", "no-answer", "no_answer", "from_leg_unanswered", "to_leg_unanswered", "from_leg_no_dial", "to_leg_no_dial", "failed", "busy", "canceled", "cancelled"]);
+const conversationStatuses = new Set(["initiated", "in-progress", "processing", "done", "failed"]);
+const safeStatus = (value: unknown, allowed: Set<string>) => allowed.has(text(value).toLowerCase()) ? text(value).toLowerCase() : "unknown";
+// Provider numbers may be numeric JSON or a decimal string, never coercible booleans/arrays/objects.
+export function positiveTalkSeconds(value: unknown): number | null {
+  if (typeof value !== "number" && !(typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value))) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
 
 // Evidence matching is deliberately India-mobile-only. It never authorizes or formats a dial.
 // Equivalent local forms are tested against the actual application canonicalizer.
@@ -42,10 +52,10 @@ export function inspectHandsetEvidence(input: HandsetEvidenceInput) {
   const correlation = voiceProviderCorrelation(audit.providerCorrelation);
   const carrierBody = row(input.carrier), carrier = row(carrierBody.Call ?? carrierBody.call ?? carrierBody);
   const conversation = row(input.conversation), metadata = row(conversation.metadata), phoneCall = row(metadata.phone_call);
-  const status = text(carrier.Status ?? carrier.status).toLowerCase();
+  const status = safeStatus(carrier.Status ?? carrier.status, carrierStatuses);
   const transcript = Array.isArray(conversation.transcript) ? conversation.transcript.map(row) : [];
   const result = (reason: string, passed = false) => ({ passed, reason, carrierStatus: status || null,
-    conversationStatus: text(conversation.status) || null, turns: transcript.length, humanQuality: "not_assessed" as const });
+    conversationStatus: safeStatus(conversation.status, conversationStatuses), turns: transcript.length, humanQuality: "not_assessed" as const });
   const expectedPhone = canonicalEvidencePhone(input.phone);
   if (!identifier(input.appCallId) || !identifier(input.agentId) || !expectedPhone) return result("invalid_expected_context");
   if (call.callId !== input.appCallId || call.provider !== "elevenlabs_exotel" || call.dialed !== true) return result("app_call_not_verified");
@@ -56,8 +66,8 @@ export function inspectHandsetEvidence(input: HandsetEvidenceInput) {
   if (["no-answer", "no_answer", "from_leg_unanswered"].includes(status)) return result("recipient_leg_not_answered");
   if (["failed", "busy", "canceled", "cancelled", "to_leg_unanswered", "from_leg_no_dial", "to_leg_no_dial"].includes(status)) return result("carrier_not_connected");
   if (status !== "completed") return result("carrier_not_completed");
-  const talkSeconds = Number(row(carrier.Details ?? carrier.details).ConversationDuration);
-  if (!Number.isFinite(talkSeconds) || talkSeconds <= 0) return result("carrier_talk_time_not_verified");
+  const talkSeconds = positiveTalkSeconds(row(carrier.Details ?? carrier.details).ConversationDuration);
+  if (talkSeconds === null) return result("carrier_talk_time_not_verified");
   if (conversation.conversation_id !== correlation.conversationId || conversation.agent_id !== input.agentId) return result("conversation_identity_mismatch");
   if (phoneCall.type !== "exotel" || phoneCall.direction !== "outbound" || phoneCall.call_sid !== correlation.carrierCallId) return result("conversation_carrier_link_missing");
   if (canonicalEvidencePhone(phoneCall.external_number) !== expectedPhone) return result("conversation_recipient_mismatch");
@@ -79,4 +89,30 @@ export function assertHandsetEvidence(input: HandsetEvidenceInput) {
   const evidence = inspectHandsetEvidence(input);
   if (!evidence.passed) throw new Error(`Handset conversation not verified: ${evidence.reason}`);
   return evidence;
+}
+
+export const ATTENDED_HANDSET_STATEMENT = 'I answered this exact handset call and heard a complete AI answer to my spoken question.';
+
+/** Participant testimony is a separate evidence class, never fabricated stream counters or recording. */
+export function inspectAttendedHandsetEvidence(input: HandsetEvidenceInput, report: unknown, asOf = Date.now()) {
+ const automatic = inspectHandsetEvidence(input), r = row(report);
+ const call = row(row(input.appAudit).call), metadata = row(row(input.conversation).metadata);
+ const output = (reason: string, attendedPassed = false) => ({
+  ...automatic, attendedPassed, attendanceReason:reason,
+  evidenceClass:attendedPassed ? 'participant_report_with_correlated_provider_metadata' : 'unverified_participant_report',
+  recordingChanged:false, audioRecordingInspected:false, answerAccuracy:'not_assessed' as const,
+ });
+ // All call, recipient, agent, transcript and talk-time checks must succeed first.
+ if (!automatic.passed && automatic.reason !== 'two_way_audio_not_verified') return output('technical_prerequisites_not_verified');
+ if (call.recordingAllowed !== false) return output('recording_disabled_context_not_verified');
+ if (r.schemaVersion !== 1 || r.source !== 'participant_report' || r.appCallId !== input.appCallId ||
+     r.statement !== ATTENDED_HANDSET_STATEMENT || r.participant !== 'recipient' ||
+     typeof r.recordedBy !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(r.recordedBy)) return output('explicit_exact_call_confirmation_required');
+ const start = metadata.start_time_unix_secs, duration = metadata.call_duration_secs, reported = r.reportedAtMs;
+ if (typeof start !== 'number' || !Number.isFinite(start) || start <= 0 ||
+     typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0 ||
+     typeof reported !== 'number' || !Number.isSafeInteger(reported) || !Number.isFinite(asOf)) return output('attendance_time_not_verified');
+ const endedAt = (start + duration) * 1000;
+ if (reported < endedAt || reported > asOf || asOf - reported > 86_400_000 || reported - endedAt > 86_400_000) return output('attendance_outside_call_confirmation_window');
+ return output('attended_exchange_confirmed',true);
 }

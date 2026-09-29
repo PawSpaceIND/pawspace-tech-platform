@@ -1,16 +1,15 @@
 // Read-only verification after an explicit app-governed call. This module never dials or repairs data.
-import { inspectHandsetEvidence } from '../lib/voice-handset-evidence.ts';
+import { inspectHandsetEvidence, inspectAttendedHandsetEvidence } from '../lib/voice-handset-evidence.ts';
 import { readBoundedText } from '../lib/provider-response-bounds.ts';
+import { handsetVerifierConfig } from './voice-handset-preflight.mjs';
 const origin = 'https://pawspace-staging.karthik-fce.workers.dev';
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(value);
 const terminalCarrier = new Set(['completed', 'no-answer', 'no_answer', 'busy', 'failed', 'canceled', 'cancelled', 'from_leg_unanswered', 'to_leg_unanswered', 'from_leg_no_dial', 'to_leg_no_dial']);
 
 export async function verifyHandsetAttempt(context, env, options = {}) {
   const { appCallId, agentId, phone, cookie } = context;
-  const host = String(env.EXOTEL_SUBDOMAIN || 'api.exotel.com').trim();
+  const config = handsetVerifierConfig(env);
   if (!id(appCallId) || !id(agentId) || !/^\+91[6-9]\d{9}$/.test(phone || '') || !/^pawspace_uat=[^\r\n;]+$/.test(cookie || '')) throw Error('Exact authenticated handset context required');
-  if (!['api.exotel.com', 'api.in.exotel.com'].includes(host) || !id(env.EXOTEL_SID)) throw Error('Approved carrier region/account required');
-  if (![env.EXOTEL_API_KEY, env.EXOTEL_API_TOKEN, env.ELEVENLABS_API_KEY].every(value => typeof value === 'string' && value.trim())) throw Error('Read-only provider credentials missing');
   const request = options.fetchImpl || fetch;
   const delay = options.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const maxAttempts = Math.max(1, Math.min(Number(options.maxAttempts) || 30, 30));
@@ -24,8 +23,8 @@ export async function verifyHandsetAttempt(context, env, options = {}) {
   const appAudit = auditBody?.data;
   const correlation = appAudit?.providerCorrelation;
   if (appAudit?.call?.callId !== appCallId || appAudit?.call?.provider !== 'elevenlabs_exotel' || appAudit?.call?.dialed !== true || !id(correlation?.carrierCallId) || !id(correlation?.conversationId) || correlation?.agentId !== agentId || appAudit?.call?.providerCallId !== correlation.carrierCallId) throw Error('Exact provider correlation unavailable; do not guess a latest call');
-  const carrierUrl = `https://${host}/v1/Accounts/${encodeURIComponent(env.EXOTEL_SID)}/Calls/${encodeURIComponent(correlation.carrierCallId)}.json?details=true`;
-  const elevenUrl = 'https://api.elevenlabs.io/v1/convai/conversations/' + encodeURIComponent(correlation.conversationId);
+  const carrierUrl = `${config.carrierOrigin}/v1/Accounts/${encodeURIComponent(config.accountId)}/Calls/${encodeURIComponent(correlation.carrierCallId)}.json?details=true`;
+  const elevenUrl = config.elevenOrigin + '/v1/convai/conversations/' + encodeURIComponent(correlation.conversationId);
   const carrierHeaders = { authorization: 'Basic ' + Buffer.from(env.EXOTEL_API_KEY + ':' + env.EXOTEL_API_TOKEN).toString('base64') };
   const deadline = Date.now() + 180000;
   let last;
@@ -38,6 +37,12 @@ export async function verifyHandsetAttempt(context, env, options = {}) {
     const conversation = await read(elevenUrl, { 'xi-api-key': env.ELEVENLABS_API_KEY });
     last = inspectHandsetEvidence({ appCallId, agentId, phone, appAudit, carrier, conversation });
     if (typeof options.log === 'function') options.log(last);
+    if (options.attendedReport && terminalCarrier.has(carrierStatus) && ['done', 'failed'].includes(conversation?.status)) {
+      const attended = inspectAttendedHandsetEvidence({ appCallId, agentId, phone, appAudit, carrier, conversation }, options.attendedReport);
+      if (typeof options.log === 'function') options.log(attended);
+      if (attended.attendedPassed) return attended;
+      throw Error('Attended handset confirmation not verified: ' + attended.attendanceReason);
+    }
     if (last.passed) return last;
     if (['done', 'failed'].includes(conversation?.status) && terminalCarrier.has(carrierStatus)) break;
     if (attempt + 1 < maxAttempts) await delay(4000);

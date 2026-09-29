@@ -107,3 +107,23 @@ regressions: 438/438 passed with normal hooks and 438/438 with forced loader
 fallback, zero skips in either selection. Full-suite and GitHub CI outcomes are
 reported separately after execution. The prior hardening stash `a74a6098` was
 left untouched. No merge, shared deployment, remote data repair or dial occurred.
+
+## 29 September: main integration and previously unshipped review changes
+
+The incoming head `564abb3` was verified at 37 successful checks and two conditional skips. Main advanced to `7008c8560a509078d10f8e75e83c6e9343125b2d` through #1168. The same PR now includes that exact main: 13 PR-only files and 56 main-only files were preserved byte-for-byte; six overlapping baseline JSON files were verified as the exact three-way union.
+
+The preserved stash was applied without dropping it. Its previously failing workflow assertion is now aligned with the extracted validation helper without removing the ownership, identifier, idempotency or validation-order checks. Added executable tests run the actual specialist workflow script with injected invalid prerequisites and a fetch trap, proving zero requests occur for each invalid context.
+
+Implemented review items now included in the working revision:
+- Numeric/decimal-only positive talk time and bounded provider status reporting.
+- Curated audit projection without the new unused-variable lint warning; explicit ledger recording flag.
+- Shared application phone normalization and separator handling, with one Indian mobile tester only.
+- Provider credential/host/account, specialist identity, access-code and stable run-ID validation before login or dial.
+- Post-call attended verification through the existing staging login and three exact GETs. No dial, recording activation, provider configuration or customer/payment mutation.
+- Participant confirmation is explicit, call-bound and time-bound. `attendedPassed` remains distinct from automated `passed`; no audio bytes or listening results are invented. The operator must receive the exact participant statement after the call, not infer it from advance approval.
+
+Validation before commit: 464/464 selected tests passed normally and with `PAWSPACE_FORCE_LOADER_HOOK=1`; typecheck and focused lint with zero warnings passed. Only ten existing protected fingerprints were updated for the reviewed governance/workflow edits; every old value was checked against the integrated parent. Full exact-head build/tests/CI remain separate gates.
+
+Additional review limitation: a follow-up command proposing default-region alignment and an explicit UAT-mode assertion on participant evidence was blocked and verified unapplied; it was not rerouted. Current verifier default remains global while the application adapter's implicit default is India. A read-only repository-variable lookup confirmed explicit `ELEVENLABS_API_BASE=https://api.elevenlabs.io`; the environment-specific lookup returned 404. This is configuration evidence, not deployed-runtime proof. Before any attended execution, verify the explicit provider base used by workflow and deployed Worker match. The optional extra mode assertion is not present; the attended CLI remains pinned to the staging origin and exact single allowlisted recipient. These facts must not be represented as fixes that were applied.
+
+No handset call, merge to main, shared deployment, voice activation, recording enablement, customer/contact/payment edit or knowledge activation has been executed by this continuation. Live routing and bridge verification still belong to #1166.
