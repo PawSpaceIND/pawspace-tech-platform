@@ -797,6 +797,22 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
     const ready = (listing.assets ?? []).filter(a => a.proofReady).map(a => a.purpose);
     expect(ready.slice().sort(), "both unique proof purposes are approved").toEqual(["after_service", "before_service"]);
     log(`${ready.length >= 2 ? "✅" : "❌"} Media listing for ${bookingId}: proofReady for ${ready.join(", ") || "none"}.`);
+    if (JOURNEY_MODE === "pay_after_only") {
+      const override = await page!.evaluate(async (id) => {
+        const response = await fetch("/api/grooming-lifecycle", {
+          method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            bookingId: id,
+            action: "authorise_completion_without_collection",
+            reason: "Synthetic UAT: payment intentionally not collected in pay-after-only completion proof",
+          }),
+        });
+        return { http: response.status, body: await response.json().catch(() => null) as unknown };
+      }, bookingId) as { http: number; body?: { collectionOverride?: { payoutReleased?: boolean; reason?: string } } };
+      expect(override.http, `Operations completion override: ${JSON.stringify(override.body)}`).toBe(200);
+      expect(override.body?.collectionOverride?.payoutReleased, "completion override must never release provider payout").toBe(false);
+      log("✅ Operations authorised completion without collection for the synthetic pay-after proof; provider payout remains withheld.");
+    }
     await shot(page!, "founder-approval");
   } finally { await context.close(); }
 });
@@ -831,6 +847,18 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     await shot(page, "partner-completed");
     const invoice = await page.getByText(/Invoice /).first().textContent().catch(() => "");
     if (invoice) log(`✅ ${invoice.trim()}`);
+    if (JOURNEY_MODE === "pay_after_only") {
+      const lifecycle = await page.evaluate(async (id) => {
+        const response = await fetch(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" });
+        return { http: response.status, body: await response.json().catch(() => null) as unknown };
+      }, bookingId) as { http: number; body?: { data?: { invoice?: { invoiceNumber?: string; status?: string }; taxReadiness?: { taxRuleStatus?: string }; payoutReadiness?: { status?: string; payoutAmount?: number } } } };
+      expect(lifecycle.http, `post-completion lifecycle: ${JSON.stringify(lifecycle.body)}`).toBe(200);
+      expect(lifecycle.body?.data?.invoice?.invoiceNumber, "completion must create an invoice").toBeTruthy();
+      expect(lifecycle.body?.data?.invoice?.status).toBe("issued");
+      expect(lifecycle.body?.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
+      expect(lifecycle.body?.data?.payoutReadiness?.status, "uncollected pay-after completion must withhold payout").toBe("withheld_pending_collection");
+      log(`✅ Post-completion Finance projection: invoice ${lifecycle.body?.data?.invoice?.invoiceNumber}, tax resolved, payout withheld pending collection.`);
+    }
     if (bookingMode === "pay_after" && JOURNEY_MODE !== "pay_after_only") {
       const request = page.getByRole("button", { name: "Create payment request" });
       if (await request.isVisible({ timeout: 10_000 }).catch(() => false)) {
