@@ -2,7 +2,7 @@ import{authError,authorize,database,securityAudit}from"../../../../lib/server-au
 import{
  approveV2SalaryReleasePlan,applyApprovedV2Adjustments,createV2SalaryReleasePlan,decideV2Adjustment,
  deriveV2Lop,proposeV2AuthorizedDeduction,releaseHeldV2Salary,saveV2PayrollPolicy,setV2SalaryHold,
- v2PayrollGovernanceDirectory
+ queueDueV2SalaryInstructions,v2PayrollGovernanceDirectory
 }from"../../../../lib/v2-payroll-governance";
 
 type Row=Record<string,unknown>;
@@ -50,6 +50,8 @@ export async function POST(request:Request){
    const approved=await hr();data=await setV2SalaryHold(db,{runId:text(body.runId),employeeId:text(body.employeeId),hold:Boolean(body.hold),reason:text(body.reason),releaseAt:body.releaseAt==null?undefined:Number(body.releaseAt),actorId:approved.email});
   }else if(action==="release_held_salary"){
    const approved=await finance();data=await releaseHeldV2Salary(db,{runId:text(body.runId),employeeId:text(body.employeeId),releaseAt:Number(body.releaseAt),actorId:approved.email});
+  }else if(action==="queue_due_salary"){
+   const approved=await finance();data=await queueDueV2SalaryInstructions(db,{runId:text(body.runId),asOf:body.asOf==null?undefined:Number(body.asOf),actorId:approved.email});
   }else return Response.json({error:"Unknown V2 payroll governance action"},{status:400});
   await securityAudit(db,actor,`v2.payroll.${action}`,"v2_payroll",text(body.runId)||text(body.adjustmentId)||text(body.employeeId)||null,"completed");
   return Response.json({data,productionReady:false});
