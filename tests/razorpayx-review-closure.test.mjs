@@ -57,13 +57,13 @@ function actualUiFunction(path,name,context){
 }
 for(const[path,name]of [["app/team/finance/partners/page.tsx","sendTestPayout"],["app/team/finance/contractors/page.tsx","sendPayout"]]){
  for(const reloadFails of [false,true])test(`actual Finance handler displays HTTP 202 warning: ${name}, reload failure=${reloadFails}`,async()=>{
-  const state={error:"",notice:"",busy:""},calls=[];
+  const state={error:"",notice:"",busy:"",feedbackRequest:0},calls=[];
   const set=key=>value=>{state[key]=typeof value==="function"?value(state[key]):value;};
-  const fn=actualUiFunction(path,name,{setBusy:set("busy"),setError:set("error"),setNotice:set("notice"),period:"2026-09",razorpayXDispatchNotice:notice.razorpayXDispatchNotice,
+  const fn=actualUiFunction(path,name,{setBusy:set("busy"),setError:set("error"),setNotice:set("notice"),setPayoutFeedbackRequest:set("feedbackRequest"),period:"2026-09",razorpayXDispatchNotice:notice.razorpayXDispatchNotice,
    fetch:async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return{ok:true,status:202,json:async()=>({data:{connected:true,reconciliationRequired:true,accounting:{status:"review_required",reason:"untrusted-provider-text"}}})};},
    load:async()=>{if(reloadFails)throw new Error("Refresh unavailable");}});
   await fn("RPX-REVIEW");assert.equal(calls.length,1);assert.equal(calls[0].url,"/api/razorpayx-test-dispatch");assert.equal(calls[0].body.payoutId,"RPX-REVIEW");
-  assert.match(state.notice,/accounting requires Finance review/);assert.match(state.error,/Do not send another payout/);assert.doesNotMatch(state.notice,/untrusted-provider-text/);assert.equal(state.busy,"");
+  assert.match(state.notice,/accounting requires Finance review/);assert.match(state.error,/Do not send another payout/);assert.doesNotMatch(state.notice,/untrusted-provider-text/);assert.equal(state.busy,"");assert.equal(state.feedbackRequest,1,"Completion asks for presentation focus exactly once");
  });
 }
 test("shared notice distinguishes provider acceptance, bookkeeping review and nonconfirmation",()=>{
