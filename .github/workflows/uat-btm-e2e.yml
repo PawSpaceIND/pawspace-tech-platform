@@ -26,6 +26,14 @@ on:
         options:
           - full
           - pay_after_only
+      provider_mode:
+        description: 'automatic = scheduler chooses; commission_named = explicitly select the seeded commission Grooming partner'
+        required: true
+        default: 'automatic'
+        type: choice
+        options:
+          - automatic
+          - commission_named
 
 jobs:
   e2e:
@@ -55,6 +63,7 @@ jobs:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           PW_SERVICE_DATE: ${{ github.event.inputs.service_date }}
           PW_JOURNEY_MODE: ${{ github.event.inputs.journey_mode }}
+          PW_PROVIDER_MODE: ${{ github.event.inputs.provider_mode }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           E2E_REPORT: test-results/uat-btm-report.md
         run: npx playwright test --config playwright.uat-btm.config.ts

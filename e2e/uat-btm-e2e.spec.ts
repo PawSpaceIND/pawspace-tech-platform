@@ -24,6 +24,9 @@ import { dirname } from "node:path";
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
 const JOURNEY_MODE = process.env.PW_JOURNEY_MODE || "full";
+const PROVIDER_MODE = process.env.PW_PROVIDER_MODE || "automatic";
+const COMMISSION_PROVIDER_ID = "uatcap_groom_cm";
+const COMMISSION_PROVIDER_NAME = "PawSpace Grooming Partner (UAT)";
 /**
  * Requested service date (IST). Default: the day after tomorrow. Every booking this proof makes holds a
  * groomer for its window plus the travel-buffer neighbours, so running it repeatedly on the date manual
@@ -137,6 +140,22 @@ async function ensurePet(page: Page) {
   expect(res.ok(), `pet seed (${res.status()})`).toBeTruthy();
 }
 
+async function chooseRequestedGroomer(page: Page) {
+  if (PROVIDER_MODE !== "commission_named") return;
+  const section = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Available for this exact slot", exact: true }),
+  });
+  await expect(section, "exact-slot groomer choices must render for commission-provider UAT").toHaveCount(1, { timeout: 30_000 });
+  const automatic = section.getByRole("button", { name: "PawSpace chooses the best available groomer", exact: true });
+  const target = section.getByRole("button").filter({ hasText: COMMISSION_PROVIDER_NAME }).first();
+  await expect(target, `${COMMISSION_PROVIDER_NAME} must be offered for this exact slot`).toBeVisible({ timeout: 30_000 });
+  await expect(target).toBeEnabled();
+  await target.click();
+  await expect(target).toHaveAttribute("aria-pressed", "true");
+  await expect(automatic).toHaveAttribute("aria-pressed", "false");
+  log(`✅ Commission-provider mode: explicitly selected ${COMMISSION_PROVIDER_NAME} (${COMMISSION_PROVIDER_ID}); automatic matching deselected.`);
+}
+
 /** Walk grooming steps 1→4 for the BTM doorstep on SERVICE_DATE, stopping on the review step. Returns the slot used. */
 async function reachReview(page: Page, preferredSlots: RegExp[]) {
   await page.goto("/mobile-app");
@@ -170,6 +189,7 @@ async function reachReview(page: Page, preferredSlots: RegExp[]) {
   const slotUsed = await selectSlot(page, preferredSlots, tried);
   expect(slotUsed, "an available slot must exist on the requested date").not.toEqual("");
   log(`✅ Slot "${slotUsed}" selected.`);
+  await chooseRequestedGroomer(page);
   await openReview(page);
   return { slotUsed, tried };
 }
@@ -227,6 +247,7 @@ async function confirmBooking(page: Page): Promise<BookingAttempt> {
     const provider = (data.provider ?? {}) as Record<string, unknown>;
     if (reserve.status === 200 && provider.id) {
       assignedProviderId = String(provider.id); assignedProviderName = String(provider.name ?? "");
+      if (PROVIDER_MODE === "commission_named") expect(assignedProviderId, "named commission groomer must survive reservation without silent replacement").toBe(COMMISSION_PROVIDER_ID);
       log(`✅ Capacity: reserve returned HTTP 200, status "${String(data.status)}", provider assigned: ${assignedProviderName || assignedProviderId} (${assignedProviderId}). The "No provider is available" refusal did NOT occur.`);
     } else {
       refused = true;
@@ -269,6 +290,7 @@ async function bookWithSlotFallback(page: Page, preferred: RegExp[], payMode: "o
     const next = await selectSlot(page, preferred, tried);
     if (!next) { log(`❌ Capacity: every offered slot on ${SERVICE_DATE} was refused for this doorstep.`); return last; }
     log(`✅ Slot "${next}" selected (retry ${attempt}).`);
+    await chooseRequestedGroomer(page);
     await openReview(page);
   }
   return last;
@@ -909,5 +931,36 @@ test("6. Founder Finance — same booking appears in Grooming finance and Accoun
     expect(String(accountsRow?.invoiceNumber)).toBe(String(financeItem?.invoice_number));
     expect(String(accountsRow?.status)).toBe("issued");
     log(`✅ Same booking ${bookingId} reached Finance and Accounts: invoice ${String(financeItem?.invoice_number)}, receivable ₹${Number(financeItem?.receivable).toFixed(2)}.`);
+  } finally { await context.close(); }
+});
+
+test("7. Founder Finance — commission provider earnings are governed for the same completed booking", async ({ browser }) => {
+  test.setTimeout(120_000);
+  test.skip(PROVIDER_MODE !== "commission_named", "Commission earnings proof runs only when the seeded commission Grooming partner is explicitly selected.");
+  section("7. Founder Finance — commission earnings and payout readiness");
+  expect(bookingId, "completed commission booking id").not.toEqual("");
+  expect(assignedProviderId).toBe(COMMISSION_PROVIDER_ID);
+  const context = await browser.newContext();
+  try {
+    let page: Page | null = null;
+    for (const email of FOUNDER_EMAILS) { try { page = await staffSignIn(context, email); break; } catch { /* try next founder-capable fixture */ } }
+    expect(page, "founder-capable staff identity must sign in for Partner Finance verification").not.toBeNull();
+    const partnerFinance = await page!.evaluate(async () => {
+      const response = await fetch("/api/partner-finance", { cache: "no-store", credentials: "include" });
+      return { http: response.status, body: await response.json().catch(() => null) as unknown };
+    });
+    expect(partnerFinance.http, `Partner Finance: ${JSON.stringify(partnerFinance.body)}`).toBe(200);
+    const body = partnerFinance.body as { data?: { commission?: { orders?: Array<Record<string, unknown>>; policy?: Record<string, unknown> }; payoutQueue?: { policy?: Record<string, unknown>; queue?: Array<Record<string, unknown>>; upcoming?: Array<Record<string, unknown>> }; razorpayxTest?: { ready?: boolean; problems?: string[] } } } | null;
+    const order = (body?.data?.commission?.orders || []).find(row => String(row.booking_id) === bookingId);
+    expect(order, `commission order must be created for completed booking ${bookingId}`).toBeTruthy();
+    expect(String(order?.provider_id)).toBe(COMMISSION_PROVIDER_ID);
+    expect(Number(order?.order_amount), "commission order retains the customer order amount").toBeGreaterThan(0);
+    expect(Number(order?.commission_amount), "commission provider must have a positive governed earning").toBeGreaterThan(0);
+    expect(String(order?.status), "new commission earning must wait for Finance confirmation, never auto-pay").toBe("pending_confirmation");
+    expect(Number(order?.due_at), "commission payout has a governed future due date").toBeGreaterThan(Number(order?.completed_at));
+    expect(body?.data?.razorpayxTest?.ready, `RazorpayX TEST readiness: ${JSON.stringify(body?.data?.razorpayxTest)}`).toBe(true);
+    const queued = (body?.data?.payoutQueue?.queue || []).find(row => String(row.booking_id) === bookingId);
+    expect(queued, "unapproved commission must not already be in the release queue").toBeFalsy();
+    log(`✅ Same booking ${bookingId} produced governed provider earnings for ${COMMISSION_PROVIDER_NAME}: ₹${Number(order?.commission_amount).toFixed(2)}, status pending_confirmation, payout due ${new Date(Number(order?.due_at)).toISOString()}, RazorpayX TEST ready.`);
   } finally { await context.close(); }
 });
