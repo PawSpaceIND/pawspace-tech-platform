@@ -23,6 +23,7 @@ import { dirname } from "node:path";
 
 const BASE = process.env.PW_BASE_URL || "https://pawspace-staging.karthik-fce.workers.dev";
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
+const JOURNEY_MODE = process.env.PW_JOURNEY_MODE || "full";
 /**
  * Requested service date (IST). Default: the day after tomorrow. Every booking this proof makes holds a
  * groomer for its window plus the travel-buffer neighbours, so running it repeatedly on the date manual
@@ -567,6 +568,7 @@ async function staffSignIn(context: BrowserContext, email: string): Promise<Page
 
 test("1. Customer — BTM Layout 560068 on the requested date, pay online through the Razorpay sandbox", async ({ browser }) => {
   test.setTimeout(600_000);
+  test.skip(JOURNEY_MODE === "pay_after_only", "Pay-after-only acceptance intentionally performs no checkout payment action.");
   section("1. Customer persona — BTM Layout checkout (online)");
   const context = await browser.newContext();
   await mockAddressAutocomplete(context);
@@ -795,6 +797,22 @@ test("4. Founder — approves both photos in Control → Customer booking lifecy
     const ready = (listing.assets ?? []).filter(a => a.proofReady).map(a => a.purpose);
     expect(ready.slice().sort(), "both unique proof purposes are approved").toEqual(["after_service", "before_service"]);
     log(`${ready.length >= 2 ? "✅" : "❌"} Media listing for ${bookingId}: proofReady for ${ready.join(", ") || "none"}.`);
+    if (JOURNEY_MODE === "pay_after_only") {
+      const override = await page!.evaluate(async (id) => {
+        const response = await fetch("/api/grooming-lifecycle", {
+          method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            bookingId: id,
+            action: "authorise_completion_without_collection",
+            reason: "Synthetic UAT: payment intentionally not collected in pay-after-only completion proof",
+          }),
+        });
+        return { http: response.status, body: await response.json().catch(() => null) as unknown };
+      }, bookingId) as { http: number; body?: { collectionOverride?: { payoutReleased?: boolean; reason?: string } } };
+      expect(override.http, `Operations completion override: ${JSON.stringify(override.body)}`).toBe(200);
+      expect(override.body?.collectionOverride?.payoutReleased, "completion override must never release provider payout").toBe(false);
+      log("✅ Operations authorised completion without collection for the synthetic pay-after proof; provider payout remains withheld.");
+    }
     await shot(page!, "founder-approval");
   } finally { await context.close(); }
 });
@@ -829,7 +847,19 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
     await shot(page, "partner-completed");
     const invoice = await page.getByText(/Invoice /).first().textContent().catch(() => "");
     if (invoice) log(`✅ ${invoice.trim()}`);
-    if (bookingMode === "pay_after") {
+    if (JOURNEY_MODE === "pay_after_only") {
+      const lifecycle = await page.evaluate(async (id) => {
+        const response = await fetch(`/api/grooming-lifecycle?bookingId=${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" });
+        return { http: response.status, body: await response.json().catch(() => null) as unknown };
+      }, bookingId) as { http: number; body?: { data?: { invoice?: { invoiceNumber?: string; status?: string }; taxReadiness?: { taxRuleStatus?: string }; payoutReadiness?: { status?: string; payoutAmount?: number } } } };
+      expect(lifecycle.http, `post-completion lifecycle: ${JSON.stringify(lifecycle.body)}`).toBe(200);
+      expect(lifecycle.body?.data?.invoice?.invoiceNumber, "completion must create an invoice").toBeTruthy();
+      expect(lifecycle.body?.data?.invoice?.status).toBe("issued");
+      expect(lifecycle.body?.data?.taxReadiness?.taxRuleStatus).toBe("resolved");
+      expect(lifecycle.body?.data?.payoutReadiness?.status, "uncollected pay-after completion must withhold payout").toBe("withheld_pending_collection");
+      log(`✅ Post-completion Finance projection: invoice ${lifecycle.body?.data?.invoice?.invoiceNumber}, tax resolved, payout withheld pending collection.`);
+    }
+    if (bookingMode === "pay_after" && JOURNEY_MODE !== "pay_after_only") {
       const request = page.getByRole("button", { name: "Create payment request" });
       if (await request.isVisible({ timeout: 10_000 }).catch(() => false)) {
         await request.click();
@@ -837,8 +867,47 @@ test("5. Partner — adds service proof and completes the job", async ({ browser
         log(`${link ? "✅" : "⚠️"} Pay-after: Razorpay sandbox payment request ${link ? "created (checkout link + QR payload shown)" : "did not surface a checkout link"}.`);
         await shot(page, "partner-payment-request");
       }
+    } else if (bookingMode === "pay_after") {
+      log("ℹ️ Pay-after-only acceptance: payment request/checkout intentionally not created; collection remains pending for separate payment certification.");
     } else {
       log("✅ Prepaid booking: nothing further to collect after completion.");
     }
+  } finally { await context.close(); }
+});
+test("6. Founder Finance — same booking appears in Grooming finance and Accounts with receivable outstanding", async ({ browser }) => {
+  test.setTimeout(120_000);
+  section("6. Founder Finance — invoice, receivable and Accounts projection");
+  expect(bookingId, "completed booking id").not.toEqual("");
+  const context = await browser.newContext();
+  try {
+    let page: Page | null = null;
+    for (const email of FOUNDER_EMAILS) { try { page = await staffSignIn(context, email); break; } catch { /* try next founder-capable fixture */ } }
+    expect(page, "founder-capable staff identity must sign in for Finance verification").not.toBeNull();
+    const finance = await page!.evaluate(async () => {
+      const response = await fetch("/api/grooming-finance", { cache: "no-store", credentials: "include" });
+      return { http: response.status, body: await response.json().catch(() => null) as unknown };
+    });
+    const financeBody = finance.body as { items?: Array<Record<string, unknown>> } | null;
+    const financeItem = (financeBody?.items || []).find(row => String(row.booking_id) === bookingId);
+    expect(finance.http, `Grooming finance: ${JSON.stringify(finance.body)}`).toBe(200);
+    expect(financeItem, `booking ${bookingId} must appear in Grooming finance`).toBeTruthy();
+    expect(String(financeItem?.booking_status)).toBe("completed");
+    expect(String(financeItem?.invoice_status)).toBe("issued");
+    expect(financeItem?.invoiced).toBe(true);
+    if (bookingMode === "pay_after" && JOURNEY_MODE === "pay_after_only") {
+      expect(Number(financeItem?.receivable), "uncollected pay-after booking remains a receivable").toBeGreaterThan(0);
+      expect(["captured", "paid"]).not.toContain(String(financeItem?.payment_status));
+    }
+    const accounts = await page!.evaluate(async () => {
+      const response = await fetch("/api/accounts-business-view", { cache: "no-store", credentials: "include" });
+      return { http: response.status, body: await response.json().catch(() => null) as unknown };
+    });
+    const accountsBody = accounts.body as { data?: { ledger?: Array<Record<string, unknown>> } } | null;
+    const accountsRow = (accountsBody?.data?.ledger || []).find(row => String(row.bookingId) === bookingId);
+    expect(accounts.http, `Accounts view: ${JSON.stringify(accounts.body)}`).toBe(200);
+    expect(accountsRow, `booking ${bookingId} must appear in the Accounts business ledger`).toBeTruthy();
+    expect(String(accountsRow?.invoiceNumber)).toBe(String(financeItem?.invoice_number));
+    expect(String(accountsRow?.status)).toBe("issued");
+    log(`✅ Same booking ${bookingId} reached Finance and Accounts: invoice ${String(financeItem?.invoice_number)}, receivable ₹${Number(financeItem?.receivable).toFixed(2)}.`);
   } finally { await context.close(); }
 });

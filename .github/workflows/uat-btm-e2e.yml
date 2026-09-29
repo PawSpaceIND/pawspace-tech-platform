@@ -18,6 +18,14 @@ on:
         description: 'Requested service date (YYYY-MM-DD, IST); blank = the day after tomorrow, so repeated proofs do not consume the date manual testers are using'
         required: false
         default: ''
+      journey_mode:
+        description: 'full = Razorpay TEST payment gate; pay_after_only = no payment action, prove booking/partner/completion only'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - pay_after_only
 
 jobs:
   e2e:
@@ -46,6 +54,7 @@ jobs:
         env:
           PW_BASE_URL: ${{ github.event.inputs.base_url }}
           PW_SERVICE_DATE: ${{ github.event.inputs.service_date }}
+          PW_JOURNEY_MODE: ${{ github.event.inputs.journey_mode }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           E2E_REPORT: test-results/uat-btm-report.md
         run: npx playwright test --config playwright.uat-btm.config.ts
