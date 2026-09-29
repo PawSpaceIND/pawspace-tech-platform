@@ -296,6 +296,90 @@ jobs:
           } else console.log('EXOTEL_GROOMING_CALL_DETAIL='+JSON.stringify({skipped:true,hasCallSid:Boolean(callSid),hasCredentials:Boolean(exKey&&exToken&&exSid)}));
           NODE
 
+  direct-exotel-maya-uat:
+    if: ${{ inputs.confirm == 'direct-exotel-maya-uat' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Place one direct Exotel Maya UAT call
+        env:
+          EXPECTED_DESTINATION_LAST4: ${{ inputs.expected_destination_last4 }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_SUBDOMAIN: ${{ vars.EXOTEL_SUBDOMAIN }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node <<'NODE'
+          const text=v=>String(v??'').trim(),digits=v=>text(v).replace(/\D/g,'');
+          const entries=text(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST).split(/[\s,;]+/).filter(Boolean);
+          if(entries.length!==1)throw Error('Direct UAT requires exactly one allowlisted recipient');
+          const phone=entries[0],expected=text(process.env.EXPECTED_DESTINATION_LAST4);
+          if(!/^\d{4}$/.test(expected)||digits(phone).slice(-4)!==expected)throw Error('Confirmed UAT recipient mismatch');
+          const key=text(process.env.EXOTEL_API_KEY),token=text(process.env.EXOTEL_API_TOKEN),sid=text(process.env.EXOTEL_SID);
+          const host=text(process.env.EXOTEL_SUBDOMAIN)||'api.exotel.com',caller=text(process.env.EXOTEL_CALLER_ID),appId=text(process.env.EXOTEL_VOICE_APP_ID);
+          if(!key||!token||!sid||!caller||!appId)throw Error('Direct Exotel UAT prerequisites missing');
+          if(appId!=='1347515')throw Error('Direct Exotel UAT is pinned to reviewed Maya flow 1347515');
+          console.log('::add-mask::'+phone);
+          const auth='Basic '+Buffer.from(key+':'+token).toString('base64');
+          const params=new URLSearchParams({
+            From:phone,CallerId:caller,
+            Url:'http://my.exotel.com/'+sid+'/exoml/start_voice/'+appId,
+            CallType:'trans',TimeOut:'60',Record:'false'
+          });
+          const dial=await fetch('https://'+host+'/v1/Accounts/'+encodeURIComponent(sid)+'/Calls/connect.json',{
+            method:'POST',headers:{authorization:auth,'content-type':'application/x-www-form-urlencoded'},
+            body:params.toString(),signal:AbortSignal.timeout(30000)
+          });
+          const body=await dial.json().catch(()=>({}));
+          if(!dial.ok){console.log('DIRECT_EXOTEL_ERROR='+JSON.stringify(body).slice(0,1000));throw Error('Direct Exotel dial failed '+dial.status);}
+          const call=body.Call||body.call||{},callSid=text(call.Sid||call.sid);
+          if(!callSid)throw Error('Direct Exotel dial returned no CallSid');
+          console.log('::add-mask::'+callSid);
+          console.log('DIRECT_EXOTEL_ACCEPTED='+JSON.stringify({status:call.Status||call.status||null,callerLast4:digits(caller).slice(-4),recipientLast4:expected,appId}));
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          let finalStatus='',duration=0;
+          for(let i=0;i<96;i++){
+            await sleep(5000);
+            const rr=await fetch('https://'+host+'/v1/Accounts/'+encodeURIComponent(sid)+'/Calls/'+encodeURIComponent(callSid)+'.json',{headers:{authorization:auth},signal:AbortSignal.timeout(30000)});
+            const rb=await rr.json().catch(()=>({}));
+            if(!rr.ok)throw Error('Direct Exotel status read failed '+rr.status);
+            const c=rb.Call||rb.call||rb;
+            finalStatus=text(c.Status||c.status);duration=Number(c.Duration||c.duration||0);
+            console.log('DIRECT_EXOTEL_STATUS='+JSON.stringify({status:finalStatus,duration}));
+            if(['completed','no-answer','busy','failed','canceled'].includes(finalStatus))break;
+          }
+          const eh={'xi-api-key':text(process.env.ELEVENLABS_API_KEY)},agentId=text(process.env.GROOMING_AGENT_ID);
+          let matched=null;
+          if(eh['xi-api-key']&&agentId){
+            for(let attempt=0;attempt<10&&!matched;attempt++){
+              const lr=await fetch('https://api.elevenlabs.io/v1/convai/conversations?agent_id='+encodeURIComponent(agentId)+'&page_size=20',{headers:eh,signal:AbortSignal.timeout(30000)});
+              const lb=await lr.json().catch(()=>({}));
+              for(const item of lb.conversations||[]){
+                const dr=await fetch('https://api.elevenlabs.io/v1/convai/conversations/'+encodeURIComponent(item.conversation_id),{headers:eh,signal:AbortSignal.timeout(30000)});
+                const d=await dr.json().catch(()=>({}));
+                if(d?.metadata?.phone_call?.call_sid===callSid){matched=d;break;}
+              }
+              if(!matched)await sleep(2000);
+            }
+          }
+          console.log('DIRECT_EXOTEL_FINAL='+JSON.stringify({
+            carrierStatus:finalStatus,duration,
+            conversationStatus:matched?.status||null,
+            turns:Array.isArray(matched?.transcript)?matched.transcript.length:0
+          }));
+          if(finalStatus!=='completed')throw Error('Direct Exotel handset call did not complete: '+finalStatus);
+          NODE
+
   specialist-call:
     if: ${{ inputs.confirm == 'specialist-call' }}
     runs-on: ubuntu-latest
