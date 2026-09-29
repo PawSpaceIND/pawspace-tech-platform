@@ -115,6 +115,27 @@ test("booting a real Worker over a real D1 binding is real_execution even with n
   assert.equal(classifyTestFile("tests/a.test.mjs", inert).evidenceClass, "source_contract");
 });
 
+test("locked Wrangler CLI execution is classified the same as npx Wrangler execution", () => {
+  const files = {
+    "wrangler.demo.jsonc": `{ "main": "tests/demo-worker.ts", "d1_databases": [{ "binding": "DB" }] }`,
+    "tests/demo-worker.ts": `import { POST } from "../app/api/canonical-bookings/route.ts";\nexport default { fetch: POST };\n`,
+    "tests/a-real-d1.test.mjs": `import { spawn } from "node:child_process";\nconst port = 44011;\nspawn(process.execPath, ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.demo.jsonc", "--port", "0"]);\nconst response = await fetch("http://127.0.0.1:" + port + "/run");\nassert.equal(response.status, 200);\n`,
+  };
+  const root = sandbox(files);
+  const row = classifyTestFile("tests/a-real-d1.test.mjs", root);
+  assert.equal(row.evidenceClass, "real_execution");
+  assert.equal(row.localWorker, true);
+  assert.equal(row.routeHandlersExecuted, 1);
+
+  const noTraffic = sandbox({ ...files, "tests/a-real-d1.test.mjs": `import { spawn } from "node:child_process";\nspawn(process.execPath, ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.demo.jsonc", "--port", "0"]);\n` });
+  assert.equal(classifyTestFile("tests/a-real-d1.test.mjs", noTraffic).evidenceClass, "source_contract",
+    "launching a Worker without making a request is not execution evidence");
+
+  const noDev = sandbox({ ...files, "tests/a-real-d1.test.mjs": `import { spawn } from "node:child_process";\nconst port = 44011;\nspawn(process.execPath, ["node_modules/wrangler/bin/wrangler.js", "--version"]);\nawait fetch("http://127.0.0.1:" + port + "/run");\n` });
+  assert.equal(classifyTestFile("tests/a-real-d1.test.mjs", noDev).evidenceClass, "source_contract",
+    "the Wrangler binary name alone is not enough without a dev launch");
+});
+
 test("an inert product import is not promoted to executable evidence", () => {
   const hollow = sandbox({
     "tests/a.test.mjs": `import { DatabaseSync } from "node:sqlite";\nimport * as refunds from "../lib/refunds.ts";\nassert.ok(true);\n`,
