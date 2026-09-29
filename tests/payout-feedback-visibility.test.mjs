@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
+import ts from 'typescript';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
 import {uiBehaviorSignatures} from '../scripts/ui-audit-event-contract.mjs';
 installWorkersHooks('__PAYOUT_FEEDBACK_UI_DB__');
@@ -11,40 +12,79 @@ const {default:PayoutActionFeedback}=await import('../app/components/ui/PayoutAc
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const baseline=JSON.parse(read('tests/fixtures/payout-feedback-source-contract.json'));
-function removeReviewedWrapper(source){
- for(const addition of ['import PayoutActionFeedback from "../../../components/ui/PayoutActionFeedback";\n','<PayoutActionFeedback notice={notice}>','</PayoutActionFeedback>']){
-  assert.equal(source.split(addition).length,2,'Exactly one reviewed wrapper/import is allowed');
-  source=source.replace(addition,'');
+const completion='setPayoutFeedbackRequest(request=>request+1);';
+const wrapper='<PayoutActionFeedback requestId={payoutFeedbackRequest}>';
+function validatePlacement(source,path){
+ const tree=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),wrappers=[],functions=[],calls=[];
+ function walk(node){
+  if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(tree)==='PayoutActionFeedback')wrappers.push(node);
+  if(ts.isFunctionDeclaration(node))functions.push(node);
+  if(ts.isCallExpression(node)&&node.expression.getText(tree)==='setPayoutFeedbackRequest')calls.push(node);
+  ts.forEachChild(node,walk);
  }
- return source;
+ walk(tree);assert.equal(wrappers.length,1);
+ const children=wrappers[0].children.filter(n=>!ts.isJsxText(n)||n.text.trim());
+ assert.equal(children.length,2,'Feedback wraps exactly the original error and notice expressions');
+ for(const[index,name]of ['error','notice'].entries()){
+  const child=children[index];assert.ok(ts.isJsxExpression(child)&&child.expression&&ts.isBinaryExpression(child.expression),'Feedback child must be an outcome expression');
+  assert.equal(child.expression.operatorToken.kind,ts.SyntaxKind.AmpersandAmpersandToken);assert.equal(child.expression.left.getText(tree),name);
+ }
+ const names=path.includes('/partners/')?['release','sendTestPayout']:['sendPayout'];
+ assert.equal(calls.length,names.length,'No unrelated action may advance the payout focus token');
+ for(const name of names){
+  const matches=functions.filter(fn=>fn.name?.text===name);assert.equal(matches.length,1);
+  const guarded=matches[0].body.statements.filter(ts.isTryStatement);assert.equal(guarded.length,1);
+  assert.equal(guarded[0].finallyBlock?.statements.at(-1)?.getText(tree),completion,'Only explicit payout completion requests focus');
+ }
 }
-for(const[p,before]of Object.entries(baseline.files))test('Payout feedback changes only its reviewed wrapper; original handlers and money rules remain: '+p,()=>{
- const source=read(p),original=removeReviewedWrapper(source);
- assert.equal(hash(original),before.sha256);
+function recoverOriginal(source,path){
+ validatePlacement(source,path);
+ for(const addition of ['import PayoutActionFeedback from "../../../components/ui/PayoutActionFeedback";\n',wrapper,'</PayoutActionFeedback>',',[payoutFeedbackRequest,setPayoutFeedbackRequest]=useState(0)']){
+  assert.equal(source.split(addition).length,2,'Exactly one reviewed wrapper/import/counter is allowed');source=source.replace(addition,'');
+ }
+ const count=path.includes('/partners/')?2:1;assert.equal(source.split(';'+completion).length,count+1);
+ return path.includes('/partners/')?source.replaceAll(';'+completion,''):source.replace(completion,'');
+}
+for(const[p,before]of Object.entries(baseline.files))test('Payout feedback retains original complete page bytes and request events: '+p,()=>{
+ const source=read(p),original=recoverOriginal(source,p);assert.equal(hash(original),before.sha256);
  assert.deepEqual(uiBehaviorSignatures(source,p),uiBehaviorSignatures(original,p));
 });
-test('New feedback remains keyboard-focusable and preserves alert text safely',()=>{
- const html=renderToStaticMarkup(createElement(PayoutActionFeedback,{notice:'Review'},createElement('p',{role:'alert'},'<Pay again?>')));
+test('Feedback is keyboard-focusable and preserves alert text safely',()=>{
+ const html=renderToStaticMarkup(createElement(PayoutActionFeedback,{requestId:1},createElement('p',{role:'alert'},'<Pay again?>')));
  assert.match(html,/tabindex="-1"/);assert.match(html,/role="group"/);assert.match(html,/aria-label="Payout action outcome"/);
  assert.match(html,/<p role="alert">&lt;Pay again\?&gt;<\/p>/);
 });
-test('Payout feedback has no network, storage, payout authority or scheduled work',()=>{
+test('Feedback has no network, identity storage, payout authority or scheduled work',()=>{
  const source=read('app/components/ui/PayoutActionFeedback.tsx');
  assert.doesNotMatch(source,/fetch\(|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie|setTimeout|setInterval|dangerouslySetInnerHTML/);
- assert.match(source,/if\(!notice\|\|!feedback\.current\)return/);
- assert.match(source,/focus\(\{preventScroll:true\}\)/);
- assert.match(source,/scrollIntoView\(\{block:"center",inline:"nearest",behavior:"instant"\}\)/);
+ assert.match(source,/if\(!requestId\|\|!feedback\.current\?\.textContent\?\.trim\(\)\)return/);
+ assert.match(source,/\},\[requestId\]\)/);assert.doesNotMatch(source,/\[notice\]|\[error\]/);
+ assert.match(source,/focus\(\{preventScroll:true\}\)/);assert.match(source,/scrollIntoView\(\{block:"center",inline:"nearest",behavior:"instant"\}\)/);
 });
-test('Original-byte proof still catches a changed payout endpoint or disabled safeguard',()=>{
+test('Original-byte proof rejects changed payout endpoints, payloads and busy safeguards',()=>{
  const p='app/team/finance/partners/page.tsx',source=read(p);
  for(const[from,to]of [['/api/razorpayx-test-dispatch','/api/unsafe-dispatch'],['JSON.stringify({payoutId})','JSON.stringify({payoutId:"other"})'],['disabled={Boolean(busy)}','disabled={false}']]){
-  assert.ok(source.includes(from));assert.notEqual(hash(removeReviewedWrapper(source.replace(from,to))),baseline.files[p].sha256);
+  assert.ok(source.includes(from));assert.notEqual(hash(recoverOriginal(source.replace(from,to),p)),baseline.files[p].sha256);
  }
 });
-test('Viewport regressions are included in the zero-retry isolated UI workflow',()=>{
+test('Placement proof rejects a wrapper moved away from the payout outcomes',()=>{
+ const p='app/team/finance/partners/page.tsx',source=read(p);
+ const moved=source.replace(wrapper,'').replace('</PayoutActionFeedback>','').replace('<header ',wrapper+'<header ').replace('</header>','</header></PayoutActionFeedback>');
+ assert.throws(()=>validatePlacement(moved,p),/Feedback wraps exactly|Feedback child/);
+});
+test('Placement proof rejects a missing completion request or unrelated focus trigger',()=>{
+ const p='app/team/finance/contractors/page.tsx',source=read(p);
+ assert.throws(()=>validatePlacement(source.replace(completion,''),p),/No unrelated action/);
+ assert.throws(()=>validatePlacement(source+'\nfunction unrelated(){'+completion+'}',p),/No unrelated action/);
+});
+test('Original historical source baseline was not repinned',()=>{
+ assert.equal(baseline.base,'1610115c881220eb6db5cb67298779cb0c9f6f63');
+});
+test('Viewport and review regressions remain in the zero-retry isolated UI workflow',()=>{
  assert.match(read('playwright.ui-audit.config.ts'),/testMatch:\["ui-audit-closure.spec.ts","ui-audit-finance-feedback.spec.ts"\]/);
  assert.match(read('playwright.ui-audit.config.ts'),/retries:0/);
  const suite=read('e2e/ui-audit-finance-feedback.spec.ts');
  assert.match(suite,/toBeFocused\(\)/);assert.match(suite,/r\.top>=0&&r\.bottom<=innerHeight/);
+ assert.match(suite,/review error-only payout/);assert.match(suite,/review unrelated action keeps focus/);
  assert.doesNotMatch(suite,/scrollIntoViewIfNeeded|\.focus\(|waitForTimeout|test\.skip|test\.only/);
 });
