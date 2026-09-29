@@ -1,6 +1,7 @@
 import{ensureCommunicationTables}from"./communication-engine";
 import{endInboundAiVoiceSession}from"./inbound-ai-telephony";
-import{reconcileVerifiedElevenLabsCompletion}from"./voice-outbound-governance";
+import{ensureVoiceCallTables,reconcileVerifiedElevenLabsCompletion}from"./voice-outbound-governance";
+import { resolveElevenLabsFailureCall } from "./elevenlabs-failure-correlation";
 
 type Env=Record<string,unknown>;type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -39,10 +40,17 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
 
  const vars=initiationVariables(data),sessionId=text(vars.pawspace_voice_session_id),voiceCallId=text(vars.pawspace_voice_call_id);
  if(type==="call_initiation_failure"){
-  if(sessionId)await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_call_initiation_failure"}).catch(()=>null);
-  if(voiceCallId)await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:false,asOf:now}).catch(()=>null);
-  await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?").bind(JSON.stringify({outcome:"call_initiation_failure",sessionId:sessionId||null,voiceCallId:voiceCallId||null}),now,eventId).run();
-  return{duplicatePrevented:false,conversationId,status:"processed",outcome:"call_initiation_failure"};
+  if(sessionId&&voiceCallId)throw new Response("Ambiguous ElevenLabs failure identity",{status:409});
+  let failureVoiceCallId="";
+  if(sessionId)await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_call_initiation_failure"});
+  else {
+   await ensureVoiceCallTables(db);
+   failureVoiceCallId=await resolveElevenLabsFailureCall(db,{conversationId,agentId:text(data.agent_id),claimedCallId:voiceCallId});
+   await reconcileVerifiedElevenLabsCompletion(db,{callId:failureVoiceCallId,conversationId,completed:false,asOf:now});
+  }
+  // An unresolved identity or storage failure must remain retryable, not become a processed no-op.
+  await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?").bind(JSON.stringify({outcome:"call_initiation_failure",sessionId:sessionId||null,voiceCallId:failureVoiceCallId||null}),now,eventId).run();
+  return{duplicatePrevented:false,conversationId,status:"processed",outcome:"call_initiation_failure",voiceCallId:failureVoiceCallId||null};
  }
  let session:Row|null=null,threadId="",customerId="";
  if(sessionId){
