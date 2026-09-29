@@ -43,3 +43,25 @@ test("one-shot carrier UAT remains consent, allowlist, idempotency and time gate
   assert.match(scheduler, /voice-carrier-uat:2026-09-11:controlled-retry-7/);
   assert.match(scheduler, /requestControlledCarrierUatCall/);
 });
+
+test("native AgentStream isolates each call conversation and preserves business context", () => {
+  assert.match(bridge, /nativeVoiceThreadId\(order\.id\)/);
+  assert.match(bridge, /THREAD-VOICE-/);
+  assert.doesNotMatch(bridge, /WHERE customer_id=\? AND status='open' ORDER BY updated_at DESC LIMIT 1/);
+  assert.match(bridge, /order\.booking_id/);
+  assert.match(bridge, /order\.lead_id/);
+});
+
+test("native AgentStream uses PawSpace specialist sales profiles with scheduling authority", () => {
+  assert.match(bridge, /value === "grooming_sales".*"grooming"/s);
+  assert.match(bridge, /value === "training_sales".*"dog_training"/s);
+  assert.match(bridge, /salesService:active\.salesService/);
+  assert.match(bridge, /"scheduling\.book"/);
+});
+
+test("native AgentStream speaks the governed opening disclosure before normal turns", () => {
+  assert.match(bridge, /SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=\?/);
+  assert.match(bridge, /synthesizeLinear16\(env, session\.openingDisclosure, session\.sampleRate\)/);
+  assert.match(bridge, /recordSegment\(env, session, "assistant", session\.openingDisclosure/);
+  assert.match(bridge, /sendAudio\(server, session, greeting\.audio/);
+});

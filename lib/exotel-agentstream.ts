@@ -2,6 +2,7 @@ import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
+import type { VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
 // Exotel AgentStream is raw signed little-endian PCM over JSON/WebSocket. This module is deliberately
@@ -52,16 +53,32 @@ type Session = {
   sampleRate: number;
   language: string;
   segmentIndex: number;
+  useCase: string;
+  openingDisclosure: string;
+  salesService: VoiceSalesService | undefined;
   salesDispatchItemId: string | null;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+
+export function nativeVoiceSalesService(useCase: unknown): VoiceSalesService | undefined {
+  const value = text(useCase);
+  if (value === "grooming_sales") return "grooming";
+  if (value === "training_sales") return "dog_training";
+  return undefined;
+}
+
+export function nativeVoiceThreadId(ledgerCallId: unknown) {
+  const normalized = text(ledgerCallId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96);
+  if (!normalized) throw new Error("AgentStream call id cannot create a voice thread");
+  return `THREAD-VOICE-${normalized}`;
+}
 const serviceActor: AuthenticatedActor = {
   email: "exotel-agentstream@system.pawspace",
   name: "Exotel AgentStream voice service",
   roleCode: "service_exotel_agentstream",
-  permissions: ["communications.manage", "customers.manage", "bookings.manage"],
+  permissions: ["communications.manage", "customers.manage", "bookings.manage", "scheduling.book"],
   developmentPreview: false,
   identitySource: "workspace",
   principalType: "identity_subject",
@@ -134,13 +151,20 @@ async function responseBytes(result: unknown): Promise<Uint8Array> {
   throw new Error("TTS model returned no audio bytes");
 }
 
-async function openThread(db: D1Database, customerId: string) {
-  const existing = await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
-  if (existing) return text(existing.id);
-  const id = uid("THREAD"), now = Date.now();
+async function openThread(db: D1Database, order: Row) {
+  const customerId = text(order.customer_id), id = nativeVoiceThreadId(order.id);
+  const existing = await db.prepare("SELECT id,customer_id,status FROM communication_threads WHERE id=?").bind(id).first<Row>();
+  if (existing) {
+    if (text(existing.customer_id) !== customerId) throw new Error("AgentStream voice thread/customer mismatch");
+    if (text(existing.status) === "closed") throw new Error("AgentStream voice thread is closed");
+    return id;
+  }
+  const now = Date.now();
   await db.batch([
-    db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,NULL,NULL,NULL,'open','ai-orchestrator',NULL,?,?)").bind(id, customerId, now, now),
-    db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(), id, "customer", customerId, customerId, now),
+    db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)")
+      .bind(id, customerId, text(order.booking_id) || null, text(order.lead_id) || null, now, now),
+    db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)")
+      .bind(crypto.randomUUID(), id, "customer", customerId, customerId, now),
   ]);
   return id;
 }
@@ -150,14 +174,18 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   const providerCallId = text(start.call_sid), accountSid = text(start.account_sid), streamSid = text(start.stream_sid);
   if (!providerCallId || !streamSid) throw new Error("AgentStream start is missing call_sid or stream_sid");
   if (!accountSid || accountSid !== text(env.EXOTEL_SID)) throw new Error("AgentStream account_sid does not match the configured Exotel account");
-  const order = await env.DB.prepare("SELECT id,customer_id,state,provider,provider_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
+  const order = await env.DB.prepare("SELECT id,customer_id,lead_id,booking_id,use_case,state,provider,provider_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
   if (!order) throw new Error("AgentStream call is not present in the governed outbound ledger");
   if (!text(order.customer_id)) throw new Error("AgentStream voice AI requires a canonical customer");
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
   if (["blocked_disabled", "blocked_permission", "blocked_use_case", "blocked_not_allowlisted", "blocked_consent", "blocked_opt_out", "blocked_quiet_hours", "blocked_frequency_cap", "provider_unavailable", "ended", "cancelled"].includes(text(order.state))) throw new Error("AgentStream call is not in an active carrier state");
   if (text(env.PAWSPACE_VOICE_ENV) === "uat" && text(order.mode) !== "uat") throw new Error("AgentStream UAT cannot bind a non-UAT call");
 
-  const customerId = text(order.customer_id), threadId = await openThread(env.DB, customerId), aiCallId = uid("AIVCALL"), now = Date.now();
+  const customerId = text(order.customer_id), useCase = text(order.use_case), threadId = await openThread(env.DB, order), aiCallId = uid("AIVCALL"), now = Date.now();
+  const script = await env.DB.prepare("SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=?").bind(useCase).first<Row>();
+  const openingDisclosure = text(script?.opening_disclosure);
+  if (!script || Number(script.active) !== 1 || !openingDisclosure || openingDisclosure.length > 1200) throw new Error("AgentStream opening disclosure is unavailable");
+  const salesService = nativeVoiceSalesService(useCase);
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
   await env.DB.batch([
@@ -167,7 +195,7 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   ]);
   const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0, salesDispatchItemId };
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0, useCase, openingDisclosure, salesService, salesDispatchItemId };
 }
 
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
@@ -253,7 +281,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) return;
     const llmStarted = Date.now();
-    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId});
+    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId,salesService:active.salesService});
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
@@ -278,6 +306,10 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
         session = await establishSession(env, incoming.start || {});
+        const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
+        await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
+        assistantPlaying = true;
+        sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
         return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
