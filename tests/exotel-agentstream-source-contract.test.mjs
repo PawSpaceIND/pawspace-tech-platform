@@ -65,3 +65,11 @@ test("native AgentStream speaks the governed opening disclosure before normal tu
   assert.match(bridge, /recordSegment\(env, session, "assistant", session\.openingDisclosure/);
   assert.match(bridge, /sendAudio\(server, session, greeting\.audio/);
 });
+
+test("native AgentStream preserves bounded canonical voice follow-up history", () => {
+  assert.match(bridge, /channel='voice' ORDER BY created_at DESC LIMIT 32/);
+  assert.match(bridge, /bind\(threadId, customerId\)/);
+  assert.match(bridge, /classifyVoiceFollowup\(transcript, conversationHistory\)/);
+  assert.match(bridge, /context: \{ \.\.\.input\.context, conversationHistory, asOf: now \}/);
+  assert.match(bridge, /voiceFollowupIntent,/);
+});

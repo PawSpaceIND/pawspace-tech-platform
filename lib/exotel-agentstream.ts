@@ -2,6 +2,7 @@ import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
+import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
 import type { VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
@@ -169,6 +170,21 @@ async function openThread(db: D1Database, order: Row) {
   return id;
 }
 
+export async function nativeVoiceConversationHistory(db: D1Database, threadId: string, customerId: string): Promise<VoiceHistoryMessage[]> {
+  const rows = await db.prepare("SELECT direction,payload_json FROM communication_messages WHERE thread_id=? AND customer_id=? AND channel='voice' ORDER BY created_at DESC LIMIT 32")
+    .bind(threadId, customerId).all<Row>();
+  const history: VoiceHistoryMessage[] = [];
+  for (const row of [...rows.results].reverse()) {
+    const direction = text(row.direction);
+    if (direction !== "inbound" && direction !== "outbound") continue;
+    let payload: Row = {};
+    try { payload = JSON.parse(text(row.payload_json) || "{}") as Row; } catch { continue; }
+    const content = text(payload.text).slice(0, 1000);
+    if (content) history.push({ role: direction === "inbound" ? "user" : "assistant", content });
+  }
+  return history;
+}
+
 async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   await ensureAiVoiceUatTables(env.DB);
   const providerCallId = text(start.call_sid), accountSid = text(start.account_sid), streamSid = text(start.stream_sid);
@@ -208,7 +224,27 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
       .bind(crypto.randomUUID(), session.aiCallId, messageId, index, speaker, transcript, speaker === "customer" ? EXOTEL_AGENTSTREAM_STT_MODEL : null, confidence, now),
   ]);
   if (speaker !== "customer" || !provider) return { output: transcript, outcome: "recorded" };
-  const turn = await orchestrateAiTurn(env.DB, { actor: serviceActor, threadId: session.threadId, customerId: session.customerId, inputMessageId: messageId, idempotencyKey: `exotel-agentstream:${session.providerCallId}:${index}`, channel: "voice", provider });
+  const conversationHistory = await nativeVoiceConversationHistory(env.DB, session.threadId, session.customerId);
+  const voiceFollowupIntent = classifyVoiceFollowup(transcript, conversationHistory);
+  const contextualProvider: AiResponseProvider = {
+    ...provider,
+    async generate(input: AiProviderInput) {
+      return provider.generate({
+        ...input,
+        context: { ...input.context, conversationHistory, asOf: now },
+      });
+    },
+  };
+  const turn = await orchestrateAiTurn(env.DB, {
+    actor: serviceActor,
+    threadId: session.threadId,
+    customerId: session.customerId,
+    inputMessageId: messageId,
+    idempotencyKey: `exotel-agentstream:${session.providerCallId}:${index}`,
+    channel: "voice",
+    provider: contextualProvider,
+    voiceFollowupIntent,
+  });
   const row = (turn.turn || null) as Row | null;
   return { output: text(row?.output || row?.output_text), outcome: text(row?.outcome) || (row ? "draft_review_required" : "pending") };
 }
