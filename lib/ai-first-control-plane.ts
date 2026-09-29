@@ -3,6 +3,9 @@ import{buildCustomer360}from"./customer-360";
 import{requestAiHumanHandoff,type AiHandoffReason}from"./ai-human-handoff";
 import{recordVoiceConsent,requestOutboundVoiceCall,VOICE_USE_CASES,type VoiceUseCaseDefinition}from"./voice-outbound-canonical";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
+import{ensureOutboundOrchestratorTables}from"./outbound-schema";
+import{detectAiOutboundEscalation}from"./outbound-escalation";
+import{scheduleLeadCallback}from"./lead-callback-governance";
 
 type Row=Record<string,unknown>;
 type Env=Record<string,unknown>;
@@ -23,20 +26,33 @@ export function isCustomerCallbackRequest(message:string){const value=text(messa
 export async function requestGovernedCustomerCallback(db:D1Database,env:Env,input:{actor:AuthenticatedActor;customerId:string;message:string;idempotencyKey:string;cityId?:string}){
  await requireCustomerOwnership(db,input.actor,input.customerId);
  if(!isCustomerCallbackRequest(input.message))return{matched:false as const};
- // This is not sales outreach. Register a dedicated transactional voice use case before the canonical
- // voice engine seeds scripts/evaluates policy so the existing PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED
- // switch continues to govern real outbound marketing while an explicit customer callback request is
- // governed only by identity, consent, opt-out, quiet hours, frequency and provider readiness.
+ // This is not sales outreach. The dedicated transactional use case is part of the canonical voice
+ // registry; the compatibility helper stays idempotent for older callers.
  ensureCustomerRequestedCallbackUseCase();
  const customer=await db.prepare("SELECT id,primary_phone FROM canonical_customers WHERE id=?").bind(input.customerId).first<Row>();
  const phone=digits(customer?.primary_phone);if(phone.length<10)throw new Response("A verified customer phone is required before an AI callback can be requested",{status:409});
  const now=Date.now(),actorId="ai-callback-orchestrator@system.pawspace";
- // The customer's explicit request to be called is the consent event. It is persisted before the
- // existing voice engine evaluates opt-out, quiet-hours, frequency, provider and environment gates.
+ // The customer's explicit request to be called is the consent event. The actual dial still passes
+ // the canonical opt-out, quiet-hours, frequency and provider-readiness gates when it is attempted.
  await recordVoiceConsent(db,{phone,subjectType:"customer",subjectId:input.customerId,granted:true,source:"authenticated_customer_call_me_request",actorId,asOf:now});
  const context=await buildCustomer360(db,input.customerId);
+ const parsed=detectAiOutboundEscalation(input.message,now),requestedAt=parsed?.callbackAt??null;
+ if(requestedAt&&requestedAt>now){
+  await ensureOutboundOrchestratorTables(db);
+  const lead=await db.prepare("SELECT id FROM lead_work_items WHERE customer_id=? AND status IN ('active','sla_breached','qualified') ORDER BY created_at DESC LIMIT 1").bind(input.customerId).first<Row>().catch(()=>null);
+  const leadId=text(lead?.id)||null;
+  let callbackId:string|null=null;
+  if(leadId){
+   const scheduled=await scheduleLeadCallback(db,{leadId,requestedAt,reason:`Customer requested AI callback: ${input.message.slice(0,180)}`,actorId,idempotencyKey:`ai-callback-schedule:${input.idempotencyKey}`});
+   callbackId=scheduled.id;
+  }
+  const sourceKey=`customer-ai-callback:${input.idempotencyKey}`;
+  await db.prepare("INSERT INTO outbound_routing_queue (id,source_key,customer_id,lead_id,source_type,lane,priority_score,high_intent,lifecycle_code,target_offer,next_best_service,expected_revenue,ltv,callback_at,status,context_json,created_at,updated_at) VALUES (?,?,?,?,?,'ai',100,1,'requested_callback','Customer requested callback',NULL,NULL,0,?,'queued',?,?,?) ON CONFLICT(source_key) DO UPDATE SET callback_at=excluded.callback_at,lead_id=COALESCE(excluded.lead_id,outbound_routing_queue.lead_id),context_json=excluded.context_json,updated_at=excluded.updated_at")
+   .bind(`ORQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`,sourceKey,input.customerId,leadId,"customer_requested_callback",requestedAt,JSON.stringify({customerRequested:true,callbackId,message:input.message.slice(0,240),timezone:"Asia/Kolkata"}),now,now).run();
+  return{matched:true as const,scheduled:true as const,requestedAt,callbackId,customerContextAttached:context.length>0,contextCustomerId:input.customerId,consentSource:"authenticated_customer_call_me_request",voiceUseCase:CUSTOMER_REQUESTED_CALLBACK_USE_CASE,policyEngine:"voice-outbound-canonical"};
+ }
  const result=await requestOutboundVoiceCall(db,env,{idempotencyKey:`ai-callback:${input.idempotencyKey}`,useCase:CUSTOMER_REQUESTED_CALLBACK_USE_CASE,phone,cityId:text(input.cityId)||"blr",customerId:input.customerId,actorId,actorPermissions:["customers.manage","communications.call"],asOf:now});
- return{matched:true as const,callback:result,customerContextAttached:context.length>0,contextCustomerId:input.customerId,consentSource:"authenticated_customer_call_me_request",voiceUseCase:CUSTOMER_REQUESTED_CALLBACK_USE_CASE,policyEngine:"voice-outbound-canonical"};
+ return{matched:true as const,scheduled:false as const,callback:result,customerContextAttached:context.length>0,contextCustomerId:input.customerId,consentSource:"authenticated_customer_call_me_request",voiceUseCase:CUSTOMER_REQUESTED_CALLBACK_USE_CASE,policyEngine:"voice-outbound-canonical"};
 }
 
 export const LOW_RISK_AUTO_TOOLS=new Set<AiToolCode>([

@@ -65,6 +65,7 @@ export const VOICE_USE_CASES: VoiceUseCaseDefinition[] = [
   { code: "service_recovery", label: "Follow up on a service failure or complaint", purpose: "service_recovery", requiresBooking: true, requiresSalesApproval: false, maxAttempts: 3 },
   { code: "payment_recovery", label: "Follow up on an unpaid confirmed booking", purpose: "service_recovery", requiresBooking: true, requiresSalesApproval: false, maxAttempts: 3 },
   { code: "feedback_request", label: "Ask for feedback after a completed service", purpose: "lifecycle", requiresBooking: true, requiresSalesApproval: false, maxAttempts: 1 },
+  { code: "customer_requested_callback", label: "Customer explicitly requested an AI callback", purpose: "transactional", requiresBooking: false, requiresSalesApproval: false, maxAttempts: 2 },
   { code: "lead_qualification", label: "Qualify an inbound enquiry", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
   { code: "sales_pitch", label: "Outbound sales / pitching call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 1 },
   { code: "grooming_sales", label: "Grooming sales and booking call", purpose: "marketing", requiresBooking: false, requiresSalesApproval: true, maxAttempts: 2 },
