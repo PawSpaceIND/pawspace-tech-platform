@@ -23,6 +23,30 @@ function expectedLines(employee:Row){
   ...rows(employee.advances??[]).map(e=>({component_code:"ADVANCE_RECOVERY",label:e.label,kind:"deduction",amount:e.amount,source_type:"salary_advance",source_reference:e.installmentId,policy_version:`salary_advance:${text(e.advanceId)}`})),
  ];
 }
+async function approvedV2Lines(db:D1Database,run:Row,snapshot:Row,results:Row[],lines:Row[]){
+ const byEmployee=new Map<string,Row[]>();
+ if(!Object.hasOwn(snapshot,"v2PayrollAdjustments")){
+  if(lines.some(line=>text(line.source_type)==="v2_hr_payroll_adjustment"))throw payrollIntegrityConflict();
+  return byEmployee;
+ }
+ const ids=snapshot.v2PayrollAdjustments;
+ if(!Array.isArray(snapshot.employees)||!Array.isArray(ids)||ids.some(id=>typeof id!=="string"||!id)||new Set(ids).size!==ids.length)
+  throw payrollIntegrityConflict();
+ const applied=(await db.prepare("SELECT * FROM v2_payroll_adjustments WHERE run_id=? AND status='applied' ORDER BY id").bind(run.id).all<Row>()).results;
+ if(applied.length!==ids.length||applied.some(a=>!ids.includes(text(a.id))))throw payrollIntegrityConflict();
+ for(const a of applied){
+  const amount=Number(a.amount),actors=[a.requested_by,a.hr_approved_by,a.finance_approved_by].map(v=>text(v).trim().toLowerCase());
+  if(!["lop","authorized_deduction"].includes(text(a.kind))||!Number.isFinite(amount)||amount<=0||!Number.isSafeInteger(cents(amount))||
+     actors.some(v=>!v)||new Set(actors).size!==3||!(Number(a.applied_at)>0)||!(Number(a.hr_approved_at)>0)||!(Number(a.finance_approved_at)>0)||
+     !Number.isSafeInteger(Number(a.policy_version))||Number(a.policy_version)<1||!text(a.reason).trim()||!text(a.evidence_reference).trim()||
+     !results.some(r=>text(r.employee_id)===text(a.employee_id)))throw payrollIntegrityConflict();
+  const expected={component_code:text(a.kind)==="lop"?"LOP":"AUTHORIZED_DEDUCTION",label:text(a.kind)==="lop"?"Loss of pay":"Authorized HR deduction",
+   kind:"deduction",amount,source_type:"v2_hr_payroll_adjustment",source_reference:a.id,policy_version:`v2_policy:${a.policy_version}`};
+  const existing=byEmployee.get(text(a.employee_id))||[];existing.push(expected);byEmployee.set(text(a.employee_id),existing);
+ }
+ return byEmployee;
+}
+
 /** Verify the whole saved artifact, not only the run identifier or number of component lines.
  * Legacy incomplete rows are refused for reconciliation; they are never silently repaired. */
 export async function completePayrollResults(db:D1Database,run:Row,period?:{periodStart:number;periodEnd:number}){
@@ -36,6 +60,7 @@ export async function completePayrollResults(db:D1Database,run:Row,period?:{peri
  const slips=(await db.prepare("SELECT employee_id,result_id FROM payslips WHERE run_id=?").bind(run.id).all<Row>()).results;
  if(slips.length!==results.length||results.some(r=>slips.filter(p=>text(p.employee_id)===text(r.employee_id)&&text(p.result_id)===text(r.id)).length!==1))throw payrollIntegrityConflict();
  const byResult=new Map<string,Row[]>();for(const line of lines){const key=text(line.result_id);const group=byResult.get(key)||[];group.push(line);byResult.set(key,group);}
+ const v2Lines=await approvedV2Lines(db,run,snapshot,results,lines);
  if(Array.isArray(snapshot.employees)){
   const expected=rows(snapshot.employees);
   if(expected.length!==results.length||new Set(expected.map(e=>text(e.employeeId))).size!==results.length)throw payrollIntegrityConflict();
@@ -43,7 +68,7 @@ export async function completePayrollResults(db:D1Database,run:Row,period?:{peri
    const result=results.find(row=>text(row.employee_id)===text(e.employeeId));
    if(!result||text(result.structure_id)!==text(e.structureId)||text(result.source_snapshot_json)!==JSON.stringify(e))throw payrollIntegrityConflict();
    const actual=(byResult.get(text(result.id))||[]).map(lineKey).sort();
-   const required=expectedLines(e).map(lineKey).sort();
+   const required=[...expectedLines(e),...(v2Lines.get(text(e.employeeId))||[])].map(lineKey).sort();
    if(JSON.stringify(actual)!==JSON.stringify(required))throw payrollIntegrityConflict();
   }
  }
