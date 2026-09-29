@@ -282,6 +282,12 @@ for(const viewport of viewports) {
   expect.soft(detailBox!.height,"empty handoff detail should size to content instead of a large blank card").toBeLessThan(320);
   await detail.scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("handoff-empty-detail.png")});
+
+  await page.route("**/api/ai-human-handoff?threadId=**",route=>route.fulfill({json:{data:{current:{status:"staff_active",reason:"customer_request",queue_code:"customer_experience",confidence:.9,summary:{transcript:[{direction:"inbound",channel:"web",text:"Synthetic populated handoff"}]}},aiPaused:true,sameCanonicalThread:true}}}));
+  await ready(page,"/v2/team/ai/handoff");
+  expect.soft((await detail.boundingBox())!.height,"populated handoff detail keeps its established workspace depth").toBeGreaterThanOrEqual(560);
+  await detail.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("handoff-populated-detail.png")});
  });
 }
 
