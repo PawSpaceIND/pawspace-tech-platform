@@ -42,7 +42,7 @@ const ordinaryPrompts=['My dog Bruno needs a full bath and a full body haircut. 
 let prompts=ordinaryPrompts,addressesBefore=[],reservationsBefore=[];
 if(quoteOnly){
  const [pets,addresses,geocodes,groups]=await Promise.all([
-  rows('SELECT id,name,species FROM canonical_pets WHERE customer_id=? AND species='dog' ORDER BY created_at LIMIT 2'),
+  rows("SELECT id,name,species FROM canonical_pets WHERE customer_id=? AND species='dog' ORDER BY created_at LIMIT 2"),
   rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC'),
   rows('SELECT address_id FROM customer_service_address_geocodes WHERE customer_id=?'),
   rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
