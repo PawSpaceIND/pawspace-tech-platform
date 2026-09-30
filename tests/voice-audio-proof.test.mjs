@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
 import {runWithWorkersDb} from './helpers/module-hooks.mjs';
-import {VOICE_DEMO_SCENARIOS,assertDemoResponse} from '../scripts/voice-demo-scenarios.mjs';
+import {VOICE_DEMO_SCENARIOS,assertDemoResponse,assertDemoRuntimePhonePause} from '../scripts/voice-demo-scenarios.mjs';
 installAiHooks();
 const responsesRoute=await import('../app/api/elevenlabs/v1/responses/route.ts');
 const valid={transcript:'What grooming services do you offer for my dog Bruno?',reply:'We offer Essential Bath grooming for dogs. Would you like to hear more?',audioBytes:16000,nonSilentBytes:9000};
@@ -121,4 +121,13 @@ test('caller waits for greeting playback duration as well as stream silence',()=
  assert.equal(greetingPlaybackFinished({...greeting,now:5750}),true);
  assert.equal(greetingPlaybackFinished({...greeting,now:6000,lastAudioAt:5900}),false);
  assert.equal(greetingPlaybackFinished({...greeting,now:6000,bytes:0}),false);
+});
+
+test('non-dialing demos verify encrypted phone controls through runtime truth, never binding-name guesses',()=>{
+ const vars={PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_VOICE_NATIVE_UAT_APPROVED:'false',PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED:'false',PAWSPACE_VOICE_UAT_AUTORUN:'false'};
+ const gate={mode:'disabled',enabled:false,uatApproved:false,salesOutboundApproved:false};
+ assert.equal(assertDemoRuntimePhonePause(vars,gate),true);
+ for(const change of [{mode:'uat'},{enabled:true},{uatApproved:true},{salesOutboundApproved:true},{enabled:undefined}])assert.throws(()=>assertDemoRuntimePhonePause(vars,{...gate,...change}),/shutdown/);
+ assert.throws(()=>assertDemoRuntimePhonePause(vars,undefined),/shutdown/);
+ for(const name of Object.keys(vars))assert.throws(()=>assertDemoRuntimePhonePause({...vars,[name]:name==='PAWSPACE_VOICE_PHONE_TESTS_PAUSED'?'false':'true'},gate),/phone stop/);
 });
