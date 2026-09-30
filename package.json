@@ -84,5 +84,8 @@
     "wrangler": "^4.131.0"
   },
   "type": "module",
-  "displayName": "PawSpace Grooming"
+  "displayName": "PawSpace Grooming",
+  "overrides": {
+    "undici": "7.29.1"
+  }
 }
