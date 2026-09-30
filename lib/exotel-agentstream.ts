@@ -221,7 +221,6 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   if (!order) throw new Error("AgentStream call is not present in the governed outbound ledger");
   if (!text(order.customer_id)) throw new Error("AgentStream voice AI requires a canonical customer");
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
-  if (!AGENTSTREAM_ACTIVE_STATES.has(text(order.state))) throw new Error("AgentStream call is not connected in the canonical voice ledger");
   if (text(env.PAWSPACE_VOICE_ENV) === "uat" && text(order.mode) !== "uat") throw new Error("AgentStream UAT cannot bind a non-UAT call");
 
   const customerId = text(order.customer_id), useCase = text(order.use_case);
@@ -230,6 +229,7 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   if (!script || Number(script.active) !== 1 || !openingDisclosure || openingDisclosure.length > 1200) throw new Error("AgentStream opening disclosure is unavailable");
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
+  await ensureAgentStreamConnected(env.DB, order);
 
   const threadId = await openThread(env.DB, order), aiCallId = nativeVoiceAiCallId(order.id), now = Date.now();
   if (text(order.ai_call_id) && text(order.ai_call_id) !== aiCallId) throw new Error("AgentStream call is already bound to a different AI voice ledger");
@@ -241,6 +241,9 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
     throw new Error("AgentStream AI voice ledger does not match the governed call");
   }
   if (!created) await env.DB.prepare("UPDATE ai_voice_calls SET reconnect_count=reconnect_count+1 WHERE id=? AND status='active'").bind(aiCallId).run();
+  const segment = await env.DB.prepare("SELECT COALESCE(MAX(segment_index),-1)+1 AS n FROM ai_voice_segments WHERE call_id=?").bind(aiCallId).first<Row>();
+  const segmentIndex = Number(segment?.n ?? 0);
+  if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) throw new Error("AgentStream segment sequence is invalid");
 
   await env.DB.batch([
     env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=? AND (ai_call_id IS NULL OR ai_call_id=?)")
@@ -251,7 +254,7 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   const salesService = nativeVoiceSalesService(useCase);
   const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0, useCase, openingDisclosure, salesService, salesDispatchItemId };
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
 }
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
   const messageId = `MSG-VOICE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, now = Date.now(), index = session.segmentIndex++;
@@ -381,10 +384,12 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
         session = await establishSession(env, incoming.start || {});
-        const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
-        await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
-        assistantPlaying = true;
-        sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
+        if (!session.reconnected) {
+          const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
+          await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
+          assistantPlaying = true;
+          sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
+        }
         return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
