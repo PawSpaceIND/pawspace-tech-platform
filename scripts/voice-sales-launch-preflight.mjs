@@ -31,8 +31,11 @@ export async function inspectVoiceSalesLaunch(env=process.env,request=fetch){
  const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(!login.ok||!cookie.startsWith('pawspace_uat='))throw Error('Staging founder authentication refused');
  const headers={cookie,origin,'content-type':'application/json'};
  const readiness=await request(origin+'/api/voice-outbound',{headers,signal:AbortSignal.timeout(30000)});const rb=await readiness.json();if(!readiness.ok||rb.data?.gate?.mode!=='uat')throw Error('UAT voice environment is not verified');
+ const overview=await request(origin+'/api/voice-outbound?scope=sales_operations',{headers,signal:AbortSignal.timeout(30000)});
+ const overviewBody=await overview.json();const operations=overviewBody.data;
+ if(!overview.ok||!Array.isArray(operations?.sources)||operations.productionCertified!==false)throw Error('Deployed sales dashboard evidence is unavailable or incorrectly certified');
  const policy=await request(origin+'/api/voice-outbound',{method:'POST',headers,body:JSON.stringify({action:'policy_preview',useCase:'grooming_sales',phone,customerId,cityId:'blr'}),signal:AbortSignal.timeout(30000)});const pb=await policy.json();
- const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,provider:rb.data.transport?.provider||null,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
+ const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,provider:rb.data.transport?.provider||null,salesDashboardSources:operations.sources.length,salesDashboardUnavailable:operations.sources.filter(source=>source?.available!==true).length,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
  console.log('VOICE_SALES_LAUNCH_PREFLIGHT='+JSON.stringify(evidence));
  if(!evidence.enabled||!evidence.policyAllowed)throw Error('Existing voice policy has not cleared this UAT call');
  return evidence;
