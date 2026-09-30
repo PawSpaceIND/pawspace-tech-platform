@@ -75,6 +75,16 @@ export default function VoiceSalesOperationsPanel() {
       <p><Link href="/v2/team/voice/ai-test">Test Maya</Link> · <Link href="/v2/team/ai">AI configuration</Link> · <Link href="/v2/team/sales/power-dialler">Human follow-up</Link> · <Link href="/v2/team/finance/reconciliation">Payment reconciliation</Link></p>
       {ops && <small>Updated {new Date(ops.asOf).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST. {ops.certificationReason}</small>}
     </TeamSection>
+    <TeamSection title="Voice sales funnel" note="Grooming and Training offers started in the past 30 days. Each stage counts canonical records for the same customer. A queued link is not a delivered link, and assignment is not provider acceptance.">
+      <TeamStatGrid>
+        <StatCard label="Offers proposed" value={ops?.funnel?.offered ?? "Unknown"}/>
+        <StatCard label="Bookings created" value={ops?.funnel?.booked ?? "Unknown"}/>
+        <StatCard label="Links queued" value={ops?.funnel?.linkQueued ?? "Unknown"}/>
+        <StatCard label="Links delivered" value={ops?.funnel?.linkDelivered ?? "Unknown"}/>
+        <StatCard label="Payments captured" value={ops?.funnel?.paid ?? "Unknown"}/>
+        <StatCard label="Providers assigned" value={ops?.funnel?.providerAssigned ?? "Unknown"}/>
+      </TeamStatGrid>
+    </TeamSection>
     <TeamSection title="Voice booking journey" note="Latest 30 offers. Payment status comes from the booking payment record; provider ID indicates assignment, not provider acceptance. Missing values remain unverified.">
       <TeamTable head={["Offer / service", "Checkout", "Booking", "Payment link", "Payment record", "Provider assignment"]} rows={(ops?.offers ?? []).map(row => [
         `${display(row.id)} · ${display(row.service_code)}`, display(row.status), display(row.booking_id), display(row.payment_link_status), display(row.payment_status), display(row.provider_id),

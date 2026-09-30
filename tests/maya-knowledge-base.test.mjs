@@ -35,6 +35,8 @@ test("customer questions find the right knowledge", async () => {
   assert.equal(await top("cat routine grooming without bath"), "maya_grooming_cats");
   assert.equal(await top("pet funeral cremation"), "maya_funeral");
   assert.equal(await top("relocation to another city abroad microchip"), "maya_relocation");
+  assert.equal(await top("my dog is vomiting and has diarrhoea should I call a vet"), "maya_pet_health_questions");
+  assert.equal(await top("rabbit bird hygiene grooming clean housing"), "maya_pet_hygiene_questions");
 });
 
 test("re-seeding publishes only the entries that changed", async () => {

@@ -63,6 +63,21 @@ test("voice prepaid Grooming queues secure WhatsApp checkout without claiming de
  const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentProvider,"razorpay");assert.equal(payload.paymentVerified,false);assert.match(payload.paymentLink,/\/v2\/booking\?bookingId=/);
 });
 
+test("voice coupon is a governed Grooming quote, never an invented or Training discount",async t=>{
+ const w=await world(t);
+ const approved=actions(w);approved[1].arguments.couponCode="GROOM200";
+ const offer=await prepare(w,"approved-voice-coupon",approved);
+ assert.match(offer.summary,/Coupon GROOM200: INR 200 off/);
+ const stored=w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id);
+ const quote=JSON.parse(stored.quote_json);
+ assert.equal(quote.coupon.code,"GROOM200");assert.equal(quote.coupon.discount,200);
+ assert.equal(bookingCount(w),0,"a quoted coupon cannot book without confirmation");
+ const invented=actions(w);invented[1].arguments.couponCode="FAKE999";
+ await refuse(prepare(w,"invented-voice-coupon",invented),400);
+ const training=await world(t,"dog_training"),trainingActions=actions(training,"trainer-meet-greet");trainingActions[1].arguments.couponCode="GROOM200";
+ await refuse(prepare(training,"training-coupon",trainingActions),400);
+});
+
 test("prepaid Grooming subscription creates pending entitlement, never multiplied bundle price",async t=>{
  const w=await world(t),offer=await prepare(w,"subscription",actions(w,"sub-3-dog"));assert.match(offer.summary,/Prepaid bundle/);assert.match(offer.summary,/does not enable automatic renewal/);
  const result=await confirm(w,offer.id);const sub=w.sqlite.prepare("SELECT * FROM customer_grooming_subscriptions WHERE source_booking_id=?").get(result.bookingId);
@@ -160,6 +175,17 @@ test("specialist model receives only same-thread canonical conversation memory",
  const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"dog_training"});
  const r=await turn(w,"He pulls on the leash","history-goal",provider);assert.notEqual(r.turn.outcome,"handoff");assert.ok(requestBody);
  const sent=JSON.parse(requestBody.input);assert.equal(sent.canonicalContext.salesService,"dog_training");assert.ok(sent.canonicalContext.conversationHistory.some(x=>x.text==="Milo is two years old"));assert.equal(sent.canonicalContext.catalogueTool,null);assert.match(requestBody.instructions,/Dog Training only/);
+});
+
+test("urgent pet symptoms stop sales and advise immediate veterinary care",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My dog is having a seizure","urgent-health",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/emergency veterinarian immediately/);
+ assert.equal(bookingCount(w),0);
 });
 
 
