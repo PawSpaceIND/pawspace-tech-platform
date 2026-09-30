@@ -1,12 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
+import {serviceAddressPincodes} from "../lib/service-address-pincode.ts";
 const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const shell=read("app/mobile-app/page.tsx"),gate=read("app/mobile-app/booking-entry-gate.tsx"),address=read("app/mobile-app/address-picker.tsx");
 
 test("all customer services use one guest-first booking entry instead of early per-service OTP gates",()=>{
  assert.match(shell,/!customer\?<GuestBookingPreview service=\{service\}/);
- assert.match(shell,/bookingEntryReady!==service\.serviceCode\?<BookingEntryDetails/);
+ assert.match(shell,/bookingDetailsRequired\?<BookingEntryDetails/);
+ assert.match(shell,/onLoggedIn=\{logged=>\{onLoggedIn\(logged\);setBookingDetailsRequired\(true\);\}\}/);
+ assert.match(shell,/const open=.*setBookingDetailsRequired\(false\)/);
  assert.doesNotMatch(shell,/customer\|\|service\.name==="Grooming"/);
  for(const code of ["grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","food","relocation"]) assert.match(shell,new RegExp(`serviceCode:\"${code}\"`));
 });
@@ -37,3 +40,6 @@ test("shared address picker supports automatic current-location reverse geocodin
  assert.match(address,/Enter the street and area/);
  assert.match(address,/onChange=\{e=>invalidate\(e\.target\.value\)\}/);
 });
+
+
+test("executed address helper backs the booking-entry contract",()=>{assert.deepEqual(serviceAddressPincodes("18th Main, Bengaluru 560068"),["560068"]);});
