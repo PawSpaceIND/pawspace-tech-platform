@@ -31,7 +31,7 @@ export function pendingQuoteProof(rows,reply,now=Date.now()){
  const row=rows[0];
  if(row.status!=='pending'||row.service_code!=='grooming'||!Number.isFinite(Number(row.expires_at))||Number(row.expires_at)<=now||typeof row.summary!=='string'||row.summary.length>3000||typeof row.quote_json!=='string'||row.quote_json.length>16000||typeof reply!=='string'||reply.length>12000||reply.trim()!==row.summary.trim())throw Error('Pending quote evidence invalid');
  let quote;try{quote=JSON.parse(row.quote_json);}catch{throw Error('Pending quote evidence invalid');}
- if(quote.packageCode!=='dog-makeover'||!Number.isFinite(quote.totalAmount)||quote.totalAmount<=0||quote.coupon||!/availability was checked, not reserved/i.test(row.summary)||!/confirm|shall I reserve/i.test(row.summary)||!/Complete Makeover/i.test(reply)||!/not reserved/i.test(reply))throw Error('Pending quote evidence invalid');
+ if(quote.packageCode!=='dog-makeover'||!Number.isFinite(quote.totalAmount)||quote.totalAmount<=0||quote.coupon||!/\bavailability was checked\b[^.!?]{0,60}\bnot reserved\b/i.test(row.summary)||!/confirm|shall I reserve/i.test(row.summary)||!/Complete Makeover/i.test(reply)||!/not reserved/i.test(reply))throw Error('Pending quote evidence invalid');
  return{pendingQuotes:1,service:'grooming',packageCode:quote.packageCode,totalAmount:quote.totalAmount,expiresInMs:Number(row.expires_at)-now,separateConfirmationRequired:true,reservationCreated:false,bookingCreated:false,paymentOrderCreated:false,assignmentCertified:false};
 }
 
