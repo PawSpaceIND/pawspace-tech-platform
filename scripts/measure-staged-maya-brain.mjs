@@ -36,11 +36,13 @@ if(![testerPhone,testerPhone.slice(2)].includes(customerPhone))throw Error('Demo
 if(!env.ELEVENLABS_LLM_SECRET)throw Error('Staged brain authentication missing');
 const before=await bookingIds(),paymentsBefore=await paymentIds();
 const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});
+console.log('::add-mask::'+context.callId);console.log('::add-mask::'+context.threadId);
+if(!context.callId||!context.threadId)throw Error('Governed timing context missing');
 const results=[];
 try{
  for(const prompt of ['My dog Bruno needs a full bath and a full body haircut. Which one-time grooming package fits that?','I am considering boarding for Bruno for two nights. What information would you need?','No extras please. I only want the grooming information.']){
   await isolation();const started=Date.now();
-  const response=await fetch(origin+'/api/elevenlabs/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env.ELEVENLABS_LLM_SECRET},body:JSON.stringify({model:config.conversation_config.agent.prompt.custom_llm.model_id,input:prompt,elevenlabs_extra_body:{pawspace_voice_call_id:context.callId}}),signal:AbortSignal.timeout(30000)});
+  const response=await fetch(origin+'/api/elevenlabs/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env.ELEVENLABS_LLM_SECRET},body:JSON.stringify({model:config.conversation_config.agent.prompt.custom_llm.model_id,input:prompt,elevenlabs_extra_body:{pawspace_customer_id:env.SPECIALIST_CUSTOMER_ID,pawspace_thread_id:context.threadId}}),signal:AbortSignal.timeout(30000)});
   if(!response.ok||!response.body)throw Error('Staged brain probe refused');
   const headersMs=Date.now()-started;let firstDeltaMs=null,buffer='',completed=null,failed=false;const decoder=new TextDecoder();
   for await(const chunk of response.body){buffer+=decoder.decode(chunk,{stream:true});let newline;
