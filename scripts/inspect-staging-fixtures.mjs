@@ -6,6 +6,19 @@ const ORIGIN='https://pawspace-staging.karthik-fce.workers.dev';
 const SHA=/^[a-f0-9]{40}$/;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const SALES_SOURCES=['Inbound sessions','Voice booking journey','Voice sales funnel','Post-call reconciliation','AI processing measurements','CRM write reconciliation'];
+const LEGACY_FIXTURES=['groom_arun','groom_kiran','groom_sanjay','train_kiran','train_ramesh','train_meera'];
+const ROSTER_DIAGNOSIS_SQL=`SELECT COUNT(*) rosterRows,
+ COALESCE(SUM(CASE WHEN c.id IS NULL THEN 1 ELSE 0 END),0) missingCanonicalRows,
+ COALESCE(SUM(CASE WHEN TRIM(COALESCE(c.phone,''))='' THEN 1 ELSE 0 END),0) missingPhoneRows,
+ COALESCE(SUM(CASE WHEN TRIM(COALESCE(c.email,''))<>'' THEN 1 ELSE 0 END),0) emailPresentRows,
+ COALESCE(SUM(CASE WHEN COALESCE(c.source,'')<>'uat_staging_seed' THEN 1 ELSE 0 END),0) canonicalProvenanceMismatchRows,
+ COALESCE(SUM(CASE WHEN COALESCE(p.updated_by,'')<>'founder_seed' THEN 1 ELSE 0 END),0) capacityProvenanceMismatchRows,
+ COALESCE(SUM(CASE WHEN p.city_id<>'blr' OR COALESCE(c.city_id,'')<>'blr' THEN 1 ELSE 0 END),0) cityMismatchRows
+ FROM provider_capacity_profiles p LEFT JOIN canonical_providers c ON c.id=p.id
+ WHERE p.city_id='blr' OR EXISTS (SELECT 1 FROM boarding_host_profiles h WHERE h.provider_id=p.id AND h.city_id='blr')`;
+const LEGACY_DIAGNOSIS_SQL=`SELECT p.id fixtureId,CASE WHEN c.id IS NOT NULL THEN 1 ELSE 0 END canonicalPresent,
+ CASE WHEN TRIM(COALESCE(c.phone,''))<>'' THEN 1 ELSE 0 END phonePresent
+ FROM provider_capacity_profiles p LEFT JOIN canonical_providers c ON c.id=p.id WHERE p.id IN (?,?,?,?,?,?) ORDER BY p.id`;
 
 export async function inspectStagingFixtures({env=process.env,request=fetch}={}){
  const expected=String(env.EXPECTED_SHA||'');
@@ -56,7 +69,24 @@ export async function inspectStagingFixtures({env=process.env,request=fetch}={})
  await settings();
  const versions=snapshots.map(s=>s.version?.id).filter(Boolean);
  if(new Set(versions).size>1)throw Error('Worker version changed during inspection');
- return {inspectionCompleted:true,revision:expected,phonePaused:true,dialed:false,bookingCreated:false,paymentCaptured:false,operationalSources,operationalSourcesAvailable:operationalSources.filter(source=>source.available).length,operationalSourcesComplete:operationalSources.every(source=>source.available),fixtureSnapshots:snapshots,automaticAssignmentCertified:false,providerAcceptanceCertified:false,premiumCertified:false,scope:'Authenticated read-only fixture and operational-source snapshots; no business mutation or launch certification'};
+ let rosterDiagnosis=null;
+ if(env.INSPECT_ROSTER_DIAGNOSIS==='true'){
+  const query=async(sql,params=[])=>{
+   const response=await request(base+'/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{method:'POST',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},body:JSON.stringify({sql,params}),redirect:'error',signal:AbortSignal.timeout(30000)});
+   const body=await response.json();
+   if(!response.ok||body.success!==true||!Array.isArray(body.result)||body.result.length!==1||body.result[0].success!==true||!Array.isArray(body.result[0].results))throw Error('Read-only roster diagnosis refused');
+   return body.result[0].results;
+  };
+  const aggregates=await query(ROSTER_DIAGNOSIS_SQL),legacy=await query(LEGACY_DIAGNOSIS_SQL,LEGACY_FIXTURES);
+  if(aggregates.length!==1||legacy.length>LEGACY_FIXTURES.length||new Set(legacy.map(row=>row.fixtureId)).size!==legacy.length)throw Error('Roster diagnosis shape invalid');
+  const keys=['rosterRows','missingCanonicalRows','missingPhoneRows','emailPresentRows','canonicalProvenanceMismatchRows','capacityProvenanceMismatchRows','cityMismatchRows'];
+  const counts=Object.fromEntries(keys.map(key=>{const value=Number(aggregates[0][key]);if(!Number.isSafeInteger(value)||value<0)throw Error('Roster diagnosis count invalid');return[key,value];}));
+  if(keys.slice(1).some(key=>counts[key]>counts.rosterRows))throw Error('Roster diagnosis count inconsistent');
+  const legacyFixtures=legacy.map(row=>{if(!LEGACY_FIXTURES.includes(row.fixtureId)||![0,1].includes(row.canonicalPresent)||![0,1].includes(row.phonePresent))throw Error('Legacy diagnosis shape invalid');return{fixtureId:row.fixtureId,canonicalPresent:row.canonicalPresent===1,phonePresent:row.phonePresent===1};});
+  await settings();
+  rosterDiagnosis={counts,legacyFixtures,contactsExposed:false,identitiesProvisioned:false,assignmentCertified:false,scope:'Whole-roster aggregate prerequisites and six source-documented legacy IDs; no contact validation, destination approval or mutation'};
+ }
+ return {inspectionCompleted:true,revision:expected,phonePaused:true,dialed:false,bookingCreated:false,paymentCaptured:false,operationalSources,operationalSourcesAvailable:operationalSources.filter(source=>source.available).length,operationalSourcesComplete:operationalSources.every(source=>source.available),fixtureSnapshots:snapshots,rosterDiagnosis,automaticAssignmentCertified:false,providerAcceptanceCertified:false,premiumCertified:false,scope:'Authenticated read-only fixture and operational-source snapshots; no business mutation or launch certification'};
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){

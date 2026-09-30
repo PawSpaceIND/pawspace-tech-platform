@@ -79,6 +79,7 @@ jobs:
         run: node --test tests/staging-fixture-inspection.test.mjs
       - name: Inspect hosted fixed-fixture evidence without business mutations
         env:
+          INSPECT_ROSTER_DIAGNOSIS: 'true'
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

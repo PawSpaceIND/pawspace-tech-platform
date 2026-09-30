@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectStagingFixtures} from '../scripts/inspect-staging-fixtures.mjs';
+import {DatabaseSync} from 'node:sqlite';
 
 const env={EXPECTED_SHA:'a'.repeat(40),STAGING_D1_ID:'11111111-1111-1111-1111-111111111111',PRODUCTION_D1_ID:'22222222-2222-2222-2222-222222222222',CLOUDFLARE_ACCOUNT_ID:'account',CLOUDFLARE_API_TOKEN:'private-token',PAWSPACE_UAT_ACCESS_CODE:'private-code'};
 const sourceNames=['Inbound sessions','Voice booking journey','Voice sales funnel','Post-call reconciliation','AI processing measurements','CRM write reconciliation'];
@@ -49,4 +50,28 @@ test('a narrow snapshot cannot certify mutation or automatic assignment',async()
  for(const key of ['bookingMutationAuthorized','automaticAssignmentCovered','productionReadiness']){
   const {request}=harness({snapshot:{[key]:true}});await assert.rejects(inspectStagingFixtures({env,request}),/scope invalid/);
  }
+});
+test('optional hosted roster diagnosis executes SELECT-only aggregates and exposes no contacts',async()=>{
+ const db=new DatabaseSync(':memory:');
+ try{
+  db.exec('CREATE TABLE provider_capacity_profiles(id TEXT PRIMARY KEY,city_id TEXT,updated_by TEXT); CREATE TABLE canonical_providers(id TEXT PRIMARY KEY,city_id TEXT,phone TEXT,email TEXT,source TEXT); CREATE TABLE boarding_host_profiles(provider_id TEXT,city_id TEXT);');
+  const ids=['groom_arun','groom_kiran','groom_sanjay','train_kiran','train_ramesh','train_meera'];
+  for(const id of ids)db.prepare('INSERT INTO provider_capacity_profiles VALUES(?,?,?)').run(id,'blr',id==='groom_arun'?'legacy':'founder_seed');
+  db.prepare('INSERT INTO canonical_providers VALUES(?,?,?,?,?)').run('groom_arun','blr','private-phone','private-email','legacy');
+  db.prepare('INSERT INTO provider_capacity_profiles VALUES(?,?,?)').run('cross-city','del','founder_seed');
+  db.prepare('INSERT INTO canonical_providers VALUES(?,?,?,?,?)').run('cross-city','blr','','','uat_staging_seed');
+  db.prepare('INSERT INTO boarding_host_profiles VALUES(?,?)').run('cross-city','blr');
+  const fixture=harness(),queries=[];
+  const request=async(url,init={})=>{
+   if(new URL(url).pathname.endsWith('/query')){
+    assert.equal(init.method,'POST');const {sql,params}=JSON.parse(init.body);assert.match(sql,/^SELECT /);assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|DROP|ALTER|REPLACE|PRAGMA)\b/i);queries.push(sql);
+    return Response.json({success:true,result:[{success:true,results:db.prepare(sql).all(...params)}]});
+   }
+   return fixture.request(url,init);
+  };
+  const report=await inspectStagingFixtures({env:{...env,INSPECT_ROSTER_DIAGNOSIS:'true'},request});
+  assert.equal(queries.length,2);assert.deepEqual(report.rosterDiagnosis.counts,{rosterRows:7,missingCanonicalRows:5,missingPhoneRows:6,emailPresentRows:1,canonicalProvenanceMismatchRows:6,capacityProvenanceMismatchRows:1,cityMismatchRows:6});
+  assert.equal(report.rosterDiagnosis.legacyFixtures.length,6);assert.equal(report.rosterDiagnosis.legacyFixtures.filter(row=>row.canonicalPresent).length,1);
+  assert.doesNotMatch(JSON.stringify(report),/private-phone|private-email|private-token|private-code/);assert.equal(report.rosterDiagnosis.assignmentCertified,false);assert.equal(report.rosterDiagnosis.identitiesProvisioned,false);
+ }finally{db.close();}
 });
