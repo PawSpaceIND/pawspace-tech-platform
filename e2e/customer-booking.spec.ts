@@ -136,7 +136,13 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await page.getByRole("button", { name: "Save care plan", exact: true }).click(); expect((await care).status()).toBe(200);
     const stranger = await browser.newPage({ baseURL: origin });
     try { await loginHost(stranger, Object.keys(phones).find(id => id !== providerId)!); const denied = await stranger.request.post("/api/boarding-stays", { data: { stayId, action: "accept", idempotencyKey: `wrong-host-${stayId}` } }); expect(denied.status()).toBe(403); } finally { await Promise.allSettled([stranger.close()]); }
-    await host.goto("/host"); await dismissPrivacy(host); await host.getByRole("button", { name: /Requests/ }).click();
+    await host.goto("/host");
+    // The request-count badge is rendered only after the client has loaded this host's
+    // stays. A click on the earlier server-rendered tab can precede hydration.
+    const requestsTab = host.getByRole("button", { name: /Requests/ });
+    await expect(requestsTab.locator("b")).toBeVisible();
+    await dismissPrivacy(host); await requestsTab.click();
+    await expect(host.getByRole("heading", { name: "Awaiting host response", exact: true })).toBeVisible();
     const offer = host.getByText(bookingId, { exact: false }).first().locator("xpath=ancestor::button[1]"); await offer.click();
     const accepted = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "accept");
     await host.getByRole("button", { name: "Accept & lock capacity", exact: true }).click(); expect((await accepted).status()).toBe(200);
