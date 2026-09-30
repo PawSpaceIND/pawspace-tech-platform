@@ -63,7 +63,29 @@ const HUMAN_EXCEPTION_PATTERNS=[
 ];
 export function requiresImmediateHumanHandoff(input:string){return needsImmediateVetGuidance(input)||!policyEnquiryTopic(input)&&HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
 export function parseGroundedActionEnvelope(raw:string):{reply:string;actions:AiActionRequest[]}|null{
- let value=raw.trim();const fenced=value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);if(fenced)value=fenced[1].trim();if(!value.startsWith("{")||!value.endsWith("}"))return null;let parsed:unknown;try{parsed=JSON.parse(value)}catch{return null;}if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return null;const row=parsed as Row,reply=text(row.reply),rawActions=row.actions===undefined?[]:row.actions;if(!Array.isArray(rawActions)||rawActions.length>6)return null;const actions:AiActionRequest[]=[];for(const item of rawActions){if(!item||typeof item!=="object"||Array.isArray(item))return null;const action=item as Row,toolCode=text(action.toolCode) as AiToolCode;if(!ACTION_TOOLS.has(toolCode)||!action.arguments||typeof action.arguments!=="object"||Array.isArray(action.arguments))return null;actions.push({toolCode,arguments:action.arguments as Record<string,unknown>});}return{reply,actions};
+ const parse=(source:string,depth:number):{reply:string;actions:AiActionRequest[]}|null=>{
+  let value=source.trim();const fenced=value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);if(fenced)value=fenced[1].trim();
+  if(!value.startsWith("{")||!value.endsWith("}"))return null;
+  let parsed:unknown;try{parsed=JSON.parse(value)}catch{return null;}
+  if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return null;
+  const row=parsed as Row,reply=text(row.reply),rawActions=row.actions===undefined?[]:row.actions;
+  if(!Array.isArray(rawActions)||rawActions.length>6)return null;
+  // Some models serialize the entire proposal inside reply. Normalize one wrapper
+  // only, with the same registered-tool validation; never merge competing plans.
+  if(reply.trim().startsWith("{")||reply.trim().startsWith("```")){
+   if(depth>=1||rawActions.length)return null;
+   return parse(reply,depth+1);
+  }
+  const actions:AiActionRequest[]=[];
+  for(const item of rawActions){
+   if(!item||typeof item!=="object"||Array.isArray(item))return null;
+   const action=item as Row,toolCode=text(action.toolCode) as AiToolCode;
+   if(!ACTION_TOOLS.has(toolCode)||!action.arguments||typeof action.arguments!=="object"||Array.isArray(action.arguments))return null;
+   actions.push({toolCode,arguments:action.arguments as Record<string,unknown>});
+  }
+  return{reply,actions};
+ };
+ return parse(raw,0);
 }
 
 async function canonicalRows(db:D1Database,sql:string){return(await db.prepare(sql).all<Row>()).results;}
@@ -150,7 +172,10 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
    if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
   }
  }
- const envelope=parseGroundedActionEnvelope(result.text),reply=safePetMedicalReply(envelope?.reply||result.text,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
+ const envelope=parseGroundedActionEnvelope(result.text);
+ if(!envelope&&/^\s*(?:\{|```)/.test(result.text))return{text:"",provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,failure:"malformed_output"};
+ const customerText=envelope?(envelope.reply||(envelope.actions.length?"Let me check those booking details.":"")):result.text;
+ const reply=safePetMedicalReply(customerText,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
  const catalogueVerifiedPrices=pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified=offerClaimsApproved(reply,eligibleOffers);
  // Verify the original draft before rendering approved identifiers for speech. Never hide an
  // invalid price/code, or rewrite text already emitted through the streaming callback.
