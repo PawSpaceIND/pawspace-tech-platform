@@ -43,3 +43,16 @@ test('short yes cannot authorize a negated or cancellation question',()=>{
   assert.equal(classifyVoiceFollowup('Yes, proceed',[...history,{role:'assistant',content:question}]).intent,'unknown');
  }
 });
+
+test('native follow-up classifier stays behaviorally identical to the active ElevenLabs classifier',async()=>{
+ const {classifyVoiceFollowup:native}=await import('../lib/voice-conversation-followup.ts');
+ const cases=[
+  ['Tomorrow at 11 AM',history],
+  ['Yes, proceed',[...history,{role:'assistant',content:'Shall I book this grooming slot and create checkout?'}]],
+  ['12 Test Street, Bengaluru 560038',[...history,{role:'assistant',content:'What is your address and pincode?'}]],
+  ['I want a human',history],
+  ['refund me',history],
+  ['Can you hear me?',history],
+ ];
+ for(const [input,context] of cases)assert.deepEqual(native(input,context),classifyVoiceFollowup(input,context),input);
+});
