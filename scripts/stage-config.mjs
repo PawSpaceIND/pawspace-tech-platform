@@ -74,6 +74,8 @@ if (problems.length) {
  */
 const WORKER_NAME = "pawspace-staging";
 cfg.name = WORKER_NAME;
+// Platform-supplied version identity; attestation fails closed when unavailable.
+cfg.version_metadata = { binding: "PAWSPACE_VERSION_METADATA" };
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
@@ -107,6 +109,7 @@ export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
  * governed commercial terms are seeded from it. It is here because staging needs it, not because the
  * build leaked it. */
 cfg.vars = {
+  ...( /^[0-9a-f]{40}$/.test(String(process.env.EXPECTED_SHA || "")) ? { PAWSPACE_STAGING_BUILD_SHA: process.env.EXPECTED_SHA } : {}),
   PAWSPACE_DEPLOYMENT_ENV: "staging",
   PAWSPACE_PRODUCTION_ENFORCE: "false",
   PAWSPACE_ENV: "staging",

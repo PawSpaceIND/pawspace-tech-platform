@@ -154,6 +154,7 @@ jobs:
       # any is missing, too short, or equal to one of the values that was committed.
       - name: Configure staging (name + D1 + sandbox)
         env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
           PAWSPACE_UAT_PERSONAS: ${{ github.event.inputs.test_customer_personas }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_WORKER_PLACEMENT_REGION: ${{ vars.STAGING_WORKER_PLACEMENT_REGION }}
