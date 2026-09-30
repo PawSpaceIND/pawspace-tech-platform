@@ -54,7 +54,7 @@ Allowed tools are schedule.reserve, booking.create, checkout.payment_order.creat
 
 const HUMAN_EXCEPTION_PATTERNS=[
  /\b(refund|money back|payment dispute|charged twice|wrong charge)\b/i,
- /\b(emergency|not breathing|collapsed|seizure|bleeding|poisoned|injured|accident)\b/i,
+ /\b(emergency|not breathing|collapsed|seizure|bleeding|poisoned|injured|accident|ate chocolate)\b/i,
  /\b(provider|trainer|groomer|sitter|walker|driver).{0,24}\b(no[- ]?show|did not come|didn't come|not arrived|never arrived)\b/i,
  /\b(complaint|very unhappy|serious issue|escalate this|service failure)\b/i,
 ];

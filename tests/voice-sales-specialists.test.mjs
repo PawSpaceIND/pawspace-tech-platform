@@ -188,6 +188,17 @@ test("urgent pet symptoms stop sales and advise immediate veterinary care",async
  assert.equal(bookingCount(w),0);
 });
 
+test("suspected chocolate ingestion stops voice sales and gives emergency vet direction",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My puppy ate chocolate","urgent-health",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/emergency veterinarian immediately/);
+ assert.equal(bookingCount(w),0);
+});
+
 test("a non-urgent health question cannot turn a model sales proposal into a booking",async t=>{
  const w=await world(t);
  const {applyOwnedDdl}=await import("./helpers/ai-harness.mjs");
