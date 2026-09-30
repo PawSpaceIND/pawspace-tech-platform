@@ -1,10 +1,10 @@
 // Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
 import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
-import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming} from './staged-quote-proof.mjs';
+import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
-const env=process.env,quoteOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_only',origin='https://pawspace-staging.karthik-fce.workers.dev';
+const env=process.env,inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
 authorizedLaunchTester(env);
 if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||'')||!env.SPECIALIST_CUSTOMER_ID||!env.ELEVENLABS_API_KEY||!env.GROOMING_AGENT_ID)throw Error('Exact demo prerequisites missing');
 const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
@@ -42,11 +42,17 @@ const ordinaryPrompts=['My dog Bruno needs a full bath and a full body haircut. 
 let prompts=ordinaryPrompts,addressesBefore=[],reservationsBefore=[];
 if(quoteOnly){
  const [pets,addresses,geocodes,groups]=await Promise.all([
-  rows('SELECT id,name,species FROM canonical_pets WHERE customer_id=? ORDER BY created_at LIMIT 6'),
+  rows('SELECT id,name,species FROM canonical_pets WHERE customer_id=? AND species='dog' ORDER BY created_at LIMIT 2'),
   rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC'),
   rows('SELECT address_id FROM customer_service_address_geocodes WHERE customer_id=?'),
   rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
  ]);
+ const prerequisites=savedQuotePrerequisites(pets,addresses,geocodes);
+ console.log('SAVED_QUOTE_PREREQUISITES='+JSON.stringify(prerequisites));
+ if(inspectOnly){
+  await isolation();const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites};
+  await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('SAVED_QUOTE_INSPECTION='+JSON.stringify(report));process.exit(0);
+ }
  addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;prompts=[savedQuotePrompt(pets,addresses,geocodes)];
 }
 const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});

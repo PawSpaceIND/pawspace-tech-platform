@@ -1,5 +1,10 @@
 import {serviceAddressText} from '../lib/service-address-text.ts';
 
+export function savedQuotePrerequisites(pets,addresses,geocodes){
+ const dogCount=Math.min(2,pets.filter(p=>p.species==='dog').length),address=addresses[0];
+ return{dogCountBoundedAtTwo:dogCount,savedAddressPresent:Boolean(address),savedAddressGeocoded:Boolean(address&&geocodes.some(g=>g.address_id===address.id))};
+}
+
 // Only existing owned records supplied by parameterized staging reads. No invented intake facts.
 export function savedQuotePrompt(pets,addresses,geocodes,now=Date.now()){
  const dogs=pets.filter(p=>p.species==='dog');
