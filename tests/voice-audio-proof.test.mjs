@@ -4,7 +4,8 @@ import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DEMO_LIMITS,DEMO_SUMMARY_PATH,readDemoJson,validateDemoIdentifier,validateDemoContext,validateDemoSignedUrl,actionsMaskCommand,createDemoEventBoundary,demoArtifactPaths,validatedDemoReport,serializeDemoReport,serializeDemoSummary} from '../scripts/voice-demo-output-boundary.mjs';
-import {assertFinalConversation} from '../scripts/voice-final-conversation-proof.mjs';
+import {assertFinalConversation,verifyFinalConversation} from '../scripts/voice-final-conversation-proof.mjs';
+import {inspect} from 'node:util';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
@@ -325,5 +326,59 @@ test('real probe and final-conversation proof preserve validated audio bytes and
  assert.equal(saved.passed,true);assert.equal(saved.demonstrations.every(item=>item.proof.finalTranscriptMatched),true);
  assert.equal(saved.nativeCarrierCertified,false);
 });
+test('malformed signed URLs expose only a generic error without their secret input or cause',()=>{
+ const secret='test_token_test_token';
+ for(const value of [`wss://[${secret}]/v1/convai/conversation`,`${secret}`,`wss://api.elevenlabs.io:${secret}/v1/convai/conversation`]){
+  assert.throws(()=>validateDemoSignedUrl(value),error=>{
+   assert.equal(error.message,'Invalid demo socket URL');
+   assert.equal(Object.hasOwn(error,'input'),false);
+   assert.equal(Object.hasOwn(error,'cause'),false);
+   assert.equal(inspect(error,{showHidden:true,depth:null}).includes(secret),false);
+   return true;
+  });
+ }
+});
 
+test('malformed event and HTTP JSON cannot reflect conversation IDs or tokens into diagnostics',async()=>{
+ const id='conv_test_test_test';
+ let eventError;
+ try{createDemoEventBoundary().parse(id);}catch(error){eventError=error;}
+ assert.equal(eventError?.message,'Invalid demo event JSON');
+ assert.equal(inspect(eventError,{showHidden:true,depth:null}).includes(id),false);
+ const secret='test_token_test_token';
+ await assert.rejects(readDemoJson(new Response(secret)),error=>{
+  assert.equal(error.message,'Invalid demo JSON response');
+  assert.equal(inspect(error,{showHidden:true,depth:null}).includes(secret),false);
+  const serialized=serializeDemoReport({...report(),passed:false,error:error.message});
+  assert.equal(serialized.includes(secret),false);
+  return true;
+ });
+});
+
+test('validated conversation IDs remain in-memory proof correlation and stay out of exported reports',async t=>{
+ const logged=[];
+ t.mock.method(console,'log',(...args)=>logged.push(args));
+ const {event}=parse(createDemoEventBoundary(),metadata('conv_test_test_test'));
+ const conversationId=event.conversation_initiation_metadata_event.conversation_id;
+ const input=report(),requests=[];
+ const evidence={conversationId,inputMode:'audio',inputBytes:2000,outputBytes:input.audioBytes,nonSilentBytes:input.nonSilentBytes,playbackComplete:true};
+ const detail={status:'done',conversation_id:conversationId,agent_id:'agent_fixture',metadata:{text_only:false},transcript:[{role:'user',message:input.transcript},{role:'agent',message:input.reply}]};
+ const verified=await verifyFinalConversation({key:'fixture-key',conversationId,agentId:'agent_fixture',turns:[{transcript:input.transcript,reply:input.reply}],liveAudioEvidence:evidence,request:async(url,options)=>{
+  requests.push({url,options});
+  return Response.json(detail);
+ }});
+ assert.equal(requests.length,1);
+ assert.equal(requests[0].url,`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`);
+ assert.equal(verified.finalTranscriptMatched,true);
+ assert.deepEqual(logged,[]);
+ const saved=serializeDemoReport({...input,conversationId,conversation_id:conversationId,proof:{...verified,conversationId}});
+ assert.equal(saved.includes(conversationId),false);
+ const summary=serializeDemoSummary(VOICE_DEMO_SCENARIOS.map(scenario=>({...input,scenario:scenario.id,conversationId,proof:verified})));
+ assert.equal(summary.includes(conversationId),false);
+ assert.throws(()=>assertFinalConversation({...detail,conversation_id:'conv_wrong_fixture'},{agentId:'agent_fixture',turns:[{transcript:input.transcript,reply:input.reply}],liveAudioEvidence:evidence}),error=>{
+  assert.equal(error.message,'Final conversation lacks bidirectional audio evidence');
+  assert.equal(inspect(error,{showHidden:true,depth:null}).includes(conversationId),false);
+  return true;
+ });
+});
 });

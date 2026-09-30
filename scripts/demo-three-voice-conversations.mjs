@@ -49,7 +49,7 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
  socket.addEventListener('message',event=>{if(error)return;try{
   const {event:d,audio}=boundary.parse(event.data);
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
-  if(d.type==='conversation_initiation_metadata'){const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;inputFormat=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(outputFormat);if(inputFormat!=='pcm_16000')throw Error('Demo microphone requires PCM16000');console.log(actionsMaskCommand(conversationId));}
+  if(d.type==='conversation_initiation_metadata'){const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;inputFormat=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(outputFormat);if(inputFormat!=='pcm_16000')throw Error('Demo microphone requires PCM16000');}
   if(d.type==='audio'){const bytes=audio;if(!state.listening){firstGreeting ||= Date.now();lastGreeting=Date.now();greetingBytes+=bytes.length;}else if(state.transcript){returnedAudio.push(bytes);firstAudio ||=Date.now();lastAudio=Date.now();}}
   applyAudioProbeEvent(state,d,{now:Date.now(),outputFormat});
   if(d.type==='error')throw Error('Demo voice provider error');

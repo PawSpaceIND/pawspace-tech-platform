@@ -28,7 +28,8 @@ export async function readDemoJson(response){
    size+=value.byteLength;if(size>DEMO_LIMITS.jsonBytes||chunks.length>=DEMO_LIMITS.eventCount){void reader.cancel().catch(()=>{});throw Error('Demo JSON response exceeded');}
    chunks.push(value);
   }
-  return JSON.parse(Buffer.concat(chunks,size).toString('utf8'));
+  try{return JSON.parse(Buffer.concat(chunks,size).toString('utf8'));}
+  catch{throw Error('Invalid demo JSON response');}
  }finally{reader.releaseLock();}
 }
 export function validateDemoIdentifier(value){
@@ -45,7 +46,7 @@ export function actionsMaskCommand(value){
 export function validateDemoSignedUrl(value){
  boundedText(value,8192);
  if(/[\u0000-\u0020\u007f]/.test(value))throw Error('Invalid demo socket URL');
- const url=new URL(value);
+ let url;try{url=new URL(value);}catch{throw Error('Invalid demo socket URL');}
  // Only the two regions already permitted by this demo. Official socket origins/path:
  // https://elevenlabs.io/docs/eleven-agents/libraries/web-sockets
  // https://elevenlabs.io/docs/overview/administration/data-residency
@@ -63,7 +64,7 @@ export function createDemoEventBoundary(){
  return{parse(raw){
   if(++eventCount>DEMO_LIMITS.eventCount)throw Error('Demo event count exceeded');
   boundedText(raw,DEMO_LIMITS.eventBytes);
-  const event=JSON.parse(raw);
+  let event;try{event=JSON.parse(raw);}catch{throw Error('Invalid demo event JSON');}
   if(!event||typeof event!=='object'||Array.isArray(event)||typeof event.type!=='string'||event.type.length>64)throw Error('Invalid demo event');
   let audio;
   if(event.type==='conversation_initiation_metadata'){
