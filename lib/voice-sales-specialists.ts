@@ -128,7 +128,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   quote = await quoteGroomingBookingWithLiveMultiPet(db, { packageCode: text(booking.packageCode), packageName: "", pets: pets.map(p => ({ species: text(p.species) as "dog" | "cat" | "other" })), paymentMode: mode, cityId: address.cityId, zoneId: address.zoneId, scheduledStart: start.toISOString() });
   // Voice checkout is delivered over WhatsApp. Use that channel's campaign eligibility,
   // then let the canonical coupon engine calculate the only permitted discounted total.
-  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote, channel: input.channel === "voice" || input.channel === "whatsapp" ? "whatsapp" : "website" }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
+  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote, channel: input.channel === "chat" ? "website" : "whatsapp" }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
  }
  const { executeGovernedSchedulingRequest } = await import("../app/api/uat-scheduling/route");
  const response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor);
