@@ -6,7 +6,7 @@ Keep ElevenLabs for the first Grooming pilot; evaluate the native engine alongsi
 Reuse canonical CRM, scheduling, booking, payment and provider-assignment rules.
 Use existing approved commercial policies. The user directed unresolved commercial cases to staff;
 do not invent refund, subscription, surcharge or operating-hour commitments.
-The user authorized one attended UAT call to the supplied recipient ending 7878, at any time.
+Earlier attended-call authorization is superseded by the user’s explicit stop: no phone calls until the audio fault is fixed. Do not automatically resume dialing after synthetic tests pass.
 Full number is intentionally excluded from this repository.
 
 ## Included work
@@ -107,3 +107,40 @@ activation script does not invent a checker identity or change the lifecycle per
 Activation/isolation tests passed 81/81 and sales/pet-care tests passed 49/49. These checks prove
 staging knowledge availability, not an answered voice conversation, payment or provider acceptance.
 No calls, rollout changes or production activation occurred during this operation.
+
+
+## Phone stop and audio repair — current evidence
+
+The participant reported a silent native call after saying hello, followed by another disconnect.
+A separate native handset workflow dispatched the repeat call; these results are failed audio proof.
+Both the carrier self-test and staging voice-activation workflows are disabled. A later queued native
+handset job (36707856407) was cancelled before execution.
+
+[Shutdown run 36707608749](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36707608749)
+verified the deployed staging voice mode disabled and UAT, native UAT, self-test, autorun and outbound
+sales gates false, preserving unrelated binding names. This proves the shutdown at its readback time;
+it does not certify future staging revisions.
+
+Revision `a5291d6e` corrects native PCM terminal frames to the documented carrier minimum and rejects
+failed/empty TTS responses before playback. Fifty focused tests and typecheck passed. The historical
+logs show a stream error shortly after preparing the greeting but do not establish the exact exception;
+the frame defect is concrete, not a proven sole cause of those silent calls.
+
+Revision `12a1b3eff4270145a2c414fd7ebab5220bb58011` adds a persistent user phone-pause gate,
+preserves the pause in staging configuration, refuses the voice-activation overlay while paused,
+and requires all phone gates disabled before non-dialing demos. Its 195 focused checks and typecheck
+passed; these include executed dialing refusal and activation-overlay refusal. Updated manifests track
+only these reviewed changes. Unrelated business rules remain authoritative.
+
+[Deployment 36709553463](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709553463)
+is queued for that exact application revision with phone pause enabled and SMS smoke disabled.
+[Pause refresh 36709549373](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709549373)
+is queued to persist and read back the additional pause binding on the current staging worker.
+These live jobs remain pending; do not report deployed repair until their terminal readbacks pass.
+
+Three actual audio demo conversations remain unverified. The first attempt failed its Grooming-answer
+acceptance check; the next refused a replaced staging revision before starting. The runner captures
+real ASR text, substantive replies, audible response bytes and terminal provider evidence, and verifies
+that informational conversations did not create bookings. It uses the approved ElevenLabs voice with
+the PawSpace brain, not the native carrier path. It reports input-to-playback elapsed time, not model
+latency. No conversation or successful demo is fabricated from the scenario scripts.
