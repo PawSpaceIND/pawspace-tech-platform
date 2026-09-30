@@ -102,6 +102,8 @@ test("a renamed code is still found by its campaign, and does not re-seed on eve
 
 test("the web chat and WhatsApp prompts carry the coupon rules without overriding a sales lever", async () => {
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /at most once/);
+  assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /In voice, describe the savings without saying the code/);
+  assert.doesNotMatch(offersModule.APPROVED_OFFERS_DIRECTIVE, /With code <code>/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /only after the customer hesitates on price/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /Never invent, guess or alter a coupon code/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /authorized sales lever stated elsewhere/);

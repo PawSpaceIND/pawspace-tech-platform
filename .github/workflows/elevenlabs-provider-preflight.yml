@@ -61,8 +61,41 @@ on:
 permissions:
   contents: read
 jobs:
+  inspect-agent-deadlines:
+    if: ${{ inputs.confirm == 'inspect-agent-deadlines' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Read current staging agent deadlines and voice metadata (no calls or changes)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {mkdir,writeFile} from 'node:fs/promises';
+          const key=process.env.ELEVENLABS_API_KEY,id=process.env.GROOMING_AGENT_ID;
+          if(!key||!id)throw Error('Staging agent read prerequisites missing');
+          const headers={'xi-api-key':key};
+          const r=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(id),{headers,signal:AbortSignal.timeout(15000)});
+          if(!r.ok)throw Error('Agent configuration read refused: '+r.status);
+          const body=await r.json(),c=body.conversation_config,p=c?.agent?.prompt,t=c?.turn,v=c?.tts;
+          if(p?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw Error('Exact isolated staging brain is required');
+          let voice={metadataReadable:false};
+          if(v?.voice_id){const vr=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(v.voice_id),{headers,signal:AbortSignal.timeout(15000)});if(vr.ok){const x=await vr.json();voice={metadataReadable:true,name:x.name??null,category:x.category??null,labels:x.labels??null};}else voice={metadataReadable:false,httpStatus:vr.status};}
+          const report={dialed:false,configurationChanged:false,stagingBrain:true,agentModel:p.llm??null,cascadeTimeoutSeconds:p.cascade_timeout_seconds??null,ttsModel:v?.model_id??null,stability:v?.stability??null,speed:v?.speed??null,expressive:v?.expressive_mode===true,turnTimeoutSeconds:t?.turn_timeout??null,softTimeoutSeconds:t?.soft_timeout_config?.timeout_seconds??null,softTimeoutMessage:t?.soft_timeout_config?.message??null,voice};
+          await mkdir('artifacts/agent-deadlines',{recursive:true});await writeFile('artifacts/agent-deadlines/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maya-agent-deadlines
+          path: artifacts/agent-deadlines/report.json
+          retention-days: 3
   evaluate-runtime-sale:
-    if: ${{ inputs.confirm == 'evaluate-runtime-sale' }}
+    if: ${{ inputs.confirm == 'evaluate-runtime-sale' || inputs.confirm == 'evaluate-runtime-concierge' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 5
@@ -76,6 +109,7 @@ jobs:
       - name: Evaluate actual sales runtime with synthetic database and mocked payments (no calls)
         env:
           VOICE_SALE_ACTION: evaluate-runtime-sale
+          VOICE_SALE_SCENARIO: ${{ inputs.confirm == 'evaluate-runtime-concierge' && 'concierge' || 'booking' }}
           PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
           PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
           PAWSPACE_LOCAL_PREVIEW: 'on'
@@ -995,6 +1029,7 @@ jobs:
             const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
             const voiceId=currentTts.voice_id;
             if(!voiceId) throw new Error(label+' agent voice_id missing');
+            if(currentPrompt?.llm!=='custom-llm'||currentPrompt?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw new Error(label+' exact isolated staging custom brain required');
             const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
             const voiceMeta=await voiceRead.json().catch(()=>({}));
             if(voiceRead.ok) console.log(label+'_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
@@ -1007,6 +1042,7 @@ jobs:
                   max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
                   prompt:{
                     ...currentPrompt,
+                    cascade_timeout_seconds:15,
                     prompt:premiumLanguagePrompt(humanCallPrompt(currentPrompt?.prompt)),
                     built_in_tools:{
                       ...(currentPrompt?.built_in_tools||{}),
@@ -1042,7 +1078,7 @@ jobs:
                   soft_timeout_config:{
                     ...(currentTurn?.soft_timeout_config||{}),
                     timeout_seconds:3,
-                    message:"Sure, give me a second.",
+                    message:"I'm checking that for you.",
                     max_soft_timeouts_per_generation:1
                   }
                 }
@@ -1054,6 +1090,7 @@ jobs:
             const result=await patch.json().catch(()=>({}));
             if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error(label+' agent update failed '+patch.status);}
             const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+            if(cc?.agent?.prompt?.cascade_timeout_seconds!==15)throw new Error(label+' model response window did not persist');
             const languageReady=premiumLanguageReadiness(cc);
             if(!languageReady.allLanguagesConfigured||!languageReady.languageDetection)throw new Error(label+' premium multilingual configuration did not persist');
             console.log(label+'_MULTILINGUAL_READY='+JSON.stringify({
@@ -1064,6 +1101,7 @@ jobs:
               premiumCertified:languageReady.premiumCertified
             }));
             console.log(label+'_AUDIO_TUNED='+JSON.stringify({
+              modelResponseWindowSeconds:cc?.agent?.prompt?.cascade_timeout_seconds??null,
               profile:profile.id,
               firstMessage:agent.first_message||null,
               modelId:tts.model_id||null,

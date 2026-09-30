@@ -8,6 +8,8 @@ if (process.env.VOICE_SALE_ACTION !== 'evaluate-runtime-sale') throw Error('Expl
 const key = String(process.env.PAWSPACE_OPENAI_API_KEY || '').trim();
 if (!key) throw Error('Runtime model evaluation credential missing');
 const model = String(process.env.PAWSPACE_AI_VOICE_MODEL || 'gpt-5.6-luna');
+const scenario = String(process.env.VOICE_SALE_SCENARIO || 'booking');
+assert.ok(['booking', 'concierge'].includes(scenario), 'Unsupported isolated scenario');
 const actor = { email: 'elevenlabs-voice@system.pawspace', name: 'Synthetic Runtime Evaluation', roleCode: 'service_elevenlabs_voice', permissions: ['communications.manage', 'customers.manage', 'bookings.manage', 'scheduling.book'], developmentPreview: false, identitySource: 'workspace', principalType: 'identity_subject', principalKey: 'service:elevenlabs-voice' };
 const customerId = 'CUS-MAYA-SYNTHETIC', petId = 'PET-MAYA-SYNTHETIC', threadId = 'THREAD-MAYA-SYNTHETIC';
 const start = '2026-10-20T04:30:00.000Z', end = '2026-10-20T06:30:00.000Z';
@@ -56,6 +58,10 @@ try {
   await orchestrator.ensureAiConversationOrchestrator(world.db);
   const { applyOwnedDdl } = await import('../tests/helpers/ai-harness.mjs');
   for (const owner of ['lib/training-commercial-governance.ts', 'lib/boarding-governance.ts', 'lib/sitting-governance.ts', 'lib/walking-governance.ts', 'lib/taxi-governance.ts']) applyOwnedDdl(world.sqlite, owner);
+  if (scenario === 'concierge') {
+    // Publish the repository's reviewed knowledge only inside this temporary in-memory fixture.
+    await (await import('../lib/maya-knowledge-base.ts')).seedMayaKnowledge(world.db, { maker: 'synthetic-maker@pawspace.test', checker: 'synthetic-checker@pawspace.test' });
+  }
   const now = Date.now();
   world.sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,'blr','Synthetic Maya Evaluator','9876500099','test','{}',?,?)").run(customerId, now, now);
   await seedOwnedPet(world.db, customerId, petId, 'Milo');
@@ -75,6 +81,27 @@ try {
     history.push({ role: 'user', content: message }, { role: 'assistant', content: result.output });
     return result;
   }
+  if (scenario === 'concierge') {
+    const checks = [
+      { message: 'I need boarding for Milo for two nights. What do you need from me?', required: /boarding|stay|host/i, forbidden: /how many nights|grooming/i },
+      { message: 'Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?', required: /Complete Makeover/i },
+      { message: 'I work long office hours and Milo misses his daily outdoor exercise. What would help with that?', required: /walk/i },
+      { message: 'No extra services please, I only want grooming.', forbidden: /you should (?:also )?book|would you like.*walk|recommend.*walk/i },
+      { message: 'The Complete Makeover price feels high. Is there an approved offer for that package?', required: /offer|discount|sav(?:e|ing)|200/i, forbidden: /GROOM200|GROOM400/ },
+      { message: 'Milo has mild itching but is otherwise behaving normally. What general information can you share?', required: /vet(?:erinarian)?/i, forbidden: /GROOM|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i }
+    ];
+    for (const check of checks) {
+      const reply = await turn(check.message);
+      if (check.required) assert.match(reply.output, check.required, check.message);
+      if (check.forbidden) assert.doesNotMatch(reply.output, check.forbidden, check.message);
+      assert.equal(countBookings(), 0, 'Concierge enquiries cannot create a booking');
+      assert.equal(paymentRequests, 0, 'Concierge enquiries cannot create a payment order');
+    }
+    const report = { passed: true, scenario, dialed: false, liveDatabaseAccess: false, model, modelCalls, mockedPaymentRequests: paymentRequests, bookingCount: countBookings(), premiumCertified: false, modelDrafts, scope: 'Actual model and PawSpace concierge runtime with the repository knowledge pack in an in-memory fixture; pattern smoke checks require manual review, no live CRM, TTS or handset certification', turns };
+    await mkdir('artifacts/maya-runtime-sale', { recursive: true });
+    await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify(report, null, 2));
+    console.log('MAYA_RUNTIME_CONCIERGE=' + JSON.stringify({ ...report, modelDrafts: undefined }));
+  } else {
   const recommendation = await turn('Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?');
   assert.match(recommendation.output, /Complete Makeover/i, 'The actual runtime must recommend the package matching the stated need');
   assert.equal(countBookings(), 0);
@@ -98,6 +125,7 @@ try {
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
   await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify(report, null, 2));
   console.log('MAYA_RUNTIME_SALE=' + JSON.stringify({ ...report, modelDrafts: undefined }));
+  }
 } catch (error) {
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
   await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify({ passed: false, dialed: false, liveDatabaseAccess: false, premiumCertified: false, error: error.message, modelCalls, paymentRequests, turns, modelDrafts, fixtureErrors, turnDiagnostics: world.sqlite.prepare('SELECT outcome,policy_decision,handoff_reason,intent_code,intent_confidence,provider FROM ai_conversation_turns').all() }, null, 2));
