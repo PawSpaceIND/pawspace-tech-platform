@@ -66,11 +66,17 @@ test("the V2 training recovery banner links to the owned booking & payment page 
 const MANAGE = "../app/v2/booking/training-manage.tsx";
 const trainingSession = (n, status) => ({ id: `TS-${n}`, programme_id: "TP-1", booking_id: "B1", sequence_no: n, provider_id: "train_kiran", scheduled_start: `2036-10-0${n}T04:30:00.000Z`, scheduled_end: `2036-10-0${n}T05:30:00.000Z`, status, attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null });
 const trainingRecord = (statuses, programme = {}) => ({ programme: { id: "TP-1", booking_id: "B1", provider_id: "train_kiran", plan_code: "obedience-starter", plan_name: "Starter Plan", status: "scheduled", total_sessions: statuses.length, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 0, meet_booking_id: null, pricing_snapshot_json: "{}", ...programme }, sessions: statuses.map((status, index) => trainingSession(index + 1, status)), events: [] });
-async function renderManage(record, inactive = false) {
+async function renderManage(record, inactive = false, now = Date.parse("2026-09-29T00:00:00.000Z")) {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const React = await import("react");
   const mod = await import(MANAGE);
-  return renderToStaticMarkup(React.createElement(mod.default, { bookingId: "B1", record, inactive, onRescheduled() {} })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const originalNow = Date.now;
+  Date.now = () => now;
+  try {
+    return renderToStaticMarkup(React.createElement(mod.default, { bookingId: "B1", record, inactive, onRescheduled() {} })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  } finally {
+    Date.now = originalNow;
+  }
 }
 
 test("an open Training programme offers a new time for its next unlocked session and a cancellation review", async () => {

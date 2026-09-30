@@ -28,7 +28,7 @@ import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationP
 import { centralConsentAllows, recordGlobalOptOut } from "./communication-governance";
 import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
 import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_CALL_STATES, VOICE_RETRYABLE_STATES, VOICE_TERMINAL_STATES, type VoiceCallState } from "./voice-call-state";
-import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
+import { exotelTelephony, selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;
@@ -207,7 +207,12 @@ export type VoiceCallRequest = {
 // cap impossible to bypass through JSON, route fields, actor spoofing, or retries.
 const CONTROLLED_UAT_FREQUENCY_TOKEN = Symbol("controlled-voice-uat-frequency-isolation");
 const CONTROLLED_UAT_SPECIALIST_TOKEN = Symbol("controlled-specialist-voice-uat");
-type InternalVoiceCallRequest = VoiceCallRequest & { [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true; [CONTROLLED_UAT_SPECIALIST_TOKEN]?: true };
+const CONTROLLED_NATIVE_AGENTSTREAM_TOKEN = Symbol("controlled-native-agentstream-uat");
+type InternalVoiceCallRequest = VoiceCallRequest & {
+  [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true;
+  [CONTROLLED_UAT_SPECIALIST_TOKEN]?: true;
+  [CONTROLLED_NATIVE_AGENTSTREAM_TOKEN]?: true;
+};
 
 function controlledUatFrequencyIsolated(env: Env, input: VoiceCallRequest, phoneKey: string) {
   const internal = input as InternalVoiceCallRequest;
@@ -240,6 +245,32 @@ function controlledSpecialistUat(env: Env, input: VoiceCallRequest, phoneKey: st
     && (useCase === "grooming_sales" || useCase === "training_sales")
     && text(input.customerId).length > 0
     && text(input.idempotencyKey).startsWith("voice-specialist-uat:");
+}
+
+function nativeAgentStreamUrlConfigured(env: Env) {
+  const value = text(env.PAWSPACE_VOICE_STREAM_URL);
+  if (!value) return false;
+  try { return new URL(value).protocol === "wss:"; } catch { return false; }
+}
+
+function controlledNativeAgentStreamUat(env: Env, input: VoiceCallRequest, phoneKey: string) {
+  const internal = input as InternalVoiceCallRequest;
+  if (internal[CONTROLLED_NATIVE_AGENTSTREAM_TOKEN] !== true) return false;
+  const gate = resolveVoiceCallGate(env), useCase = text(input.useCase);
+  const sales = useCase === "grooming_sales" || useCase === "training_sales";
+  return gate.ok
+    && gate.mode === "uat"
+    && text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() === "true"
+    && text(env.PAWSPACE_VOICE_NATIVE_UAT_APPROVED).toLowerCase() === "true"
+    && text(env.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED).toLowerCase() === "true"
+    && (!sales || salesOutboundApproved(env))
+    && nativeAgentStreamUrlConfigured(env)
+    && gate.allowlist.length === 1
+    && gate.allowlist[0] === phoneKey
+    && (useCase === "booking_confirmation" || sales)
+    && text(input.customerId).length > 0
+    && (useCase !== "booking_confirmation" || text(input.bookingId).length > 0)
+    && text(input.idempotencyKey).startsWith("voice-native-agentstream-uat:");
 }
 
 function inQuietHours(hour: number, start: number, end: number) { return start > end ? hour >= start || hour < end : hour >= start && hour < end; }
@@ -312,8 +343,11 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const localHour = new Date(now + IST_OFFSET_MINUTES * 60_000).getUTCHours();
   const quiet = inQuietHours(localHour, policy.quietStart, policy.quietEnd);
   const specialistUat = controlledSpecialistUat(env, input, phoneKey);
-  add("quiet_hours", specialistUat || !quiet, "blocked_quiet_hours", specialistUat && quiet
-    ? `Controlled specialist UAT bypassed quiet hours for the single allowlisted test recipient; production policy remains ${policy.quietStart}-${policy.quietEnd}`
+  const nativeAgentStreamUat = controlledNativeAgentStreamUat(env, input, phoneKey);
+  const nativeSalesUat = nativeAgentStreamUat && (text(input.useCase) === "grooming_sales" || text(input.useCase) === "training_sales");
+  const quietBypass = specialistUat || nativeSalesUat;
+  add("quiet_hours", quietBypass || !quiet, "blocked_quiet_hours", quietBypass && quiet
+    ? `${nativeSalesUat ? "Controlled native AgentStream UAT" : "Controlled specialist UAT"} bypassed quiet hours for the single allowlisted test recipient; production policy remains ${policy.quietStart}-${policy.quietEnd}`
     : quiet ? `Local hour ${localHour} is inside quiet hours ${policy.quietStart}-${policy.quietEnd} (${policy.source})` : `Local hour ${localHour} is outside quiet hours (${policy.source})`);
 
   // Only calls that actually dialled count towards the cap. A call the gate refused never reached the
@@ -322,7 +356,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const attempts24h = Number(attempts?.n || 0);
   const weekly = phoneKey && useCase?.purpose === "marketing" ? await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE phone_key=? AND purpose='marketing' AND dialed_at IS NOT NULL AND dialed_at>=?").bind(phoneKey, now - 7 * 86_400_000).first<Row>() : null;
   const dailyCap = 1;
-  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey) || specialistUat;
+  const frequencyCapIsolated = controlledUatFrequencyIsolated(env, input, phoneKey) || specialistUat || nativeAgentStreamUat;
   const capOk = frequencyCapIsolated || (attempts24h < dailyCap && (!weekly || Number(weekly.n || 0) < policy.promotionalCap7d));
   add("frequency_cap", capOk, "blocked_frequency_cap",
     frequencyCapIsolated
@@ -330,8 +364,9 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
       : capOk ? `${attempts24h} of ${dailyCap} calls used in the last 14 days`
         : `Frequency cap reached (${attempts24h}/${dailyCap} in 14d${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
 
-  const provider = selectTelephonyProvider(env);
+  const provider = nativeAgentStreamUat ? exotelTelephony(env) : selectTelephonyProvider(env);
   const providerOk = provider.status === "connected" || provider.status === "simulated";
+  if (nativeAgentStreamUat) add("native_agentstream_stream", nativeAgentStreamUrlConfigured(env), "provider_unavailable", nativeAgentStreamUrlConfigured(env) ? "Controlled native UAT has an approved WSS AgentStream URL" : "Controlled native UAT requires PAWSPACE_VOICE_STREAM_URL");
   add("provider_configured", providerOk, "provider_unavailable", providerOk ? `Transport ${provider.provider} (${provider.status})` : "No telephony provider is connected");
 
   const firstFailure = checks.find(check => !check.passed) || null;
@@ -348,7 +383,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     attempts24h,
     consentDecision: consentGranted ? "granted" : consent ? "revoked" : "missing",
     optOutDecision: optOut || leadOptOut ? "opted_out" : "clear",
-    quietHoursDecision: specialistUat && quiet ? "uat_bypass" : quiet ? "inside" : "outside",
+    quietHoursDecision: quietBypass && quiet ? "uat_bypass" : quiet ? "inside" : "outside",
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
@@ -616,6 +651,35 @@ export async function requestControlledSpecialistUatCall(db: Db, env: Env, input
   if ((useCase !== "grooming_sales" && useCase !== "training_sales") || !text(input.customerId)) throw new Error("Controlled specialist UAT requires Grooming/Training and canonical customer context");
   if (!text(input.idempotencyKey).startsWith("voice-specialist-uat:")) throw new Error("Controlled specialist UAT requires a dedicated voice-specialist-uat idempotency key");
   return requestOutboundVoiceCallInternal(db, env, { ...input, actorId: "system:voice-specialist-uat", actorPermissions: ["communications.call", "customers.manage"], simulatedOutcome: null, [CONTROLLED_UAT_SPECIALIST_TOKEN]: true });
+}
+
+/**
+ * Controlled native AgentStream UAT. This is the only code path allowed to force direct Exotel while
+ * the ordinary runtime remains ElevenLabs. The provider override is a module-private Symbol, so an API
+ * client cannot forge it through JSON. Exactly one environment-allowlisted recipient may be dialled.
+ */
+export async function requestControlledNativeAgentStreamUatCall(db: Db, env: Env, input: Omit<VoiceCallRequest, "actorId" | "actorPermissions">) {
+  const gate = resolveVoiceCallGate(env), dialNumber = canonicalDialNumber(env, input.phone), targetKey = normalisedDialKey(dialNumber || input.phone), useCase = text(input.useCase);
+  const sales = useCase === "grooming_sales" || useCase === "training_sales";
+  if (!gate.ok || gate.mode !== "uat"
+    || text(env.PAWSPACE_VOICE_UAT_APPROVED).toLowerCase() !== "true"
+    || text(env.PAWSPACE_VOICE_NATIVE_UAT_APPROVED).toLowerCase() !== "true"
+    || text(env.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED).toLowerCase() !== "true") {
+    throw new Error("Controlled native AgentStream UAT requires explicit UAT, native-UAT and AI self-test approvals");
+  }
+  if (sales && !salesOutboundApproved(env)) throw new Error("Controlled native AgentStream sales UAT requires outbound sales approval");
+  if (!nativeAgentStreamUrlConfigured(env)) throw new Error("Controlled native AgentStream UAT requires an approved WSS PAWSPACE_VOICE_STREAM_URL");
+  if (gate.allowlist.length !== 1 || !targetKey || gate.allowlist[0] !== targetKey) throw new Error("Controlled native AgentStream UAT requires exactly the single approved allowlisted recipient");
+  if ((useCase !== "booking_confirmation" && !sales) || !text(input.customerId)) throw new Error("Controlled native AgentStream UAT supports booking confirmation, Grooming sales or Training sales with canonical customer context");
+  if (useCase === "booking_confirmation" && !text(input.bookingId)) throw new Error("Controlled native booking-confirmation UAT requires a canonical booking");
+  if (!text(input.idempotencyKey).startsWith("voice-native-agentstream-uat:")) throw new Error("Controlled native AgentStream UAT requires a dedicated voice-native-agentstream-uat idempotency key");
+  return requestOutboundVoiceCallInternal(db, env, {
+    ...input,
+    actorId: "system:voice-native-agentstream-uat",
+    actorPermissions: ["communications.call", "customers.manage"],
+    simulatedOutcome: null,
+    [CONTROLLED_NATIVE_AGENTSTREAM_TOKEN]: true,
+  });
 }
 
 /**
