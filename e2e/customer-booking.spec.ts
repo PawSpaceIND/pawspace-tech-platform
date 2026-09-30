@@ -133,7 +133,7 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await page.getByPlaceholder("Medicine, dose, allergy or none").fill("none");
     await page.getByPlaceholder("Sleep, walks, separation or other care needs").fill("Calm indoor rest; leash walks only.");
     const care = page.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "submit_care_plan");
-    await page.getByRole("button", { name: "Save canonical care plan", exact: true }).click(); expect((await care).status()).toBe(200);
+    await page.getByRole("button", { name: "Save care plan", exact: true }).click(); expect((await care).status()).toBe(200);
     const stranger = await browser.newPage({ baseURL: origin });
     try { await loginHost(stranger, Object.keys(phones).find(id => id !== providerId)!); const denied = await stranger.request.post("/api/boarding-stays", { data: { stayId, action: "accept", idempotencyKey: `wrong-host-${stayId}` } }); expect(denied.status()).toBe(403); } finally { await Promise.allSettled([stranger.close()]); }
     await host.goto("/host"); await dismissPrivacy(host); await host.getByRole("button", { name: /Requests/ }).click();
