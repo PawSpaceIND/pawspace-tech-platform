@@ -170,7 +170,7 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
   * package, or whose service, the reply actually names. A taxi fare of 499 does not ground "grooming for
   * 499". */
  const lower=reply.toLowerCase(),groups=catalogue&&typeof catalogue==="object"?Object.entries(catalogue as Row):[];
- const rows:Array<{amounts:Set<number>;named:boolean}>=[];
+ const rows:Array<{amounts:Set<number>;named:boolean;name:string;packageCode:string;offer:boolean}>=[];
  for(const[group,value]of groups){
   if(!Array.isArray(value))continue;
   const serviceNamed=Object.entries(SERVICE_GROUP_WORDS).some(([key,pattern])=>group===key&&pattern.test(lower));
@@ -178,12 +178,31 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
    if(!item||typeof item!=="object")continue;const row=item as Row,amounts=new Set<number>();
    for(const[key,field]of Object.entries(row))if(/price|amount/i.test(key)&&Number.isFinite(Number(field))&&Number(field)>0)amounts.add(Math.round(Number(field)));
    const name=text(row.name).toLowerCase();
-   if(amounts.size)rows.push({amounts,named:serviceNamed||(name.length>2&&lower.includes(name))});
+   if(amounts.size)rows.push({amounts,named:serviceNamed||(name.length>2&&lower.includes(name)),name,packageCode:text(row.package_code),offer:group==="approvedOffers"});
   }
  }
  // Each amount starts at a digit that does not continue a number, so matching stays linear in the reply.
- const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)].map(match=>Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")))).filter(Number.isFinite);
- return amounts.every(amount=>rows.some(row=>row.named&&row.amounts.has(amount)));
+ const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)];
+ return amounts.every((match,index)=>{
+  const amount=Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")));
+  if(!Number.isFinite(amount))return false;
+  // Bind an explicitly named package to its adjacent amount. A service-wide match
+  // must never substitute another package's valid price or accept swapped prices.
+  const before=lower.slice(index?amounts[index-1].index!+amounts[index-1][0].length:0,match.index).split(/[.!?;](?:\s+|$)|\n/).at(-1)||"";
+  const after=lower.slice(match.index!+match[0].length,index+1<amounts.length?amounts[index+1].index:8000).split(/[.!?;](?:\s+|$)|\n/)[0]||"";
+  const preceding=rows.filter(row=>row.name.length>2&&before.includes(row.name));
+  const matchesPackage=(row:typeof rows[number])=>row.amounts.has(amount)||(!row.offer&&Boolean(row.packageCode)&&rows.some(offer=>offer.offer&&offer.named&&offer.packageCode===row.packageCode&&offer.amounts.has(amount)));
+  if(preceding.length){
+   const nearest=Math.max(...preceding.map(row=>before.lastIndexOf(row.name)));
+   return preceding.some(row=>before.lastIndexOf(row.name)===nearest&&matchesPackage(row));
+  }
+  const following=rows.filter(row=>row.name.length>2&&after.includes(row.name));
+  if(following.length){
+   const nearest=Math.min(...following.map(row=>after.indexOf(row.name)));
+   return following.some(row=>after.indexOf(row.name)===nearest&&matchesPackage(row));
+  }
+  return rows.some(row=>row.named&&row.amounts.has(amount));
+ });
 }
 /** The words that name each catalogue group's service in a reply. */
 const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};

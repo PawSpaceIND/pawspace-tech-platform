@@ -52,7 +52,7 @@ test("a paused or expired campaign is no longer an offer the AI may give", async
 test("an offer price grounds a reply only when the reply names its code; a discount is never a price", async () => {
   const { db } = fresh();
   const offers = await offersModule.approvedSalesOffers(db, { asOf: ASOF, customerId: "CUS-DEFAULT" });
-  const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
+  const catalogue = { grooming: [{ package_code: "dog-bath", name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
   const priced = (reply) => runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts(reply, offers), catalogue);
   assert.equal(priced("With code GROOM200, Essential Bath comes to ₹1,149 instead of ₹1,349."), true);
   assert.equal(priced("Essential Bath is just ₹1,149 for you today."), false, "the discounted price needs the code");
