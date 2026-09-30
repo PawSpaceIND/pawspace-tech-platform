@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {activateMayaKnowledgeStaging, requiredPetCareSources} from '../scripts/activate-maya-knowledge-staging.mjs';
+import {importLibModule} from './helpers/ts-module-loader.mjs';
+
+test('activation readback covers the actual production pet-care knowledge pack', async () => {
+  const {MAYA_KNOWLEDGE} = await importLibModule('maya-knowledge-base');
+  for (const key of requiredPetCareSources) {
+    const entries = MAYA_KNOWLEDGE.filter(entry => entry.sourceKey === key);
+    assert.equal(entries.length, 1, key);
+    assert.ok(entries[0].contentText.trim().length > 0, key);
+  }
+});
 
 const env = {CONFIRM: 'activate-approved-maya-staging', EXPECTED_SHA: 'a'.repeat(40),
   CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'test-token', STAGING_D1_ID: 'staging', PAWSPACE_UAT_ACCESS_CODE: 'test-code'};
