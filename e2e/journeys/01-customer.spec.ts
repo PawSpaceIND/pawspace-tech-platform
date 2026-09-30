@@ -260,6 +260,10 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
       await expect.poll(() => hero.locator("img").evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath("customer-approved-unified-grooming.png"), fullPage: true });
     } else {
+      const guestPreview = page.getByRole("region", { name: `${name} guest booking preview`, exact: true });
+      await expect(guestPreview).toBeVisible();
+      await expect(guestPreview).toContainText("Browse the service before signing in.");
+      await guestPreview.getByRole("button", { name: "Continue to booking", exact: true }).click();
       await expect(page.getByRole("button", { name: "Send OTP", exact: true })).toBeVisible();
     }
     await nav.getByRole("button", { name: /Home$/i }).click();
