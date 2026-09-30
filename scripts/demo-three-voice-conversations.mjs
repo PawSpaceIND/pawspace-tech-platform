@@ -53,7 +53,11 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
   if(d.type==='error')throw Error('Demo voice provider error');
  }catch(e){error=e;}});
  socket.addEventListener('error',()=>{error=Error('Demo audio transport failed');});socket.addEventListener('close',()=>{closed=true;});
- async function waitFor(predicate){const until=Date.now()+100000;while(!predicate()){if(error)throw error;if(closed)throw Error('Demo disconnected');if(Date.now()>until)throw Error('Demo timed out');await delay(100);}if(error)throw error;}
+ async function waitFor(predicate,{microphoneOpen=false}={}){const until=Date.now()+100000;while(!predicate()){if(error)throw error;if(closed)throw Error('Demo disconnected');if(Date.now()>until)throw Error('Demo timed out');
+  // Match an open SDK microphone: silence is still input audio while the agent answers.
+  // Stopping chunks is a transport gap, not an explicit end-of-turn signal.
+  if(microphoneOpen)socket.send(JSON.stringify({user_audio_chunk:Buffer.alloc(3200).toString('base64')}));
+  await delay(100);}if(error)throw error;}
  try{
   await waitFor(()=>state.greeting&&inputFormat&&greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreeting,lastAudioAt:lastGreeting,bytes:greetingBytes,format:outputFormat}));
   const wav=execFileSync('espeak-ng',['--stdout','-s','150',scenario.text],{maxBuffer:2097152,timeout:10000});
@@ -61,7 +65,7 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
   if(pcm.length<1000||pcm.length>960000)throw Error('Invalid synthetic demo audio');
   state.listening=true;const input=Buffer.concat([Buffer.alloc(16000),pcm,Buffer.alloc(64000)]),started=Date.now();
   for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
-  await waitFor(()=>scenario.recognized.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&scenario.reply.test(state.reply)&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500);
+  await waitFor(()=>scenario.recognized.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&scenario.reply.test(state.reply)&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500,{microphoneOpen:true});
   console.log('VOICE_DEMO_OBSERVED='+JSON.stringify({scenario:scenario.id,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
   assertDemoResponse(scenario,state);const playbackCompletedMs=Date.now()-started;socket.close();
   const proof=await verifyFinalConversation({key:env.ELEVENLABS_API_KEY,conversationId,agentId:env.GROOMING_AGENT_ID,turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:pcm.length,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:true},request:(url,options)=>fetch(url.replace('https://api.elevenlabs.io',eleven),options)});

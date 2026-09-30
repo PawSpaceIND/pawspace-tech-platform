@@ -219,3 +219,14 @@ with that draft-review label. All 32 gateway tests passed. The provider remains 
 it does not certify live playback. The diagnostic now also reads output lengths and completion
 timestamps to distinguish generated answers from interrupted provider playback without exposing
 private CRM reply content. No rollout, staff ownership or policy rule was changed.
+
+### Synthetic microphone correction
+
+The demo runner previously stopped transmitting microphone audio two seconds after the scripted
+question. The [official ElevenLabs audio interface](https://github.com/elevenlabs/elevenlabs-python/blob/main/src/elevenlabs/conversational_ai/conversation.py)
+keeps input callbacks active throughout the conversation. The runner now sends paced PCM silence
+while awaiting the answer, preserving an open microphone instead of leaving a transport gap.
+Only synthetic input changes; no output audio, transcript or answer is invented. Shutdown guards,
+scenario checks, interruption rejection and terminal provider verification remain intact.
+All 13 existing audio-proof tests passed and the runner syntax check passed. This corrects a concrete
+test-transport mismatch, but is not proof that it caused the interrupted session or fixed carrier calls.
