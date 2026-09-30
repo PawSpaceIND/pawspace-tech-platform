@@ -24,6 +24,14 @@ on:
         description: 'Exact 40-character commit SHA to deploy'
         required: true
         default: ''
+      native_handset_proof:
+        description: 'Place exactly one controlled native AgentStream UAT call while holding the staging lease'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   ci-config:
@@ -228,9 +236,122 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
         run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Place one controlled native AgentStream handset proof
+        if: ${{ github.event.inputs.native_handset_proof == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+        run: |
+          node <<'NODE'
+          (async () => {
+          const { execFileSync } = require("node:child_process");
+          const origin = String(process.env.STAGING_URL || "").trim().replace(/\/$/, "");
+          const access = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
+          const customerId = String(process.env.UAT_CUSTOMER_ID || "").trim();
+          const cityId = String(process.env.UAT_CITY_ID || "blr").trim() || "blr";
+          if (!/^https:\/\//.test(origin) || !access || !customerId) throw new Error("Native handset proof prerequisites missing");
+
+          const config = require("./dist/server/wrangler.json");
+          const vars = config?.vars || {};
+          if (vars.PAWSPACE_VOICE_ENV !== "uat"
+            || vars.PAWSPACE_VOICE_RUNTIME !== "elevenlabs"
+            || vars.PAWSPACE_VOICE_UAT_APPROVED !== "true"
+            || vars.PAWSPACE_VOICE_NATIVE_UAT_APPROVED !== "true"
+            || vars.PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED !== "true"
+            || vars.PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED !== "true"
+            || vars.VOICE_AGENTSTREAM_STT_LANGUAGE !== "auto"
+            || !String(vars.PAWSPACE_VOICE_STREAM_URL || "").startsWith("wss://")) {
+            throw new Error("Native AgentStream UAT gate is not fully activated");
+          }
+
+          const login = await fetch(origin + "/api/staging-login", {
+            method: "POST",
+            headers: { "content-type": "application/json", origin },
+            body: JSON.stringify({ email: "founder@pawspace.in", code: access }),
+            redirect: "manual",
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (login.status !== 200) throw new Error("Founder staging sign-in failed");
+          const cookie = String(login.headers.get("set-cookie") || "").split(";", 1)[0];
+          if (!cookie.startsWith("pawspace_uat=")) throw new Error("Staging login did not issue the UAT session cookie");
+
+          const response = await fetch(origin + "/api/voice-outbound", {
+            method: "POST",
+            headers: { "content-type": "application/json", origin, cookie },
+            body: JSON.stringify({ action: "uat_native_agentstream_test", useCase: "grooming_sales", customerId, cityId }),
+            redirect: "error",
+            signal: AbortSignal.timeout(30_000),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (response.status !== 201 || body?.data?.provider !== "exotel" || !body?.data?.callId || !body?.data?.providerCallId) {
+            throw new Error("Native AgentStream UAT dial was not accepted: " + String(body?.error || response.status));
+          }
+          const callId = String(body.data.callId);
+          const providerCallId = String(body.data.providerCallId);
+          console.log("::add-mask::" + callId);
+          console.log("::add-mask::" + providerCallId);
+          const threadId = "THREAD-VOICE-" + callId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96);
+          console.log("Native Exotel dial accepted; identifiers withheld.");
+
+          const sqlEscape = value => String(value || "").replaceAll("'", "''");
+          const query = sql => {
+            const raw = execFileSync("npx", ["wrangler", "d1", "execute", "pawspace-staging", "--remote", "--json", "--command", sql], {
+              encoding: "utf8", env: process.env, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+            });
+            const starts = [raw.indexOf("["), raw.indexOf("{")].filter(index => index >= 0);
+            if (!starts.length) throw new Error("Staging D1 returned no JSON");
+            const parsed = JSON.parse(raw.slice(Math.min(...starts)));
+            const blocks = Array.isArray(parsed) ? parsed : [parsed];
+            return blocks.flatMap(block => Array.isArray(block?.results) ? block.results : []);
+          };
+
+          let evidence = null;
+          for (let attempt = 0; attempt < 20; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            const rows = query(`
+              SELECT o.state,o.provider,o.provider_call_id,
+                (SELECT COUNT(*) FROM ai_voice_events e JOIN ai_voice_calls c ON c.id=e.call_id WHERE c.thread_id='${sqlEscape(threadId)}' AND e.event_type IN ('agentstream_started','agentstream_reconnected')) AS stream_events,
+                (SELECT COUNT(*) FROM ai_voice_events e JOIN ai_voice_calls c ON c.id=e.call_id WHERE c.thread_id='${sqlEscape(threadId)}' AND e.event_type='agentstream_turn') AS turn_events,
+                (SELECT e.detail_json FROM ai_voice_events e JOIN ai_voice_calls c ON c.id=e.call_id WHERE c.thread_id='${sqlEscape(threadId)}' AND e.event_type='agentstream_turn' ORDER BY e.created_at DESC LIMIT 1) AS latest_turn
+              FROM voice_call_orders o WHERE o.id='${sqlEscape(callId)}'
+            `);
+            evidence = rows[0] || null;
+            if (Number(evidence?.stream_events || 0) > 0 && Number(evidence?.turn_events || 0) > 0) break;
+            const terminal = new Set(["busy","no_answer","failed","ended","blocked_provider","provider_unavailable"]);
+            if (evidence && terminal.has(String(evidence.state || "")) && Number(evidence.stream_events || 0) < 1) break;
+          }
+          if (!evidence?.provider_call_id || String(evidence.provider) !== "exotel") throw new Error("Native UAT call did not persist as direct Exotel");
+          const state = String(evidence.state || "unknown");
+          if (Number(evidence.stream_events || 0) < 1) throw new Error("No AgentStream connection observed; carrier state=" + state);
+          if (Number(evidence.turn_events || 0) < 1) throw new Error("AgentStream connected but no native STT -> Maya -> TTS turn was observed; carrier state=" + state);
+          let diagnostics = {};
+          try { diagnostics = JSON.parse(String(evidence.latest_turn || "{}")); } catch {}
+          const safe = {
+            state,
+            agentStreamObserved: true,
+            turns: Number(evidence.turn_events || 0),
+            configuredSttLanguage: String(diagnostics.configuredSttLanguage || "unknown"),
+            detectedSttLanguage: diagnostics.detectedSttLanguage || null,
+            ttsLanguage: String(diagnostics.ttsLanguage || "unknown"),
+            sttMs: Number(diagnostics.sttMs || 0),
+            llmMs: Number(diagnostics.llmMs || 0),
+            ttsMs: Number(diagnostics.ttsMs || 0),
+            totalMs: Number(diagnostics.totalMs || 0),
+            targetMet: diagnostics.targetMet === true,
+          };
+          console.log("Native UAT evidence " + JSON.stringify(safe));
+          })().catch(error => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
       - name: Publish sanitized activation summary
         env:
           STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          NATIVE_HANDSET_PROOF: ${{ github.event.inputs.native_handset_proof }}
         run: |
           {
             echo '## Voice UAT staging activation'
@@ -248,7 +369,12 @@ jobs:
             echo '- controlled native AgentStream UAT override: enabled for explicit staff UAT only'
             echo '- AgentStream STT language mode: auto-detect'
             echo '- AgentStream wss endpoint configured: yes'
-            echo '- real call placed by this workflow: no'
+            if [ "$NATIVE_HANDSET_PROOF" = "true" ]; then
+              echo '- real call placed by this workflow: one controlled native AgentStream UAT call'
+              echo '- native proof required AgentStream plus at least one STT -> Maya -> TTS turn: yes'
+            else
+              echo '- real call placed by this workflow: no'
+            fi
             echo '- consent written by this workflow: no (staging scheduler writes only the explicitly source-attributed record before the due time)'
             echo "- staging origin: $STAGING_URL"
           } >> "$GITHUB_STEP_SUMMARY"
