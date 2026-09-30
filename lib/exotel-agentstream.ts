@@ -2,6 +2,9 @@ import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
+import { transitionVoiceCall } from "./voice-outbound-governance";
+import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
+import type { VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
 // Exotel AgentStream is raw signed little-endian PCM over JSON/WebSocket. This module is deliberately
@@ -17,6 +20,7 @@ const MAX_UTTERANCE_MS = 6_000;
 const END_SILENCE_MS = 350;
 const PRE_ROLL_MS = 250;
 const SPEECH_RMS_THRESHOLD = 420;
+const AGENTSTREAM_ACTIVE_STATES = new Set(["connected", "speaking", "listening"]);
 const outboundFrameBytes = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
@@ -52,16 +56,45 @@ type Session = {
   sampleRate: number;
   language: string;
   segmentIndex: number;
+  reconnected: boolean;
+  useCase: string;
+  openingDisclosure: string;
+  salesService: VoiceSalesService | undefined;
   salesDispatchItemId: string | null;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+
+export function nativeVoiceSalesService(useCase: unknown): VoiceSalesService | undefined {
+  const value = text(useCase);
+  if (value === "grooming_sales") return "grooming";
+  if (value === "training_sales") return "dog_training";
+  return undefined;
+}
+
+function normalizedLedgerCallId(ledgerCallId: unknown) {
+  const normalized = text(ledgerCallId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96);
+  if (!normalized) throw new Error("AgentStream call id cannot create a voice identity");
+  return normalized;
+}
+
+export function nativeVoiceThreadId(ledgerCallId: unknown) {
+  return `THREAD-VOICE-${normalizedLedgerCallId(ledgerCallId)}`;
+}
+
+export function nativeVoiceAiCallId(ledgerCallId: unknown) {
+  return `AIVCALL-NATIVE-${normalizedLedgerCallId(ledgerCallId)}`;
+}
+
+function nativeVoiceParticipantId(ledgerCallId: unknown) {
+  return `VOICEPART-${normalizedLedgerCallId(ledgerCallId)}`;
+}
 const serviceActor: AuthenticatedActor = {
   email: "exotel-agentstream@system.pawspace",
   name: "Exotel AgentStream voice service",
   roleCode: "service_exotel_agentstream",
-  permissions: ["communications.manage", "customers.manage", "bookings.manage"],
+  permissions: ["communications.manage", "customers.manage", "bookings.manage", "scheduling.book"],
   developmentPreview: false,
   identitySource: "workspace",
   principalType: "identity_subject",
@@ -134,15 +167,49 @@ async function responseBytes(result: unknown): Promise<Uint8Array> {
   throw new Error("TTS model returned no audio bytes");
 }
 
-async function openThread(db: D1Database, customerId: string) {
-  const existing = await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();
-  if (existing) return text(existing.id);
-  const id = uid("THREAD"), now = Date.now();
-  await db.batch([
-    db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,NULL,NULL,NULL,'open','ai-orchestrator',NULL,?,?)").bind(id, customerId, now, now),
-    db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(), id, "customer", customerId, customerId, now),
-  ]);
+async function openThread(db: D1Database, order: Row) {
+  const customerId = text(order.customer_id), id = nativeVoiceThreadId(order.id), now = Date.now();
+  await db.prepare("INSERT OR IGNORE INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)")
+    .bind(id, customerId, text(order.booking_id) || null, text(order.lead_id) || null, now, now).run();
+  const existing = await db.prepare("SELECT id,customer_id,status FROM communication_threads WHERE id=?").bind(id).first<Row>();
+  if (!existing || text(existing.customer_id) !== customerId) throw new Error("AgentStream voice thread/customer mismatch");
+  if (text(existing.status) === "closed") throw new Error("AgentStream voice thread is closed");
+  await db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)")
+    .bind(nativeVoiceParticipantId(order.id), id, "customer", customerId, customerId, now).run();
   return id;
+}
+
+export async function nativeVoiceConversationHistory(db: D1Database, threadId: string, customerId: string): Promise<VoiceHistoryMessage[]> {
+  const rows = await db.prepare("SELECT direction,payload_json FROM communication_messages WHERE thread_id=? AND customer_id=? AND channel='voice' ORDER BY created_at DESC LIMIT 32")
+    .bind(threadId, customerId).all<Row>();
+  const history: VoiceHistoryMessage[] = [];
+  for (const row of [...rows.results].reverse()) {
+    const direction = text(row.direction);
+    if (direction !== "inbound" && direction !== "outbound") continue;
+    let payload: Row = {};
+    try { payload = JSON.parse(text(row.payload_json) || "{}") as Row; } catch { continue; }
+    const content = text(payload.text).slice(0, 1000);
+    if (content) history.push({ role: direction === "inbound" ? "user" : "assistant", content });
+  }
+  return history;
+}
+
+async function ensureAgentStreamConnected(db: D1Database, order: Row) {
+  const callId = text(order.id), state = text(order.state);
+  if (AGENTSTREAM_ACTIVE_STATES.has(state)) return;
+  if (state !== "dialing" && state !== "ringing") throw new Error("AgentStream call is not connected in the canonical voice ledger");
+  try {
+    await transitionVoiceCall(db, {
+      callId,
+      to: "connected",
+      reason: "authenticated_agentstream_start",
+      actor: serviceActor.email,
+      detail: { source: "exotel_agentstream_start" },
+    });
+  } catch (error) {
+    const current = await db.prepare("SELECT state FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
+    if (!current || !AGENTSTREAM_ACTIVE_STATES.has(text(current.state))) throw error;
+  }
 }
 
 async function establishSession(env: Env, start: AgentStart): Promise<Session> {
@@ -150,26 +217,45 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   const providerCallId = text(start.call_sid), accountSid = text(start.account_sid), streamSid = text(start.stream_sid);
   if (!providerCallId || !streamSid) throw new Error("AgentStream start is missing call_sid or stream_sid");
   if (!accountSid || accountSid !== text(env.EXOTEL_SID)) throw new Error("AgentStream account_sid does not match the configured Exotel account");
-  const order = await env.DB.prepare("SELECT id,customer_id,state,provider,provider_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
+  const order = await env.DB.prepare("SELECT id,customer_id,lead_id,booking_id,use_case,state,provider,provider_call_id,ai_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
   if (!order) throw new Error("AgentStream call is not present in the governed outbound ledger");
   if (!text(order.customer_id)) throw new Error("AgentStream voice AI requires a canonical customer");
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
-  if (["blocked_disabled", "blocked_permission", "blocked_use_case", "blocked_not_allowlisted", "blocked_consent", "blocked_opt_out", "blocked_quiet_hours", "blocked_frequency_cap", "provider_unavailable", "ended", "cancelled"].includes(text(order.state))) throw new Error("AgentStream call is not in an active carrier state");
   if (text(env.PAWSPACE_VOICE_ENV) === "uat" && text(order.mode) !== "uat") throw new Error("AgentStream UAT cannot bind a non-UAT call");
 
-  const customerId = text(order.customer_id), threadId = await openThread(env.DB, customerId), aiCallId = uid("AIVCALL"), now = Date.now();
+  const customerId = text(order.customer_id), useCase = text(order.use_case);
+  const script = await env.DB.prepare("SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=?").bind(useCase).first<Row>();
+  const openingDisclosure = text(script?.opening_disclosure);
+  if (!script || Number(script.active) !== 1 || !openingDisclosure || openingDisclosure.length > 1200) throw new Error("AgentStream opening disclosure is unavailable");
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
+  await ensureAgentStreamConnected(env.DB, order);
+
+  const threadId = await openThread(env.DB, order), aiCallId = nativeVoiceAiCallId(order.id), now = Date.now();
+  if (text(order.ai_call_id) && text(order.ai_call_id) !== aiCallId) throw new Error("AgentStream call is already bound to a different AI voice ledger");
+  const inserted = await env.DB.prepare("INSERT OR IGNORE INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,'exotel','outbound','active','verified','en',?,?)")
+    .bind(aiCallId, threadId, customerId, now, serviceActor.email).run();
+  const created = Number(inserted.meta?.changes || 0) === 1;
+  const existingAiCall = await env.DB.prepare("SELECT id,thread_id,customer_id,status FROM ai_voice_calls WHERE id=?").bind(aiCallId).first<Row>();
+  if (!existingAiCall || text(existingAiCall.thread_id) !== threadId || text(existingAiCall.customer_id) !== customerId || text(existingAiCall.status) !== "active") {
+    throw new Error("AgentStream AI voice ledger does not match the governed call");
+  }
+  if (!created) await env.DB.prepare("UPDATE ai_voice_calls SET reconnect_count=reconnect_count+1 WHERE id=? AND status='active'").bind(aiCallId).run();
+  const segment = await env.DB.prepare("SELECT COALESCE(MAX(segment_index),-1)+1 AS n FROM ai_voice_segments WHERE call_id=?").bind(aiCallId).first<Row>();
+  const segmentIndex = Number(segment?.n ?? 0);
+  if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) throw new Error("AgentStream segment sequence is invalid");
+
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,'exotel','outbound','active','verified','en',?,?)").bind(aiCallId, threadId, customerId, now, serviceActor.email),
-    env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=?").bind(aiCallId, aiCallId, now, text(order.id), providerCallId),
-    env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), aiCallId, "agentstream_started", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16" }), now),
+    env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=? AND (ai_call_id IS NULL OR ai_call_id=?)")
+      .bind(aiCallId, aiCallId, now, text(order.id), providerCallId, aiCallId),
+    env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
+      .bind(crypto.randomUUID(), aiCallId, created ? "agentstream_started" : "agentstream_reconnected", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16" }), now),
   ]);
+  const salesService = nativeVoiceSalesService(useCase);
   const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex: 0, salesDispatchItemId };
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
 }
-
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
   const messageId = `MSG-VOICE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, now = Date.now(), index = session.segmentIndex++;
   const direction = speaker === "customer" ? "inbound" : "outbound";
@@ -180,7 +266,27 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
       .bind(crypto.randomUUID(), session.aiCallId, messageId, index, speaker, transcript, speaker === "customer" ? EXOTEL_AGENTSTREAM_STT_MODEL : null, confidence, now),
   ]);
   if (speaker !== "customer" || !provider) return { output: transcript, outcome: "recorded" };
-  const turn = await orchestrateAiTurn(env.DB, { actor: serviceActor, threadId: session.threadId, customerId: session.customerId, inputMessageId: messageId, idempotencyKey: `exotel-agentstream:${session.providerCallId}:${index}`, channel: "voice", provider });
+  const conversationHistory = await nativeVoiceConversationHistory(env.DB, session.threadId, session.customerId);
+  const voiceFollowupIntent = classifyVoiceFollowup(transcript, conversationHistory);
+  const contextualProvider: AiResponseProvider = {
+    ...provider,
+    async generate(input: AiProviderInput) {
+      return provider.generate({
+        ...input,
+        context: { ...input.context, conversationHistory, asOf: now },
+      });
+    },
+  };
+  const turn = await orchestrateAiTurn(env.DB, {
+    actor: serviceActor,
+    threadId: session.threadId,
+    customerId: session.customerId,
+    inputMessageId: messageId,
+    idempotencyKey: `exotel-agentstream:${session.providerCallId}:${index}`,
+    channel: "voice",
+    provider: contextualProvider,
+    voiceFollowupIntent,
+  });
   const row = (turn.turn || null) as Row | null;
   return { output: text(row?.output || row?.output_text), outcome: text(row?.outcome) || (row ? "draft_review_required" : "pending") };
 }
@@ -218,6 +324,13 @@ function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markN
   socket.send(JSON.stringify({ event: "mark", stream_sid: session.streamSid, mark: { name: markName } }));
 }
 
+async function recordTransportInterruption(env: Env, session: Session | null, reason: string) {
+  if (!session) return;
+  await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
+    .bind(crypto.randomUUID(), session.aiCallId, "agentstream_transport_interrupted", JSON.stringify({ reason, streamSid: session.streamSid }), Date.now())
+    .run().catch(() => undefined);
+}
+
 async function closeSession(env: Env, session: Session | null, reason: string) {
   if (!session) return;
   const now = Date.now();
@@ -253,7 +366,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) return;
     const llmStarted = Date.now();
-    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId});
+    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId,salesService:active.salesService});
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
@@ -278,6 +391,12 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
         session = await establishSession(env, incoming.start || {});
+        if (!session.reconnected) {
+          const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
+          await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
+          assistantPlaying = true;
+          sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
+        }
         return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
@@ -314,8 +433,13 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       try { server.close(1011, text((error as Error)?.message).slice(0, 100) || "AgentStream processing failed"); } catch {}
     });
   });
-  server.addEventListener("close", () => { ctx.waitUntil(closeSession(env, session, "socket_closed")); session = null; });
-  server.addEventListener("error", () => { ctx.waitUntil(closeSession(env, session, "socket_error")); });
+  server.addEventListener("close", () => {
+    const active = session; session = null;
+    ctx.waitUntil(recordTransportInterruption(env, active, "socket_closed"));
+  });
+  server.addEventListener("error", () => {
+    ctx.waitUntil(recordTransportInterruption(env, session, "socket_error"));
+  });
 
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket });
 }
