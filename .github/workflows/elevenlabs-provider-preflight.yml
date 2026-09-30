@@ -61,6 +61,39 @@ on:
 permissions:
   contents: read
 jobs:
+  evaluate-runtime-sale:
+    if: ${{ inputs.confirm == 'evaluate-runtime-sale' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Evaluate actual sales runtime with synthetic database and mocked payments (no calls)
+        env:
+          VOICE_SALE_ACTION: evaluate-runtime-sale
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+          PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+          PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+          PAWSPACE_PAYMENT_ENV: sandbox
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+          NODE_ENV: test
+          APP_ENV: staging
+          FORBID_PRODUCTION: 'true'
+        run: node --experimental-strip-types scripts/evaluate-maya-runtime-sale.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-isolated-runtime-sale
+          path: artifacts/maya-runtime-sale/report.json
+          retention-days: 3
+          if-no-files-found: ignore
   evaluate-sales-dialogue:
     if: ${{ inputs.confirm == 'evaluate-sales-dialogue' }}
     runs-on: ubuntu-latest
