@@ -1047,7 +1047,7 @@
     "lib/ai-governance.ts": "afea995f8db867f14fcf8d10ccf3a7b29abf2529369bb159de0b6b7cb74a1d9b",
     "lib/ai-grounded-runtime-provider.ts": "7919de34ff7c37b13df986b25b9593abc9cd914f2f7be33c377dca29ce9406c4",
     "lib/ai-human-handoff.ts": "3004b8bc5dedf55401ac50610fa6cd6514f9294385720249b7cabcdb6f0a75b5",
-    "lib/ai-provider-adapter.ts": "0da78123bf7e5477b407f8bc1c060a8dccefe152a6e0840d291ea2df77a3a112",
+    "lib/ai-provider-adapter.ts": "3d4bfaf3891586f9d2efc44fa2f53be290ee19a78d1143c4d2feab846a71604b",
     "lib/ai-provider-runtime-control.ts": "97cca426e2d01675e5af30a7ab1b4bf0559b254e9aba37d2fcd99914536794b9",
     "lib/ai-provider-safety.ts": "a81dc62cfe4ff8259607bc149a576f989b85fe5752d1667439f6bd9a0b37eb3f",
     "lib/ai-runtime-kill-switch.ts": "1c4f047362187843ef0fd5ffdb3c027c944aa627d161da2b84812847f694d850",

@@ -3,7 +3,7 @@
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
     ".github/workflows/deploy-staging.yml": "57cbfd9887e19eebd64622be7f75373510979d5f74a12a109f9bb30bebaa86c9",
-    ".github/workflows/elevenlabs-provider-preflight.yml": "58f65bc32379eaf996fb4556d246cdd70647e8eafbc5a583138546c523e4c40f",
+    ".github/workflows/elevenlabs-provider-preflight.yml": "3613991e9a252ef8875d8ba08d160c27c3e99056237aa8d6df57c875caf1fe52",
     ".github/workflows/voice-uat-staging.yml": "63da3dbd84a37be6bc06d6a980059d8a346a40a6e031bfe61cd1f3494b365dd2",
     ".gitleaksignore": "42321d1ea122ebb8bd828806de526bbc1e198cf31965553de188a762212d788b",
     "app/api/ai-intelligence/route.ts": "46f58d684819ba40a9fbb937cb2d37b8ab88a7eb5c33f5308367721fe78424d7",
@@ -30,7 +30,7 @@
     "e2e/paid-journey-remediation.spec.ts": "ade05702571c0bf81391a4fe1f997f5285e1d501cdd60e9bea351c9a07d1974b",
     "e2e/uat-btm-e2e.spec.ts": "db2e840c4729bad4a10f947738ee50c16f615a9bed370df619daec7fcb4d8887",
     "e2e/v2-grooming.spec.ts": "d985c7238f51b90bbe65ca1bd056e05998504bb11c90db650d4c4efbb474c55d",
-    "lib/ai-provider-adapter.ts": "0da78123bf7e5477b407f8bc1c060a8dccefe152a6e0840d291ea2df77a3a112",
+    "lib/ai-provider-adapter.ts": "3d4bfaf3891586f9d2efc44fa2f53be290ee19a78d1143c4d2feab846a71604b",
     "lib/api-gateway.ts": "3e00cc1a972fff573173e2271ae87af26d9bae092b319d0b0f870a4553b38045",
     "lib/boarding-stay-lifecycle.ts": "ba09632bf6da58ad01ac5723b544a1806aa2f60b3ed30f064c6fbc5762b6edae",
     "lib/booking-payment-balances.ts": "307a26db2d36edfdc20d76b4eb2c9c39a933e66138d837ca5d502c1bcb197c6a",

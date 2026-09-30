@@ -61,6 +61,39 @@ on:
 permissions:
   contents: read
 jobs:
+  inspect-agent-deadlines:
+    if: ${{ inputs.confirm == 'inspect-agent-deadlines' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Read current staging agent deadlines and voice metadata (no calls or changes)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {mkdir,writeFile} from 'node:fs/promises';
+          const key=process.env.ELEVENLABS_API_KEY,id=process.env.GROOMING_AGENT_ID;
+          if(!key||!id)throw Error('Staging agent read prerequisites missing');
+          const headers={'xi-api-key':key};
+          const r=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(id),{headers,signal:AbortSignal.timeout(15000)});
+          if(!r.ok)throw Error('Agent configuration read refused: '+r.status);
+          const body=await r.json(),c=body.conversation_config,p=c?.agent?.prompt,t=c?.turn,v=c?.tts;
+          if(p?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw Error('Exact isolated staging brain is required');
+          let voice={metadataReadable:false};
+          if(v?.voice_id){const vr=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(v.voice_id),{headers,signal:AbortSignal.timeout(15000)});if(vr.ok){const x=await vr.json();voice={metadataReadable:true,name:x.name??null,category:x.category??null,labels:x.labels??null};}else voice={metadataReadable:false,httpStatus:vr.status};}
+          const report={dialed:false,configurationChanged:false,stagingBrain:true,agentModel:p.llm??null,cascadeTimeoutSeconds:p.cascade_timeout_seconds??null,ttsModel:v?.model_id??null,stability:v?.stability??null,speed:v?.speed??null,expressive:v?.expressive_mode===true,turnTimeoutSeconds:t?.turn_timeout??null,softTimeoutSeconds:t?.soft_timeout_config?.timeout_seconds??null,softTimeoutMessage:t?.soft_timeout_config?.message??null,voice};
+          await mkdir('artifacts/agent-deadlines',{recursive:true});await writeFile('artifacts/agent-deadlines/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maya-agent-deadlines
+          path: artifacts/agent-deadlines/report.json
+          retention-days: 3
   evaluate-runtime-sale:
     if: ${{ inputs.confirm == 'evaluate-runtime-sale' || inputs.confirm == 'evaluate-runtime-concierge' }}
     runs-on: ubuntu-latest
