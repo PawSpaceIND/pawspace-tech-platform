@@ -410,3 +410,16 @@ or telephony access. Raw synthetic replies are retained. Pattern checks are limi
 not semantic certification or proof of a live booking/CRM journey; premium certification is always
 false. Its local mocked harness proved request scope/history handling only. Real-model results
 must be inspected separately before any claim about conversation quality.
+
+Real-model run 36736854461 on afab0454 completed and all six smoke checks passed. Manual review
+is stricter: Boarding was answered, Complete Makeover was recommended with a concrete reason,
+Walking was explained when asked, the customer declining extras was respected, and itching was
+referred to a vet without medicine/doses. The first reply nevertheless asked the number of nights
+after the customer had supplied two. The discount reply read `GROOM200`; the evaluation assembled
+the channel/specialist/human prompts but omitted the runtime's separate voice-coupon directive,
+so this is not proof that the complete runtime prompt violates its coupon rule. The evaluator must
+share that directive and reject spoken codes. The Walking turn took 4,606 ms (blocking whole-response
+time, not first audio latency). Cross-service information on request is not proof of proactive
+cross-selling. These are remaining acceptance gaps despite the workflow passing its smoke checks.
+The raw six-turn report is retained in the `maya-synthetic-sales-dialogue` artifact; it makes no
+premium, runtime-booking, CRM, TTS or handset certification claim.

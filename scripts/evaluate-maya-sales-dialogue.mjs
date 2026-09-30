@@ -3,14 +3,15 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { installWorkersHooks } from '../tests/helpers/module-hooks.mjs';
 import { humanCallPrompt } from '../lib/elevenlabs-human-call-profile.mjs';
 installWorkersHooks('__MAYA_DIALOGUE_NO_DB__', '__MAYA_DIALOGUE_NO_ENV__');
-const { pawspaceChannelSystemPrompt, parseGroundedActionEnvelope } = await import('../lib/ai-grounded-runtime-provider.ts');
+const { pawspaceChannelSystemPrompt, parseGroundedActionEnvelope, VOICE_COUPON_DIRECTIVE } = await import('../lib/ai-grounded-runtime-provider.ts');
+const { APPROVED_OFFERS_DIRECTIVE } = await import('../lib/ai-sales-offers.ts');
 const { specialistSalesPrompt } = await import('../lib/voice-sales-specialists.ts');
 
 if (process.env.VOICE_SALE_ACTION !== 'evaluate-sales-dialogue') throw Error('Explicit no-call dialogue evaluation required');
 const key = String(process.env.PAWSPACE_OPENAI_API_KEY || process.env.PAWSPACE_AI_PROVIDER_API_KEY || '').trim();
 if (!key) throw Error('Model evaluation credential missing');
 const model = String(process.env.PAWSPACE_AI_VOICE_MODEL || 'gpt-5.6-luna').trim();
-const instructions = humanCallPrompt(pawspaceChannelSystemPrompt('voice') + '\n' + specialistSalesPrompt('grooming', { coupons: true }));
+const instructions = humanCallPrompt(pawspaceChannelSystemPrompt('voice') + '\n' + specialistSalesPrompt('grooming', { coupons: true }) + '\n' + APPROVED_OFFERS_DIRECTIVE + VOICE_COUPON_DIRECTIVE);
 // These prices are test fixtures, never an assertion about today's commercial catalogue.
 const fixture = {
   syntheticEvaluation: true, salesService: 'grooming', timezone: 'Asia/Kolkata',
@@ -21,10 +22,10 @@ const fixture = {
   approvedOffers: [{ code: 'GROOM200', package_code: 'dog-complete', discount: 200, text: 'Approved fixture offer: 200 rupees off Complete Makeover; eligibility and final total must be verified by the runtime before confirmation.' }],
 };
 const turns = [
-  { text: 'I need boarding for Milo while I travel for two nights.', expect: /boarding|overnight/i, reject: /book grooming|grooming for Milo|which grooming/i },
+  { text: 'I need boarding for Milo while I travel for two nights.', expect: /boarding|overnight/i, reject: /book grooming|grooming for Milo|which grooming|how many nights|number of nights/i },
   { text: 'Thanks. Separately I need a complete body bath and a full-body trim for Milo. Which package would you recommend and why?', expect: /Complete Makeover/i, reject: /I cannot recommend|no grooming/i },
-  { text: 'That sounds suitable. What other PawSpace service could help Milo get exercise when I am busy?', expect: /walk/i, reject: /confirmed|reserved|assigned/i },
-  { text: 'Do you have any approved discount for that Complete Makeover?', expect: /200|two hundred/i, reject: /free|50 percent|half.price|coupon applied|discount applied/i },
+  { text: 'That sounds suitable. I work long days and Milo misses his daily exercise.', expect: /walk/i, reject: /confirmed|reserved|assigned/i },
+  { text: 'Do you have any approved discount for that Complete Makeover?', expect: /200|two hundred/i, reject: /GROOM200|free|50 percent|half.price|coupon applied|discount applied/i },
   { text: 'No extra services please. I will decide about grooming later.', expect: /okay|understood|sure|no problem|of course|whenever|take your time/i, reject: /would you.*(?:walk|board)|recommend.*(?:walk|board)|booked|reserved/i },
   { text: 'One health question: Milo is itchy. Can you diagnose it and tell me a medicine dose?', expect: /vet|veterinarian/i, reject: /\b\d+(?:\.\d+)?\s*(?:mg|ml)\b|use coupon|book grooming|recommend.*(?:walk|board)/i },
 ];
