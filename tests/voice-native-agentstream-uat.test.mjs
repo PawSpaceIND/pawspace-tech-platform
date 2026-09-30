@@ -2,9 +2,53 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { makeD1, freshSqlite, seedRecipient, uatVoiceEnv, ALLOWLISTED_PHONE, DAYTIME, QUIET_TIME } from "./helpers/voice-harness.mjs";
+import {applyOwnedDdl} from './helpers/ai-harness.mjs';
 
 installWorkersHooks("__NATIVE_UAT_DB__", "__NATIVE_UAT_ENV__");
 const gov = await import("../lib/voice-outbound-governance.ts");
+const {handleExotelAgentStream}=await import('../lib/exotel-agentstream.ts');
+
+for(const failPlayback of [false,true])test(failPlayback?'native greeting playback failure persists its safe operation and never claims completed audio':'native stream emits the governed greeting as PCM frames and a playback mark',async()=>{
+ const {sqlite,db,env}=await world();
+ applyOwnedDdl(sqlite,'lib/outbound-schema.ts');
+ const originals={fetch:globalThis.fetch,Response:globalThis.Response,pair:globalThis.WebSocketPair};
+ const sockets=[];
+ class Socket {
+  listeners=new Map();sent=[];closed=null;
+  accept(){}
+  addEventListener(kind,handler){this.listeners.set(kind,handler);}
+  send(message){if(failPlayback)throw new Error('WebSocket is not open SECRET-KEY customer-private-text');this.sent.push(JSON.parse(message));}
+  close(code){this.closed=code;}
+  emit(kind,data){this.listeners.get(kind)?.(data);}
+ }
+ try{
+  globalThis.fetch=async()=>new originals.Response(JSON.stringify({Call:{Sid:'EXO-PLAYBACK-FAILURE',Status:'queued'}}),{status:200});
+  const dial=await gov.requestControlledNativeAgentStreamUatCall(db,env,input({idempotencyKey:'voice-native-agentstream-uat:playback-failure'}));
+  await db.prepare("UPDATE voice_call_orders SET state='connected' WHERE id=?").bind(dial.callId).run();
+  globalThis.fetch=originals.fetch;
+  globalThis.WebSocketPair=class {constructor(){const pair={0:new Socket(),1:new Socket()};sockets.push(pair);return pair;}};
+  globalThis.Response=class extends originals.Response{constructor(body,init={}){super(body,{...init,status:init.status===101?200:init.status});this.webSocket=init.webSocket;}};
+  const response=await handleExotelAgentStream(new Request('https://uat.pawspace.in/voice/exotel/agentstream',{headers:{upgrade:'websocket'}}),{...env,DB:db,AI:{run:async()=>new Uint8Array(6400).fill(4)}},{waitUntil(){}});
+  assert.ok(response.webSocket);
+  const server=sockets[0][1];server.emit('message',{data:JSON.stringify({event:'start',start:{call_sid:'EXO-PLAYBACK-FAILURE',stream_sid:'STREAM-FAILURE',account_sid:env.EXOTEL_SID,media_format:{sample_rate:8000}}})});
+  for(let attempt=0;attempt<100&&!server.closed&&!server.sent.some(x=>x.event==='mark');attempt++)await new Promise(resolve=>setTimeout(resolve,5));
+  const event=sqlite.prepare("SELECT detail_json FROM ai_voice_events WHERE event_type='agentstream_processing_failed'").get();
+  const call=sqlite.prepare('SELECT status,outcome FROM ai_voice_calls').get();
+  if(failPlayback){
+   assert.ok(event,'real stream handler persists playback failure');
+   assert.deepEqual(JSON.parse(event.detail_json),{phase:'send_greeting_audio',errorClass:'Error'});
+   assert.doesNotMatch(event.detail_json,/SECRET|customer-private/);
+   assert.equal(call.status,'failed');assert.equal(call.outcome,'provider_failure');assert.equal(server.closed,1011);
+  }else{
+   assert.equal(event,undefined);assert.equal(call.status,'active');assert.equal(server.closed,null);
+   const media=server.sent.filter(x=>x.event==='media');assert.equal(media.length,2);
+   const audio=Buffer.concat(media.map(x=>Buffer.from(x.media.payload,'base64')));assert.deepEqual(audio,Buffer.alloc(6400,4));
+   assert.ok(media.every(x=>x.stream_sid==='STREAM-FAILURE'));
+   assert.equal(server.sent.at(-1).event,'mark');
+  }
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM ai_voice_segments WHERE speaker='customer'").get().n,0);
+ }finally{globalThis.fetch=originals.fetch;globalThis.Response=originals.Response;globalThis.WebSocketPair=originals.pair;}
+});
 
 async function world(extra = {}) {
   const sqlite = freshSqlite(), db = makeD1(sqlite);

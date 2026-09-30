@@ -342,8 +342,9 @@ async function recordTransportInterruption(env: Env, session: Session | null, re
 async function closeSession(env: Env, session: Session | null, reason: string) {
   if (!session) return;
   const now = Date.now();
+  const failed = reason === "agentstream_error";
   await env.DB.batch([
-    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN 'completed' ELSE status END,outcome=COALESCE(outcome,'carrier_ended'),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(reason, now, session.aiCallId),
+    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN ? ELSE status END,outcome=COALESCE(outcome,?),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(failed ? "failed" : "completed", failed ? "provider_failure" : "carrier_ended", reason, now, session.aiCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), session.aiCallId, "agentstream_stopped", JSON.stringify({ reason }), now),
   ]).catch(() => undefined);
   try {
