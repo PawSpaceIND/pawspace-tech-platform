@@ -108,6 +108,10 @@ test("the web chat and WhatsApp prompts carry the coupon rules without overridin
   assert.match(runtime.WEB_CHAT_SALES_DIRECTIVE, /approvedOffers/);
   assert.match(runtime.pawspaceChannelSystemPrompt("voice"), /For a non-urgent medical concern/);
   assert.equal(runtime.isPetMedicalQuestion("My cat is vomiting"), true);
+  for (const question of [
+    "My dog has a lump", "My rabbit has ear discharge", "My bird is losing weight",
+    "My puppy ate chocolate", "There is blood in my cat's urine",
+  ]) assert.equal(runtime.isPetMedicalQuestion(question), true, question);
   assert.equal(runtime.isPetMedicalQuestion("How much for grooming?"), false);
   assert.match(runtime.ensureVeterinaryReferral("It could have several causes.", true), /contact a veterinarian/);
   assert.equal(runtime.ensureVeterinaryReferral("Please contact a veterinarian today.", true), "Please contact a veterinarian today.");

@@ -22,6 +22,13 @@ Full number is intentionally excluded from this repository.
 - Show canonical booking/payment/message/provider records, inbound sessions and pending reconciliation.
 - Expose draft/activate/pause controls through existing governed sales-target APIs.
 - Retain existing individual-call policy preview and dial/handoff/opt-out/retry/cancel controls.
+- Answer general pet health and hygiene questions from approved knowledge, with a veterinarian referral
+  on medical turns and immediate emergency-vet advice for danger signs. Medical turns cannot propose
+  checkout actions or cross-sell. Maya does not diagnose, prescribe, or represent herself as a vet.
+- Use governed approved offers for eligible Grooming voice proposals; the WhatsApp checkout quote
+  remains authoritative and a separate customer confirmation is required.
+- Materialize the ElevenLabs post-call reconciliation table in the deployment migration before the
+  first callback, so missing reconciliation evidence appears as unknown rather than an absent source.
 
 ## Verification and remaining launch gates
 
@@ -47,6 +54,12 @@ The user subsequently approved the current voice for the initial pilot. Localize
 returned 401; this is an explicit pilot deferral, not a claim of localized voice certification.
 Fresh-launch preflight verifies the full authorized recipient via SHA-256, isolated staging revision,
 canonical ownership, the deployed read-only sales dashboard and the existing policy preview. It has no dial or policy-override operation.
+The pet-care source pack includes the AVMA pet-care pages and Merck Veterinary Manual pet-owner
+overview as curated references. Maya has no live open-web retrieval. The updated knowledge pack must
+pass the existing maker/checker activation process before live responses use it. Vet consultation
+must be checked against the live service directory and scheduling system; a referral alone is not a
+confirmed connection to a veterinarian. The present symptom detector is English and limited, so
+multilingual and broader medical triage remain additional launch work.
 
 ## Observed staging and attended-test evidence
 
@@ -54,13 +67,19 @@ canonical ownership, the deployed read-only sales dashboard and the existing pol
   certified application revision `3d972f675f989f4d250a4468bc4fc22e8163915f` with zero isolation failures:
   sandbox payments, production blocked, 30/30 seeded service-zone pairs, 6/6 authenticated personas,
   and 6/6 hosted smoke routes. A later main deployment replaced this revision. The current PR
-  has since merged main and repaired the voice console for incomplete operations responses;
-  [application-revision staging deploy 36677435636](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36677435636)
-  is queued and is not yet certified.
+  has since merged main and repaired the voice console for incomplete operations responses.
+- [Staging deployment 36681033000](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36681033000)
+  certified revision `48e5e039aa6501007683873f9a492ea5047a9ab1`. The final coupon-channel
+  correction, post-call migration and broader medical-question detection are in newer revisions;
+  exact-head staging certification remains required.
 - [Browser run 36674336899](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674336899)
   passed 28 scenarios across Professional/Fun, all three palettes, light/dark and desktop/mobile.
 - [Normal policy inspection 36674341413](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674341413)
   matched the authorized recipient and canonical owner but reported `frequency_cap`. It did not dial.
+- [No-call launch preflight 36682442926](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36682442926)
+  found five of six dashboard sources available; post-call reconciliation was absent before its
+  first callback. It again reported `frequency_cap` and did not dial. The additive migration above
+  addresses the missing source, subject to exact-revision staging verification.
 - The user authorized an attended test at any time. The existing settings-managed
   `uat_specialist_sales_test` endpoint separately enforces UAT and sales approval, one allowlisted
   recipient, canonical ownership, consent and opt-out checks. Its existing test-only frequency
