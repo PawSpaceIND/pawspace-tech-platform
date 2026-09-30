@@ -1012,7 +1012,7 @@
     "lib/schema-drift-repair.ts": "21c332f2e9f0964d385a870c9d2e4a93c2db0a108a5bf03846473b5179c38b36",
     "lib/schema-governance-manifest.ts": "d1c44fff1e591f2b2eb82e34d2033e5cbdbbe5c1bd6867fdb354c979a2185f6c",
     "lib/security-crypto.ts": "af1f32d81e76fb0e5c0d5c27a4cfc15e1a2e0dc9653a32fde8294c68bfbe9622",
-    "lib/server-auth.ts": "989ce44e935c1c518ed5769976ec072a81e62c64c2ceaaaa21b050b908bef7d4",
+    "lib/server-auth.ts": "c54aeaad35c96ccfa1c6e66265a35edb1a8896d786aeedf6e388dcbddaf8dab6",
     "lib/service-address-consistency.ts": "aabe113abc9bd7dd57d636e4301efca17a45af481aac8088534e6ee62671acd8",
     "lib/service-address-pincode.ts": "60ae8a15a06791d7c544f241da57cdd1eb6f17e9dae7bb1ff490b87f39e67c85",
     "lib/service-address-text.ts": "ebf4b2e105a200af14ce06690d684400c846c47eb367ba6f10b2a892d93f30f5",
