@@ -326,7 +326,7 @@ jobs:
         with:
           node-version: '22.16.0'
       - name: Validate premium audio output boundaries without provider requests
-        run: node --test tests/premium-audio-output-boundary.test.mjs
+        run: node --test tests/premium-audio-output-boundary.test.mjs tests/voice-aligned-reply-timing.test.mjs
       - name: Install synthetic microphone tools
         timeout-minutes: 6
         run: |

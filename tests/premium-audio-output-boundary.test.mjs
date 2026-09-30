@@ -45,3 +45,9 @@ test('failed reports retain bounded observations but never reflect raw exception
  assert.equal(result.passed,false);assert.equal(result.transcript,input.transcript);assert.equal(result.reply,input.reply);assert.equal(result.error,'Premium audio demo failed before certification');assert.equal(json.includes('private'),false);assert.equal(result.premiumCertified,false);
  assert.throws(()=>serializePremiumSummary([input,report(1),report(2)]));
 });
+
+test('aligned answer-chunk arrival is optional and bounded, with no missing-to-zero substitution',()=>{
+ const input=report();assert.equal(validatedPremiumReport(input).turns[0].utteranceEndToAlignedReplyChunkMs,null);
+ input.turns[0].utteranceEndToAlignedReplyChunkMs=2200.5;assert.equal(validatedPremiumReport(input).turns[0].utteranceEndToAlignedReplyChunkMs,2200.5);
+ for(const value of [NaN,Infinity,-1,300001,'2200']){input.turns[0].utteranceEndToAlignedReplyChunkMs=value;assert.throws(()=>validatedPremiumReport(input));}
+});

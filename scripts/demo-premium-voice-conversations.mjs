@@ -7,6 +7,7 @@ import {assertDemoResponse,assertDemoPhonePauseMetadata,assertDemoRuntimePhonePa
 import {createAudioProbeState,applyAudioProbeEvent,audioFormat,greetingPlaybackFinished} from './voice-audio-proof.mjs';
 import {verifyFinalConversation} from './voice-final-conversation-proof.mjs';
 import {isSubstantiveVoiceReply,isControlledVoiceReply} from './voice-uat-evidence.mjs';
+import {createAlignedReplyTiming} from './voice-aligned-reply-timing.mjs';
 import {PREMIUM_AUDIO_SCENARIOS} from './premium-audio-scenarios.mjs';
 import {readDemoJson,validateDemoContext,validateDemoSignedUrl,actionsMaskCommand,createDemoEventBoundary} from './voice-demo-output-boundary.mjs';
 import {premiumArtifactPaths,validatedPremiumReport,serializePremiumReport,serializePremiumSummary} from './premium-audio-output-boundary.mjs';
@@ -47,13 +48,13 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
  const context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
  console.log(actionsMaskCommand(context.callId));console.log(actionsMaskCommand(context.threadId));
  const signedResponse=await fetch(eleven+'/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await readDemoJson(signedResponse);if(!signedResponse.ok||!signed.signed_url)throw Error('Demo socket authorization refused');const signedUrl=validateDemoSignedUrl(signed.signed_url);console.log(actionsMaskCommand(signedUrl));
- const socket=new WebSocket(signedUrl),initialState=createAudioProbeState();let state=initialState;let inputFormat,outputFormat,conversationId,error,closed=false,greetingBytes=0,firstGreeting=0,lastGreeting=0;const returnedAudio=[];let firstAudio=0,lastAudio=0,replyEventAt=0;
+ const socket=new WebSocket(signedUrl),initialState=createAudioProbeState();let state=initialState;let inputFormat,outputFormat,conversationId,error,closed=false,greetingBytes=0,firstGreeting=0,lastGreeting=0;const returnedAudio=[];let firstAudio=0,lastAudio=0,replyEventAt=0,alignedTiming=createAlignedReplyTiming();
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_customer_id:env.SPECIALIST_CUSTOMER_ID,pawspace_thread_id:context.threadId},dynamic_variables:{pawspace_uat:'true'}})));
  socket.addEventListener('message',event=>{try{
   const {event:d,audio}=eventBoundary.parse(String(event.data));
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
   if(d.type==='conversation_initiation_metadata'){const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;inputFormat=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(outputFormat);if(inputFormat!=='pcm_16000')throw Error('Demo microphone requires PCM16000');}
-  if(d.type==='audio'){const bytes=audio;if(!state.listening){firstGreeting ||= Date.now();lastGreeting=Date.now();greetingBytes+=bytes.length;}else if(state.transcript){returnedAudio.push(bytes);firstAudio ||=Date.now();lastAudio=Date.now();}}
+  if(d.type==='audio'){const bytes=audio;if(!state.listening){firstGreeting ||= Date.now();lastGreeting=Date.now();greetingBytes+=bytes.length;}else if(state.transcript){alignedTiming.observe(d.audio_event,Date.now());returnedAudio.push(bytes);firstAudio ||=Date.now();lastAudio=Date.now();}}
   applyAudioProbeEvent(state,d,{now:Date.now(),outputFormat});
   if(d.type==='agent_response'&&state.transcript&&isSubstantiveVoiceReply(state.reply))replyEventAt=Date.now();
   if(d.type==='error')throw Error('Demo voice provider error');
@@ -67,7 +68,7 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
  try{
   await waitFor(()=>state.greeting&&inputFormat&&greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreeting,lastAudioAt:lastGreeting,bytes:greetingBytes,format:outputFormat}));
   for(const scenario of sessionScenario.turns){
-  state={...createAudioProbeState(),greeting:true,listening:true};returnedAudio.length=0;firstAudio=0;lastAudio=0;replyEventAt=0;
+  state={...createAudioProbeState(),greeting:true,listening:true};returnedAudio.length=0;firstAudio=0;lastAudio=0;replyEventAt=0;alignedTiming=createAlignedReplyTiming();
   const wav=execFileSync('espeak-ng',['--stdout','-s','150',scenario.text],{maxBuffer:2097152,timeout:10000});
   const pcm=execFileSync('ffmpeg',['-loglevel','error','-i','pipe:0','-ar','16000','-ac','1','-f','s16le','pipe:1'],{input:wav,maxBuffer:2097152,timeout:10000});
   if(pcm.length<1000||pcm.length>960000)throw Error('Invalid synthetic demo audio');
@@ -81,7 +82,7 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
   execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(observedFormat.rate),'-ac','1','-i',observedPaths.raw,observedPaths.wav]);
   assertDemoResponse(scenario,state);if(scenario.forbidden?.test(state.reply))throw Error('Premium audio turn violated '+scenario.id);
   const playbackCompletedMs=Date.now()-started,utteranceEndAt=started+(16000+pcm.length)/32000*1000;sessionInputBytes+=pcm.length;
-  turns.push({scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,inputToPlaybackCompletedMs:playbackCompletedMs,utteranceEndToFirstAudioMs:firstAudio?Math.max(0,firstAudio-utteranceEndAt):null,utteranceEndToReplyEventMs:replyEventAt?Math.max(0,replyEventAt-utteranceEndAt):null,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:!state.replyInterrupted});
+  turns.push({scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,inputToPlaybackCompletedMs:playbackCompletedMs,utteranceEndToFirstAudioMs:firstAudio?Math.max(0,firstAudio-utteranceEndAt):null,utteranceEndToReplyEventMs:replyEventAt?Math.max(0,replyEventAt-utteranceEndAt):null,utteranceEndToAlignedReplyChunkMs:alignedTiming.result(state.reply,utteranceEndAt),audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:!state.replyInterrupted});
   sessionAudio.push(...returnedAudio,Buffer.alloc(audioFormat(outputFormat).rate*audioFormat(outputFormat).bytesPerSample/2,audioFormat(outputFormat).silence));
   if(JSON.stringify(before)!==JSON.stringify(await bookingIds())||JSON.stringify(paymentsBefore)!==JSON.stringify(await paymentIds()))throw Error('Informational audio turn changed bookings or payments');
   }
