@@ -147,3 +147,10 @@ test('useful answers with incidental support advice remain eligible task-answer 
  assert.equal(audioProofChecks({...valid,reply:emergency}).audio,true);
  assert.equal(audioProofChecks({...valid,reply:emergency}).substantiveReply,false);
 });
+
+test('call handoff wording is controlled while incidental support advice is a useful answer',()=>{
+ for(const reply of ["I’m routing this call to a PawSpace team member.","I'm routing this call to a PawSpace team member.","One moment while I check that for you. I’m routing this call to a PawSpace team member."]){
+  assert.equal(isHandoffReply(reply),true,reply);assert.equal(audioProof({...valid,reply}),false,reply);
+ }
+ assert.equal(audioProof({...valid,reply:'We offer Essential Bath for Bruno. If you need help, a PawSpace team member can assist.'}),true);
+});

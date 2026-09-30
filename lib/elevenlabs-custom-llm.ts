@@ -193,7 +193,9 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  clock.mark("inboundWriteStarted");
  if(emergencyGuidanceOnly(inputText)){
   // Public safety direction is not permission to enqueue a staff request or resume AI actions.
-  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null);
+  await assertVoiceCustomerMayReply(db,ctx);
+  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null,true);
+  try{await assertVoiceCustomerMayReply(db,ctx);}catch(error){await db.prepare("UPDATE communication_messages SET status='suppressed',updated_at=? WHERE id=? AND status='ready'").bind(Date.now(),replyId).run();throw error;}
   return{output:IMMEDIATE_VET_GUIDANCE,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"emergency_guidance",timings:clock.marks,modelRef:null,providerRef:"deterministic_emergency_guidance",upstreamMs:null as number|null};
  }
  try{await assertVoiceCustomerMayReply(db,ctx);}catch(error){

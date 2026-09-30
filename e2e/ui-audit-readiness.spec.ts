@@ -66,6 +66,35 @@ test('closing an outstanding OTP request does not reopen its code step',async({p
   await expect(dialog.getByRole('textbox',{name:'Verification code'})).toHaveCount(0);
 });
 
+test('using a different number clears the old phone before requesting another OTP',async({page})=>{
+  await fixture(page);
+  const requestedPhones: string[]=[];
+  await page.route('**/api/customer-otp',async route=>{
+    requestedPhones.push(String(route.request().postDataJSON().phone));
+    return route.fulfill({json:{data:{challengeId:`UI-UAT-OTP-${requestedPhones.length}`,existingCustomer:true,sandboxCode:'123456'}}});
+  });
+  await page.goto('/v2');
+  await expect(page.getByText('3 services ready',{exact:true})).toHaveCount(1);
+  await dismissPrivacy(page);
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Sign in to PawSpace'});
+  const phone=dialog.getByRole('textbox',{name:'Mobile number'});
+  await phone.fill('9000000001');
+  await expect(dialog.getByRole('button',{name:/Continue securely/})).toBeEnabled();
+  await dialog.getByRole('button',{name:/Continue securely/}).click();
+  await expect(dialog.getByRole('textbox',{name:'Verification code'})).toBeVisible();
+  await dialog.getByRole('button',{name:/Use a different number/}).click();
+  await expect(phone).toHaveValue('');
+  await dialog.getByRole('button',{name:/Continue securely/}).click();
+  await expect(dialog.getByText('Enter a valid 10-digit mobile number.',{exact:true})).toBeVisible();
+  expect(requestedPhones).toEqual(['9000000001']);
+  await phone.fill('9000000002');
+  await dialog.getByRole('button',{name:/Continue securely/}).click();
+  await expect(dialog.getByRole('textbox',{name:'Verification code'})).toBeVisible();
+  await expect(dialog.getByText(/Enter the 6-digit code for \+91 9000000002/)).toBeVisible();
+  expect(requestedPhones).toEqual(['9000000001','9000000002']);
+});
+
 test('Care Card validates in place, focuses missing input, preserves back/review details',async({page})=>{
   const writes=await fixture(page,true); await page.goto('/v2/sitting'); await dismissPrivacy(page);
   await page.getByRole('button',{name:'See available sitters',exact:true}).click();

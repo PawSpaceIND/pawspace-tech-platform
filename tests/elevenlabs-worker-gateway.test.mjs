@@ -172,7 +172,7 @@ test("validated date-and-time answer retains SSE transport and conversation hist
     applyOwnedDdl(w.sqlite, owner);
 
   await setAiRolloutStage(w.db, { stage: "customers", reason: "synthetic executed customer voice UAT", actorEmail: "test@pawspace.test" });
-  const mock = stubFetch(() => jsonResponse({output_text:"I can explain PawSpace grooming services.",status:"completed",usage:{total_tokens:20}}));
+  const mock = stubFetch(() => jsonResponse({output_text:"You prefer tomorrow at 11:00 AM for grooming. What address and PIN should I check?",status:"completed",usage:{total_tokens:20}}));
   t.after(() => mock.restore());
   const r = await dispatch(w, request("/api/elevenlabs/v1/responses", JSON.stringify({
     model: "pawspace-grounded-openai", input: [{role:"user",content:"Can I book a grooming today?"},{role:"assistant",content:"What is your preferred grooming date and time?"},{role:"user",content:"I want for tomorrow at 11:00 AM."}],
@@ -183,12 +183,16 @@ test("validated date-and-time answer retains SSE transport and conversation hist
   const sse = await r.response.text();
 
   assert.match(sse, /response\.output_text\.delta/);
-  assert.match(sse, /I can explain PawSpace grooming services/, JSON.stringify({providerCalls:mock.calls.length,turns:w.sqlite.prepare("SELECT intent_code,provider,outcome,handoff_reason,policy_decision FROM ai_conversation_turns").all()}));
+  assert.match(sse, /You prefer tomorrow at 11:00 AM for grooming/, JSON.stringify({providerCalls:mock.calls.length,turns:w.sqlite.prepare("SELECT intent_code,provider,outcome,handoff_reason,policy_decision FROM ai_conversation_turns").all()}));
   assert.equal(mock.calls.length, 1, "the real adapter must reach its mocked external provider");
   assert.equal(mock.calls[0].url, "https://api.openai.com/v1/responses");
   const providerInput=JSON.parse(JSON.parse(mock.calls[0].init.body).input);
   assert.equal(providerInput.customerMessage,"I want for tomorrow at 11:00 AM.");
-  assert.equal(providerInput.canonicalContext.conversationHistory.length,3);
+  assert.deepEqual(providerInput.canonicalContext.conversationHistory.map(item=>({role:item.role,content:item.content})),[
+    {role:"user",content:"Can I book a grooming today?"},
+    {role:"assistant",content:"What is your preferred grooming date and time?"},
+    {role:"user",content:"I want for tomorrow at 11:00 AM."},
+  ]);
   assert.equal(providerInput.canonicalContext.timezone,"Asia/Kolkata");
   assert.equal(providerInput.intent.intent,"booking_create");
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE template_key='elevenlabs_custom_llm_reply'").get().n, 1);

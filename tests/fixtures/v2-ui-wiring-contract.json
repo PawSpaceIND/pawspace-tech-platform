@@ -51,7 +51,7 @@
       "conditions": 31
     },
     "app/v2/page.tsx": {
-      "sha256": "32cb39476305c0833da5a11d63e7356b9f761283c0884fdaf612dc3b3c65d2e0",
+      "sha256": "5b91274a2ea6706052fb5e440932bd96e713ad1d65a8efd0267f80a92fa20607",
       "functions": 29,
       "declarations": 42,
       "interactionProps": 31,
@@ -97,7 +97,7 @@
         "conditions": 9
       },
       "app/v2/page.tsx": {
-        "sha256": "447a5f17b288246b4f9c0fe5f99e4b5a2047b7a1e58f0c5335ef237daa3e279d",
+        "sha256": "700becf8d35cdcfe7c65f51b99d2ccefbafdf87615f8f7de5247f5d7068cb547",
         "functions": 29,
         "declarations": 42,
         "interactionProps": 16,

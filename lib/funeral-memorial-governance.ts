@@ -1,9 +1,9 @@
 import{governedJsonError}from"./governed-http-error";
 import{ACCT,periodOf,postJournal}from"./finance-accounts";
-import{resolveFuneralFinancePolicy,taxFromGrossMargin}from"./special-service-finance-policy";
+import{FUNERAL_FINANCE_POLICY_DOMAIN,resolveFuneralFinancePolicy,taxFromGrossMargin}from"./special-service-finance-policy";
 import{queueSpecialServiceCaseUpdate}from"./special-service-case-linkage";
 import{providerPayoutDueAt}from"./provider-payout-hold";
-import{prepareCollectionEventPosting}from"./collection-ledger";
+import{COLLECTION_LEDGER_DOMAIN,prepareCollectionEventPosting,resolveCollectionLedgerPolicy}from"./collection-ledger";
 import{sandboxCapabilitiesUnlocked}from"./payment-environment";
 type Row=Record<string,unknown>;
 export type FuneralServiceType="cremation"|"burial"|"memorial";
@@ -55,6 +55,20 @@ export async function listFuneralCases(db:D1Database,input:{customerId?:string;s
 
 export async function getFuneralReport(db:D1Database){await ensureFuneralMemorialTables(db);const byType=await db.prepare("SELECT service_type,COUNT(*) count FROM funeral_cases GROUP BY service_type ORDER BY service_type").all<Row>(),fulfillment=await db.prepare("SELECT status,COUNT(*) count FROM funeral_cases GROUP BY status ORDER BY status").all<Row>(),turnaround=await db.prepare("SELECT AVG(updated_at-created_at) average_ms FROM funeral_cases WHERE status='closed'").first<Row>(),records=await db.prepare("SELECT COUNT(*) count FROM funeral_memorial_records").first<Row>(),revenue=await db.prepare("SELECT COALESCE(SUM(amount),0) amount FROM funeral_payments WHERE status='paid'").first<Row>();return{requestsByType:byType.results.map(item=>({serviceType:String(item.service_type),count:Number(item.count||0)})),serviceFulfillment:fulfillment.results.map(item=>({status:String(item.status),count:Number(item.count||0)})),turnaroundTime:{averageMs:Number(turnaround?.average_ms||0),basis:"request_to_closure"},plantationMemorialRecords:Number(records?.count||0),revenueAndAverageOrderValue:{sandboxPaidAmount:Number(revenue?.amount||0),currency:"INR",liveMoney:false},generatedAt:Date.now()};}
 
+// Revalidate the same scope precedence/version used by resolveServicePolicy inside the payment
+// transaction. A replacement override, deactivation or edit cannot post a previously prepared policy.
+function funeralPolicyCheck(db:D1Database,key:string,domain:string,service:string,city:string,at:number,policy:{id:string;version:number;updatedAt:number}){
+ const date=new Date(at).toISOString().slice(0,10);
+ return db.prepare(`INSERT INTO funeral_payment_checks (id,valid)
+  SELECT ?,CASE WHEN date('now')=? AND EXISTS(SELECT 1 FROM (
+   SELECT id,version,updated_at FROM service_policy_configs
+   WHERE policy_domain=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)
+    AND (service_code=? OR service_code='*') AND (city_id=? OR city_id='*')
+   ORDER BY CASE WHEN service_code=? AND city_id=? THEN 0 WHEN service_code=? AND city_id='*' THEN 1 WHEN service_code='*' AND city_id=? THEN 2 ELSE 3 END,version DESC,updated_at DESC LIMIT 1
+  ) WHERE id=? AND version=? AND updated_at=?) THEN 1 ELSE 0 END`)
+  .bind(key,date,domain,date,date,service,city,service,city,service,city,policy.id,policy.version,policy.updatedAt);
+}
+
 export async function requireFuneralSandboxPayments(){
  const{env}=await import("cloudflare:workers");
  const runtime=env as unknown as Record<string,unknown>;
@@ -90,6 +104,7 @@ export async function mutateFuneralCase(db:D1Database,input:{caseId:string;actio
    if(Number(config?.cash_allowed)!==1)throw governedJsonError({error:"Cash is not enabled for this service type"},409);
   }
   const policy=await resolveFuneralFinancePolicy(db,"blr"),taxStatus=policy.config.taxEnabled?"configured":"disabled_by_policy";
+  const collectionPolicy=await resolveCollectionLedgerPolicy(db,{serviceCode:"funeral"});
   const paymentId=String(payment.id),paymentReference=input.paymentReference||`SANDBOX-${paymentId}`,check=crypto.randomUUID();
   const collection=await prepareCollectionEventPosting(db,{event:mode==="cash_uat"?"cash_collected_confirmed":"online_payment_captured",bookingId:input.caseId,customerId:String(row.customer_id),serviceCode:"funeral",paymentId,amount,paymentMethod:mode==="cash_uat"?"cash":"upi",collectorId:input.actorId,entryDate:new Date(now).toISOString().slice(0,10),transactionAt:now,actorId:input.actorId,manualEntry:mode==="cash_uat"});
   if(!collection.posted){
@@ -99,16 +114,18 @@ export async function mutateFuneralCase(db:D1Database,input:{caseId:string;actio
   }
   try{await db.batch([
    db.prepare("INSERT INTO funeral_payment_checks (id,valid) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM funeral_payments WHERE id=? AND case_id=? AND status='due' AND amount=?) AND (?<>'cash_uat' OR EXISTS(SELECT 1 FROM funeral_service_config WHERE service_type=? AND cash_allowed=1)) THEN 1 ELSE 0 END").bind(check,paymentId,input.caseId,amount,mode,row.service_type),
+   funeralPolicyCheck(db,`${check}:finance`,FUNERAL_FINANCE_POLICY_DOMAIN,"funeral_memorial","blr",now,policy),
+   funeralPolicyCheck(db,`${check}:collection`,COLLECTION_LEDGER_DOMAIN,"funeral","*",now,collectionPolicy),
    db.prepare("UPDATE funeral_payments SET status='paid',payment_mode=?,payment_reference=?,paid_at=?,updated_at=? WHERE id=? AND status='due'").bind(mode,paymentReference,now,now,paymentId),
    db.prepare("INSERT INTO funeral_invoices (id,case_id,amount,status,tax_status,issued_at) VALUES (?,?,?,'uat_issued',?,?)").bind(`FNI-${paymentId}`,input.caseId,amount,taxStatus,now),
    ...collection.statements,
    db.prepare("INSERT INTO funeral_events (id,case_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,'payment_recorded',?,?,?)").bind(crypto.randomUUID(),input.caseId,input.actorId,JSON.stringify({mode,provider:"internal_uat",liveMoney:false,taxStatus,paymentId}),now),
-   db.prepare("DELETE FROM funeral_payment_checks WHERE id=?").bind(check),
+   db.prepare("DELETE FROM funeral_payment_checks WHERE id IN (?,?,?)").bind(check,`${check}:finance`,`${check}:collection`),
   ]);}catch(error){
    if(/funeral_payment_conflict/.test(error instanceof Error?error.message:String(error))){
     const current=await db.prepare("SELECT id,amount,status FROM funeral_payments WHERE case_id=?").bind(input.caseId).first<Row>();
     if(current&&current.id===payment.id&&Number(current.amount)===amount&&current.status==="paid")return getFuneralCase(db,input.caseId);
-    throw governedJsonError({error:"Funeral quote or payment changed; refresh before retrying"},409);
+    throw governedJsonError({error:"Funeral quote, payment or finance policy changed; refresh before retrying"},409);
    }
    throw error;
   }

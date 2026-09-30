@@ -96,3 +96,13 @@ test("native AgentStream transport interruption stays reconnectable until explic
   assert.match(bridge, /kind === "stop".*closeSession\(env, active/s);
   assert.doesNotMatch(bridge, /addEventListener\("close".*closeSession/s);
 });
+
+test("native AgentStream auto-detects STT language and records safe turn-quality telemetry", () => {
+  assert.match(bridge, /resolveCarrierSttLanguage\(env\.VOICE_AGENTSTREAM_STT_LANGUAGE\)/);
+  assert.match(bridge, /whisperInputLanguage\(language\)/);
+  assert.match(bridge, /if \(requestedLanguage\) input\.language = requestedLanguage/);
+  assert.match(bridge, /nativeVoiceTurnDiagnostics\(/);
+  assert.match(bridge, /transcriptChars: stt\.text\.length/);
+  assert.match(bridge, /assistantChars: generated\.output\.length/);
+  assert.match(bridge, /ttsModel: text\(env\.VOICE_CARRIER_TTS_MODEL\) \|\| EXOTEL_AGENTSTREAM_TTS_MODEL/);
+});

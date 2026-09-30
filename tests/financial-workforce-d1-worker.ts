@@ -1,6 +1,7 @@
 import {ensureAttendanceLeaveTables,decideLeave} from "../lib/attendance-leave";
 import {ensureFuneralMemorialTables,mutateFuneralCase} from "../lib/funeral-memorial-governance";
-import {ensureCollectionLedgerTables} from "../lib/collection-ledger";
+import {writeServicePolicy} from "../lib/service-policy-governance";
+import {ensureCollectionLedgerTables,resolveCollectionLedgerPolicy} from "../lib/collection-ledger";
 import {ensureSecurityTables} from "../lib/server-auth";
 import {upsertIdentityBinding} from "../lib/identity-binding";
 import {issuePlatformSession,platformSessionCookie} from "../lib/platform-session";
@@ -13,6 +14,7 @@ const first=(db:D1Database,sql:string,...args:unknown[])=>db.prepare(sql).bind(.
 async function refused(work:Promise<unknown>,status?:number){try{await work;}catch(error){if(status!==undefined)assert(error instanceof Response&&error.status===status,`expected refusal ${status}, got ${String(error)}`);return;}throw new Error("Expected refusal");}
 // Only the timing of reads is controlled. SQL and atomic batches run in native local D1.
 function rendezvous(db:D1Database,pattern:string,count=2){let reads=0,release:()=>void=()=>{};const ready=new Promise<void>(r=>{release=r;});return new Proxy(db,{get(target,key){if(key!=="prepare"){const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;}return(sql:string)=>{const wrap=(statement:D1PreparedStatement):D1PreparedStatement=>new Proxy(statement,{get(st,k){if(k==="bind")return(...args:unknown[])=>wrap(st.bind(...args));if(k==="first")return async()=>{const row=await st.first();if(sql.includes(pattern)&&reads<count){reads++;if(reads===count)release();await ready;}return row;};const value=Reflect.get(st,k);return typeof value==="function"?value.bind(st):value;}});return wrap(target.prepare(sql));};}});}
+function afterRead(db:D1Database,pattern:string,change:()=>Promise<void>){let changed=false;return new Proxy(db,{get(target,key){if(key!=="prepare"){const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;}return(sql:string)=>{const wrap=(statement:D1PreparedStatement):D1PreparedStatement=>new Proxy(statement,{get(st,k){if(k==="bind")return(...args:unknown[])=>wrap(st.bind(...args));if(k==="first")return async()=>{const row=await st.first();if(!changed&&sql.includes(pattern)){changed=true;await change();}return row;};const value=Reflect.get(st,k);return typeof value==="function"?value.bind(st):value;}});return wrap(target.prepare(sql));};}});}
 async function seedLeave(db:D1Database,prefix:string,balance:number,allowNegative=0){
  await db.batch([
   db.prepare("INSERT INTO leave_policies (id,name,version,status,leave_code,allow_negative,effective_from,created_by,created_at) VALUES (?,?,1,'active_uat',?,?,0,'fixture',0)").bind(prefix,prefix,prefix,allowNegative),
@@ -47,7 +49,7 @@ async function run(db:D1Database){
  assert(decisions.filter(x=>x.status==='fulfilled').length===1,"approve versus reject has one decision");
  const decision=await first(db,"SELECT status FROM leave_requests WHERE id='decision-a'");
  const ledger=await first(db,"SELECT COUNT(*) n FROM leave_ledger_events WHERE source_request_id='decision-a'");
- assert(Number(ledger?.n)===(decision?.status==='approved'?1:0),"decision matches its ledger");passed.push("approve/reject race cannot overwrite a committed decision");
+ assert(Number(ledger?.n)===(decision?.status==='approved'?1:0),"decision matches its ledger");const decisionEvent=await first(db,"SELECT decision,reason,actor_id FROM leave_decision_events WHERE request_id='decision-a'");assert(decisionEvent?.decision===decision?.status&&decisionEvent?.reason==="UAT integrity test"&&decisionEvent?.actor_id==="checker","winning decision retains its reason and actor");passed.push("approve/reject race cannot overwrite a committed decision");
  await seedLeave(db,"replay",2);const replayDb=rendezvous(db,"SELECT * FROM leave_requests");
  await Promise.allSettled([decide(replayDb,"replay-a"),decide(replayDb,"replay-a")]);
  assert(Number((await first(db,"SELECT balance FROM employee_leave_balances WHERE employee_id='replay'"))?.balance)===1,"same leave replay one debit");passed.push("same leave request cannot debit twice");
@@ -56,7 +58,17 @@ async function run(db:D1Database){
  await db.prepare("CREATE TRIGGER fault_leave BEFORE UPDATE OF status ON leave_requests WHEN OLD.id='leave-rollback-a' BEGIN SELECT RAISE(ABORT,'injected_leave_failure'); END").run();
  await refused(decide(db,"leave-rollback-a"));
  assert((await first(db,"SELECT status FROM leave_requests WHERE id='leave-rollback-a'"))?.status==='pending'&&Number((await first(db,"SELECT balance FROM employee_leave_balances WHERE employee_id='leave-rollback'"))?.balance)===2&&Number((await first(db,"SELECT COUNT(*) n FROM leave_ledger_events WHERE source_request_id='leave-rollback-a'"))?.n)===0,"leave failure rolls back decision, balance and ledger");
+ assert(Number((await first(db,"SELECT COUNT(*) n FROM leave_decision_events WHERE request_id='leave-rollback-a'"))?.n)===0,"failed leave batch leaves no decision audit");
  await db.prepare("DROP TRIGGER fault_leave").run();await decide(db,"leave-rollback-a");passed.push("native D1 leave failure rolls back decision and debit; retry succeeds");
+ await seedLeave(db,"audit-reason",2);
+ for(const [suffix,decision,reason] of [["a","approved","Approve requested family leave"],["b","rejected","Coverage is unavailable on requested date"]] as const){
+  await decideLeave(db,{requestId:`audit-reason-${suffix}`,decision,reason,actorId:"audit-checker"});
+  const recorded=await first(db,"SELECT * FROM leave_decision_events WHERE request_id=?",`audit-reason-${suffix}`);
+  assert(recorded?.decision===decision&&recorded?.reason===reason&&recorded?.actor_id==="audit-checker"&&Number(recorded?.decided_at)>0,"approval and rejection retain exact supplied rationale");
+  await refused(decideLeave(db,{requestId:`audit-reason-${suffix}`,decision,reason:"Replacement reason must not overwrite history",actorId:"other-checker"}),409);
+  assert((await first(db,"SELECT reason FROM leave_decision_events WHERE request_id=?",`audit-reason-${suffix}`))?.reason===reason,"replay cannot overwrite decision audit");
+ }
+ passed.push("approval/rejection reasons are atomic, attributed and immutable on replay");
  await seedPayment(db,"repeated");const paymentDb=rendezvous(db,"SELECT * FROM funeral_payments WHERE case_id=");
  await Promise.all([pay(paymentDb,"repeated",{amount:1000}),pay(paymentDb,"repeated",{amount:1000})]);
  await pay(db,"repeated",{amount:1000});
@@ -82,6 +94,29 @@ async function run(db:D1Database){
  let changed=false;
  const quoteDb=new Proxy(db,{get(target,key){if(key==="prepare")return(sql:string)=>{const wrap=(st:D1PreparedStatement):D1PreparedStatement=>new Proxy(st,{get(statement,method){if(method==="bind")return(...args:unknown[])=>wrap(statement.bind(...args));if(method==="first")return async()=>{const row=await statement.first();if(!changed&&sql==='SELECT * FROM funeral_payments WHERE case_id=?'){changed=true;await target.prepare("UPDATE funeral_payments SET amount=1200 WHERE case_id='quote-race'").run();}return row;};const value=Reflect.get(statement,method);return typeof value==="function"?value.bind(statement):value;}});return wrap(target.prepare(sql));};const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;}});
  await refused(pay(quoteDb,"quote-race",{amount:1000}),409);assert((await paymentFacts(db,"quote-race")).payment?.status==='due',"stale quote remains unpaid");passed.push("repricing between read and payment refuses stale amount");
+ const originalCollection=await resolveCollectionLedgerPolicy(db,{serviceCode:"funeral"});
+ await seedPayment(db,"collection-policy-race");
+ const collectionRace=afterRead(db,"WITH stored AS",async()=>{await writeServicePolicy(db,{domain:"collection_ledger_policy",config:{accounts:{...originalCollection.config.accounts,gatewayClearing:"1021-Synthetic Test Gateway"}}},"policy-checker","Synthetic policy version race");});
+ await refused(pay(collectionRace,"collection-policy-race"),409);
+ const policyFacts=await paymentFacts(db,"collection-policy-race");
+ assert(policyFacts.payment?.status==='due'&&Number(policyFacts.invoice?.n)===0&&Number(policyFacts.journal?.n)===0&&Number(policyFacts.marker?.n)===0&&Number(policyFacts.event?.n)===0,"policy edit after prepared read rolls back all payment effects");
+ await pay(db,"collection-policy-race");
+ assert(Number((await first(db,"SELECT COUNT(*) n FROM finance_journal_entries WHERE payment_id='payment-collection-policy-race' AND account_code='1021-Synthetic Test Gateway'"))?.n)===1,"retry uses newly resolved collection account");
+ await writeServicePolicy(db,{domain:"collection_ledger_policy",config:originalCollection.config},"policy-checker","Restore synthetic collection fixture");
+ passed.push("collection policy version race refuses stale posting; retry uses current policy");
+ await seedPayment(db,"finance-policy-race");
+ const financeRace=afterRead(db,"WITH stored AS",async()=>{await writeServicePolicy(db,{domain:"funeral_commercial_finance",serviceCode:"funeral_memorial",cityId:"blr",config:{taxEnabled:true,taxRatePercent:1}},"policy-checker","Synthetic scoped policy race only");});
+ await refused(pay(financeRace,"finance-policy-race"),409);
+ assert((await paymentFacts(db,"finance-policy-race")).payment?.status==='due',"new higher priority finance scope cannot use stale invoice metadata");
+ await pay(db,"finance-policy-race");
+ assert((await first(db,"SELECT tax_status FROM funeral_invoices WHERE case_id='finance-policy-race'"))?.tax_status==='configured',"retry resolves new scoped policy");
+ passed.push("new higher-priority finance policy prevents stale invoice metadata");
+ await seedPayment(db,"collection-override-race");
+ const overrideRace=afterRead(db,"WITH stored AS",async()=>{await writeServicePolicy(db,{domain:"collection_ledger_policy",serviceCode:"funeral",config:{nonPostingEvents:["payment_failed","payment_pending","online_payment_captured"]}},"policy-checker","Synthetic newly disabled capture fixture");});
+ await refused(pay(overrideRace,"collection-override-race"),409);await refused(pay(db,"collection-override-race"),409);
+ const blockedFacts=await paymentFacts(db,"collection-override-race");assert(blockedFacts.payment?.status==='due'&&Number(blockedFacts.journal?.n)===0,"new collection override remains authoritative on retry");
+ await writeServicePolicy(db,{domain:"collection_ledger_policy",serviceCode:"funeral",config:originalCollection.config,active:false},"policy-checker","Retire synthetic collection override");
+ passed.push("new collection scope override blocks both stale and fresh capture");
  await ensureSecurityTables(db);
  const binding=await upsertIdentityBinding(db,{identitySource:"customer_otp",principalType:"identity_subject",principalKey:"synthetic",subjectType:"customer",subjectId:"synthetic",actorId:"test",reason:"native D1 payment ownership proof"});
  const session=await issuePlatformSession(db,{bindingId:String(binding?.id),identitySource:"customer_otp",principalType:"identity_subject",principalKey:"synthetic",subjectType:"customer",subjectId:"synthetic"});

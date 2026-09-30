@@ -115,3 +115,25 @@ test('takeover after ready persistence is truthfully suppressed, never sent or s
  await assert.rejects(()=>voice.runElevenLabsGroundedTurn(db,body(),undefined,x=>emitted.push(x)),e=>e instanceof Response&&e.status===409);assert.deepEqual(emitted,[]);
  assert.deepEqual(w.sqlite.prepare("SELECT status FROM communication_messages WHERE direction='outbound'").all().map(x=>x.status),['suppressed']);
 });
+
+for(const text of ['Do not contact anyone.','Without calling me, explain grooming.','This is hypothetical; just explain your services.'])test('non-emergency no-contact text never becomes veterinary guidance: '+text,()=>{
+ assert.equal(emergency.needsImmediateVetGuidance(text),false);
+ assert.equal(emergency.emergencyGuidanceOnly(text),false);
+});
+test('emergency information-only predicate requires both emergency and no-action intent',()=>{
+ assert.equal(emergency.emergencyGuidanceOnly('My pet is struggling to breathe. Do not contact anyone.'),true);
+ assert.equal(emergency.emergencyGuidanceOnly('My pet is struggling to breathe. This is hypothetical.'),true);
+ assert.equal(emergency.emergencyGuidanceOnly('My pet is struggling to breathe.'),false);
+});
+for(const timing of ['before','after'])for(const change of ["assigned_to='human@test.invalid'","status='closed'"])test('emergency reply respects '+timing+'-persistence ownership race: '+change,async t=>{
+ const w=await world(t),emitted=[];
+ const db={...w.db,prepare(sql){const original=w.db.prepare(sql);if(!sql.includes("'elevenlabs_custom_llm_reply'"))return original;return{bind(...args){const bound=original.bind(...args);return{...bound,async run(){
+  const mutate=()=>w.sqlite.exec("UPDATE communication_threads SET "+change+" WHERE id='THREAD-GUARD'");
+  if(timing==='before')mutate();const result=await bound.run();if(timing==='after')mutate();return result;
+ }}}};}};
+ const mock=stubFetch(()=>{throw Error('No model or contact permitted')});t.after(()=>mock.restore());
+ await assert.rejects(()=>voice.runElevenLabsGroundedTurn(db,{...body(),input:'My pet is struggling to breathe. Do not contact anyone.'},undefined,x=>emitted.push(x)),e=>e instanceof Response&&e.status===409);
+ assert.deepEqual(emitted,[]);assert.equal(mock.calls.length,0);
+ assert.deepEqual(w.sqlite.prepare("SELECT status FROM communication_messages WHERE direction='outbound'").all().map(x=>x.status),timing==='before'?[]:['suppressed']);
+ const handoffs=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='ai_handoffs'").get();assert.equal(handoffs?w.sqlite.prepare('SELECT COUNT(*) n FROM ai_handoffs').get().n:0,0);
+});

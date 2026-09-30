@@ -173,6 +173,7 @@ export default function PawSpaceV2() {
     authGeneration.current += 1;
     setAuthBusy(false);
     setAuthStage("phone");
+    setPhone("");
     setChallenge(null);
     setCode("");
     setName("");

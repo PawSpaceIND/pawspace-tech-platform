@@ -15,9 +15,9 @@ This document supersedes the stale statement in `VOICE_UAT_CHECKLIST.md` that th
 
 ## Important remaining boundary
 
-The current Exotel automated dial adapter is a **call-control plane** (create call + status callbacks). The existing Workers AI speech path is an **in-app audio plane**. There is not yet repository evidence of a deployed bidirectional carrier media stream transporting Exotel call audio into Workers AI and synthesized audio back to the carrier.
+The repository now contains the native bidirectional carrier path: direct Exotel AgentStream connects to the PawSpace WebSocket handler, linear16 carrier audio is transcribed by Workers AI, the governed Maya/Atlas turn runs on the canonical PawSpace conversation, and carrier-safe linear16 TTS is streamed back. A private, staff-only native-UAT override can exercise that path while ordinary staging calls remain pinned to ElevenLabs.
 
-A successful Exotel dial therefore does **not** by itself certify two-way autonomous audio. The live gate remains red until a real allow-listed UAT call proves both media directions and the evidence is attached.
+That is executable architecture, not live-carrier certification. A successful Exotel dial or automated simulator test does **not** by itself certify two-way autonomous audio. The live gate remains red until a real single-allowlisted UAT call proves carrier audio -> STT -> Maya/Atlas -> TTS -> carrier audio, including callback reconciliation and failure recovery, with sanitized evidence attached.
 
 ## Required staging configuration
 
@@ -35,7 +35,7 @@ Administrator-controlled non-secret variable:
 
 - `PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT` — absolute HTTPS URL for `/api/voice-provider-webhook` on the isolated staging deployment.
 
-The voice activation workflow sets only UAT-safe runtime values: `PAWSPACE_VOICE_ENV=uat`, `PAWSPACE_VOICE_UAT_APPROVED=true`, the two model names, the speech deadline and the Workers AI binding. `PAWSPACE_VOICE_LIVE_APPROVED` is deliberately not set.
+The voice activation workflow sets only UAT-safe runtime values: `PAWSPACE_VOICE_ENV=uat`, explicitly pins ordinary routing to `PAWSPACE_VOICE_RUNTIME=elevenlabs`, enables the private native-UAT approval, sets AgentStream STT to auto-detect, pins the approved speech models and deadline, and binds Workers AI. `PAWSPACE_VOICE_LIVE_APPROVED` is deliberately not set.
 
 ## First-call procedure
 
@@ -43,10 +43,12 @@ The voice activation workflow sets only UAT-safe runtime values: `PAWSPACE_VOICE
 2. Sign in to `/team/voice` as an operator with `communications.call`.
 3. Confirm Environment shows UAT mode, six Exotel secret names configured, HTTPS callback configured and the expected allow-list size.
 4. Record explicit consent for the allow-listed test recipient using the existing governed `record_consent` API/action. Consent must reflect a real prior human grant; do not manufacture it for the test.
-5. Run `policy_preview` for the exact recipient/use case and require all checks to pass.
-6. Only during the approved 08:00–21:00 IST window, place one controlled call.
-7. Open Audit and retain policy decisions, state transitions, signed carrier callbacks, transcript segments, barge-in events and handoff evidence.
-8. Do not widen the allow-list or enable live/customer rollout as a workaround for a failing scenario.
+5. Confirm the activation summary says ordinary voice runtime is ElevenLabs, controlled native AgentStream UAT is enabled, and STT language mode is auto-detect.
+6. Run `policy_preview` for the exact recipient/use case and require all checks to pass.
+7. From the staff voice surface/API invoke only the governed `uat_native_agentstream_test` action for the canonical customer (and booking for booking confirmation). The route loads the phone from canonical customer ownership; it does not accept a dial number from the request.
+8. Only during the approved 08:00–21:00 IST window, place one controlled native call. Ordinary calls must continue to resolve to ElevenLabs.
+9. Open Audit and retain policy decisions, state transitions, Exotel Call Details reconciliation, transcript segments, language/latency diagnostics, barge-in events and handoff evidence.
+10. Do not widen the allow-list, flip the global runtime away from ElevenLabs, or enable live/customer rollout as a workaround for a failing scenario.
 
 ## 18-scenario certification matrix
 

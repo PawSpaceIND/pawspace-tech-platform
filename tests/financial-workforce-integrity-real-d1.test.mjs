@@ -19,7 +19,7 @@ for (const profile of ["sandbox", "live", "unset", "production", "app-production
   else if(profile!=="sandbox")args.push("--var",`PAWSPACE_PAYMENT_ENV:${profile==='unset'?'':profile}`);
   const child=spawn(process.execPath,args,{stdio:["ignore","pipe","pipe","ipc"],detached:process.platform!=="win32",env:{...process.env,XDG_CONFIG_HOME:`${process.cwd()}/${dir}/xdg`,WRANGLER_SEND_METRICS:"false"}});
   child.stdout.on("data",chunk=>{logs+=String(chunk);});child.stderr.on("data",chunk=>{logs+=String(chunk);});
-  try{const {port}=await waitForWranglerReady(child,()=>logs);await waitForHealth(port,child,()=>logs);const response=await fetch(`http://127.0.0.1:${port}/${profile==='sandbox'?'run':'guard'}`);const result=await response.json();assert.equal(response.status,200,`${JSON.stringify(result)}\n${logs}`);assert.equal(result.ok,true,JSON.stringify(result));if(profile==='sandbox'){assert.equal(result.nativeD1,true);assert.equal(result.passed.length,13);console.log(result.passed.join("\n"));}else assert.equal(result.disabledBeforeWrites,true);
+  try{const {port}=await waitForWranglerReady(child,()=>logs);await waitForHealth(port,child,()=>logs);const response=await fetch(`http://127.0.0.1:${port}/${profile==='sandbox'?'run':'guard'}`);const result=await response.json();assert.equal(response.status,200,`${JSON.stringify(result)}\n${logs}`);assert.equal(result.ok,true,JSON.stringify(result));if(profile==='sandbox'){assert.equal(result.nativeD1,true);assert.equal(result.passed.length,17);console.log(result.passed.join("\n"));}else assert.equal(result.disabledBeforeWrites,true);
   }finally{await stopWorker(child);await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
  });
 }

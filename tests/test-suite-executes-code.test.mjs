@@ -20,7 +20,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import { dirname, join, resolve, relative, isAbsolute, sep, win32 } from "node:path";
 import ts from "typescript";
 
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -122,13 +122,21 @@ const helperExecutes = (src) => {
  * a config filename anywhere in source. This remains a static classifier of executable tests,
  * not proof that a test passed. Scope-aware symbols tie spawn to node:child_process and an args
  * variable to its const declaration. Unsupported commands/configs fail closed. */
+const nativePathStyle = { sep, isAbsolute };
+const relativePathIsInside = (value, style = nativePathStyle) =>
+  value.split(style.sep)[0] !== ".." && !style.isAbsolute(value);
+const relativePathIsProduct = (value, style = nativePathStyle) => {
+  const parts = value.split(style.sep);
+  return parts.length > 1 && ["lib", "app"].includes(parts[0]);
+};
+
 function nativeWorkerExecutes(src, root = dirname(TESTS_DIR), read = (path) => readFileSync(path, "utf8")) {
   if (!src.includes("child_process")) return false;
-  const fileName = resolve(root, "tests/classification-input.mjs");
+  const fileName = resolve(root, "tests/classification-input.mjs").split(sep).join("/");
   const source = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const program = ts.createProgram([fileName], { allowJs: true, noResolve: true, noLib: true }, {
     getSourceFile: (name) => name === fileName ? source : undefined,
-    getDefaultLibFileName: () => "", writeFile() {}, getCurrentDirectory: () => root,
+    getDefaultLibFileName: () => "", writeFile() {}, getCurrentDirectory: () => root.split(sep).join("/"),
     getDirectories: () => [], fileExists: (name) => name === fileName,
     readFile: (name) => name === fileName ? src : undefined,
     getCanonicalFileName: (name) => name, useCaseSensitiveFileNames: () => true,
@@ -136,7 +144,7 @@ function nativeWorkerExecutes(src, root = dirname(TESTS_DIR), read = (path) => r
   });
   const checker = program.getTypeChecker();
   const literal = (node) => node && ts.isStringLiteralLike(node) ? node.text : undefined;
-  const insideRoot = (path) => { const rel = relative(root, path); return rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel); };
+  const insideRoot = (path) => relativePathIsInside(relative(root, path));
   const runtimeImport = (node) => ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly &&
     (!node.importClause?.namedBindings || !ts.isNamedImports(node.importClause.namedBindings) ||
       !!node.importClause.name || node.importClause.namedBindings.elements.some((item) => !item.isTypeOnly));
@@ -155,7 +163,7 @@ function nativeWorkerExecutes(src, root = dirname(TESTS_DIR), read = (path) => r
       for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`, join(base, "index.ts")]) {
         if (!insideRoot(candidate)) continue;
         try { read(candidate); } catch { continue; }
-        if (/^(lib|app)\//.test(relative(root, candidate))) return true;
+        if (relativePathIsProduct(relative(root, candidate))) return true;
         if (workerLoadsProduct(candidate)) return true;
       }
     }
@@ -354,4 +362,24 @@ test('native classifier recognizes the actual native D1 drivers without executin
     'financial-workforce-integrity-real-d1.test.mjs',
     'scheduling-rules-authorization-real-d1.test.mjs',
   ]) assert.equal(nativeWorkerExecutes(readFileSync(join(TESTS_DIR, name), 'utf8')), true, name);
+});
+
+
+test('native path classification preserves platform separators and rejects traversal or other drives', () => {
+  const root = String.raw`C:\repo`;
+  for (const file of [String.raw`C:\repo\lib\proof.ts`, String.raw`C:\repo\app\api\proof.ts`]) {
+    const path = win32.relative(root, file);
+    assert.equal(relativePathIsInside(path, win32), true);
+    assert.equal(relativePathIsProduct(path, win32), true);
+  }
+  for (const file of [String.raw`C:\outside\lib\proof.ts`, String.raw`D:\repo\lib\proof.ts`]) {
+    const path = win32.relative(root, file);
+    assert.equal(relativePathIsInside(path, win32), false);
+    assert.equal(relativePathIsProduct(path, win32), false);
+  }
+  assert.equal(relativePathIsProduct(win32.relative(root, String.raw`C:\repo\tests\lib\proof.ts`), win32), false);
+  assert.equal(relativePathIsInside('../lib/proof.ts'), false);
+  assert.equal(relativePathIsProduct('lib/proof.ts'), true);
+  // A backslash is a valid filename character on POSIX, not a directory separator.
+  if (sep === '/') assert.equal(relativePathIsProduct(String.raw`lib\proof.ts`), false);
 });

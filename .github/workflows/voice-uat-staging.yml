@@ -109,7 +109,7 @@ jobs:
       - name: Install and validate voice contracts
         run: |
           npm run install:ci
-          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs
+          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs tests/voice-agentstream-quality.test.mjs tests/voice-native-agentstream-uat.test.mjs
       - name: Build
         run: npm run build
       - name: Configure isolated staging base
@@ -241,8 +241,10 @@ jobs:
             echo '- account SID accepted from EXOTEL_SID or EXOTEL_ACCOUNT_SID alias: yes'
             echo '- seven-parameter UAT preflight: passed'
             echo '- single allow-listed E.164 test recipient validated: yes'
+            echo '- ordinary voice runtime: ElevenLabs (unchanged)'
+            echo '- controlled native AgentStream UAT override: enabled for explicit staff UAT only'
+            echo '- AgentStream STT language mode: auto-detect'
             echo '- AgentStream wss endpoint configured: yes'
-            echo '- one-shot dispatch target: 2026-09-11 10:00 IST'
             echo '- real call placed by this workflow: no'
             echo '- consent written by this workflow: no (staging scheduler writes only the explicitly source-attributed record before the due time)'
             echo "- staging origin: $STAGING_URL"
