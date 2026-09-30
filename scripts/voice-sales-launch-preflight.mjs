@@ -9,6 +9,15 @@ export function authorizedLaunchTester(env){
  if(!/^[a-f0-9]{64}$/.test(expected)||actual!==expected)throw Error('The configured tester does not match the authorized recipient');
  return phone;
 }
+// This selects the existing settings-managed UAT endpoint, never a generic-call override.
+// Its server-side approval, consent, opt-out and single-recipient guards remain authoritative.
+export function specialistPilotAction(env){
+ if(env.PILOT_ACTION==='specialist-call')return 'request_call';
+ if(env.PILOT_ACTION!=='attended-specialist-uat')throw Error('Explicit specialist pilot action required');
+ if(String(env.GITHUB_RUN_ATTEMPT)!=='1')throw Error('Attended dial jobs cannot be rerun; inspect the original call instead');
+ authorizedLaunchTester(env);
+ return 'uat_specialist_sales_test';
+}
 export async function inspectVoiceSalesLaunch(env=process.env,request=fetch){
  const phone=authorizedLaunchTester(env),origin='https://pawspace-staging.karthik-fce.workers.dev';
  const base=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(env.STAGING_D1_ID)}`;

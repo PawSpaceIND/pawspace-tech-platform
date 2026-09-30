@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {canonicalDialNumber} from '../lib/voice-call-gate.ts';
-import {authorizedLaunchTester,inspectVoiceSalesLaunch} from '../scripts/voice-sales-launch-preflight.mjs';
+import {authorizedLaunchTester,inspectVoiceSalesLaunch,specialistPilotAction} from '../scripts/voice-sales-launch-preflight.mjs';
 const env={PAWSPACE_VOICE_UAT_ALLOWLIST:'+91 98765 43210',EXPECTED_TESTER_SHA256:createHash('sha256').update('9876543210').digest('hex')};
 test('fresh launch requires the full authorized number, not a matching last four',()=>{
  assert.equal(authorizedLaunchTester(env),'+919876543210');
@@ -26,4 +26,12 @@ test('fresh inspection resolves one canonical owner and previews policy without 
   assert.fail('unexpected request');
  };
  const result=await inspectVoiceSalesLaunch(env,request);assert.equal(result.dialed,false);assert.equal(result.policyAllowed,true);assert.deepEqual(actions,['policy_preview']);
+});
+
+test('attended pilot requires exact recipient authorization and refuses workflow reruns',()=>{
+ assert.equal(specialistPilotAction({PILOT_ACTION:'specialist-call'}),'request_call');
+ assert.equal(specialistPilotAction({...env,PILOT_ACTION:'attended-specialist-uat',GITHUB_RUN_ATTEMPT:'1'}),'uat_specialist_sales_test');
+ assert.throws(()=>specialistPilotAction({...env,PILOT_ACTION:'attended-specialist-uat',GITHUB_RUN_ATTEMPT:'2'}),/cannot be rerun/);
+ assert.throws(()=>specialistPilotAction({...env,PILOT_ACTION:'attended-specialist-uat',GITHUB_RUN_ATTEMPT:'1',EXPECTED_TESTER_SHA256:'0'.repeat(64)}),/authorized recipient/);
+ assert.throws(()=>specialistPilotAction({...env,PILOT_ACTION:'unknown',GITHUB_RUN_ATTEMPT:'1'}),/Explicit/);
 });

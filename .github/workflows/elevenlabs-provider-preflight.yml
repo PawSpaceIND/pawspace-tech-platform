@@ -301,7 +301,7 @@ jobs:
           NODE
 
   specialist-call:
-    if: ${{ inputs.confirm == 'specialist-call' }}
+    if: ${{ inputs.confirm == 'specialist-call' || inputs.confirm == 'attended-specialist-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 5
@@ -310,9 +310,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Verify exact isolated build before an attended specialist test
+        if: ${{ inputs.confirm == 'attended-specialist-uat' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          PILOT_ACTION: ${{ inputs.confirm }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
@@ -330,13 +342,15 @@ jobs:
           const {specialistDemoPreflight}=await import('./scripts/voice-handset-preflight.mjs');
           const {verifyHandsetAttempt}=await import('./scripts/verify-handset-attempt.mjs');
           const {useCase,agentId,phone,customerId,idempotencyKey}=specialistDemoPreflight(process.env);
+          const {specialistPilotAction}=await import('./scripts/voice-sales-launch-preflight.mjs');
+          const action=specialistPilotAction(process.env);
           const access=process.env.PAWSPACE_UAT_ACCESS_CODE;
           console.log('::add-mask::'+phone);
           const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:access}),redirect:'manual',signal:AbortSignal.timeout(20000)});
           if(login.status!==200)throw new Error('staging founder login failed: '+login.status);
           const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
           if(!cookie.startsWith('pawspace_uat='))throw new Error('staging UAT cookie missing');
-          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action:'request_call',idempotencyKey,useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
+          const call=await fetch(origin+'/api/voice-outbound',{method:'POST',headers:{'content-type':'application/json',origin,cookie},body:JSON.stringify({action,idempotencyKey,useCase,phone,customerId,cityId:'blr',campaignId:'controlled_specialist_uat'}),redirect:'error',signal:AbortSignal.timeout(30000)});
           const body=await call.json().catch(()=>({}));
           const dialed=Boolean(body?.data?.dialed||body?.data?.dialled);
           console.log('PAWSPACE_SPECIALIST_RESPONSE='+JSON.stringify({status:call.status,error:body?.error||null,code:body?.code||null,state:body?.data?.state||null,useCase:body?.data?.useCase||null,provider:body?.data?.provider||null,dialed,phoneLast4:body?.data?.phoneLast4||null,quietHoursDecision:body?.data?.quietHoursDecision||null,blockedBy:body?.data?.blockedBy||null,blockedDetail:body?.data?.blockedDetail||null}));
