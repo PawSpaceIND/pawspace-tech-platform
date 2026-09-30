@@ -86,6 +86,13 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
         run: node --experimental-strip-types scripts/inspect-attended-request.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-attended-premium-review
+          path: voice-attended-review
+          if-no-files-found: ignore
+          retention-days: 3
   diagnose-voice-demo:
     if: ${{ inputs.confirm == 'diagnose-voice-demo' }}
     runs-on: ubuntu-latest
