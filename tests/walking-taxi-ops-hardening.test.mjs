@@ -399,9 +399,10 @@ test("regression: mid-programme replacement resets handover state so the replace
 
 // ---------------------------------------------------------------------------
 // 3. Taxi: pickup/dropoff verification states + D2/D3 regressions around
-//    driver replacement after a confirmed pickup.
+//    pre-pickup driver replacement, and refusal after confirmed pickup.
 // ---------------------------------------------------------------------------
 test("regression: taxi driver replacement re-attributes pickup/dropoff handover to the replacement driver", async () => {
+  try {
   const stack = await opsStack();
   const { sqlite } = stack;
   stack.seedProvider("taxi_one", { services: ["pet_taxi"] });
@@ -414,12 +415,15 @@ test("regression: taxi driver replacement re-attributes pickup/dropoff handover 
   await tMutate(stack, bookingId, "accept");
   await rejects(tMutate(stack, bookingId, "confirm_pickup", { handoverMethod: "owner" }), 409, /vehicle assignment is required/);
   await tMutate(stack, bookingId, "assign_vehicle", { vehicleId: "TXV-ONE" });
-  await tMutate(stack, bookingId, "confirm_pickup", { handoverMethod: "owner" });
   let trip = sqlite.prepare("SELECT status,pickup_verification_status FROM taxi_trips WHERE booking_id=?").get(bookingId);
-  assert.deepEqual([String(trip.status), String(trip.pickup_verification_status)], ["pickup_confirmed", "uat_confirmed"]);
-  assert.equal(sqlite.prepare("SELECT provider_id FROM taxi_pickup_handover_events WHERE trip_id=?").get(tripId).provider_id, "taxi_one");
+  assert.deepEqual([String(trip.status), String(trip.pickup_verification_status)], ["vehicle_assigned", "pending"]);
+  // An incomplete persisted handover is not pet custody. Keep the old provider on this draft so
+  // the replacement's real confirmation still exercises ON CONFLICT attribution (D3).
+  sqlite.prepare("INSERT INTO taxi_pickup_handover_events (trip_id,booking_id,provider_id,method,status,otp_status,confirmed_by,confirmed_at) VALUES (?,?,?,'owner','pending','not_connected','incomplete-attempt',0)")
+    .run(tripId, bookingId, "taxi_one");
+  assert.equal(sqlite.prepare("SELECT status FROM taxi_pickup_handover_events WHERE trip_id=?").get(tripId).status, "pending");
 
-  // Pre-trip failure after pickup confirmation branches into recovery; trip window/route preserved.
+  // Pre-pickup failure branches into recovery; the booked trip window and route are preserved.
   const recovery = await tMutate(stack, bookingId, "decline", { reason: "Vehicle breakdown before start" });
   assert.equal(recovery.status, "ops_escalation");
   const offered = await taxiOps.mutateTaxiOps(stack.db, { bookingId, action: "assign_replacement", actorId: "ops@test", idempotencyKey: crypto.randomUUID(), providerId: "taxi_two", reason: "Eligible replacement driver with verified vehicle" });
@@ -466,6 +470,25 @@ test("regression: taxi driver replacement re-attributes pickup/dropoff handover 
   const reconciliation = await tFinance(stack, bookingId, "reconcile");
   assert.equal(reconciliation.paidTotal, amount);
   assert.equal(reconciliation.unpaidTripTotal, 0);
+  } catch(error) {
+    if(error instanceof Response)throw new Error(`Taxi replacement refused: ${await error.text()}`);
+    throw error;
+  }
+});
+
+test("a driver cannot replace its assignment after real pickup confirmation", async () => {
+  const stack = await opsStack();
+  stack.seedProvider("taxi_one", { services: ["pet_taxi"] });
+  stack.seedVehicle("TXV-ONE", "taxi_one");
+  const { bookingId, tripId } = stack.seedTaxiBooking({ tag: "TCUSTODY", providerId: "taxi_one" });
+  await tMutate(stack, bookingId, "accept");
+  await tMutate(stack, bookingId, "assign_vehicle", { vehicleId: "TXV-ONE" });
+  await tMutate(stack, bookingId, "confirm_pickup", { handoverMethod: "owner" });
+  const before = stack.sqlite.prepare("SELECT status,pickup_verification_status,provider_id FROM taxi_trips WHERE booking_id=?").get(bookingId);
+  await rejects(tMutate(stack, bookingId, "decline", { reason: "Vehicle breakdown after handover" }), 409, /safety incident workflow/);
+  assert.deepEqual(stack.sqlite.prepare("SELECT status,pickup_verification_status,provider_id FROM taxi_trips WHERE booking_id=?").get(bookingId), before);
+  assert.equal(stack.sqlite.prepare("SELECT provider_id,status FROM taxi_pickup_handover_events WHERE trip_id=?").get(tripId).status, "confirmed");
+  assert.equal(stack.sqlite.prepare("SELECT COUNT(*) n FROM taxi_recovery_cases WHERE booking_id=?").get(bookingId).n, 0);
 });
 
 test("taxi settlement cannot be prepared for an incomplete trip", async () => {
