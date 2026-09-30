@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import * as h from "./helpers/stay-taxi-latency-harness.mjs";
 
-installWorkersHooks("__STAY_BOOKING_DB__", "__STAY_BOOKING_ENV__");
+installWorkersHooks("__STAY_BOOKING_DB__", "__STAY_BOOKING_ENV__", { authoredRosterFixture: true });
 h.stubGeocoding();
 const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
@@ -81,8 +81,8 @@ test("Boarding: hosts are assigned, replayed and booked exactly as before, and a
   const unvaccinated = await h.timed(w, h.schedulingRequest(w, { clientRequestId: "stay:unvax", petIds: [h.PETS.cat], serviceCode: "boarding", careMode: "visit", preferredProviderId: "stay_host_large", scheduledStart: h.ist(6, 10), scheduledEnd: h.ist(6, 14) }), scheduling.POST);
   same(outcome(unvaccinated), [409, "Boarding requires verified vaccination for every selected pet"], "unvaccinated");
   // The reserve path still publishes the synthetic UAT roster rows it always wrote.
-  const roster = w.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE source='uat_roster' AND provider_id=? ORDER BY date").all(BOARDING_ROUNDS[0][0]);
-  same(roster.map((row) => row.windows_json), BOARDING_ROSTER, "persisted UAT roster");
+  const roster = w.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE source='roster' AND provider_id=? ORDER BY date").all(BOARDING_ROUNDS[0][0]);
+  same(roster.map((row) => row.windows_json), BOARDING_ROSTER, "persisted authored roster");
 });
 
 test("Pet Sitting: SIT-03 overnight exclusivity and the travel buffer refuse and assign exactly as before", async () => {

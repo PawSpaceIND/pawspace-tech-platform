@@ -14,8 +14,8 @@ function fixture(t) {
  const input={cityId:'blr',zoneId:'blr-south',serviceCode:'dog_training',petIds:['dog'],scheduledStart:'2026-10-01T10:00:00+05:30',scheduledEnd:'2026-10-01T11:00:00+05:30',occurrences:12,cadenceDays:7};
  const occurrences=buildOccurrences(input),dates=schedulingDates(occurrences,330);
  const providers=Array.from({length:3},(_,i)=>({id:`trainer-${i}`,name:`Trainer ${i}`,cityId:'blr',model:'commission',qualityScore:90-i,rating:5,capacity:1,maxDailyJobs:4,travelBufferMinutes:30}));
- for(const p of providers){sqlite.prepare('INSERT INTO provider_capacity_profiles VALUES (?,?)').run(p.id,'blr');for(const date of dates)sqlite.prepare('INSERT INTO scheduling_availability VALUES (?,?,?,?,?,?)').run(p.id,'blr','blr-south',date,'["09:00-19:00"]','uat_roster');}
- const repository=()=>{const calendar=schedulingCalendarReads(db,'blr',occurrences,330);return {listEligibleProviders:async()=>providers,getPet:async()=>({id:'dog',species:'dog'}),listBookings:async()=>[],listAvailability:async(id,date)=>(await calendar.availability(id,date)).map(r=>({zoneId:r.zone_id,windows:JSON.parse(r.windows_json)})),providerUnavailableForWindow:calendar.unavailable};};
+ for(const p of providers){sqlite.prepare('INSERT INTO provider_capacity_profiles VALUES (?,?)').run(p.id,'blr');for(const date of dates)sqlite.prepare('INSERT INTO scheduling_availability VALUES (?,?,?,?,?,?)').run(p.id,'blr','blr-south',date,'["09:00-19:00"]','roster');}
+ const repository=()=>{const calendar=schedulingCalendarReads(db,'blr',occurrences,330);return {listEligibleProviders:async()=>providers,getPet:async()=>({id:'dog',species:'dog'}),listBookings:async()=>[],listAvailability:async(id,date)=>(await calendar.availability(id,date)).map(r=>({zoneId:r.zone_id,windows:JSON.parse(r.windows_json),source:r.source})),providerUnavailableForWindow:calendar.unavailable};};
  return {sqlite,input,occurrences,dates,repository,reads:()=>reads};
 }
 
@@ -37,12 +37,12 @@ test('a later reservation reads newly published leave, including offset timestam
  assert.equal(f.reads(),4,'no snapshot is reused between requests');
 });
 
-test('authored roster overrides UAT availability even when authored in another zone',async t=>{
+test('requested-zone authored roster remains authoritative when another authored row exists in a different zone',async t=>{
  const f=fixture(t);
  f.sqlite.prepare('INSERT INTO scheduling_availability VALUES (?,?,?,?,?,?)').run('trainer-0','blr','blr-east',f.dates[5],'["09:00-19:00"]','partner_app');
  const result=await schedule(f.repository(),f.input);
- assert.equal(result.provider.id,'trainer-1');
- assert.match(result.evaluations[0].reasons.join(' '),/outside roster/);
+ assert.equal(result.provider.id,'trainer-0');
+ assert.ok(!result.evaluations[0].reasons.some(reason=>/outside roster/.test(reason)));
 });
 
 test('cleared leave and touching endpoints do not block; database errors fail closed',async t=>{

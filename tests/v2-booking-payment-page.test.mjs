@@ -64,7 +64,7 @@ test("the V2 training recovery banner links to the owned booking & payment page 
 // QA: a V2 Training customer had no way to ask for a new session time or a programme cancellation - "Manage service"
 // opened a payment-return page. These render the manage section from a loaded programme, as the browser first shows it.
 const MANAGE = "../app/v2/booking/training-manage.tsx";
-const trainingSession = (n, status) => ({ id: `TS-${n}`, programme_id: "TP-1", booking_id: "B1", sequence_no: n, provider_id: "train_kiran", scheduled_start: `2026-10-0${n}T04:30:00.000Z`, scheduled_end: `2026-10-0${n}T05:30:00.000Z`, status, attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null });
+const trainingSession = (n, status) => ({ id: `TS-${n}`, programme_id: "TP-1", booking_id: "B1", sequence_no: n, provider_id: "train_kiran", scheduled_start: `2036-10-0${n}T04:30:00.000Z`, scheduled_end: `2036-10-0${n}T05:30:00.000Z`, status, attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null });
 const trainingRecord = (statuses, programme = {}) => ({ programme: { id: "TP-1", booking_id: "B1", provider_id: "train_kiran", plan_code: "obedience-starter", plan_name: "Starter Plan", status: "scheduled", total_sessions: statuses.length, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 0, meet_booking_id: null, pricing_snapshot_json: "{}", ...programme }, sessions: statuses.map((status, index) => trainingSession(index + 1, status)), events: [] });
 async function renderManage(record, inactive = false, now = Date.parse("2026-09-29T00:00:00.000Z")) {
   const { renderToStaticMarkup } = await import("react-dom/server");

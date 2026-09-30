@@ -15,6 +15,7 @@
 .scope.scope [data-audit-list-detail] > aside { max-height:72dvh; overflow-y:auto !important; overscroll-behavior-y:contain; scrollbar-gutter:stable; }
 .scope.scope [data-audit-list-detail] > :is(section,article) { align-self:start; }
 .scope.scope [data-audit-list-detail] > article:has(> hr + p:last-child) { min-height:0 !important; }
+.scope.scope [data-audit-list-detail] > article:has(> p:only-child) { min-height:0 !important; }
 /* F-005: template IDs / Meta references stay inside their cells; the table itself scrolls instead of text painting into neighbours. */
 .scope.scope [aria-label="Templates table; scroll horizontally for all columns"] table { min-width:125rem !important; }
 .scope.scope [aria-label="Templates table; scroll horizontally for all columns"] :is(th,td):nth-child(1) { min-width:34rem !important; }
