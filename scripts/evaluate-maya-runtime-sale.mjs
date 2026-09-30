@@ -51,6 +51,8 @@ try {
   await account.ensureCustomerAccountTables(world.db);
   await (await import('../lib/customer-360.ts')).ensureCustomer360Tables(world.db);
   await (await import('../lib/pricing-control-runtime.ts')).ensurePricingControlRuntime(world.db);
+  // Seed packages are intentionally inactive. Activate only these reviewed defaults in this in-memory fixture.
+  world.sqlite.prepare("UPDATE service_packages SET active=1 WHERE package_code IN ('dog-basic','dog-makeover')").run();
   await orchestrator.ensureAiConversationOrchestrator(world.db);
   const { applyOwnedDdl } = await import('../tests/helpers/ai-harness.mjs');
   for (const owner of ['lib/training-commercial-governance.ts', 'lib/boarding-governance.ts', 'lib/sitting-governance.ts', 'lib/walking-governance.ts', 'lib/taxi-governance.ts']) applyOwnedDdl(world.sqlite, owner);
@@ -95,7 +97,7 @@ try {
   const report = { passed: true, dialed: false, liveDatabaseAccess: false, model, modelCalls, mockedPaymentRequests: paymentRequests, bookingCount: countBookings(), paymentVerified: false, duplicatePrevented: true, premiumCertified: false, modelDrafts, scope: 'Real model plus actual PawSpace runtime against in-memory fixtures; no live booking, payment capture, TTS, delivered checkout or handset certification', turns };
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
   await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify(report, null, 2));
-  console.log('MAYA_RUNTIME_SALE=' + JSON.stringify(report));
+  console.log('MAYA_RUNTIME_SALE=' + JSON.stringify({ ...report, modelDrafts: undefined }));
 } catch (error) {
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
   await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify({ passed: false, dialed: false, liveDatabaseAccess: false, premiumCertified: false, error: error.message, modelCalls, paymentRequests, turns, modelDrafts, fixtureErrors, turnDiagnostics: world.sqlite.prepare('SELECT outcome,policy_decision,handoff_reason,intent_code,intent_confidence,provider FROM ai_conversation_turns').all() }, null, 2));
