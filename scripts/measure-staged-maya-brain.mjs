@@ -1,10 +1,10 @@
 // Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
 import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
-import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt} from './staged-quote-proof.mjs';
+import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt,syntheticQuoteRepairProof,quoteRepairRevision,quoteIncidentStart,quoteIncidentEnd} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
-const env=process.env,inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
+const env=process.env,repairOnly=env.MAYA_BRAIN_PROBE_MODE==='repair_quote_handoff',inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites','repair_quote_handoff'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
 authorizedLaunchTester(env);
 if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||'')||!env.SPECIALIST_CUSTOMER_ID||!env.ELEVENLABS_API_KEY||!env.GROOMING_AGENT_ID)throw Error('Exact demo prerequisites missing');
 const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
@@ -47,6 +47,38 @@ if(quoteOnly){
   rows('SELECT address_id FROM customer_service_address_geocodes WHERE customer_id=?'),
   rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
  ]);
+
+ if(repairOnly){
+  if(env.EXPECTED_SHA!==quoteRepairRevision||pets.length>=20)throw Error('Verified repair revision required');
+  const handoffs=await rows("SELECT * FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active')");
+  if(handoffs.length!==1)throw Error('Exact synthetic quote incident not proven');
+  const h=handoffs[0];console.log(actionsMaskCommand(h.thread_id));console.log(actionsMaskCommand(h.id));
+  const [calls,turns,laterMessages,pending]=await Promise.all([
+   rows("SELECT * FROM ai_voice_calls WHERE customer_id=? AND thread_id=? AND started_at>=? AND started_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart,quoteIncidentEnd]),
+   rows("SELECT t.*,m.payload_json,m.direction,m.created_by input_actor,m.channel input_channel,m.provider input_provider FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id WHERE t.customer_id=? AND t.thread_id=? AND t.created_at>=? AND t.created_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart,quoteIncidentEnd]),
+   rows("SELECT payload_json,created_by,channel FROM communication_messages WHERE customer_id=? AND thread_id=? AND direction='inbound' AND created_at>=? ORDER BY created_at LIMIT 20",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart]),
+   rows("SELECT id FROM voice_sales_offers WHERE customer_id=? AND thread_id=? AND status='pending' AND expires_at>=?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,Date.now()]),
+  ]);
+  const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);if(!selected)throw Error('Exact synthetic quote incident not proven');
+  const expectedPrompt=savedQuotePrompt(pets,addresses,geocodes,quoteIncidentStart,selected.id);
+  const proof=syntheticQuoteRepairProof({revision:env.EXPECTED_SHA,customerId:env.SPECIALIST_CUSTOMER_ID,handoffs,calls,turns,expectedPrompt});
+  if(!laterMessages.length||laterMessages.length>=20||pending.length||laterMessages.some(m=>{let payload;try{payload=JSON.parse(m.payload_json);}catch{return true;}const text=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());return text?.trim()!==expectedPrompt.trim()||m.channel!=='voice'||m.created_by!=='elevenlabs-voice@system.pawspace';}))throw Error('Later customer activity prevents synthetic cleanup');
+  async function handoffApi(body){const path='/api/ai-human-handoff'+(body?'':'?threadId='+encodeURIComponent(h.thread_id)+'&customerId='+encodeURIComponent(env.SPECIALIST_CUSTOMER_ID));const r=await fetch(origin+path,{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Governed synthetic cleanup refused');return b.data;}
+  await isolation();const snapshot=await handoffApi();
+  if(snapshot?.current?.id!==h.id||snapshot.current.status!=='queued'||snapshot.current.reason!=='policy_risk'||snapshot.current.taken_over_by!=null||snapshot.current.taken_over_at!=null||!Array.isArray(snapshot.events)||snapshot.events.length!==1||snapshot.events[0].event_type!=='handoff_requested')throw Error('Synthetic handoff changed; no cleanup performed');
+  const reason='Reset only the self-generated unconfirmed-quote policy false-positive from sandbox probe 36786494207 after verified quote-parser repair; no phone outreach';
+  const body={threadId:h.thread_id,customerId:env.SPECIALIST_CUSTOMER_ID,reason};
+  const taken=await handoffApi({...body,action:'take_over'});
+  if(taken?.handoff?.id!==h.id||taken.handoff.status!=='staff_active'||taken.handoff.taken_over_by!=='founder@pawspace.in')throw Error('Explicit staff takeover not verified; AI remains paused');
+  await isolation();const claimed=await handoffApi();
+  if(claimed?.current?.id!==h.id||claimed.current.status!=='staff_active'||claimed.events?.length!==2||claimed.events[1].event_type!=='staff_takeover'||claimed.events[1].actor_email!=='founder@pawspace.in'||JSON.parse(claimed.events[1].detail_json||'{}').reason!==reason)throw Error('Staff handoff changed; AI remains paused');
+  await handoffApi({...body,action:'resume_ai'});const verified=await handoffApi();
+  if(verified?.aiPaused!==false||verified.current?.id!==h.id||verified.current.status!=='resumed'||verified.current.resumed_by!=='founder@pawspace.in'||verified.events?.length!==3||verified.events[2].event_type!=='ai_resumed')throw Error('Governed cleanup readback not verified');
+  const [bookingsAfter,paymentsAfter,addressesAfter,reservationsAfter]=await Promise.all([bookingIds(),paymentIds(),rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC'),rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id')]);
+  if(JSON.stringify(before)!==JSON.stringify(bookingsAfter)||JSON.stringify(paymentsBefore)!==JSON.stringify(paymentsAfter)||JSON.stringify(addresses)!==JSON.stringify(addressesAfter)||JSON.stringify(groups)!==JSON.stringify(reservationsAfter))throw Error('Synthetic cleanup business readback changed');
+  await isolation();const report={revision:env.EXPECTED_SHA,...proof,governedStaffTakeoverVerified:true,governedResumeVerified:true,phoneCallsPaused:true,businessReadbacksUnchanged:true,bookingCreated:false,paymentCaptured:false,modelRequested:false,externalMessageSent:false,premiumCertified:false};
+  await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('SYNTHETIC_QUOTE_CLEANUP='+JSON.stringify(report));process.exit(0);
+ }
  const prerequisites=savedQuotePrerequisites(pets,addresses,geocodes);
  console.log('SAVED_QUOTE_PREREQUISITES='+JSON.stringify(prerequisites));
  if(inspectOnly){

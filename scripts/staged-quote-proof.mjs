@@ -42,3 +42,19 @@ export function safeBrainTiming(input){
  for(const key of marks){const v=input[key];if(v!==undefined){if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>120000)throw Error('Staged timing evidence invalid');out[key]=v;}}
  return out;
 }
+
+// One known self-generated sandbox incident only; never accepts arbitrary staff/customer cases.
+export const quoteRepairRevision='1e62e969512b70614e8badcc8fdb3c7bbd4140a6';
+export const quoteIncidentStart=Date.parse('2026-09-30T22:36:19Z');
+export const quoteIncidentEnd=Date.parse('2026-09-30T22:36:24Z');
+export function syntheticQuoteRepairProof({revision,customerId,handoffs,calls,turns,expectedPrompt}){
+ const refuse=()=>{throw Error('Exact synthetic quote incident not proven');};
+ if(revision!==quoteRepairRevision||!customerId||typeof expectedPrompt!=='string'||expectedPrompt.length>2000||!Array.isArray(handoffs)||handoffs.length!==1||!Array.isArray(calls)||calls.length!==1||!Array.isArray(turns)||turns.length!==1)refuse();
+ const h=handoffs[0],c=calls[0],t=turns[0];
+ const incidentTime=x=>typeof x==='number'&&Number.isFinite(x)&&x>=quoteIncidentStart&&x<quoteIncidentEnd;
+ if(h.customer_id!==customerId||c.customer_id!==customerId||t.customer_id!==customerId||h.thread_id!==c.thread_id||h.thread_id!==t.thread_id||!h.session_id||h.session_id!==t.session_id||!/^AIHO-[a-f0-9-]{36}$/.test(h.id||'')||h.requested_by!=='elevenlabs-voice@system.pawspace'||h.status!=='queued'||h.reason!=='policy_risk'||h.taken_over_by!=null||h.taken_over_at!=null||h.resumed_by!=null||h.resumed_at!=null||!incidentTime(h.created_at)||!incidentTime(c.started_at)||!incidentTime(t.created_at)||c.transport_provider!=='sandbox_simulator'||c.direction!=='inbound'||c.consent_status!=='verified'||c.created_by!=='founder@pawspace.in'||c.status!=='failed'||t.outcome!=='handoff'||t.policy_decision!=='blocked_high_impact'||t.handoff_reason!=='policy_risk'||t.direction!=='inbound'||t.input_actor!=='elevenlabs-voice@system.pawspace'||t.input_channel!=='voice'||t.input_provider!=='elevenlabs')refuse();
+ let payload;try{payload=JSON.parse(t.payload_json);}catch{refuse();}
+ const actual=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());
+ if(actual?.trim()!==expectedPrompt.trim())refuse();
+ return{singleKnownSyntheticIncident:true,staffTakeoverObserved:false,exactInputVerified:true,governedStaffResumeRequired:true,dialed:false};
+}
