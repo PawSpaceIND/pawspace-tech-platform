@@ -70,3 +70,15 @@ checks, without revealing any other matched account.
 The legacy runtime defaults `groom_arun`, `groom_kiran`, `groom_sanjay`, `train_kiran`, `train_ramesh` and `train_meera` can be selected under the UAT identity exemption without a canonical-provider phone row. `loadGovernedProviders` uses the capacity record, while `governedUatSeedFixture` explicitly recognizes these IDs; the staging SQL supplies their home bases. A missing canonical phone/login therefore does not prove they are unselectable.
 
 Those identities are deliberately not invented or omitted from this attestation. If hosted rows cannot be matched to documented synthetic contacts, the result stays unproven. A separately authorized fully isolated fixture database or independently verified complete fixture identity provision may be necessary before automatic assignment testing. This read-only change does neither and does not alter active voice configuration.
+
+## Preserve the explicit phone-test pause
+
+The diagnostic staging configuration also retains the separately reviewed phone-stop control from
+12a1b3eff4270145a2c414fd7ebab5220bb58011. The deploy workflow passes the existing repository/environment
+variable PAWSPACE_VOICE_PHONE_TESTS_PAUSED. When true, stage-config explicitly disables voice mode,
+UAT/native/self-test/autorun/sales approvals; the outbound gate refuses even an otherwise approved
+call. This import does not set the hosted variable or alter live configuration by itself.
+The operator must verify the variable is true and the resulting runtime pause before deploying or
+running the synthetic booking. The attestation's voiceNotLive check alone is not proof of this pause.
+The merged configuration regression proves the pause does not remove Worker version metadata or
+exact build-SHA attestation. It uses local config generation and fake-provider gate tests, never calls.

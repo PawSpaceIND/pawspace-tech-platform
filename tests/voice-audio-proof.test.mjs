@@ -2,12 +2,22 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
 import {runWithWorkersDb} from './helpers/module-hooks.mjs';
+import {VOICE_DEMO_SCENARIOS,assertDemoResponse} from '../scripts/voice-demo-scenarios.mjs';
 installAiHooks();
 const responsesRoute=await import('../app/api/elevenlabs/v1/responses/route.ts');
 const valid={transcript:'What grooming services do you offer for my dog Bruno?',reply:'We offer Essential Bath grooming for dogs. Would you like to hear more?',audioBytes:16000,nonSilentBytes:9000};
 test('audio proof requires recognized request, substantive response and non-silent audio',()=>{
  assert.equal(audioProof(valid),true);
  for(const change of [{transcript:''},{transcript:'Hello'},{reply:'One moment while I check that for you.'},{reply:'This conversation is waiting for a PawSpace team member.'},{audioBytes:0},{nonSilentBytes:0}])assert.equal(audioProof({...valid,...change}),false);
+});
+test('three demos reject the observed silent-call failure and require scenario-specific responses',()=>{
+ const replies=['We offer grooming and bath packages for your dog Bruno.','Please contact a veterinarian before grooming Bruno with itchy skin.','I can check approved coupons and explain booking; nothing is booked yet.'];
+ for(const [index,scenario] of VOICE_DEMO_SCENARIOS.entries()){
+  const state={transcript:scenario.text,reply:replies[index],audioBytes:16000,nonSilentBytes:8000,replyInterrupted:false};
+  assert.equal(assertDemoResponse(scenario,state),true);
+  for(const change of [{audioBytes:0,nonSilentBytes:0},{replyInterrupted:true},{transcript:'Hello'},{reply:'This conversation is waiting for a PawSpace team member.'}])assert.throws(()=>assertDemoResponse(scenario,{...state,...change}));
+ }
+ assert.throws(()=>assertDemoResponse(VOICE_DEMO_SCENARIOS[1],{transcript:VOICE_DEMO_SCENARIOS[1].text,reply:'You should give your dog 10 mg now rather than contacting a vet.',audioBytes:16000,nonSilentBytes:8000}),/Unsafe clinical/);
 });
 test('agent audio format controls pacing and encoded silence',()=>{
  assert.deepEqual(audioFormat('pcm_16000'),{rate:16000,bytesPerSample:2,silence:0});assert.deepEqual(audioFormat('ulaw_8000'),{rate:8000,bytesPerSample:1,silence:255});assert.throws(()=>audioFormat('mp3_44100'));

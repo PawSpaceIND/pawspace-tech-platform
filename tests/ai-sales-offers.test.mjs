@@ -106,6 +106,18 @@ test("the web chat and WhatsApp prompts carry the coupon rules without overridin
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /Never invent, guess or alter a coupon code/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /authorized sales lever stated elsewhere/);
   assert.match(runtime.WEB_CHAT_SALES_DIRECTIVE, /approvedOffers/);
+  assert.match(runtime.pawspaceChannelSystemPrompt("voice"), /For a non-urgent medical concern/);
+  assert.equal(runtime.isPetMedicalQuestion("My cat is vomiting"), true);
+  for (const question of [
+    "My dog has a lump", "My rabbit has ear discharge", "My bird is losing weight",
+    "My puppy ate chocolate", "There is blood in my cat's urine",
+  ]) assert.equal(runtime.isPetMedicalQuestion(question), true, question);
+  assert.equal(runtime.isPetMedicalQuestion("How much for grooming?"), false);
+  assert.match(runtime.ensureVeterinaryReferral("It could have several causes.", true), /contact a veterinarian/);
+  assert.equal(runtime.ensureVeterinaryReferral("Please contact a veterinarian today.", true), "Please contact a veterinarian today.");
+  assert.doesNotMatch(runtime.safePetMedicalReply("Book grooming with a coupon now.", true), /coupon|grooming/i);
+  assert.match(runtime.safePetMedicalReply("Skin redness can have several causes.", true), /contact a veterinarian/);
+  assert.doesNotMatch(runtime.safePetMedicalReply("Here is your checkout.", true, true), /checkout/i);
 });
 
 test("an approved '₹N off' only counts in the sentence that names its code", async () => {

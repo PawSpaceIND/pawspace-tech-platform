@@ -121,9 +121,13 @@ test("web chat: an offer the server cannot quote is said back to the customer, n
   assert.equal(bookings(w).length, 0);
 });
 
-test("a coupon is refused on voice, and booking.create never takes a coupon quote outside a confirmed offer", async (t) => {
+test("voice accepts only a governed coupon proposal, and booking.create never takes a coupon quote outside a confirmed offer", async (t) => {
   const w = await world(t);
-  await assert.rejects(sales.prepareVoiceSalesOffer(w.db, { actor, threadId: w.threadId, customerId: w.customerId, service: "grooming", turnKey: "voice-coupon", actions: plan(w, { couponCode: "GROOM200" }) }), (e) => e instanceof Response && e.status === 400);
+  const offer = await sales.prepareVoiceSalesOffer(w.db, { actor, threadId: w.threadId, customerId: w.customerId, service: "grooming", turnKey: "voice-coupon", actions: plan(w, { couponCode: "GROOM200" }) });
+  assert.match(offer.summary, /Coupon GROOM200/);
+  const stored = JSON.parse(w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id).quote_json);
+  assert.equal(w.sqlite.prepare("SELECT channel FROM coupon_quotes WHERE id=?").get(stored.coupon.quoteId).channel, "whatsapp");
+  assert.equal(bookings(w).length, 0);
   const quote = await coupons.quoteCoupon(w.db, { code: "GROOM200", customerId: w.customerId, serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
   assert.equal(quote.valid, true);
   await assert.rejects(controlPlane.executeGovernedConversationTool(w.db, { actor, threadId: w.threadId, customerId: w.customerId, channel: "chat", intent: "booking_create", toolCode: "booking.create", arguments: { scheduleGroupId: "GROUP-NONE", petIds: [w.petId], packageCode: "dog-basic", paymentMode: "prepaid", couponQuoteId: quote.quoteId }, idempotencyKey: "guessed-coupon", customerConfirmed: true }), (e) => e instanceof Response);

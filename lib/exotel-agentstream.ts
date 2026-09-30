@@ -157,7 +157,11 @@ function wavFromPcm16le(pcm: Uint8Array, sampleRate: number) {
 }
 
 async function responseBytes(result: unknown): Promise<Uint8Array> {
-  if (result instanceof Response) return new Uint8Array(await result.arrayBuffer());
+  if (result instanceof Response) {
+    if (!result.ok) throw new Error(`TTS provider refused audio (${result.status})`);
+    if (result.headers.get("content-type")?.includes("application/json")) return responseBytes(await result.json());
+    return new Uint8Array(await result.arrayBuffer());
+  }
   if (result instanceof Uint8Array) return result;
   if (result instanceof ArrayBuffer) return new Uint8Array(result);
   if (result instanceof ReadableStream) return new Uint8Array(await new Response(result).arrayBuffer());
@@ -318,14 +322,16 @@ async function synthesizeLinear16(env: Env, output: string, sampleRate: number) 
   const result = await ai(env).run(model, { text: output, encoding: "linear16", container: "none", sample_rate: sampleRate, speaker: text(env.VOICE_CARRIER_TTS_SPEAKER) || "luna" }, { returnRawResponse: true });
   let audio = await responseBytes(result);
   if (audio.byteLength % 2) audio = audio.subarray(0, audio.byteLength - 1);
+  if (!audio.byteLength) throw new Error("TTS model returned no audio bytes");
   return { audio, latencyMs: Date.now() - started };
 }
 
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
-  // Exotel documents chunks as multiples of 320 bytes. Pad only the terminal chunk with digital silence.
+  // Exotel requires 3,200–100,000 bytes per media message, in multiples of 320.
+  // The terminal frame also needs the minimum size; pad its remainder with digital silence.
   for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
     const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
-    const paddedLength = Math.ceil(raw.byteLength / 320) * 320;
+    const paddedLength = Math.max(outboundFrameBytes, Math.ceil(raw.byteLength / 320) * 320);
     const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
     socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
   }
@@ -342,8 +348,9 @@ async function recordTransportInterruption(env: Env, session: Session | null, re
 async function closeSession(env: Env, session: Session | null, reason: string) {
   if (!session) return;
   const now = Date.now();
+  const failed = reason === "agentstream_error";
   await env.DB.batch([
-    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN 'completed' ELSE status END,outcome=COALESCE(outcome,'carrier_ended'),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(reason, now, session.aiCallId),
+    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN ? ELSE status END,outcome=COALESCE(outcome,?),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(failed ? "failed" : "completed", failed ? "provider_failure" : "carrier_ended", reason, now, session.aiCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), session.aiCallId, "agentstream_stopped", JSON.stringify({ reason }), now),
   ]).catch(() => undefined);
   try {
@@ -368,22 +375,29 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   let providerPromise: Promise<AiResponseProvider> | null = null;
   let speechParts: Uint8Array[] = [], preRoll: Uint8Array[] = [], speechStartedAt = 0, silenceMs = 0, assistantPlaying = false;
   let chain = Promise.resolve();
+  // Record the failing operation without logging transcripts, provider messages or credentials.
+  let processingPhase = "waiting";
 
   const processUtterance = async (pcm: Uint8Array, active: Session) => {
     const turnStarted = Date.now();
+    processingPhase = "transcribe";
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) return;
     const llmStarted = Date.now();
+    processingPhase = "generate_reply";
     providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId,salesService:active.salesService});
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
+    processingPhase = "synthesize_reply";
     const tts = await synthesizeLinear16(env, generated.output, active.sampleRate);
     const assistantSegment = recordSegment(env, active, "assistant", generated.output, null, null);
     const totalMs = Date.now() - turnStarted;
     const markName = `turn-${active.segmentIndex}-end`;
     assistantPlaying = true;
+    processingPhase = "send_reply_audio";
     sendAudio(server, active, tts.audio, markName);
+    processingPhase = "record_reply";
     await assistantSegment;
     const diagnostics = nativeVoiceTurnDiagnostics({
       configuredSttLanguage: active.language,
@@ -414,18 +428,24 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "connected") return;
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
+        processingPhase = "establish_session";
         session = await establishSession(env, incoming.start || {});
         if (!session.reconnected) {
+          processingPhase = "synthesize_greeting";
           const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
+          processingPhase = "record_greeting";
           await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
           assistantPlaying = true;
+          processingPhase = "send_greeting_audio";
           sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
         }
+        processingPhase = "waiting_for_speech";
         return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
       if (kind === "stop") { const active = session; await closeSession(env, active, text(incoming.stop?.reason) || "callended"); session = null; server.close(1000, "Call ended"); return; }
       if (kind !== "media" || !session) return;
+      processingPhase = "receive_audio";
       const payload = text(incoming.media?.payload);
       if (!payload) return;
       let pcm: Uint8Array;
@@ -453,6 +473,13 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       }
     }).catch(async error => {
       const active = session;
+      if (active) {
+        const name = String((error as Error)?.name || "");
+        const errorClass = ["Error", "TypeError", "RangeError", "InvalidStateError", "AbortError", "TimeoutError"].includes(name) ? name : "UnknownError";
+        await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
+          .bind(crypto.randomUUID(), active.aiCallId, "agentstream_processing_failed", JSON.stringify({ phase: processingPhase, errorClass }), Date.now())
+          .run().catch(() => undefined);
+      }
       await closeSession(env, active, "agentstream_error");
       try { server.close(1011, text((error as Error)?.message).slice(0, 100) || "AgentStream processing failed"); } catch {}
     });

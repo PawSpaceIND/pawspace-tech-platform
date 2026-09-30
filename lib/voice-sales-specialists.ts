@@ -100,7 +100,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
  onlyKeys(schedule, ["serviceCode", "petIds", "serviceAddress", "servicePincode", "scheduledStart", "scheduledEnd", "cadenceDays", "weekdays", "occurrences"]);
  onlyKeys(booking, ["petIds", "packageCode", "paymentMode", "requirements", "couponCode"]);
  const couponCode = text(booking.couponCode).toUpperCase(); delete booking.couponCode;
- if (couponCode && (input.service !== "grooming" || (input.channel ?? "voice") === "voice")) throw refusal("Coupons are applied only to Grooming offers in web chat and WhatsApp", 400); onlyKeys(object(input.actions[2].arguments), []);
+ if (couponCode && input.service !== "grooming") throw refusal("This sales checkout applies coupons only to eligible Grooming offers", 400); onlyKeys(object(input.actions[2].arguments), []);
  if (text(schedule.serviceCode) !== input.service) throw refusal("The proposal does not belong to this sales specialist", 403);
  const ids = petIds(schedule.petIds), bookingPets = petIds(booking.petIds);
  if (JSON.stringify([...ids].sort()) !== JSON.stringify([...bookingPets].sort())) throw refusal("Booking pets differ from the proposed appointment", 400);
@@ -126,7 +126,9 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   const { resolveGovernedServiceAddress } = await import("./service-discovery-address");
   const address = await resolveGovernedServiceAddress(db, { customerId: input.customerId, serviceCode: input.service, serviceAddress: text(schedule.serviceAddress), servicePincode: text(schedule.servicePincode) });
   quote = await quoteGroomingBookingWithLiveMultiPet(db, { packageCode: text(booking.packageCode), packageName: "", pets: pets.map(p => ({ species: text(p.species) as "dog" | "cat" | "other" })), paymentMode: mode, cityId: address.cityId, zoneId: address.zoneId, scheduledStart: start.toISOString() });
-  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote, channel: input.channel === "whatsapp" ? "whatsapp" : "website" }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
+  // Voice checkout is delivered over WhatsApp. Use that channel's campaign eligibility,
+  // then let the canonical coupon engine calculate the only permitted discounted total.
+  if (couponCode) { const coupon = await quoteSalesCoupon(db, { code: couponCode, customerId: input.customerId, cityId: address.cityId, quote, channel: input.channel === "chat" ? "website" : "whatsapp" }); quote = { ...quote, coupon }; booking.couponQuoteId = coupon.quoteId; }
  }
  const { executeGovernedSchedulingRequest } = await import("../app/api/uat-scheduling/route");
  const response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor);
