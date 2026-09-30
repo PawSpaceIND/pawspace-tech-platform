@@ -394,7 +394,7 @@ jobs:
   # particular build to still be live is a race this cannot reliably win. The provider is the same
   # one the Worker calls, so time-to-first-token measured here is the floor the voice turn can reach.
   measure-staged-maya-brain:
-    if: ${{ inputs.confirm == 'measure-staged-maya-brain' }}
+    if: ${{ inputs.confirm == 'measure-staged-maya-brain' || inputs.confirm == 'probe-staged-maya-quote' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency:
@@ -407,8 +407,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Measure actual staged brain timings without dialing
+      - name: Validate saved-quote evidence guards without provider requests
+        run: node --experimental-strip-types --test tests/staged-quote-proof.test.mjs
+      - name: Measure actual staged brain timings or prepare an unconfirmed quote without dialing
         env:
+          MAYA_BRAIN_PROBE_MODE: ${{ inputs.confirm == 'probe-staged-maya-quote' && 'quote_only' || 'timing' }}
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}

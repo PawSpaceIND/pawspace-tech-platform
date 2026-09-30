@@ -1,33 +1,35 @@
-// Actual isolated staged brain timings; no phone call or booking instructions.
+// Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
+import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
+import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
-const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
+const env=process.env,quoteOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_only',origin='https://pawspace-staging.karthik-fce.workers.dev';
 authorizedLaunchTester(env);
 if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||'')||!env.SPECIALIST_CUSTOMER_ID||!env.ELEVENLABS_API_KEY||!env.GROOMING_AGENT_ID)throw Error('Exact demo prerequisites missing');
 const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
 if(!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].includes(eleven))throw Error('Approved voice provider region required');
 const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
 const cf='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
-async function readCf(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||b.success!==true)throw Error('Staging verification failed');return b.result;}
+async function readCf(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok||b.success!==true)throw Error('Staging verification failed');return b.result;}
 async function isolation(verifyRuntime=true){
  const db=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID));if(db.name!=='pawspace-staging'||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Isolated demo database required');
  const settings=await readCf('/workers/scripts/pawspace-staging/settings');
  if(settings.annotations?.['workers/message']!=='staging '+env.EXPECTED_SHA)throw Error('Demo staging revision changed');
  const vars=Object.fromEntries(settings.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
  assertDemoPhonePauseMetadata(vars);
- if(verifyRuntime){const readiness=await fetch(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),body=await readiness.json();if(!readiness.ok)throw Error('Authenticated runtime phone-shutdown read refused');assertDemoRuntimePhonePause(vars,body.data?.gate);}
+ if(verifyRuntime){const readiness=await fetch(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),body=await readDemoJson(readiness);if(!readiness.ok)throw Error('Authenticated runtime phone-shutdown read refused');assertDemoRuntimePhonePause(vars,body.data?.gate);}
  if(vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true'||!settings.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Demo sandbox bindings not proven');
 }
 async function paymentIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM booking_payments WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});if(!Array.isArray(rows)||rows.length!==1||rows[0]?.success===false||!Array.isArray(rows[0]?.results))throw Error('Business-state readback refused');return rows[0].results.map(x=>x.id);}
 async function bookingIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM canonical_bookings WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});if(!Array.isArray(rows)||rows.length!==1||rows[0]?.success===false||!Array.isArray(rows[0]?.results))throw Error('Business-state readback refused');return rows[0].results.map(x=>x.id);}
 await isolation(false);
-const configResponse=await fetch(eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await configResponse.json();
+const configResponse=await fetch(eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await readDemoJson(configResponse);
 if(!configResponse.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Demo must use the actual PawSpace staging brain');
 const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.timeout(20000)});
 const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(login.status!==200||!cookie.startsWith('pawspace_uat='))throw Error('Authenticated demo login refused');
 await isolation();
-async function app(body){const r=await fetch(origin+'/api/ai-voice-uat',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok)throw Error('Governed simulator request refused ('+r.status+')');return b.data;}
+async function app(body){const r=await fetch(origin+'/api/ai-voice-uat',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Governed simulator request refused ('+r.status+')');return b.data;}
 const identity=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT primary_phone FROM canonical_customers WHERE id=?',params:[env.SPECIALIST_CUSTOMER_ID]});
 const customerPhone=String(identity[0]?.results?.[0]?.primary_phone||'').replace(/\D/g,'');
 const testerPhone=authorizedLaunchTester(env).replace(/\D/g,'');
@@ -35,28 +37,50 @@ if(![testerPhone,testerPhone.slice(2)].includes(customerPhone))throw Error('Demo
 
 if(!env.ELEVENLABS_LLM_SECRET)throw Error('Staged brain authentication missing');
 const before=await bookingIds(),paymentsBefore=await paymentIds();
+async function rows(sql,params=[env.SPECIALIST_CUSTOMER_ID]){const data=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql,params});if(!Array.isArray(data)||data.length!==1||data[0]?.success===false||!Array.isArray(data[0]?.results))throw Error('Owned quote readback refused');return data[0].results;}
+const ordinaryPrompts=['My dog Bruno needs a full bath and a full body haircut. Which one-time grooming package fits that?','I am considering boarding for Bruno for two nights. What information would you need?','No extras please. I only want the grooming information.'];
+let prompts=ordinaryPrompts,addressesBefore=[],reservationsBefore=[];
+if(quoteOnly){
+ const [pets,addresses,geocodes,groups]=await Promise.all([
+  rows('SELECT id,name,species FROM canonical_pets WHERE customer_id=? ORDER BY created_at LIMIT 6'),
+  rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC'),
+  rows('SELECT address_id FROM customer_service_address_geocodes WHERE customer_id=?'),
+  rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
+ ]);
+ addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;prompts=[savedQuotePrompt(pets,addresses,geocodes)];
+}
 const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});
-console.log('::add-mask::'+context.callId);console.log('::add-mask::'+context.threadId);
+validateDemoContext(context);console.log(actionsMaskCommand(context.callId));console.log(actionsMaskCommand(context.threadId));
 if(!context.callId||!context.threadId)throw Error('Governed timing context missing');
-const results=[];
+const results=[];let quoteProof=null;
 try{
- for(const prompt of ['My dog Bruno needs a full bath and a full body haircut. Which one-time grooming package fits that?','I am considering boarding for Bruno for two nights. What information would you need?','No extras please. I only want the grooming information.']){
+ if(quoteOnly){const pending=await rows("SELECT id FROM voice_sales_offers WHERE customer_id=? AND thread_id=? AND status='pending' AND expires_at>=?",[env.SPECIALIST_CUSTOMER_ID,context.threadId,Date.now()]);if(pending.length)throw Error('Active customer quote prevents isolated preparation');}
+ for(const prompt of prompts){
   await isolation();const started=Date.now();
   const response=await fetch(origin+'/api/elevenlabs/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env.ELEVENLABS_LLM_SECRET},body:JSON.stringify({model:config.conversation_config.agent.prompt.custom_llm.model_id,input:prompt,elevenlabs_extra_body:{pawspace_customer_id:env.SPECIALIST_CUSTOMER_ID,pawspace_thread_id:context.threadId}}),signal:AbortSignal.timeout(30000)});
   if(!response.ok||!response.body)throw Error('Staged brain probe refused');
-  const headersMs=Date.now()-started;let firstDeltaMs=null,buffer='',completed=null,failed=false;const decoder=new TextDecoder();
-  for await(const chunk of response.body){buffer+=decoder.decode(chunk,{stream:true});let newline;
+  const headersMs=Date.now()-started;let firstDeltaMs=null,buffer='',completed=null,failed=false,reply='',receivedBytes=0;const decoder=new TextDecoder();
+  for await(const chunk of response.body){receivedBytes+=chunk.byteLength;if(receivedBytes>128*1024)throw Error('Staged brain response exceeds evidence limit');buffer+=decoder.decode(chunk,{stream:true});let newline;
    while((newline=buffer.indexOf('\n'))!==-1){const line=buffer.slice(0,newline).trim();buffer=buffer.slice(newline+1);if(!line.startsWith('data: {'))continue;const event=JSON.parse(line.slice(6));
-    if(event.type==='response.output_text.delta'&&String(event.delta||'').trim()&&firstDeltaMs===null)firstDeltaMs=Date.now()-started;
+    if(event.type==='response.output_text.delta'){reply+=String(event.delta||'');if(reply.length>12000)throw Error('Staged brain reply exceeds evidence limit');if(reply.trim()&&firstDeltaMs===null)firstDeltaMs=Date.now()-started;}
     if(event.type==='response.failed')failed=true;
     if(event.type==='response.completed')completed=event.response;
    }
   }
   if(failed||!completed||firstDeltaMs===null||!completed.pawspace_timing)throw Error('Staged brain probe did not complete with timing evidence');
   if(JSON.stringify(before)!==JSON.stringify(await bookingIds())||JSON.stringify(paymentsBefore)!==JSON.stringify(await paymentIds()))throw Error('Informational timing probe changed booking or payment sets');
-  results.push({prompt,headersMs,firstValidatedDeltaMs:firstDeltaMs,totalMs:Date.now()-started,timing:completed.pawspace_timing});
+  if(quoteOnly){
+   const [offers,addresses,groups]=await Promise.all([
+    rows('SELECT status,service_code,summary,expires_at,quote_json FROM voice_sales_offers WHERE customer_id=? AND thread_id=? ORDER BY created_at',[env.SPECIALIST_CUSTOMER_ID,context.threadId]),
+    rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY id'),
+    rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
+   ]);
+   if(JSON.stringify(addressesBefore)!==JSON.stringify(addresses)||JSON.stringify(reservationsBefore)!==JSON.stringify(groups))throw Error('Quote changed address or reservation records');
+   quoteProof=pendingQuoteProof(offers.filter(x=>Number(x.expires_at)>=Date.now()&&x.status==='pending'),reply);
+  }
+  results.push({prompt:quoteOnly?'Saved-address unconfirmed Grooming quote (private intake omitted)':prompt,headersMs,firstValidatedDeltaMs:firstDeltaMs,totalMs:Date.now()-started,timing:safeBrainTiming(completed.pawspace_timing)});
  }
- await isolation();await app({action:'complete',callId:context.callId,outcome:'synthetic_timing_probe',disposition:'info_shared'});
- const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,bookingSetUnchanged:true,paymentSetUnchanged:true,scope:'Actual staged brain timings; excludes ASR, TTS and handset',results};
+ await isolation();await app({action:'complete',callId:context.callId,outcome:quoteOnly?'synthetic_quote_only_probe':'synthetic_timing_probe',disposition:'info_shared'});
+ const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,bookingSetUnchanged:true,paymentSetUnchanged:true,scope:quoteOnly?'Actual staged unconfirmed saved-address quote only; no customer confirmation, delivered checkout, capture, assignment or audio certification':'Actual staged brain timings; excludes ASR, TTS and handset',...(quoteOnly?{quoteProof,addressSetUnchanged:true,reservationRecordsUnchanged:true}:{}),results};
  await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('STAGED_BRAIN_TIMINGS='+JSON.stringify(report));
-}catch(error){await app({action:'transport_failure',callId:context.callId,reason:'synthetic_timing_probe_failed',reconnected:false}).catch(()=>{});throw error;}
+}catch(error){await app({action:'transport_failure',callId:context.callId,reason:quoteOnly?'synthetic_quote_only_probe_failed':'synthetic_timing_probe_failed',reconnected:false}).catch(()=>{});throw Error('Staged brain verification failed; no phone call or confirmation was sent');}
