@@ -3,7 +3,7 @@ const key=String(process.env.ELEVENLABS_API_KEY||'').trim();
 if(!key)throw new Error('ElevenLabs API key is required for voice discovery');
 
 const languages=[
- ['hi','Hindi'],['ta','Tamil'],['ml','Malayalam'],['te','Telugu'],
+ ['en','English'],['hi','Hindi'],['ta','Tamil'],['ml','Malayalam'],['te','Telugu'],
  ['pa','Punjabi'],['mr','Marathi'],['bn','Bengali'],['kn','Kannada'],
 ];
 

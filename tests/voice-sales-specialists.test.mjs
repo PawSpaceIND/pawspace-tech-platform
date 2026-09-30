@@ -42,7 +42,7 @@ async function refuse(p,status){await assert.rejects(p,e=>e instanceof Response&
 
 test("two fixed sales profiles are distinct and unknown model IDs stay generic",()=>{
  assert.equal(sales.voiceSalesService("pawspace-grooming-sales"),"grooming");assert.equal(sales.voiceSalesService("pawspace-training-sales"),"dog_training");assert.equal(sales.voiceSalesService("toString"),undefined);
- const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/automated checkout cannot execute that mode yet/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
+ const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/does not grant new action permissions/i);assert.match(groomingPrompt,/automated voice checkout remains prepaid-only/i);assert.match(groomingPrompt,/offer a human teammate/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
  for(const value of ["yes", "Yes, please", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
  for(const value of ["no", "yes but tomorrow", "yes for a different dog", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
 });
@@ -53,6 +53,14 @@ test("one-time grooming quote -> explicit confirmation -> canonical booking/orde
  const result=await confirm(w,offer.id);assert.ok(result.bookingId);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);assert.equal(result.paymentVerified,false);assert.equal(result.paymentLinkDelivered,false);
  assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(result.bookingId).status,"payment_pending");
  const repeat=await confirm(w,offer.id);assert.equal(repeat.duplicatePrevented,true);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});
+
+test("voice prepaid Grooming queues secure WhatsApp checkout without claiming delivery or payment",async t=>{
+ const w=await world(t),offer=await prepare(w,"prepaid-whatsapp"),result=await confirm(w,offer.id);
+ assert.ok(result.bookingId);assert.ok(result.orderId);assert.equal(result.paymentVerified,false);assert.equal(result.paymentLinkDelivered,false);assert.equal(result.paymentLinkQueued,true);assert.equal(result.payLink,null);
+ const message=w.sqlite.prepare("SELECT * FROM communication_messages WHERE id=?").get(result.paymentMessageId);
+ assert.ok(message);assert.equal(message.channel,"whatsapp");assert.equal(message.purpose,"transactional");assert.equal(message.template_key,"voice_booking_checkout_ready");assert.equal(message.booking_id,result.bookingId);
+ const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentProvider,"razorpay");assert.equal(payload.paymentVerified,false);assert.match(payload.paymentLink,/\/v2\/booking\?bookingId=/);
 });
 
 test("prepaid Grooming subscription creates pending entitlement, never multiplied bundle price",async t=>{
