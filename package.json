@@ -86,6 +86,7 @@
   "type": "module",
   "displayName": "PawSpace Grooming",
   "overrides": {
-    "undici": "7.29.1"
+    "undici": "7.29.1",
+    "brace-expansion@^5.0.0": "5.0.12"
   }
 }
