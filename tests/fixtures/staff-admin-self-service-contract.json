@@ -1095,7 +1095,7 @@
     "lib/taxi-commercial-client.ts": "98668a3a09a19001b7a5b65352f8f0339f50de344b8a87f72759dfdf6d3d4f41",
     "lib/taxi-completion-finance.ts": "8888616e78cad25f21895372b07950847847c289f7334f8edb42019eb64e3b4c",
     "lib/taxi-finance-client.ts": "5275f54e52ce93b8e3db3fd978a8f0d427cee866cd77db8df1855a092cc35427",
-    "lib/taxi-finance-governance.ts": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d",
+    "lib/taxi-finance-governance.ts": "eb9fd73e2325d548a9f5f4a64106017bc3cee42e83522b1c70b5082487a4e6fe",
     "lib/taxi-fleet-governance.ts": "95787d09857275c12863bb30d5210c548a42eb49508f3188d513c47db6451759",
     "lib/taxi-governance.ts": "66acb06b7ff9f5efb49b6e3299a3531fe9ab774407367877f6c5ab04afdaf2d4",
     "lib/taxi-invoice.ts": "738a74a7cc394b38bfac24fe8569c4f716c65b261f3f739112e7413c3b92a329",

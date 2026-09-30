@@ -204,3 +204,39 @@ for (const identity of [
     w.sqlite.close();
   });
 }
+
+for (const [field,value] of [["provider_id","OTHER-PROVIDER"],["schedule_group_id","OTHER-GROUP"],["service_code","dog_walking"],["status","completed"],["status","cancelled"]]) {
+  test(`approval preserves a mismatched or terminal work order (${field}=${value})`, async () => {
+    const w=await world();await act(w,"request_cancel");
+    w.sqlite.prepare(`UPDATE provider_work_orders SET ${field}=?`).run(value);
+    const before=snapshot(w);
+    assert.equal((await refusal(act(w,"approve_cancel",{approvedRefundAmount:100})))?.status,409);
+    assert.deepEqual(snapshot(w),before);w.sqlite.close();
+  });
+}
+
+test("approval allows a pre-custody booking with no work order to cancel",async()=>{
+  const w=await world();await act(w,"request_cancel");w.sqlite.exec("DELETE FROM provider_work_orders");
+  const result=await act(w,"approve_cancel");assert.equal(result.status,"cancelled");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM provider_work_orders").get().n,0);w.sqlite.close();
+});
+
+for(const winnerMode of ["provider","group","state","new_order"]){
+ test(`approval cannot overwrite an independently committed work-order ${winnerMode} change`,async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"taxi-work-order-")),path=join(dir,"db.sqlite");
+  const first=new DatabaseSync(path),second=new DatabaseSync(path);
+  try{
+   const w=await world({sqlite:first});await act(w,"request_cancel");
+   const originalBatch=w.db.batch;let release,reached;
+   const gate=new Promise(r=>release=r),ready=new Promise(r=>reached=r);
+   w.db.batch=async statements=>{if(statements.length===11){reached();await gate;}return originalBatch(statements);};
+   const pending=act(w,"approve_cancel",{approvedRefundAmount:100});await ready;
+   if(winnerMode==="provider")second.exec("UPDATE provider_work_orders SET provider_id='NEW-PROVIDER'");
+   if(winnerMode==="group")second.exec("UPDATE provider_work_orders SET schedule_group_id='NEW-GROUP'");
+   if(winnerMode==="state")second.exec("UPDATE provider_work_orders SET status='assigned'");
+   if(winnerMode==="new_order")second.exec("UPDATE provider_work_orders SET id='REPLACEMENT-WORK-ORDER'");
+   const committed=snapshot({...w,sqlite:second});release();
+   assert.equal((await refusal(pending))?.status,409);assert.deepEqual(snapshot(w),committed);
+  }finally{first.close();second.close();rmSync(dir,{recursive:true,force:true});}
+ });
+}
