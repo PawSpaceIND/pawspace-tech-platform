@@ -202,6 +202,9 @@ export function exotelTelephony(env: Env): TelephonyProvider {
 }
 
 export const ELEVENLABS_EXOTEL_PROVIDER = "elevenlabs_exotel";
+export const ELEVENLABS_TELEPHONY_SECRET_NAMES = ["ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_AGENT_PHONE_NUMBER_ID"] as const;
+export const ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES = [...ELEVENLABS_TELEPHONY_SECRET_NAMES, "ELEVENLABS_INIT_WEBHOOK_SECRET", "ELEVENLABS_LLM_SECRET", "ELEVENLABS_WEBHOOK_SECRET"] as const;
+const productionVoiceRuntime = (env: Env) => val(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production" || val(env, "PAWSPACE_PRODUCTION_ENFORCE").toLowerCase() === "true";
 export function elevenLabsAgentIdForUseCase(env: Env, useCase?: string | null) {
   const code = String(useCase ?? "").trim().toLowerCase();
   if (code === "grooming_sales") return val(env, "ELEVENLABS_GROOMING_AGENT_ID") || val(env, "ELEVENLABS_AGENT_ID");
@@ -211,6 +214,9 @@ export function elevenLabsAgentIdForUseCase(env: Env, useCase?: string | null) {
 export function elevenLabsExotelTelephony(env: Env): TelephonyProvider {
   const apiKey = val(env, "ELEVENLABS_API_KEY"), defaultAgentId = val(env, "ELEVENLABS_AGENT_ID"), configuredPhoneNumberId = val(env, "ELEVENLABS_AGENT_PHONE_NUMBER_ID");
   if (!apiKey || !defaultAgentId || !configuredPhoneNumberId) return disconnectedTelephony;
+  // A dial-only production configuration can ring while initiation/LLM authentication fails or
+  // cannot reconcile its signed post-call receipt. Refuse before contacting either provider.
+  if (productionVoiceRuntime(env) && ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES.some(name => !val(env, name))) return disconnectedTelephony;
   const base = (val(env, "ELEVENLABS_API_BASE") || "https://api.in.residency.elevenlabs.io").replace(/\/$/, "");
   const callerLast10 = val(env, "EXOTEL_CALLER_ID").replace(/\D/g, "").slice(-10);
   return {
@@ -300,16 +306,18 @@ export function localSimulatorTelephony(env: Env): TelephonyProvider {
 }
 
 export function selectTelephonyProvider(env: Env): TelephonyProvider {
-  if (val(env, "PAWSPACE_VOICE_TRANSPORT") === LOCAL_SIMULATOR_PROVIDER && voiceMode(env) !== "live") return localSimulatorTelephony(env);
   if (val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase() === "elevenlabs") {
-    const eleven = elevenLabsExotelTelephony(env);
-    if (eleven.status === "connected") return eleven;
+    // An explicit provider pin is an authority boundary, not a preference. Missing credentials
+    // must leave the call disconnected even when a different carrier is fully configured.
+    return elevenLabsExotelTelephony(env);
   }
+  if (val(env, "PAWSPACE_VOICE_TRANSPORT") === LOCAL_SIMULATOR_PROVIDER && voiceMode(env) !== "live") return localSimulatorTelephony(env);
   if (telephonyCredentialsConfigured(env)) return exotelTelephony(env);
   return disconnectedTelephony;
 }
 
 export function telephonyProviderStatus(env: Env) {
   const provider = selectTelephonyProvider(env);
-  return { provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
+  const requiredNames = val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase() === "elevenlabs" ? [...VOICE_TELEPHONY_SECRET_NAMES, ...(productionVoiceRuntime(env) ? ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES : ELEVENLABS_TELEPHONY_SECRET_NAMES)] : VOICE_TELEPHONY_SECRET_NAMES;
+  return { provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: requiredNames.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
 }

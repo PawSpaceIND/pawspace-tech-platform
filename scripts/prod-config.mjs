@@ -85,6 +85,14 @@ if (!["disabled", "uat"].includes(voiceEnv)) problems.push("PAWSPACE_VOICE_ENV m
 if (!["true", "false"].includes(voiceUatApproved)) problems.push("PAWSPACE_VOICE_UAT_APPROVED must be true or false.");
 if (voiceEnv === "disabled" && voiceUatApproved === "true") problems.push("PAWSPACE_VOICE_UAT_APPROVED cannot be true while PAWSPACE_VOICE_ENV is disabled.");
 
+// Enabled ordinary voice is pinned to ElevenLabs. Validate presence without serializing or
+// printing values; the deploy step materializes these only as encrypted Worker secrets.
+if (voiceEnv === "uat") {
+  for (const name of ["ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_AGENT_PHONE_NUMBER_ID", "ELEVENLABS_INIT_WEBHOOK_SECRET", "ELEVENLABS_LLM_SECRET", "ELEVENLABS_WEBHOOK_SECRET"]) {
+    if (!String(process.env[name] || "").trim()) problems.push(`${name} is required for pinned ElevenLabs UAT voice. No provider fallback is permitted.`);
+  }
+}
+
 if (problems.length) {
   console.error("Refusing to configure the production deploy:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
