@@ -133,12 +133,12 @@ passed; these include executed dialing refusal and activation-overlay refusal. U
 only these reviewed changes. Unrelated business rules remain authoritative.
 
 [Deployment 36709553463](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709553463)
-is queued for that exact application revision with phone pause enabled and SMS smoke disabled.
+was superseded and cancelled before completing; it does not certify that application revision.
 [Pause refresh 36709549373](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709549373)
 completed successfully at 11:54 UTC. Readback verified the persistent phone-pause binding true,
 voice mode disabled and all five UAT/native/self-test/autorun/outbound-sales gates false, preserving
-unrelated binding names. No call was placed. Both dialing workflows remain disabled. The repaired
-application deployment remains queued; this shutdown success does not certify deployed audio repair.
+unrelated binding names. No call was placed. Both dialing workflows remain disabled. This
+shutdown success does not certify deployed audio repair. Later deployment evidence is recorded below.
 
 Three actual audio demo conversations remain unverified. The first attempt failed its Grooming-answer
 acceptance check; the next refused a replaced staging revision before starting. The runner captures
@@ -148,7 +148,7 @@ the PawSpace brain, not the native carrier path. It reports input-to-playback el
 latency. No conversation or successful demo is fabricated from the scenario scripts.
 
 
-## Latest source regression and pending live jobs
+## Earlier source regression
 
 All 881 tests in `tests/ai-*.test.mjs`, `tests/voice-*.test.mjs` and `tests/maya-*.test.mjs`
 passed at revision `40e298f588ecc9a5cce86f91ef3de12fee02f962`, with zero failures or skipped tests.
@@ -156,9 +156,66 @@ They ran in local simulator/sandbox mode and cover the current AI/voice source, 
 The local full `npm test` command hit the three-minute command limit during the build before tests
 started; that attempt is not a pass.
 
-Full-repository CI run 36710431959 is queued for that source revision. Non-dialing demo run
-36710208909 is pending the shared staging lock and targets repaired application revision
-`12a1b3eff4270145a2c414fd7ebab5220bb58011`. Follow those existing runs; do not restart them because
-an observation timeout elapsed. The demo runner refuses a replaced revision or any enabled phone
-gate. Successful audio conversations, checkout delivery, sandbox payment and provider acceptance
-remain unverified. Synthetic success is not authorization to resume handset dialing.
+Full-repository CI run 36710431959 and demo run 36710208909 were superseded and cancelled.
+They are historical attempts, not live jobs or successful proof.
+
+## Current baseline, failed audio demo and verification
+
+The participant identified the better handset experience as approximately midnight on 30 September.
+Historical preflight run 36611595356 records a matching carrier call from 23:47:27 to 23:51:15 IST
+on 29 September: completed, 228 seconds, with a provider conversation of 25 turns over 216 seconds.
+The transcript includes Grooming package prices, package details and requests for date, address,
+PIN and prepaid checkout confirmation. The provider reported no conversation error. No recording
+was retained, and this is not evidence of a completed sale. The attended workflow stopped polling
+before the carrier finished; its timeout does not prove this call was silent.
+
+The recorded voice configuration used English, `eleven_v3_conversational`, stability 0.45,
+similarity 0.75, speed 1, `scribe_realtime` ASR and the `pawspace-grooming-sales` custom LLM.
+This is a historical baseline, not a readback of the current live configuration or authorization
+to roll back business governance.
+
+Staging deployment 36711874925 certified application revision
+`7c6c10f3629a8b2ef046cb223273ffa2d7bc9ffe` with 28/28 checks. The phone pause remained enabled.
+This proves that revision's staging certification, not current-head deployment or audio readiness.
+
+Actual non-dialing audio demo 36713972743 recognized “What grooming services do you offer for my
+dog Bruno?” but returned only “Sure, give me a second.” It timed out without a substantive reply.
+There were 43,520 response bytes, including non-silent audio; these do not prove an answered question.
+Read-only diagnosis 36717622217 found two user turns and an interrupted acknowledgement. The
+provider marked the session done after client disconnection; no exact root cause has been established.
+The three real audio demonstrations remain unverified, and no follow-up phone call is authorized.
+
+The extended local full regression ran 9,726 tests: 9,725 passed and one failed because the reviewed
+diagnostic workflow fingerprint was stale. Updating only that fingerprint passed all six preservation
+tests. The original full run remains a failed run; it is not a clean current-head full-suite pass.
+
+Source revision `e3f2c657aaf57a9731360617fdf2a4346636f3c7` integrates approved main PR1204:
+an explicitly selected ElevenLabs runtime refuses missing credentials rather than silently selecting
+another provider. Production configuration preserves the explicit provider pin and validates the
+required credentials. No deployment or phone activation was performed. All 955 focused checks and
+typecheck passed on this integrated source. Full-repository CI run 36720073296 and exact failed-session
+diagnostic run 36718542839 were both authoritatively queued at the latest readback, with no runner
+assigned to the diagnostic. Follow these existing handles; an observation timeout is not a failed job.
+
+Checkout delivery, sandbox payment, eligible assignment and provider acceptance, current-head
+staging certification and reliable full audio replies still require direct proof. Keep the phone pause,
+staff ownership, consent, canonical pricing and explicit booking/payment confirmation boundaries.
+Synthetic success cannot automatically resume handset dialing.
+
+### Completed failed-session diagnostic
+
+Read-only run 36718542839 finished on 30 September at 13:29 UTC. Its provenance check failed
+because the provider recorded the exact Grooming question twice, at zero and four seconds, rather
+than once. The isolated CRM recorded three inbound custom-LLM requests about four seconds apart
+and three `service_info` turns from OpenAI, with latencies of 5,667, 4,636 and 3,630 milliseconds.
+All three carried `draft_review_required`; no handoff reason was recorded. This label is the
+orchestrator's default for informational drafts and does not itself prove that speech was withheld.
+The original query did not collect output lengths, so it cannot establish whether those answers
+were empty or whether their completed speech responses reached the provider.
+
+A local executed gateway regression now covers the exact question and `pawspace-grooming-sales`
+model. It proves that a nonempty informational answer completes the Responses speech stream even
+with that draft-review label. All 32 gateway tests passed. The provider remains mocked in this test;
+it does not certify live playback. The diagnostic now also reads output lengths and completion
+timestamps to distinguish generated answers from interrupted provider playback without exposing
+private CRM reply content. No rollout, staff ownership or policy rule was changed.

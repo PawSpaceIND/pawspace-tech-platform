@@ -37,7 +37,7 @@ if(env.CLOUDFLARE_API_TOKEN&&env.CLOUDFLARE_ACCOUNT_ID&&env.STAGING_D1_ID&&env.S
  if(calls.length!==1)throw Error('Exact synthetic CRM context missing or ambiguous');
  const thread=calls[0].thread_id;
  const messages=await query("SELECT direction,template_key,length(payload_json) AS payload_length,created_at FROM communication_messages WHERE thread_id=? AND template_key IN ('elevenlabs_custom_llm','elevenlabs_custom_llm_reply') AND created_at BETWEEN ? AND ? ORDER BY created_at",[thread,start,end]);
- const turns=await query('SELECT intent_code,provider,model_ref,latency_ms,policy_decision,outcome,handoff_reason FROM ai_conversation_turns WHERE thread_id=? AND channel=\'voice\' AND created_at BETWEEN ? AND ? ORDER BY created_at',[thread,start,end]);
+ const turns=await query('SELECT intent_code,provider,model_ref,latency_ms,policy_decision,outcome,handoff_reason,length(output_text) AS output_characters,created_at,completed_at FROM ai_conversation_turns WHERE thread_id=? AND channel=\'voice\' AND created_at BETWEEN ? AND ? ORDER BY created_at',[thread,start,end]);
  console.log('FAILED_DEMO_BRAIN_RECORDS='+JSON.stringify({dialed:false,callStatus:calls[0].status,callOutcome:calls[0].outcome,messages,turns}));
 }
 // Preserve the identity refusal, but retain diagnostic status when transcripts were redacted,

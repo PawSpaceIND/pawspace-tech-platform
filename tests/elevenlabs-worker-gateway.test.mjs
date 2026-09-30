@@ -228,6 +228,38 @@ test("unknown voice turn can hand off with the original customer schema", async 
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1);
 });
 
+test("Grooming demo question completes specialist speech despite a draft-review label", async t => {
+  const w = world(t, { PAWSPACE_AI_PROVIDER: "openai", PAWSPACE_OPENAI_API_KEY: "test-only-openai" });
+  seedCustomer(w.sqlite, "CUS-EL-TURN", "Synthetic Tester", "9876500092");
+  await inboundMessage(w.sqlite, w.db, { threadId: "THREAD-EL-TURN", customerId: "CUS-EL-TURN",
+    text: "synthetic fixture", channel: "voice", idempotencyKey: "fixture-turn" });
+  const { ensureAiConversationOrchestrator } = await import("../lib/ai-conversation-orchestrator.ts");
+  const { setAiRolloutStage } = await import("../lib/ai-audience-rollout.ts");
+  await ensureAiConversationOrchestrator(w.db);
+  await (await import("../lib/pricing-control-runtime.ts")).ensurePricingControlRuntime(w.db);
+  for (const owner of ["lib/training-commercial-governance.ts", "lib/boarding-governance.ts", "lib/sitting-governance.ts", "lib/walking-governance.ts", "lib/taxi-governance.ts"])
+    applyOwnedDdl(w.sqlite, owner);
+  await setAiRolloutStage(w.db, { stage: "staff_only", reason: "synthetic executed voice UAT", actorEmail: "test@pawspace.test" });
+  const answer = "PawSpace offers grooming for dogs. What grooming care does Bruno need?";
+  const mock = stubFetch(() => jsonResponse({ output_text: answer, usage: { total_tokens: 20 } }));
+  t.after(() => mock.restore());
+  const r = await dispatch(w, request("/api/elevenlabs/v1/responses", JSON.stringify({
+    model: "pawspace-grooming-sales", input: "What grooming services do you offer for my dog Bruno?",
+    elevenlabs_extra_body: { pawspace_customer_id: "CUS-EL-TURN", pawspace_thread_id: "THREAD-EL-TURN" },
+  }), { authorization: `Bearer ${credentials.ELEVENLABS_LLM_SECRET}` }));
+  const body = await r.response.text();
+  const events = body.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(mock.calls.length, 1);
+  assert.doesNotMatch(body, /response\.failed/);
+  assert.equal(events.find(event => event.type === "response.output_text.delta")?.delta, answer);
+  assert.equal(events.find(event => event.type === "response.completed")?.response.pawspace_timing.path, "orchestrator");
+  const saved = w.sqlite.prepare("SELECT output_text,policy_decision,outcome FROM ai_conversation_turns").get();
+  assert.equal(saved.output_text, answer);
+  assert.equal(saved.policy_decision, "draft_review_required");
+  assert.equal(saved.outcome, "draft_review_required");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n, 0);
+});
+
 test("active staff pause produces a spoken status without invoking the LLM", async t => {
   const w = world(t, { PAWSPACE_AI_PROVIDER: "openai", PAWSPACE_OPENAI_API_KEY: "test-only-openai" });
   seedCustomer(w.sqlite, "CUS-EL-TURN", "Synthetic Tester", "9876500092");
