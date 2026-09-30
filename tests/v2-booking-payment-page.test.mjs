@@ -74,13 +74,19 @@ async function renderManage(record, inactive = false) {
 }
 
 test("an open Training programme offers a new time for its next unlocked session and a cancellation review", async () => {
-  const text = await renderManage(trainingRecord(["scheduled", "locked", "locked"]));
-  assert.match(text, /Change or cancel your programme/);
-  assert.match(text, /Next session 1 · 1 Oct, 10:00 am IST\. Only your next upcoming session can be rescheduled, up to 24 hours before it starts\./);
-  assert.match(text, /Request reschedule/);
-  assert.match(text, /Request programme cancellation \/ refund review/);
-  // Later sessions unlock one at a time, so the section never offers one of them.
-  assert.doesNotMatch(text, /Next session [23]/);
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-09-29T04:30:00.000Z");
+  try {
+    const text = await renderManage(trainingRecord(["scheduled", "locked", "locked"]));
+    assert.match(text, /Change or cancel your programme/);
+    assert.match(text, /Next session 1 · 1 Oct, 10:00 am IST\. Only your next upcoming session can be rescheduled, up to 24 hours before it starts\./);
+    assert.match(text, /Request reschedule/);
+    assert.match(text, /Request programme cancellation \/ refund review/);
+    // Later sessions unlock one at a time, so the section never offers one of them.
+    assert.doesNotMatch(text, /Next session [23]/);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("a session already awaiting a new time, or already under way, is not offered again", async () => {
