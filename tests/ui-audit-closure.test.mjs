@@ -24,6 +24,7 @@ test('table repair stays scoped and never hides document overflow',()=>{
   assert.match(css,/table-layout:auto !important/);
   assert.match(css,/min-width:42rem !important/);
   assert.match(css,/word-break:normal/);
+  assert.match(css,/\[data-audit-list-detail\] > article:has\(> p:only-child\) \{ min-height:0 !important; \}/);
 });
 test('Atlas formatter treats content as text and retains the original response',()=>{
   const source=read('app/components/ui/ReadableText.tsx');

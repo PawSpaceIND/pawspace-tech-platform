@@ -288,6 +288,14 @@ for(const viewport of viewports) {
   expect.soft((await detail.boundingBox())!.height,"populated handoff detail keeps its established workspace depth").toBeGreaterThanOrEqual(560);
   await detail.scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("handoff-populated-detail.png")});
+
+  await page.route("**/api/conversations?status=open",route=>route.fulfill({json:{data:{threads:[]}}}));
+  await page.route("**/api/ai-human-handoff?mode=queue",route=>route.fulfill({json:{data:{queue:[]}}}));
+  await ready(page,"/v2/team/ai/handoff");
+  await expect(detail.getByText("Select a thread.",{exact:true})).toBeVisible();
+  expect.soft((await detail.boundingBox())!.height,"no-thread handoff detail should size to its single empty-state line").toBeLessThan(320);
+  await detail.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("handoff-no-thread-detail.png")});
  });
 }
 
