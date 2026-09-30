@@ -423,3 +423,18 @@ time, not first audio latency). Cross-service information on request is not proo
 cross-selling. These are remaining acceptance gaps despite the workflow passing its smoke checks.
 The raw six-turn report is retained in the `maya-synthetic-sales-dialogue` artifact; it makes no
 premium, runtime-booking, CRM, TTS or handset certification claim.
+
+
+## Explicit quote preparation and current runtime proof
+
+Full CI 36736852447 on afab0454 passed lint/typecheck and 9,767 of 9,769 tests, but failed two coupon-format assertions. The natural spoken quote formatter had also changed web chat presentation. The correction keeps the original chat/WhatsApp INR and coupon-code display; natural rupee/plural wording and omission of spoken internal codes apply only to voice. The voice test verifies the exact stored approved coupon and unchanged checkout authority.
+
+Stricter real-model dialogue run 36737694339 passed its six smoke checks. Manual review confirmed preserved two-night context, a reasoned Complete Makeover recommendation, proactive Walking after a stated exercise need, approved savings without reading the code, respecting declined extras, and veterinarian referral. Whole-response durations were 7,998/2,270/1,647/4,049/1,328/5,276 ms; these are not first-audio measurements and variability remains an acceptance gap.
+
+The new isolated runtime evaluator supplies only a model credential. It uses the actual PawSpace gateway, orchestrator, quote, scheduling and booking modules against an in-memory synthetic database; only reviewed Grooming package defaults are activated in that fixture. Payment order requests are mocked and all other network destinations are refused. No production pricing/catalogue guard was weakened, no live database was accessed and no phone was dialed.
+
+Real-model runs 36740533203 and 36741533005 correctly failed: an explicit request to prepare a quote produced no offer. The first classified the request as service information; the second, after corrected intent, interrupted it with an unsolicited coupon question. The reviewed correction recognises the bounded explicit preparation command, asks for missing facts only, and instructs the model to propose the registered three-step chain without requesting permission again or inserting optional offers. Preparation still creates only an unconfirmed quote; execution still requires a separate exact affirmative. Information-only, policy, ownership and emergency gates remain enforced.
+
+Real-model run 36741880203 on 65aa57d3 passed the actual runtime sequence: Complete Makeover recommendation with a concrete reason (2,723 ms), canonical 2,399-rupee offer (1,977 ms), then the exact attended “Yeah, please.” confirmation (228 ms). Confirmation made no additional model request. Exactly one synthetic canonical payment-pending booking and one mocked payment order were created; repeated confirmation was prevented. This does not prove live checkout delivery, payment capture, provider acceptance, CRM closure, TTS naturalness or handset latency. Premium certification remains false.
+
+The latest focused sales/chat/gateway regressions passed 64/64, presentation preservation passed 174/174, and typecheck passed. Scoped lint had no errors and one existing unused-variable warning in the gateway test. These fixes are proposed in PR 1199 and are not deployed. Calling remains paused; no further handset authorization exists.
