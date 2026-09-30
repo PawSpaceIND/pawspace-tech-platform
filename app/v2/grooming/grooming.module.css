@@ -69,3 +69,7 @@
 /* Keep the horizontal date strip inside the booking column, not the page's hidden overflow. */
 .page .journey { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }
 .page .journey > .step { min-width:0; max-width:100%; box-sizing:border-box; }
+
+/* Summary labels sit on brand-primary, so use its foreground rather than light-surface accents. */
+.page.page .summary :is(.summaryTop span, .summaryTop b, .summaryPet small, .summaryRows span,
+  .priceBlock > span, .priceBlock > b, .priceBlock small) { color:var(--brand-on-primary) !important; }
