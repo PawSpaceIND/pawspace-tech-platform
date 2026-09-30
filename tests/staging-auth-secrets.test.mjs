@@ -448,3 +448,18 @@ test("voice activation cannot overwrite a phone pause retained by the staging bu
     assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), config);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test("paused staging retains attestation version identity and sandbox locks without inherited dial approval", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const result = runStageConfig({ ...GOOD, EXPECTED_SHA: sha, PAWSPACE_VOICE_PHONE_TESTS_PAUSED: " TrUe " });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.config.version_metadata, { binding: "PAWSPACE_VERSION_METADATA" });
+  assert.equal(result.config.vars.PAWSPACE_STAGING_BUILD_SHA, sha);
+  assert.equal(result.config.vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED, "true");
+  assert.equal(result.config.vars.PAWSPACE_VOICE_ENV, "disabled");
+  assert.equal(result.config.vars.PAWSPACE_VOICE_UAT_AUTORUN, "false");
+  assert.equal(result.config.vars.FORBID_PRODUCTION, "true");
+  assert.equal(result.config.vars.PAWSPACE_PAYMENT_LIVE_APPROVED, "false");
+  assert.match(workflow, /PAWSPACE_VOICE_PHONE_TESTS_PAUSED: \$\{\{ vars\.PAWSPACE_VOICE_PHONE_TESTS_PAUSED \}\}/);
+});

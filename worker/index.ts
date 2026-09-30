@@ -1,3 +1,4 @@
+import{handleStagingFixtureIsolation}from"../lib/staging-fixture-isolation";
 import{d1ServerTiming,installD1RequestTiming,withD1RequestTiming}from"../lib/d1-request-timing";
 import {sweepPartnerHeartbeats} from "../lib/partner-job-heartbeat";
 /** Cloudflare Worker entry point for the vinext-starter template. */
@@ -116,6 +117,10 @@ const worker = {
     // Lightweight edge liveness probe: no auth, D1, secrets, or external integrations.
     const healthResponse=handleEdgeHealth(request);
     if(healthResponse)return healthResponse;
+
+    // Fixed-fixture attestation must bypass the generic gateway's DDL and audit writers.
+    const fixtureIsolation=await handleStagingFixtureIsolation(request,env.DB,env);
+    if(fixtureIsolation)return fixtureIsolation;
 
     if(url.pathname==="/__staging/sentry-self-test"){
       if(env.PAWSPACE_DEPLOYMENT_ENV!=="staging")return new Response("Not found",{status:404});
