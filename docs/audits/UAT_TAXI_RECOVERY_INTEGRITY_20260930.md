@@ -62,3 +62,11 @@ Unrun locally: full build, whole suite, full typecheck, live/staged browser jour
 The initially source-only post-handover Finance concern was reproduced and repaired in this same bounded PR with the parent's authorization. The new head requires fresh hosted CI; green checks on earlier recovery-only head `2f76bbaa87ad568e59b575d4182ffe39097a2740` do not certify this expanded code.
 
 Also unverified: recovery replacement acceptance under native D1 contention and the deployed customer → driver → operations → completion → accounting journey. Training/financial fixes in #1201 are intentionally not duplicated here. Cross-PR integration and exact deployed SHA verification remain prerequisites for a human-test readiness claim.
+
+## Fresh-head compatibility repair and coordinated digest refresh
+
+Expanded head `d008c0c36d3cd1ec410046e640604ba844015729` passed the hosted focused job (run 36696124220: 116 tests, zero failures/skips, focused lint), but broader Web tests failed (run 36696124212, job 109824783740). Failures reproduced the nine protected-source digest contracts, conditional-transition source contract, TS-03 public safety refusal, and the old post-pickup replacement fixture plus its E2E100 wrapper.
+
+Commit `4441c6b` retains conditional booking/trip UPDATE predicates, preserves the terminal safety-incident refusal contract, and corrects replacement to occur before custody. The replacement regression still verifies persisted handover re-attribution and completion/accounting; a new real-pickup test refuses replacement and preserves custody. Focused checks: 42 recovery tests passed; 29 existing lifecycle/replacement compatibility tests passed with the repository's governed local-preview fixture flag. Production eligibility guards remain intact.
+
+After fresh-head hosted mismatch evidence, parent-authorized digest refresh changes exactly two reviewed source entries in each of nine manifests. No other hash, assertion, or source inventory entry changes. Exact old/new paths and SHA-256 values are recorded in `UAT_TAXI_SOURCE_DIGEST_PROOF_20260930.json`; the updater compared all other parsed JSON entries for equality. These manifests overlap #1201 and require combined merge validation later. All earlier CI results apply only to their recorded heads; the final pushed head requires fresh checks.
