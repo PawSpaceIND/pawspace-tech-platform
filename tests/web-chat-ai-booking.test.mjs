@@ -124,8 +124,10 @@ test("web chat: an offer the server cannot quote is said back to the customer, n
 test("voice accepts only a governed coupon proposal, and booking.create never takes a coupon quote outside a confirmed offer", async (t) => {
   const w = await world(t);
   const offer = await sales.prepareVoiceSalesOffer(w.db, { actor, threadId: w.threadId, customerId: w.customerId, service: "grooming", turnKey: "voice-coupon", actions: plan(w, { couponCode: "GROOM200" }) });
-  assert.match(offer.summary, /Coupon GROOM200/);
+  assert.match(offer.summary, /approved coupon saves 200 rupees/);
+  assert.doesNotMatch(offer.summary, /GROOM200/);
   const stored = JSON.parse(w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id).quote_json);
+  assert.equal(stored.coupon.code, "GROOM200");
   assert.equal(w.sqlite.prepare("SELECT channel FROM coupon_quotes WHERE id=?").get(stored.coupon.quoteId).channel, "whatsapp");
   assert.equal(bookings(w).length, 0);
   const quote = await coupons.quoteCoupon(w.db, { code: "GROOM200", customerId: w.customerId, serviceCode: "grooming", cityId: "blr", channel: "website", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });

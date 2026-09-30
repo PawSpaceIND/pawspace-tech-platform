@@ -300,3 +300,15 @@ test('original payment demo disclaimers remain read-only while suggestion-style 
  assert.equal(isSalesInformationQuestion('What about the Complete Makeover package tomorrow?'),false);
  assert.equal(isSalesInformationQuestion('How about the larger package?'),false);
 });
+
+
+test("explicit preparation request creates only a pending quote; yeah confirms its stored terms", async t => {
+ const w=await world(t);let calls=0;
+ const provider={salesService:"grooming",status:"connected",provider:"mock-sales-model",modelRef:"proof",async generate(input){calls++;assert.equal(input.intent.intent,"booking_create");return{text:"Here is your proposed appointment",provider:"mock-sales-model",modelRef:"proof",latencyMs:1,actionRequests:actions(w)};}};
+ const offered=await turn(w,"Please prepare a quote for the one-time Bath & Basic for Milo, prepaid, October 20 2026 at 10 AM India time, at 12 Test Street, Bengaluru, PIN 560038.","explicit-quote",provider);
+ assert.equal(offered.turn.policyDecision,"customer_confirmation_required");assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
+ const confirmed=await turn(w,"Yeah, please.","explicit-quote-confirm",provider);
+ assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(calls,1);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+ assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE customer_id=?").get(w.customerId).status,"payment_pending");
+});

@@ -29,6 +29,10 @@ const counted = (v: unknown, noun: string) => `${v} ${noun}${Number(v) === 1 ? "
 export function isVoiceSalesConfirmation(message: string) {
  return /^(?:(?:yes|yeah|yep)(?:,? please|,? go ahead|,? proceed|,? book it|,? confirm)?|confirm(?: the booking)?|go ahead|proceed|book it|book this)[.! ]*$/i.test(message.trim());
 }
+/** An explicit request to prepare an offer is not permission to execute it. */
+export function isVoiceSalesQuoteRequest(message: string) {
+ return /^(?:(?:please|can you|could you)\s+)?(?:prepare|create)\s+(?:a|the)\s+quote\s+for\b/i.test(message.trim());
+}
 export async function ensureVoiceSalesOffers(db: D1Database) {
  return ensureD1Once(db,"voice_sales_offers",async()=>{
  await db.batch([
@@ -70,7 +74,22 @@ async function quoteSalesCoupon(db: D1Database, input: { code: string; customerI
  if (!result.valid || !("quoteId" in result) || !result.quoteId) throw refusal(`The coupon could not be applied: ${result.error || "not eligible for this booking"}`);
  return { quoteId: result.quoteId, code: result.code, discount: Number(result.discount), finalAmount: Number(result.finalAmount) };
 }
-function summaryFor(service: VoiceSalesService, quote: Row, schedule: Row) {
+const writtenMoney = (v: unknown) => `INR ${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+function writtenSummaryFor(service: VoiceSalesService, quote: Row, schedule: Row) {
+ const at = new Date(text(schedule.scheduledStart)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
+ const plan = object(quote.subscriptionPlan), recommended = object(quote.recommendedProvider);
+ const occurrences=Array.isArray(quote.occurrences)?quote.occurrences.map(object):[];
+ const last=occurrences.length?new Date(text(occurrences[occurrences.length-1].start)).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"numeric",month:"long"}):"";
+ const cadence=Array.isArray(schedule.weekdays)&&schedule.weekdays.length?` on ${schedule.weekdays.map(day=>["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][Number(day)]).join(", ")}`:Number(schedule.cadenceDays)>0?` every ${schedule.cadenceDays} day(s)`:"";
+ const terms = service === "dog_training" ? `${quote.sessions} session(s), ${quote.minutesPerSession} minutes per session${cadence}, valid for ${quote.validityDays} days.${occurrences.length>1?` Last planned session ${last}.`:""}`
+  : quote.offerType === "subscription" ? `Prepaid bundle: ${plan.sessions} credits, ${plan.reserveSessions} credit(s) for this appointment, valid for ${plan.validityValue} ${plan.validityUnit}. This does not enable automatic renewal.` : "One-time grooming appointment.";
+ const coupon = object(quote.coupon), discounted = text(coupon.quoteId) !== "";
+ const total = discounted ? Number(coupon.finalAmount) : Number(quote.totalAmount), dueNow = discounted ? total : Number(quote.amountDueNow);
+ const remaining = total - dueNow;
+ return `${text(quote.packageName)} for ${quote.petCount} pet(s). ${terms}${discounted ? ` Coupon ${text(coupon.code)}: ${writtenMoney(coupon.discount)} off ${writtenMoney(quote.totalAmount)}.` : ""} Total ${writtenMoney(total)}; ${writtenMoney(dueNow)} due now${remaining > 0 ? ` and ${writtenMoney(remaining)} remaining under the quoted payment terms` : ""}. Requested start ${at} India time.${service === "dog_training" ? ` Recommended available trainer: ${text(recommended.name)}. Confirming also selects this trainer; you can ask for another option.` : ""} Availability was checked, not reserved. Shall I reserve this and create the booking with payment still pending?`;
+}
+function summaryFor(service: VoiceSalesService, quote: Row, schedule: Row, channel: SalesOfferChannel) {
+ if (channel !== "voice") return writtenSummaryFor(service, quote, schedule);
  const at = new Date(text(schedule.scheduledStart)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
  const plan = object(quote.subscriptionPlan), recommended = object(quote.recommendedProvider);
  const occurrences=Array.isArray(quote.occurrences)?quote.occurrences.map(object):[];
@@ -147,7 +166,7 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   quote.occurrences=occurrences.map(o=>({start:o.start,end:o.end,occurrenceNumber:o.occurrenceNumber}));
  }
  const actions: AiActionRequest[] = [{ toolCode: "schedule.reserve", arguments: schedule }, { toolCode: "booking.create", arguments: booking }, { toolCode: "checkout.payment_order.create", arguments: {} }];
- const offerId = id(), now = Date.now(), expiresAt = Math.min(now + 10 * 60000, Number(quote.expiresAt) || Infinity), summary = summaryFor(input.service, quote, schedule);
+ const offerId = id(), now = Date.now(), expiresAt = Math.min(now + 10 * 60000, Number(quote.expiresAt) || Infinity), summary = summaryFor(input.service, quote, schedule, input.channel || "voice");
  await db.batch([
   db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending'").bind(input.threadId, input.customerId),
   db.prepare("INSERT INTO voice_sales_offers (id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) VALUES (?,?,?,?,?,'pending',?,?,?,?,?)").bind(offerId, input.turnKey, input.threadId, input.customerId, input.service, JSON.stringify(quote), JSON.stringify(actions), summary, expiresAt, now),
