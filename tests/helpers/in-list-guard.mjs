@@ -29,6 +29,7 @@ const squash = (value) => value.replace(/\s+/g, "");
  * that cannot grow with production data.
  */
 export const BOUNDED_IN_LISTS = {
+  "ai-analytics.ts": [{ expression: 'COLLECTED_PAYMENT_STATUSES.map(()=>"?")', why: "the four compile-time collected-funds status literals; never booking/result-set IDs" }],
   "communication-engine.ts": [{ expression: 'allowed.map(()=>"?")', why: "the literal statuses one delivery event may advance from" }],
   "boarding-ops-governance.ts": [{ expression: 'petIds.map(()=>"?")', why: "pet ids of a single stay" }],
   "grooming-payment-reconciliation.ts": [{ expression: 'reconciliationSchemaObjects.map(()=>"?")', why: "the six compile-time schema objects required by reconciliation" }],

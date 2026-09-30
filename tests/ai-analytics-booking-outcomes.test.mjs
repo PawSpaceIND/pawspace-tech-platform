@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {registerHooks} from 'node:module';
-import {existsSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
+import {register} from 'node:module';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
 import {hasPermission} from '../lib/platform-security.ts';
 
 // Hermetic route/SQL execution: identity resolution and cold-schema bootstrapping are external
@@ -26,14 +25,17 @@ const stubs={
  'ai-voice-uat':'export const ensureAiVoiceUatTables=async()=>{};',
  'communication-engine':'export const ensureCommunicationTables=async()=>{};',
 };
-registerHooks({resolve(specifier,context,next){
- const key=specifier.split('/').at(-1);
- if(stubs[key])return{url:`data:text/javascript,${encodeURIComponent(stubs[key])}`,shortCircuit:true};
- if(specifier.startsWith('.')&&context.parentURL?.startsWith('file:')&&!/\.[a-z]+$/i.test(specifier)){
-  const candidate=new URL(`${specifier}.ts`,context.parentURL);if(existsSync(fileURLToPath(candidate)))return next(candidate.href,context);
+installWorkersHooks('__AI_OUTCOME_DB__');
+// register() works on the older loader path too; stub modules execute in the test thread.
+register(`data:text/javascript,${encodeURIComponent(`
+ let stubs;
+ export function initialize(data){stubs=data;}
+ export function resolve(specifier,context,next){
+  const key=specifier.split('/').at(-1);
+  if(stubs[key])return{url:'data:text/javascript,'+encodeURIComponent(stubs[key]),shortCircuit:true};
+  return next(specifier,context);
  }
- return next(specifier,context);
-}});
+`)}`,{parentURL:import.meta.url,data:stubs});
 const {buildAiBookingOutcomes}=await import('../lib/ai-analytics.ts');
 const {GET}=await import('../app/api/ai-analytics/route.ts');
 function world(){
