@@ -65,7 +65,7 @@ export default function VoiceSalesOperationsPanel() {
     <TeamSection title="AI sales overview" note="Grooming pilot first. A completed call or a checkout link does not prove a paid booking." actions={<Button variant="secondary" onClick={() => void refresh()} disabled={busy}>{busy ? "Refreshing…" : "Refresh sales overview"}</Button>}>
       {!data && <TeamAlert tone="info">Loading operational evidence…</TeamAlert>}
       {data?.errors.map(error => <TeamAlert key={error}>{error}</TeamAlert>)}
-      {ops?.sources.filter(source => !source.available).map(source => <TeamAlert key={source.name}>{source.name} is unavailable. Its records have not been counted as zero.</TeamAlert>)}
+      {ops?.sources?.filter(source => !source.available).map(source => <TeamAlert key={source.name}>{source.name} is unavailable. Its records have not been counted as zero.</TeamAlert>)}
       <TeamStatGrid>
         <StatCard label="Approved knowledge" value={coverage ? `${coverage.activeTopics} / ${coverage.requiredTopics}` : "Unknown"} meta={coverage ? `${coverage.sourceMatchedTopics} match the reviewed source` : "Requires knowledge access"} />
         <StatCard label="Post-call updates pending" value={ops?.pendingWebhooks ?? "Unknown"} meta="Provider events not fully reconciled" />
