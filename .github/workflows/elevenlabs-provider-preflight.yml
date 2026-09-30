@@ -61,6 +61,32 @@ on:
 permissions:
   contents: read
 jobs:
+  evaluate-sales-dialogue:
+    if: ${{ inputs.confirm == 'evaluate-sales-dialogue' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Evaluate synthetic multi-turn sales dialogue without application or phone access
+        env:
+          VOICE_SALE_ACTION: evaluate-sales-dialogue
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+        run: node --experimental-strip-types scripts/evaluate-maya-sales-dialogue.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-synthetic-sales-dialogue
+          path: artifacts/maya-dialogue/report.json
+          retention-days: 3
+          if-no-files-found: ignore
   inspect-attended-request:
     if: ${{ inputs.confirm == 'inspect-attended-request' }}
     runs-on: ubuntu-latest

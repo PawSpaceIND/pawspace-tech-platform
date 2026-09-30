@@ -83,24 +83,27 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
   persisted+=Number(result.meta?.changes||0);
  }
  const analysis=(data.analysis||{})as Row,summary=text(analysis.transcript_summary||analysis.summary);
+ // A transcription webhook also exists for a conversation that failed after speech.
+ // Preserve its transcript without turning the provider failure into a successful call.
+ const providerFailed=text(data.status).toLowerCase()==="failed";
  const metadata=(data.metadata||{})as Row;
- if(session)await db.prepare("UPDATE ai_voice_calls SET disposition=COALESCE(NULLIF(?,''),disposition),outcome=COALESCE(outcome,'completed'),ended_at=COALESCE(ended_at,?) WHERE id=?")
-  .bind(summary.slice(0,1000),now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run();
+ if(session)await db.prepare("UPDATE ai_voice_calls SET disposition=COALESCE(NULLIF(?,''),disposition),outcome=CASE WHEN ?=1 THEN 'provider_error' ELSE COALESCE(outcome,'completed') END,ended_at=COALESCE(ended_at,?) WHERE id=?")
+  .bind(summary.slice(0,1000),providerFailed?1:0,now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run();
  // ElevenLabs transports the speech itself, so native turn_index may still be zero.
  const customerTurns=transcript.filter(turn=>text(turn.role).toLowerCase()==="user"&&text(turn.message||turn.text)).length;
  if(sessionId&&customerTurns)await db.prepare("UPDATE inbound_ai_voice_sessions SET turn_index=MAX(turn_index,?) WHERE id=?").bind(customerTurns,sessionId).run();
- const completion=sessionId?await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_completed"}):null;
+ const completion=sessionId?await endInboundAiVoiceSession(db,{sessionId,outcome:providerFailed?"elevenlabs_provider_failed":"elevenlabs_completed"}):null;
  let crmDisposition:unknown=null;
  if(outboundCall&&text(outboundCall.lead_id)&&customerTurns){
   crmDisposition=await recordBotCallDisposition(db,{
    idempotencyKey:`elevenlabs:${voiceCallId}:completion`,leadId:text(outboundCall.lead_id),
-   channel:"voice",botProvider:"elevenlabs",callRef:conversationId,primaryTag:"info_shared",
-   notes:"Verified post-call transcript contains customer speech. No purchase or payment is inferred from conversation text.",
+   channel:"voice",botProvider:"elevenlabs",callRef:conversationId,primaryTag:providerFailed?"human_intervention_needed":"info_shared",
+   notes:providerFailed?"The provider reported a failed conversation after customer speech. Staff must review the transcript and canonical booking/payment state; no sale is inferred.":"Verified post-call transcript contains customer speech. No purchase or payment is inferred from conversation text.",
    transcriptRef:threadId,actorId:"system:elevenlabs-post-call",asOf:now,
   });
   if(crmDisposition&&typeof crmDisposition==="object"&&"pending" in crmDisposition&&crmDisposition.pending)throw new Error("CRM disposition is still processing; retry post-call reconciliation");
  }
- const voiceCompletion=voiceCallId?await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:true,asOf:now}):null;
+ const voiceCompletion=voiceCallId?await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:!providerFailed,asOf:now}):null;
  await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?")
   .bind(JSON.stringify({sessionId:sessionId||null,voiceCallId:voiceCallId||null,persistedTurns:persisted,transcriptTurns:transcript.length,summary:summary.slice(0,500),callDurationSecs:Number(metadata.call_duration_secs||metadata.call_duration_seconds||0)||null}),now,eventId).run();
  return{duplicatePrevented:false,conversationId,status:"processed",sessionId:sessionId||null,voiceCallId:voiceCallId||null,persistedTurns:persisted,completion,voiceCompletion,crmDisposition};

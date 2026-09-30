@@ -35,6 +35,26 @@ test('exact call owns transcript even when another customer thread is newer',asy
  assert.deepEqual(w.sqlite.prepare('SELECT DISTINCT thread_id FROM communication_messages').all().map(r=>r.thread_id),['THREAD-VOICE-call']);assert.equal(recorded.leadId,'lead');assert.equal(recorded.primaryTag,'info_shared');
  assert.equal((await reconcileElevenLabsPostCall(w.db,w.payload)).duplicatePrevented,true);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM communication_messages').get().n,2);
 });
+test('failed conversation with customer speech keeps transcript and requests staff review, never successful completion',async t=>{
+ const w=world(t);w.payload.data.status='failed';let disposition,completion;
+ globalThis.__postCall.disposition=async input=>{disposition=input;return{id:'failed-review'}};
+ globalThis.__postCall.complete=async input=>{completion=input;return{state:'provider_error'}};
+ await reconcileElevenLabsPostCall(w.db,w.payload);
+ assert.equal(disposition.primaryTag,'human_intervention_needed');
+ assert.match(disposition.notes,/canonical booking\/payment state/);
+ assert.equal(completion.completed,false);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM communication_messages').get().n,2);
+ assert.equal((await reconcileElevenLabsPostCall(w.db,w.payload)).duplicatePrevented,true);
+});
+test('failed inbound transcript ends with provider failure and corrects the call outcome',async t=>{
+ const w=world(t);w.sqlite.exec("INSERT INTO inbound_ai_voice_sessions VALUES('session','inbound-thread','customer',0,'ai-call'); INSERT INTO ai_voice_calls VALUES('ai-call',NULL,'completed',NULL)");
+ w.payload.data.status='failed';w.payload.data.conversation_initiation_client_data.dynamic_variables={pawspace_voice_session_id:'session'};
+ let ended;globalThis.__postCall.end=async input=>{ended=input;return{status:'ended'}};
+ await reconcileElevenLabsPostCall(w.db,w.payload);
+ assert.equal(ended.outcome,'elevenlabs_provider_failed');
+ assert.equal(w.sqlite.prepare('SELECT outcome FROM ai_voice_calls').get().outcome,'provider_error');
+ assert.equal(w.sqlite.prepare('SELECT turn_index FROM inbound_ai_voice_sessions').get().turn_index,1);
+});
 for(const failure of ['disposition','complete'])test(`${failure} failure remains retryable without duplicate transcript`,async t=>{
  const w=world(t);globalThis.__postCall[failure]=async()=>{throw Error('temporary storage failure')};
  await assert.rejects(reconcileElevenLabsPostCall(w.db,w.payload),/temporary storage failure/);

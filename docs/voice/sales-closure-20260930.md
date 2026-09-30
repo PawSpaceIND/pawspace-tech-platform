@@ -381,3 +381,32 @@ The failing full-suite ratchet was corrected by extending the existing audio sou
 to execute both real Workers AI adapters: default model selection, audio bytes, transcript and TTS
 result, plus absent/malformed binding refusal. No test budget was raised. That test and the static
 test ratchet passed 5/5; the candidate typecheck passed. Full candidate certification is still due.
+
+## Failed-conversation reporting and model dialogue evaluation
+
+Model-only latency job 36735786495 passed: the two short synthetic enquiries produced first streamed
+text at 753/828 ms and first sentences at 809/909 ms; blocking totals were 1,925/1,687 ms. These
+measure the upstream model with a short prompt, not full-runtime latency, booking execution or TTS.
+
+Inspection found that the post-call transcription path always requested successful completion,
+including explicit provider status `failed`. The local correction preserves the transcript and
+accepted-call correlation, records outbound provider error, marks inbound failure, and uses the
+existing human-intervention CRM disposition after customer speech. It does not infer a sale from
+the transcript, execute bookings, retry a call or relax identity checks. Nine post-call recovery tests
+and 22 tests with the real ledger passed, including the exact attended affirmative in a failed
+transcript, terminal error, staff task, reservation release, duplicate prevention and no redial.
+
+Broader preservation checks found seven additional contracts carrying the earlier voice-prompt
+hash, beyond the two updated in the prior candidate. Only the reviewed prompt/post-call hashes
+were updated; unrelated source and UI contracts remain enforced. The eight relevant presentation
+suites passed 174/174 after correction. Typecheck and focused lint passed. Workflow/preservation
+checks passed 14/14 after adding the explicit no-call model evaluation job.
+
+`evaluate-sales-dialogue` evaluates six turns through the real upstream model using current channel,
+specialist and human-call prompts with synthetic catalogue/knowledge fixtures. It covers Boarding,
+needs-led Grooming, walking, approved discount information, declining extras and a medical question.
+Only the upstream model credential is provided; the script has no application, customer, database
+or telephony access. Raw synthetic replies are retained. Pattern checks are limited smoke checks,
+not semantic certification or proof of a live booking/CRM journey; premium certification is always
+false. Its local mocked harness proved request scope/history handling only. Real-model results
+must be inspected separately before any claim about conversation quality.
