@@ -797,9 +797,12 @@ test("BRD-17 filing: host settlements carry 194H TDS at the governed FY threshol
   await tds.ensureTdsTables(db);
   const fin = await import("../lib/boarding-finance-governance.ts");
   await fin.ensureBoardingFinanceTables(db);
-  const period = new Date().toISOString().slice(0, 7);
+  // The governed TDS month uses India time, including the first 5.5 hours of a new month.
+  // Anchor the period and settlement timestamps together so midnight cannot split the fixture.
+  const settledAt = Date.now();
+  const period = new Date(settledAt + 330 * 60_000).toISOString().slice(0, 7);
   const settlement = (bookingId, amount) => sqlite.prepare("INSERT OR REPLACE INTO boarding_host_settlement_ledger (booking_id,stay_id,provider_id,gross_booking_value,currency,payout_amount,payout_rule_status,tax_status,approval_status,payout_status,eligible_at,created_at,updated_at) VALUES (?,?,?,?,'INR',?,'rule_applied','resolved','approved','not_instructed',?,?,?)")
-    .run(bookingId, `S-${bookingId}`, HOST, amount, amount, Date.now(), Date.now(), Date.now());
+    .run(bookingId, `S-${bookingId}`, HOST, amount, amount, settledAt, settledAt, settledAt);
 
   // Below the Rs 20,000 FY commission threshold: nothing may be deducted.
   settlement("BRD-BK-S1", 15000);
