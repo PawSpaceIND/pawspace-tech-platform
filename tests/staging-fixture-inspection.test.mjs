@@ -70,8 +70,9 @@ test('optional hosted roster diagnosis executes SELECT-only aggregates and expos
    return fixture.request(url,init);
   };
   const report=await inspectStagingFixtures({env:{...env,INSPECT_ROSTER_DIAGNOSIS:'true'},request});
-  assert.equal(queries.length,2);assert.deepEqual(report.rosterDiagnosis.counts,{rosterRows:7,missingCanonicalRows:5,missingPhoneRows:6,emailPresentRows:1,canonicalProvenanceMismatchRows:6,capacityProvenanceMismatchRows:1,cityMismatchRows:6});
+  assert.equal(queries.length,3);assert.deepEqual(report.rosterDiagnosis.counts,{rosterRows:7,missingCanonicalRows:5,missingPhoneRows:6,emailPresentRows:1,canonicalProvenanceMismatchRows:6,capacityProvenanceMismatchRows:1,cityMismatchRows:6});
   assert.equal(report.rosterDiagnosis.legacyFixtures.length,6);assert.equal(report.rosterDiagnosis.legacyFixtures.filter(row=>row.canonicalPresent).length,1);
+  assert.equal(report.rosterDiagnosis.prerequisiteMismatches.length,6);assert.equal(report.rosterDiagnosis.opaqueMismatchIdentities,1);assert.equal(report.rosterDiagnosis.prerequisiteMismatches.find(row=>row.fixtureId==='groom_arun').canonicalProvenanceMatches,false);
   assert.doesNotMatch(JSON.stringify(report),/private-phone|private-email|private-token|private-code/);assert.equal(report.rosterDiagnosis.assignmentCertified,false);assert.equal(report.rosterDiagnosis.identitiesProvisioned,false);
  }finally{db.close();}
 });

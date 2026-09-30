@@ -19,6 +19,16 @@ const ROSTER_DIAGNOSIS_SQL=`SELECT COUNT(*) rosterRows,
 const LEGACY_DIAGNOSIS_SQL=`SELECT p.id fixtureId,CASE WHEN c.id IS NOT NULL THEN 1 ELSE 0 END canonicalPresent,
  CASE WHEN TRIM(COALESCE(c.phone,''))<>'' THEN 1 ELSE 0 END phonePresent
  FROM provider_capacity_profiles p LEFT JOIN canonical_providers c ON c.id=p.id WHERE p.id IN (?,?,?,?,?,?) ORDER BY p.id`;
+const MISMATCH_DIAGNOSIS_SQL=`SELECT p.id fixtureId,
+ CASE WHEN c.id IS NOT NULL THEN 1 ELSE 0 END canonicalPresent,
+ CASE WHEN TRIM(COALESCE(c.phone,''))<>'' THEN 1 ELSE 0 END phonePresent,
+ CASE WHEN p.city_id='blr' AND c.city_id='blr' THEN 1 ELSE 0 END cityMatches,
+ CASE WHEN c.source='uat_staging_seed' THEN 1 ELSE 0 END canonicalProvenanceMatches,
+ CASE WHEN p.updated_by='founder_seed' THEN 1 ELSE 0 END capacityProvenanceMatches
+ FROM provider_capacity_profiles p LEFT JOIN canonical_providers c ON c.id=p.id
+ WHERE (p.city_id='blr' OR EXISTS (SELECT 1 FROM boarding_host_profiles h WHERE h.provider_id=p.id AND h.city_id='blr'))
+ AND (c.id IS NULL OR TRIM(COALESCE(c.phone,''))='' OR TRIM(COALESCE(c.email,''))<>'' OR COALESCE(c.source,'')<>'uat_staging_seed' OR COALESCE(p.updated_by,'')<>'founder_seed' OR p.city_id<>'blr' OR COALESCE(c.city_id,'')<>'blr')
+ ORDER BY p.id LIMIT 257`;
 
 export async function inspectStagingFixtures({env=process.env,request=fetch}={}){
  const expected=String(env.EXPECTED_SHA||'');
@@ -83,8 +93,17 @@ export async function inspectStagingFixtures({env=process.env,request=fetch}={})
   const counts=Object.fromEntries(keys.map(key=>{const value=Number(aggregates[0][key]);if(!Number.isSafeInteger(value)||value<0)throw Error('Roster diagnosis count invalid');return[key,value];}));
   if(keys.slice(1).some(key=>counts[key]>counts.rosterRows))throw Error('Roster diagnosis count inconsistent');
   const legacyFixtures=legacy.map(row=>{if(!LEGACY_FIXTURES.includes(row.fixtureId)||![0,1].includes(row.canonicalPresent)||![0,1].includes(row.phonePresent))throw Error('Legacy diagnosis shape invalid');return{fixtureId:row.fixtureId,canonicalPresent:row.canonicalPresent===1,phonePresent:row.phonePresent===1};});
+  const mismatches=await query(MISMATCH_DIAGNOSIS_SQL);
+  if(mismatches.length>256)throw Error('Roster diagnosis overflow');
+  let opaqueMismatchIdentities=0;
+  const prerequisiteMismatches=mismatches.flatMap(row=>{
+   if(typeof row.fixtureId!=='string'||!/^(?:groom|train|uatcap|host|sit|taxi|walk)_[a-z0-9_]{1,72}$/.test(row.fixtureId)){opaqueMismatchIdentities++;return[];}
+   const flags=['canonicalPresent','phonePresent','cityMatches','canonicalProvenanceMatches','capacityProvenanceMatches'];
+   if(flags.some(key=>![0,1].includes(row[key])))throw Error('Roster mismatch shape invalid');
+   return[{fixtureId:row.fixtureId,...Object.fromEntries(flags.map(key=>[key,row[key]===1]))}];
+  });
   await settings();
-  rosterDiagnosis={counts,legacyFixtures,contactsExposed:false,identitiesProvisioned:false,assignmentCertified:false,scope:'Whole-roster aggregate prerequisites and six source-documented legacy IDs; no contact validation, destination approval or mutation'};
+  rosterDiagnosis={counts,legacyFixtures,prerequisiteMismatches,opaqueMismatchIdentities,contactsExposed:false,identitiesProvisioned:false,assignmentCertified:false,scope:'Whole-roster aggregate prerequisites and bounded fixture-identifier mismatches; no contact validation, destination approval or mutation'};
  }
  return {inspectionCompleted:true,revision:expected,phonePaused:true,dialed:false,bookingCreated:false,paymentCaptured:false,operationalSources,operationalSourcesAvailable:operationalSources.filter(source=>source.available).length,operationalSourcesComplete:operationalSources.every(source=>source.available),fixtureSnapshots:snapshots,rosterDiagnosis,automaticAssignmentCertified:false,providerAcceptanceCertified:false,premiumCertified:false,scope:'Authenticated read-only fixture and operational-source snapshots; no business mutation or launch certification'};
 }
