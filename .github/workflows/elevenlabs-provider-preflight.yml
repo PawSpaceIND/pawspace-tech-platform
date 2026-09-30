@@ -421,6 +421,23 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
         run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Open only the authorized attended staging window
+        if: ${{ inputs.confirm == 'attended-specialist-uat' }}
+        env:
+          PILOT_ACTION: ${{ inputs.confirm }}
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: |
+          node --experimental-strip-types scripts/attended-voice-window.mjs
+          node --experimental-strip-types scripts/voice-sales-launch-preflight.mjs
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
@@ -460,6 +477,16 @@ jobs:
           const evidence=await verifyHandsetAttempt({appCallId:body.data.callId,agentId,phone,cookie},process.env,{log:result=>console.log('HANDSET_EVIDENCE='+JSON.stringify(result))});
           console.log('HANDSET_VERIFIED='+JSON.stringify(evidence));
           NODE
+
+      - name: Restore and verify the phone pause after the single attended attempt
+        if: ${{ always() && inputs.confirm == 'attended-specialist-uat' }}
+        env:
+          PAUSE_PHONE_CALLS: user-requested-stop
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: node scripts/pause-staging-phone-calls.mjs
 
   direct-grooming-call:
     if: ${{ inputs.confirm == 'direct-grooming-call' || inputs.confirm == 'inspect-app-voice' }}

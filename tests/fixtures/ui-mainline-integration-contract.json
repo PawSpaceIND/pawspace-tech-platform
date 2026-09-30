@@ -3,7 +3,7 @@
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
     ".github/workflows/deploy-staging.yml": "57cbfd9887e19eebd64622be7f75373510979d5f74a12a109f9bb30bebaa86c9",
-    ".github/workflows/elevenlabs-provider-preflight.yml": "5285036efc039104003bb4dd4abc1d81994d5d22d1ff50c10e24e1768ea2f121",
+    ".github/workflows/elevenlabs-provider-preflight.yml": "2b11d7cbff2b363a316f028756c826c6f082434f2cd754ad28393e18e591d409",
     ".github/workflows/voice-uat-staging.yml": "63da3dbd84a37be6bc06d6a980059d8a346a40a6e031bfe61cd1f3494b365dd2",
     ".gitleaksignore": "42321d1ea122ebb8bd828806de526bbc1e198cf31965553de188a762212d788b",
     "app/api/ai-intelligence/route.ts": "46f58d684819ba40a9fbb937cb2d37b8ab88a7eb5c33f5308367721fe78424d7",
@@ -75,7 +75,7 @@
     "tests/customer-payment-gate-uat.test.mjs": "ab6aa82e5563e67f72b9a6b1d301c9e4b3ad0e23ae303bfd96861f38fe56edc9",
     "tests/e2e/staging-certification.mjs": "8fd80bace76dc0a9c29fa499722de710337c53b86ef7c2ea30945d45bc865263",
     "tests/elevenlabs-provider-preflight.test.mjs": "88afa0b5938be293089ea4d2469a7cd7ccbd3f2683f7b2d6316402f3ac8252c6",
-    "tests/elevenlabs-worker-gateway.test.mjs": "6204a971c65b5f6f6d9366591d144e1bfae31b0ad52c9b4fbdcde085fb990f8c",
+    "tests/elevenlabs-worker-gateway.test.mjs": "d63f83f783dbc6c8e6b4e494a53914dc7c70cd58c7483a0a27bc6f77941c615c",
     "tests/lp-d02-d10-provider-workspace-projection.test.mjs": "b32fdfd9b17a28b29d98d15448b3f97763f7a8ba9e725c28ff8ea13c0913f8bc",
     "tests/openai-elevenlabs-voice-integration.test.mjs": "1c6530c5019d5edeef0f89041a3f2024b59837a583086e1ae2b45fc43ab590a0",
     "tests/paid-journey-remediation.test.mjs": "998b31487a69301abf5ed317558b96fb114a66668942f37dbb9d1cf7de929a6a",

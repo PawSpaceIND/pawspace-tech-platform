@@ -230,3 +230,48 @@ Only synthetic input changes; no output audio, transcript or answer is invented.
 scenario checks, interruption rejection and terminal provider verification remain intact.
 All 13 existing audio-proof tests passed and the runner syntax check passed. This corrects a concrete
 test-transport mismatch, but is not proof that it caused the interrupted session or fixed carrier calls.
+
+## Verified non-dialing audio conversations
+
+Run 36722940748 refused a replaced staging revision before starting audio. Replacement deployment
+36720556802 certified `a7348c36ffc29c3c3ac4b6d2b0e39e2c11631b33` with 28/28 checks. Its voice and
+ElevenLabs reply sources match certified 7c6c10f3; the intervening relevant changes concern staging
+fixture attestation. Run 36724088995 used the corrected microphone runner at 777e1d01 against that
+exact replacement revision and passed three real ASR → PawSpace brain → TTS conversations:
+
+- Grooming: package details and canonical prices, followed by a discovery question.
+- Pet health: veterinarian referral before grooming itchy skin, without a sales action.
+- Coupons and booking: no approved coupon available in the test context; explained confirmation
+  and checkout steps without booking anything.
+
+All three final provider transcripts matched exactly one recognized user question, with observed
+bidirectional non-silent audio. The original booking set remained unchanged. Artifact 11101409734
+contains the actual transcripts and response WAVs. Local WAV inspection verified mono 16 kHz audio
+lasting 31.76, 19.12 and 33.20 seconds. Input-to-finished-playback times were 43,137, 29,047 and
+46,538 milliseconds; these include the scripted question and full spoken response and do not measure
+model latency or first substantive audio. No handset call was placed. This proves non-dialing audio
+reliability for these scenarios, not carrier quality, interruption recovery, premium latency or a sale.
+
+Preflight 36725992881 confirmed the exact replacement revision and isolated staging database,
+then refused disabled voice mode, consistent with the user's phone pause. It did not read the
+dashboard/policy evidence after that early refusal. The revised local preflight now retains those
+read-only observations while disabled and still refuses call readiness. All six preflight tests passed;
+the revision is included in the attended-check batch. No call control or business rule changed.
+Renewed permission was granted for exactly one attended ElevenLabs Grooming call to the already
+authorized tester after remaining checks, with no automatic redial or general calling activation.
+
+
+Full CI 36722911804 finished with 9,758/9,759 tests passing. The sole failure was the
+preservation manifest's outdated hash for the newly added gateway regression, not an application
+behavior failure. The reviewed hash was corrected; all 12 local preservation and preflight tests
+passed. The original full run remains failed and its final build step did not run.
+
+The attended workflow now opens a temporary isolated ElevenLabs UAT window only for the first
+attempt, exact authorized tester and Grooming use case, with native calling and autorun disabled.
+It reads the existing policy before dialing and always restores/verifies the persistent phone pause
+on completion or failure. No application gate, consent, pricing or booking logic is changed.
+The controlled endpoint requires the existing self-test approval flag; this flag is temporary for this
+single manually dispatched job while automatic calling workflows remain disabled.
+
+All 16 local attended-window, launch-preflight and preservation checks passed. Both automatic
+voice activation workflows were independently verified `disabled_manually` before dispatch.

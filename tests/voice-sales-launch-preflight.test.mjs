@@ -42,6 +42,26 @@ test('fresh inspection resolves one canonical owner and previews policy without 
  const result=await inspectVoiceSalesLaunch(env,request);assert.equal(result.dialed,false);assert.equal(result.policyAllowed,true);assert.equal(result.salesDashboardSources,2);assert.equal(result.salesDashboardUnavailable,1);assert.deepEqual(result.salesDashboardUnavailableSources,['Voice booking journey']);assert.deepEqual(actions,['policy_preview']);
 });
 
+test('paused inspection reports dashboard evidence but cannot certify a ready call',async t=>{
+ const actions=[],logs=[],priorLog=console.log;
+ console.log=value=>logs.push(String(value));t.after(()=>{console.log=priorLog;});
+ const request=async(url,init={})=>{
+  const body=init.body?JSON.parse(init.body):null;
+  if(String(url).includes('/d1/database/')&&!String(url).endsWith('/query'))return Response.json({success:true,result:{name:'pawspace-staging'}});
+  if(String(url).endsWith('/query')){assert.match(body.sql,/^SELECT /);return Response.json({success:true,result:[{success:true,results:[{id:'customer',primary_phone:'+919876543210'}]}]});}
+  if(String(url).endsWith('/api/staging-login'))return Response.json({}, {headers:{'set-cookie':'pawspace_uat=test; HttpOnly'}});
+  if(String(url).endsWith('/api/voice-outbound?scope=sales_operations'))return Response.json({data:{sources:[{name:'Inbound sessions',available:true}],productionCertified:false}});
+  if(String(url).endsWith('/api/voice-outbound')&&init.method!=='POST')return Response.json({data:{gate:{mode:'disabled',enabled:false,blockedReason:'Phone calls are paused by the user; renewed approval is required'},transport:{provider:'elevenlabs_exotel'}}});
+  if(String(url).endsWith('/api/voice-outbound')){actions.push(body.action);return Response.json({data:{allowed:false,blockedBy:'phone_pause'}},{status:503});}
+  assert.fail('unexpected request');
+ };
+ await assert.rejects(inspectVoiceSalesLaunch(env,request),/Existing voice policy has not cleared/);
+ const report=JSON.parse(logs.find(line=>line.startsWith('VOICE_SALES_LAUNCH_PREFLIGHT=')).split('=',2)[1]);
+ assert.equal(report.mode,'disabled');assert.equal(report.enabled,false);assert.equal(report.policyAllowed,false);
+ assert.equal(report.salesDashboardSources,1);assert.equal(report.blockedBy,'phone_pause');assert.equal(report.dialed,false);
+ assert.match(report.blockedReason,/renewed approval/);assert.deepEqual(actions,['policy_preview']);
+});
+
 test('attended pilot requires exact recipient authorization and refuses workflow reruns',()=>{
  const workflow=readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8');
  const pilot=workflow.slice(workflow.indexOf('  specialist-call:'),workflow.indexOf('  direct-grooming-call:'));
