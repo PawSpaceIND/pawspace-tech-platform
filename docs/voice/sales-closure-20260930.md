@@ -55,8 +55,8 @@ returned 401; this is an explicit pilot deferral, not a claim of localized voice
 Fresh-launch preflight verifies the full authorized recipient via SHA-256, isolated staging revision,
 canonical ownership, the deployed read-only sales dashboard and the existing policy preview. It has no dial or policy-override operation.
 The pet-care source pack includes the AVMA pet-care pages and Merck Veterinary Manual pet-owner
-overview as curated references. Maya has no live open-web retrieval. The updated knowledge pack must
-pass the existing maker/checker activation process before live responses use it. Vet consultation
+overview as curated references. Maya has no live open-web retrieval. The approved knowledge pack passed the existing authenticated staff activation lifecycle in
+isolated staging; production activation is still pending. Vet consultation
 must be checked against the live service directory and scheduling system; a referral alone is not a
 confirmed connection to a veterinarian. The present symptom detector is English and limited, so
 multilingual and broader medical triage remain additional launch work.
@@ -94,3 +94,16 @@ multilingual and broader medical triage remain additional launch work.
 
 PR: [1199](https://github.com/PawSpaceIND/pawspace-tech-platform/pull/1199).
 The production launch remains open until the attended and completed-sales gates above pass.
+
+## Latest pet-care staging verification
+
+[Deployment 36694448953](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36694448953)
+certified revision `e08d3eafc84ae3791ba6d71f4a8f228a53bb2f86`.
+[Knowledge activation 36694866129](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36694866129)
+activated 43 changed Maya entries and retained 31 matching entries. Readback proved all four pet-care
+sources uniquely active. Exact deployed revision and staging isolation passed before and after.
+The existing bootstrap API attributes approval to the authenticated staff actor by default; the
+activation script does not invent a checker identity or change the lifecycle permission rules.
+Activation/isolation tests passed 81/81 and sales/pet-care tests passed 49/49. These checks prove
+staging knowledge availability, not an answered voice conversation, payment or provider acceptance.
+No calls, rollout changes or production activation occurred during this operation.

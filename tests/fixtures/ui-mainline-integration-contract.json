@@ -1022,7 +1022,7 @@
     "lib/whatsapp-uat-adapter.ts": "3784a9c77aad269ead0261cb341d7bfb8eb303afdf11a7cb34f93c66436aa3f4",
     "lib/workforce-classification.ts": "a082977376abc4fb55dd1296bee852b444dd9f7654e50b53709300e10d66b8e4",
     "lib/workforce-person-linkage.ts": "32e0eb0fe9c2e32edaa9924e9e95fc2e5c18f27d4dcf5bc0e7e3c96dbb983cc2",
-    "package-lock.json": "49616e98c6be5ffd39052998881ba007f6b064135493ad18853dfbdd963d5901",
+    "package-lock.json": "14eee412ed032f5288dc5fc0746440d7d13581eaff7590b9765f3eb0fe781560",
     "package.json": "685a0c18a54b62f7953a7c84c74fec1077e9e6197870bb742c4637caada6100b",
     "scripts/uat-staging-provider-capacity.sql": "132400d7999df88f5170a1cfa7129b33100cd69f59314b3febbb7a11ac1e8b5c",
     "tests/partner-app-login-gate.test.mjs": "b0478b7ee9c86248ee5a5c30991f6ff870a5f2b36c806fb1bec0bc400cb4e097",
