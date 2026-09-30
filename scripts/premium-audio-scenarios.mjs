@@ -12,7 +12,7 @@ export const PREMIUM_AUDIO_SCENARIOS=Object.freeze([
  ]},
  {id:'offers_and_pet_care',turns:[
   {id:'approved_savings',text:'The Complete Makeover price feels high. Is there an approved offer for that package?',recognized:/(?=.*makeover)(?=.*(?:offer|price))/i,reply:/offer|discount|sav(?:e|ing)/i,forbidden:/GROOM200|GROOM400/i},
-  {id:'pet_health',text:'Bruno has mild itching but is otherwise behaving normally. What general information can you share?',recognized:/(?=.*bruno)(?=.*(?:itch|itching))/i,reply:/vet|veterinar/i,forbidden:/GROOM|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i},
-  {id:'routine_hygiene',text:'What routine hygiene is suitable for a rabbit? I am only asking for general care information.',recognized:/(?=.*rabbit)(?=.*(?:hygiene|care))/i,reply:/rabbit|housing|bedding|brush|vet/i,forbidden:/book.*groom|GROOM|coupon|discount/i},
+  {id:'pet_health',text:'Bruno has mild itching but is otherwise behaving normally. What general information can you share?',recognized:/(?=.*bruno)(?=.*(?:itch|itching))/i,reply:/vet|veterinar/i,forbidden:/\bGROOM\d+\b|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i},
+  {id:'routine_hygiene',text:'What routine hygiene is suitable for a rabbit? I am only asking for general care information.',recognized:/(?=.*rabbit)(?=.*(?:hygiene|care))/i,reply:/rabbit|housing|bedding|brush|vet/i,forbidden:/book.*groom|\bGROOM\d+\b|coupon|discount/i},
  ]},
 ]);
