@@ -43,6 +43,10 @@ test('fresh inspection resolves one canonical owner and previews policy without 
 });
 
 test('attended pilot requires exact recipient authorization and refuses workflow reruns',()=>{
+ const workflow=readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8');
+ const pilot=workflow.slice(workflow.indexOf('  specialist-call:'),workflow.indexOf('  direct-grooming-call:'));
+ assert.match(pilot,/concurrency:\s+group: pawspace-staging-sweep\s+cancel-in-progress: false\s+queue: max/);
+ assert.ok(pilot.indexOf('Verify exact isolated build')<pilot.indexOf('Place one controlled'));
  assert.equal(specialistPilotAction({PILOT_ACTION:'specialist-call'}),'request_call');
  assert.equal(specialistPilotAction({...env,PILOT_ACTION:'attended-specialist-uat',GITHUB_RUN_ATTEMPT:'1'}),'uat_specialist_sales_test');
  assert.throws(()=>specialistPilotAction({...env,PILOT_ACTION:'attended-specialist-uat',GITHUB_RUN_ATTEMPT:'2'}),/cannot be rerun/);

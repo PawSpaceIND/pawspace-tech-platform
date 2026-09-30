@@ -292,6 +292,11 @@ jobs:
     if: ${{ inputs.confirm == 'specialist-call' || inputs.confirm == 'attended-specialist-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
+    # Keep the checked revision stable throughout dialing and handset verification.
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
