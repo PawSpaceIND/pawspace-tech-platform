@@ -23,11 +23,11 @@ for(const scenario of [
  const originals={fetch:globalThis.fetch,Response:globalThis.Response,pair:globalThis.WebSocketPair};
  const sockets=[];
  class Socket {
-  listeners=new Map();sent=[];closed=null;
+  listeners=new Map();sent=[];closed=null;readyState=1;
   accept(){}
   addEventListener(kind,handler){this.listeners.set(kind,handler);}
   send(message){if(failPlayback)throw new Error('WebSocket is not open SECRET-KEY customer-private-text');this.sent.push(JSON.parse(message));}
-  close(code){this.closed=code;}
+  close(code){this.closed=code;this.readyState=3;}
   emit(kind,data){this.listeners.get(kind)?.(data);}
  }
  try{
@@ -45,7 +45,11 @@ for(const scenario of [
   const call=sqlite.prepare('SELECT status,outcome FROM ai_voice_calls').get();
   if(fails){
    assert.ok(event,'real stream handler persists playback failure');
-   assert.deepEqual(JSON.parse(event.detail_json),{phase:failPlayback?'send_greeting_audio':'synthesize_greeting',errorClass:'Error'});
+   const detail=JSON.parse(event.detail_json);
+   assert.equal(detail.stage,failPlayback?'opening_send':'opening_tts');
+   assert.equal(detail.code,failPlayback?'processing_exception':scenario.providerError?'http_error':'empty_audio');
+   assert.ok(Number.isFinite(detail.elapsedMs)&&detail.elapsedMs>=0);
+   assert.deepEqual(Object.keys(detail).sort(),['code','elapsedMs','stage']);
    assert.doesNotMatch(event.detail_json,/SECRET|customer-private/);
    assert.equal(call.status,'failed');assert.equal(call.outcome,'provider_failure');assert.equal(server.closed,1011);
   }else{
