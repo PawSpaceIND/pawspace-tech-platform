@@ -323,6 +323,43 @@ jobs:
   # The shared staging Worker is deployed by several workstreams, so a measurement that needs a
   # particular build to still be live is a race this cannot reliably win. The provider is the same
   # one the Worker calls, so time-to-first-token measured here is the floor the voice turn can reach.
+  measure-staged-maya-brain:
+    if: ${{ inputs.confirm == 'measure-staged-maya-brain' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Measure actual staged brain timings without dialing
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+          ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
+        run: node --experimental-strip-types scripts/measure-staged-maya-brain.mjs
+      - name: Save staged brain timing evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maya-staged-brain-timings
+          path: voice-timing-results/
+          retention-days: 7
   measure-voice-llm:
     if: ${{ inputs.confirm == 'measure-voice-llm' }}
     runs-on: ubuntu-latest
