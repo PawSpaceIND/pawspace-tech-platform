@@ -1,3 +1,11 @@
+import {describe} from 'node:test';
+import net from 'node:net';
+import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {DEMO_LIMITS,DEMO_SUMMARY_PATH,readDemoJson,validateDemoIdentifier,validateDemoContext,validateDemoSignedUrl,actionsMaskCommand,createDemoEventBoundary,demoArtifactPaths,validatedDemoReport,serializeDemoReport,serializeDemoSummary} from '../scripts/voice-demo-output-boundary.mjs';
+import {assertFinalConversation,verifyFinalConversation} from '../scripts/voice-final-conversation-proof.mjs';
+import {inspect} from 'node:util';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
@@ -171,4 +179,206 @@ test('call handoff wording is controlled while incidental support advice is a us
   assert.equal(isHandoffReply(reply),true,reply);assert.equal(audioProof({...valid,reply}),false,reply);
  }
  assert.equal(audioProof({...valid,reply:'We offer Essential Bath for Bruno. If you need help, a PawSpace team member can assist.'}),true);
+});
+
+// Network-derived demo metadata and artifacts share the audio proof boundary.
+describe('bounded demo output security',()=>{
+test.beforeEach(t=>{
+ const deny=()=>{throw Error('External network is forbidden in demo output fixtures');};
+ t.mock.method(globalThis,'fetch',deny);
+ t.mock.method(net.Socket.prototype,'connect',deny);
+});
+const metadata=id=>({type:'conversation_initiation_metadata',conversation_initiation_metadata_event:{conversation_id:id,user_input_audio_format:'pcm_16000',agent_output_audio_format:'pcm_24000'}});
+const audio=bytes=>({type:'audio',audio_event:{audio_base_64:bytes.toString('base64'),event_id:1}});
+const parse=(boundary,event)=>boundary.parse(JSON.stringify(event));
+const proof={passed:true,userTurns:1,finalTranscriptMatched:true,bidirectionalAudio:true,audioEvidence:'observed_live_stream'};
+const report=(scenario='grooming_enquiry')=>({scenario,transcript:'What grooming services do you offer?',reply:'PawSpace grooming includes brushing and a bath.',audioBytes:3200,nonSilentBytes:1600,inputToPlaybackCompletedMs:4000,proof});
+
+test('provider metadata rejects workflow control characters before it can become a mask command',()=>{
+ for(const id of ['conv_ok\n::error::injected','conv_ok\r::stop-commands::token','conv_ok\0hidden','conv_%0Ainjected','../outside',{},'x'.repeat(129),'']){
+  assert.throws(()=>parse(createDemoEventBoundary(),metadata(id)),/Invalid demo identifier/);
+ }
+ const {event}=parse(createDemoEventBoundary(),metadata('conv_fixture-123'));
+ assert.equal(actionsMaskCommand(event.conversation_initiation_metadata_event.conversation_id),'::add-mask::conv_fixture-123');
+ assert.equal(validateDemoIdentifier('CALL-123_ab'),'CALL-123_ab');
+});
+
+test('Actions command escaping turns malicious CR/LF/percent input into exactly one command',()=>{
+ const malicious='conv%0A\r\n::warning::injected';
+ const command=actionsMaskCommand(malicious);
+ assert.equal(command,'::add-mask::conv%250A%0D%0A::warning::injected');
+ assert.equal(command.split(/[\r\n]/).length,1);
+ const decoded=command.slice('::add-mask::'.length).replace(/%0D/g,'\r').replace(/%0A/g,'\n').replace(/%25/g,'%');
+ assert.equal(decoded,malicious,'the runner receives the original mask data without parsing a second command');
+ assert.throws(()=>actionsMaskCommand('x'.repeat(8193)));
+ assert.throws(()=>actionsMaskCommand({toString(){throw Error('must not coerce');}}));
+});
+
+test('context identifiers and signed socket URLs are validated before logging or socket construction',()=>{
+ assert.deepEqual(validateDemoContext({callId:'CALL-fixture',threadId:'THREAD-fixture',ignored:'private'}),{callId:'CALL-fixture',threadId:'THREAD-fixture'});
+ assert.throws(()=>validateDemoContext({callId:'CALL\n::error::bad',threadId:'THREAD-fixture'}));
+ for(const host of ['api.elevenlabs.io','api.in.residency.elevenlabs.io']){
+  const url=`wss://${host}/v1/convai/conversation?conversation_signature=fixture%2Bdata`;
+  assert.equal(validateDemoSignedUrl(url),url);
+  assert.equal(actionsMaskCommand(validateDemoSignedUrl(url)).includes('%252B'),true);
+ }
+ for(const url of ['wss://evil.example/v1/convai/conversation','https://api.elevenlabs.io/v1/convai/conversation','wss://api.elevenlabs.io/v1/other','wss://user:secret@api.elevenlabs.io/v1/convai/conversation','wss://api.elevenlabs.io:8080/v1/convai/conversation','wss://api.elevenlabs.io/v1/convai/conversation\n::error::bad','wss://api.elevenlabs.io/v1/convai/conversation#fragment'])assert.throws(()=>validateDemoSignedUrl(url));
+});
+
+test('artifact destinations are the exact three local scenario paths and reject arbitrary names',()=>{
+ for(const scenario of VOICE_DEMO_SCENARIOS){
+  assert.deepEqual(demoArtifactPaths(scenario.id),{raw:`voice-demo-results/${scenario.id}.raw`,wav:`voice-demo-results/${scenario.id}.wav`,failed:`voice-demo-results/${scenario.id}-failed.json`});
+  assert.equal(Object.isFrozen(demoArtifactPaths(scenario.id)),true);
+ }
+ for(const id of ['../outside','grooming_enquiry/../../outside','grooming_enquiry\0','__proto__','constructor','pet_health.wav',{},null])assert.throws(()=>demoArtifactPaths(id));
+ assert.equal(DEMO_SUMMARY_PATH,'voice-demo-results/conversations.json');
+});
+
+test('event size and structure are bounded before state processing',()=>{
+ for(const raw of ['null','[]','42','{}','not json',Buffer.from('{}'),' '.repeat(DEMO_LIMITS.eventBytes+1)])assert.throws(()=>createDemoEventBoundary().parse(raw));
+ const boundary=createDemoEventBoundary();
+ for(let i=0;i<DEMO_LIMITS.eventCount;i++)parse(boundary,{type:'ping',ping_event:{event_id:i}});
+ assert.throws(()=>parse(boundary,{type:'ping'}),/event count/);
+});
+
+test('audio requires canonical bounded base64 and a per-scenario cumulative byte ceiling',()=>{
+ for(const value of ['',null,{},'!!!!','AA=A','AB==','AA==\n','A'.repeat(Math.ceil(DEMO_LIMITS.audioChunkBytes/3)*4+4)])assert.throws(()=>parse(createDemoEventBoundary(),{type:'audio',audio_event:{audio_base_64:value}}));
+ const boundary=createDemoEventBoundary(),chunk=Buffer.alloc(DEMO_LIMITS.audioChunkBytes,1);
+ for(let total=0;total<DEMO_LIMITS.audioBytes;total+=chunk.length)assert.deepEqual(parse(boundary,audio(chunk)).audio,chunk);
+ assert.throws(()=>parse(boundary,audio(Buffer.from([1]))),/cumulative audio/);
+});
+
+test('transcript aggregation and reply/correction text cannot make unbounded state or reports',()=>{
+ const boundary=createDemoEventBoundary();
+ const segment='a'.repeat(DEMO_LIMITS.textBytes/2-1);
+ parse(boundary,{type:'user_transcript',user_transcription_event:{user_transcript:segment}});
+ parse(boundary,{type:'user_transcript',user_transcription_event:{user_transcript:segment}});
+ assert.throws(()=>parse(boundary,{type:'user_transcript',user_transcription_event:{user_transcript:'x'}}),/cumulative transcript/);
+ for(const event of [{type:'agent_response',agent_response_event:{agent_response:'x'.repeat(DEMO_LIMITS.textBytes+1)}},{type:'agent_response_correction',agent_response_correction_event:{original_agent_response:'original',corrected_agent_response:'🐾'.repeat(DEMO_LIMITS.textBytes/4+1)}}])assert.throws(()=>parse(createDemoEventBoundary(),event));
+});
+
+test('metadata audio formats retain the original supported PCM and microphone constraints',()=>{
+ const invalidOutput=metadata('conv_fixture');invalidOutput.conversation_initiation_metadata_event.agent_output_audio_format='pcm_999999';
+ assert.throws(()=>parse(createDemoEventBoundary(),invalidOutput),/Unsupported agent audio format/);
+ const invalidInput=metadata('conv_fixture');invalidInput.conversation_initiation_metadata_event.user_input_audio_format='pcm_48000';
+ assert.throws(()=>parse(createDemoEventBoundary(),invalidInput),/microphone/);
+});
+
+test('bounded HTTP JSON refuses declared and received oversize and releases the reader',async()=>{
+ assert.deepEqual(await readDemoJson(Response.json({ok:true})),{ok:true});
+ let cancelled=false,pulls=0;
+ const declared=new Response(new ReadableStream({pull(){pulls++;},cancel(){cancelled=true;}},{highWaterMark:0}),{headers:{'content-length':String(DEMO_LIMITS.jsonBytes+1)}});
+ await assert.rejects(readDemoJson(declared),/JSON response exceeded/);
+ assert.equal(cancelled,true);assert.equal(pulls,0);assert.equal(declared.body.locked,false);
+ cancelled=false;
+ const received=new Response(new ReadableStream({start(controller){controller.enqueue(Buffer.alloc(DEMO_LIMITS.jsonBytes+1));},cancel(){cancelled=true;return new Promise(()=>{});}}),{headers:{'content-length':'1'}});
+ await assert.rejects(readDemoJson(received),/JSON response exceeded/);
+ assert.equal(cancelled,true);assert.equal(received.body.locked,false);
+ await assert.rejects(readDemoJson(new Response('not JSON')));
+});
+
+test('report validation keeps genuine evidence and excludes arbitrary provider metadata and claims',()=>{
+ const input={...report(),dialed:true,carrierVerified:true,prompt:'untrusted prompt',file:'../../outside',proof:{...proof,secret:'untrusted'}};
+ const result=JSON.parse(serializeDemoReport(input));
+ assert.equal(result.reply,input.reply);assert.equal(result.transcript,input.transcript);
+ assert.equal(result.prompt,VOICE_DEMO_SCENARIOS[0].text);
+ assert.equal(result.dialed,false);assert.equal(result.carrierVerified,false);
+ assert.equal('file' in result,false);assert.equal('secret' in result.proof,false);
+ for(const override of [{scenario:'../outside'},{audioBytes:Infinity},{nonSilentBytes:5000},{inputToPlaybackCompletedMs:-1},{reply:'x'.repeat(DEMO_LIMITS.textBytes+1)},{proof:{...proof,userTurns:2}},{proof:{...proof,passed:false}}])assert.throws(()=>validatedDemoReport({...report(),...override}));
+ const failed=JSON.parse(serializeDemoReport({...report(),passed:false,error:'fixture\n::error::metadata'}));
+ assert.equal(failed.passed,false);assert.equal(failed.error,'fixture\n::error::metadata');
+ assert.equal(JSON.stringify(failed).split('\n').length,1);
+ assert.throws(()=>serializeDemoReport({...report(),passed:false,error:'x'.repeat(2049)}));
+});
+
+test('the summary requires exactly three successful fixed scenarios and stays byte-bounded after escaping',()=>{
+ const reports=VOICE_DEMO_SCENARIOS.map(scenario=>report(scenario.id));
+ const summary=JSON.parse(serializeDemoSummary(reports));
+ assert.equal(summary.demonstrations.length,3);assert.equal(summary.nativeCarrierCertified,false);assert.equal(summary.dialed,false);
+ assert.throws(()=>serializeDemoSummary(reports.slice(0,2)));
+ assert.throws(()=>serializeDemoSummary([...reports].reverse()));
+ assert.throws(()=>serializeDemoSummary(reports.map(item=>({...item,reply:'\0'.repeat(DEMO_LIMITS.textBytes)}))),/input bound/);
+});
+
+test('real probe and final-conversation proof preserve validated audio bytes and the three fixed artifacts offline',async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'voice-demo-boundary-'));
+ t.after(()=>rm(directory,{recursive:true,force:true}));
+ await mkdir(join(directory,'voice-demo-results'));
+ const reports=[];
+ const replies=['PawSpace grooming includes a bath, brushing and coat care for Bruno.','Please contact a vet about Bruno’s itchy skin before booking grooming.','I can explain approved coupon checks and booking steps without booking anything.'];
+ for(const [index,scenario] of VOICE_DEMO_SCENARIOS.entries()){
+  const boundary=createDemoEventBoundary(),state=createAudioProbeState(),id=`conv_fixture_${index}`;
+  const accept=event=>{const parsed=parse(boundary,event);applyAudioProbeEvent(state,parsed.event,{now:1000,outputFormat:'pcm_24000'});return parsed.audio;};
+  accept(metadata(id));accept({type:'agent_response',agent_response_event:{agent_response:'Hello, this is PawSpace.'}});
+  state.listening=true;
+  accept({type:'user_transcript',user_transcription_event:{user_transcript:scenario.text}});
+  accept({type:'agent_response',agent_response_event:{agent_response:replies[index]}});
+  const bytes=Buffer.alloc(3200,7),validated=accept(audio(bytes));
+  assertDemoResponse(scenario,state);
+  const verified=assertFinalConversation({status:'done',conversation_id:id,agent_id:'agent_fixture',metadata:{text_only:false},transcript:[{role:'user',message:state.transcript},{role:'agent',message:state.reply}]},{agentId:'agent_fixture',turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId:id,inputMode:'audio',inputBytes:2000,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:true}});
+  const result=validatedDemoReport({scenario:scenario.id,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,inputToPlaybackCompletedMs:4000,proof:verified});
+  await writeFile(join(directory,demoArtifactPaths(scenario.id).raw),validated);
+  assert.deepEqual(await readFile(join(directory,demoArtifactPaths(scenario.id).raw)),bytes);
+  reports.push(result);
+ }
+ await writeFile(join(directory,DEMO_SUMMARY_PATH),serializeDemoSummary(reports));
+ const saved=JSON.parse(await readFile(join(directory,DEMO_SUMMARY_PATH),'utf8'));
+ assert.equal(saved.passed,true);assert.equal(saved.demonstrations.every(item=>item.proof.finalTranscriptMatched),true);
+ assert.equal(saved.nativeCarrierCertified,false);
+});
+test('malformed signed URLs expose only a generic error without their secret input or cause',()=>{
+ const secret='test_token_test_token';
+ for(const value of [`wss://[${secret}]/v1/convai/conversation`,`${secret}`,`wss://api.elevenlabs.io:${secret}/v1/convai/conversation`]){
+  assert.throws(()=>validateDemoSignedUrl(value),error=>{
+   assert.equal(error.message,'Invalid demo socket URL');
+   assert.equal(Object.hasOwn(error,'input'),false);
+   assert.equal(Object.hasOwn(error,'cause'),false);
+   assert.equal(inspect(error,{showHidden:true,depth:null}).includes(secret),false);
+   return true;
+  });
+ }
+});
+
+test('malformed event and HTTP JSON cannot reflect conversation IDs or tokens into diagnostics',async()=>{
+ const id='conv_test_test_test';
+ let eventError;
+ try{createDemoEventBoundary().parse(id);}catch(error){eventError=error;}
+ assert.equal(eventError?.message,'Invalid demo event JSON');
+ assert.equal(inspect(eventError,{showHidden:true,depth:null}).includes(id),false);
+ const secret='test_token_test_token';
+ await assert.rejects(readDemoJson(new Response(secret)),error=>{
+  assert.equal(error.message,'Invalid demo JSON response');
+  assert.equal(inspect(error,{showHidden:true,depth:null}).includes(secret),false);
+  const serialized=serializeDemoReport({...report(),passed:false,error:error.message});
+  assert.equal(serialized.includes(secret),false);
+  return true;
+ });
+});
+
+test('validated conversation IDs remain in-memory proof correlation and stay out of exported reports',async t=>{
+ const logged=[];
+ t.mock.method(console,'log',(...args)=>logged.push(args));
+ const {event}=parse(createDemoEventBoundary(),metadata('conv_test_test_test'));
+ const conversationId=event.conversation_initiation_metadata_event.conversation_id;
+ const input=report(),requests=[];
+ const evidence={conversationId,inputMode:'audio',inputBytes:2000,outputBytes:input.audioBytes,nonSilentBytes:input.nonSilentBytes,playbackComplete:true};
+ const detail={status:'done',conversation_id:conversationId,agent_id:'agent_fixture',metadata:{text_only:false},transcript:[{role:'user',message:input.transcript},{role:'agent',message:input.reply}]};
+ const verified=await verifyFinalConversation({key:'fixture-key',conversationId,agentId:'agent_fixture',turns:[{transcript:input.transcript,reply:input.reply}],liveAudioEvidence:evidence,request:async(url,options)=>{
+  requests.push({url,options});
+  return Response.json(detail);
+ }});
+ assert.equal(requests.length,1);
+ assert.equal(requests[0].url,`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`);
+ assert.equal(verified.finalTranscriptMatched,true);
+ assert.deepEqual(logged,[]);
+ const saved=serializeDemoReport({...input,conversationId,conversation_id:conversationId,proof:{...verified,conversationId}});
+ assert.equal(saved.includes(conversationId),false);
+ const summary=serializeDemoSummary(VOICE_DEMO_SCENARIOS.map(scenario=>({...input,scenario:scenario.id,conversationId,proof:verified})));
+ assert.equal(summary.includes(conversationId),false);
+ assert.throws(()=>assertFinalConversation({...detail,conversation_id:'conv_wrong_fixture'},{agentId:'agent_fixture',turns:[{transcript:input.transcript,reply:input.reply}],liveAudioEvidence:evidence}),error=>{
+  assert.equal(error.message,'Final conversation lacks bidirectional audio evidence');
+  assert.equal(inspect(error,{showHidden:true,depth:null}).includes(conversationId),false);
+  return true;
+ });
+});
 });
