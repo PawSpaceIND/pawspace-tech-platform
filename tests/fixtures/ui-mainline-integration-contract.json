@@ -3,7 +3,7 @@
   "upstream": "645d92986fd219c7b322b658630225e73059f1a0",
   "protected": {
     ".github/workflows/deploy-staging.yml": "5bdcb0f3e5599e8d1a0a8ea6b808225087179a1f616064eaa57cb8b0310d4cdd",
-    ".github/workflows/elevenlabs-provider-preflight.yml": "05bf5e46091e628c639377618364774116681ccfccb87cb01b8c5742221e0eca",
+    ".github/workflows/elevenlabs-provider-preflight.yml": "5ff576b85f8c4c73a0f6ca85f43bae486a652bf117f2fbf4c1a8fab894123de4",
     ".github/workflows/voice-uat-staging.yml": "6c8f193dddf42eec5f1315e3f92502058b4be8a63e764ba9e30f83a01ef44e57",
     ".gitleaksignore": "42321d1ea122ebb8bd828806de526bbc1e198cf31965553de188a762212d788b",
     "app/api/ai-intelligence/route.ts": "46f58d684819ba40a9fbb937cb2d37b8ab88a7eb5c33f5308367721fe78424d7",

@@ -53,6 +53,25 @@ on:
 permissions:
   contents: read
 jobs:
+  diagnose-native-audio:
+    if: ${{ inputs.confirm == 'diagnose-native-audio' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect the attended native call and probe synthetic greeting without dialing
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+        run: node --experimental-strip-types scripts/diagnose-native-voice-audio.mjs
   # Answers "would streaming actually help, and by how much" without involving staging at all.
   # The shared staging Worker is deployed by several workstreams, so a measurement that needs a
   # particular build to still be live is a race this cannot reliably win. The provider is the same
