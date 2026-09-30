@@ -15,9 +15,10 @@ const id=candidates[0].conversation_id;console.log('::add-mask::'+id);
 const detail=await get('/v1/convai/conversations/'+encodeURIComponent(id));
 if(detail.agent_id!==agentId||detail.metadata?.phone_call)throw Error('Expected a synthetic session, not a phone call');
 const users=(detail.transcript||[]).filter(row=>row.role==='user');
-if(users.length!==1||String(users[0].message||'').trim()!=='What grooming services do you offer for my dog Bruno?')throw Error('Failed demo transcript identity differs');
+const normalized=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+const transcriptMatched=users.length===1&&normalized(users[0].message)===normalized('What grooming services do you offer for my dog Bruno?');
 const metadata=detail.metadata||{},prompt=config.conversation_config?.agent?.prompt||{};
-console.log('FAILED_DEMO_DIAGNOSIS='+JSON.stringify({dialed:false,status:detail.status,duration:metadata.call_duration_secs,terminationReason:scrub(metadata.termination_reason),error:scrub(typeof metadata.error==='object'?JSON.stringify(metadata.error):metadata.error),userTurns:users.length,agentTurns:(detail.transcript||[]).filter(row=>row.role==='agent').map(row=>({characters:String(row.message||'').length,interrupted:row.interrupted===true})),customLlm:{apiType:prompt.custom_llm?.api_type,model:prompt.custom_llm?.model_id,stagingEndpoint:prompt.custom_llm?.url==='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1',authConfigured:Boolean(prompt.custom_llm?.api_key)}}));
+console.log('FAILED_DEMO_DIAGNOSIS='+JSON.stringify({dialed:false,status:detail.status,duration:metadata.call_duration_secs,terminationReason:scrub(metadata.termination_reason),error:scrub(typeof metadata.error==='object'?JSON.stringify(metadata.error):metadata.error),transcriptMatched,userTurns:users.length,agentTurns:(detail.transcript||[]).filter(row=>row.role==='agent').map(row=>({characters:String(row.message||'').length,interrupted:row.interrupted===true})),customLlm:{apiType:prompt.custom_llm?.api_type,model:prompt.custom_llm?.model_id,stagingEndpoint:prompt.custom_llm?.url==='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1',authConfigured:Boolean(prompt.custom_llm?.api_key)}}));
 // Export only trace status and timing; request/response bodies and attributes can contain credentials.
 try{
  const trace=await get('/v1/convai/conversations/'+encodeURIComponent(id)+'?format=opentelemetry');
@@ -25,3 +26,6 @@ try{
  function visit(value){if(!value||typeof value!=='object')return;if(Array.isArray(value)){value.forEach(visit);return;}if(value.spanId||value.span_id)spans.push({name:scrub(value.name),status:value.status?{code:value.status.code,message:scrub(value.status.message)}:null,start:value.startTimeUnixNano,end:value.endTimeUnixNano});Object.values(value).forEach(visit);}
  visit(trace);console.log('FAILED_DEMO_TRACE='+JSON.stringify({available:true,spans:spans.slice(0,60)}));
 }catch(error){console.log('FAILED_DEMO_TRACE='+JSON.stringify({available:false,error:scrub(error.message)}));}
+// Preserve the identity refusal, but retain diagnostic status when transcripts were redacted,
+// split, or absent. A diagnostic observation never counts as successful conversation proof.
+if(!transcriptMatched)throw Error('Failed demo final transcript identity differs; diagnostic status retained');
