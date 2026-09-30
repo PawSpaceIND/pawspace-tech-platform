@@ -50,9 +50,35 @@ on:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
         default: 'grooming_sales'
+      demo_started_at:
+        description: 'Exact failed synthetic demo interval start in UTC (read-only diagnosis)'
+        required: false
+        default: ''
+      demo_ended_at:
+        description: 'Exact failed synthetic demo interval end in UTC (maximum five minutes)'
+        required: false
+        default: ''
 permissions:
   contents: read
 jobs:
+  diagnose-voice-demo:
+    if: ${{ inputs.confirm == 'diagnose-voice-demo' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect the exact failed synthetic session without dialing or generating
+        env:
+          DEMO_STARTED_AT: ${{ inputs.demo_started_at }}
+          DEMO_ENDED_AT: ${{ inputs.demo_ended_at }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node scripts/diagnose-voice-demo.mjs
   pause-staging-phone-calls:
     if: ${{ inputs.confirm == 'pause-staging-phone-calls' }}
     runs-on: ubuntu-latest
