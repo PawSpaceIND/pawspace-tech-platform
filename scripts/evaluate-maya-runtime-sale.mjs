@@ -106,7 +106,7 @@ try {
   const recommendation = await turn('Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?');
   assert.match(recommendation.output, /Complete Makeover/i, 'The actual runtime must recommend the package matching the stated need');
   assert.equal(countBookings(), 0);
-  await turn('Please prepare a quote for the one-time Complete Makeover for Milo, prepaid, October 20 2026 at 10 AM India time, at 12 Test Street, Bengaluru, PIN 560038.');
+  await turn('Please prepare an unconfirmed quote for the one-time Complete Makeover for Milo, prepaid, October 20 2026 at 10 AM India time, at 12 Test Street, Bengaluru, PIN 560038. Do not reserve or create a booking or payment order. Read the quote and ask for my separate confirmation.');
   const offer = await sales.pendingVoiceSalesOffer(world.db, threadId, customerId, 'grooming');
   assert.ok(offer, 'The actual model must propose a valid governed quote after all supplied details');
   assert.equal(countBookings(), 0, 'Quoting must not create a booking');

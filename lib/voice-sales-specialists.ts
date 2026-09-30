@@ -31,7 +31,12 @@ export function isVoiceSalesConfirmation(message: string) {
 }
 /** An explicit request to prepare an offer is not permission to execute it. */
 export function isVoiceSalesQuoteRequest(message: string) {
- return /^(?:(?:please|can you|could you)\s+)?(?:prepare|create)\s+(?:a|the)\s+quote\s+for\b/i.test(message.trim());
+ return /^(?:(?:please|can you|could you)\s+)?(?:prepare|create)\s+(?:a|an|the)\s+(?:(?:unconfirmed|draft)\s+)?quote\s+for\b/i.test(message.trim());
+}
+/** Only quote preparation can explicitly withhold payment. Positive/mixed requests remain risky. */
+export function voiceQuotePolicyText(message:string){
+ if(!isVoiceSalesQuoteRequest(message))return message;
+ return message.replace(/\b(?:do not|don't|don’t)\s+(?:reserve\s+or\s+)?(?:create|take|collect|capture|process|make|send|start)\s+(?:(?:a|any|the)\s+)?(?:booking\s+or\s+)?payment(?:\s+order)?\b/gi,"");
 }
 export async function ensureVoiceSalesOffers(db: D1Database) {
  return ensureD1Once(db,"voice_sales_offers",async()=>{
