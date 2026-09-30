@@ -135,8 +135,10 @@ only these reviewed changes. Unrelated business rules remain authoritative.
 [Deployment 36709553463](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709553463)
 is queued for that exact application revision with phone pause enabled and SMS smoke disabled.
 [Pause refresh 36709549373](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36709549373)
-is queued to persist and read back the additional pause binding on the current staging worker.
-These live jobs remain pending; do not report deployed repair until their terminal readbacks pass.
+completed successfully at 11:54 UTC. Readback verified the persistent phone-pause binding true,
+voice mode disabled and all five UAT/native/self-test/autorun/outbound-sales gates false, preserving
+unrelated binding names. No call was placed. Both dialing workflows remain disabled. The repaired
+application deployment remains queued; this shutdown success does not certify deployed audio repair.
 
 Three actual audio demo conversations remain unverified. The first attempt failed its Grooming-answer
 acceptance check; the next refused a replaced staging revision before starting. The runner captures
@@ -144,3 +146,19 @@ real ASR text, substantive replies, audible response bytes and terminal provider
 that informational conversations did not create bookings. It uses the approved ElevenLabs voice with
 the PawSpace brain, not the native carrier path. It reports input-to-playback elapsed time, not model
 latency. No conversation or successful demo is fabricated from the scenario scripts.
+
+
+## Latest source regression and pending live jobs
+
+All 881 tests in `tests/ai-*.test.mjs`, `tests/voice-*.test.mjs` and `tests/maya-*.test.mjs`
+passed at revision `40e298f588ecc9a5cce86f91ef3de12fee02f962`, with zero failures or skipped tests.
+They ran in local simulator/sandbox mode and cover the current AI/voice source, not live carrier audio.
+The local full `npm test` command hit the three-minute command limit during the build before tests
+started; that attempt is not a pass.
+
+Full-repository CI run 36710431959 is queued for that source revision. Non-dialing demo run
+36710208909 is pending the shared staging lock and targets repaired application revision
+`12a1b3eff4270145a2c414fd7ebab5220bb58011`. Follow those existing runs; do not restart them because
+an observation timeout elapsed. The demo runner refuses a replaced revision or any enabled phone
+gate. Successful audio conversations, checkout delivery, sandbox payment and provider acceptance
+remain unverified. Synthetic success is not authorization to resume handset dialing.
