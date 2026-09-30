@@ -102,6 +102,7 @@ for(let pets=1;pets<=4;pets++){
 }
 // Guard 1 end-to-end: a real 2-pet grooming booking must schedule a provider AND confirm (201), not 409.
 const groomStart=new Date(Date.UTC(2026,10,20,5,30)),groomEnd=new Date(groomStart.getTime()+120*60_000),groomGroup="runtime-groom-2pet";
+for(const providerId of["groom_arun","groom_kiran","groom_sanjay"])await publishRuntimeRoster(db,providerId,groomStart.toISOString().slice(0,10),["09:00-19:00"]);
 await seedOwnedRuntimePet(db,"RUNTIME-GROOM-CUST","Bruno","Bruno");
 await seedOwnedRuntimePet(db,"RUNTIME-GROOM-CUST","Coco","Coco");
 const groomScheduled=await call(schedulingPost,"/api/uat-scheduling",{clientRequestId:groomGroup,customerId:"RUNTIME-GROOM-CUST",petIds:["Bruno","Coco"],serviceCode:"grooming",zoneId:"blr-east",scheduledStart:groomStart.toISOString(),scheduledEnd:groomEnd.toISOString(),preferredProviderId:"groom_arun"});
@@ -111,6 +112,7 @@ expect(String((groomBooked.data as Row).bookingId||"").length>0,"a governed 2-pe
 // Guard 2: preferred-groomer soft preference + genuine-capacity protection. Only the 3 seeded
 // groomers (groom_arun/groom_kiran/groom_sanjay, capacity 1 each) exist at this point.
 const fbStart=new Date(Date.UTC(2026,10,25,5,30)),fbEnd=new Date(fbStart.getTime()+120*60_000);
+for(const providerId of["groom_arun","groom_kiran","groom_sanjay"])await publishRuntimeRoster(db,providerId,fbStart.toISOString().slice(0,10),["09:00-19:00"]);
 const fbBase={serviceCode:"grooming" as const,zoneId:"blr-east",scheduledStart:fbStart.toISOString(),scheduledEnd:fbEnd.toISOString(),preferredProviderId:"groom_arun",petIds:["Bruno"]};
 for(const suffix of ["1","2","3","4"])await seedOwnedRuntimePet(db,`RUNTIME-GROOM-FB-${suffix}`,`FB-PET-${suffix}`,`Fallback dog ${suffix}`);
 const fbReserve=(suffix:string)=>call(schedulingPost,"/api/uat-scheduling",{...fbBase,clientRequestId:`runtime-groom-fb-${suffix}`,customerId:`RUNTIME-GROOM-FB-${suffix}`,petIds:[`FB-PET-${suffix}`]});
