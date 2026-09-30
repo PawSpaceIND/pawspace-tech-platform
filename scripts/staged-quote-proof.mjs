@@ -5,6 +5,12 @@ export function savedQuotePrerequisites(pets,addresses,geocodes){
  return{dogCountBoundedAtTwo:dogCount,savedAddressPresent:Boolean(address),savedAddressGeocoded:Boolean(address&&geocodes.some(g=>g.address_id===address.id))};
 }
 
+export function quoteHandoffReceipt(handoffs,turns){
+ const reasons=new Set(['customer_requested_human','low_confidence','provider_unavailable','provider_error','provider_unsupported','policy_risk','complaint','safety','refund_payment_dispute','urgent_funeral_memorial','sensitive_relocation','unsupported_request','rollout_gated','high_value_enterprise_objection','staff_initiated','bot_lead_qualified','bot_abandoned']);
+ const decisions=new Set(['human_handoff','blocked_high_impact','customer_confirmation_required','clarification_required','customer_confirmed_action_executed','draft_review_required']);
+ return{aiPaused:handoffs.some(h=>['queued','staff_active'].includes(h.status)),handoffs:handoffs.slice(0,5).map(h=>({status:['queued','staff_active','resumed'].includes(h.status)?h.status:'other',reason:reasons.has(h.reason)?h.reason:'other'})),recentTurns:turns.slice(0,3).map(t=>({outcome:['handoff','reply_ready','draft_review_required'].includes(t.outcome)?t.outcome:'other',policyDecision:decisions.has(t.policy_decision)?t.policy_decision:'other',handoffReason:reasons.has(t.handoff_reason)?t.handoff_reason:null}))};
+}
+
 // Only existing owned records supplied by parameterized staging reads. No invented intake facts.
 export function savedQuotePrompt(pets,addresses,geocodes,now=Date.now(),selectedOwnedPetId){
  const allDogs=pets.filter(p=>p.species==='dog');

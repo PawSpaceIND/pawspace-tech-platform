@@ -1,7 +1,7 @@
 // Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
 import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
-import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites} from './staged-quote-proof.mjs';
+import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
 const env=process.env,inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
@@ -50,7 +50,13 @@ if(quoteOnly){
  const prerequisites=savedQuotePrerequisites(pets,addresses,geocodes);
  console.log('SAVED_QUOTE_PREREQUISITES='+JSON.stringify(prerequisites));
  if(inspectOnly){
-  await isolation();const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites};
+  await isolation();
+  const threads=await rows("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1");let handoff={aiPaused:false,handoffs:[],recentTurns:[]};
+  if(threads.length){const [handoffs,turns]=await Promise.all([
+   rows("SELECT status,reason FROM ai_handoffs WHERE customer_id=? AND thread_id=? ORDER BY created_at DESC LIMIT 5",[env.SPECIALIST_CUSTOMER_ID,threads[0].id]),
+   rows('SELECT outcome,policy_decision,handoff_reason FROM ai_conversation_turns WHERE customer_id=? AND thread_id=? ORDER BY created_at DESC LIMIT 3',[env.SPECIALIST_CUSTOMER_ID,threads[0].id]),
+  ]);handoff=quoteHandoffReceipt(handoffs,turns);}
+  const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites,handoff};
   await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('SAVED_QUOTE_INSPECTION='+JSON.stringify(report));process.exit(0);
  }
  addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;if(pets.length>=20)throw Error('Owned pet inspection limit reached');const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);if(!selected)throw Error('Owned pet choice is ambiguous');prompts=[savedQuotePrompt(pets,addresses,geocodes,Date.now(),selected.id)];
