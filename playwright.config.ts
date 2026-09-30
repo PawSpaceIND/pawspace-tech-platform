@@ -22,6 +22,7 @@ export default defineConfig({
     "e2e/mission-01.spec.ts",
     "e2e/partner-journey.spec.ts",
     "e2e/uat-phase3-partner-training.spec.ts",
+    "e2e/training-readiness.spec.ts",
     "e2e/uat-grooming-checkout-ui.spec.ts",
     "e2e/v2-audit-regressions.spec.ts",
     "e2e/v2-customer-shell.spec.ts",

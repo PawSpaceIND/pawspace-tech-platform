@@ -91,8 +91,17 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
   const overCost=costPerDay>0&&Number(daily?.cost||0)+reservedCostMicros>costPerDay;
   if(overRequests||overTokens||overCost)return{allowed:false,reason:"quota_exceeded"};
 
-  await db.prepare("INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'reserved',?,?)")
-   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now).run();
+  // The diagnostic reads above are not a reservation: another isolate can consume the last slot
+  // while they are in flight. Recheck every quota inside the single atomic INSERT statement.
+  const claimed=await db.prepare(`INSERT INTO ai_provider_runtime_requests (id,provider,model_ref,channel,intent,reserved_tokens,reserved_cost_micros,status,created_at,updated_at)
+   SELECT ?,?,?,?,?,?,?,'reserved',?,?
+   WHERE (SELECT COUNT(*) FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')) < ?
+   AND (SELECT COALESCE(SUM(reserved_tokens),0) FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')) + ? <= ?
+   AND (?=0 OR (SELECT COALESCE(SUM(reserved_cost_micros),0) FROM ai_provider_runtime_requests WHERE created_at>=? AND status IN ('reserved','completed','failed')) + ? <= ?)
+   AND COALESCE((SELECT open_until FROM ai_provider_runtime_circuit WHERE provider=? AND model_ref=?),0)<=?`)
+   .bind(id,input.provider,input.modelRef,text(input.channel)||"direct",text(input.intent)||"direct",reservedTokens,reservedCostMicros,now,now,
+    minute,requestsPerMinute,start,reservedTokens,tokensPerDay,costPerDay,start,reservedCostMicros,costPerDay,input.provider,input.modelRef,now).run();
+  if(Number(claimed.meta?.changes||0)!==1)return{allowed:false,reason:"quota_exceeded"};
   return{allowed:true,reservation:{id,reservedTokens,reservedCostMicros}};
  }catch{return{allowed:false,reason:"runtime_control_unavailable"};}
 }

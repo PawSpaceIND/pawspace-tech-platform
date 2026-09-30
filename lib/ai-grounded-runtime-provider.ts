@@ -1,3 +1,4 @@
+import{needsImmediateVetGuidance}from"./ai-emergency-guidance";
 import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-information";
 import {currentGroomingCatalogue} from "./ai-current-catalogue";
 import{policyEnquiryTopic,POLICY_INFORMATION_DIRECTIVE}from"./ai-policy-enquiry";
@@ -47,7 +48,7 @@ const HUMAN_EXCEPTION_PATTERNS=[
  /\b(provider|trainer|groomer|sitter|walker|driver).{0,24}\b(no[- ]?show|did not come|didn't come|not arrived|never arrived)\b/i,
  /\b(complaint|very unhappy|serious issue|escalate this|service failure)\b/i,
 ];
-export function requiresImmediateHumanHandoff(input:string){return !policyEnquiryTopic(input)&&HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
+export function requiresImmediateHumanHandoff(input:string){return needsImmediateVetGuidance(input)||!policyEnquiryTopic(input)&&HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
 export function parseGroundedActionEnvelope(raw:string):{reply:string;actions:AiActionRequest[]}|null{
  let value=raw.trim();const fenced=value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);if(fenced)value=fenced[1].trim();if(!value.startsWith("{")||!value.endsWith("}"))return null;let parsed:unknown;try{parsed=JSON.parse(value)}catch{return null;}if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return null;const row=parsed as Row,reply=text(row.reply),rawActions=row.actions===undefined?[]:row.actions;if(!Array.isArray(rawActions)||rawActions.length>6)return null;const actions:AiActionRequest[]=[];for(const item of rawActions){if(!item||typeof item!=="object"||Array.isArray(item))return null;const action=item as Row,toolCode=text(action.toolCode) as AiToolCode;if(!ACTION_TOOLS.has(toolCode)||!action.arguments||typeof action.arguments!=="object"||Array.isArray(action.arguments))return null;actions.push({toolCode,arguments:action.arguments as Record<string,unknown>});}return{reply,actions};
 }

@@ -5,10 +5,22 @@ import {staffSemanticContract,parseStaffPage} from './helpers/staff-presentation
 import ts from 'typescript';
 const read=path=>fs.readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const contract=JSON.parse(read('tests/fixtures/staff-finance-people-contract.json'));
+const sittingPath='app/team/finance/sitting/sitting-finance-workspace.tsx';
+// Reverse only the reviewed pre-completion disclosure repair. Historical AST hashes stay pinned.
+const sittingDisplayImport='import {sittingReconciliationLabel} from "../../../../lib/sitting-reconciliation-display";\n';
+const sittingDisplayParagraph='<h2>Reconciliation</h2><p>{sittingReconciliationLabel(booking.status,data?.reconciliation)}</p>';
+const historicalSittingParagraph='<h2>Reconciliation</h2><p>{data?.reconciliation?`${label(data.reconciliation.status)} · refund ${label(data.reconciliation.refund_state)} · settlement ${label(data.reconciliation.settlement_state)} · tax ${label(data.reconciliation.tax_state)}`:"Not reconciled yet"}</p>';
+function reverseReviewedSittingDisclosure(source,path){
+ if(path!==sittingPath)return source;
+ for(const exact of [sittingDisplayImport,sittingDisplayParagraph])assert.equal(source.split(exact).length,2,'Exactly one reviewed Sitting disclosure is required');
+ assert.equal(source.split('sittingReconciliationLabel').length,3,'Only the import and reviewed display may use the helper');
+ return source.replace(sittingDisplayImport,'').replace(sittingDisplayParagraph,historicalSittingParagraph);
+}
+
 for(const [path,expected] of Object.entries(contract.files)) {
   test('Finance/People presentation preserves every non-style AST node: '+path,()=>{
     const source=read(path);
-    assert.equal(staffSemanticContract(source,path),expected.semantic);
+    assert.equal(staffSemanticContract(reverseReviewedSittingDisclosure(source,path),path),expected.semantic);
     const file=parseStaffPage(source,path);let roots=0;
     function walk(node){if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='StaffModule')roots++;ts.forEachChild(node,walk);}
     walk(file);assert.equal(roots,expected.mainRoots,'Every original main, including loading/error returns, stays framed.');
@@ -37,4 +49,17 @@ test('existing async query-param forwarding routes were not replaced by client s
     const source=read(`app/team/finance/${service}/page.tsx`);
     assert.match(source,/await searchParams/);assert.ok(source.includes('params.'+key));assert.doesNotMatch(source,/StaffModule|useRouter/);
   }
+});
+
+test('reviewed Sitting disclosure retains the historical contract and rejects financial mutations',()=>{
+ assert.equal(contract.base,'82d4158b339bedebd9485f8bc5324c54475f96de');
+ assert.equal(contract.files[sittingPath].semantic,'bfcce787ec049a852c8fc50016ace019caa507c318e2b5ce202c00a4f63a0b86');
+ const source=read(sittingPath),expected=contract.files[sittingPath].semantic;
+ for(const [before,after] of [['booking.total_amount','booking.captured_amount'],['action:"approve_settlement"','action:"unsafe_settlement"'],['disabled={busy||String(booking.status)!=="completed"}','disabled={busy}'],['approvedRefundAmount:amount','approvedRefundAmount:999']]){
+  assert.ok(source.includes(before));
+  assert.notEqual(staffSemanticContract(reverseReviewedSittingDisclosure(source.replace(before,after),sittingPath),sittingPath),expected,before+' must remain protected');
+ }
+ for(const [before,after] of [[sittingDisplayImport,''],['sittingReconciliationLabel(booking.status,data?.reconciliation)','sittingReconciliationLabel("confirmed",data?.reconciliation)'],[sittingDisplayParagraph,sittingDisplayParagraph+sittingDisplayParagraph]]){
+  assert.throws(()=>reverseReviewedSittingDisclosure(source.replace(before,after),sittingPath),/reviewed Sitting disclosure/);
+ }
 });

@@ -120,8 +120,12 @@ function runProdConfig(env) {
   mkdirSync(path.join(dir, "dist", "server"), { recursive: true });
   writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "pawspace-tech-platform", main: "index.js", vars: {} }));
   const script = new URL("../scripts/prod-config.mjs", import.meta.url).pathname;
-  try { return { status: 0, stderr: "", stdout: execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) }; }
-  catch (error) { return { status: Number(error.status), stdout: String(error.stdout || ""), stderr: String(error.stderr || "") }; }
+  try {
+    const stdout = execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const config = JSON.parse(readFileSync(path.join(dir, "dist", "server", "wrangler.json"), "utf8"));
+    return { status: 0, stderr: "", stdout, config };
+  }
+  catch (error) { return { status: Number(error.status), stdout: String(error.stdout || ""), stderr: String(error.stderr || ""), config: null }; }
 }
 const GUARD = /PRODUCTION_R2_BUCKET_NAME is set but no byte-upload path exists/;
 
@@ -136,6 +140,26 @@ test("production config refuses a media bucket while proof is metadata-only, and
   const buckets = workflow.match(/PRODUCTION_R2_BUCKET_NAME: \$\{\{ vars\.PRODUCTION_R2_BUCKET_NAME \}\}/g) || [];
   assert.equal(passes.length, buckets.length, "everywhere the bucket name is passed, the declaration is passed beside it");
   assert.ok(passes.length >= 1);
+});
+
+test("production config pins ordinary voice routing to ElevenLabs in the emitted Worker vars", () => {
+  const result = runProdConfig({
+    PRODUCTION_D1_ID: "11111111-2222-4333-8444-555555555555",
+    PAWSPACE_PAYMENT_ENV: "sandbox",
+    PAWSPACE_PAYMENT_LIVE_APPROVED: "false",
+    PAWSPACE_COMMUNICATION_ENV: "sandbox",
+    PAWSPACE_MAPS_ENV: "sandbox",
+    PAWSPACE_VOICE_ENV: "disabled",
+    PAWSPACE_VOICE_UAT_APPROVED: "false",
+    IDFY_URL: "https://idfy.example.test",
+    PROVIDER_AGREEMENT_ESIGN_KEY_ID: "test-key-id",
+    META_WHATSAPP_WABA_ID: "test-waba",
+    META_WHATSAPP_PHONE_NUMBER_ID: "test-phone",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.config?.vars?.PAWSPACE_VOICE_RUNTIME, "elevenlabs");
+  assert.equal(result.config?.vars?.PAWSPACE_VOICE_ENV, "disabled");
+  assert.equal(result.config?.vars?.PAWSPACE_VOICE_UAT_APPROVED, "false");
 });
 
 test("the Booking Command Center list is newest-first with server-side search wired from the page", () => {

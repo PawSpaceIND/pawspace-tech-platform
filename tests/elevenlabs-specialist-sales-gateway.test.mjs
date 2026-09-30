@@ -39,7 +39,8 @@ test("Specialist voice offer then confirmation executes reserve -> booking -> Ra
  const threadId="THREAD-AI-CHAIN",messageId="MSG-AI-CHAIN";
  ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
  ctx.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'elevenlabs','voice','inbound','lifecycle','meta_inbound',?,'received',?,'meta-whatsapp-webhook@system.pawspace',?,?)").run(messageId,threadId,customerId,JSON.stringify({text:"Yes, go ahead and make a booking for grooming"}),"ai-chain-inbound",now,now);
- globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
+ const previousDeploymentEnv=globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV;
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
  const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
  globalThis.fetch=async(url,init)=>{
   assert.match(String(url),/^https:\/\/api\.razorpay\.com\/v1\/orders$/);
@@ -92,6 +93,9 @@ test("Specialist voice offer then confirmation executes reserve -> booking -> Ra
  const tasks=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crm_tasks'").get();if(tasks)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM crm_tasks").get().n,0);
  const payment=ctx.sqlite.prepare("SELECT booking_id,amount,currency,status FROM booking_payments WHERE customer_id=?").get(customerId);assert.notEqual(payment.status,"captured");
  const capture={action:"simulate_event",bookingId:payment.booking_id,eventType:"payment.captured",eventId:"evt_voice_sale_proof",gatewayPaymentId:"pay_voice_sale_proof",amount:payment.amount,currency:payment.currency};
+ // The voice calls above require an explicit UAT deployment. Restore the existing local
+ // simulator fixture before its separate legacy-header payment capture assertion.
+ if(previousDeploymentEnv===undefined)delete globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV;else globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV=previousDeploymentEnv;
  const captured=await routeCall("../../app/api/grooming-payment-sandbox/route.ts","POST","/api/grooming-payment-sandbox",capture);
  assert.equal(captured.status,201,JSON.stringify(captured.body));
  assert.equal(captured.body.data.synthetic,true);
