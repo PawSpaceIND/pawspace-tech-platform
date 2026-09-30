@@ -83,17 +83,18 @@ try {
   }
   if (scenario === 'concierge') {
     const checks = [
-      { message: 'I need boarding for Milo for two nights. What do you need from me?', required: /boarding|stay|host/i, forbidden: /how many nights|grooming/i },
+      { message: 'I need boarding for Milo for two nights. What do you need from me?', required: /boarding|stay|host/i, forbidden: /how many nights|grooming/i, maxWords: 70 },
       { message: 'Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?', required: /Complete Makeover/i },
       { message: 'I work long office hours and Milo misses his daily outdoor exercise. What would help with that?', required: /walk/i },
       { message: 'No extra services please, I only want grooming.', forbidden: /you should (?:also )?book|would you like.*walk|recommend.*walk/i },
       { message: 'The Complete Makeover price feels high. Is there an approved offer for that package?', required: /offer|discount|sav(?:e|ing)|200/i, forbidden: /GROOM200|GROOM400/ },
-      { message: 'Milo has mild itching but is otherwise behaving normally. What general information can you share?', required: /vet(?:erinarian)?/i, forbidden: /GROOM|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i }
+      { message: 'Milo has mild itching but is otherwise behaving normally. What general information can you share?', required: /vet(?:erinarian)?/i, forbidden: /\bGROOM\d+\b|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i, maxWords: 80 }
     ];
     for (const check of checks) {
       const reply = await turn(check.message);
       if (check.required) assert.match(reply.output, check.required, check.message);
       if (check.forbidden) assert.doesNotMatch(reply.output, check.forbidden, check.message);
+      if (check.maxWords) assert.ok(reply.output.trim().split(/\s+/u).length <= check.maxWords, 'Spoken answer exceeded the scenario pacing limit: ' + check.message);
       assert.equal(countBookings(), 0, 'Concierge enquiries cannot create a booking');
       assert.equal(paymentRequests, 0, 'Concierge enquiries cannot create a payment order');
     }
