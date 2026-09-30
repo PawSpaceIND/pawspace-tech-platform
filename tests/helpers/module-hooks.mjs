@@ -150,7 +150,8 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`, o
   }
   installedWorkersDbGlobals.add(globalName);
 
-  const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
+  const authoredRosterFixture = options.authoredRosterFixture !== false;
+  const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; if (key === "PAWSPACE_TEST_AUTHORED_ROSTER_FIXTURE") { const configured = (globalThis[${JSON.stringify(envName)}] ?? {})[key]; if (configured !== undefined) return configured; if (${authoredRosterFixture ? "true" : "false"}) return "on"; } return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
   // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI. Node 22.15+

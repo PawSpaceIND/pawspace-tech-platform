@@ -17,7 +17,7 @@ import fs from "node:fs";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import * as h from "./helpers/stay-taxi-latency-harness.mjs";
 
-installWorkersHooks("__STAY_SEARCH_DB__", "__STAY_SEARCH_ENV__");
+installWorkersHooks("__STAY_SEARCH_DB__", "__STAY_SEARCH_ENV__", { authoredRosterFixture: true });
 h.stubGeocoding();
 const scheduling = await import("../app/api/uat-scheduling/route.ts");
 const boarding = await import("../app/api/boarding-commercial/route.ts");
