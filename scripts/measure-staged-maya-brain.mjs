@@ -1,7 +1,7 @@
 // Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
 import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
-import {savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt,syntheticQuoteRepairProof,syntheticQuoteRepairChecks,quoteRepairRevision,quoteIncidentStart,quoteIncidentEnd} from './staged-quote-proof.mjs';
+import {quoteReplyDiagnostic,savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt,syntheticQuoteRepairProof,syntheticQuoteRepairChecks,quoteRepairRevision,quoteIncidentStart,quoteIncidentEnd} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
 const env=process.env,repairOnly=env.MAYA_BRAIN_PROBE_MODE==='repair_quote_handoff',inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites','repair_quote_handoff'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
@@ -85,17 +85,17 @@ if(quoteOnly){
  console.log('SAVED_QUOTE_PREREQUISITES='+JSON.stringify(prerequisites));
  if(inspectOnly){
   await isolation();
-  const threads=await rows("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1");let handoff={aiPaused:false,handoffs:[],recentTurns:[]},repairPrerequisiteChecks=null;const activeCustomerHandoffs=await rows("SELECT id FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active') LIMIT 3");const activeCustomerHandoffsBoundedAtTwo=Math.min(2,activeCustomerHandoffs.length);
+  const threads=await rows("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1");let handoff={aiPaused:false,handoffs:[],recentTurns:[]},repairPrerequisiteChecks=null,latestQuoteReply=null;const activeCustomerHandoffs=await rows("SELECT id FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active') LIMIT 3");const activeCustomerHandoffsBoundedAtTwo=Math.min(2,activeCustomerHandoffs.length);
   if(threads.length){const [handoffs,turns]=await Promise.all([
    rows("SELECT * FROM ai_handoffs WHERE customer_id=? AND thread_id=? ORDER BY created_at DESC LIMIT 5",[env.SPECIALIST_CUSTOMER_ID,threads[0].id]),
-   rows('SELECT outcome,policy_decision,handoff_reason FROM ai_conversation_turns WHERE customer_id=? AND thread_id=? ORDER BY created_at DESC LIMIT 3',[env.SPECIALIST_CUSTOMER_ID,threads[0].id]),
-  ]);handoff=quoteHandoffReceipt(handoffs,turns);
+   rows('SELECT outcome,policy_decision,handoff_reason,output_text FROM ai_conversation_turns WHERE customer_id=? AND thread_id=? ORDER BY created_at DESC LIMIT 3',[env.SPECIALIST_CUSTOMER_ID,threads[0].id]),
+  ]);handoff=quoteHandoffReceipt(handoffs,turns);latestQuoteReply=quoteReplyDiagnostic(turns[0]);
    const active=handoffs.filter(h=>['queued','staff_active'].includes(h.status));
    const [incidentCalls,incidentTurns]=await Promise.all([rows('SELECT * FROM ai_voice_calls WHERE customer_id=? AND thread_id=? AND started_at>=? AND started_at<?',[env.SPECIALIST_CUSTOMER_ID,threads[0].id,quoteIncidentStart,quoteIncidentEnd]),rows('SELECT t.*,m.payload_json,m.direction,m.created_by input_actor,m.channel input_channel,m.provider input_provider FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id WHERE t.customer_id=? AND t.thread_id=? AND t.created_at>=? AND t.created_at<?',[env.SPECIALIST_CUSTOMER_ID,threads[0].id,quoteIncidentStart,quoteIncidentEnd])]);
    const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);let expectedPrompt;try{expectedPrompt=savedQuotePrompt(pets,addresses,geocodes,quoteIncidentStart,selected?.id);}catch{}
    repairPrerequisiteChecks=syntheticQuoteRepairChecks({revision:env.EXPECTED_SHA,customerId:env.SPECIALIST_CUSTOMER_ID,handoffs:active,calls:incidentCalls,turns:incidentTurns,expectedPrompt});
   }
-  const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites,handoff,repairPrerequisiteChecks,activeCustomerHandoffsBoundedAtTwo};
+  const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites,handoff,latestQuoteReply,repairPrerequisiteChecks,activeCustomerHandoffsBoundedAtTwo};
   await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('SAVED_QUOTE_INSPECTION='+JSON.stringify(report));process.exit(0);
  }
  addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;if(pets.length>=20)throw Error('Owned pet inspection limit reached');const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);if(!selected)throw Error('Owned pet choice is ambiguous');prompts=[savedQuotePrompt(pets,addresses,geocodes,Date.now(),selected.id)];

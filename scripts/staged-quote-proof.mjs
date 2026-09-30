@@ -77,3 +77,23 @@ export function syntheticQuoteRepairProof(input){
  if(!Object.values(syntheticQuoteRepairChecks(input)).every(v=>v===true))throw Error('Exact synthetic quote incident not proven');
  return{singleKnownSyntheticIncident:true,staffTakeoverObserved:false,exactInputVerified:true,governedStaffResumeRequired:true,dialed:false};
 }
+
+// Receipt emits fixed classifications only; never the persisted customer-facing text.
+export function quoteReplyDiagnostic(turn){
+ const text=typeof turn?.output_text==='string'&&turn.output_text.length<=12000?turn.output_text:'';
+ const known={
+  unsupported_fields:'Sales proposal contains unsupported or server-authoritative fields',
+  action_order:'Sales checkout must propose reservation, booking and payment order in that order',
+  pet_mismatch:'Booking pets differ from the proposed appointment',
+  missing_pet:'Select one to four saved pets before checkout',
+  missing_address:'A complete service address and six-digit PIN are required',
+  future_appointment:'A future appointment is required',
+  prepaid_only:'This sales flow supports prepaid Grooming purchases only',
+  availability_unverified:'Current availability could not be verified',
+  no_provider:'No eligible provider is available for this proposed schedule',
+  coupon_ineligible:'That coupon is not an offer PawSpace AI can apply for this customer',
+  info_action_rejected:'This was an information-only question',
+ };
+ const matches=Object.entries(known).filter(([,phrase])=>text.includes(phrase)).map(([key])=>key);
+ return{characters:text.length,reason:matches.length===1?matches[0]:'unclassified',serverQuoteRetry:text.startsWith("I couldn't prepare that booking yet:"),asksQuestion:text.includes('?'),questionTopics:{pet:/\b(?:which pet|pet name|which dog|breed|age)\b/i.test(text),address:/\b(?:address|PIN|pincode)\b/i.test(text),appointment:/\b(?:date|time|appointment)\b/i.test(text),package:/\b(?:package|grooming|makeover)\b/i.test(text)},policyDecision:['customer_confirmation_required','clarification_required','sales_offer_retry_required','information_only_action_rejected'].includes(turn?.policy_decision)?turn.policy_decision:'other'};
+}
