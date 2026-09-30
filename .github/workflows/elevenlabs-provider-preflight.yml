@@ -50,9 +50,158 @@ on:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
         default: 'grooming_sales'
+      demo_started_at:
+        description: 'Exact failed synthetic demo interval start in UTC (read-only diagnosis)'
+        required: false
+        default: ''
+      demo_ended_at:
+        description: 'Exact failed synthetic demo interval end in UTC (maximum five minutes)'
+        required: false
+        default: ''
 permissions:
   contents: read
 jobs:
+  inspect-agent-deadlines:
+    if: ${{ inputs.confirm == 'inspect-agent-deadlines' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Read current staging agent deadlines and voice metadata (no calls or changes)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {mkdir,writeFile} from 'node:fs/promises';
+          const key=process.env.ELEVENLABS_API_KEY,id=process.env.GROOMING_AGENT_ID;
+          if(!key||!id)throw Error('Staging agent read prerequisites missing');
+          const headers={'xi-api-key':key};
+          const r=await fetch('https://api.elevenlabs.io/v1/convai/agents/'+encodeURIComponent(id),{headers,signal:AbortSignal.timeout(15000)});
+          if(!r.ok)throw Error('Agent configuration read refused: '+r.status);
+          const body=await r.json(),c=body.conversation_config,p=c?.agent?.prompt,t=c?.turn,v=c?.tts;
+          if(p?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw Error('Exact isolated staging brain is required');
+          let voice={metadataReadable:false};
+          if(v?.voice_id){const vr=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(v.voice_id),{headers,signal:AbortSignal.timeout(15000)});if(vr.ok){const x=await vr.json();voice={metadataReadable:true,name:x.name??null,category:x.category??null,labels:x.labels??null};}else voice={metadataReadable:false,httpStatus:vr.status};}
+          const report={dialed:false,configurationChanged:false,stagingBrain:true,agentModel:p.llm??null,cascadeTimeoutSeconds:p.cascade_timeout_seconds??null,ttsModel:v?.model_id??null,stability:v?.stability??null,speed:v?.speed??null,expressive:v?.expressive_mode===true,turnTimeoutSeconds:t?.turn_timeout??null,softTimeoutSeconds:t?.soft_timeout_config?.timeout_seconds??null,softTimeoutMessage:t?.soft_timeout_config?.message??null,voice};
+          await mkdir('artifacts/agent-deadlines',{recursive:true});await writeFile('artifacts/agent-deadlines/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maya-agent-deadlines
+          path: artifacts/agent-deadlines/report.json
+          retention-days: 3
+  evaluate-runtime-sale:
+    if: ${{ inputs.confirm == 'evaluate-runtime-sale' || inputs.confirm == 'evaluate-runtime-concierge' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Evaluate actual sales runtime with synthetic database and mocked payments (no calls)
+        env:
+          VOICE_SALE_ACTION: evaluate-runtime-sale
+          VOICE_SALE_SCENARIO: ${{ inputs.confirm == 'evaluate-runtime-concierge' && 'concierge' || 'booking' }}
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+          PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+          PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: 'on'
+          PAWSPACE_PAYMENT_ENV: sandbox
+          PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+          NODE_ENV: test
+          APP_ENV: staging
+          FORBID_PRODUCTION: 'true'
+        run: node --experimental-strip-types scripts/evaluate-maya-runtime-sale.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-isolated-runtime-sale
+          path: artifacts/maya-runtime-sale/report.json
+          retention-days: 3
+          if-no-files-found: ignore
+  evaluate-sales-dialogue:
+    if: ${{ inputs.confirm == 'evaluate-sales-dialogue' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Evaluate synthetic multi-turn sales dialogue without application or phone access
+        env:
+          VOICE_SALE_ACTION: evaluate-sales-dialogue
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
+        run: node --experimental-strip-types scripts/evaluate-maya-sales-dialogue.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-synthetic-sales-dialogue
+          path: artifacts/maya-dialogue/report.json
+          retention-days: 3
+          if-no-files-found: ignore
+  inspect-attended-request:
+    if: ${{ inputs.confirm == 'inspect-attended-request' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect exact attended request without dialing or modifying records
+        env:
+          DEMO_STARTED_AT: ${{ inputs.demo_started_at }}
+          DEMO_ENDED_AT: ${{ inputs.demo_ended_at }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node --experimental-strip-types scripts/inspect-attended-request.mjs
+  diagnose-voice-demo:
+    if: ${{ inputs.confirm == 'diagnose-voice-demo' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect the exact failed synthetic session without dialing or generating
+        env:
+          DEMO_STARTED_AT: ${{ inputs.demo_started_at }}
+          DEMO_ENDED_AT: ${{ inputs.demo_ended_at }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node scripts/diagnose-voice-demo.mjs
   pause-staging-phone-calls:
     if: ${{ inputs.confirm == 'pause-staging-phone-calls' }}
     runs-on: ubuntu-latest
@@ -390,6 +539,22 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
         run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Open only the authorized attended staging window
+        if: ${{ inputs.confirm == 'attended-specialist-uat' }}
+        env:
+          PILOT_ACTION: ${{ inputs.confirm }}
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          SPECIALIST_USE_CASE: ${{ inputs.specialist_use_case }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: |
+          node --experimental-strip-types scripts/attended-voice-window.mjs
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
@@ -429,6 +594,16 @@ jobs:
           const evidence=await verifyHandsetAttempt({appCallId:body.data.callId,agentId,phone,cookie},process.env,{log:result=>console.log('HANDSET_EVIDENCE='+JSON.stringify(result))});
           console.log('HANDSET_VERIFIED='+JSON.stringify(evidence));
           NODE
+
+      - name: Restore and verify the phone pause after the single attended attempt
+        if: ${{ always() && inputs.confirm == 'attended-specialist-uat' }}
+        env:
+          PAUSE_PHONE_CALLS: user-requested-stop
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: node scripts/pause-staging-phone-calls.mjs
 
   direct-grooming-call:
     if: ${{ inputs.confirm == 'direct-grooming-call' || inputs.confirm == 'inspect-app-voice' }}
@@ -854,6 +1029,7 @@ jobs:
             const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
             const voiceId=currentTts.voice_id;
             if(!voiceId) throw new Error(label+' agent voice_id missing');
+            if(currentPrompt?.llm!=='custom-llm'||currentPrompt?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw new Error(label+' exact isolated staging custom brain required');
             const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
             const voiceMeta=await voiceRead.json().catch(()=>({}));
             if(voiceRead.ok) console.log(label+'_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
@@ -866,6 +1042,7 @@ jobs:
                   max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
                   prompt:{
                     ...currentPrompt,
+                    cascade_timeout_seconds:15,
                     prompt:premiumLanguagePrompt(humanCallPrompt(currentPrompt?.prompt)),
                     built_in_tools:{
                       ...(currentPrompt?.built_in_tools||{}),
@@ -901,7 +1078,7 @@ jobs:
                   soft_timeout_config:{
                     ...(currentTurn?.soft_timeout_config||{}),
                     timeout_seconds:3,
-                    message:"Sure, give me a second.",
+                    message:"I'm checking that for you.",
                     max_soft_timeouts_per_generation:1
                   }
                 }
@@ -913,6 +1090,7 @@ jobs:
             const result=await patch.json().catch(()=>({}));
             if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error(label+' agent update failed '+patch.status);}
             const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+            if(cc?.agent?.prompt?.cascade_timeout_seconds!==15)throw new Error(label+' model response window did not persist');
             const languageReady=premiumLanguageReadiness(cc);
             if(!languageReady.allLanguagesConfigured||!languageReady.languageDetection)throw new Error(label+' premium multilingual configuration did not persist');
             console.log(label+'_MULTILINGUAL_READY='+JSON.stringify({
@@ -923,6 +1101,7 @@ jobs:
               premiumCertified:languageReady.premiumCertified
             }));
             console.log(label+'_AUDIO_TUNED='+JSON.stringify({
+              modelResponseWindowSeconds:cc?.agent?.prompt?.cascade_timeout_seconds??null,
               profile:profile.id,
               firstMessage:agent.first_message||null,
               modelId:tts.model_id||null,

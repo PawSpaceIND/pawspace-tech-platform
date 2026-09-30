@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {greetingPlaybackFinished,applyAudioProbeEvent,audioEventKind,audioFormat,audioProbeComplete,audioProof,audioProofChecks,createAudioProbeState,isHandoffReply} from '../scripts/voice-audio-proof.mjs';
 import {installAiHooks,freshUatAiDb,seedCustomer,inboundMessage,applyOwnedDdl,stubFetch} from './helpers/ai-harness.mjs';
 import {runWithWorkersDb} from './helpers/module-hooks.mjs';
-import {VOICE_DEMO_SCENARIOS,assertDemoResponse} from '../scripts/voice-demo-scenarios.mjs';
+import {VOICE_DEMO_SCENARIOS,assertDemoResponse,assertDemoRuntimePhonePause} from '../scripts/voice-demo-scenarios.mjs';
 installAiHooks();
 const responsesRoute=await import('../app/api/elevenlabs/v1/responses/route.ts');
 const valid={transcript:'What grooming services do you offer for my dog Bruno?',reply:'We offer Essential Bath grooming for dogs. Would you like to hear more?',audioBytes:16000,nonSilentBytes:9000};
@@ -85,7 +85,7 @@ test('socket event types are counted only under allowlisted names',()=>{
  * product's own ElevenLabs custom-LLM route through both handoff paths - the orchestrator's handoff
  * for an unclassifiable turn and the governed staff pause - and judge the words it actually speaks. */
 const LLM_SECRET='test-only-llm-secret';
-async function spokenHandoff(t,{staffPause}){
+async function spokenHandoff(t,{staffPause,rolloutBlocked=false}){
  const w=freshUatAiDb({ELEVENLABS_API_KEY:'test-only-elevenlabs',ELEVENLABS_AGENT_ID:'agent-test',ELEVENLABS_LLM_SECRET:LLM_SECRET,PAWSPACE_UAT_LOGIN:'on',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'test-only-openai'});
  t.after(()=>w.sqlite.close());globalThis.__PAWSPACE_TEST_ENV__={...globalThis.__PAWSPACE_TEST_ENV__,DB:w.db};
  seedCustomer(w.sqlite,'CUS-AUDIO-PROOF','Synthetic Tester','9876500093');
@@ -94,7 +94,7 @@ async function spokenHandoff(t,{staffPause}){
  const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
  for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
  const {setAiRolloutStage}=await import('../lib/ai-audience-rollout.ts');
- await setAiRolloutStage(w.db,{stage:'staff_only',reason:'synthetic audio proof handoff',actorEmail:'test@pawspace.test'});
+ await setAiRolloutStage(w.db,{stage:rolloutBlocked?'staff_only':'customers',reason:'synthetic UAT customer audio proof handoff',actorEmail:'test@pawspace.test'});
  if(staffPause){const {requestAiHumanHandoff}=await import('../lib/ai-human-handoff.ts');await requestAiHumanHandoff(w.db,{threadId:'THREAD-AUDIO-PROOF',customerId:'CUS-AUDIO-PROOF',reason:'low_confidence',actorEmail:'test@pawspace.test'});}
  const mock=stubFetch(()=>{throw new Error('a handoff turn must not call the provider');});t.after(()=>mock.restore());
  const input=staffPause?'What grooming services do you offer for my dog Bruno?':'I want for tomorrow at 11:00 AM.';
@@ -102,7 +102,7 @@ async function spokenHandoff(t,{staffPause}){
  const sse=await runWithWorkersDb(w.db,async()=>(await responsesRoute.POST(request)).text());
  const events=sse.split('\n').filter(l=>l.startsWith('data: {')).map(l=>JSON.parse(l.slice(6)));
  assert.equal(events.at(-1)?.type,'response.completed');assert.equal(mock.calls.length,0);
- assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1,'the turn really handed off');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,rolloutBlocked?0:1,'handoff state matches the exercised path');
  return events.filter(e=>e.type==='response.output_text.delta').map(e=>e.delta).join('');
 }
 for(const [name,staffPause] of [['orchestrator handoff',false],['staff pause',true]])test(`the audio proof rejects the real ${name} reply the voice runtime speaks`,async t=>{
@@ -121,4 +121,54 @@ test('caller waits for greeting playback duration as well as stream silence',()=
  assert.equal(greetingPlaybackFinished({...greeting,now:5750}),true);
  assert.equal(greetingPlaybackFinished({...greeting,now:6000,lastAudioAt:5900}),false);
  assert.equal(greetingPlaybackFinished({...greeting,now:6000,bytes:0}),false);
+});
+
+test('non-dialing demos verify encrypted phone controls through runtime truth, never binding-name guesses',()=>{
+ const vars={PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_VOICE_NATIVE_UAT_APPROVED:'false',PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED:'false',PAWSPACE_VOICE_UAT_AUTORUN:'false'};
+ const gate={mode:'disabled',enabled:false,uatApproved:false,salesOutboundApproved:false};
+ assert.equal(assertDemoRuntimePhonePause(vars,gate),true);
+ for(const change of [{mode:'uat'},{enabled:true},{uatApproved:true},{salesOutboundApproved:true},{enabled:undefined}])assert.throws(()=>assertDemoRuntimePhonePause(vars,{...gate,...change}),/shutdown/);
+ assert.throws(()=>assertDemoRuntimePhonePause(vars,undefined),/shutdown/);
+ for(const name of Object.keys(vars))assert.throws(()=>assertDemoRuntimePhonePause({...vars,[name]:name==='PAWSPACE_VOICE_PHONE_TESTS_PAUSED'?'false':'true'},gate),/phone stop/);
+});
+test('audio proof rejects the real rollout refusal without inventing a queued handoff',async t=>{
+ const spoken=await spokenHandoff(t,{staffPause:false,rolloutBlocked:true});
+ assert.match(spoken,/AI voice cannot continue this conversation/);
+ assert.equal(audioProofChecks({...valid,reply:spoken}).substantiveReply,false);
+ assert.equal(audioProof({...valid,reply:spoken}),false);
+});
+test('controlled fallback, unavailable and emergency replies cannot certify substantive grooming audio',()=>{
+ for(const reply of [
+  'AI voice cannot continue this conversation right now. Please contact the PawSpace team for help.',
+  'Customer AI voice is unavailable at the current rollout stage',
+  'AI replies are paused while the conversation is owned by staff',
+  'PawSpace custom LLM failed safely',
+  'Please contact your nearest emergency vet immediately.',
+  'One moment while I check that for you. I’m routing this conversation to a PawSpace team member so it can be handled safely.'
+ ]){
+  const checks=audioProofChecks({...valid,reply});
+  assert.equal(checks.substantiveReply,false,reply);
+  assert.equal(checks.noHandoff,false,reply);
+  assert.equal(audioProof({...valid,reply}),false,reply);
+ }
+ assert.equal(audioProof(valid),true,'a genuine answer remains eligible with audio evidence');
+});
+
+test('useful answers with incidental support advice remain eligible task-answer evidence',()=>{
+ for(const reply of [
+  'We offer Essential Bath grooming for Bruno. Please contact the PawSpace team for help with special requests.',
+  'We offer Essential Bath grooming for Bruno. If AI voice cannot continue this conversation later, please contact support.',
+  'One moment while I check that for you. We offer Essential Bath grooming for Bruno. If your pet is struggling to breathe, contact your nearest emergency vet immediately.'
+ ])assert.equal(audioProof({...valid,reply}),true,reply);
+ // A safe emergency response can be the correct outcome while not proving the requested grooming answer.
+ const emergency="Please don't wait for a response here — contact your nearest emergency vet immediately. PawSpace chat cannot diagnose or treat your pet. No call, booking or dispatch has been made by this reply.";
+ assert.equal(audioProofChecks({...valid,reply:emergency}).audio,true);
+ assert.equal(audioProofChecks({...valid,reply:emergency}).substantiveReply,false);
+});
+
+test('call handoff wording is controlled while incidental support advice is a useful answer',()=>{
+ for(const reply of ["I’m routing this call to a PawSpace team member.","I'm routing this call to a PawSpace team member.","One moment while I check that for you. I’m routing this call to a PawSpace team member."]){
+  assert.equal(isHandoffReply(reply),true,reply);assert.equal(audioProof({...valid,reply}),false,reply);
+ }
+ assert.equal(audioProof({...valid,reply:'We offer Essential Bath for Bruno. If you need help, a PawSpace team member can assist.'}),true);
 });

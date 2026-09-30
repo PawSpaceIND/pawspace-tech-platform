@@ -80,7 +80,7 @@ export async function activeCrossSell(db:D1Database,input:{customerId?:string|nu
 }
 
 /** How the AI may use approvedOffers - shared by web chat, WhatsApp and public chat prompts. */
-export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: state its code with that package's regular_price and offer_price exactly as listed (for example "With code <code>, Essential Bath comes to ₹1,149 instead of ₹1,349"). Mention the offer with usage "cross_sell" only when the customer's details already carry its code. Offers marked catalogue_estimate are conditional catalogue estimates, not a promise of the final appointment total: date, add-ons, payment and pet-count changes require a fresh server quote. If the customer is not verified, ask them to sign in before discussing a coupon. In chat the customer enters the code at checkout; in voice an accepted code may be applied only through the governed booking quote and separately confirmed. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
+export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: In chat or WhatsApp, state the approved code with the package's regular_price and offer_price exactly as listed. In voice, describe the regular_price and discount_amount without saying the code unless the caller explicitly asks for it; leave the discounted appointment total to the governed quote read-back, and put an accepted code only in the governed booking proposal. Mention the offer with usage "cross_sell" only when the customer's details already carry its code. Offers marked catalogue_estimate are conditional catalogue estimates, not a promise of the final appointment total: date, add-ons, payment and pet-count changes require a fresh server quote. If the customer is not verified, ask them to sign in before discussing a coupon. In chat the customer enters the code at checkout; in voice an accepted code may be applied only through the governed booking quote and separately confirmed. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
 
 /* Codes follow "code", "coupon", "promo", "voucher", or "coupon code" / "promo code" / "voucher code" /
  * "discount code" / "offer code" - matched as a whole, so the word "code" is never taken for the code. */
@@ -117,6 +117,43 @@ export function offerClaimsApproved(reply:string,offers:ApprovedSalesOffer[]){
 export function withoutApprovedDiscounts(reply:string,offers:ApprovedSalesOffer[]){
  return sentences(reply.slice(0,8000)).map(sentence=>{const named=namedCodes(sentence,offers);if(!named.size)return sentence;
   return sentence.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);}).join("\n");
+}
+
+/** Spoken discounts omit identifiers, but still require the exact approved package and amount
+ * in the same sentence. This never adds a discounted price or authorizes redemption. */
+export function withoutApprovedVoiceDiscounts(reply:string,offers:ApprovedSalesOffer[]){
+ return sentences(withoutApprovedDiscounts(reply,offers)).map(sentence=>{
+  const lower=sentence.toLowerCase();
+  const matching=offers.filter(offer=>{const name=groomingCatalogue.find(item=>item.code===offer.package_code)?.name.toLowerCase();return Boolean(name&&lower.includes(name));});
+  return sentence.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>matching.some(offer=>offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);
+ }).join("\n");
+}
+
+/** An explicit offer enquiry about a named package is answered from eligible server facts.
+ * This is information only: accepting an offer and quoting still use the governed action flow. */
+export function approvedVoiceOfferInformation(customerMessage:string,offers:ApprovedSalesOffer[]){
+ if(/\b(?:prepare|create|reserve|apply|add|use|book|confirm|continue|proceed|accept)\b/i.test(customerMessage))return null;
+ if(!/\b(?:offers?|coupons?|discounts?)\b/i.test(customerMessage)||/\b(?:no|without)\s+(?:offers?|coupons?|discounts?)\b|\b(?:do not|don.t)\s+(?:apply|use|add)\b/i.test(customerMessage))return null;
+ const lower=customerMessage.toLowerCase();
+ const offer=offers.find(candidate=>{const item=groomingCatalogue.find(row=>row.active&&row.code===candidate.package_code);return candidate.usage==="closing"&&Boolean(item&&lower.includes(item.name.toLowerCase()));});
+ if(!offer)return null;
+ const name=groomingCatalogue.find(item=>item.code===offer.package_code)!.name;
+ const amount=(value:number)=>value.toLocaleString("en-IN");
+ const reply=`For ${name}, an eligible offer gives ₹${amount(offer.discount_amount)} off the regular single-pet catalogue price of ₹${amount(offer.regular_price)}. Eligibility and the final total must be validated at checkout. Would you like me to check it for your booking?`;
+ return spokenApprovedOfferReply(reply.replace("an eligible offer",`the ${offer.code} offer`),[offer],customerMessage);
+}
+
+/** Presentation only, after the original draft passes offer and price verification.
+ * Keep codes when the caller asks for them; unknown identifiers are never hidden. */
+export function spokenApprovedOfferReply(reply:string,offers:ApprovedSalesOffer[],customerMessage:string){
+ if(/\b(?:what|which|tell|share|say|give|read)\b.{0,45}\b(?:coupon|promo|discount|offer)?\s*code\b/i.test(customerMessage))return reply;
+ let spoken=reply;
+ for(const offer of offers){
+  // Campaign codes are staff-controlled, so escape them before constructing a display regex.
+  const escaped=offer.code.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  spoken=spoken.replace(new RegExp(`\\b(?:code\\s+)?${escaped}\\b(?:\\s+offer\\b)?`,"gi"),"approved offer");
+ }
+ return spoken.replace(/\bapproved\s+approved offer\b/gi,"approved offer");
 }
 
 /** Approved offers as price grounding: only the regular and offer prices, and only when the reply names the code. */

@@ -69,3 +69,23 @@
 /* Keep the horizontal date strip inside the booking column, not the page's hidden overflow. */
 .page .journey { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }
 .page .journey > .step { min-width:0; max-width:100%; box-sizing:border-box; }
+
+/* Customer/partner visual audit UI-05: summary text must remain readable on the dark brand summary card. */
+.page .summary .summaryTop span,
+.page .summary .summaryPet small,
+.page .summary .summaryRows span,
+.page .summary .priceBlock > span,
+.page .summary .priceBlock small,
+.page .summary .safe p {
+  color:var(--brand-on-primary) !important;
+}
+.page .summary .summaryTop b,
+.page .summary .priceBlock > b,
+.page .summary .safe > span {
+  color:var(--brand-gold) !important;
+}
+
+/* Signature/Coral primary fills are too light for gold summary accents; use the dark brand surface. */
+.page .summary {
+  background:var(--brand-hero) !important;
+}

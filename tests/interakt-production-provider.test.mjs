@@ -54,5 +54,8 @@ test("production config declares voice disabled by default and refuses live acti
  assert.match(config,/PAWSPACE_VOICE_UAT_APPROVED \|\| "false"/);
  assert.match(config,/\["disabled", "uat"\]/);
  assert.match(config,/PAWSPACE_VOICE_ENV: voiceEnv/);
+ assert.match(config,/PAWSPACE_VOICE_RUNTIME: "elevenlabs"/);
  assert.match(config,/PAWSPACE_VOICE_UAT_APPROVED: voiceUatApproved/);
+ const workflow=read(".github/workflows/deploy-production.yml");
+ assert.match(workflow,/PAWSPACE_VOICE_RUNTIME !== "elevenlabs"/);
 });

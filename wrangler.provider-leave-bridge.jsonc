@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-provider-leave-bridge-proof",
+  "main": "tests/provider-leave-bridge-d1-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "NODE_ENV": "test",
+    "PAWSPACE_PAYMENT_ENV": "sandbox",
+    "FORBID_PRODUCTION": "true"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "provider-leave-bridge-proof",
+      "database_id": "00000000-0000-0000-0000-000000000008",
+      "preview_database_id": "provider-leave-bridge-local"
+    }
+  ]
+}

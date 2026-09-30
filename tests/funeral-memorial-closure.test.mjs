@@ -32,7 +32,7 @@ async function funeralWorld() {
   const sqlite = freshSqlite();
   const db = makeD1(sqlite);
   globalThis.__FUNERAL_DB__ = db;
-  globalThis.__FUNERAL_ENV__ = {};
+  globalThis.__FUNERAL_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
   await governance.ensureFuneralMemorialTables(db);
   return { sqlite, db };
 }
@@ -399,4 +399,17 @@ test('customer availability uses booking authority while full configuration stay
  assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?availability=1`)),'scheduling.book');
  assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?config=1`)),'pricing.view');
  assert.equal(await requiredPermission(new Request(`${OPS_ORIGIN}/api/funeral-memorial?report=summary`)),'reports.view');
+});
+
+test('customer-selected cat, other and unspecified species survive canonical persistence', async () => {
+  const {db} = await funeralWorld();
+  await enable(db, 'cremation');
+  for (const petSpecies of ['cat', 'other', 'pet']) {
+    const created = await newCase(db, {petName:`Species ${petSpecies}`, petSpecies});
+    assert.equal(created.pet_species, petSpecies);
+    const saved = await governance.getFuneralCase(db, created.id);
+    assert.equal(saved.pet_species, petSpecies);
+    const row = await db.prepare('SELECT pet_species FROM funeral_cases WHERE id=?').bind(created.id).first();
+    assert.equal(row.pet_species, petSpecies);
+  }
 });

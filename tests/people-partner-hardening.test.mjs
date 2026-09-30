@@ -98,7 +98,35 @@ test("employee self-service is strictly own-record: employee A can never see emp
 test("leave requester cannot self-approve; self attendance is idempotent per key", async () => {
   const stack = await peopleStack(); const { sqlite, db } = stack; stack.seedEmployee("EMP-A", { workEmail: "a@pawspace.test" }); await attendanceLeave.saveLeavePolicy(db, { name: "Casual", leaveCode: "CL", allowNegative: false, entitlementUnits: 12, effectiveFrom: NOW - 60 * DAY, actorId: "hr@test" }); sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES ('EMP-A','CL',5,?)").run(NOW);
   const shift=await attendanceLeave.saveShiftPolicy(db,{name:"Explicit UAT work calendar",timezone:"Asia/Kolkata",startTime:"09:00",endTime:"18:00",weeklyOff:["0","6"],effectiveFrom:Date.UTC(2026,0,1),actorId:"hr@test"});await attendanceLeave.assignShift(db,{employeeId:"EMP-A",shiftPolicyId:shift.id,effectiveFrom:Date.UTC(2026,0,1),reason:"Explicit fixture work calendar",actorId:"hr@test"});
-  const request = await selfService.applyForLeave(db, { email: "a@pawspace.test", leaveCode: "CL", startDate: "2026-08-20", endDate: "2026-08-21", units: 2, reason: "Family visit" }); assert.equal(request.status, "pending"); await assert.rejects(attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "self", actorId: "a@pawspace.test" }), /requester cannot approve their own leave request/); const decided = await attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "Approved by manager", actorId: "manager@test" }); assert.equal(decided.status, "approved"); assert.equal(Number(sqlite.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id='EMP-A' AND leave_code='CL'").get().balance), 3);
+  const request = await selfService.applyForLeave(db, { email: "a@pawspace.test", leaveCode: "CL", startDate: "2026-08-20", endDate: "2026-08-21", units: 2, reason: "Family visit" });
+  assert.equal(request.status, "pending");
+  const leaveState = () => ({
+    request: sqlite.prepare("SELECT * FROM leave_requests WHERE id=?").get(request.id),
+    balance: sqlite.prepare("SELECT * FROM employee_leave_balances WHERE employee_id='EMP-A' AND leave_code='CL'").get(),
+    ledger: sqlite.prepare("SELECT * FROM leave_ledger_events WHERE employee_id='EMP-A' ORDER BY id").all(),
+  });
+  const pending = leaveState();
+  for (const actorId of ["a@pawspace.test", " A@PAWSPACE.TEST "]) {
+    let refusal;
+    await assert.rejects(attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "self", actorId }), error => {
+      assert.ok(error instanceof Response, "self-approval returns a caller-safe HTTP refusal");
+      refusal = error;
+      return true;
+    });
+    assert.equal(refusal.status, 409);
+    assert.equal(refusal.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await refusal.json(), { error: "Maker/checker: the requester cannot approve their own leave request" });
+    assert.deepEqual(leaveState(), pending, "self-approval cannot change the request, balance or leave ledger");
+  }
+  const decided = await attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "Approved by manager", actorId: "manager@test" });
+  assert.equal(decided.status, "approved");
+  const approved = leaveState();
+  assert.equal(approved.request.status, "approved");
+  assert.equal(approved.request.approved_by, "manager@test");
+  assert.equal(Number(approved.balance.balance), 3);
+  assert.equal(approved.ledger.length, 1);
+  assert.equal(approved.ledger[0].source_request_id, request.id);
+  assert.equal(Number(approved.ledger[0].units), -2);
   const checkIn = await selfService.selfRecordAttendance(db, { email: "a@pawspace.test", eventType: "check_in", occurredAt: NOW, idempotencyKey: "att-key-1" }); assert.equal(checkIn.duplicatePrevented, false); const dup = await selfService.selfRecordAttendance(db, { email: "a@pawspace.test", eventType: "check_in", occurredAt: NOW + 60_000, idempotencyKey: "att-key-1" }); assert.equal(dup.duplicatePrevented, true); assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM attendance_events WHERE employee_id='EMP-A'").get().c, 1); assert.equal(sqlite.prepare("SELECT exception_code FROM attendance_days WHERE employee_id='EMP-A'").get().exception_code, "missing_checkout");
 });
 

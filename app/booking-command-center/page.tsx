@@ -11,6 +11,7 @@ import ServiceProofReview from "./service-proof-review";
 import EscalationRefundPanel from "./escalation-refund";
 import { paymentDeadlineLabel } from "../../lib/payment-deadline-label";
 import { awaitingPayment } from "../../lib/booking-payment-kpis";
+import { formatIndiaDateTime } from "../../lib/india-time";
 import { createBookingLoadSequence } from "./load-sequence";
 
 type Row = Record<string, unknown>;
@@ -21,7 +22,8 @@ const money = (value: unknown) => new Intl.NumberFormat("en-IN", { style: "curre
 const pretty = (value: unknown) => String(value || "Not recorded").replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 /** A customer's paid reschedule, in words Ops can act on. */
 const rescheduleStatus = (value: unknown) => ({ quoted: "Price shown, not paid", awaiting_payment: "Customer paying, time held", paid: "Paid, moving", applying: "Paid, moving", applied: "Paid and moved", expired: "Hold lapsed, not paid", cancelled: "Booking cancelled", refund_requested: "Could not move, refund raised", refunded: "Could not move, refunded", move_failed: "Could not move, needs support" } as Record<string, string>)[String(value)] ?? pretty(value);
-const when = (value: unknown) => { const date = new Date(typeof value === "number" ? value : String(value)); return Number.isNaN(date.valueOf()) ? "Not scheduled" : date.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }); };
+// Operations and customers must see the same business date, regardless of the browser time zone.
+const when = (value: unknown) => formatIndiaDateTime(typeof value === "number" ? value : String(value), {fallback: "Not scheduled"});
 const initials = (name: unknown) => String(name || "PS").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
 
 export default function BookingCommandCenter() {

@@ -143,3 +143,21 @@ import {uiDataFlowContract} from './helpers/ui-wiring-contract.mjs';
   const source=read('app/v2/funeral-memorial/page.tsx').toString();assert.match(source,/<FuneralMemorialPage homeHref="\/v2"\/>/);assert.doesNotMatch(source,/fetch\(|useEffect|useState|localStorage/);
  });
 }
+
+test('High-risk customer and partner audit fixes retain their scoped readability safeguards',()=> {
+ const appended=path=>read(path).toString().split(c.marker)[1];
+ const rules=path=>postcss.parse(appended(path));
+ const values=(root,selectorNeedle,property)=>{const out=[];root.walkRules(rule=>{if(rule.selector.includes(selectorNeedle))rule.walkDecls(property,d=>out.push(d.value));});return out;};
+ const grooming=rules('app/v2/grooming/grooming.module.css');
+ assert.ok(values(grooming,'.page .summary','background').includes('var(--brand-hero)'));
+ for(const selector of ['summaryTop span','summaryRows span','priceBlock > span','priceBlock small','safe p'])
+  assert.ok(values(grooming,selector,'color').includes('var(--brand-on-primary)'),selector);
+ for(const selector of ['summaryTop b','priceBlock > b','safe > span'])
+  assert.ok(values(grooming,selector,'color').includes('var(--brand-gold)'),selector);
+ const partner=rules('app/partner-app/partner.module.css');
+ assert.ok(values(partner,'detailCard .detailHead small','color').includes('var(--brand-text)'));
+ assert.ok(values(partner,'headerSignOut','min-width').includes('66px'));
+ assert.ok(values(partner,'headerSignOut','white-space').includes('nowrap'));
+ assert.ok(values(partner,'headerSignOut','word-break').includes('normal'));
+ assert.ok(values(partner,'headerSignOut','overflow-wrap').includes('normal'));
+});

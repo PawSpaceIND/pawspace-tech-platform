@@ -30,15 +30,15 @@ export async function inspectVoiceSalesLaunch(env=process.env,request=fetch){
  const login=await request(origin+'/api/staging-login',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.timeout(20000)});
  const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(!login.ok||!cookie.startsWith('pawspace_uat='))throw Error('Staging founder authentication refused');
  const headers={cookie,origin,'content-type':'application/json'};
- const readiness=await request(origin+'/api/voice-outbound',{headers,signal:AbortSignal.timeout(30000)});const rb=await readiness.json();if(!readiness.ok||rb.data?.gate?.mode!=='uat')throw Error('UAT voice environment is not verified');
+ const readiness=await request(origin+'/api/voice-outbound',{headers,signal:AbortSignal.timeout(30000)});const rb=await readiness.json();if(!readiness.ok||!['uat','disabled'].includes(rb.data?.gate?.mode))throw Error('Isolated voice inspection mode is not verified');
  const overview=await request(origin+'/api/voice-outbound?scope=sales_operations',{headers,signal:AbortSignal.timeout(30000)});
  const overviewBody=await overview.json();const operations=overviewBody.data;
  if(!overview.ok||!Array.isArray(operations?.sources)||operations.productionCertified!==false)throw Error('Deployed sales dashboard evidence is unavailable or incorrectly certified');
  const policy=await request(origin+'/api/voice-outbound',{method:'POST',headers,body:JSON.stringify({action:'policy_preview',useCase:'grooming_sales',phone,customerId,cityId:'blr'}),signal:AbortSignal.timeout(30000)});const pb=await policy.json();
  const unavailableSources=operations.sources.filter(source=>source?.available!==true).map(source=>String(source?.name||'unknown').slice(0,80));
- const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,provider:rb.data.transport?.provider||null,salesDashboardSources:operations.sources.length,salesDashboardUnavailable:unavailableSources.length,salesDashboardUnavailableSources:unavailableSources,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
+ const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,blockedReason:String(rb.data.gate.blockedReason||'').slice(0,500)||null,provider:rb.data.transport?.provider||null,salesDashboardSources:operations.sources.length,salesDashboardUnavailable:unavailableSources.length,salesDashboardUnavailableSources:unavailableSources,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
  console.log('VOICE_SALES_LAUNCH_PREFLIGHT='+JSON.stringify(evidence));
- if(!evidence.enabled||!evidence.policyAllowed)throw Error('Existing voice policy has not cleared this UAT call');
+ if(evidence.mode!=='uat'||!evidence.enabled||evidence.provider!=='elevenlabs_exotel'||!evidence.policyAllowed)throw Error('Existing voice policy has not cleared this UAT call');
  return evidence;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await inspectVoiceSalesLaunch();

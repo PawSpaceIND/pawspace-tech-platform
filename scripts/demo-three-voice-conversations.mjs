@@ -3,7 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {writeFile,mkdir} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
-import {VOICE_DEMO_SCENARIOS,assertDemoResponse} from './voice-demo-scenarios.mjs';
+import {VOICE_DEMO_SCENARIOS,assertDemoResponse,assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
 import {createAudioProbeState,applyAudioProbeEvent,audioFormat,greetingPlaybackFinished} from './voice-audio-proof.mjs';
 import {verifyFinalConversation} from './voice-final-conversation-proof.mjs';
 import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
@@ -15,20 +15,22 @@ if(!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].inclu
 const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
 const cf='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
 async function readCf(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||b.success!==true)throw Error('Staging verification failed');return b.result;}
-async function isolation(){
+async function isolation(verifyRuntime=true){
  const db=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID));if(db.name!=='pawspace-staging'||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Isolated demo database required');
  const settings=await readCf('/workers/scripts/pawspace-staging/settings');
  if(settings.annotations?.['workers/message']!=='staging '+env.EXPECTED_SHA)throw Error('Demo staging revision changed');
  const vars=Object.fromEntries(settings.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
- if(vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED!=='true'||vars.PAWSPACE_VOICE_ENV!=='disabled'||['PAWSPACE_VOICE_UAT_APPROVED','PAWSPACE_VOICE_NATIVE_UAT_APPROVED','PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED','PAWSPACE_VOICE_UAT_AUTORUN','PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED'].some(name=>vars[name]!=='false'))throw Error('Demo requires the user phone stop to remain active');
+ assertDemoPhonePauseMetadata(vars);
+ if(verifyRuntime){const readiness=await fetch(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),body=await readiness.json();if(!readiness.ok)throw Error('Authenticated runtime phone-shutdown read refused');assertDemoRuntimePhonePause(vars,body.data?.gate);}
  if(vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true'||!settings.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Demo sandbox bindings not proven');
 }
 async function bookingIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM canonical_bookings WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});return rows[0]?.results?.map(x=>x.id)||[];}
-await isolation();
+await isolation(false);
 const configResponse=await fetch(eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await configResponse.json();
 if(!configResponse.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Demo must use the actual PawSpace staging brain');
 const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.timeout(20000)});
 const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(login.status!==200||!cookie.startsWith('pawspace_uat='))throw Error('Authenticated demo login refused');
+await isolation();
 async function app(body){const r=await fetch(origin+'/api/ai-voice-uat',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok)throw Error('Governed simulator request refused ('+r.status+')');return b.data;}
 const identity=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT primary_phone FROM canonical_customers WHERE id=?',params:[env.SPECIALIST_CUSTOMER_ID]});
 const customerPhone=String(identity[0]?.results?.[0]?.primary_phone||'').replace(/\D/g,'');
@@ -51,7 +53,11 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
   if(d.type==='error')throw Error('Demo voice provider error');
  }catch(e){error=e;}});
  socket.addEventListener('error',()=>{error=Error('Demo audio transport failed');});socket.addEventListener('close',()=>{closed=true;});
- async function waitFor(predicate){const until=Date.now()+100000;while(!predicate()){if(error)throw error;if(closed)throw Error('Demo disconnected');if(Date.now()>until)throw Error('Demo timed out');await delay(100);}if(error)throw error;}
+ async function waitFor(predicate,{microphoneOpen=false}={}){const until=Date.now()+100000;while(!predicate()){if(error)throw error;if(closed)throw Error('Demo disconnected');if(Date.now()>until)throw Error('Demo timed out');
+  // Match an open SDK microphone: silence is still input audio while the agent answers.
+  // Stopping chunks is a transport gap, not an explicit end-of-turn signal.
+  if(microphoneOpen)socket.send(JSON.stringify({user_audio_chunk:Buffer.alloc(3200).toString('base64')}));
+  await delay(100);}if(error)throw error;}
  try{
   await waitFor(()=>state.greeting&&inputFormat&&greetingPlaybackFinished({now:Date.now(),firstAudioAt:firstGreeting,lastAudioAt:lastGreeting,bytes:greetingBytes,format:outputFormat}));
   const wav=execFileSync('espeak-ng',['--stdout','-s','150',scenario.text],{maxBuffer:2097152,timeout:10000});
@@ -59,7 +65,7 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
   if(pcm.length<1000||pcm.length>960000)throw Error('Invalid synthetic demo audio');
   state.listening=true;const input=Buffer.concat([Buffer.alloc(16000),pcm,Buffer.alloc(64000)]),started=Date.now();
   for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
-  await waitFor(()=>scenario.recognized.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&scenario.reply.test(state.reply)&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500);
+  await waitFor(()=>scenario.recognized.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&scenario.reply.test(state.reply)&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500,{microphoneOpen:true});
   console.log('VOICE_DEMO_OBSERVED='+JSON.stringify({scenario:scenario.id,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
   assertDemoResponse(scenario,state);const playbackCompletedMs=Date.now()-started;socket.close();
   const proof=await verifyFinalConversation({key:env.ELEVENLABS_API_KEY,conversationId,agentId:env.GROOMING_AGENT_ID,turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:pcm.length,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:true},request:(url,options)=>fetch(url.replace('https://api.elevenlabs.io',eleven),options)});

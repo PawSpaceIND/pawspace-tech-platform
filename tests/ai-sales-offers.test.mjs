@@ -102,6 +102,8 @@ test("a renamed code is still found by its campaign, and does not re-seed on eve
 
 test("the web chat and WhatsApp prompts carry the coupon rules without overriding a sales lever", async () => {
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /at most once/);
+  assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /In voice, describe the regular_price and discount_amount without saying the code/);
+  assert.doesNotMatch(offersModule.APPROVED_OFFERS_DIRECTIVE, /With code <code>/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /only after the customer hesitates on price/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /Never invent, guess or alter a coupon code/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /authorized sales lever stated elsewhere/);
@@ -126,4 +128,45 @@ test("an approved '₹N off' only counts in the sentence that names its code", a
   const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
   assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts("Use GROOM200 for ₹200 off grooming. Your taxi also gets ₹200 off today.", offers), catalogue), false, "the taxi's ₹200 off is not hidden by the grooming code");
   assert.equal(offersModule.offerClaimsApproved("With GROOM400 you get ₹400 off.\nAnd the sitting gets ₹400 off too.", offers), true, "a sentence without a code is left to the price check");
+});
+
+
+test("spoken approved savings require a same-sentence package and exact discount; text keeps code grounding",async()=>{
+ const {db}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const catalogue={grooming:[{name:"Complete Makeover",base_price:2399}],approvedOffers:offersModule.offerGroundingRows(offers)};
+ const valid="For Complete Makeover there is an approved offer: ₹200 off the regular ₹2,399, subject to checkout validation.";
+ assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedVoiceDiscounts(valid,offers),catalogue),true);
+ assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts(valid,offers),catalogue),false,"text continues to require its approved code");
+ for(const invalid of ["Complete Makeover gives ₹500 off ₹2,399.","Your taxi gets ₹200 off. Complete Makeover costs ₹2,399.","Complete Makeover includes a nail service for ₹200.","Complete Makeover is ₹2,199 today."]){
+  assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedVoiceDiscounts(invalid,offers),catalogue),false,invalid);
+ }
+ assert.equal(offersModule.offerClaimsApproved("Complete Makeover gives ₹200 off with FAKE500.",offers),false);
+});
+
+
+test("verified spoken offer formatting removes approved identifiers, preserves terms and answers explicit code requests",async()=>{
+ const {db}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const raw="For Complete Makeover, the approved GROOM200 offer gives ₹200 off: regular ₹2,399, estimated ₹2,199, subject to checkout validation.";
+ const spoken=offersModule.spokenApprovedOfferReply(raw,offers,"Is there an approved offer?");
+ assert.doesNotMatch(spoken,/GROOM200|approved approved/);
+ assert.match(spoken,/₹200 off/);assert.match(spoken,/estimated ₹2,199, subject to checkout validation/);
+ for(const message of ["What is the coupon code?","Please read the offer code", "Tell me the code"])
+  assert.equal(offersModule.spokenApprovedOfferReply(raw,offers,message),raw);
+ assert.equal(offersModule.spokenApprovedOfferReply("Use FAKE500 at checkout.",offers,"Any offers?"),"Use FAKE500 at checkout.");
+ assert.equal(offersModule.spokenApprovedOfferReply(raw,[],"Any offers?"),raw);
+});
+
+
+test("named-package voice offer enquiries use current eligible facts without inventing a final quote or action",async()=>{
+ const {db,sqlite}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const message="The Complete Makeover price feels high. Is there an approved offer for that package?";
+ const reply=offersModule.approvedVoiceOfferInformation(message,offers);
+ assert.match(reply,/₹200 off/);assert.match(reply,/₹2,399/);assert.match(reply,/validated at checkout/);assert.doesNotMatch(reply,/GROOM200|₹2,199|confirmed|created/i);
+ assert.equal(offersModule.approvedVoiceOfferInformation(message,[]),null);
+ for(const action of ["Prepare a quote for Complete Makeover with the coupon", "Book Complete Makeover with the offer", "Apply the offer to Complete Makeover", "I accept the Complete Makeover offer"])assert.equal(offersModule.approvedVoiceOfferInformation(action,offers),null,"action request must reach governed booking logic");
+ assert.equal(offersModule.approvedVoiceOfferInformation("Apply an offer to my taxi",offers),null);
+ assert.equal(offersModule.approvedVoiceOfferInformation("No discounts for Complete Makeover please",offers),null);
+ sqlite.prepare("UPDATE coupon_campaigns SET status='paused' WHERE code='GROOM200'").run();
+ const paused=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ assert.equal(offersModule.approvedVoiceOfferInformation(message,paused),null,"cross-sell campaign does not substitute for a paused closing offer");
 });

@@ -86,6 +86,9 @@ test("the words for each state never offer an Accept the lifecycle would refuse"
 
 // ---------------------------------------------------------------------------------------------
 test("the sitter's own booking read carries the offer state, its expiry and the booked pets", async (t) => {
+  // Deliberately include the door-code digits in an unrelated epoch timestamp.
+  // Privacy assertions must inspect protected fields/values, not numeric substrings.
+  t.mock.method(Date, "now", () => 1790767244555);
   const { sqlite, db } = await world(); t.after(() => sqlite.close());
   const seeded = await seedSittingBooking(db, sqlite, { bookingId: "SIT-OFFER", providerId: SITTER, groupId: "GRP-SIT-OFFER", reservationId: "RES-SIT-OFFER" });
   sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,created_at,updated_at) VALUES ('PET-BRUNO',?,'Bruno','dog','Indie',1,1),('PET-OTHER','SOMEONE-ELSE','Not yours','cat',NULL,1,1)").run(seeded.customerId);
@@ -102,7 +105,11 @@ test("the sitter's own booking read carries the offer state, its expiry and the 
   assert.deepEqual(row.pets, [{ name: "Bruno", species: "dog", breed: "Indie" }], "only the booking customer's own pets, name/species/breed only");
   // SIT-02 is unchanged: before a paid, accepted booking the door code, emergency contact and vet stay back.
   assert.deepEqual(row.carePlan.withheldUntilAccepted, ["emergencyContact", "vet", "homeAccess"]);
-  assert.ok(!JSON.stringify(row).includes("4455"));
+  assert.deepEqual(row.carePlan.plan, { feeding: "Kibble at 7" });
+  assert.equal(row.offer.offeredAt, Date.now());
+  for (const secret of ["Door code 4455", "Asha 9000000002", "Dr Rao"]) {
+    assert.ok(!JSON.stringify(row).includes(secret), "the entire provider response must withhold " + secret);
+  }
 
   // The offer runs out: the read says so, and the accept path refuses in agreement with it.
   setOffer(sqlite, "GRP-SIT-OFFER", { expires_at: Date.now() - 60_000 });

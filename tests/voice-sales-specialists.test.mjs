@@ -43,8 +43,8 @@ async function refuse(p,status){await assert.rejects(p,e=>e instanceof Response&
 test("two fixed sales profiles are distinct and unknown model IDs stay generic",()=>{
  assert.equal(sales.voiceSalesService("pawspace-grooming-sales"),"grooming");assert.equal(sales.voiceSalesService("pawspace-training-sales"),"dog_training");assert.equal(sales.voiceSalesService("toString"),undefined);
  const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/does not grant new action permissions/i);assert.match(groomingPrompt,/automated voice checkout remains prepaid-only/i);assert.match(groomingPrompt,/offer a human teammate/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
- for(const value of ["yes", "Yes, please", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
- for(const value of ["no", "yes but tomorrow", "yes for a different dog", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
+ for(const value of ["yes", "Yes, please", "Yeah, please.", "yep", "yeah, go ahead", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
+ for(const value of ["no", "yes but tomorrow", "yes for a different dog", "yeah but tomorrow", "yeah not yet", "yep if it is cheaper", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
 });
 
 test("one-time grooming quote -> explicit confirmation -> canonical booking/order; no fake capture",async t=>{
@@ -67,7 +67,8 @@ test("voice coupon is a governed Grooming quote, never an invented or Training d
  const w=await world(t);
  const approved=actions(w);approved[1].arguments.couponCode="GROOM200";
  const offer=await prepare(w,"approved-voice-coupon",approved);
- assert.match(offer.summary,/Coupon GROOM200: INR 200 off/);
+ assert.match(offer.summary,/approved coupon saves 200 rupees/);
+ assert.doesNotMatch(offer.summary,/GROOM200|pet\(s\)|INR/);
  const stored=w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id);
  const quote=JSON.parse(stored.quote_json);
  assert.equal(quote.coupon.code,"GROOM200");assert.equal(quote.coupon.discount,200);
@@ -117,10 +118,10 @@ test("human ownership supersedes even an already presented offer",async t=>{
 
 async function turn(w,message,key,provider){const now=Date.now(),messageId=`MSG-${key}`;w.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'elevenlabs','voice','inbound','lifecycle','voice_sales',?,'received',?,'voice-test',?,?)").run(messageId,w.threadId,w.customerId,JSON.stringify({text:message}),key,now,now);return orchestrator.orchestrateAiTurn(w.db,{actor,threadId:w.threadId,customerId:w.customerId,inputMessageId:messageId,idempotencyKey:key,channel:"voice",provider});}
 
-test("spoken yes executes previously read-back offer without asking the model for another plan",async t=>{
+test("attended-call affirmative confirms the read-back offer without another model plan",async t=>{
  const w=await world(t);let modelCalls=0;const provider={salesService:"grooming",status:"connected",provider:"mock-sales-model",modelRef:"proof",async generate(){modelCalls++;return{text:"I have enough details",provider:"mock-sales-model",modelRef:"proof",latencyMs:1,actionRequests:actions(w)};}};
  const proposed=await turn(w,"I need a grooming booking","proposal",provider);assert.equal(proposed.turn.policyDecision,"customer_confirmation_required");assert.equal(bookingCount(w),0);
- const confirmed=await turn(w,"yes","confirmation",provider);assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(modelCalls,1);assert.equal(bookingCount(w),1);assert.match(confirmed.turn.output,/pending verification/);
+ const confirmed=await turn(w,"Yeah, please.","confirmation",provider);assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(modelCalls,1);assert.equal(bookingCount(w),1);assert.match(confirmed.turn.output,/pending verification/);
 });
 
 test("short needs-assessment answers remain a scoped conversation, while human requests still win",async t=>{
@@ -248,7 +249,7 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
  const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
  const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
  const r=await turn(w,'Please show the grooming quote before booking','repair-proposal',provider);
- assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/Total INR|reserve/i);
+ assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/total is .*rupees|reserve/i);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
  const bookingTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get();
  assert.equal(bookingTable ? w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n : 0,0);
@@ -298,4 +299,16 @@ test('original payment demo disclaimers remain read-only while suggestion-style 
  assert.equal(isSalesInformationQuestion('I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.'),true);
  assert.equal(isSalesInformationQuestion('What about the Complete Makeover package tomorrow?'),false);
  assert.equal(isSalesInformationQuestion('How about the larger package?'),false);
+});
+
+
+test("explicit preparation request creates only a pending quote; yeah confirms its stored terms", async t => {
+ const w=await world(t);let calls=0;
+ const provider={salesService:"grooming",status:"connected",provider:"mock-sales-model",modelRef:"proof",async generate(input){calls++;assert.equal(input.intent.intent,"booking_create");return{text:"Here is your proposed appointment",provider:"mock-sales-model",modelRef:"proof",latencyMs:1,actionRequests:actions(w)};}};
+ const offered=await turn(w,"Please prepare a quote for the one-time Bath & Basic for Milo, prepaid, October 20 2026 at 10 AM India time, at 12 Test Street, Bengaluru, PIN 560038.","explicit-quote",provider);
+ assert.equal(offered.turn.policyDecision,"customer_confirmation_required");assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
+ const confirmed=await turn(w,"Yeah, please.","explicit-quote-confirm",provider);
+ assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(calls,1);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+ assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE customer_id=?").get(w.customerId).status,"payment_pending");
 });
