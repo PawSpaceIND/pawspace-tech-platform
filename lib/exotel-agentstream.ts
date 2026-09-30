@@ -324,6 +324,13 @@ function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markN
   socket.send(JSON.stringify({ event: "mark", stream_sid: session.streamSid, mark: { name: markName } }));
 }
 
+async function recordTransportInterruption(env: Env, session: Session | null, reason: string) {
+  if (!session) return;
+  await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
+    .bind(crypto.randomUUID(), session.aiCallId, "agentstream_transport_interrupted", JSON.stringify({ reason, streamSid: session.streamSid }), Date.now())
+    .run().catch(() => undefined);
+}
+
 async function closeSession(env: Env, session: Session | null, reason: string) {
   if (!session) return;
   const now = Date.now();
@@ -426,8 +433,13 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       try { server.close(1011, text((error as Error)?.message).slice(0, 100) || "AgentStream processing failed"); } catch {}
     });
   });
-  server.addEventListener("close", () => { ctx.waitUntil(closeSession(env, session, "socket_closed")); session = null; });
-  server.addEventListener("error", () => { ctx.waitUntil(closeSession(env, session, "socket_error")); });
+  server.addEventListener("close", () => {
+    const active = session; session = null;
+    ctx.waitUntil(recordTransportInterruption(env, active, "socket_closed"));
+  });
+  server.addEventListener("error", () => {
+    ctx.waitUntil(recordTransportInterruption(env, session, "socket_error"));
+  });
 
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket });
 }

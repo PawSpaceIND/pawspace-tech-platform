@@ -88,3 +88,11 @@ test("native AgentStream canonicalizes connection evidence and is reconnect-idem
   assert.match(bridge, /created \? "agentstream_started" : "agentstream_reconnected"/);
   assert.match(bridge, /if \(!session\.reconnected\)/);
 });
+
+test("native AgentStream transport interruption stays reconnectable until explicit stop", () => {
+  assert.match(bridge, /agentstream_transport_interrupted/);
+  assert.match(bridge, /recordTransportInterruption\(env, active, "socket_closed"\)/);
+  assert.match(bridge, /recordTransportInterruption\(env, session, "socket_error"\)/);
+  assert.match(bridge, /kind === "stop".*closeSession\(env, active/s);
+  assert.doesNotMatch(bridge, /addEventListener\("close".*closeSession/s);
+});
