@@ -53,7 +53,10 @@ canonical ownership and the existing policy preview. It has no dial or policy-ov
 - [Staging deployment 36673858254](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36673858254)
   certified application revision `3d972f675f989f4d250a4468bc4fc22e8163915f` with zero isolation failures:
   sandbox payments, production blocked, 30/30 seeded service-zone pairs, 6/6 authenticated personas,
-  and 6/6 hosted smoke routes. Later commits change test/workflow evidence only.
+  and 6/6 hosted smoke routes. A later main deployment replaced this revision. The current PR
+  has since merged main and repaired the voice console for incomplete operations responses;
+  [application-revision staging deploy 36677435636](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36677435636)
+  is queued and is not yet certified.
 - [Browser run 36674336899](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674336899)
   passed 28 scenarios across Professional/Fun, all three palettes, light/dark and desktop/mobile.
 - [Normal policy inspection 36674341413](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674341413)
