@@ -310,3 +310,74 @@ interval. Worker telemetry was unavailable, so the exception is not conclusively
 The temporary window now also waits for authenticated live readiness to prove effective UAT,
 sales approval, single allowlist and self-test approval before the call request. Cloudflare settings
 readback alone can precede runtime propagation. Failure to observe effective approval refuses dialing.
+
+
+## Attended audio succeeded; premium-sales demo failed
+
+The single approved handset request 36731282284 was accepted by PawSpace (HTTP 201) and
+ElevenLabs at 14:45:25 UTC / 20:15 IST, with canonical recipient ending 7878, recorded consent
+granted, opt-out clear and quiet hours outside. It placed one call. The verifier stopped at
+14:47:49 UTC while the carrier was in progress; its `carrier_not_completed` failure is not a
+silent-call finding. Cleanup at 14:47:53 verified the persistent phone pause and every dialing
+approval/autorun flag false. Both automatic activation workflows remain disabled.
+
+Read-only final provider inspection 36732001764 found one matching phone conversation, 143 seconds,
+seven user turns and eight agent turns, provider status `failed`. The failure reason still requires
+inspection. The participant reported: “Maya spoke and we had a conversation”, then explicitly
+rejected the premium quality: ordinary delivery, no natural human-like voice, no booking
+confirmation, recommendation, cross-selling or knowledge of other services. This is an audible
+attended conversation, **not a passed premium demo or sales closure**. No further calls are approved.
+
+The code exposes two executable voice specialists (Grooming and Training). The Grooming prompt
+explicitly scopes itself to Grooming; this does not meet the requested PawSpace-wide concierge.
+Governed booking offer/confirmation code exists but was not demonstrated in the attended call.
+Exact dialogue and current safe voice settings are being retained through a separate read-only
+review branch so the current PR's full CI is not restarted for diagnostic changes.
+
+Read-only premium review 36732628329 retained the exact conversation and live configuration.
+The provider ended the call with `custom_llm generation failed` and
+`custom_llm_error: LLM Cascade Error: TimeoutError`. The transcript starts with a Boarding enquiry,
+which Maya incorrectly redirected toward Grooming. It also contains repeated provider soft-timeout
+filler and an unexpected switch from English to Hindi. The live voice already uses
+`eleven_v3_conversational`, expressive mode, stability 0.45 and speed 1; selecting that engine did
+not establish acceptable perceived voice quality. The live turn configuration inserts
+"Sure, give me a second." after three seconds. Prompt edits alone do not change that setting.
+
+The caller's final confirmation was exactly "Yeah, please." The existing bounded confirmation
+parser accepted "yes" but not "yeah". Read-only booking-state inspection 36733719022 found five
+offer versions (four superseded, one pending), none confirmed, and zero new bookings during the
+call interval. The provider timeout is established; the precise cause of repeated offer creation
+is not established. No historical confirmation has been replayed and no booking created afterward.
+
+The local candidate now accepts bounded "yeah"/"yep" confirmations while refusing qualified or
+changed-term replies. The executed orchestrator regression uses the exact attended phrase, creates
+one canonical booking with payment pending, and proves no second model plan is requested. All 49
+sales tests passed. Prompt changes preserve the requested service, permit grounded information
+about other enabled services without extending their booking permissions, stabilize conversation
+language, and allow a relevant optional cross-service recommendation with existing safety limits.
+Those prompt changes require real multi-turn behavioural verification; they are not live fixes yet.
+
+Local typecheck passed. The additional inbound/grounding/approved-offer/persona suites passed 27/27.
+The combined sales/profile/preservation run initially passed 60/61: the remaining failure was the
+second source-preservation contract's old reviewed hash. After updating that hash, all six
+preservation checks passed. Full CI 36731270344 on the prior pushed revision passed lint/typecheck
+and 9,765 of 9,766 tests, but failed the static-test-file budget (161 versus 160); its build step
+was skipped. Neither that failed run nor focused checks certify the new candidate for deployment.
+
+Premium closure remains open: natural voice delivery and response latency, timeout recovery,
+multi-service answers, consultative recommendations, optional cross-selling, live booking
+confirmation and final CRM disposition need end-to-end proof. The phone pause remains in force;
+the one attended-call authorization has been consumed.
+
+The candidate's deterministic quote read-back now uses natural plurals and rupee wording instead
+of `pet(s)`/`INR`, and describes approved coupon savings without reading its code. The canonical
+quote, discount, payment terms, expiry and booking actions are unchanged. All 49 sales tests passed
+again after this presentation change. The real specialist gateway regression now uses the attended
+"Yeah, please." phrase through `runElevenLabsGroundedTurn`; the gateway/follow-up/action-chain/
+human-profile/failure-recovery suites passed 40/40. These tests use synthetic customers and mocked
+provider responses, not a real sales model, and do not certify natural recommendations or delivery.
+
+The failing full-suite ratchet was corrected by extending the existing audio source-contract test
+to execute both real Workers AI adapters: default model selection, audio bytes, transcript and TTS
+result, plus absent/malformed binding refusal. No test budget was raised. That test and the static
+test ratchet passed 5/5; the candidate typecheck passed. Full candidate certification is still due.
