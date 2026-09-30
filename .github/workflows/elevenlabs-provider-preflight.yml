@@ -308,6 +308,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Validate premium audio output boundaries without provider requests
+        run: node --test tests/premium-audio-output-boundary.test.mjs
       - name: Install synthetic microphone tools
         run: |
           sudo apt-get update -qq

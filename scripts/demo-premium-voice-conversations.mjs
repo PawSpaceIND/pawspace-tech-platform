@@ -8,6 +8,8 @@ import {createAudioProbeState,applyAudioProbeEvent,audioFormat,greetingPlaybackF
 import {verifyFinalConversation} from './voice-final-conversation-proof.mjs';
 import {isSubstantiveVoiceReply,isControlledVoiceReply} from './voice-uat-evidence.mjs';
 import {PREMIUM_AUDIO_SCENARIOS} from './premium-audio-scenarios.mjs';
+import {readDemoJson,validateDemoContext,validateDemoSignedUrl,actionsMaskCommand,createDemoEventBoundary} from './voice-demo-output-boundary.mjs';
+import {premiumArtifactPaths,validatedPremiumReport,serializePremiumReport,serializePremiumSummary} from './premium-audio-output-boundary.mjs';
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
 authorizedLaunchTester(env);
 if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||'')||!env.SPECIALIST_CUSTOMER_ID||!env.ELEVENLABS_API_KEY||!env.GROOMING_AGENT_ID)throw Error('Exact demo prerequisites missing');
@@ -15,43 +17,43 @@ const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io')
 if(!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].includes(eleven))throw Error('Approved voice provider region required');
 const headers={'xi-api-key':env.ELEVENLABS_API_KEY};
 const cf='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
-async function readCf(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||b.success!==true)throw Error('Staging verification failed');return b.result;}
+async function readCf(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok||b.success!==true)throw Error('Staging verification failed');return b.result;}
 async function isolation(verifyRuntime=true){
  const db=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID));if(db.name!=='pawspace-staging'||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Isolated demo database required');
  const settings=await readCf('/workers/scripts/pawspace-staging/settings');
  if(settings.annotations?.['workers/message']!=='staging '+env.EXPECTED_SHA)throw Error('Demo staging revision changed');
  const vars=Object.fromEntries(settings.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
  assertDemoPhonePauseMetadata(vars);
- if(verifyRuntime){const readiness=await fetch(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),body=await readiness.json();if(!readiness.ok)throw Error('Authenticated runtime phone-shutdown read refused');assertDemoRuntimePhonePause(vars,body.data?.gate);}
+ if(verifyRuntime){const readiness=await fetch(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),body=await readDemoJson(readiness);if(!readiness.ok)throw Error('Authenticated runtime phone-shutdown read refused');assertDemoRuntimePhonePause(vars,body.data?.gate);}
  if(vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true'||!settings.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Demo sandbox bindings not proven');
 }
 async function paymentIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM booking_payments WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});if(!Array.isArray(rows)||rows.length!==1||rows[0]?.success===false||!Array.isArray(rows[0]?.results))throw Error('Business-state readback refused');return rows[0].results.map(x=>x.id);}
 async function bookingIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM canonical_bookings WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});if(!Array.isArray(rows)||rows.length!==1||rows[0]?.success===false||!Array.isArray(rows[0]?.results))throw Error('Business-state readback refused');return rows[0].results.map(x=>x.id);}
 await isolation(false);
-const configResponse=await fetch(eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await configResponse.json();
+const configResponse=await fetch(eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),config=await readDemoJson(configResponse);
 if(!configResponse.ok||config.conversation_config?.agent?.prompt?.custom_llm?.url!==origin+'/api/elevenlabs/v1')throw Error('Demo must use the actual PawSpace staging brain');
 const login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.timeout(20000)});
 const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(login.status!==200||!cookie.startsWith('pawspace_uat='))throw Error('Authenticated demo login refused');
 await isolation();
-async function app(body){const r=await fetch(origin+'/api/ai-voice-uat',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok)throw Error('Governed simulator request refused ('+r.status+')');return b.data;}
+async function app(body){const r=await fetch(origin+'/api/ai-voice-uat',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Governed simulator request refused ('+r.status+')');return b.data;}
 const identity=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT primary_phone FROM canonical_customers WHERE id=?',params:[env.SPECIALIST_CUSTOMER_ID]});
 const customerPhone=String(identity[0]?.results?.[0]?.primary_phone||'').replace(/\D/g,'');
 const testerPhone=authorizedLaunchTester(env).replace(/\D/g,'');
 if(![testerPhone,testerPhone.slice(2)].includes(customerPhone))throw Error('Demo customer does not own the authorized tester number');
 const before=await bookingIds(),paymentsBefore=await paymentIds();await mkdir('voice-demo-results',{recursive:true});const reports=[];
 for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
- const turns=[],sessionAudio=[];let sessionInputBytes=0;
+ const turns=[],sessionAudio=[],eventBoundary=createDemoEventBoundary(),paths=premiumArtifactPaths(sessionScenario.id);let sessionInputBytes=0;
  await isolation();
- const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});
- console.log('::add-mask::'+context.callId);console.log('::add-mask::'+context.threadId);
- const signedResponse=await fetch(eleven+'/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await signedResponse.json();if(!signedResponse.ok||!signed.signed_url)throw Error('Demo socket authorization refused');console.log('::add-mask::'+signed.signed_url);
- const socket=new WebSocket(signed.signed_url),initialState=createAudioProbeState();let state=initialState;let inputFormat,outputFormat,conversationId,error,closed=false,greetingBytes=0,firstGreeting=0,lastGreeting=0;const returnedAudio=[];let firstAudio=0,lastAudio=0,replyEventAt=0;
+ const context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
+ console.log(actionsMaskCommand(context.callId));console.log(actionsMaskCommand(context.threadId));
+ const signedResponse=await fetch(eleven+'/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await readDemoJson(signedResponse);if(!signedResponse.ok||!signed.signed_url)throw Error('Demo socket authorization refused');const signedUrl=validateDemoSignedUrl(signed.signed_url);console.log(actionsMaskCommand(signedUrl));
+ const socket=new WebSocket(signedUrl),initialState=createAudioProbeState();let state=initialState;let inputFormat,outputFormat,conversationId,error,closed=false,greetingBytes=0,firstGreeting=0,lastGreeting=0;const returnedAudio=[];let firstAudio=0,lastAudio=0,replyEventAt=0;
  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'conversation_initiation_client_data',custom_llm_extra_body:{pawspace_customer_id:env.SPECIALIST_CUSTOMER_ID,pawspace_thread_id:context.threadId},dynamic_variables:{pawspace_uat:'true'}})));
  socket.addEventListener('message',event=>{try{
-  const d=JSON.parse(String(event.data));
+  const {event:d,audio}=eventBoundary.parse(String(event.data));
   if(d.type==='ping')socket.send(JSON.stringify({type:'pong',event_id:d.ping_event.event_id}));
-  if(d.type==='conversation_initiation_metadata'){const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;inputFormat=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(outputFormat);if(inputFormat!=='pcm_16000')throw Error('Demo microphone requires PCM16000');console.log('::add-mask::'+conversationId);}
-  if(d.type==='audio'){const bytes=Buffer.from(d.audio_event?.audio_base_64||'','base64');if(!state.listening){firstGreeting ||= Date.now();lastGreeting=Date.now();greetingBytes+=bytes.length;}else if(state.transcript){returnedAudio.push(bytes);firstAudio ||=Date.now();lastAudio=Date.now();}}
+  if(d.type==='conversation_initiation_metadata'){const m=d.conversation_initiation_metadata_event;conversationId=m.conversation_id;inputFormat=m.user_input_audio_format;outputFormat=m.agent_output_audio_format;audioFormat(outputFormat);if(inputFormat!=='pcm_16000')throw Error('Demo microphone requires PCM16000');}
+  if(d.type==='audio'){const bytes=audio;if(!state.listening){firstGreeting ||= Date.now();lastGreeting=Date.now();greetingBytes+=bytes.length;}else if(state.transcript){returnedAudio.push(bytes);firstAudio ||=Date.now();lastAudio=Date.now();}}
   applyAudioProbeEvent(state,d,{now:Date.now(),outputFormat});
   if(d.type==='agent_response'&&state.transcript&&isSubstantiveVoiceReply(state.reply))replyEventAt=Date.now();
   if(d.type==='error')throw Error('Demo voice provider error');
@@ -72,12 +74,11 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
   state.listening=true;const input=Buffer.concat([Buffer.alloc(16000),pcm,Buffer.alloc(64000)]),started=Date.now();
   for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
   await waitFor(()=>Boolean(state.transcript)&&(isSubstantiveVoiceReply(state.reply)||isControlledVoiceReply(state.reply))&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500,{microphoneOpen:true});
-  console.log('VOICE_DEMO_OBSERVED='+JSON.stringify({scenario:sessionScenario.id,turns,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
   // Preserve observed speech even when a semantic check fails; never substitute scripted audio.
-  const observedRaw=Buffer.concat(returnedAudio),observedName=sessionScenario.id+'-'+scenario.id+'-observed';
-  await writeFile('voice-demo-results/'+observedName+'.raw',observedRaw);
+  const observedRaw=Buffer.concat(returnedAudio),observedPaths=premiumArtifactPaths(sessionScenario.id,scenario.id);
+  await writeFile(observedPaths.raw,observedRaw);
   const observedFormat=audioFormat(outputFormat);
-  execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(observedFormat.rate),'-ac','1','-i','voice-demo-results/'+observedName+'.raw','voice-demo-results/'+observedName+'.wav']);
+  execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(observedFormat.rate),'-ac','1','-i',observedPaths.raw,observedPaths.wav]);
   assertDemoResponse(scenario,state);if(scenario.forbidden?.test(state.reply))throw Error('Premium audio turn violated '+scenario.id);
   const playbackCompletedMs=Date.now()-started,utteranceEndAt=started+(16000+pcm.length)/32000*1000;sessionInputBytes+=pcm.length;
   turns.push({scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,inputToPlaybackCompletedMs:playbackCompletedMs,utteranceEndToFirstAudioMs:firstAudio?Math.max(0,firstAudio-utteranceEndAt):null,utteranceEndToReplyEventMs:replyEventAt?Math.max(0,replyEventAt-utteranceEndAt):null,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:!state.replyInterrupted});
@@ -86,17 +87,17 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
   }
   socket.close();
   const proof=await verifyFinalConversation({key:env.ELEVENLABS_API_KEY,conversationId,agentId:env.GROOMING_AGENT_ID,turns:turns.map(turn=>({transcript:turn.transcript,reply:turn.reply})),liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:sessionInputBytes,outputBytes:turns.reduce((sum,turn)=>sum+turn.audioBytes,0),nonSilentBytes:turns.reduce((sum,turn)=>sum+turn.nonSilentBytes,0),playbackComplete:turns.every(turn=>turn.playbackComplete)},request:(url,options)=>fetch(url.replace('https://api.elevenlabs.io',eleven),options)});
-  const f=audioFormat(outputFormat),raw=Buffer.concat(sessionAudio);await writeFile('voice-demo-results/'+sessionScenario.id+'.raw',raw);
-  execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(f.rate),'-ac','1','-i','voice-demo-results/'+sessionScenario.id+'.raw','voice-demo-results/'+sessionScenario.id+'.wav']);
-  const report={scenario:sessionScenario.id,revision:env.EXPECTED_SHA,turns,proof,dialed:false,engine:'elevenlabs_with_pawspace_brain',carrierVerified:false,premiumCertified:false,scope:'Actual staged ASR/brain/TTS informational conversations; no booking confirmation, delivered checkout, payment or provider acceptance certification; first-audio metrics may include acknowledgement speech'};reports.push(report);await writeFile('voice-demo-results/'+sessionScenario.id+'.json',JSON.stringify(report,null,2));
+  const f=audioFormat(outputFormat),raw=Buffer.concat(sessionAudio);await writeFile(paths.raw,raw);
+  execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(f.rate),'-ac','1','-i',paths.raw,paths.wav]);
+  const report=validatedPremiumReport({scenario:sessionScenario.id,revision:env.EXPECTED_SHA,turns,proof,dialed:false,engine:'elevenlabs_with_pawspace_brain',carrierVerified:false,premiumCertified:false,scope:'Actual staged ASR/brain/TTS informational conversations; no booking confirmation, delivered checkout, payment or provider acceptance certification; first-audio metrics may include acknowledgement speech'});reports.push(report);await writeFile(paths.json,serializePremiumReport(report));
   await app({action:'complete',callId:context.callId,outcome:'synthetic_audio_demo',disposition:'info_shared'});
-  console.log('VOICE_DEMO_RESULT='+JSON.stringify(report));
+  console.log('VOICE_DEMO_RESULT='+serializePremiumReport(report));
  }catch(e){
-  const failed={passed:false,scenario:sessionScenario.id,turns,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,error:String(e.message),dialed:false};
-  console.log('VOICE_DEMO_FAILED='+JSON.stringify(failed));await writeFile('voice-demo-results/'+sessionScenario.id+'-failed.json',JSON.stringify(failed,null,2));
-  socket.close();await app({action:'transport_failure',callId:context.callId,reason:'synthetic_audio_demo_failed',reconnected:false}).catch(()=>{});throw e;
+  const failed=validatedPremiumReport({passed:false,revision:env.EXPECTED_SHA,scenario:sessionScenario.id,turns,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,dialed:false});
+  console.log('VOICE_DEMO_FAILED='+serializePremiumReport(failed));await writeFile(paths.failed,serializePremiumReport(failed));
+  socket.close();await app({action:'transport_failure',callId:context.callId,reason:'synthetic_audio_demo_failed',reconnected:false}).catch(()=>{});throw Error('Premium audio demo failed before certification');
  }
 }
 await isolation();if(JSON.stringify(before)!==JSON.stringify(await bookingIds())||JSON.stringify(paymentsBefore)!==JSON.stringify(await paymentIds()))throw Error('Informational demos changed bookings or payments');
-await writeFile('voice-demo-results/conversations.json',JSON.stringify({passed:true,demonstrations:reports,bookingSetUnchanged:true,dialed:false,nativeCarrierCertified:false},null,2));
+await writeFile('voice-demo-results/conversations.json',serializePremiumSummary(reports));
 console.log('THREE_PREMIUM_INFORMATIONAL_AUDIO_SESSIONS_PASSED='+JSON.stringify({count:reports.length,turns:reports.reduce((sum,report)=>sum+report.turns.length,0),premiumCertified:false,dialed:false,bookingSetUnchanged:true,nativeCarrierCertified:false}));
