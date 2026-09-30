@@ -284,3 +284,12 @@ staging UUID and canonical `pawspace-staging` name before any Worker mutation, i
 verified staging binding. A supplied production DB ID must still differ. This retains positive
 isolation proof without relying on an unset optional environment variable. All 17 focused checks
 passed, including production database metadata refusal. The single-call approval remains unused.
+
+
+Job 36729012860 again refused before mutation/dial and verified pause cleanup. A fresh authenticated
+read (36729556588) proves effective provider `elevenlabs_exotel`, paused/disabled mode and all six
+sales operations sources available. Its policy refusal is `voice_enabled`, expected during pause.
+The provider pin is encrypted; plaintext settings cannot establish its effective value. The window
+now requires authenticated runtime readiness to prove the existing ElevenLabs provider and disabled
+gate before mutation, preserving the encrypted binding unchanged. All 17 focused checks passed,
+including this executed encrypted-runtime case and non-ElevenLabs refusal.

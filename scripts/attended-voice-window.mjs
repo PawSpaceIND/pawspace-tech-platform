@@ -15,7 +15,13 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch){
  if(!metadataResponse.ok||metadata.success!==true||metadata.result?.name!=='pawspace-staging'||metadata.result?.uuid!==env.STAGING_D1_ID)throw Error('Canonical isolated staging database not verified');
  const before=await api();
  const values=Object.fromEntries(before.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
- if(values.PAWSPACE_DEPLOYMENT_ENV!=='staging'||values.PAWSPACE_PAYMENT_ENV!=='sandbox'||values.PAWSPACE_VOICE_RUNTIME!=='elevenlabs'||values.PAWSPACE_VOICE_PHONE_TESTS_PAUSED!=='true'||values.PAWSPACE_VOICE_ENV!=='disabled'||!before.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Paused isolated ElevenLabs staging required');
+ if(values.PAWSPACE_DEPLOYMENT_ENV!=='staging'||values.PAWSPACE_PAYMENT_ENV!=='sandbox'||values.PAWSPACE_VOICE_PHONE_TESTS_PAUSED!=='true'||values.PAWSPACE_VOICE_ENV!=='disabled'||!before.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Paused isolated ElevenLabs staging required');
+ const origin='https://pawspace-staging.karthik-fce.workers.dev';
+ const login=await request(origin+'/api/staging-login',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+ const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
+ if(!login.ok||!cookie.startsWith('pawspace_uat='))throw Error('Attended runtime authentication refused');
+ const readiness=await request(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(30000)}),runtime=await readiness.json();
+ if(!readiness.ok||runtime.data?.transport?.provider!=='elevenlabs_exotel'||runtime.data?.gate?.mode!=='disabled'||runtime.data?.gate?.enabled!==false)throw Error('Paused isolated ElevenLabs staging required');
  const changes={PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'false',PAWSPACE_VOICE_ENV:'uat',PAWSPACE_VOICE_UAT_APPROVED:'true',PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED:'true',PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED:'true',PAWSPACE_VOICE_NATIVE_UAT_APPROVED:'false',PAWSPACE_VOICE_UAT_AUTORUN:'false'};
  const bindings=before.bindings.filter(x=>!(x.name in changes)).map(x=>({name:x.name,type:'inherit',version_id:'latest'}));
  bindings.push(...Object.entries(changes).map(([name,text])=>({name,type:'plain_text',text})));
