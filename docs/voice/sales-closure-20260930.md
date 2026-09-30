@@ -47,3 +47,28 @@ The user subsequently approved the current voice for the initial pilot. Localize
 returned 401; this is an explicit pilot deferral, not a claim of localized voice certification.
 Fresh-launch preflight verifies the full authorized recipient via SHA-256, isolated staging revision,
 canonical ownership and the existing policy preview. It has no dial or policy-override operation.
+
+## Observed staging and attended-test evidence
+
+- [Staging deployment 36673858254](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36673858254)
+  certified application revision `3d972f675f989f4d250a4468bc4fc22e8163915f` with zero isolation failures:
+  sandbox payments, production blocked, 30/30 seeded service-zone pairs, 6/6 authenticated personas,
+  and 6/6 hosted smoke routes. Later commits change test/workflow evidence only.
+- [Browser run 36674336899](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674336899)
+  passed 28 scenarios across Professional/Fun, all three palettes, light/dark and desktop/mobile.
+- [Normal policy inspection 36674341413](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674341413)
+  matched the authorized recipient and canonical owner but reported `frequency_cap`. It did not dial.
+- The user authorized an attended test at any time. The existing settings-managed
+  `uat_specialist_sales_test` endpoint separately enforces UAT and sales approval, one allowlisted
+  recipient, canonical ownership, consent and opt-out checks. Its existing test-only frequency
+  isolation was used without changing production rules or environment approvals. The workflow
+  additionally verifies the full recipient hash and exact isolated build, and refuses reruns.
+- [Attended attempt 36674750574](https://github.com/PawSpaceIND/pawspace-tech-platform/actions/runs/36674750574)
+  received HTTP 201 / `dialing` from ElevenLabs/Exotel at 05:45 UTC (11:15 IST). Exact provider
+  correlation was verified. The terminal carrier result was `recipient_leg_not_answered` with
+  zero conversation turns. The workflow therefore failed its handset acceptance check correctly.
+  No audio quality, successful conversation, booking, payment or provider acceptance is certified.
+  The participant was asked what happened on their handset; no automatic redial was performed.
+
+PR: [1199](https://github.com/PawSpaceIND/pawspace-tech-platform/pull/1199).
+The production launch remains open until the attended and completed-sales gates above pass.
