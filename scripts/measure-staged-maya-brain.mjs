@@ -42,7 +42,7 @@ const ordinaryPrompts=['My dog Bruno needs a full bath and a full body haircut. 
 let prompts=ordinaryPrompts,addressesBefore=[],reservationsBefore=[];
 if(quoteOnly){
  const [pets,addresses,geocodes,groups]=await Promise.all([
-  rows("SELECT id,name,species FROM canonical_pets WHERE customer_id=? AND species='dog' ORDER BY created_at LIMIT 2"),
+  rows("SELECT id,name,species FROM canonical_pets WHERE customer_id=? AND species='dog' ORDER BY created_at LIMIT 20"),
   rows('SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC'),
   rows('SELECT address_id FROM customer_service_address_geocodes WHERE customer_id=?'),
   rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
@@ -53,7 +53,7 @@ if(quoteOnly){
   await isolation();const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,modelRequested:false,voiceContextCreated:false,bookingCreated:false,paymentCaptured:false,scope:'Read-only owned saved-quote prerequisites; no quote or business execution',prerequisites};
   await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('SAVED_QUOTE_INSPECTION='+JSON.stringify(report));process.exit(0);
  }
- addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;prompts=[savedQuotePrompt(pets,addresses,geocodes)];
+ addressesBefore=[...addresses].sort((a,b)=>a.id.localeCompare(b.id));reservationsBefore=groups;if(pets.length>=20)throw Error('Owned pet inspection limit reached');const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);if(!selected)throw Error('Owned pet choice is ambiguous');prompts=[savedQuotePrompt(pets,addresses,geocodes,Date.now(),selected.id)];
 }
 const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});
 validateDemoContext(context);console.log(actionsMaskCommand(context.callId));console.log(actionsMaskCommand(context.threadId));

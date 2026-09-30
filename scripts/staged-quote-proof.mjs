@@ -6,11 +6,13 @@ export function savedQuotePrerequisites(pets,addresses,geocodes){
 }
 
 // Only existing owned records supplied by parameterized staging reads. No invented intake facts.
-export function savedQuotePrompt(pets,addresses,geocodes,now=Date.now()){
- const dogs=pets.filter(p=>p.species==='dog');
+export function savedQuotePrompt(pets,addresses,geocodes,now=Date.now(),selectedOwnedPetId){
+ const allDogs=pets.filter(p=>p.species==='dog');
+ const dogs=selectedOwnedPetId?allDogs.filter(p=>p.id===selectedOwnedPetId):allDogs;
  const address=addresses[0];
  if(dogs.length!==1||!address||!geocodes.some(g=>g.address_id===address.id))throw Error('Saved quote prerequisites unavailable');
  const pet=dogs[0];
+ if(allDogs.filter(p=>p.name===pet.name).length!==1)throw Error('Saved quote prerequisites unavailable');
  if(typeof pet.name!=='string'||!pet.name.trim()||pet.name.length>80||/[\r\n\x00-\x1f]/.test(pet.name)||typeof address.line1!=='string'||address.line1.length<8||!/^\d{6}$/.test(address.postal_code||''))throw Error('Saved quote prerequisites unavailable');
  const text=serviceAddressText({line1:address.line1,line2:address.line2,area:address.area,city:address.city,postalCode:address.postal_code});
  if(text.length>500||/[\r\n\x00-\x1f]/.test(text))throw Error('Saved quote prerequisites unavailable');
