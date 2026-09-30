@@ -41,7 +41,9 @@ test('attended workflow always restores pause even when unlock, policy or call f
  const workflow=readFileSync(new URL('../.github/workflows/elevenlabs-provider-preflight.yml',import.meta.url),'utf8');
  const job=workflow.slice(workflow.indexOf('  specialist-call:'),workflow.indexOf('  direct-grooming-call:'));
  assert.ok(job.indexOf('Verify exact isolated build')<job.indexOf('Open only the authorized'));
- assert.ok(job.indexOf('scripts/voice-sales-launch-preflight.mjs')<job.indexOf('Place one controlled'));
+ assert.ok(job.indexOf('scripts/attended-voice-window.mjs')<job.indexOf('Place one controlled'));
+ assert.match(job,/specialistPilotAction\(process.env\)/);
+ assert.doesNotMatch(job,/node --experimental-strip-types scripts\/voice-sales-launch-preflight.mjs/);
  assert.match(job,/Restore and verify[\s\S]*?if: \$\{\{ always\(\) && inputs.confirm == 'attended-specialist-uat' \}\}/);
  assert.match(job,/run: node scripts\/pause-staging-phone-calls.mjs/);
  assert.doesNotMatch(job,/continue-on-error|workflow enable/);

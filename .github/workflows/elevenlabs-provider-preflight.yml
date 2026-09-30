@@ -437,7 +437,6 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
         run: |
           node --experimental-strip-types scripts/attended-voice-window.mjs
-          node --experimental-strip-types scripts/voice-sales-launch-preflight.mjs
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}

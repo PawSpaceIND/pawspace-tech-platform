@@ -293,3 +293,12 @@ The provider pin is encrypted; plaintext settings cannot establish its effective
 now requires authenticated runtime readiness to prove the existing ElevenLabs provider and disabled
 gate before mutation, preserving the encrypted binding unchanged. All 17 focused checks passed,
 including this executed encrypted-runtime case and non-ElevenLabs refusal.
+
+
+Attended job 36729798400 opened and read back the isolated window successfully, then the ordinary
+policy preview refused `frequency_cap` for prior test dials; no call was requested and cleanup
+verified the pause. The existing controlled specialist UAT endpoint already isolates attended tests
+from historical frequency while checking consent, opt-out, approvals, exact allowlist and provider.
+The attended workflow now relies on that endpoint's authoritative policy before dialing instead of
+requiring the ordinary-sales preview to pass. No application policy, cap or consent record changes.
+The separate ordinary-sales preflight remains strict. All prior attempts placed zero handset calls.
