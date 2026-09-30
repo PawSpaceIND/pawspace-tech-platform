@@ -396,7 +396,29 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    expect(unpaidAccept.status(),await unpaidAccept.text()).toBe(409);
    const unpaidAccount=await page.request.get("/api/customer-account");expect(unpaidAccount.ok()).toBeTruthy();
    const unpaidRows=(await unpaidAccount.json()).data.bookings.filter((row:{id:string})=>row.id===bookingId);expect(unpaidRows).toHaveLength(1);expect(unpaidRows[0].status).toBe("payment_pending");
-   const staffCode=process.env.PW_STAFF_UAT_ACCESS_CODE;expect(staffCode).toBeTruthy();await finance.goto("/staging-login");await finance.getByPlaceholder("shared UAT access code").fill(staffCode!);const financeSignedIn=finance.waitForResponse(response=>response.url().endsWith("/api/staging-login")&&response.request().method()==="POST");await finance.getByRole("button",{name:"Finance (payroll, GST, payouts) anjali.finance33@tkpetcare.in",exact:true}).click();expect((await financeSignedIn).status()).toBe(200);await finance.waitForURL("**/me");const financeBeforeMfa=await finance.request.get(`/api/sitting-finance?bookingId=${encodeURIComponent(bookingId)}`);expect(financeBeforeMfa.status()).toBe(403);expect(await financeBeforeMfa.text()).toContain("MFA enrollment required");const enrolled=await finance.request.post("/api/v1/auth/mfa/enroll");expect(enrolled.status(),await enrolled.text()).toBe(201);const enrollment=await enrolled.json();const mfaCode=await totpForTest(String(enrollment.data.secret));const confirmed=await finance.request.post("/api/v1/auth/mfa/enroll",{data:{code:mfaCode}});expect(confirmed.status(),await confirmed.text()).toBe(200);const verified=await finance.request.post("/api/v1/auth/mfa/verify",{data:{code:mfaCode}});expect(verified.status(),await verified.text()).toBe(200);
+   const staffCode=process.env.PW_STAFF_UAT_ACCESS_CODE;expect(staffCode).toBeTruthy();
+   await finance.goto("/staging-login");await finance.getByPlaceholder("shared UAT access code").fill(staffCode!);
+   // The supported Finance entry is MFA, not /me; observe its real automatic enrollment request.
+   const [financeSignedIn,enrolled]=await Promise.all([
+    finance.waitForResponse(r=>r.url().endsWith("/api/staging-login")&&r.request().method()==="POST"),
+    finance.waitForResponse(r=>r.url().endsWith("/api/v1/auth/mfa/enroll")&&r.request().method()==="POST"&&!r.request().postDataJSON()?.code,{timeout:15_000}),
+    finance.waitForURL(/\/mfa(?:\?|$)/,{timeout:15_000}),
+    finance.getByRole("button",{name:"Finance (payroll, GST, payouts) anjali.finance33@tkpetcare.in",exact:true}).click(),
+   ]);
+   expect(financeSignedIn.status()).toBe(200);expect(await financeSignedIn.json()).toMatchObject({ok:true,role:"finance"});
+   await expect(finance.getByRole("heading",{name:"Multi-factor authentication",exact:true})).toBeVisible();
+   const financeBeforeMfa=await finance.request.get(`/api/sitting-finance?bookingId=${encodeURIComponent(bookingId)}`);expect(financeBeforeMfa.status()).toBe(403);expect(await financeBeforeMfa.text()).toContain("MFA enrollment required");
+   expect(enrolled.status()).toBe(201);
+   // Use the secret actually rendered by the enrollment UI, including any dev-effect remount.
+   const setupSecret=await finance.getByText("Setup secret",{exact:true}).locator("..").locator("strong").innerText();const mfaCode=await totpForTest(setupSecret.trim());
+   await finance.getByLabel("6-digit authenticator code",{exact:true}).fill(mfaCode);
+   const [confirmed,verified]=await Promise.all([
+    finance.waitForResponse(r=>r.url().endsWith("/api/v1/auth/mfa/enroll")&&r.request().method()==="POST"&&Boolean(r.request().postDataJSON()?.code)),
+    finance.waitForResponse(r=>r.url().endsWith("/api/v1/auth/mfa/verify")&&r.request().method()==="POST"),
+    finance.waitForURL("**/team/finance",{timeout:15_000}),
+    finance.getByRole("button",{name:"Enable MFA & continue",exact:true}).click(),
+   ]);
+   expect(confirmed.status()).toBe(200);expect(verified.status()).toBe(200);
    const billingBeforeCapture=await page.request.get("/api/customer-billing");expect(billingBeforeCapture.ok()).toBeTruthy();
    const paymentBeforeCapture=(await billingBeforeCapture.json()).data.payments.find((item:{id:string})=>item.id===paymentId);
    expect(paymentBeforeCapture.status).toBe("created");expect(paymentBeforeCapture.gateway).toBe("razorpay_sandbox");
@@ -436,7 +458,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("reassignment needed");await expect(page.getByRole("textbox",{name:"Food and water routine",exact:true})).toHaveValue("Use the labelled food container. Refresh water after the meal.");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-recovery.png"),fullPage:true});
    // Use the real seeded UAT staff login; the persona lane keeps anonymous preview authority disabled.
-   const ops=await browser.newPage({baseURL:new URL(page.url()).origin});try{const staffCode=process.env.PW_STAFF_UAT_ACCESS_CODE;expect(staffCode,"Disposable staff UAT code must be provisioned for this run").toBeTruthy();await ops.goto("/staging-login");await ops.getByPlaceholder("shared UAT access code").fill(staffCode!);const staffSignedIn=ops.waitForResponse(response=>response.url().endsWith("/api/staging-login")&&response.request().method()==="POST");await ops.getByRole("button",{name:"Manager (people & performance) jyoti.manager39@tkpetcare.in",exact:true}).click();expect((await staffSignedIn).status()).toBe(200);await ops.waitForURL("**/me");await expect.poll(()=>ops.evaluate(async()=>{const response=await fetch("/api/staging-login",{cache:"no-store"});return response.ok?(await response.json()).signedInAs?.email:null;})).toBe("jyoti.manager39@tkpetcare.in");await ops.goto("/team/operations/sitting");await ops.getByRole("button",{name:new RegExp(bookingId)}).click();const recoveryCard=ops.getByRole("article").filter({has:ops.getByRole("heading",{name:"Sitter recovery",exact:true})});await expect(recoveryCard).toContainText(reason);await expect(recoveryCard.getByRole("textbox",{name:"Operations replacement reason",exact:true})).toBeVisible();await ops.screenshot({path:test.info().outputPath("sitting-operations-recovery.png"),fullPage:true});
+   const ops=await browser.newPage({baseURL:new URL(page.url()).origin});try{const staffCode=process.env.PW_STAFF_UAT_ACCESS_CODE;expect(staffCode,"Disposable staff UAT code must be provisioned for this run").toBeTruthy();await ops.goto("/staging-login");await ops.getByPlaceholder("shared UAT access code").fill(staffCode!);const staffSignedIn=ops.waitForResponse(response=>response.url().endsWith("/api/staging-login")&&response.request().method()==="POST");await ops.getByRole("button",{name:"Manager (operations · Booking Command Center & scheduling) jyoti.manager39@tkpetcare.in",exact:true}).click();expect((await staffSignedIn).status()).toBe(200);await ops.waitForURL("**/booking-command-center");await expect.poll(()=>ops.evaluate(async()=>{const response=await fetch("/api/staging-login",{cache:"no-store"});return response.ok?(await response.json()).signedInAs?.email:null;})).toBe("jyoti.manager39@tkpetcare.in");await ops.goto("/team/operations/sitting");await ops.getByRole("button",{name:new RegExp(bookingId)}).click();const recoveryCard=ops.getByRole("article").filter({has:ops.getByRole("heading",{name:"Sitter recovery",exact:true})});await expect(recoveryCard).toContainText(reason);await expect(recoveryCard.getByRole("textbox",{name:"Operations replacement reason",exact:true})).toBeVisible();await ops.screenshot({path:test.info().outputPath("sitting-operations-recovery.png"),fullPage:true});
     await recoveryCard.getByRole("textbox",{name:"Operations replacement reason",exact:true}).fill("Original sitter cannot travel; offer this available sitter for the same care window.");
     const offered=ops.waitForResponse(response=>response.url().endsWith("/api/sitting-ops")&&response.request().method()==="POST"&&response.request().postDataJSON()?.action==="assign_replacement");await recoveryCard.getByRole("button",{name:"Offer replacement",exact:true}).first().click();const offerResponse=await offered;expect(offerResponse.status(),await offerResponse.text()).toBe(202);const replacementId=String(offerResponse.request().postDataJSON().providerId);expect(replacementId).not.toBe(providerId);expect(phones[replacementId]).toBeTruthy();
     const replacement=await browser.newPage({baseURL:new URL(page.url()).origin,viewport:page.viewportSize()!});try{
@@ -464,7 +486,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
 
 
 
-  }finally{await Promise.all([partner.close(),finance.close()]);}
+  }finally{await Promise.allSettled([partner.close(),finance.close()]);}
 
  }
 
