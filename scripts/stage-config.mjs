@@ -34,6 +34,7 @@ const r2BucketName = String(process.env.STAGING_R2_BUCKET_NAME || "").trim();
 const razorpayRelayOrigin = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN || "").trim();
 const razorpayRelaySha = String(process.env.PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA || "").trim();
 let razorpayRelayWorker = "";
+const phoneTestsPaused = String(process.env.PAWSPACE_VOICE_PHONE_TESTS_PAUSED || "").trim().toLowerCase() === "true";
 const problems = [];
 if (placementRegion && !/^(aws|gcp|azure):[a-z0-9-]+$/.test(placementRegion)) problems.push("STAGING_WORKER_PLACEMENT_REGION must be a cloud region hint such as aws:ap-southeast-1.");
 if (Boolean(razorpayRelayOrigin) !== Boolean(razorpayRelaySha)) problems.push("Razorpay sandbox relay origin and SHA must be configured together.");
@@ -130,6 +131,15 @@ cfg.vars = {
   EXOTEL_SUBDOMAIN: "api.exotel.com",
   META_WHATSAPP_UAT_DELIVERY_ENABLED: "true",
   PAWSPACE_MEDIA_ENV: "uat",
+  ...(phoneTestsPaused ? {
+    PAWSPACE_VOICE_PHONE_TESTS_PAUSED: "true",
+    PAWSPACE_VOICE_ENV: "disabled",
+    PAWSPACE_VOICE_UAT_APPROVED: "false",
+    PAWSPACE_VOICE_NATIVE_UAT_APPROVED: "false",
+    PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED: "false",
+    PAWSPACE_VOICE_UAT_AUTORUN: "false",
+    PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "false",
+  } : {}),
   ...(razorpayRelayOrigin ? {
     PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: razorpayRelayOrigin.replace(/\/$/, ""),
     PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: razorpayRelaySha,

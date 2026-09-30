@@ -20,6 +20,7 @@ async function isolation(){
  const settings=await readCf('/workers/scripts/pawspace-staging/settings');
  if(settings.annotations?.['workers/message']!=='staging '+env.EXPECTED_SHA)throw Error('Demo staging revision changed');
  const vars=Object.fromEntries(settings.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
+ if(vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED!=='true'||vars.PAWSPACE_VOICE_ENV!=='disabled'||['PAWSPACE_VOICE_UAT_APPROVED','PAWSPACE_VOICE_NATIVE_UAT_APPROVED','PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED','PAWSPACE_VOICE_UAT_AUTORUN','PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED'].some(name=>vars[name]!=='false'))throw Error('Demo requires the user phone stop to remain active');
  if(vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true'||!settings.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Demo sandbox bindings not proven');
 }
 async function bookingIds(){const rows=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql:'SELECT id FROM canonical_bookings WHERE customer_id=? ORDER BY id',params:[env.SPECIALIST_CUSTOMER_ID]});return rows[0]?.results?.map(x=>x.id)||[];}

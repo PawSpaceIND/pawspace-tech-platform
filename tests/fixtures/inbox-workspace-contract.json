@@ -1480,7 +1480,7 @@
     "lib/voice-ai-browser-harness.ts": "054aa8d1603e529d03e5c9822187a43241413cabd1f72aff4a1eefeb787818d7",
     "lib/voice-ai-self-test.ts": "cc096cc354844c059f43129ed241388a9340040453eefd91dfaaacad3db78484",
     "lib/voice-bridge-governance.ts": "998ab47aa20727d02ef35a82976aaca7aebf3018bc48186963741defcb26d599",
-    "lib/voice-call-gate.ts": "c5a3a9da9809a9503e5903fb18e3fc8f2f5cda9a27c3e4c252119cf2bdb0a640",
+    "lib/voice-call-gate.ts": "c2df6f3ebc08ad1aa4c590b0e71059a078c26bc07cb6aa87d8d45e0d6270f1a7",
     "lib/voice-call-state.ts": "a011e696bbc061b2a2175a1270cfcce7e96ea2fadd648deb56d37ef1236de102",
     "lib/voice-carrier-uat-scheduler.ts": "be208170398ebe80d3b4f251836399dbc60d9139c534d91b4e4ee7157b4d2f6e",
     "lib/voice-operator-console.ts": "8d8674cf2b37c068b0ea9dd1f382326ad43e2cdd989b5016fff820c748076b92",
