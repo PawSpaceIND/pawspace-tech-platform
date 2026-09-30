@@ -56,3 +56,8 @@ export async function requestControlledSpecialistUatCall(db: Db, env: Env, input
   const canonical = await canonicalRequest(db, env, input as VoiceRequest);
   return base.requestControlledSpecialistUatCall(db, env, canonical);
 }
+
+export async function requestControlledNativeAgentStreamUatCall(db: Db, env: Env, input: Omit<VoiceRequest, "actorId" | "actorPermissions">) {
+  const canonical = await canonicalRequest(db, env, input as VoiceRequest);
+  return base.requestControlledNativeAgentStreamUatCall(db, env, canonical);
+}

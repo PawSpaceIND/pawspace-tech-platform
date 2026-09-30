@@ -2,6 +2,7 @@ import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { recordAgentStreamCompletionDisposition } from "./voice-agentstream-disposition";
+import { nativeVoiceTurnDiagnostics, resolveCarrierSttLanguage, whisperInputLanguage, type CarrierSttLanguage } from "./voice-agentstream-quality";
 import { transitionVoiceCall } from "./voice-outbound-governance";
 import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
 import type { VoiceSalesService } from "./voice-sales-specialists";
@@ -54,7 +55,7 @@ type Session = {
   threadId: string;
   customerId: string;
   sampleRate: number;
-  language: string;
+  language: CarrierSttLanguage;
   segmentIndex: number;
   reconnected: boolean;
   useCase: string;
@@ -229,17 +230,19 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   if (!script || Number(script.active) !== 1 || !openingDisclosure || openingDisclosure.length > 1200) throw new Error("AgentStream opening disclosure is unavailable");
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
+  const requestedLanguage = resolveCarrierSttLanguage(env.VOICE_AGENTSTREAM_STT_LANGUAGE);
   await ensureAgentStreamConnected(env.DB, order);
 
   const threadId = await openThread(env.DB, order), aiCallId = nativeVoiceAiCallId(order.id), now = Date.now();
   if (text(order.ai_call_id) && text(order.ai_call_id) !== aiCallId) throw new Error("AgentStream call is already bound to a different AI voice ledger");
-  const inserted = await env.DB.prepare("INSERT OR IGNORE INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,'exotel','outbound','active','verified','en',?,?)")
-    .bind(aiCallId, threadId, customerId, now, serviceActor.email).run();
+  const inserted = await env.DB.prepare("INSERT OR IGNORE INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,'exotel','outbound','active','verified',?,?,?)")
+    .bind(aiCallId, threadId, customerId, requestedLanguage, now, serviceActor.email).run();
   const created = Number(inserted.meta?.changes || 0) === 1;
-  const existingAiCall = await env.DB.prepare("SELECT id,thread_id,customer_id,status FROM ai_voice_calls WHERE id=?").bind(aiCallId).first<Row>();
+  const existingAiCall = await env.DB.prepare("SELECT id,thread_id,customer_id,status,language FROM ai_voice_calls WHERE id=?").bind(aiCallId).first<Row>();
   if (!existingAiCall || text(existingAiCall.thread_id) !== threadId || text(existingAiCall.customer_id) !== customerId || text(existingAiCall.status) !== "active") {
     throw new Error("AgentStream AI voice ledger does not match the governed call");
   }
+  const language = resolveCarrierSttLanguage(existingAiCall.language);
   if (!created) await env.DB.prepare("UPDATE ai_voice_calls SET reconnect_count=reconnect_count+1 WHERE id=? AND status='active'").bind(aiCallId).run();
   const segment = await env.DB.prepare("SELECT COALESCE(MAX(segment_index),-1)+1 AS n FROM ai_voice_segments WHERE call_id=?").bind(aiCallId).first<Row>();
   const segmentIndex = Number(segment?.n ?? 0);
@@ -249,12 +252,12 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
     env.DB.prepare("UPDATE voice_call_orders SET ai_call_id=?,transcript_ref=?,updated_at=? WHERE id=? AND provider_call_id=? AND (ai_call_id IS NULL OR ai_call_id=?)")
       .bind(aiCallId, aiCallId, now, text(order.id), providerCallId, aiCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
-      .bind(crypto.randomUUID(), aiCallId, created ? "agentstream_started" : "agentstream_reconnected", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16" }), now),
+      .bind(crypto.randomUUID(), aiCallId, created ? "agentstream_started" : "agentstream_reconnected", JSON.stringify({ provider: "exotel", streamSid, sampleRate, encoding: "linear16", sttLanguage: language, ttsLanguage: "en" }), now),
   ]);
   const salesService = nativeVoiceSalesService(useCase);
   const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language: "en", segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language, segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
 }
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
   const messageId = `MSG-VOICE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, now = Date.now(), index = session.segmentIndex++;
@@ -291,14 +294,19 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
   return { output: text(row?.output || row?.output_text), outcome: text(row?.outcome) || (row ? "draft_review_required" : "pending") };
 }
 
-async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, language: string) {
+async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, language: CarrierSttLanguage) {
   const started = Date.now();
-  const result = await ai(env).run(text(env.VOICE_STT_MODEL) || EXOTEL_AGENTSTREAM_STT_MODEL, { audio: Array.from(wavFromPcm16le(pcm, sampleRate)), language, vad_filter: true });
+  const model = text(env.VOICE_STT_MODEL) || EXOTEL_AGENTSTREAM_STT_MODEL;
+  const input: Record<string, unknown> = { audio: Array.from(wavFromPcm16le(pcm, sampleRate)), vad_filter: true };
+  const requestedLanguage = whisperInputLanguage(language);
+  if (requestedLanguage) input.language = requestedLanguage;
+  const result = await ai(env).run(model, input);
   if (!result || typeof result !== "object") throw new Error("Whisper returned no result object");
   const record = result as Record<string, unknown>;
   const transcript = text(record.text ?? record.transcription);
   const raw = Number(record.confidence);
-  return { text: transcript, confidence: Number.isFinite(raw) ? raw : (transcript ? 0.9 : 0), latencyMs: Date.now() - started };
+  const detectedLanguage = text(record.language).toLowerCase().slice(0, 32) || (requestedLanguage ?? null);
+  return { text: transcript, confidence: Number.isFinite(raw) ? raw : (transcript ? 0.9 : 0), latencyMs: Date.now() - started, detectedLanguage, model };
 }
 
 async function synthesizeLinear16(env: Env, output: string, sampleRate: number) {
@@ -377,8 +385,24 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     assistantPlaying = true;
     sendAudio(server, active, tts.audio, markName);
     await assistantSegment;
+    const diagnostics = nativeVoiceTurnDiagnostics({
+      configuredSttLanguage: active.language,
+      detectedSttLanguage: stt.detectedLanguage,
+      sampleRate: active.sampleRate,
+      pcmBytes: pcm.byteLength,
+      sttMs: stt.latencyMs,
+      llmMs,
+      ttsMs: tts.latencyMs,
+      totalMs,
+      latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS,
+      transcriptChars: stt.text.length,
+      assistantChars: generated.output.length,
+      sttModel: stt.model,
+      ttsModel: text(env.VOICE_CARRIER_TTS_MODEL) || EXOTEL_AGENTSTREAM_TTS_MODEL,
+      outcome: generated.outcome,
+    });
     await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(
-      crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify({ sttMs: stt.latencyMs, llmMs, ttsMs: tts.latencyMs, totalMs, latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS, targetMet: totalMs <= VOICE_TURN_LATENCY_TARGET_MS, outcome: generated.outcome }), Date.now(),
+      crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify(diagnostics), Date.now(),
     ).run();
   };
 
