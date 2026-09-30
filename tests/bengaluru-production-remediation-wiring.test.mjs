@@ -62,6 +62,8 @@ test("canonical production provider identifiers are required and written as non-
 test("production voice config defaults closed and does not offer live activation", () => {
   assert.match(prodConfig, /PAWSPACE_VOICE_ENV \|\| "disabled"/);
   assert.match(prodConfig, /PAWSPACE_VOICE_UAT_APPROVED \|\| "false"/);
+  assert.match(prodConfig, /PAWSPACE_VOICE_RUNTIME: "elevenlabs"/);
+  assert.match(workflow, /PAWSPACE_VOICE_RUNTIME !== "elevenlabs"/);
   assert.match(prodConfig, /\["disabled", "uat"\]/);
   assert.match(workflow, /options: \[disabled, uat\]/);
   const inputs = workflowInputs(workflow);

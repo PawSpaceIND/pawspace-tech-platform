@@ -270,6 +270,7 @@ jobs:
           if ((cfg.vars || {}).PAWSPACE_PAYMENT_LIVE_APPROVED !== "false") fail("live payment approval is not locked false");
           if ("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS" in (cfg.vars || {})) fail("payment pilot booking IDs must be a Worker secret, never a plaintext wrangler var");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_RUNTIME !== "elevenlabs") fail("ordinary production voice runtime is not pinned to ElevenLabs");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
           for (const name of ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"]) {

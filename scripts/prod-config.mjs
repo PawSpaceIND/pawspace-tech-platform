@@ -101,6 +101,7 @@ cfg.vars = {
   PAWSPACE_COMMUNICATION_ENV: explicit.PAWSPACE_COMMUNICATION_ENV,
   PAWSPACE_MAPS_ENV: explicit.PAWSPACE_MAPS_ENV,
   PAWSPACE_VOICE_ENV: voiceEnv,
+  PAWSPACE_VOICE_RUNTIME: "elevenlabs",
   PAWSPACE_VOICE_UAT_APPROVED: voiceUatApproved,
   ...productionConfig,
 };
@@ -119,6 +120,6 @@ if (forbidden.length) {
 writeFileSync(path, JSON.stringify(cfg));
 console.log(`Production config written → name=${PRODUCTION_WORKER_NAME}`);
 console.log(`  payment=${explicit.PAWSPACE_PAYMENT_ENV} liveApproved=false communication=${explicit.PAWSPACE_COMMUNICATION_ENV} maps=${explicit.PAWSPACE_MAPS_ENV}`);
-console.log(`  voice=${voiceEnv} voiceUatApproved=${voiceUatApproved}`);
+console.log(`  voice=${voiceEnv} voiceRuntime=elevenlabs voiceUatApproved=${voiceUatApproved}`);
 console.log(`  paymentPilotAllowlist=${pilotBookingIdsRaw ? `provided(${pilotBookingIdCount})` : "not-provided"} (value is handled as a Worker secret and is not written to wrangler vars)`);
 console.log("Production provider identifiers are written as non-secret Worker vars; credentials are uploaded only as Worker secrets.");
