@@ -73,3 +73,14 @@ test("native AgentStream preserves bounded canonical voice follow-up history", (
   assert.match(bridge, /context: \{ \.\.\.input\.context, conversationHistory, asOf: now \}/);
   assert.match(bridge, /voiceFollowupIntent,/);
 });
+
+test("native AgentStream requires a connected canonical call and is reconnect-idempotent", () => {
+  assert.match(bridge, /AGENTSTREAM_ACTIVE_STATES = new Set\(\["connected", "speaking", "listening"\]\)/);
+  assert.match(bridge, /AGENTSTREAM_ACTIVE_STATES\.has\(text\(order\.state\)\)/);
+  assert.match(bridge, /INSERT OR IGNORE INTO communication_threads/);
+  assert.match(bridge, /nativeVoiceParticipantId\(order\.id\)/);
+  assert.match(bridge, /nativeVoiceAiCallId\(order\.id\)/);
+  assert.match(bridge, /INSERT OR IGNORE INTO ai_voice_calls/);
+  assert.match(bridge, /reconnect_count=reconnect_count\+1/);
+  assert.match(bridge, /created \? "agentstream_started" : "agentstream_reconnected"/);
+});
