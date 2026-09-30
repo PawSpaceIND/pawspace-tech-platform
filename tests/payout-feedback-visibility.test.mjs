@@ -80,11 +80,37 @@ test('Placement proof rejects a missing completion request or unrelated focus tr
 test('Original historical source baseline was not repinned',()=>{
  assert.equal(baseline.base,'1610115c881220eb6db5cb67298779cb0c9f6f63');
 });
+const requiredUiSuites=['ui-audit-closure.spec.ts','ui-audit-finance-feedback.spec.ts','ui-audit-readiness.spec.ts'];
+function validateUiWorkflow(source){
+ const tree=ts.createSourceFile('playwright.ui-audit.config.ts',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+ const exported=tree.statements.find(ts.isExportAssignment)?.expression;
+ assert.ok(exported&&ts.isCallExpression(exported)&&exported.expression.getText(tree)==='defineConfig');
+ const config=exported.arguments[0];
+ function value(object,key){
+  assert.ok(ts.isObjectLiteralExpression(object),'Configuration must remain a reviewable object');
+  const matches=object.properties.filter(p=>ts.isPropertyAssignment(p)&&p.name.getText(tree)===key);
+  assert.equal(matches.length,1,'Exactly one '+key+' configuration is required');
+  return matches[0].initializer;
+ }
+ const suites=value(config,'testMatch');assert.ok(ts.isArrayLiteralExpression(suites));
+ const names=suites.elements.map(n=>{assert.ok(ts.isStringLiteral(n));return n.text;});
+ for(const name of requiredUiSuites)assert.ok(names.includes(name),'Required UI suite missing: '+name);
+ assert.equal(value(config,'retries').getText(tree),'0');
+ assert.equal(value(config,'workers').getText(tree),'1');
+ assert.equal(value(value(config,'webServer'),'reuseExistingServer').kind,ts.SyntaxKind.FalseKeyword);
+}
 test('Viewport and review regressions remain in the zero-retry isolated UI workflow',()=>{
- assert.match(read('playwright.ui-audit.config.ts'),/testMatch:\["ui-audit-closure.spec.ts","ui-audit-finance-feedback.spec.ts"\]/);
- assert.match(read('playwright.ui-audit.config.ts'),/retries:0/);
+ validateUiWorkflow(read('playwright.ui-audit.config.ts'));
  const suite=read('e2e/ui-audit-finance-feedback.spec.ts');
  assert.match(suite,/toBeFocused\(\)/);assert.match(suite,/r\.top>=0&&r\.bottom<=innerHeight/);
  assert.match(suite,/review error-only payout/);assert.match(suite,/review unrelated action keeps focus/);
  assert.doesNotMatch(suite,/scrollIntoViewIfNeeded|\.focus\(|waitForTimeout|test\.skip|test\.only/);
+});
+
+test('UI workflow proof rejects removed suites, retries and reused servers',()=>{
+ const source=read('playwright.ui-audit.config.ts');
+ for(const suite of requiredUiSuites)assert.throws(()=>validateUiWorkflow(source.replace('"'+suite+'"','"unrelated.spec.ts"')),/Required UI suite missing/);
+ for(const[from,to]of [['retries:0','retries:1'],['workers:1','workers:2'],['reuseExistingServer:false','reuseExistingServer:true']]){
+  assert.ok(source.includes(from));assert.throws(()=>validateUiWorkflow(source.replace(from,to)));
+ }
 });

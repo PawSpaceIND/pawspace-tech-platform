@@ -1,3 +1,4 @@
+import{needsImmediateVetGuidance,emergencyChatResponse}from"./ai-emergency-guidance";
 import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
 import{ensureCommunicationTables}from"./communication-engine";
 import{ensureD1Once}from"./d1-ensure-once.js";
@@ -101,6 +102,7 @@ async function publishedPriceAnswer(db:D1Database,service:PublicServiceEntry){
 }
 
 export async function runPublicAiWebChat(db:D1Database,input:{query:string;history?:unknown;sessionKey?:string}){
+ if(needsImmediateVetGuidance(input.query))return{...emergencyChatResponse(input.sessionKey),knowledge:[],serviceDirectory:[],trustSafetyRedacted:false};
  await ensureAiWebChatTables(db);
  const query=text(input.query).slice(0,4000);if(!query)throw new Response("Question is required",{status:400});
  const sessionKey=text(input.sessionKey).slice(0,120)||crypto.randomUUID(),now=Date.now();

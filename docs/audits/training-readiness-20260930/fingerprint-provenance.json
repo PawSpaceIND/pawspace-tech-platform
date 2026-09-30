@@ -1,0 +1,129 @@
+{
+  "base": "11ab937275cbfba6ea05adb167224d7a24b14d58",
+  "changes": {
+    "app/api/training-customer-session-change/route.ts": [
+      "d7df7629422f2a277d9dcbbd7156d675fa7b1cbceac161d7c8ac438e5d8813c6",
+      "d29584c339e94b5333de4b8c20aae5c406e8dc637e00961986fecde5d856c3a9"
+    ],
+    "app/trainer/page.tsx": [
+      "b3ada37cbdcd13a8dc7e57e7d0ecf67c06f9d5ee627aa3f6ea90404117475fcf",
+      "a9f56379a205159fd59a99e5a0615993ccbc1a9c6512dcad19104d8bcc16c867"
+    ],
+    "app/trainer/trainer.module.css": [
+      "f6dc8ebd4623f1523600999365a42d2639aceba5a4c15915b7ce8a09f5ae188d",
+      "50d8251a9ad6c28f0f71ed982c68074c793ae442c5b0e9f894e9518f878ecdd1"
+    ],
+    "app/v2/booking/training-manage.tsx": [
+      "ab80169673564ba848cf340549d7fece9de50e95fc785ddc97487cdca5be2c34",
+      "ea332434cfd9165bbfa80bcb299bfffa21fe49a86c27750b3a95e5190958d2ee"
+    ],
+    "lib/training-session-client.ts": [
+      "707d320ebb4f61a6d4a7ab610199a14f22ebee37020c86c555ab3ba6c198137e",
+      "7f262a43fce8dca06fb071afa94a2d7b09ad4801b6fd5971aeeb2d72250c0964"
+    ],
+    "lib/training-session-lifecycle.ts": [
+      "60cef8e983b7a8fec5a493e218861a59bbad2c05468a61e80ed7d4958b1812f4",
+      "b9010f20cc64b6ce9ccfda4d1e14f0f5c2b29ec3a86f5fe7516dd11db16a56ab"
+    ],
+    "playwright.config.ts": [
+      "9cb4b327cd72cb14837228d58f6fce9a55dc7e5889b34787459ce20a449c953d",
+      "1551f8b3f590f005c1372cf4ef2e76c6973e1d72de04426db1fadb34fbbf9481"
+    ],
+    "tests/v2-booking-payment-page.test.mjs": [
+      "e8cb5dc23772b459a24aa80373dab138544e775e6d9e3ce6c0b4000fa6085786",
+      "a59a47aab7f700a5bb60bed4c39f4638d47bf0c660b9f62aaec0f0168063937a"
+    ],
+    "tests/v2-grooming-training-audit.test.mjs": [
+      "f25ae89c365fd7cce8bed5c0eae85e53189754a16d3eac442c80e650482b7732",
+      "dba06ad3654e8463ad18080a0e1c051dca34233040c734d7fd2c7aba8c022511"
+    ]
+  },
+  "updates": [
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "app/trainer/page.tsx",
+        "app/trainer/trainer.module.css",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "paths": [
+        "playwright.config.ts",
+        "app/api/training-customer-session-change/route.ts",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "app/trainer/page.tsx",
+        "app/trainer/trainer.module.css",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "app/trainer/page.tsx",
+        "app/trainer/trainer.module.css",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "paths": [
+        "app/api/training-customer-session-change/route.ts",
+        "app/trainer/page.tsx",
+        "app/trainer/trainer.module.css",
+        "lib/training-session-client.ts",
+        "lib/training-session-lifecycle.ts"
+      ]
+    }
+  ],
+  "new_protected_helpers": [
+    "lib/training-customer-change-window.ts",
+    "lib/training-progress-editor.ts"
+  ],
+  "new_helper_entries": 18
+}

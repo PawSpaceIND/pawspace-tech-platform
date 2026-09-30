@@ -102,7 +102,7 @@ test("a renamed code is still found by its campaign, and does not re-seed on eve
 
 test("the web chat and WhatsApp prompts carry the coupon rules without overriding a sales lever", async () => {
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /at most once/);
-  assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /In voice, describe the savings without saying the code/);
+  assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /In voice, describe the regular_price and discount_amount without saying the code/);
   assert.doesNotMatch(offersModule.APPROVED_OFFERS_DIRECTIVE, /With code <code>/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /only after the customer hesitates on price/);
   assert.match(offersModule.APPROVED_OFFERS_DIRECTIVE, /Never invent, guess or alter a coupon code/);
@@ -128,4 +128,17 @@ test("an approved '₹N off' only counts in the sentence that names its code", a
   const catalogue = { grooming: [{ name: "Essential Bath", base_price: 1349 }], approvedOffers: offersModule.offerGroundingRows(offers) };
   assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts("Use GROOM200 for ₹200 off grooming. Your taxi also gets ₹200 off today.", offers), catalogue), false, "the taxi's ₹200 off is not hidden by the grooming code");
   assert.equal(offersModule.offerClaimsApproved("With GROOM400 you get ₹400 off.\nAnd the sitting gets ₹400 off too.", offers), true, "a sentence without a code is left to the price check");
+});
+
+
+test("spoken approved savings require a same-sentence package and exact discount; text keeps code grounding",async()=>{
+ const {db}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const catalogue={grooming:[{name:"Complete Makeover",base_price:2399}],approvedOffers:offersModule.offerGroundingRows(offers)};
+ const valid="For Complete Makeover there is an approved offer: ₹200 off the regular ₹2,399, subject to checkout validation.";
+ assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedVoiceDiscounts(valid,offers),catalogue),true);
+ assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedDiscounts(valid,offers),catalogue),false,"text continues to require its approved code");
+ for(const invalid of ["Complete Makeover gives ₹500 off ₹2,399.","Your taxi gets ₹200 off. Complete Makeover costs ₹2,399.","Complete Makeover includes a nail service for ₹200.","Complete Makeover is ₹2,199 today."]){
+  assert.equal(runtime.pricesMatchCatalogue(offersModule.withoutApprovedVoiceDiscounts(invalid,offers),catalogue),false,invalid);
+ }
+ assert.equal(offersModule.offerClaimsApproved("Complete Makeover gives ₹200 off with FAKE500.",offers),false);
 });

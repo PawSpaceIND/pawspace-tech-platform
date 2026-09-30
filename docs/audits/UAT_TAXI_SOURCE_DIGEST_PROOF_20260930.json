@@ -1,0 +1,120 @@
+{
+  "reviewed_source_commit": "4441c6bbcde52b5759452e7fca0a3c46f49238ec",
+  "fresh_failure_run": 36696124212,
+  "fresh_failure_job": 109824783740,
+  "sources": {
+    "lib/taxi-lifecycle.ts": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748",
+    "lib/taxi-finance-governance.ts": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+  },
+  "changes": [
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/ui-mainline-integration-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "source": "lib/taxi-lifecycle.ts",
+      "old_sha256": "eae5b1a34c916648bd1ed1043bef765464d40f13bf94e35fe1b798fcc49c93be",
+      "new_sha256": "db6ed09c5016d539d8d00dfc0c454215a4bcf353036d2fff687e813e8b024748"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "source": "lib/taxi-finance-governance.ts",
+      "old_sha256": "ea99e7d0dba106cbc3bffdf5b2f5bb4a1525138030cdcdc08a315e2e299c1b80",
+      "new_sha256": "cb5d91d03a747157eb05b3293914a30b6c265b1e089b09e835a68d3f4eded21d"
+    }
+  ],
+  "other_entries_preserved": true
+}

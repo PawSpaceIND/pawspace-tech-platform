@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-financial-workforce-integrity-proof",
+  "main": "tests/financial-workforce-d1-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": { "NODE_ENV": "test", "PAWSPACE_PAYMENT_ENV": "sandbox", "FORBID_PRODUCTION": "true" },
+  "d1_databases": [{ "binding": "DB", "database_name": "financial-workforce-integrity-proof", "database_id": "00000000-0000-0000-0000-000000000008", "preview_database_id": "financial-workforce-integrity-local" }]
+}

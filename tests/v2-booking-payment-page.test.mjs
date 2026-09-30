@@ -173,3 +173,17 @@ test("the booking page labels a captured split's balance and never offers a Pet 
   assert.match(source, /stage=\{balanceStage\?"balance":undefined\}/);
   assert.match(source, /requested after drop-off/);
 });
+
+// An unchanged fixture must not age into or out of the business-policy boundary as CI runs later.
+test("Training manage never offers self-service for past, invalid, or inside-window dates", async () => {
+  const now = Date.parse("2026-10-02T04:30:00.000Z");
+  for (const start of ["2026-10-01T04:30:00.000Z", "not-a-date", new Date(now).toISOString(), new Date(now + 86400000 - 1).toISOString()]) {
+    const record = trainingRecord(["scheduled", "locked"]); record.sessions[0].scheduled_start = start;
+    const text = await renderManage(record, false, now);
+    assert.doesNotMatch(text, /Request reschedule/);
+    assert.match(text, /require PawSpace support/);
+    assert.match(text, /Request programme cancellation \/ refund review/);
+  }
+  const record = trainingRecord(["scheduled", "locked"]); record.sessions[0].scheduled_start = new Date(now + 86400000).toISOString();
+  assert.match(await renderManage(record, false, now), /Request reschedule/);
+});

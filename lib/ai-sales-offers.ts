@@ -80,7 +80,7 @@ export async function activeCrossSell(db:D1Database,input:{customerId?:string|nu
 }
 
 /** How the AI may use approvedOffers - shared by web chat, WhatsApp and public chat prompts. */
-export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: describe that package's regular_price and offer_price exactly as listed. In chat or WhatsApp, state the approved code. In voice, describe the savings without saying the code unless the caller explicitly asks for it; put an accepted code only in the governed booking proposal. Mention the offer with usage "cross_sell" only when the customer's details already carry its code. Offers marked catalogue_estimate are conditional catalogue estimates, not a promise of the final appointment total: date, add-ons, payment and pet-count changes require a fresh server quote. If the customer is not verified, ask them to sign in before discussing a coupon. In chat the customer enters the code at checkout; in voice an accepted code may be applied only through the governed booking quote and separately confirmed. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
+export const APPROVED_OFFERS_DIRECTIVE=`Coupon codes: approvedOffers lists the only coupon codes you may ever mention, and only while they are listed. The offer with usage "closing" may be used at most once in a conversation, only after the customer hesitates on price for one of its listed packages: In chat or WhatsApp, state the approved code with the package's regular_price and offer_price exactly as listed. In voice, describe the regular_price and discount_amount without saying the code unless the caller explicitly asks for it; leave the discounted appointment total to the governed quote read-back, and put an accepted code only in the governed booking proposal. Mention the offer with usage "cross_sell" only when the customer's details already carry its code. Offers marked catalogue_estimate are conditional catalogue estimates, not a promise of the final appointment total: date, add-ons, payment and pet-count changes require a fresh server quote. If the customer is not verified, ask them to sign in before discussing a coupon. In chat the customer enters the code at checkout; in voice an accepted code may be applied only through the governed booking quote and separately confirmed. Never invent, guess or alter a coupon code; if approvedOffers is empty, give no coupon. Any other discount may come only from an authorized sales lever stated elsewhere in these instructions.`;
 
 /* Codes follow "code", "coupon", "promo", "voucher", or "coupon code" / "promo code" / "voucher code" /
  * "discount code" / "offer code" - matched as a whole, so the word "code" is never taken for the code. */
@@ -117,6 +117,16 @@ export function offerClaimsApproved(reply:string,offers:ApprovedSalesOffer[]){
 export function withoutApprovedDiscounts(reply:string,offers:ApprovedSalesOffer[]){
  return sentences(reply.slice(0,8000)).map(sentence=>{const named=namedCodes(sentence,offers);if(!named.size)return sentence;
   return sentence.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>offers.some(offer=>named.has(offer.code.toUpperCase())&&offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);}).join("\n");
+}
+
+/** Spoken discounts omit identifiers, but still require the exact approved package and amount
+ * in the same sentence. This never adds a discounted price or authorizes redemption. */
+export function withoutApprovedVoiceDiscounts(reply:string,offers:ApprovedSalesOffer[]){
+ return sentences(withoutApprovedDiscounts(reply,offers)).map(sentence=>{
+  const lower=sentence.toLowerCase();
+  const matching=offers.filter(offer=>{const name=groomingCatalogue.find(item=>item.code===offer.package_code)?.name.toLowerCase();return Boolean(name&&lower.includes(name));});
+  return sentence.replace(APPROVED_AMOUNT_OFF,(whole,amount:string)=>matching.some(offer=>offer.discount_amount===Math.round(Number(amount.replace(/,/g,""))))?"":whole);
+ }).join("\n");
 }
 
 /** Approved offers as price grounding: only the regular and offer prices, and only when the reply names the code. */

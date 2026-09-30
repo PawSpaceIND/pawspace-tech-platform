@@ -1,7 +1,7 @@
 import {boundedFetch} from "./bounded-fetch";
 import {getDeviceLocation} from "./device-location-client";
 export type TrainerSession={id:string;programme_id:string;booking_id:string;sequence_no:number;provider_id:string;scheduled_start:string;scheduled_end:string;status:string;customer_id:string;customer_name:string;plan_code:string;plan_name:string;total_sessions:number;completed_sessions:number;no_show_sessions:number;cancelled_sessions:number;programme_status:string;petIds:string[];requirements:string[];attendance:Record<string,unknown>;homework:Record<string,unknown>;progress:Record<string,unknown>;evidenceRefs:string[];ownerHandover?:{durationMinutes:number;completedAt:number}|null;events:Array<Record<string,unknown>>};
-export type TrainingReport={attendance:Record<string,unknown>;homework:string;progress:Record<string,number>;evidenceRefs:string[]};
+export type TrainingReport={attendance:Record<string,unknown>;homework:string;progress:Record<string,number|null>;evidenceRefs:string[]};
 
 async function body<T>(response:Response){const result=await response.json() as {data?:T;error?:string};if(!response.ok)throw new Error(result.error||`Training request failed (${response.status})`);return result.data as T;}
 export async function currentProviderIdentity(){const response=await boundedFetch("/api/identity-session",{cache:"no-store",credentials:"include"});return body<{subjectType:"customer"|"provider";subjectId:string;roleCode:string;expiresAt:number}>(response);}
