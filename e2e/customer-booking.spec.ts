@@ -400,12 +400,15 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    await finance.goto("/staging-login");await finance.getByPlaceholder("shared UAT access code").fill(staffCode!);
    // The supported Finance entry is MFA, not /me; observe its real automatic enrollment request.
    const [financeSignedIn,enrolled]=await Promise.all([
-    finance.waitForResponse(r=>r.url().endsWith("/api/staging-login")&&r.request().method()==="POST").then(async response=>({status:response.status(),body:await response.json()})),
+    finance.waitForResponse(r=>r.url().endsWith("/api/staging-login")&&r.request().method()==="POST"),
     finance.waitForResponse(r=>r.url().endsWith("/api/v1/auth/mfa/enroll")&&r.request().method()==="POST"&&!r.request().postDataJSON()?.code,{timeout:15_000}),
     finance.waitForURL(/\/mfa(?:\?|$)/,{timeout:15_000}),
     finance.getByRole("button",{name:"Finance (payroll, GST, payouts) anjali.finance33@tkpetcare.in",exact:true}).click(),
    ]);
-   expect(financeSignedIn.status).toBe(200);expect(financeSignedIn.body).toMatchObject({ok:true,role:"finance"});
+   expect(financeSignedIn.status()).toBe(200);
+   // Chromium can discard the POST body during navigation; verify the persisted session instead.
+   const financeSession=await finance.request.get("/api/staging-login");expect(financeSession.status()).toBe(200);
+   expect(await financeSession.json()).toMatchObject({enabled:true,signedInAs:{email:"anjali.finance33@tkpetcare.in",role:"finance"}});
    await expect(finance.getByRole("heading",{name:"Multi-factor authentication",exact:true})).toBeVisible();
    const financeBeforeMfa=await finance.request.get(`/api/sitting-finance?bookingId=${encodeURIComponent(bookingId)}`);expect(financeBeforeMfa.status()).toBe(403);expect(await financeBeforeMfa.text()).toContain("MFA enrollment required");
    expect(enrolled.status()).toBe(201);
