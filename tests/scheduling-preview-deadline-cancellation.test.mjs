@@ -221,9 +221,13 @@ test("a request whose lease cleanup never finished (a cancelled request) does no
     const q = (await (await h.viaWorker(w, h.boardingQuoteRequest(w, { packageCode: "boarding-4h", petCount: 1, ...window, providerId: host }), boarding.POST)).json()).data;
     const reserve = await within(h.viaWorker(w, reserveRequest(group, window), route.POST));
     if (reserve === "blocked") return { reserve, booking: null };
-    const provider = (await reserve.clone().json()).data?.provider;
+    // Read each body once. Node 22 may collect a cloned response's tee branch and
+    // cancel the retained original before the later assertion reads it again.
+    const reserveBody = await reserve.json();
+    const provider = reserveBody.data?.provider;
     const booking = await within(h.viaWorker(w, h.canonicalBookingRequest(w, { idempotencyKey: group, scheduleGroupId: group, customer, pets: [{ sourceId: h.PETS.dog, name: "Bruno", species: "dog", vaccinationStatus: "verified" }], cityId: "blr", zoneId: "blr-east", serviceCode: "boarding", packageCode: q.packageCode, packageName: q.packageName, ...window, provider: provider && { id: provider.id, name: provider.name, model: provider.model }, totalAmount: q.totalAmount, amountDueNow: q.amountDueNow, payment: { method: "upi", mode: q.paymentMode, status: "created", detail: "Awaiting" }, pricing: { discount: 0, boardingQuoteId: q.quoteId } }), canonical.POST));
-    return { reserve, booking };
+    const bookingBody = booking === "blocked" ? null : await booking.json();
+    return { reserve, reserveBody, booking, bookingBody };
   }
   const warm = await stay(3, "stay:lease-warm");
   assert.deepEqual([warm.reserve.status, warm.booking.status], [200, 201], "the isolate is warm and healthy");
@@ -234,7 +238,7 @@ test("a request whose lease cleanup never finished (a cancelled request) does no
   state.cancelled = false;
   const next = await stay(5, "stay:lease-next");
   assert.notEqual(next.reserve, "blocked", "the next Reserve must not wait on the cancelled request's lease cleanup");
-  assert.equal(next.reserve.status, 200, JSON.stringify(await next.reserve.clone().json()));
+  assert.equal(next.reserve.status, 200, JSON.stringify(next.reserveBody));
   assert.notEqual(next.booking, "blocked", "the next canonical booking must not wait on it either");
-  assert.equal(next.booking.status, 201, JSON.stringify(await next.booking.clone().json()));
+  assert.equal(next.booking.status, 201, JSON.stringify(next.bookingBody));
 });
