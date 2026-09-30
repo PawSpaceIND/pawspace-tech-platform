@@ -22,7 +22,7 @@ import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, enterWorkersDbScope } from "./helpers/module-hooks.mjs";
 import { d1, ORIGIN } from "./helpers/execution-harness.mjs";
 
-installWorkersHooks("__SCHED_PREVIEW_DB__", "__SCHED_PREVIEW_ENV__");
+installWorkersHooks("__SCHED_PREVIEW_DB__", "__SCHED_PREVIEW_ENV__", { authoredRosterFixture: false });
 const REPO = new URL("../", import.meta.url);
 const read = (file) => fs.readFileSync(new URL(file, REPO), "utf8");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

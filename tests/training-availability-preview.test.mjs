@@ -48,9 +48,9 @@ test('Training preview refuses anonymous, foreign-customer and foreign-pet reque
  assert.equal(counts(f.sqlite).scheduling_reservations,0);
 });
 
-test('Training UAT roster seeds only requested session dates and retry stays idempotent',async t=>{
+test('Training authored UAT roster seeds only requested session dates and retry stays idempotent',async t=>{
  const f=await fixture(t),first=await f.call();assert.equal(first.status,200,JSON.stringify(first.body));
- const rows=()=>f.sqlite.prepare("SELECT provider_id,date FROM scheduling_availability WHERE source='uat_roster' ORDER BY provider_id,date").all();
+ const rows=()=>f.sqlite.prepare("SELECT provider_id,date FROM scheduling_availability WHERE source='roster' ORDER BY provider_id,date").all();
  const before=rows();
  assert.equal(before.length,6,'three seeded trainers × two requested weekly sessions');
  assert.equal(new Set(before.map(row=>row.date)).size,2,'do not seed 100 days for a two-session preview');
@@ -83,7 +83,7 @@ test('Training optimisation preserves Grooming next-day UAT roster for customer 
  assert.equal(result.status,200,JSON.stringify(result.body));
  const providerId=result.body.data.provider.id;
  const nextDay=new Date(Date.parse(f.input.scheduledStart)+86400000).toISOString().slice(0,10);
- const roster=f.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE provider_id=? AND date=? AND source='uat_roster'").get(providerId,nextDay);
- assert.ok(roster,'the existing next-day window used by customer reschedule must remain available');
+ const roster=f.sqlite.prepare("SELECT windows_json FROM scheduling_availability WHERE provider_id=? AND date=? AND source='roster'").get(providerId,nextDay);
+ assert.ok(roster,'the authored next-day window used by customer reschedule must remain available');
  assert.deepEqual(JSON.parse(roster.windows_json),['09:00-19:00']);
 });
