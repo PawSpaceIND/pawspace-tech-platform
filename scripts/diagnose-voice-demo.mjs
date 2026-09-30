@@ -1,4 +1,4 @@
-// Inspect one failed synthetic audio session. GET requests only; never start a conversation or dial.
+// Inspect one failed synthetic audio session. Provider GETs and isolated D1 SELECTs only; never dial.
 const env=process.env;
 const base=String(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
 if(!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].includes(base))throw Error('Unapproved voice provider region');
@@ -18,6 +18,7 @@ const users=(detail.transcript||[]).filter(row=>row.role==='user');
 const normalized=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const transcriptMatched=users.length===1&&normalized(users[0].message)===normalized('What grooming services do you offer for my dog Bruno?');
 const metadata=detail.metadata||{},prompt=config.conversation_config?.agent?.prompt||{};
+console.log('FAILED_DEMO_USER_TURNS='+JSON.stringify(users.map(row=>({text:scrub(row.message),time:row.time_in_call_secs,interrupted:row.interrupted===true}))));
 console.log('FAILED_DEMO_DIAGNOSIS='+JSON.stringify({dialed:false,status:detail.status,duration:metadata.call_duration_secs,terminationReason:scrub(metadata.termination_reason),error:scrub(typeof metadata.error==='object'?JSON.stringify(metadata.error):metadata.error),transcriptMatched,userTurns:users.length,agentTurns:(detail.transcript||[]).filter(row=>row.role==='agent').map(row=>({characters:String(row.message||'').length,interrupted:row.interrupted===true})),customLlm:{apiType:prompt.custom_llm?.api_type,model:prompt.custom_llm?.model_id,stagingEndpoint:prompt.custom_llm?.url==='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1',authConfigured:Boolean(prompt.custom_llm?.api_key)}}));
 // Export only trace status and timing; request/response bodies and attributes can contain credentials.
 try{
@@ -26,6 +27,19 @@ try{
  function visit(value){if(!value||typeof value!=='object')return;if(Array.isArray(value)){value.forEach(visit);return;}if(value.spanId||value.span_id)spans.push({name:scrub(value.name),status:value.status?{code:value.status.code,message:scrub(value.status.message)}:null,start:value.startTimeUnixNano,end:value.endTimeUnixNano});Object.values(value).forEach(visit);}
  visit(trace);console.log('FAILED_DEMO_TRACE='+JSON.stringify({available:true,spans:spans.slice(0,60)}));
 }catch(error){console.log('FAILED_DEMO_TRACE='+JSON.stringify({available:false,error:scrub(error.message)}));}
+if(env.CLOUDFLARE_API_TOKEN&&env.CLOUDFLARE_ACCOUNT_ID&&env.STAGING_D1_ID&&env.SPECIALIST_CUSTOMER_ID){
+ if(env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Production database refused');
+ const cf='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
+ async function readDb(path,body){const r=await fetch(cf+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||b.success!==true)throw Error('Isolated diagnostic database read refused');return b.result;}
+ const db=await readDb('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID));if(db.name!=='pawspace-staging')throw Error('Exact staging database required');
+ const query=async(sql,params)=>{const result=await readDb('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql,params});return result[0]?.results||[];};
+ const calls=await query("SELECT thread_id,status,outcome FROM ai_voice_calls WHERE customer_id=? AND transport_provider='sandbox_simulator' AND started_at BETWEEN ? AND ?",[env.SPECIALIST_CUSTOMER_ID,start,end]);
+ if(calls.length!==1)throw Error('Exact synthetic CRM context missing or ambiguous');
+ const thread=calls[0].thread_id;
+ const messages=await query("SELECT direction,template_key,length(payload_json) AS payload_length,created_at FROM communication_messages WHERE thread_id=? AND template_key IN ('elevenlabs_custom_llm','elevenlabs_custom_llm_reply') AND created_at BETWEEN ? AND ? ORDER BY created_at",[thread,start,end]);
+ const turns=await query('SELECT intent_code,provider,model_ref,latency_ms,policy_decision,outcome,handoff_reason FROM ai_conversation_turns WHERE thread_id=? AND channel=\'voice\' AND created_at BETWEEN ? AND ? ORDER BY created_at',[thread,start,end]);
+ console.log('FAILED_DEMO_BRAIN_RECORDS='+JSON.stringify({dialed:false,callStatus:calls[0].status,callOutcome:calls[0].outcome,messages,turns}));
+}
 // Preserve the identity refusal, but retain diagnostic status when transcripts were redacted,
 // split, or absent. A diagnostic observation never counts as successful conversation proof.
 if(!transcriptMatched)throw Error('Failed demo final transcript identity differs; diagnostic status retained');

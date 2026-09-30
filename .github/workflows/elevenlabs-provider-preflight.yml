@@ -75,6 +75,11 @@ jobs:
         env:
           DEMO_STARTED_AT: ${{ inputs.demo_started_at }}
           DEMO_ENDED_AT: ${{ inputs.demo_ended_at }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
