@@ -71,7 +71,7 @@
     "tests/atlas-scenario-planning.test.mjs": "50481fba2c4d8c15dd3227add5cb1d84e168fbd43dd945e6eb20d8f780ab9005",
     "tests/boarding-customer-care.test.mjs": "65ff8814f17dcc4f53764659fc9332110191ae4ba11dc50aa13e0b36b15bd14b",
     "tests/boarding-customer-wiring.test.mjs": "64d8bbe063bb5c4fb9f8ce1a8c77c43ac1785e0d95aebbb0657204e9cf12d3ca",
-    "tests/customer-checkout-wiring.test.mjs": "1e50fda0425445056e62c09b8776e22ee04baaf20625bd8f2766479b563474ad",
+    "tests/customer-checkout-wiring.test.mjs": "82519f13b37f06ba2536c5d4a49b4a12304dbc8291197d3e7010b9d1badeaf93",
     "tests/customer-payment-gate-uat.test.mjs": "ab6aa82e5563e67f72b9a6b1d301c9e4b3ad0e23ae303bfd96861f38fe56edc9",
     "tests/e2e/staging-certification.mjs": "8fd80bace76dc0a9c29fa499722de710337c53b86ef7c2ea30945d45bc865263",
     "tests/elevenlabs-provider-preflight.test.mjs": "88afa0b5938be293089ea4d2469a7cd7ccbd3f2683f7b2d6316402f3ac8252c6",

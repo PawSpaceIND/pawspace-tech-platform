@@ -1,6 +1,7 @@
 import {resolveUatStaffActor} from "./uat-staging-auth";
 import {isVoiceAllowlisted} from "./voice-call-gate";
 import {STAGING_PROVIDER_FIXTURES} from "./staging-fixture-provider-manifest";
+import {samePhoneForms,samePhoneSql} from "./customer-phone";
 
 type Env=Record<string,unknown>;
 type Row=Record<string,unknown>;
@@ -62,6 +63,10 @@ export async function handleStagingFixtureIsolation(request:Request,db:D1Databas
   const customers=await db.prepare("SELECT id,city_id,primary_phone,secondary_phone,email,source FROM canonical_customers WHERE id='CUS0000'").all<Row>();
   const customer=customers.results?.[0];
   const customerProven=customers.results?.length===1&&customer?.city_id==="blr"&&customer?.source==="uat_seed"&&text(customer?.primary_phone)==="9100000000"&&!text(customer?.secondary_phone)&&!text(customer?.email);
+  // OTP prefers a prior bound customer when one normalized phone appears on multiple records.
+  // Refuse ambiguity rather than certifying one row while login could resolve to another account.
+  const customerOtpTargets=await db.prepare(`SELECT id FROM canonical_customers WHERE ${samePhoneSql("primary_phone")} ORDER BY id LIMIT 2`).bind(...samePhoneForms("9100000000")).all<Row>();
+  const customerOtpTargetUnambiguous=customerOtpTargets.results?.length===1&&customerOtpTargets.results[0].id==="CUS0000";
   // All Bengaluru profiles, including inactive/uat_ready, are a conservative SUPERSET, not a preview for one slot.
   // Unknown/extra providers cannot silently be ignored by narrowing to the eight chosen fixtures.
   // The narrow scope cannot accept an arbitrary provider or recipient. It proves only this explicit
@@ -79,7 +84,9 @@ export async function handleStagingFixtureIsolation(request:Request,db:D1Databas
   let groomingServiceProven=false;
   if(strictGrooming&&rows.length===1){try{const services:unknown=JSON.parse(text(rows[0].services_json));groomingServiceProven=Array.isArray(services)&&services.includes("grooming");}catch{/* malformed service scope fails closed */}}
   const strictGroomerProven=strictGrooming&&rows.length===1&&providerProven(rows[0])&&rows[0].id==="uatcap_groom_ft"&&rows[0].provider_model==="full_time"&&Number(rows[0].live)===1&&rows[0].status==="active"&&groomingServiceProven;
-  const checks={...gates,customerFixtureProven:customerProven,...(strictGrooming?{specificGroomerFixtureProven:strictGroomerProven}:{fixedProviderFixturesProven:fixedProvidersProven,bengaluruCapacityRosterProven:rosterProven}),...exclusion};
+  const groomerOtpTargets=strictGrooming?await db.prepare("SELECT id FROM canonical_providers WHERE phone='9000000901' ORDER BY id LIMIT 2").all<Row>():null;
+  const groomerOtpTargetUnambiguous=groomerOtpTargets?.results?.length===1&&groomerOtpTargets.results[0].id==="uatcap_groom_ft";
+  const checks={...gates,customerFixtureProven:customerProven,customerOtpTargetUnambiguous,...(strictGrooming?{specificGroomerFixtureProven:strictGroomerProven,groomerOtpTargetUnambiguous}:{fixedProviderFixturesProven:fixedProvidersProven,bengaluruCapacityRosterProven:rosterProven}),...exclusion};
   const ok=Object.values(checks).every(Boolean);
   const fixtureSnapshotId=ok?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify({scope,customer,roster:rows,checks})))),byte=>byte.toString(16).padStart(2,"0")).join(""):null;
   return json({ok,fixtureSnapshotId,code:ok?"fixed_fixture_snapshot_attested":"fixed_fixture_isolation_unproven",scope:strictGrooming?"grooming_strict":"documented_synthetic_customer_and_bengaluru_capacity_roster",checks,version:{id:text(metadata?.id),buildSha:expectedSha},observedAt:new Date().toISOString(),strictProviderSelectionRequired:strictGrooming,automaticAssignmentCovered:false,reassignmentRecoveryCovered:false,assignmentLock:false,bookingMutationAuthorized:false,staffFallbackRecipientsCovered:false,alternateProviderTablesCovered:false,productionReadiness:false,requiresMatchingDeploymentIsolationCertificate:true},ok?200:409);

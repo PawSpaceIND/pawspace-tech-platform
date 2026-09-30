@@ -11,6 +11,9 @@ empty or arbitrary scopes and all recipient/provider query parameters are refuse
 `grooming_strict` reads only documented CUS0000 and `uatcap_groom_ft`, joined to its canonical
 provider identity. The groomer must have the exact checked-in synthetic contact/provenance,
 no email, matching Bengaluru cities, active/live full-time capacity and Grooming service scope.
+The customer phone must resolve uniquely under the same normalized-phone predicate as customer
+OTP, and the partner phone must resolve uniquely under the partner OTP exact lookup. An alias
+on another account fails closed rather than allowing a login to an unproved identity.
 The same Founder, host, revision, payment/payout, OTP and effective external-recipient exclusion
 gates apply. Its SELECT does not read or depend on the global roster or Boarding tables.
 
@@ -59,6 +62,8 @@ Narrow-scope tests also prove that the fixed single-provider SELECT succeeds wit
 tables or unrelated roster identities, while missing/non-Grooming/non-full-time/changed contacts
 fail; both fixed recipients fail on each effective external channel; arbitrary and duplicate scope
 inputs are refused; and existing strict-choice/replay helpers cannot silently switch provider.
+Normalized customer aliases and duplicated partner OTP targets are rejected using SELECT-only
+checks, without revealing any other matched account.
 
 ## Known fail-closed roster prerequisite
 
