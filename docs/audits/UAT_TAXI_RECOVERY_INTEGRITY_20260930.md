@@ -1,10 +1,10 @@
-# Human-test readiness: Taxi recovery integrity
+# Human-test readiness: Taxi custody and recovery integrity
 
 Audited from main `ac3716af91c329e1e1a10db8322ac34b57f65e05` on 30 September 2026. This is a bounded functional repair toward human testing within 48 hours, not a production-readiness certificate.
 
 ## Ownership and isolation
 
-Open PR scopes were read before editing: #1201 financial/workforce/Training/AI/UI readiness; #1200 provider leave; #1197 guest booking; #1199 and #1194 voice sales; #1202 native voice UAT quality. None modifies `lib/taxi-lifecycle.ts`. No shared UI or browser changes were made.
+Open PR scopes were read before editing: #1201 financial/workforce/Training/AI/UI readiness; #1200 provider leave; #1197 guest booking; #1199 and #1194 voice sales; #1202 native voice UAT quality. None modifies `lib/taxi-lifecycle.ts`. Before the authorized Finance extension, open scopes were rechecked: no other open PR owned `lib/taxi-finance-governance.ts`. No shared UI or browser changes were made.
 
 The source checkout was clean. A separate shared-object clone and fresh worktree were created under this task's writable workspace. Branch: `fix/uat-partner-lifecycle-20260930`. No other worktree was modified. Existing dependencies were referenced through a local ignored symlink to avoid another install on the memory-pressured Mac.
 
@@ -18,7 +18,15 @@ The first 16 executable regressions all failed against unchanged main, because t
 
 Recovery now refuses closed bookings/trips and confirmed pickup/active trips with governed 409 responses. Only pre-pickup booking/trip states may recover. The existing safety incident workflow remains the route for a pet already in custody.
 
-The recovery case, canonical booking, trip, work order, scheduling/fleet capacity, assignment decision/offer, event, two queued notifications, and scoped idempotency receipt commit in one D1 batch. The first statement uses the case's existing NOT NULL `booking_id` as a transactional assertion: its scalar subquery must still match eligible booking/trip state, pending pickup, matching provider ownership and schedule group, and an open work order. A stale or inconsistent read aborts the batch. No schema, refund, payout or price-policy changes are included.
+The recovery case, canonical booking, trip, work order, scheduling/fleet capacity, assignment decision/offer, event, two queued notifications, and scoped idempotency receipt commit in one D1 batch. The first statement uses the case's existing NOT NULL `booking_id` as a transactional assertion: its scalar subquery must still match eligible booking/trip state, pending pickup, matching provider ownership and schedule group, and an open work order. A stale or inconsistent read aborts the batch. No schema, refund-amount, payout or price-policy changes are included.
+
+## Finance custody extension
+
+A subsequent hermetic reproduction confirmed that a request and distinct-checker approval could cancel an assigned trip whose pickup was confirmed, even with zero approved refund. Booking/trip became cancelled with the confirmed custody marker retained. Parent authorized the coherent extension after a fresh open-PR ownership check. Ten Finance regressions failed before this repair; four authority/amount invariants already passed.
+
+Both customer cancellation requests and Finance approval now enforce the existing active-trip safety refusal from confirmed pickup onward, including a stale trip status carrying a confirmed pickup marker. Request, approval and unpaid-hold claims recheck custody inside their SQL transaction. Approval also checks the unchanged booking/trip/group assignment and maker/checker separation inside its conditional claim. Its scoped idempotency receipt commits with cancellation/refund writes, so a receipt-write interruption rolls everything back. Exact-key concurrency replays the saved result; a new key cannot approve the same cancellation twice. No zero-refund bypass remains.
+
+The unpaid-hold release still claims the booking first, with custody and collection checks. Its following request insert uses SQLite `changes()` from that claim; all outputs then use the unique request ID as ownership. Two independent callers sharing the same millisecond timestamp cannot claim one another's release. The existing capture-first hold-expiry regression remains passing.
 
 ## Evidence and limits
 
@@ -34,8 +42,10 @@ Validation command:
 NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true \
 PAWSPACE_PAYMENT_ENV=sandbox PAWSPACE_PAYMENT_LIVE_APPROVED=false \
 node --experimental-strip-types --test --test-concurrency=1 \
-tests/taxi-recovery-boundaries.test.mjs tests/taxi-gate2.test.mjs \
-tests/taxi-gate3.test.mjs tests/taxi-gate4.test.mjs tests/taxi-gate5.test.mjs \
+tests/taxi-recovery-boundaries.test.mjs tests/taxi-custody-finance.test.mjs \
+tests/taxi-gate2.test.mjs \
+tests/taxi-gate3.test.mjs tests/taxi-unpaid-hold-expiry.test.mjs \
+tests/taxi-gate4.test.mjs tests/taxi-gate5.test.mjs \
 tests/launch-partner-lifecycle-refusals.test.mjs tests/sitting-gate2.test.mjs \
 tests/boarding-gate2.test.mjs tests/training-session-lifecycle.test.mjs \
 tests/grooming-completion-recovery.test.mjs \
@@ -43,12 +53,12 @@ tests/grooming-completion-invoice-integrity.test.mjs \
 tests/launch-partner-grooming-repairs.test.mjs
 ```
 
-Local result: **146 passed, 0 failed, 0 skipped** in 13.35 seconds, including **42 new Taxi recovery regressions**. Local runtime: Node 24.19.0. Focused lint passed: `eslint lib/taxi-lifecycle.ts tests/taxi-recovery-boundaries.test.mjs`; `git diff --check` passed. Hosted focused CI uses Node 22.16.0 with no build, credentials, deploy, seed, or external fixture mutations. Broader repository checks run through existing PR CI.
+Local result: **170 passed, 0 failed, 0 skipped**, including **61 new Taxi recovery/Finance regressions**. Local runtime: Node 24.19.0. Focused lint passed: `eslint lib/taxi-lifecycle.ts lib/taxi-finance-governance.ts tests/taxi-recovery-boundaries.test.mjs tests/taxi-custody-finance.test.mjs`; `git diff --check` passed. Hosted focused CI uses Node 22.16.0 with no build, credentials, deploy, seed, or external fixture mutations. Broader repository checks run through existing PR CI.
 
 Unrun locally: full build, whole suite, full typecheck, live/staged browser journeys, native partner GPS/handover, real payments/refunds/payouts, customer messages and provider dispatch. Browser ownership was reserved for the separate UI task. Hosted exact-head results must be read from the PR; local success does not establish deployed behavior.
 
 ## Follow-up before Taxi human testing
 
-Source review found an adjacent Finance concern outside this repair: `approve_cancel` in `lib/taxi-finance-governance.ts` blocks `in_progress`/dropoff states but omits `pickup_confirmed`; its transaction claim also lacks a pickup/trip eligibility predicate. That path needs a separate executable reproduction and coordinated review of post-handover cancellation policy before claiming the entire Taxi interruption chain ready. This finding is source evidence, not a tested live failure.
+The initially source-only post-handover Finance concern was reproduced and repaired in this same bounded PR with the parent's authorization. The new head requires fresh hosted CI; green checks on earlier recovery-only head `2f76bbaa87ad568e59b575d4182ffe39097a2740` do not certify this expanded code.
 
 Also unverified: recovery replacement acceptance under native D1 contention and the deployed customer → driver → operations → completion → accounting journey. Training/financial fixes in #1201 are intentionally not duplicated here. Cross-PR integration and exact deployed SHA verification remain prerequisites for a human-test readiness claim.

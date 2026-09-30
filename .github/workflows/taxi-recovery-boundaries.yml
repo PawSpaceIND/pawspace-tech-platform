@@ -1,11 +1,13 @@
-name: Taxi recovery boundaries
+name: Taxi custody boundaries
 
 on:
   pull_request:
     branches: [main]
     paths:
       - lib/taxi-lifecycle.ts
+      - lib/taxi-finance-governance.ts
       - tests/taxi-recovery-boundaries.test.mjs
+      - tests/taxi-custody-finance.test.mjs
       - .github/workflows/taxi-recovery-boundaries.yml
 
 permissions:
@@ -13,7 +15,7 @@ permissions:
 
 jobs:
   taxi-recovery:
-    name: Hermetic Taxi recovery regression
+    name: Hermetic Taxi custody regression
     runs-on: ubuntu-latest
     env:
       NODE_ENV: test
@@ -34,10 +36,14 @@ jobs:
         run: >-
           node --experimental-strip-types --test --test-concurrency=1
           tests/taxi-recovery-boundaries.test.mjs
+          tests/taxi-custody-finance.test.mjs
           tests/taxi-gate2.test.mjs
           tests/taxi-gate3.test.mjs
+          tests/taxi-unpaid-hold-expiry.test.mjs
           tests/taxi-gate4.test.mjs
           tests/taxi-gate5.test.mjs
           tests/launch-partner-lifecycle-refusals.test.mjs
       - name: Lint changed lifecycle and regression
-        run: npx --no-install eslint lib/taxi-lifecycle.ts tests/taxi-recovery-boundaries.test.mjs
+        run: >-
+          npx --no-install eslint lib/taxi-lifecycle.ts lib/taxi-finance-governance.ts
+          tests/taxi-recovery-boundaries.test.mjs tests/taxi-custody-finance.test.mjs
