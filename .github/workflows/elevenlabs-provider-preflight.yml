@@ -53,6 +53,24 @@ on:
 permissions:
   contents: read
 jobs:
+  pause-staging-phone-calls:
+    if: ${{ inputs.confirm == 'pause-staging-phone-calls' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Apply the user-requested phone stop and verify live staging gates
+        env:
+          PAUSE_PHONE_CALLS: user-requested-stop
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: node scripts/pause-staging-phone-calls.mjs
   demo-three-voice-conversations:
     if: ${{ inputs.confirm == 'demo-three-voice-conversations' }}
     runs-on: ubuntu-latest
