@@ -8,7 +8,16 @@ installWorkersHooks("__NATIVE_UAT_DB__", "__NATIVE_UAT_ENV__");
 const gov = await import("../lib/voice-outbound-governance.ts");
 const {handleExotelAgentStream}=await import('../lib/exotel-agentstream.ts');
 
-for(const failPlayback of [false,true])test(failPlayback?'native greeting playback failure persists its safe operation and never claims completed audio':'native stream emits the governed greeting as PCM frames and a playback mark',async()=>{
+for(const scenario of [
+ {name:'native stream emits the governed greeting as PCM frames and a playback mark',audioBytes:6400},
+ {name:'native terminal greeting frames meet the carrier minimum even with a ten-byte tail',audioBytes:6410},
+ {name:'native short greeting fills a complete carrier frame with terminal silence',audioBytes:320},
+ {name:'native greeting playback failure persists its safe operation and never claims completed audio',audioBytes:6400,failPlayback:true},
+ {name:'native provider error responses never become caller audio or completed calls',providerError:true},
+ {name:'native empty TTS audio fails before greeting playback',audioBytes:0},
+])test(scenario.name,async()=>{
+ const failPlayback=scenario.failPlayback===true;
+ const fails=failPlayback||scenario.providerError||scenario.audioBytes===0;
  const {sqlite,db,env}=await world();
  applyOwnedDdl(sqlite,'lib/outbound-schema.ts');
  const originals={fetch:globalThis.fetch,Response:globalThis.Response,pair:globalThis.WebSocketPair};
@@ -28,21 +37,22 @@ for(const failPlayback of [false,true])test(failPlayback?'native greeting playba
   globalThis.fetch=originals.fetch;
   globalThis.WebSocketPair=class {constructor(){const pair={0:new Socket(),1:new Socket()};sockets.push(pair);return pair;}};
   globalThis.Response=class extends originals.Response{constructor(body,init={}){super(body,{...init,status:init.status===101?200:init.status});this.webSocket=init.webSocket;}};
-  const response=await handleExotelAgentStream(new Request('https://uat.pawspace.in/voice/exotel/agentstream',{headers:{upgrade:'websocket'}}),{...env,DB:db,AI:{run:async()=>new Uint8Array(6400).fill(4)}},{waitUntil(){}});
+  const response=await handleExotelAgentStream(new Request('https://uat.pawspace.in/voice/exotel/agentstream',{headers:{upgrade:'websocket'}}),{...env,DB:db,AI:{run:async()=>scenario.providerError?new Response('{"error":"SECRET-KEY customer-private-text"}',{status:401,headers:{'content-type':'application/json'}}):new Uint8Array(scenario.audioBytes).fill(4)}},{waitUntil(){}});
   assert.ok(response.webSocket);
   const server=sockets[0][1];server.emit('message',{data:JSON.stringify({event:'start',start:{call_sid:'EXO-PLAYBACK-FAILURE',stream_sid:'STREAM-FAILURE',account_sid:env.EXOTEL_SID,media_format:{sample_rate:8000}}})});
   for(let attempt=0;attempt<100&&!server.closed&&!server.sent.some(x=>x.event==='mark');attempt++)await new Promise(resolve=>setTimeout(resolve,5));
   const event=sqlite.prepare("SELECT detail_json FROM ai_voice_events WHERE event_type='agentstream_processing_failed'").get();
   const call=sqlite.prepare('SELECT status,outcome FROM ai_voice_calls').get();
-  if(failPlayback){
+  if(fails){
    assert.ok(event,'real stream handler persists playback failure');
-   assert.deepEqual(JSON.parse(event.detail_json),{phase:'send_greeting_audio',errorClass:'Error'});
+   assert.deepEqual(JSON.parse(event.detail_json),{phase:failPlayback?'send_greeting_audio':'synthesize_greeting',errorClass:'Error'});
    assert.doesNotMatch(event.detail_json,/SECRET|customer-private/);
    assert.equal(call.status,'failed');assert.equal(call.outcome,'provider_failure');assert.equal(server.closed,1011);
   }else{
    assert.equal(event,undefined);assert.equal(call.status,'active');assert.equal(server.closed,null);
-   const media=server.sent.filter(x=>x.event==='media');assert.equal(media.length,2);
-   const audio=Buffer.concat(media.map(x=>Buffer.from(x.media.payload,'base64')));assert.deepEqual(audio,Buffer.alloc(6400,4));
+   const media=server.sent.filter(x=>x.event==='media');assert.equal(media.length,Math.ceil(scenario.audioBytes/3200));
+   const frames=media.map(x=>Buffer.from(x.media.payload,'base64'));assert.ok(frames.every(x=>x.length>=3200&&x.length<=100000&&x.length%320===0));
+   const audio=Buffer.concat(frames);assert.deepEqual(audio.subarray(0,scenario.audioBytes),Buffer.alloc(scenario.audioBytes,4));assert.ok(audio.subarray(scenario.audioBytes).every(x=>x===0));
    assert.ok(media.every(x=>x.stream_sid==='STREAM-FAILURE'));
    assert.equal(server.sent.at(-1).event,'mark');
   }

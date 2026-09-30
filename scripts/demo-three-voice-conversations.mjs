@@ -60,11 +60,11 @@ for(const scenario of VOICE_DEMO_SCENARIOS){
   for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
   await waitFor(()=>scenario.recognized.test(state.transcript)&&isSubstantiveVoiceReply(state.reply)&&scenario.reply.test(state.reply)&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500);
   console.log('VOICE_DEMO_OBSERVED='+JSON.stringify({scenario:scenario.id,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
-  assertDemoResponse(scenario,state);socket.close();
+  assertDemoResponse(scenario,state);const playbackCompletedMs=Date.now()-started;socket.close();
   const proof=await verifyFinalConversation({key:env.ELEVENLABS_API_KEY,conversationId,agentId:env.GROOMING_AGENT_ID,turns:[{transcript:state.transcript,reply:state.reply}],liveAudioEvidence:{conversationId,inputMode:'audio',inputBytes:pcm.length,outputBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:true},request:(url,options)=>fetch(url.replace('https://api.elevenlabs.io',eleven),options)});
   const f=audioFormat(outputFormat),raw=Buffer.concat(returnedAudio);await writeFile('voice-demo-results/'+scenario.id+'.raw',raw);
   execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(f.rate),'-ac','1','-i','voice-demo-results/'+scenario.id+'.raw','voice-demo-results/'+scenario.id+'.wav']);
-  const report={scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,responseMs:Date.now()-started,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,proof,dialed:false,engine:'elevenlabs_with_pawspace_brain',carrierVerified:false};reports.push(report);
+  const report={scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,inputToPlaybackCompletedMs:playbackCompletedMs,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,proof,dialed:false,engine:'elevenlabs_with_pawspace_brain',carrierVerified:false};reports.push(report);
   await app({action:'complete',callId:context.callId,outcome:'synthetic_audio_demo',disposition:'info_shared'});
   console.log('VOICE_DEMO_RESULT='+JSON.stringify(report));
  }catch(e){

@@ -157,7 +157,11 @@ function wavFromPcm16le(pcm: Uint8Array, sampleRate: number) {
 }
 
 async function responseBytes(result: unknown): Promise<Uint8Array> {
-  if (result instanceof Response) return new Uint8Array(await result.arrayBuffer());
+  if (result instanceof Response) {
+    if (!result.ok) throw new Error(`TTS provider refused audio (${result.status})`);
+    if (result.headers.get("content-type")?.includes("application/json")) return responseBytes(await result.json());
+    return new Uint8Array(await result.arrayBuffer());
+  }
   if (result instanceof Uint8Array) return result;
   if (result instanceof ArrayBuffer) return new Uint8Array(result);
   if (result instanceof ReadableStream) return new Uint8Array(await new Response(result).arrayBuffer());
@@ -318,14 +322,16 @@ async function synthesizeLinear16(env: Env, output: string, sampleRate: number) 
   const result = await ai(env).run(model, { text: output, encoding: "linear16", container: "none", sample_rate: sampleRate, speaker: text(env.VOICE_CARRIER_TTS_SPEAKER) || "luna" }, { returnRawResponse: true });
   let audio = await responseBytes(result);
   if (audio.byteLength % 2) audio = audio.subarray(0, audio.byteLength - 1);
+  if (!audio.byteLength) throw new Error("TTS model returned no audio bytes");
   return { audio, latencyMs: Date.now() - started };
 }
 
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
-  // Exotel documents chunks as multiples of 320 bytes. Pad only the terminal chunk with digital silence.
+  // Exotel requires 3,200–100,000 bytes per media message, in multiples of 320.
+  // The terminal frame also needs the minimum size; pad its remainder with digital silence.
   for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
     const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
-    const paddedLength = Math.ceil(raw.byteLength / 320) * 320;
+    const paddedLength = Math.max(outboundFrameBytes, Math.ceil(raw.byteLength / 320) * 320);
     const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
     socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
   }
