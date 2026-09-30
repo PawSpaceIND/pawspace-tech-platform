@@ -188,6 +188,25 @@ test("urgent pet symptoms stop sales and advise immediate veterinary care",async
  assert.equal(bookingCount(w),0);
 });
 
+test("a non-urgent health question cannot turn a model sales proposal into a booking",async t=>{
+ const w=await world(t);
+ const {applyOwnedDdl}=await import("./helpers/ai-harness.mjs");
+ const {ensurePricingControlRuntime}=await import("../lib/pricing-control-runtime.ts");await ensurePricingControlRuntime(w.db);
+ for(const owner of ["lib/training-commercial-governance.ts","lib/boarding-governance.ts","lib/sitting-governance.ts","lib/walking-governance.ts","lib/taxi-governance.ts"])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ let requestBody;
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");requestBody=JSON.parse(init.body);return Response.json({status:"completed",output_text:JSON.stringify({reply:"Buy a grooming package now to fix the rash.",actions:actions(w)}),usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My dog has an itchy rash","routine-health",provider);
+ assert.ok(requestBody);
+ assert.match(requestBody.instructions,/medical-information turn/);
+ assert.match(response.turn.output,/contact a veterinarian/);
+ assert.doesNotMatch(response.turn.output,/buy|grooming package|rash.*fix/i);
+ assert.equal(bookingCount(w),0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers").get().n,0);
+});
+
 
 test("Training refuses an invented cadence and a schedule beyond programme validity",async t=>{
  const w=await world(t,"dog_training");const noCadence=actions(w,"training-2-starter");delete noCadence[0].arguments.cadenceDays;
