@@ -29,3 +29,9 @@ Cloud UAT owns actual screenshots and rendered retest. Verify the appended rule'
 Separate next finding: at 485 CSS px, floating Appearance/order-update bubbles overlap the right end of Check service area. This involves different floating utility selectors and is deliberately excluded from this contrast fix. Preserve all form handlers in a separately reviewed patch.
 
 Draft only. Exact-head hosted CI and cloud render remain integration gates. No merge or deployment is included.
+
+## Exact-head CI preservation repair
+
+On head b4e9ba072a97224bcc28d0bbce53f67cbb64ccec (synthetic merge21e7ddcd5e815adc847ef1bceb7d699b961600b5), UIclosure36707754916/jobs109861966054 and109861966405, chat36707754825/job109861965710, and PreUAT36707754979/job109861966680 failed the same three CSS byte-digest assertions. Browser rendering was skipped, not a rendered contrast failure. The immutable original stylesheet-prefix assertion passed. Local rerun reproduced all three failures.
+
+Only app/v2/grooming/grooming.module.css entries in inbox-workspace-contract.json, partner-services-presentation-contract.json and ui-display-truth-contract.json are refreshed: old b6f21c7ea2306b79015bafb600a405e8d1a42ff49264ed63699be0ebccab4dc9 → actual SHA2568f1d26f61abc524bf1afea5f4bbe4f349274942fb2f6ed88d22ab3a37b21bf0a. No test/assertion/other key changes; four-line CSS patch unchanged. Captain independently confirmed the failure and scoped digest instruction; tool relay remains unavailable. New exact-head hosted browser gates must run before visual certification.
