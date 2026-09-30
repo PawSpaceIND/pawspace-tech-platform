@@ -12,7 +12,7 @@ import type{AiToolCode}from"./ai-tool-registry";
 import type{AuthenticatedActor}from"./server-auth";
 import{latestSalesPromptContext,renderProtectedQuotaDirective}from"./ai-sales-goal-orchestrator";
 import{listServiceControls}from"./service-control";
-import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,withoutApprovedVoiceDiscounts,type ApprovedSalesOffer}from"./ai-sales-offers";
+import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,withoutApprovedVoiceDiscounts,spokenApprovedOfferReply,type ApprovedSalesOffer}from"./ai-sales-offers";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -146,7 +146,12 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
    if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
   }
  }
- const envelope=parseGroundedActionEnvelope(result.text),reply=safePetMedicalReply(envelope?.reply||result.text,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);return{text:reply,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(reply,eligibleOffers),highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}
+ const envelope=parseGroundedActionEnvelope(result.text),reply=safePetMedicalReply(envelope?.reply||result.text,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
+ const catalogueVerifiedPrices=pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified=offerClaimsApproved(reply,eligibleOffers);
+ // Verify the original draft before rendering approved identifiers for speech. Never hide an
+ // invalid price/code, or rewrite text already emitted through the streaming callback.
+ const spoken=channel==="voice"&&!input.onDelta&&catalogueVerifiedPrices&&offerClaimsVerified?spokenApprovedOfferReply(reply,eligibleOffers,input.inputText):reply;
+ return{text:spoken,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices,offerClaimsVerified,highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}
 
 /**
  * Every rupee amount in a reply is a real price in the server-owned catalogue supplied for this turn.

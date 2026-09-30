@@ -142,3 +142,16 @@ test("spoken approved savings require a same-sentence package and exact discount
  }
  assert.equal(offersModule.offerClaimsApproved("Complete Makeover gives ₹200 off with FAKE500.",offers),false);
 });
+
+
+test("verified spoken offer formatting removes approved identifiers, preserves terms and answers explicit code requests",async()=>{
+ const {db}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const raw="For Complete Makeover, the approved GROOM200 offer gives ₹200 off: regular ₹2,399, estimated ₹2,199, subject to checkout validation.";
+ const spoken=offersModule.spokenApprovedOfferReply(raw,offers,"Is there an approved offer?");
+ assert.doesNotMatch(spoken,/GROOM200|approved approved/);
+ assert.match(spoken,/₹200 off/);assert.match(spoken,/estimated ₹2,199, subject to checkout validation/);
+ for(const message of ["What is the coupon code?","Please read the offer code", "Tell me the code"])
+  assert.equal(offersModule.spokenApprovedOfferReply(raw,offers,message),raw);
+ assert.equal(offersModule.spokenApprovedOfferReply("Use FAKE500 at checkout.",offers,"Any offers?"),"Use FAKE500 at checkout.");
+ assert.equal(offersModule.spokenApprovedOfferReply(raw,[],"Any offers?"),raw);
+});

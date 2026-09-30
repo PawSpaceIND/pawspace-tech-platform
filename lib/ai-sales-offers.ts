@@ -129,6 +129,19 @@ export function withoutApprovedVoiceDiscounts(reply:string,offers:ApprovedSalesO
  }).join("\n");
 }
 
+/** Presentation only, after the original draft passes offer and price verification.
+ * Keep codes when the caller asks for them; unknown identifiers are never hidden. */
+export function spokenApprovedOfferReply(reply:string,offers:ApprovedSalesOffer[],customerMessage:string){
+ if(/\b(?:what|which|tell|share|say|give|read)\b.{0,45}\b(?:coupon|promo|discount|offer)?\s*code\b/i.test(customerMessage))return reply;
+ let spoken=reply;
+ for(const offer of offers){
+  // Campaign codes are staff-controlled, so escape them before constructing a display regex.
+  const escaped=offer.code.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  spoken=spoken.replace(new RegExp(`\\b(?:code\\s+)?${escaped}\\b(?:\\s+offer\\b)?`,"gi"),"approved offer");
+ }
+ return spoken.replace(/\bapproved\s+approved offer\b/gi,"approved offer");
+}
+
 /** Approved offers as price grounding: only the regular and offer prices, and only when the reply names the code. */
 export function offerGroundingRows(offers:ApprovedSalesOffer[]):Row[]{return offers.map(offer=>({name:offer.code,package_code:offer.package_code,regular_price:offer.regular_price,offer_price:offer.offer_price}));}
 
