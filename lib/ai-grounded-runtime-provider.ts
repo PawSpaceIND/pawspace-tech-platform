@@ -12,7 +12,7 @@ import type{AiToolCode}from"./ai-tool-registry";
 import type{AuthenticatedActor}from"./server-auth";
 import{latestSalesPromptContext,renderProtectedQuotaDirective}from"./ai-sales-goal-orchestrator";
 import{listServiceControls}from"./service-control";
-import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,withoutApprovedVoiceDiscounts,spokenApprovedOfferReply,type ApprovedSalesOffer}from"./ai-sales-offers";
+import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,withoutApprovedVoiceDiscounts,spokenApprovedOfferReply,approvedVoiceOfferInformation,type ApprovedSalesOffer}from"./ai-sales-offers";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -128,6 +128,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
   :approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
  ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation||medicalQuestion;
  const eligibleOffers=options.salesService==="dog_training"?[]:offers;
+ const offerInformation=channel==="voice"&&!input.onDelta&&!medicalQuestion?approvedVoiceOfferInformation(input.inputText,eligibleOffers):null;
+ if(offerInformation)return{text:offerInformation,provider:"approved_offer_catalogue",modelRef:"server_owned_offers",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedVoiceDiscounts(offerInformation,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(offerInformation,eligibleOffers),highImpactAction:false,actionRequests:[]};
  if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
  if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});
  if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:options.salesService==="grooming"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}

@@ -129,6 +129,20 @@ export function withoutApprovedVoiceDiscounts(reply:string,offers:ApprovedSalesO
  }).join("\n");
 }
 
+/** An explicit offer enquiry about a named package is answered from eligible server facts.
+ * This is information only: accepting an offer and quoting still use the governed action flow. */
+export function approvedVoiceOfferInformation(customerMessage:string,offers:ApprovedSalesOffer[]){
+ if(/\b(?:prepare|create|reserve|apply|add|use|book|confirm|continue|proceed|accept)\b/i.test(customerMessage))return null;
+ if(!/\b(?:offers?|coupons?|discounts?)\b/i.test(customerMessage)||/\b(?:no|without)\s+(?:offers?|coupons?|discounts?)\b|\b(?:do not|don.t)\s+(?:apply|use|add)\b/i.test(customerMessage))return null;
+ const lower=customerMessage.toLowerCase();
+ const offer=offers.find(candidate=>{const item=groomingCatalogue.find(row=>row.active&&row.code===candidate.package_code);return candidate.usage==="closing"&&Boolean(item&&lower.includes(item.name.toLowerCase()));});
+ if(!offer)return null;
+ const name=groomingCatalogue.find(item=>item.code===offer.package_code)!.name;
+ const amount=(value:number)=>value.toLocaleString("en-IN");
+ const reply=`For ${name}, an eligible offer gives ₹${amount(offer.discount_amount)} off the regular single-pet catalogue price of ₹${amount(offer.regular_price)}. Eligibility and the final total must be validated at checkout. Would you like me to check it for your booking?`;
+ return spokenApprovedOfferReply(reply.replace("an eligible offer",`the ${offer.code} offer`),[offer],customerMessage);
+}
+
 /** Presentation only, after the original draft passes offer and price verification.
  * Keep codes when the caller asks for them; unknown identifiers are never hidden. */
 export function spokenApprovedOfferReply(reply:string,offers:ApprovedSalesOffer[],customerMessage:string){

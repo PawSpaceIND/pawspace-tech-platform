@@ -155,3 +155,18 @@ test("verified spoken offer formatting removes approved identifiers, preserves t
  assert.equal(offersModule.spokenApprovedOfferReply("Use FAKE500 at checkout.",offers,"Any offers?"),"Use FAKE500 at checkout.");
  assert.equal(offersModule.spokenApprovedOfferReply(raw,[],"Any offers?"),raw);
 });
+
+
+test("named-package voice offer enquiries use current eligible facts without inventing a final quote or action",async()=>{
+ const {db,sqlite}=fresh(),offers=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ const message="The Complete Makeover price feels high. Is there an approved offer for that package?";
+ const reply=offersModule.approvedVoiceOfferInformation(message,offers);
+ assert.match(reply,/₹200 off/);assert.match(reply,/₹2,399/);assert.match(reply,/validated at checkout/);assert.doesNotMatch(reply,/GROOM200|₹2,199|confirmed|created/i);
+ assert.equal(offersModule.approvedVoiceOfferInformation(message,[]),null);
+ for(const action of ["Prepare a quote for Complete Makeover with the coupon", "Book Complete Makeover with the offer", "Apply the offer to Complete Makeover", "I accept the Complete Makeover offer"])assert.equal(offersModule.approvedVoiceOfferInformation(action,offers),null,"action request must reach governed booking logic");
+ assert.equal(offersModule.approvedVoiceOfferInformation("Apply an offer to my taxi",offers),null);
+ assert.equal(offersModule.approvedVoiceOfferInformation("No discounts for Complete Makeover please",offers),null);
+ sqlite.prepare("UPDATE coupon_campaigns SET status='paused' WHERE code='GROOM200'").run();
+ const paused=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
+ assert.equal(offersModule.approvedVoiceOfferInformation(message,paused),null,"cross-sell campaign does not substitute for a paused closing offer");
+});
