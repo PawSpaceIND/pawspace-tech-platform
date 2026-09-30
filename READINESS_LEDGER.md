@@ -731,3 +731,6 @@ than executing anything. **And nobody has opened the live app in a browser, this
 - Real human browser/device QA — nobody has opened the live app and clicked through it, this
   entire engagement, by either agent
 - Live deployment URL confirmation — same reason
+## Training human-UAT guard/assessment follow-up — 30 September 2026
+
+Local branch based on `11ab937275cbfba6ea05adb167224d7a24b14d58`; see `docs/audits/training-readiness-20260930/README.md` for source/test provenance. Past/invalid customer change-window bypass and a concurrent schedule-change bypass were reproduced (5/8 passed before repair), then repaired with customer-only lifecycle and transactional guards. Missing trainer assessments no longer invent 7/10; the existing at-least-one-explicit-valid-score policy is preserved. Focused selection 74/74 on both loader paths, native local D1 2/2, real local browser desktop/mobile 2/2, typecheck and build passed. Whole-repository aggregate, remote exact-head CI, merge, deployment and hosted acceptance are still separate gates. No launch approval is inferred.

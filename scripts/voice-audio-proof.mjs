@@ -1,17 +1,17 @@
-import {isSubstantiveVoiceReply} from './voice-uat-evidence.mjs';
-const HANDOFF=/waiting for a PawSpace team member|routing this (?:conversation )?to a PawSpace team member|cannot continue the booking/i;
+import {isSubstantiveVoiceReply,isControlledVoiceReply} from './voice-uat-evidence.mjs';
 export function audioFormat(format){
  const m=/^(pcm|ulaw)_(\d+)$/.exec(String(format));
  if(!m||![8000,16000,22050,24000,44100,48000].includes(Number(m[2])))throw Error('Unsupported agent audio format');
  return {rate:Number(m[2]),bytesPerSample:m[1]==='pcm'?2:1,silence:m[1]==='pcm'?0:255};
 }
 export function audioProofChecks({transcript,reply,audioBytes,nonSilentBytes}){
- return {asrGrooming:/grooming/i.test(transcript),asrBruno:/bruno/i.test(transcript),substantiveReply:isSubstantiveVoiceReply(reply),noHandoff:!HANDOFF.test(reply),audio:audioBytes>1600,nonSilentAudio:nonSilentBytes>100};
+ return {asrGrooming:/grooming/i.test(transcript),asrBruno:/bruno/i.test(transcript),substantiveReply:isSubstantiveVoiceReply(reply),noHandoff:!isControlledVoiceReply(reply),audio:audioBytes>1600,nonSilentAudio:nonSilentBytes>100};
 }
 export function audioProof(state){return Object.values(audioProofChecks(state)).every(Boolean);}
 const AGENT_EVENT_KINDS=new Set(['conversation_initiation_metadata','audio','agent_response','agent_response_correction','user_transcript','interruption','ping','error','internal_tentative_agent_response','vad_score','client_tool_call','agent_tool_response','contextual_update','mcp_tool_call','mcp_connection_status','agent_chat_response_part']);
 export const audioEventKind=type=>typeof type==='string'&&AGENT_EVENT_KINDS.has(type)?type:'other';
-export const isHandoffReply=reply=>HANDOFF.test(String(reply||''));
+// Legacy probe name: this flags controlled refusals as well as handoffs; it does not prove staff was queued.
+export const isHandoffReply=isControlledVoiceReply;
 export function createAudioProbeState(){return {greeting:false,listening:false,segments:[],transcript:'',reply:'',audioBytes:0,nonSilentBytes:0,lastAudio:0,playbackEndAt:0,replyInterrupted:false,interruptedEventId:0};}
 // A new recognised input supersedes the reply and playback queue. Cancelled output is not proof.
 export function applyAudioProbeEvent(s,d,{now,outputFormat}){

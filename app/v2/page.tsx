@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import type { CustomerAccountRecord } from "../../lib/customer-account";
 import {
   endV2CustomerSession,
@@ -18,6 +18,7 @@ import { bootstrapHome } from "../../lib/v2/home-bootstrap";
 import styles from "./v2.module.css";
 import { AdditionalCareTiles, HomePets } from "./home-care-extras";
 import V2ServiceIcon from "./service-icon";
+import { useModalFocus } from "../components/use-modal-focus";
 import PawSpaceWelcome from "../components/pawspace-welcome";
 
 type ServiceCard = {
@@ -68,6 +69,14 @@ export default function PawSpaceV2() {
   const [authBusy, setAuthBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
+  const authDialog = useRef<HTMLDivElement>(null);
+  const authOpener = useRef<HTMLElement | null>(null);
+  const authGeneration = useRef(0);
+  const openAuth = (event: MouseEvent<HTMLButtonElement>) => {
+    authOpener.current = event.currentTarget;
+    setAuthOpen(true);
+  };
+
   const bootstrapGeneration = useRef(0);
   const bootstrap = useCallback(async () => {
     const generation = ++bootstrapGeneration.current;
@@ -110,15 +119,17 @@ export default function PawSpaceV2() {
   const requestOtp = async () => {
     setAuthError("");
     if (!/^\d{10}$/.test(phone)) { setAuthError("Enter a valid 10-digit mobile number."); return; }
+    const generation = ++authGeneration.current;
     setAuthBusy(true);
     try {
       const result = await requestV2CustomerOtp(phone);
+      if (generation !== authGeneration.current) return;
       setChallenge(result);
       setAuthStage("code");
     } catch (problem) {
-      setAuthError(problem instanceof Error ? problem.message : "We could not send your code.");
+      if (generation === authGeneration.current) setAuthError(problem instanceof Error ? problem.message : "We could not send your code.");
     } finally {
-      setAuthBusy(false);
+      if (generation === authGeneration.current) setAuthBusy(false);
     }
   };
 
@@ -126,17 +137,20 @@ export default function PawSpaceV2() {
     setAuthError("");
     if (!challenge?.challengeId) { setAuthStage("phone"); return; }
     if (!/^\d{6}$/.test(code)) { setAuthError("Enter the 6-digit code."); return; }
+    const generation = ++authGeneration.current;
     setAuthBusy(true);
     try {
       await verifyV2CustomerOtp({ challengeId: challenge.challengeId, code, name: name.trim() || undefined });
-      setAuthOpen(false);
-      setCode("");
-      setChallenge(null);
+      if (generation === authGeneration.current) {
+        setAuthOpen(false);
+        setCode("");
+        setChallenge(null);
+      }
       await bootstrap();
     } catch (problem) {
-      setAuthError(problem instanceof Error ? problem.message : "We could not verify your code.");
+      if (generation === authGeneration.current) setAuthError(problem instanceof Error ? problem.message : "We could not verify your code.");
     } finally {
-      setAuthBusy(false);
+      if (generation === authGeneration.current) setAuthBusy(false);
     }
   };
 
@@ -155,13 +169,17 @@ export default function PawSpaceV2() {
     }
   };
 
-  const resetAuth = () => {
+  const resetAuth = useCallback(() => {
+    authGeneration.current += 1;
+    setAuthBusy(false);
     setAuthStage("phone");
     setChallenge(null);
     setCode("");
     setName("");
     setAuthError("");
-  };
+  }, []);
+  const closeAuth = useCallback(() => { setAuthOpen(false); resetAuth(); }, [resetAuth]);
+  useModalFocus(authOpen, authDialog, authOpener, closeAuth);
 
   return (
     <main className={styles.page} data-v2-home="true">
@@ -187,7 +205,7 @@ export default function PawSpaceV2() {
                 <span className={styles.profileText}><small>Welcome back</small><b>{firstName}</b></span>
               </Link>
             ) : (
-              <button className={styles.signIn} onClick={() => setAuthOpen(true)}>Sign in</button>
+              <button className={styles.signIn} onClick={openAuth}>Sign in</button>
             )}
           </div>
         </header>
@@ -244,7 +262,7 @@ export default function PawSpaceV2() {
               <div className={styles.fact}><span>◎</span><div><b>{account.bookings.length || "—"}</b><small>care records</small></div></div>
             </div>
           ) : (
-            <button className={styles.familySignIn} onClick={() => setAuthOpen(true)}><span>＋</span><div><b>Bring your pet family in</b><small>Pets, addresses and bookings, together.</small></div><strong>Continue →</strong></button>
+            <button className={styles.familySignIn} onClick={openAuth}><span>＋</span><div><b>Bring your pet family in</b><small>Pets, addresses and bookings, together.</small></div><strong>Continue →</strong></button>
           )}
         </section>
 
@@ -331,13 +349,13 @@ export default function PawSpaceV2() {
         <Link href="/v2"><span>⌂</span><b>Home</b></Link>
         <Link href="/v2/activity"><span>◎</span><b>Bookings</b></Link>
         <Link href="/v2/chat" className={styles.mobileAi}><span>✦</span><b>Help</b></Link>
-        {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={() => setAuthOpen(true)}><span>◉</span><b>Sign in</b></button>}
+        {account ? <Link href="/v2/account"><span>◉</span><b>Account</b></Link> : <button onClick={openAuth}><span>◉</span><b>Sign in</b></button>}
       </nav>
 
       {authOpen && (
-        <div className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-label="Sign in to PawSpace">
+        <div ref={authDialog} tabIndex={-1} className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-label="Sign in to PawSpace">
           <div className={styles.authModal}>
-            <button className={styles.modalClose} aria-label="Close" onClick={() => { setAuthOpen(false); resetAuth(); }}>×</button>
+            <button className={styles.modalClose} aria-label="Close" onClick={closeAuth}>×</button>
             <div className={styles.authBrand}><span>🐾</span><div><small>WELCOME HOME</small><b>PawSpace knows your family.</b></div></div>
             <h2>{authStage === "phone" ? "One number. Every care journey." : "You're almost in."}</h2>
             <p>{authStage === "phone" ? "Use your mobile number to securely open pets, places and care history." : `Enter the 6-digit code for +91 ${phone}.`}</p>

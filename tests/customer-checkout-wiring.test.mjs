@@ -7,6 +7,7 @@ import { d1 } from './helpers/execution-harness.mjs';
 installWorkersHooks('__CUSTOMER_CHECKOUT_WIRING_DB__', '__CUSTOMER_CHECKOUT_WIRING_ENV__');
 const sdk = await import('../lib/mobile/razorpay.ts');
 const server = await import('../lib/customer-checkout-server.ts');
+const provider = await import('../lib/razorpay-client.ts');
 const { CustomerCheckoutController } = await import('../lib/customer-checkout-client.ts');
 const locks = { PAWSPACE_PAYMENT_ENV: 'sandbox', FORBID_PRODUCTION: 'true', PAWSPACE_PAYMENT_LIVE_APPROVED: 'false' };
 // Deliberately synthetic keys. All external SDK/network calls below are controlled test doubles.
@@ -15,7 +16,46 @@ const env = { ...locks, RAZORPAY_KEY_ID_SANDBOX: 'rzp_test_fixtureOnly', RAZORPA
 const opts = { keyId: env.RAZORPAY_KEY_ID_SANDBOX, orderId: 'order_fixture', amountPaise: 49950, currency: 'INR' };
 const receipt = { bookingId: 'B1', orderId: 'order_fixture', paymentId: 'pay_fixture',
   signature: createHmac('sha256', env.RAZORPAY_KEY_SECRET_SANDBOX).update('order_fixture|pay_fixture').digest('hex') };
+// Install a rejecting boundary for EVERY test: never fall through to the real provider.
+// Production reconciliation catches provider errors, so afterEach also reports unexpected calls.
+let unexpectedNetwork;
+test.beforeEach(t => {
+  unexpectedNetwork = [];
+  t.mock.method(globalThis, 'fetch', async () => {
+    unexpectedNetwork.push('unconfigured fetch');
+    throw new Error('Unexpected network request in checkout wiring test');
+  });
+});
+test.afterEach(() => assert.deepEqual(unexpectedNetwork, [], 'all network attempts must match the explicit fixture'));
+function orderPaymentsFixture(t) {
+  const calls = [];
+  let scenario = 'uncaptured';
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    try {
+      assert.equal(String(url), 'https://api.razorpay.com/v1/orders/order_fixture/payments');
+      assert.equal(init.method, 'GET');
+      assert.equal(init.body, undefined);
+      assert.equal(init.redirect, 'manual');
+      const headers = new Headers(init.headers);
+      // Compare only with source-local fake keys; do not inspect runtime/provider credentials.
+      assert.equal(headers.get('authorization'), `Basic ${Buffer.from(`${env.RAZORPAY_KEY_ID_SANDBOX}:${env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`);
+      assert.equal(headers.get('accept'), 'application/json');
+    } catch (error) {
+      unexpectedNetwork.push('request did not match synthetic order-payment GET');
+      throw error;
+    }
+    calls.push({ method: init.method, orderId: 'order_fixture' });
+    if (scenario === 'network_error') throw new TypeError('Synthetic provider unavailable');
+    if (scenario === 'http_error') return Response.json({ error: { description: 'Synthetic provider unavailable' } }, { status: 503 });
+    if (scenario === 'malformed') return Response.json({ entity: 'collection' });
+    const captured = scenario === 'captured';
+    return Response.json({ items: [{ id: 'pay_fixture', order_id: 'order_fixture', status: captured ? 'captured' : 'authorized', captured,
+      amount: 49950, currency: 'INR', method: 'upi', notes: { booking_id: 'B1', payment_id: 'P1' } }] });
+  });
+  return { calls, setScenario(value) { assert.ok(['uncaptured', 'captured', 'network_error', 'http_error', 'malformed'].includes(value)); scenario = value; } };
+}
 function world(t) {
+  const network = orderPaymentsFixture(t);
   const sqlite = new DatabaseSync(':memory:'); t.after(() => sqlite.close());
   sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,package_code TEXT,service_code TEXT DEFAULT 'grooming',package_name TEXT DEFAULT 'Bath & Basic',provider_id TEXT DEFAULT 'PRV1',scheduled_start TEXT DEFAULT '2026-09-20T03:30:00.000Z',scheduled_end TEXT DEFAULT '2026-09-20T05:30:00.000Z',total_amount REAL DEFAULT 499.50,currency TEXT DEFAULT 'INR',updated_at INTEGER DEFAULT 1);
     CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT,mode TEXT DEFAULT 'prepaid');
@@ -28,7 +68,7 @@ function world(t) {
     INSERT INTO payment_intents VALUES('I1','B1','C1','P1','order_fixture','razorpay','sandbox',49950,'INR');`);
   const db = d1(sqlite); enterWorkersDbScope(db); globalThis.__CUSTOMER_CHECKOUT_WIRING_DB__ = db;
   globalThis.__CUSTOMER_CHECKOUT_WIRING_ENV__ = { ...env };
-  return { sqlite, db };
+  return { sqlite, db, network };
 }
 function event(sqlite, patch = {}) {
   const row = { id: 'EV1', booking_id: 'B1', payment_id: 'P1', gateway_order_id: 'order_fixture', gateway_payment_id: 'pay_fixture',
@@ -126,11 +166,35 @@ for (const bookingStatus of ['cancelled', 'draft', 'rejected', 'unknown']) {
   });
 }
 test('valid receipt before webhook stays pending and changes no financial state', async t => {
-  const { sqlite, db } = world(t); const before = sqlite.prepare('SELECT * FROM booking_payments').all();
+  const { sqlite, db, network } = world(t); const before = sqlite.prepare('SELECT * FROM booking_payments').all();
   const result = await server.verifyCustomerCheckoutReceipt(db, env, 'C1', receipt);
   assert.equal(result.receiptVerified, true); assert.equal(result.status, 'awaiting_confirmation');
+  assert.deepEqual(network.calls, [{ method: 'GET', orderId: 'order_fixture' }]);
   assert.deepEqual(sqlite.prepare('SELECT * FROM booking_payments').all(), before);
   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM payment_gateway_events').get().n, 0);
+});
+for (const scenario of ['network_error', 'http_error', 'malformed']) {
+  test(`provider ${scenario} leaves a valid receipt pending without financial writes`, async t => {
+    const { sqlite, db, network } = world(t); network.setScenario(scenario);
+    const before = sqlite.prepare('SELECT * FROM booking_payments').all();
+    const result = await server.verifyCustomerCheckoutReceipt(db, env, 'C1', receipt);
+    assert.equal(result.status, 'awaiting_confirmation');
+    assert.equal(network.calls.length, 1);
+    assert.deepEqual(sqlite.prepare('SELECT * FROM booking_payments').all(), before);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM payment_gateway_events').get().n, 0);
+  });
+}
+test('offline provider fixture distinguishes captured and uncaptured evidence', async t => {
+  const network = orderPaymentsFixture(t);
+  for (const captured of [false, true]) {
+    network.setScenario(captured ? 'captured' : 'uncaptured');
+    const result = await provider.fetchPaymentOrderPayments(env, { orderId: 'order_fixture' });
+    assert.equal(result.connected, true); assert.equal(result.environment, 'sandbox');
+    assert.equal(result.payments.length, 1); assert.equal(result.payments[0].captured, captured);
+    assert.equal(result.payments[0].status, captured ? 'captured' : 'authorized');
+    assert.equal(result.payments[0].amount, 49950);
+  }
+  assert.equal(network.calls.length, 2);
 });
 test('forged, cross-customer and cross-order receipts cannot be confirmed', async t => {
   const { db } = world(t);
@@ -147,10 +211,11 @@ for (const [field, value] of Object.entries({ booking_id: 'B2', payment_id: 'P2'
   });
 }
 test('matching processed signed capture confirms exactly that payment, including on replay', async t => {
-  const { sqlite, db } = world(t); event(sqlite);
+  const { sqlite, db, network } = world(t); event(sqlite);
   const before = sqlite.prepare('SELECT * FROM payment_gateway_events').all();
   for (let i = 0; i < 3; i++) assert.equal((await server.verifyCustomerCheckoutReceipt(db, env, 'C1', receipt)).status, 'captured');
   assert.deepEqual(sqlite.prepare('SELECT * FROM payment_gateway_events').all(), before);
+  assert.equal(network.calls.length, 0, 'trusted persisted evidence does not query the provider');
 });
 
 function client(patches = {}) {

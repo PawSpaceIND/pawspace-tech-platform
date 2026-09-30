@@ -20,7 +20,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import ts from "typescript";
 
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -55,7 +56,11 @@ const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 /* 160, not 156: resume-voice-uat, verify-voice-sale, voice-uat-evidence and voice-substantive-reply
  * run the voice UAT scripts they cover (scripts/*.mjs), not lib/ or app/ modules, so this ratchet counts them as static
  * even though they execute the code under test. */
-const STATIC_FILE_BUDGET = 160;
+/* 160 -> 158: native Wrangler drivers were previously misclassified. The combined candidate
+ * measured 161 before tracing spawn -> config.main -> runtime product imports: the newly added
+ * financial-workforce driver and existing booking-fanout / scheduling-rules drivers account for
+ * all three corrected files. This is a classifier correction, not three newly converted tests. */
+const STATIC_FILE_BUDGET = 158;
 
 /*
  * A file "executes" if it loads a lib/ or app/ module.
@@ -113,10 +118,98 @@ const helperExecutes = (src) => {
   return false;
 };
 
+/* Follow the native-worker execution edge, rather than accepting the words "wrangler" or
+ * a config filename anywhere in source. This remains a static classifier of executable tests,
+ * not proof that a test passed. Scope-aware symbols tie spawn to node:child_process and an args
+ * variable to its const declaration. Unsupported commands/configs fail closed. */
+function nativeWorkerExecutes(src, root = dirname(TESTS_DIR), read = (path) => readFileSync(path, "utf8")) {
+  if (!src.includes("child_process")) return false;
+  const fileName = resolve(root, "tests/classification-input.mjs");
+  const source = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const program = ts.createProgram([fileName], { allowJs: true, noResolve: true, noLib: true }, {
+    getSourceFile: (name) => name === fileName ? source : undefined,
+    getDefaultLibFileName: () => "", writeFile() {}, getCurrentDirectory: () => root,
+    getDirectories: () => [], fileExists: (name) => name === fileName,
+    readFile: (name) => name === fileName ? src : undefined,
+    getCanonicalFileName: (name) => name, useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  });
+  const checker = program.getTypeChecker();
+  const literal = (node) => node && ts.isStringLiteralLike(node) ? node.text : undefined;
+  const insideRoot = (path) => { const rel = relative(root, path); return rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel); };
+  const runtimeImport = (node) => ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly &&
+    (!node.importClause?.namedBindings || !ts.isNamedImports(node.importClause.namedBindings) ||
+      !!node.importClause.name || node.importClause.namedBindings.elements.some((item) => !item.isTypeOnly));
+  const visited = new Set();
+  function workerLoadsProduct(path) {
+    if (!insideRoot(path) || visited.has(path)) return false;
+    visited.add(path);
+    let contents;
+    try { contents = read(path); } catch { return false; }
+    const ast = ts.createSourceFile(path, contents, ts.ScriptTarget.Latest, true);
+    for (const statement of ast.statements) {
+      if (!runtimeImport(statement)) continue;
+      const specifier = literal(statement.moduleSpecifier);
+      if (!specifier?.startsWith(".")) continue;
+      const base = resolve(dirname(path), specifier);
+      for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`, join(base, "index.ts")]) {
+        if (!insideRoot(candidate)) continue;
+        try { read(candidate); } catch { continue; }
+        if (/^(lib|app)\//.test(relative(root, candidate))) return true;
+        if (workerLoadsProduct(candidate)) return true;
+      }
+    }
+    return false;
+  }
+  function isSpawn(node) {
+    if (!ts.isIdentifier(node)) return false;
+    const declarations = checker.getSymbolAtLocation(node)?.declarations;
+    if (declarations?.length !== 1) return false;
+    const decl = declarations[0];
+    return ts.isImportSpecifier(decl) && (decl.propertyName?.text ?? decl.name.text) === "spawn" &&
+      ["node:child_process", "child_process"].includes(literal(decl.parent.parent.parent.moduleSpecifier));
+  }
+  const nodeCommand = (node) => ts.isPropertyAccessExpression(node) && node.expression.getText(source) === "process" &&
+    !checker.getSymbolAtLocation(node.expression)?.declarations?.length && node.name.text === "execPath";
+  const npxCommand = (node) => ["npx", "npx.cmd"].includes(literal(node)) ||
+    (ts.isConditionalExpression(node) && npxCommand(node.whenTrue) && npxCommand(node.whenFalse));
+  function invocationExecutes(node) {
+    if (!ts.isCallExpression(node) || !isSpawn(node.expression) || node.arguments.length < 2) return false;
+    const [command, suppliedArgs, options] = node.arguments;
+    // A changed cwd makes relative config resolution ambiguous; do not guess.
+    if (options && (!ts.isObjectLiteralExpression(options) || options.properties.some((property) =>
+      ts.isSpreadAssignment(property) || property.name?.getText(source).replace(/["']/g, "") === "cwd"))) return false;
+    let args = suppliedArgs;
+    if (ts.isIdentifier(args)) {
+      const declarations = checker.getSymbolAtLocation(args)?.declarations;
+      if (declarations?.length !== 1) return false;
+      const decl = declarations[0];
+      if (!ts.isVariableDeclaration(decl) || !(decl.parent.flags & ts.NodeFlags.Const) || decl.pos >= node.pos) return false;
+      args = decl.initializer;
+    }
+    if (!args || !ts.isArrayLiteralExpression(args)) return false;
+    const values = args.elements.map(literal);
+    if (!((nodeCommand(command) && values[0] === "node_modules/wrangler/bin/wrangler.js") ||
+      (npxCommand(command) && values[0] === "wrangler"))) return false;
+    if (values[1] !== "dev" || values[2] !== "--config" || !values[3]?.match(/\.jsonc?$/)) return false;
+    const configPath = resolve(root, values[3]);
+    if (!insideRoot(configPath)) return false;
+    try {
+      const parsed = ts.parseConfigFileTextToJson(configPath, read(configPath));
+      if (parsed.error || typeof parsed.config?.main !== "string") return false;
+      return workerLoadsProduct(resolve(dirname(configPath), parsed.config.main));
+    } catch { return false; }
+  }
+  let found = false;
+  function visit(node) { if (invocationExecutes(node)) found = true; if (!found) ts.forEachChild(node, visit); }
+  visit(source);
+  return found;
+}
+
 const executes = (src) =>
   STATIC_IMPORT.test(src) || HARNESS.test(src) || LIB_LOADER.test(src) ||
   ((LOADER.test(src) || TRANSPILE.test(src)) && PRODUCT_PATH.test(src)) ||
-  helperExecutes(src);
+  helperExecutes(src) || nativeWorkerExecutes(src);
 
 /*
  * Excluded from the count. These are meta-tests ABOUT the source - reading it is the whole job, not
@@ -186,4 +279,79 @@ test("the budget is kept honest - lower it when files are converted", () => {
     `only ${actual} static test files remain but the budget still says ${STATIC_FILE_BUDGET}. ` +
     `Lower STATIC_FILE_BUDGET to ${actual} so the ratchet keeps its teeth.`,
   );
+});
+
+const nativeFixtureRoot = resolve('/virtual-native-classifier');
+const nativeFixtureFiles = {
+  'wrangler.proof.jsonc': '{ // local worker\n "main": "tests/proof-worker.ts", }',
+  'tests/proof-worker.ts': 'import { run } from "../lib/proof"; export default { fetch: run };',
+  'lib/proof.ts': 'export const run = () => new Response("ok");',
+};
+const nativeInvocation = 'spawn(process.execPath, ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.proof.jsonc", "--local"]);';
+const nativeImport = 'import { spawn } from "node:child_process";\n';
+function classifyNative(source, overrides = {}) {
+  const files = { ...nativeFixtureFiles, ...overrides };
+  return nativeWorkerExecutes(source, nativeFixtureRoot, (path) => {
+    const contents = files[relative(nativeFixtureRoot, path)];
+    if (typeof contents !== 'string') throw new Error('fixture does not exist');
+    return contents;
+  });
+}
+
+test('native classifier follows literal spawn, JSONC config, and real worker imports', () => {
+  assert.equal(classifyNative(nativeImport + nativeInvocation), true);
+  assert.equal(classifyNative(nativeImport + `const args = ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.proof.jsonc"];
+    args.push("--local"); spawn(process.execPath, args);`), true);
+  assert.equal(classifyNative(nativeImport.replace('{ spawn }', '{ spawn as launch }') + nativeInvocation.replace('spawn(', 'launch(')), true);
+  assert.equal(classifyNative(nativeImport + nativeInvocation.replace('process.execPath', 'process.platform === "win32" ? "npx.cmd" : "npx"').replace('node_modules/wrangler/bin/wrangler.js', 'wrangler')), true);
+  assert.equal(classifyNative(nativeImport + nativeInvocation, {
+    'tests/proof-worker.ts': 'import { run } from "./helper.mjs";',
+    'tests/helper.mjs': 'import { run } from "../app/api/proof/route";',
+    'app/api/proof/route.ts': 'export const run = () => new Response("ok");',
+  }), true);
+});
+
+test('native classifier rejects source text, unused references, and unrelated child processes', () => {
+  const rejected = [
+    '// ' + nativeImport + '// ' + nativeInvocation,
+    `const source = ${JSON.stringify(nativeImport + nativeInvocation)};`,
+    nativeImport + 'const args = ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.proof.jsonc"];',
+    nativeImport + 'readFileSync("wrangler.proof.jsonc"); spawn(process.execPath, ["other-script.mjs"]);',
+    nativeInvocation,
+    'const spawn = () => {}; ' + nativeInvocation,
+    nativeImport + 'function test(spawn) { ' + nativeInvocation + ' }',
+    nativeImport + 'function test(process) { ' + nativeInvocation + ' }',
+    nativeImport + 'const args = ["node_modules/wrangler/bin/wrangler.js", "dev", "--config", "wrangler.proof.jsonc"]; function test(args) { spawn(process.execPath, args); }',
+    nativeImport.replace('node:child_process', './fake-process.mjs') + nativeInvocation,
+    nativeImport + nativeInvocation.replace('process.execPath', '"echo"'),
+    nativeImport + nativeInvocation.replace('"dev"', '"deploy"'),
+    nativeImport + nativeInvocation.replace('"wrangler.proof.jsonc"', 'configPath'),
+    nativeImport + nativeInvocation.replace('"wrangler.proof.jsonc"', '"../outside.jsonc"'),
+    nativeImport + nativeInvocation.replace(']);', '], { cwd: "elsewhere" });'),
+  ];
+  for (const source of rejected) assert.equal(classifyNative(source), false, source);
+});
+
+test('native classifier requires an existing runtime product import and fails closed on broken edges', () => {
+  const rejected = [
+    { 'wrangler.proof.jsonc': null },
+    { 'wrangler.proof.jsonc': '{ broken json' },
+    { 'wrangler.proof.jsonc': '{}' },
+    { 'wrangler.proof.jsonc': '{"main":"../outside.ts"}' },
+    { 'tests/proof-worker.ts': null },
+    { 'tests/proof-worker.ts': 'const text = \'import { run } from "../lib/proof"\';' },
+    { 'tests/proof-worker.ts': 'import type { Run } from "../lib/proof";' },
+    { 'tests/proof-worker.ts': 'import { type Run } from "../lib/proof";' },
+    { 'lib/proof.ts': null },
+    { 'tests/proof-worker.ts': 'import "./cycle.mjs";', 'tests/cycle.mjs': 'import "./proof-worker.ts";' },
+  ];
+  for (const files of rejected) assert.equal(classifyNative(nativeImport + nativeInvocation, files), false, JSON.stringify(files));
+});
+
+test('native classifier recognizes the actual native D1 drivers without executing infrastructure', () => {
+  for (const name of [
+    'booking-fanout-atomicity-real-d1.test.mjs',
+    'financial-workforce-integrity-real-d1.test.mjs',
+    'scheduling-rules-authorization-real-d1.test.mjs',
+  ]) assert.equal(nativeWorkerExecutes(readFileSync(join(TESTS_DIR, name), 'utf8')), true, name);
 });
