@@ -199,6 +199,19 @@ test("suspected chocolate ingestion stops voice sales and gives emergency vet di
  assert.equal(bookingCount(w),0);
 });
 
+test("a request to connect to a vet creates a staff handoff without claiming a connection",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"Please connect me to a vet","vet-request",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/contact a veterinarian for medical advice/);
+ assert.match(response.turn.output,/routing this conversation to a PawSpace team member/);
+ assert.doesNotMatch(response.turn.output,/you are connected|vet is on the line/i);
+ assert.equal(bookingCount(w),0);
+});
+
 test("a non-urgent health question cannot turn a model sales proposal into a booking",async t=>{
  const w=await world(t);
  const {applyOwnedDdl}=await import("./helpers/ai-harness.mjs");

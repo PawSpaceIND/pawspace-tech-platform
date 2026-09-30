@@ -221,6 +221,7 @@ export async function orchestrateAiTurn(db:D1Database,input:{actor:Authenticated
   * reported as provider_error. Its type (never its message) is kept so an operator can tell it from a provider failure. */
   providerFailure=error instanceof Response?`exception_http_${error.status}`:`exception_${error instanceof Error?error.name:"unknown"}`;handoffReason="provider_error";policyDecision="human_handoff";outcome="handoff";output=await handoff(db,{threadId:input.threadId,customerId:input.customerId,sessionId:session.id,reason:"provider_error",actorEmail:input.actor.email,confidence:intent.confidence});}}
  if(outcome==="handoff"&&/\b(?:not breathing|cannot breathe|difficulty breathing|collapsed|unconscious|seizure|bleeding heavily|uncontrolled bleeding|poisoned|poisoning|ate chocolate|hit by (?:a )?(?:car|vehicle)|severe trauma)\b/i.test(text))output=`Please contact an emergency veterinarian immediately. ${output}`;
+ else if(outcome==="handoff"&&/\b(?:connect|transfer|put me through|let me speak|talk|speak|call)\b.{0,45}\b(?:a |an |the )?(?:vet(?:erinarian)?|animal doctor)\b/i.test(text))output=`Please contact a veterinarian for medical advice. ${output}`;
  if(outcome==="draft_review_required"){const grounding=await verifiedGroundingRefs(db,providerResult.groundingRefs),
   // Catalogue prices are grounding too: every quoted amount was checked against the server-owned catalogue.
   catalogueGrounded=providerResult.catalogueVerifiedPrices===true,
