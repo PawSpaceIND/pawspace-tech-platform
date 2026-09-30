@@ -6,7 +6,8 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const shell=read("app/mobile-app/page.tsx"),gate=read("app/mobile-app/booking-entry-gate.tsx"),address=read("app/mobile-app/address-picker.tsx");
 
 test("all customer services use one guest-first booking entry instead of early per-service OTP gates",()=>{
- assert.match(shell,/!customer\?<GuestBookingPreview service=\{service\}/);
+ assert.match(shell,/!customer\?\(service\.name===?"Grooming"\?<Book service=\{service\} customer=\{null\}/);
+ assert.match(shell,/:<GuestBookingPreview service=\{service\}/);
  assert.match(shell,/bookingDetailsRequired\?<BookingEntryDetails/);
  assert.match(shell,/onLoggedIn=\{logged=>\{onLoggedIn\(logged\);setBookingDetailsRequired\(true\);\}\}/);
  assert.match(shell,/const open=.*setBookingDetailsRequired\(false\)/);
