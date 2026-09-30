@@ -55,7 +55,8 @@ test('multilingual readiness distinguishes language enablement from premium loca
  assert.equal(ready.allLanguagesConfigured,true);
  assert.equal(ready.languageDetection,true);
  assert.equal(ready.localizedVoicesComplete,true);
- assert.equal(ready.premiumCertified,true);
+ assert.equal(ready.configurationComplete,true);
+ assert.equal(ready.premiumCertified,false);
  const fallback=premiumLanguageReadiness({language_presets:premiumLanguagePresets(),agent:{prompt}});
  assert.equal(fallback.allLanguagesConfigured,true);
  assert.equal(fallback.premiumCertified,false);
@@ -69,3 +70,10 @@ test('multilingual readiness distinguishes language enablement from premium loca
  assert.equal(malformed.configuredCodes.includes('ta'),false);
  assert.equal(malformed.premiumCertified,false);
 });
+
+for(const invalid of [null,undefined,"",-1,NaN,Infinity,"900"]){
+ test(`premium latency rejects unmeasured or invalid input ${String(invalid)}`,()=>{
+  const metrics={replyStartP50Ms:900,replyStartP95Ms:1700,toolAcknowledgementMs:700,maxSilentGapMs:600,naturalTurns:12,repeatedKnownFacts:0,bookingCompleted:true,gracefulEnding:true,humanTransferReady:true};
+  for(const key of ['replyStartP50Ms','replyStartP95Ms','toolAcknowledgementMs','maxSilentGapMs','repeatedKnownFacts'])assert.equal(evaluatePremiumCallQuality({...metrics,[key]:invalid}).pass,false,key);
+ });
+}

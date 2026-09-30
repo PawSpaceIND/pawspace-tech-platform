@@ -38,6 +38,10 @@ test("voice operator console exercises every governed action without a live dial
 
     if (req.method() === "GET") {
       const scope = url.searchParams.get("scope");
+      if (scope === "sales_operations") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({data:{asOf:Date.now(),productionCertified:false,certificationReason:"Attended evidence required",sources:[],inbound:[],offers:[],pendingWebhooks:0,pendingCrmWrites:0}}) });
+        return;
+      }
       if (scope === "ledger") {
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: ledger }) });
         return;
@@ -81,7 +85,7 @@ test("voice operator console exercises every governed action without a live dial
   });
 
   await page.goto("/team/voice");
-  await expect(page.getByRole("heading", { name: "Automated outbound calling" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI voice and sales operations" })).toBeVisible();
   await expect(page.getByText("ENABLED", { exact: true })).toBeVisible();
 
   await page.getByRole("combobox", { name: "Use case", exact: true }).selectOption(useCase.code);
@@ -149,3 +153,36 @@ test("AI voice UAT page exposes browser-mic and carrier controls with safe readi
   await page.getByRole("button", { name: "Clipped / distorted", exact: true }).click();
   await expect(page.getByText("distorted", { exact: true })).toBeVisible();
 });
+
+for (const theme of ["emerald", "signature", "coral"]) for (const mode of ["light", "dark"]) {
+ test(`sales overview preserves evidence truth and theme ${theme}/${mode}`,async({page},info)=>{
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.addInitScript(({theme,mode})=>{localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);},{theme,mode});
+  const writes:Array<Record<string,unknown>>=[];
+  await page.route('**/api/voice-outbound**',async route=>{
+   const scope=new URL(route.request().url()).searchParams.get('scope');
+   expect(route.request().method()).toBe('GET');
+   const data=scope==='sales_operations'?{asOf:Date.now(),productionCertified:false,certificationReason:'Attended evidence required',sources:[{name:'Inbound sessions',available:false}],inbound:null,pendingWebhooks:2,pendingCrmWrites:1,offers:[{id:'O-1',service_code:'grooming',status:'completed',booking_id:'B-1',payment_link_status:'queued',payment_status:'created',provider_id:null}]}:scope==='ledger'?[]:readiness;
+   await route.fulfill({json:{data}});
+  });
+  await page.route('**/api/ai-business-configuration**',route=>route.fulfill({json:{data:{activeTopics:5,requiredTopics:10,sourceMatchedTopics:5,audioAcceptance:'not_certified',liveToolCoverage:'not_certified'}}}));
+  await page.route('**/api/admin/sales-targets',async route=>{
+   if(route.request().method()==='POST'){writes.push(route.request().postDataJSON());await route.fulfill({json:{data:{id:'target'}}});return;}
+   await route.fulfill({json:{data:[{id:'target',target_type:'booking_conversion',service_code:'grooming',daily_goal:2,achieved_count:0,status:'active',max_contacts_per_day:5}]}});
+  });
+  await page.goto('/v2/team/voice');
+  await expect(page.getByRole('heading',{name:'AI sales overview'})).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);
+  await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
+  await expect(page.getByText('Not certified',{exact:true})).toBeVisible();
+  await expect(page.getByText('Inbound sessions is unavailable.',{exact:false})).toBeVisible();
+  await expect(page.getByText('queued',{exact:true})).toBeVisible();
+  await expect(page.getByText('created',{exact:true})).toBeVisible();
+  const pause=page.getByRole('button',{name:'Pause target',exact:true});await expect(pause).toBeDisabled();
+  await page.getByLabel('Reason for a target change').fill('Pause while the team reviews call quality');
+  await pause.click();await expect(page.getByText('Target paused.',{exact:false})).toBeVisible();
+  expect(writes).toEqual([{action:'pause',id:'target',reason:'Pause while the team reviews call quality'}]);
+  expect(errors).toEqual([]);
+  await page.screenshot({path:info.outputPath(`voice-sales-${theme}-${mode}.png`),fullPage:true});
+ });
+}

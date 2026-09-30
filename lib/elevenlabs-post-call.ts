@@ -1,3 +1,5 @@
+import{voiceThreadIdForCall}from"./elevenlabs-custom-llm";
+import{recordBotCallDisposition}from"./bot-call-disposition";
 import{ensureCommunicationTables}from"./communication-engine";
 import{endInboundAiVoiceSession}from"./inbound-ai-telephony";
 import{ensureVoiceCallTables,reconcileVerifiedElevenLabsCompletion}from"./voice-outbound-governance";
@@ -39,6 +41,7 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
  await db.prepare("INSERT OR IGNORE INTO elevenlabs_voice_webhooks (event_id,conversation_id,event_type,status,detail_json,created_at) VALUES (?,?,?,'processing','{}',?)").bind(eventId,conversationId,type,now).run();
 
  const vars=initiationVariables(data),sessionId=text(vars.pawspace_voice_session_id),voiceCallId=text(vars.pawspace_voice_call_id);
+ if(sessionId&&voiceCallId)throw new Response("Ambiguous ElevenLabs call identity",{status:409});
  if(type==="call_initiation_failure"){
   if(sessionId&&voiceCallId)throw new Response("Ambiguous ElevenLabs failure identity",{status:409});
   let failureVoiceCallId="";
@@ -52,7 +55,7 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
   await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?").bind(JSON.stringify({outcome:"call_initiation_failure",sessionId:sessionId||null,voiceCallId:failureVoiceCallId||null}),now,eventId).run();
   return{duplicatePrevented:false,conversationId,status:"processed",outcome:"call_initiation_failure",voiceCallId:failureVoiceCallId||null};
  }
- let session:Row|null=null,threadId="",customerId="";
+ let session:Row|null=null,outboundCall:Row|null=null,threadId="",customerId="";
  if(sessionId){
   session=await db.prepare("SELECT * FROM inbound_ai_voice_sessions WHERE id=?").bind(sessionId).first<Row>();
   if(!session)throw new Response("PawSpace voice session was not found for ElevenLabs post-call event",{status:409});
@@ -60,9 +63,11 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
  }else if(voiceCallId){
   const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
   if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call was not found for ElevenLabs post-call event",{status:409});
-  customerId=text(call.customer_id);const open=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<Row>();threadId=text(open?.id);
-  if(!threadId){threadId=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.batch([
-   db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)").bind(threadId,customerId,text(call.booking_id)||null,text(call.lead_id)||null,now,now),
+  outboundCall=call;customerId=text(call.customer_id);threadId=voiceThreadIdForCall(voiceCallId);
+  const open=await db.prepare("SELECT id,customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
+  if(open&&text(open.customer_id)!==customerId)throw new Response("Voice thread customer mismatch",{status:409});
+  if(!open){await db.batch([
+   db.prepare("INSERT OR IGNORE INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'open','ai-orchestrator',NULL,?,?)").bind(threadId,customerId,text(call.booking_id)||null,text(call.lead_id)||null,now,now),
    db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(),threadId,"customer",customerId,customerId,now),
   ]);}
  }else throw new Response("PawSpace voice identity is missing from ElevenLabs dynamic variables",{status:409});
@@ -79,12 +84,25 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
  const analysis=(data.analysis||{})as Row,summary=text(analysis.transcript_summary||analysis.summary);
  const metadata=(data.metadata||{})as Row;
  if(session)await db.prepare("UPDATE ai_voice_calls SET disposition=COALESCE(NULLIF(?,''),disposition),outcome=COALESCE(outcome,'completed'),ended_at=COALESCE(ended_at,?) WHERE id=?")
-  .bind(summary.slice(0,1000),now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run().catch(()=>undefined);
- const completion=sessionId?await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_completed"}).catch(()=>null):null;
- const voiceCompletion=voiceCallId?await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:true,asOf:now}).catch(()=>null):null;
+  .bind(summary.slice(0,1000),now,text(vars.pawspace_ai_call_id||session.ai_call_id)).run();
+ // ElevenLabs transports the speech itself, so native turn_index may still be zero.
+ const customerTurns=transcript.filter(turn=>text(turn.role).toLowerCase()==="user"&&text(turn.message||turn.text)).length;
+ if(sessionId&&customerTurns)await db.prepare("UPDATE inbound_ai_voice_sessions SET turn_index=MAX(turn_index,?) WHERE id=?").bind(customerTurns,sessionId).run();
+ const completion=sessionId?await endInboundAiVoiceSession(db,{sessionId,outcome:"elevenlabs_completed"}):null;
+ let crmDisposition:unknown=null;
+ if(outboundCall&&text(outboundCall.lead_id)&&customerTurns){
+  crmDisposition=await recordBotCallDisposition(db,{
+   idempotencyKey:`elevenlabs:${voiceCallId}:completion`,leadId:text(outboundCall.lead_id),
+   channel:"voice",botProvider:"elevenlabs",callRef:conversationId,primaryTag:"info_shared",
+   notes:"Verified post-call transcript contains customer speech. No purchase or payment is inferred from conversation text.",
+   transcriptRef:threadId,actorId:"system:elevenlabs-post-call",asOf:now,
+  });
+  if(crmDisposition&&typeof crmDisposition==="object"&&"pending" in crmDisposition&&crmDisposition.pending)throw new Error("CRM disposition is still processing; retry post-call reconciliation");
+ }
+ const voiceCompletion=voiceCallId?await reconcileVerifiedElevenLabsCompletion(db,{callId:voiceCallId,conversationId,completed:true,asOf:now}):null;
  await db.prepare("UPDATE elevenlabs_voice_webhooks SET status='processed',detail_json=?,processed_at=? WHERE event_id=?")
   .bind(JSON.stringify({sessionId:sessionId||null,voiceCallId:voiceCallId||null,persistedTurns:persisted,transcriptTurns:transcript.length,summary:summary.slice(0,500),callDurationSecs:Number(metadata.call_duration_secs||metadata.call_duration_seconds||0)||null}),now,eventId).run();
- return{duplicatePrevented:false,conversationId,status:"processed",sessionId:sessionId||null,voiceCallId:voiceCallId||null,persistedTurns:persisted,completion,voiceCompletion};
+ return{duplicatePrevented:false,conversationId,status:"processed",sessionId:sessionId||null,voiceCallId:voiceCallId||null,persistedTurns:persisted,completion,voiceCompletion,crmDisposition};
 }
 
 export function elevenLabsTransferReadiness(env:Env){
