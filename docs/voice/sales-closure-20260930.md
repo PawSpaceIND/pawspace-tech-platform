@@ -275,3 +275,12 @@ single manually dispatched job while automatic calling workflows remain disabled
 
 All 16 local attended-window, launch-preflight and preservation checks passed. Both automatic
 voice activation workflows were independently verified `disabled_manually` before dispatch.
+
+
+Attended job 36728533044 refused before opening the window or dialing because the environment's
+optional production DB ID was absent. Its cleanup independently verified all phone gates paused.
+The window guard now reads authoritative Cloudflare database metadata and requires both the exact
+staging UUID and canonical `pawspace-staging` name before any Worker mutation, in addition to the
+verified staging binding. A supplied production DB ID must still differ. This retains positive
+isolation proof without relying on an unset optional environment variable. All 17 focused checks
+passed, including production database metadata refusal. The single-call approval remains unused.

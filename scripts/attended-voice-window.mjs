@@ -7,9 +7,12 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch){
  authorizedLaunchTester(env);
  if(!/^[a-f0-9]{40}$/.test(String(env.EXPECTED_SHA||''))||!env.SPECIALIST_CUSTOMER_ID)throw Error('Exact certified staging and canonical tester required');
  const account=String(env.CLOUDFLARE_ACCOUNT_ID||''),token=String(env.CLOUDFLARE_API_TOKEN||'');
- if(!/^[a-f0-9]{32}$/i.test(account)||!token||!env.STAGING_D1_ID||!env.PRODUCTION_D1_ID||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Isolated staging prerequisites required');
+ if(!/^[a-f0-9]{32}$/i.test(account)||!token||!env.STAGING_D1_ID||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Isolated staging prerequisites required');
  const path=`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/pawspace-staging/settings`;
  async function api(init={}){const r=await request(path,{...init,headers:{authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(30000)}),b=await r.json();if(!r.ok||b.success!==true)throw Error('Attended settings operation refused');return b.result;}
+ const metadataResponse=await request(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${encodeURIComponent(env.STAGING_D1_ID)}`,{headers:{authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(30000)});
+ const metadata=await metadataResponse.json();
+ if(!metadataResponse.ok||metadata.success!==true||metadata.result?.name!=='pawspace-staging'||metadata.result?.uuid!==env.STAGING_D1_ID)throw Error('Canonical isolated staging database not verified');
  const before=await api();
  const values=Object.fromEntries(before.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
  if(values.PAWSPACE_DEPLOYMENT_ENV!=='staging'||values.PAWSPACE_PAYMENT_ENV!=='sandbox'||values.PAWSPACE_VOICE_RUNTIME!=='elevenlabs'||values.PAWSPACE_VOICE_PHONE_TESTS_PAUSED!=='true'||values.PAWSPACE_VOICE_ENV!=='disabled'||!before.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID))throw Error('Paused isolated ElevenLabs staging required');

@@ -8,7 +8,8 @@ const vars={PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_PAYMENT_ENV:'sandbox',PAW
 const settings=()=>({bindings:[...Object.entries(vars).map(([name,text])=>({name,type:'plain_text',text})),{name:'DB',type:'d1',id:'stage'},{name:'KEY',type:'secret_text'}],annotations:{'workers/message':'fixture'}});
 test('one attended window inherits secret bindings and leaves native/automatic calling off',async()=>{
  let current=settings(),patches=0;
- await openAttendedVoiceWindow(env,async(url,init)=>{
+ await openAttendedVoiceWindow({...env,PRODUCTION_D1_ID:''},async(url,init)=>{
+  if(url.includes('/d1/database/'))return Response.json({success:true,result:{name:'pawspace-staging',uuid:'stage'}});
   assert.match(url,/workers\/scripts\/pawspace-staging\/settings$/);
   if(init.method==='PATCH'){
    patches++;
@@ -29,7 +30,7 @@ test('reruns, wrong recipient, live database and other use cases fail before net
 test('unpaused, production or non-ElevenLabs worker never receives an unlock PATCH',async()=>{
  for(const override of [{PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'false'},{PAWSPACE_DEPLOYMENT_ENV:'production'},{PAWSPACE_VOICE_RUNTIME:'native'}]){
   const current=settings();for(const [name,text] of Object.entries(override))current.bindings.find(x=>x.name===name).text=text;
-  await assert.rejects(openAttendedVoiceWindow(env,async(url,init)=>{assert.notEqual(init.method,'PATCH');return Response.json({success:true,result:current});}),/Paused isolated/);
+  await assert.rejects(openAttendedVoiceWindow(env,async(url,init)=>{assert.notEqual(init.method,'PATCH');return Response.json({success:true,result:url.includes('/d1/database/')?{name:'pawspace-staging',uuid:'stage'}:current});}),/Paused isolated/);
  }
 });
 test('attended workflow always restores pause even when unlock, policy or call fails',()=>{
@@ -40,4 +41,8 @@ test('attended workflow always restores pause even when unlock, policy or call f
  assert.match(job,/Restore and verify[\s\S]*?if: \$\{\{ always\(\) && inputs.confirm == 'attended-specialist-uat' \}\}/);
  assert.match(job,/run: node scripts\/pause-staging-phone-calls.mjs/);
  assert.doesNotMatch(job,/continue-on-error|workflow enable/);
+});
+
+test('wrong database metadata refuses before any worker mutation',async()=>{
+ await assert.rejects(openAttendedVoiceWindow({...env,PRODUCTION_D1_ID:''},async(url,init)=>{assert.ok(url.includes('/d1/database/'));assert.notEqual(init.method,'PATCH');return Response.json({success:true,result:{name:'pawspace-production',uuid:'stage'}});}),/Canonical isolated/);
 });
