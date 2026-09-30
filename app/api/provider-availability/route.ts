@@ -7,7 +7,10 @@ const selfServiceActor=(actor:Awaited<ReturnType<typeof resolveActor>>)=>actor.s
 
 export async function GET(request:Request){
  try{
-  const actor=await resolveActor(request),db=await database(),url=new URL(request.url);
+  const actor=await resolveActor(request),db=await database();
+  if(!selfServiceActor(actor)&&!actorManagesProviders(actor))
+    throw governedJsonError({error:"Provider calendar access is required"},403);
+  const url=new URL(request.url);
   const providerId=String(url.searchParams.get("providerId")||"").trim();
   const from=String(url.searchParams.get("from")||"").trim(),to=String(url.searchParams.get("to")||"").trim();
   if(!providerId||!from||!to)throw governedJsonError({error:"providerId, from and to are required"},400);
