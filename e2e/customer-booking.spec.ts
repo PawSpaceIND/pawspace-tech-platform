@@ -77,6 +77,105 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
   return page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: name }).first();
 }
 
+async function localBoardingCompletion(page: import("@playwright/test").Page, browser: import("@playwright/test").Browser, created: import("@playwright/test").Response) {
+  const result = await created.json();
+  const bookingId = String(result.data.bookingId), paymentId = String(result.data.paymentId);
+  const providerId = String(created.request().postDataJSON().provider.id);
+  const phones: Record<string, string> = { host_maya_rohan: "9000000953", host_sana: "9000000954", host_arjun_tara: "9000000955", host_priya_dev: "9000000956" };
+  expect(phones[providerId], "The selected host must be a documented local fixture").toBeTruthy();
+  const origin = new URL(page.url()).origin;
+  const host = await browser.newPage({ baseURL: origin, viewport: page.viewportSize()! });
+  const ops = await browser.newPage({ baseURL: origin });
+  // Existing seed-identities.mjs dispatch/MFA fixture, also used by hardened Grooming.
+  // This separate local Finance identity does not reuse or alter Sitting's enrolled staff account.
+  const finance = await browser.newPage({ baseURL: origin, extraHTTPHeaders: {
+    "oai-authenticated-user-email": "e2e.finance@pawspace.test", cookie: "pawspace_admin_mfa=e2e-finance-mfa-session-token",
+  } });
+  const dismissPrivacy = async (target: import("@playwright/test").Page) => {
+    const essential = target.getByRole("button", { name: "Essential only", exact: true });
+    if (await essential.isVisible()) await essential.click();
+  };
+  const loginHost = async (target: import("@playwright/test").Page, id: string) => {
+    await target.goto("/partner/onboarding"); await dismissPrivacy(target);
+    await target.getByPlaceholder("10-digit phone number").fill(phones[id]);
+    await target.getByRole("button", { name: "Send OTP", exact: true }).click();
+    const sandbox = target.getByText(/Sandbox code \(no real SMS yet\):/i); await expect(sandbox).toBeVisible();
+    const code = (await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1]; expect(code).toMatch(/^\d{6}$/);
+    await target.getByPlaceholder("6-digit code").fill(code!); await target.getByRole("button", { name: "Verify & continue", exact: true }).click();
+    await expect.poll(async () => { const r = await target.request.get("/api/identity-session"); return r.ok() ? (await r.json()).data.subjectId : null; }).toBe(id);
+  };
+  try {
+    const account = await page.request.get("/api/customer-account"); expect(account.ok()).toBeTruthy();
+    const before = (await account.json()).data.bookings.filter((row: { id: string }) => row.id === bookingId);
+    expect(before).toHaveLength(1); expect(before[0].status).toBe("payment_pending");
+    const staysBefore = await page.request.get(`/api/boarding-stays?scope=customer&bookingId=${encodeURIComponent(bookingId)}`); expect(staysBefore.ok()).toBeTruthy();
+    const stay = (await staysBefore.json()).data[0], stayId = String(stay.id);
+    expect(stay.booking_id).toBe(bookingId); expect(stay.host_provider_id).toBe(providerId);
+    await loginHost(host, providerId);
+    const unpaid = await host.request.post("/api/boarding-stays", { data: { stayId, action: "accept", idempotencyKey: `unpaid-host-${stayId}` } });
+    expect(unpaid.status(), await unpaid.text()).toBe(409);
+    expect((await unpaid.json()).code).toBe("boarding_payment_not_captured");
+    const stillPending = await page.request.get("/api/customer-account"); expect(stillPending.ok()).toBeTruthy(); const pendingRows = (await stillPending.json()).data.bookings.filter((row: { id: string }) => row.id === bookingId); expect(pendingRows).toHaveLength(1); expect(pendingRows[0].status).toBe("payment_pending");
+    const billing = await page.request.get("/api/customer-billing"); expect(billing.ok()).toBeTruthy();
+    const payment = (await billing.json()).data.payments.find((row: { id: string }) => row.id === paymentId);
+    expect(payment.status).toBe("created"); expect(payment.gateway).toBe("uat_sandbox");
+    const amount = Number(payment.amount_due_now); expect(amount).toBeGreaterThan(0); expect(amount).toBe(Number(payment.amount));
+    const linked = await finance.request.post("/api/grooming-payment-sandbox", { data: { action: "link_order", bookingId, gatewayOrderId: `order_e2e_boarding_${bookingId}` } });
+    expect(linked.status(), await linked.text()).toBe(201); expect((await linked.json()).data).toMatchObject({ environment: "sandbox", synthetic: true });
+    const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_e2e_boarding_${bookingId}`, gatewayPaymentId: `pay_e2e_boarding_${bookingId}`, amount, currency: "INR" };
+    const captured = await finance.request.post("/api/grooming-payment-sandbox", { data: capture }); expect(captured.status(), await captured.text()).toBe(201);
+    expect((await captured.json()).data).toMatchObject({ synthetic: true, environment: "sandbox", result: { status: "processed", duplicate: false } });
+    const replay = await finance.request.post("/api/grooming-payment-sandbox", { data: capture }); expect(replay.status(), await replay.text()).toBe(201); expect((await replay.json()).data.result.duplicate).toBe(true);
+    await page.goto(`/v2/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`); await dismissPrivacy(page);
+    await page.getByPlaceholder("Name and reachable phone").fill("UAT emergency contact: 9000000952");
+    await page.getByPlaceholder("Clinic / vet and contact").fill("UAT vet contact: 9000000951");
+    await page.getByPlaceholder("Food, portions and times").fill("Labelled food twice daily; fresh water always.");
+    await page.getByPlaceholder("Medicine, dose, allergy or none").fill("none");
+    await page.getByPlaceholder("Sleep, walks, separation or other care needs").fill("Calm indoor rest; leash walks only.");
+    const care = page.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "submit_care_plan");
+    await page.getByRole("button", { name: "Save canonical care plan", exact: true }).click(); expect((await care).status()).toBe(200);
+    const stranger = await browser.newPage({ baseURL: origin });
+    try { await loginHost(stranger, Object.keys(phones).find(id => id !== providerId)!); const denied = await stranger.request.post("/api/boarding-stays", { data: { stayId, action: "accept", idempotencyKey: `wrong-host-${stayId}` } }); expect(denied.status()).toBe(403); } finally { await Promise.allSettled([stranger.close()]); }
+    await host.goto("/host"); await dismissPrivacy(host); await host.getByRole("button", { name: /Requests/ }).click();
+    const offer = host.getByText(bookingId, { exact: false }).first().locator("xpath=ancestor::button[1]"); await offer.click();
+    const accepted = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "accept");
+    await host.getByRole("button", { name: "Accept & lock capacity", exact: true }).click(); expect((await accepted).status()).toBe(200);
+    await host.goto(`/host?bookingId=${encodeURIComponent(bookingId)}`);
+    const ownStay = host.getByRole("region", { name: `Stay ${bookingId}`, exact: true });
+    const checkedIn = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "check_in");
+    await ownStay.getByRole("button", { name: "✓ Check in", exact: true }).click(); expect((await checkedIn).status()).toBe(200);
+    for (const [name, type] of [["🍲 Log meal", "meal"], ["🎾 Log play", "play"]]) {
+      const event = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "care_event" && r.request().postDataJSON()?.careEventType === type);
+      await ownStay.getByRole("button", { name, exact: true }).click(); expect((await event).status()).toBe(200);
+    }
+    const access = process.env.PW_STAFF_UAT_ACCESS_CODE; expect(access).toBeTruthy();
+    await ops.goto("/staging-login"); await dismissPrivacy(ops); await ops.getByPlaceholder("shared UAT access code").fill(access!);
+    const signedIn = ops.waitForResponse(r => r.url().endsWith("/api/staging-login") && r.request().method() === "POST");
+    await ops.getByRole("button", { name: /Manager \(operations/ }).click(); expect((await signedIn).status()).toBe(200); await ops.waitForURL("**/booking-command-center");
+    const prepared = await host.request.post("/api/boarding-proof", { data: { stayId, action: "prepare_media", idempotencyKey: `board-proof-${bookingId}`, purpose: "stay_update", mimeType: "image/jpeg", sizeBytes: 128, sha256: "c".repeat(64) } }); expect(prepared.status(), await prepared.text()).toBe(200);
+    const asset = (await prepared.json()).data, mediaRef = String(asset.mediaRef), uploadToken = String(asset.upload.token);
+    const finalized = await ops.request.post("/api/boarding-proof", { data: { stayId, action: "sandbox_finalize_media", idempotencyKey: `board-finalize-${bookingId}`, mediaRef, uploadToken, storageObjectId: `e2e-board-${bookingId}` } }); expect(finalized.status(), await finalized.text()).toBe(200);
+    const selfScan = await host.request.post("/api/boarding-proof", { data: { stayId, action: "record_media_scan", idempotencyKey: `board-self-scan-${bookingId}`, mediaRef, scanResult: "clean", reason: "Uploader must not self-approve" } }); expect(selfScan.status()).toBe(403);
+    const scanned = await ops.request.post("/api/boarding-proof", { data: { stayId, action: "record_media_scan", idempotencyKey: `board-scan-${bookingId}`, mediaRef, scanResult: "clean", reason: "Independent synthetic UAT scan review" } }); expect(scanned.status(), await scanned.text()).toBe(200);
+    const daily = await host.request.post("/api/boarding-proof", { data: { stayId, action: "record_daily_update", idempotencyKey: `board-daily-${bookingId}`, mediaRef, note: "Synthetic care proof: meal, play and settled rest complete." } }); expect(daily.status(), await daily.text()).toBe(200);
+    await host.goto(`/host/proof?stayId=${encodeURIComponent(stayId)}`); await expect(host.locator("main")).toContainText("Verified · usable as proof");
+    await host.goto(`/host?bookingId=${encodeURIComponent(bookingId)}`); host.once("dialog", dialog => void dialog.accept());
+    const checkedOut = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "check_out");
+    await ownStay.getByRole("button", { name: "✓ Check out", exact: true }).click(); const checkout = await checkedOut; expect(checkout.status(), await checkout.text()).toBe(200);
+    const completed = (await checkout.json()).data; expect(completed.status).toBe("completed"); expect(completed.payout).toBe("accrued"); expect(completed.tax).toBe("resolved"); expect(completed.finance.ledgerStatus).toBe("balanced"); expect(completed.finance.providerId).toBe(providerId);
+    const finalAccount = await page.request.get("/api/customer-account"); expect(finalAccount.ok()).toBeTruthy(); const rows = (await finalAccount.json()).data.bookings.filter((row: { id: string }) => row.id === bookingId); expect(rows).toHaveLength(1); expect(rows[0].status).toBe("completed"); expect(rows[0].providerId).toBe(providerId);
+    const finalBilling = await page.request.get("/api/customer-billing"); expect(finalBilling.ok()).toBeTruthy(); const finalPayments = (await finalBilling.json()).data.payments.filter((row: { id: string }) => row.id === paymentId); expect(finalPayments).toHaveLength(1); expect(finalPayments[0].status).toBe("captured"); expect(finalPayments[0].gateway).toBe("razorpay_sandbox"); expect(Number(finalPayments[0].amount)).toBe(amount);
+    await page.reload(); await expect(page.getByText(/Completed/i).first()).toBeVisible(); await page.screenshot({ path: test.info().outputPath("customer-boarding-completed.png"), fullPage: true });
+    await ops.goto("/v2/team/operations/boarding"); await ops.getByRole("button").filter({ hasText: bookingId }).click(); await expect(ops.locator("main")).toContainText("Stay Completed"); await expect(ops.locator("main")).toContainText("Payment Captured");
+    const opsFinance = await ops.request.get(`/api/boarding-finance?bookingId=${encodeURIComponent(bookingId)}`); expect(opsFinance.status()).toBe(403);
+    const financeRead = await finance.request.get(`/api/boarding-finance?bookingId=${encodeURIComponent(bookingId)}`); expect(financeRead.status(), await financeRead.text()).toBe(200);
+    const truth = (await financeRead.json()).data; expect(truth.stay.booking_status).toBe("completed"); expect(truth.stay.stay_status).toBe("completed"); expect(truth.stay.payment_status).toBe("captured"); expect(Number(truth.stay.total_amount)).toBe(amount);
+    await finance.goto(`/v2/team/finance/boarding?bookingId=${encodeURIComponent(bookingId)}`); await dismissPrivacy(finance); await expect(finance.getByRole("heading", { name: "Boarding finance & reconciliation", exact: true })).toBeVisible(); await expect(finance.getByPlaceholder("Canonical Boarding booking ID", { exact: true })).toHaveValue(bookingId); await expect(finance.getByText("completed", { exact: true })).toHaveCount(2); await expect(finance.getByText("captured", { exact: true })).toBeVisible();
+    await finance.screenshot({ path: test.info().outputPath("boarding-finance-completed.png"), fullPage: true }); await ops.screenshot({ path: test.info().outputPath("boarding-operations-completed.png"), fullPage: true }); await host.screenshot({ path: test.info().outputPath("boarding-host-completed.png"), fullPage: true });
+    console.log("BOARDING-PERSISTENT", JSON.stringify({ bookingId, paymentId, providerId, customerStatus: "completed", partnerStatus: "completed", paymentStatus: "captured", gateway: "razorpay_sandbox", paymentEvidence: "staff_sandbox_simulator", ledger: completed.finance.ledgerStatus, liveMoney: false }));
+  } finally { await Promise.allSettled([host.close(), ops.close(), finance.close()]); }
+}
+
 test("customer: sandbox sign-in -> grooming checkout -> persisted booking", async ({ page }) => {
   test.setTimeout(90_000);
   await sandboxLogin(page);
@@ -287,9 +386,9 @@ test("address choice: customer can recover from a wrong map match and editing cl
  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
 });
 
-for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting: payment_pending -> simulated capture -> same-booking provider completion and finance":"boarding: customer-selected afternoon and evening times reach the real quote",async({page,browser,baseURL})=>{
- if(mode==="sitting"){
-  test.setTimeout(120_000);
+for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting: payment_pending -> simulated capture -> same-booking provider completion and finance":"boarding: quote -> payment_pending -> simulated capture -> host completion and finance",async({page,browser,baseURL})=>{
+ {
+  test.setTimeout(mode==="sitting"?120_000:180_000);
   // This capture/lifecycle case belongs only to the documented disposable persona runner.
   // Never point its Finance simulator at staging or an externally hosted origin.
   const origin=new URL(baseURL!);expect(origin.protocol).toBe("http:");expect(["127.0.0.1","localhost"]).toContain(origin.hostname);
@@ -341,6 +440,13 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   await page.getByLabel("Visit start time",{exact:true}).fill("13:30");
   const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
   await page.getByRole("button",{name:"See available sitters",exact:true}).click();
+ }else{
+  await page.getByRole("button",{name:/← Plan/}).click();
+  const finalQuote=page.waitForResponse(r=>r.url().endsWith("/api/boarding-commercial")&&r.request().method()==="POST"&&r.request().postDataJSON()?.scheduledStart===`${date}T07:30:00.000Z`&&r.request().postDataJSON()?.scheduledEnd===`${date}T11:30:00.000Z`);
+  await page.getByLabel("Check-in time",{exact:true}).fill("13:00");await page.getByLabel("Check-out time",{exact:true}).fill("17:00");
+  const quote=await finalQuote;expect(quote.status(),await quote.text()).toBe(201);
+  const executionNow=Number(process.env.PAWSPACE_UAT_EXECUTION_NOW_MS);expect(executionNow).toBeGreaterThanOrEqual(Date.parse(`${date}T07:30:00.000Z`));expect(executionNow).toBeLessThan(Date.parse(`${date}T11:30:00.000Z`));
+  await page.getByRole("button",{name:"See available homes",exact:true}).click();
  }
  await page.getByRole("button",{name:/^Continue with /}).click();
  await page.getByLabel("Vet contact",{exact:true}).fill("UAT vet contact: 9000000951");
@@ -358,7 +464,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
  await expect(intro).toContainText(meeting.request.id);await expect(intro).toContainText("not proof of payment or service completion");
  await intro.getByRole("button",{name:"Refresh introduction requests",exact:true}).click();await expect(intro).toContainText(meeting.request.id);
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
- const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:30 pm":"6:00 pm");await expect(review).toContainText(mode==="sitting"?"1 hour":"4 hours");
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:30 pm":"1:00 pm");await expect(review).toContainText(mode==="sitting"?"1 hour":"4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
@@ -370,6 +476,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   const created=page.waitForResponse(response=>response.url().endsWith("/api/canonical-bookings")&&response.request().method()==="POST");
   await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);
   await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible({timeout:30_000});
+  await localBoardingCompletion(page,browser,response);
  }else{
   const created=page.waitForResponse(response=>response.url().endsWith("/api/sitting-bookings")&&response.request().method()==="POST");await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);const body=await response.json();const bookingId=String(body.data.bookingId),paymentId=String(body.data.paymentId);expect(bookingId).not.toBe("");expect(paymentId).toMatch(/^PAY-SIT-/);
   await expect.poll(async()=>{const saved=await page.context().request.get("/api/customer-account");if(!saved.ok())return "account_unavailable";const account=await saved.json();const row=account.data.bookings.find((booking:{id:string})=>booking.id===bookingId);return row?.status??"missing";},{timeout:30_000,message:"Sitting booking should enter payment_pending before the payment review UI is asserted"}).toBe("payment_pending");
