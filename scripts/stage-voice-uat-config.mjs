@@ -36,7 +36,9 @@ if (problems.length) {
 cfg.vars = {
   ...cfg.vars,
   PAWSPACE_VOICE_ENV: "uat",
+  PAWSPACE_VOICE_RUNTIME: "elevenlabs",
   PAWSPACE_VOICE_UAT_APPROVED: "true",
+  PAWSPACE_VOICE_NATIVE_UAT_APPROVED: "true",
   PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED: "true",
   PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "true",
   PAWSPACE_VOICE_UAT_AUTORUN: "true",
@@ -49,6 +51,7 @@ cfg.vars = {
   PAWSPACE_VOICE_STATUS_CALLBACK_URL: callback,
   PAWSPACE_VOICE_STREAM_URL: streamUrl,
   VOICE_STT_MODEL: "@cf/openai/whisper-large-v3-turbo",
+  VOICE_AGENTSTREAM_STT_LANGUAGE: "auto",
   VOICE_TTS_MODEL: "@cf/myshell-ai/melotts",
   VOICE_CARRIER_TTS_MODEL: "@cf/deepgram/aura-2-en",
   VOICE_SPEECH_TIMEOUT_MS: "12000",
@@ -62,4 +65,4 @@ for (const secretName of [
 ]) delete cfg.vars[secretName];
 
 writeFileSync(path, JSON.stringify(cfg));
-console.log("Voice UAT overlay applied: bidirectional AgentStream enabled, carrier linear16 TTS pinned, one-shot 10:00 IST queue armed; secret values withheld.");
+console.log("Voice UAT overlay applied: ordinary routing pinned to ElevenLabs, controlled native AgentStream UAT enabled, STT auto-detection enabled, carrier linear16 TTS pinned; secret values withheld.");
