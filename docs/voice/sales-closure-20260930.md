@@ -302,3 +302,11 @@ from historical frequency while checking consent, opt-out, approvals, exact allo
 The attended workflow now relies on that endpoint's authoritative policy before dialing instead of
 requiring the ordinary-sales preview to pass. No application policy, cap or consent record changes.
 The separate ordinary-sales preflight remains strict. All prior attempts placed zero handset calls.
+
+
+Attended request 36730202645 returned HTTP 500 and pause cleanup passed. Read-only diagnostic
+36730889781 found no call-ledger row and no ElevenLabs conversation in the exact 14:36–14:38 UTC
+interval. Worker telemetry was unavailable, so the exception is not conclusively attributed.
+The temporary window now also waits for authenticated live readiness to prove effective UAT,
+sales approval, single allowlist and self-test approval before the call request. Cloudflare settings
+readback alone can precede runtime propagation. Failure to observe effective approval refuses dialing.

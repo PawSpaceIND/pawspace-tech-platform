@@ -2,7 +2,7 @@
 // No dial operation and no application policy override. The workflow always restores the pause.
 import {pathToFileURL} from 'node:url';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
-export async function openAttendedVoiceWindow(env=process.env,request=fetch){
+export async function openAttendedVoiceWindow(env=process.env,request=fetch,options={}){
  if(env.PILOT_ACTION!=='attended-specialist-uat'||String(env.GITHUB_RUN_ATTEMPT)!=='1'||env.SPECIALIST_USE_CASE!=='grooming_sales')throw Error('One first-attempt attended Grooming job required');
  authorizedLaunchTester(env);
  if(!/^[a-f0-9]{40}$/.test(String(env.EXPECTED_SHA||''))||!env.SPECIALIST_CUSTOMER_ID)throw Error('Exact certified staging and canonical tester required');
@@ -30,6 +30,19 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch){
  await api({method:'PATCH',body:form});
  const after=await api(),afterVars=Object.fromEntries(after.bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text??x.value]));
  if(!Object.entries(changes).every(([name,value])=>afterVars[name]===value)||!after.bindings.some(x=>x.type==='d1'&&x.name==='DB'&&x.id===env.STAGING_D1_ID)||before.bindings.some(x=>!after.bindings.some(y=>y.name===x.name)))throw Error('Attended settings readback failed; restore phone pause');
+ // Worker settings readback can precede propagation to live requests. Never dial on metadata alone.
+ const delay=options.delay||((ms)=>new Promise(resolve=>setTimeout(resolve,ms)));
+ let effective=false;
+ for(let attempt=0;attempt<5;attempt++){
+  const r=await request(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(5000)}),b=await r.json();
+  const a=await request(origin+'/api/voice-outbound?scope=ai_self_test',{headers:{cookie},signal:AbortSignal.timeout(5000)}),ab=await a.json();
+  if(!r.ok||!a.ok)throw Error('Effective attended approval read refused');
+  const gate=b.data?.gate,ai=ab.data;
+  effective=b.data?.transport?.provider==='elevenlabs_exotel'&&gate?.mode==='uat'&&gate?.enabled===true&&gate?.uatApproved===true&&gate?.salesOutboundApproved===true&&gate?.allowlistSize===1&&ai?.mode==='uat'&&ai?.approved===true&&ai?.singleRecipient===true;
+  if(effective)break;
+  if(attempt<4)await delay(2000);
+ }
+ if(!effective)throw Error('Attended approvals have not reached the live runtime; do not dial');
  console.log('ATTENDED_VOICE_WINDOW='+JSON.stringify({verified:true,mode:'uat',provider:'elevenlabs',nativeApproved:false,autorun:false,dialed:false}));
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await openAttendedVoiceWindow();
