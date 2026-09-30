@@ -89,7 +89,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
-    concurrency: pawspace-staging-deploy
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
     env:
       DEPLOY_SHA: ${{ github.event.inputs.expected_sha }}
     steps:
