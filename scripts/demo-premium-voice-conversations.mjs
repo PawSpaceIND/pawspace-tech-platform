@@ -73,6 +73,11 @@ for(const sessionScenario of PREMIUM_AUDIO_SCENARIOS){
   for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
   await waitFor(()=>Boolean(state.transcript)&&(isSubstantiveVoiceReply(state.reply)||isControlledVoiceReply(state.reply))&&state.reply.length>=30&&state.audioBytes>1600&&state.nonSilentBytes>100&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500,{microphoneOpen:true});
   console.log('VOICE_DEMO_OBSERVED='+JSON.stringify({scenario:sessionScenario.id,turns,transcript:state.transcript,reply:state.reply,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes}));
+  // Preserve observed speech even when a semantic check fails; never substitute scripted audio.
+  const observedRaw=Buffer.concat(returnedAudio),observedName=sessionScenario.id+'-'+scenario.id+'-observed';
+  await writeFile('voice-demo-results/'+observedName+'.raw',observedRaw);
+  const observedFormat=audioFormat(outputFormat);
+  execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(observedFormat.rate),'-ac','1','-i','voice-demo-results/'+observedName+'.raw','voice-demo-results/'+observedName+'.wav']);
   assertDemoResponse(scenario,state);if(scenario.forbidden?.test(state.reply))throw Error('Premium audio turn violated '+scenario.id);
   const playbackCompletedMs=Date.now()-started,utteranceEndAt=started+(16000+pcm.length)/32000*1000;sessionInputBytes+=pcm.length;
   turns.push({scenario:scenario.id,prompt:scenario.text,transcript:state.transcript,reply:state.reply,inputToPlaybackCompletedMs:playbackCompletedMs,utteranceEndToFirstAudioMs:firstAudio?Math.max(0,firstAudio-utteranceEndAt):null,utteranceEndToReplyEventMs:replyEventAt?Math.max(0,replyEventAt-utteranceEndAt):null,audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,playbackComplete:!state.replyInterrupted});
