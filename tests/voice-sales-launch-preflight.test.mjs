@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {canonicalDialNumber} from '../lib/voice-call-gate.ts';
 import {authorizedLaunchTester,inspectVoiceSalesLaunch} from '../scripts/voice-sales-launch-preflight.mjs';
 const env={PAWSPACE_VOICE_UAT_ALLOWLIST:'+91 98765 43210',EXPECTED_TESTER_SHA256:createHash('sha256').update('9876543210').digest('hex')};
 test('fresh launch requires the full authorized number, not a matching last four',()=>{
  assert.equal(authorizedLaunchTester(env),'+919876543210');
+ assert.equal(authorizedLaunchTester(env),canonicalDialNumber(env,env.PAWSPACE_VOICE_UAT_ALLOWLIST));
  assert.throws(()=>authorizedLaunchTester({...env,PAWSPACE_VOICE_UAT_ALLOWLIST:'9876543210,9876543211'}));
  assert.throws(()=>authorizedLaunchTester({...env,PAWSPACE_VOICE_UAT_ALLOWLIST:'9999943210'}),/authorized recipient/);
  assert.throws(()=>authorizedLaunchTester({...env,EXPECTED_TESTER_SHA256:''}));

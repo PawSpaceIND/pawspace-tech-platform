@@ -154,10 +154,10 @@ test("AI voice UAT page exposes browser-mic and carrier controls with safe readi
   await expect(page.getByText("distorted", { exact: true })).toBeVisible();
 });
 
-for (const theme of ["emerald", "signature", "coral"]) for (const mode of ["light", "dark"]) {
- test(`sales overview preserves evidence truth and theme ${theme}/${mode}`,async({page},info)=>{
+for (const theme of ["emerald", "signature", "coral"]) for (const mode of ["light", "dark"]) for (const style of ["professional", "cartoon"]) {
+ test(`sales overview preserves evidence truth and theme ${theme}/${mode}/${style}`,async({page},info)=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.addInitScript(({theme,mode})=>{localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);},{theme,mode});
+  await page.addInitScript(({theme,mode,style})=>{localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.visual-style',style);},{theme,mode,style});
   const writes:Array<Record<string,unknown>>=[];
   await page.route('**/api/voice-outbound**',async route=>{
    const scope=new URL(route.request().url()).searchParams.get('scope');
@@ -174,6 +174,7 @@ for (const theme of ["emerald", "signature", "coral"]) for (const mode of ["ligh
   await expect(page.getByRole('heading',{name:'AI sales overview'})).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
+  await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);
   await expect(page.getByText('Not certified',{exact:true})).toBeVisible();
   await expect(page.getByText('Inbound sessions is unavailable.',{exact:false})).toBeVisible();
   await expect(page.getByText('queued',{exact:true})).toBeVisible();
@@ -183,6 +184,6 @@ for (const theme of ["emerald", "signature", "coral"]) for (const mode of ["ligh
   await pause.click();await expect(page.getByText('Target paused.',{exact:false})).toBeVisible();
   expect(writes).toEqual([{action:'pause',id:'target',reason:'Pause while the team reviews call quality'}]);
   expect(errors).toEqual([]);
-  await page.screenshot({path:info.outputPath(`voice-sales-${theme}-${mode}.png`),fullPage:true});
+  await page.screenshot({path:info.outputPath(`voice-sales-${theme}-${mode}-${style}.png`),fullPage:true});
  });
 }
