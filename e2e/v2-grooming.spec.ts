@@ -154,18 +154,26 @@ test("V2 contract: care -> single booking -> verified capture -> canonical confi
         const v = value / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
       }); return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
     };
-    const contrast = (element: Element) => {
-      const a = luminance(getComputedStyle(element).color), b = luminance(getComputedStyle(summary).backgroundColor);
+    const contrast = (element: Element, surface: Element = summary) => {
+      const a = luminance(getComputedStyle(element).color), b = luminance(getComputedStyle(surface).backgroundColor);
       return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
     };
     const captions = [group.querySelector(":scope > small"), ...summary.querySelectorAll('[class*="safe"] p,[class*="footnote"]')].filter(Boolean) as Element[];
+    const coupon = summary.querySelector('[role="group"][aria-label="Coupon code"]')!;
+    const couponHelper = coupon.querySelector(":scope > small")!;
+    const helperStyle = getComputedStyle(couponHelper);
+    const helperBounds = couponHelper.getBoundingClientRect();
     return {
+      couponHelperContrast: contrast(couponHelper, coupon),
+      couponHelperVisible: helperBounds.width > 0 && helperBounds.height > 0 && helperStyle.visibility === "visible" && Number(helperStyle.opacity) > 0,
       stacked: boxes.every((box, i) => i === 0 || box.top >= boxes[i - 1].bottom - 1),
       contained: [...group.querySelectorAll("b,small,strong"), ...captions].every(line),
       choicesFit: buttons.every(button => button.scrollHeight <= button.clientHeight + 1 && button.clientHeight >= 44),
-      contrast: captions.map(contrast),
+      contrast: captions.map(element => contrast(element)),
     };
   });
+  expect(summaryAudit.couponHelperVisible).toBe(true);
+  expect(summaryAudit.couponHelperContrast).toBeGreaterThanOrEqual(4.5);
   expect(summaryAudit.stacked).toBe(true);
   expect(summaryAudit.contained).toBe(true);
   expect(summaryAudit.choicesFit).toBe(true);

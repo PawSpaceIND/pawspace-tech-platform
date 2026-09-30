@@ -158,11 +158,11 @@
 }
 
 /* Summary payment timing is a choice list, not the address-entry three-column grid. */
-.page.page .summary .addressBox { grid-template-columns:minmax(0,1fr); align-items:stretch; gap:12px; }
-.page.page .summary .addressBox .providerGrid { grid-template-columns:minmax(0,1fr); min-width:0; }
-.page.page .summary .addressBox button { height:auto; min-height:76px; min-width:0; align-items:center; background:var(--brand-surface) !important; color:var(--brand-text) !important; }
-.page.page .summary .addressBox button small { color:var(--brand-muted) !important; line-height:1.5; }
-.page.page .summary .addressBox button strong { color:var(--brand-text) !important; }
-.page.page .summary .addressBox > :is(b,small),.page.page .summary .safe p,.page.page .summary .safe > span,.page.page .summary .footnote { color:var(--brand-on-primary) !important; }
-.page.page .summary .addressBox button b { color:var(--brand-text) !important; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] { grid-template-columns:minmax(0,1fr); align-items:stretch; gap:12px; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] .providerGrid { grid-template-columns:minmax(0,1fr); min-width:0; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] button { height:auto; min-height:76px; min-width:0; align-items:center; background:var(--brand-surface) !important; color:var(--brand-text) !important; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] button small { color:var(--brand-muted) !important; line-height:1.5; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] button strong { color:var(--brand-text) !important; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] > :is(b,small),.page.page .summary .safe p,.page.page .summary .safe > span,.page.page .summary .footnote { color:var(--brand-on-primary) !important; }
+.page.page .summary > .addressBox[aria-label="Payment timing"] button b { color:var(--brand-text) !important; }
 .page.page .summary .safe { background:transparent; }
