@@ -73,3 +73,66 @@
 /* Summary labels sit on brand-primary, so use its foreground rather than light-surface accents. */
 .page.page .summary :is(.summaryTop span, .summaryTop b, .summaryPet small, .summaryRows span,
   .priceBlock > span, .priceBlock > b, .priceBlock small) { color:var(--brand-on-primary) !important; }
+
+/* Premium Grooming phase 1: existing four-step flow, presentation only. */
+.page.page { padding-inline:clamp(12px,3vw,32px); }
+.page.page .nav { max-width:1100px; padding:16px 0; gap:20px; grid-template-columns:minmax(100px,1fr) minmax(0,600px) auto; }
+.page.page .brand img { width:112px; max-height:48px; }
+.page.page .hero { margin:28px auto; padding:0; gap:24px; }
+.page.page .hero h1 { font-size:clamp(28px,3.5vw,40px); line-height:1.15; letter-spacing:-.025em; margin:10px 0; }
+.page.page .hero p { font-size:15px; line-height:1.65; max-width:720px; }
+.page.page .hero .eyebrow { padding:6px 10px; letter-spacing:.1em; }
+.page.page .layout { padding:0 0 32px; gap:24px; grid-template-columns:minmax(0,1fr) 350px; }
+.page.page .journey { gap:24px; }
+.page.page .step { padding:24px; background:var(--brand-surface) !important; border:1px solid var(--brand-line); border-radius:var(--paw-card-radius); box-shadow:var(--brand-shadow); backdrop-filter:none; }
+.page.page .stepHead { gap:12px; margin-bottom:20px; align-items:center; }
+.page.page .stepHead > span { width:36px; height:36px; flex:none; border-radius:var(--paw-control-radius); }
+.page.page .stepHead h2 { font-size:22px; line-height:1.35; letter-spacing:-.02em; }
+.page.page .stepHead small { font-size:11px !important; line-height:1.5; letter-spacing:.12em; }
+.page.page .stepNavigation { gap:8px; }
+.page.page .stepNavigation button { min-height:48px; padding:10px 8px; line-height:1.35; font-size:13px; border-radius:var(--paw-control-radius); }
+.page.page .stepNavigation button span { overflow-wrap:anywhere; }
+.page.page .stepNavigation button:disabled { opacity:1; border-style:dashed; }
+.page.page .stepNavigation button[aria-current="step"] { box-shadow:0 0 0 2px var(--brand-surface),0 0 0 3px var(--brand-primary); }
+.page.page .petCard,.page.page .providerCard { min-height:76px; padding:16px; gap:12px; border-radius:var(--paw-control-radius); }
+.page.page .petCard div,.page.page .providerCard div { overflow-wrap:anywhere; }
+.page.page .packageGrid,.page.page .petGrid,.page.page .providerGrid { gap:12px; }
+.page.page .packageCard { padding:20px; border-radius:var(--paw-card-radius); }
+.page.page .packageCard h3 { font-size:20px; line-height:1.35; margin:12px 0 8px; }
+.page.page .packageCard p { line-height:1.6; margin:0 0 12px; }
+.page.page .packageBottom { gap:12px; align-items:center; }
+.page.page .journey .addressBox { gap:12px; grid-template-columns:minmax(0,1fr) 120px; }
+.page.page .journey .addressBox > button { grid-column:1 / -1; min-height:52px; }
+.page.page .journey .addressBox label { min-width:0; font-size:13px; line-height:1.5; }
+.page.page .journey .addressBox input { width:100%; min-width:0; box-sizing:border-box; }
+.page.page .helper { line-height:1.6; margin-top:12px; }
+.page.page .summary { width:100%; box-sizing:border-box; padding:24px; border-radius:var(--paw-card-radius); }
+.page.page .summaryTop { flex-wrap:wrap; gap:8px; }
+.page.page .summaryPet { gap:14px; }
+.page.page .summaryPet div { min-width:0; overflow-wrap:anywhere; }
+.page.page .summaryRows { gap:16px; }
+.page.page .summaryRows div { gap:16px; align-items:baseline; }
+.page.page .summaryRows b { min-width:0; max-width:65%; overflow-wrap:anywhere; line-height:1.5; }
+.page.page .priceBlock > b { font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.page.page .summary .safe { align-items:flex-start; }
+.page.page .summary .safe p,.page.page .footnote { line-height:1.6; }
+.page.page .continue { min-height:56px; width:100%; font-size:16px; line-height:1.4; padding:14px 18px; white-space:normal; }
+@media(max-width:1100px) {
+  .page.page .layout { grid-template-columns:minmax(0,1fr); }
+  .page.page .summary { position:static; }
+}
+@media(max-width:900px) {
+  .page.page .nav { grid-template-columns:minmax(0,1fr) auto; gap:16px; }
+  .page.page .stepNavigation button { flex-direction:column; gap:5px; padding:8px 4px; font-size:12px; }
+}
+@media(max-width:640px) {
+  .page.page .hero { margin:20px auto; gap:16px; }
+  .page.page .hero h1 { font-size:28px; }
+  .page.page .hero p { font-size:14px; }
+  .page.page .layout { display:flex; padding-inline:0; gap:20px; }
+  .page.page .step,.page.page .summary { padding:18px; }
+  .page.page .stepHead h2 { font-size:20px; }
+  .page.page .stepHead { margin-bottom:16px; }
+  .page.page .journey .addressBox { grid-template-columns:minmax(0,1fr); }
+  .page.page .packageCard { padding:16px; }
+}
