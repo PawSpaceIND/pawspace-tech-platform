@@ -29,12 +29,20 @@ test("operator audit exposes governed transcript segments and voice events", () 
 test("voice staging overlay is explicit, isolated and keeps recipient/provider data secret", () => {
   assert.match(overlay, /cfg\.name !== "pawspace-staging"/);
   assert.match(overlay, /PAWSPACE_VOICE_ENV: "uat"/);
+  assert.match(overlay, /PAWSPACE_VOICE_RUNTIME: "elevenlabs"/);
+  assert.match(overlay, /PAWSPACE_VOICE_NATIVE_UAT_APPROVED: "true"/);
+  assert.match(overlay, /VOICE_AGENTSTREAM_STT_LANGUAGE: "auto"/);
   assert.match(overlay, /cfg\.ai = \{ binding: "AI" \}/);
   assert.match(overlay, /PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT/);
   for (const name of ["PAWSPACE_VOICE_UAT_ALLOWLIST", "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"]) {
     assert.match(overlay, new RegExp(`delete cfg\\.vars\\[secretName\\]`));
     assert.match(workflow, new RegExp(`secrets\\.${name}`));
   }
+  assert.match(workflow, /tests\/voice-agentstream-quality\.test\.mjs/);
+  assert.match(workflow, /tests\/voice-native-agentstream-uat\.test\.mjs/);
+  assert.match(workflow, /ordinary voice runtime: ElevenLabs \(unchanged\)/);
+  assert.match(workflow, /controlled native AgentStream UAT override: enabled for explicit staff UAT only/);
+  assert.match(workflow, /AgentStream STT language mode: auto-detect/);
   assert.doesNotMatch(workflow, /request_call|action:\s*["']request_call["']/);
   assert.match(workflow, /real call placed by this workflow: no/);
 });
