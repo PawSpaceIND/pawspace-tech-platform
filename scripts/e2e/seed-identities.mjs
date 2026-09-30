@@ -105,6 +105,10 @@ export function seed(dbPath = locateDb()) {
   }
 
   db.exec("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  // Local persona D1 mirrors staging's authored roster posture. G17 deliberately refuses to let
+  // synthetic uat_roster fallback open a commission provider, so the browser fixture publishes explicit
+  // source='roster' rows instead of weakening the production scheduler rule.
+  db.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   // The hardened multi-actor journey exercises the real server-bound ARRIVED gate. That gate must
   // fail closed unless an approved punctuality/tracking policy exists, so seed the same local-only UAT
   // policy shape used by the executable grooming journey harness rather than bypassing the guard.
@@ -147,6 +151,18 @@ export function seed(dbPath = locateDb()) {
     ["sit_sana","Sana F.","9000000945"], ["sit_neha","Neha P.","9000000946"], ["sit_asha","Asha R.","9000000947"],
   ]) out.push(upsert(db, "canonical_providers", {
     id: provider[0], name: provider[1], phone: provider[2], city_id: "blr", source: "e2e_seed", created_at: now, updated_at: now,
+  }));
+  const personaServiceDate = String(process.env.PW_UAT_SERVICE_DATE || new Date(now + 5 * 86400000).toISOString().slice(0, 10));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(personaServiceDate) || Number.isNaN(Date.parse(`${personaServiceDate}T00:00:00.000Z`))) {
+    throw new Error(`invalid PW_UAT_SERVICE_DATE: ${personaServiceDate}`);
+  }
+  for (const [providerId, windowsJson] of [
+    ["host_maya_rohan", '["00:00-23:59"]'], ["host_sana", '["00:00-23:59"]'],
+    ["host_arjun_tara", '["00:00-23:59"]'], ["host_priya_dev", '["00:00-23:59"]'],
+    ["sit_sana", '["09:00-19:00"]'], ["sit_neha", '["09:00-19:00"]'], ["sit_asha", '["09:00-19:00"]'],
+  ]) out.push(upsert(db, "scheduling_availability", {
+    id: `e2e_roster_${providerId}_${personaServiceDate}_blr-east`, provider_id: providerId, city_id: "blr",
+    zone_id: "blr-east", date: personaServiceDate, windows_json: windowsJson, source: "roster", updated_at: now,
   }));
   out.push(upsert(db, "customer_identity_links", {
     email: IDENTITIES.customer.email, customer_id: CUSTOMER_ID, status: "active", verified_at: now, updated_at: now,

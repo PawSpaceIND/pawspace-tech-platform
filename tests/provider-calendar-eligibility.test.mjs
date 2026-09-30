@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
-installWorkersHooks('__G15_G19_CALENDAR_DB__');
+installWorkersHooks('__G15_G19_CALENDAR_DB__', undefined, { authoredRosterFixture: false });
 const {schedule}=await import('../backend/src/scheduling.ts');
 const provider=(model='commission')=>({id:'CALENDAR-P',cityId:'blr',name:'Synthetic calendar provider',model,services:['grooming','boarding','pet_sitting'],zones:['blr-east'],live:true,rating:5,qualityScore:100,capacity:4,travelBufferMinutes:30,maxDailyJobs:6});
 const row=(date,windows,extra={})=>({id:'OPEN-'+date,providerId:'CALENDAR-P',cityId:'blr',zoneId:'blr-east',date,windows,source:'partner_app',updatedAt:'2026-09-29T00:00:00Z',...extra});
@@ -76,4 +76,16 @@ test('G17/G18 an authored Blocked stay day cannot be reopened by a synthetic wid
   row('2026-10-06',['00:00-24:00'],{source:'uat_roster',id:'UAT-WIDE'}),
  ];
  refused(await schedule(repo(rows),stay('boarding')));
+});
+
+
+test('G17 commission providers are not opened by synthetic UAT fallback alone',async()=>{
+ const synthetic=row('2026-10-05',['09:00-19:00'],{source:'uat_roster'});
+ refused(await schedule(repo([synthetic],'commission'),request('grooming','2026-10-05T10:00:00+05:30','2026-10-05T12:00:00+05:30')));
+});
+
+test('G15 full-time UAT fallback remains usable when no authored roster exists',async()=>{
+ const synthetic=row('2026-10-05',['09:00-19:00'],{source:'uat_roster'});
+ const result=await schedule(repo([synthetic],'full_time'),request('grooming','2026-10-05T10:00:00+05:30','2026-10-05T12:00:00+05:30'));
+ assert.equal(result.provider?.id,'CALENDAR-P');assert.equal(result.mode,'automatic');
 });

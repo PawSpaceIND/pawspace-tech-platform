@@ -73,6 +73,17 @@ async function world() {
   await capacity.ensureProviderCapacityTables(db);
   await capacity.seedProviderCapacityDefaults(db);
   await provisionOps(sqlite, db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  // Publish the exact IST calendar days touched by the stay. Deriving this from the reservation
+  // window avoids a second Date.now() clock drifting across midnight and accidentally testing
+  // missing-roster behavior instead of the vaccination/ownership gate this suite owns.
+  const { start: rosterStart, end: rosterEnd } = future();
+  const istDay = (iso) => new Date(Date.parse(iso) + 330 * 60_000).toISOString().slice(0, 10);
+  for (let day = Date.parse(istDay(rosterStart)); day <= Date.parse(istDay(rosterEnd)); day += 86_400_000) {
+    const date = new Date(day).toISOString().slice(0, 10);
+    sqlite.prepare("INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+      .run(`boarding-authority-${HOST}-${date}`, HOST, "blr", "blr-east", date, JSON.stringify(["00:00-23:59"]), "roster", Date.now());
+  }
 
   const now = Date.now();
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");

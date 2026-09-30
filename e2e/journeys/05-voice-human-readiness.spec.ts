@@ -200,7 +200,7 @@ test("voice operator console exercises every governed control without a live dia
   });
 
   await page.goto("/team/voice");
-  await expect(page.getByRole("heading", { name: "Automated outbound calling" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI voice and sales operations" })).toBeVisible();
   await expect(page.getByText("ENABLED", { exact: true })).toBeVisible();
 
   await page.getByRole("combobox", { name: "Use case", exact: true }).selectOption(useCase.code);

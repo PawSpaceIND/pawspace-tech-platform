@@ -37,7 +37,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-installWorkersHooks("__PTJA_F27_DB__", "__PTJA_F27_ENV__");
+installWorkersHooks("__PTJA_F27_DB__", "__PTJA_F27_ENV__", { authoredRosterFixture: false });
 
 function makeD1(sqlite) {
   const statement = (sql, args = []) => ({
