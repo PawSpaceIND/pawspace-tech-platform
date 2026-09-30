@@ -11,11 +11,19 @@ const model = String(process.env.PAWSPACE_AI_VOICE_MODEL || 'gpt-5.6-luna');
 const actor = { email: 'elevenlabs-voice@system.pawspace', name: 'Synthetic Runtime Evaluation', roleCode: 'service_elevenlabs_voice', permissions: ['communications.manage', 'customers.manage', 'bookings.manage', 'scheduling.book'], developmentPreview: false, identitySource: 'workspace', principalType: 'identity_subject', principalKey: 'service:elevenlabs-voice' };
 const customerId = 'CUS-MAYA-SYNTHETIC', petId = 'PET-MAYA-SYNTHETIC', threadId = 'THREAD-MAYA-SYNTHETIC';
 const start = '2026-10-20T04:30:00.000Z', end = '2026-10-20T06:30:00.000Z';
-const realFetch = globalThis.fetch, turns = [];
+const realFetch = globalThis.fetch, turns = [], modelDrafts = [];
 let modelCalls = 0, paymentRequests = 0;
 // Before fixture setup, reject every destination other than the isolated model and mocked order API.
 globalThis.fetch = async (url, init) => {
-  if (String(url) === 'https://api.openai.com/v1/responses') { modelCalls++; return realFetch(url, init); }
+  if (String(url) === 'https://api.openai.com/v1/responses') {
+    modelCalls++;
+    const response = await realFetch(url, init);
+    const body = await response.clone().json().catch(() => ({}));
+    const text = body.output_text || (body.output || []).flatMap(item => item.content || []).filter(part => part.type === 'output_text').map(part => part.text).join('');
+    const request = JSON.parse(init.body), context = JSON.parse(request.input).canonicalContext;
+    modelDrafts.push({ status: response.status, text, catalogue: context.catalogue });
+    return response;
+  }
   assert.equal(String(url), 'https://api.razorpay.com/v1/orders', 'Unexpected external request is forbidden');
   paymentRequests++;
   const body = JSON.parse(init.body);
@@ -84,12 +92,12 @@ try {
   const replay = await sales.confirmVoiceSalesOffer(world.db, { actor, threadId, customerId, service: 'grooming', offerId: offer.id, confirmation: 'Yeah, please.' });
   assert.equal(replay.duplicatePrevented, true);
   assert.equal(countBookings(), 1); assert.equal(paymentRequests, 1);
-  const report = { passed: true, dialed: false, liveDatabaseAccess: false, model, modelCalls, mockedPaymentRequests: paymentRequests, bookingCount: countBookings(), paymentVerified: false, duplicatePrevented: true, premiumCertified: false, scope: 'Real model plus actual PawSpace runtime against in-memory fixtures; no live booking, payment capture, TTS, delivered checkout or handset certification', turns };
+  const report = { passed: true, dialed: false, liveDatabaseAccess: false, model, modelCalls, mockedPaymentRequests: paymentRequests, bookingCount: countBookings(), paymentVerified: false, duplicatePrevented: true, premiumCertified: false, modelDrafts, scope: 'Real model plus actual PawSpace runtime against in-memory fixtures; no live booking, payment capture, TTS, delivered checkout or handset certification', turns };
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
   await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify(report, null, 2));
   console.log('MAYA_RUNTIME_SALE=' + JSON.stringify(report));
 } catch (error) {
   await mkdir('artifacts/maya-runtime-sale', { recursive: true });
-  await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify({ passed: false, dialed: false, liveDatabaseAccess: false, premiumCertified: false, error: error.message, modelCalls, paymentRequests, turns, fixtureErrors, turnDiagnostics: world.sqlite.prepare('SELECT outcome,policy_decision,handoff_reason,intent_code,intent_confidence,provider FROM ai_conversation_turns').all() }, null, 2));
+  await writeFile('artifacts/maya-runtime-sale/report.json', JSON.stringify({ passed: false, dialed: false, liveDatabaseAccess: false, premiumCertified: false, error: error.message, modelCalls, paymentRequests, turns, modelDrafts, fixtureErrors, turnDiagnostics: world.sqlite.prepare('SELECT outcome,policy_decision,handoff_reason,intent_code,intent_confidence,provider FROM ai_conversation_turns').all() }, null, 2));
   throw error;
 } finally { world.close(); globalThis.fetch = realFetch; }
