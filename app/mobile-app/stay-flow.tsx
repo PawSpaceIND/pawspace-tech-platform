@@ -28,6 +28,7 @@ import {indiaDateOffset,rememberBookingReference,sameReviewedStayQuote} from "..
 import {boardingPetNote,boardingVaccinationProblem,stayBookingWindowRule,stayDateBounds,stayWindowCheckNow,stayWindowProblem} from "../../lib/stay-plan-checks";
 import {HOST_REQUESTS_NOTE,HOST_REQUESTS_NOT_INCLUDED,HOST_REQUESTS_TITLE,hostRequestsExcludedNote,hostRequestsReviewValue} from "../../lib/boarding-host-requests";
 import {stayMoney} from "../../lib/stay-money";
+import {missingStayCareFields} from "../../lib/stay-care-validation";
 import {plainErrorMessage} from "../../lib/safe-json-response";
 
 type Mode = "boarding" | "sitting";
@@ -132,6 +133,8 @@ async function previewSittersPatiently(request: UatScheduleRequest, signal: Abor
 }
 export default function StayFlow({ mode: initialMode, customer, onModeChange, routeScope="legacy" }: { routeScope?:"legacy"|"v2"; mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
   const actionLock=useRef(false);
+  const careFieldsRef = useRef<HTMLDivElement>(null);
+  const [careValidationShown, setCareValidationShown] = useState(false);
   const[meeting,setMeeting]=useState<StayMeeting|null>(null);
   const bookingAttempt=useRef<{key:string;id:string;host?:BoardingHost;boarding?:BoardingQuote;sitting?:SittingQuote;schedule?:UatScheduleResult}|null>(null);
   const recoveryBookingId=useInitialBookingReference();
@@ -316,6 +319,17 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     setProfileOpen(true);
     setStage(1);
   };
+  const missingCareFields = missingStayCareFields(mode, careDraft);
+  const reviewCare = () => {
+    setScheduleError("");
+    setCareValidationShown(true);
+    if (missingCareFields.length) {
+      careFieldsRef.current?.querySelector<HTMLTextAreaElement>(`[data-care-field="${missingCareFields[0]}"]`)?.focus();
+      return;
+    }
+    setCareValidationShown(false);
+    setStage(4);
+  };
   const confirm = async () => {
     if(actionLock.current)return;
     if (!datesValid || !agreed) return;
@@ -323,7 +337,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     if (!serviceLocation) { setScheduleError("Verify the service address before continuing."); return; }
     if (!activeQuote) { setScheduleError(quoteError || "Wait for the current stay price before confirming."); return; }
     if (mode === "boarding" && selectedPetObjs.some((pet) => pet.vaccinationStatus !== "verified")) { setScheduleError("Boarding requires verified vaccination for every selected pet."); return; }
-    if(!careDraft.vet?.trim()||!careDraft.emergencyContact?.trim()||(mode==="sitting"&&!careDraft.homeAccess?.trim())){setScheduleError("Add vet and emergency contacts, plus home access for Sitting, in your Care Card before confirming.");return;}
+    if(missingStayCareFields(mode,careDraft).length){setScheduleError("Add vet and emergency contacts, plus home access for Sitting, in your Care Card before confirming.");return;}
     actionLock.current=true;setScheduling(true);setScheduleError("");
     const attemptKey=JSON.stringify([reviewKey,careDraft,selectedBenefits,foodType]);
     if(!bookingAttempt.current||bookingAttempt.current.key!==attemptKey)bookingAttempt.current={key:attemptKey,id:`stay:${crypto.randomUUID()}`};
@@ -632,14 +646,26 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               </span>
             </div>
           </article>
-          <div className={styles.careInstructions}><p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement.</p>{([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field])=>mode==="sitting"||field!=="homeAccess").map(([field,title])=><label className={styles.field} key={field}>{title}<textarea value={careDraft[field]||""} required={['vet','emergencyContact','homeAccess'].includes(field)} onChange={event=>setCareDraft(value=>({...value,[field]:event.target.value}))}/></label>)}</div>
+          <div ref={careFieldsRef} className={styles.careInstructions}>
+            <p>Enter the instructions your caregiver should follow. These will be saved with the booking. Requests and extras require caregiver agreement. Fields marked required must be filled before review.</p>
+            {careValidationShown && missingCareFields.length > 0 && <p role="alert">Complete the required care details below before reviewing your booking.</p>}
+            {([['feeding','Food and water routine'],['medication','Medication and allergy instructions from your vet'],['vet','Vet contact'],['emergencyContact','Emergency contact'],['homeAccess','Home access instructions'],['specialInstructions','Other care instructions']] as const).filter(([field]) => mode === "sitting" || field !== "homeAccess").map(([field,title]) => {
+              const required = ['vet','emergencyContact','homeAccess'].includes(field);
+              const invalid = careValidationShown && required && !careDraft[field]?.trim();
+              return <label className={styles.field} key={field}>
+                {title}{required && <span> (required)</span>}
+                <textarea aria-label={title} data-care-field={field} value={careDraft[field] || ""} required={required} aria-invalid={invalid || undefined} aria-describedby={invalid ? `stay-care-${field}-error` : undefined} onChange={event => setCareDraft(value => ({...value,[field]:event.target.value}))}/>
+                {invalid && <span id={`stay-care-${field}-error`}>Enter {title.toLowerCase()} to continue.</span>}
+              </label>;
+            })}
+          </div>
           {mode==="boarding"&&<><div className={styles.sectionHead}><b>{HOST_REQUESTS_TITLE}</b><span>{HOST_REQUESTS_NOT_INCLUDED}</span></div><p className={styles.hint}>{HOST_REQUESTS_NOTE}</p><div className={styles.benefitGrid}>{careBenefits.map(benefit=><button key={benefit} className={selectedBenefits.includes(benefit)?styles.selected:""} onClick={()=>toggleBenefit(benefit)}>{selectedBenefits.includes(benefit)?"✓":"＋"} {benefit}</button>)}</div><label className={styles.field}>Food preference<select value={foodType} onChange={event=>setFoodType(event.target.value)}><option value="">Choose a preference</option><option>Pet food from home</option><option>Vegetarian fresh food</option><option>Non-vegetarian fresh food</option><option>Host to quote food separately</option></select></label></>}
           {caregiver.providerId&&<StayMeetingRequest key={`${mode}:${caregiver.providerId}:${start}:${end}`} providerId={caregiver.providerId} providerName={caregiver.name} serviceCode={mode==="boarding"?"boarding":"pet_sitting"} start={start} end={end} onRequested={setMeeting}/>}
           <p className={styles.hint}>Care updates appear against the saved booking. Introduction requests are separate and never silently added to this stay bill.</p>
           <button className={styles.back} onClick={() => {if(canPlanStay({datesValid,petCount:selectedPets.length,serviceAvailable:serviceLocation?.zone.serviceAvailable}))setStage(2);}}>
             ← Caregiver
           </button>
-          <button className={styles.primary} onClick={() => setStage(4)}>
+          <button className={styles.primary} onClick={reviewCare}>
             Review protected booking
           </button>
         </>

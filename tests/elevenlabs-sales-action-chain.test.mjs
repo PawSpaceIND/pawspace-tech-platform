@@ -37,7 +37,8 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
  const threadId="THREAD-AI-CHAIN",messageId="MSG-AI-CHAIN";
  ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
  ctx.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'elevenlabs','voice','inbound','lifecycle','meta_inbound',?,'received',?,'meta-whatsapp-webhook@system.pawspace',?,?)").run(messageId,threadId,customerId,JSON.stringify({text:"Yes, go ahead and make a booking for grooming"}),"ai-chain-inbound",now,now);
- globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
+ const previousDeploymentEnv=globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV;
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_PAYMENT_ENV:"sandbox",RAZORPAY_KEY_ID_SANDBOX:"rzp_test_ai_chain",RAZORPAY_KEY_SECRET_SANDBOX:"secret_ai_chain"};
  const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
  globalThis.fetch=async(url,init)=>{
   assert.match(String(url),/^https:\/\/api\.razorpay\.com\/v1\/orders$/);
@@ -61,7 +62,7 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
   assert.equal(input.intent.intent,'booking_create');
   assert.ok(req.max_output_tokens>=600);
   const envelope=JSON.stringify({reply:"Ready",actions});
-  return new Response([{type:"response.output_text.delta",delta:envelope},{type:"response.completed",response:{status:"completed",usage:{total_tokens:100}}}].map(e=>'data: '+JSON.stringify(e)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
+  return Response.json({output_text:envelope,status:"completed",usage:{total_tokens:100}});
  };
  const voice=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:'user',content:'I need grooming for Milo'},{role:'assistant',content:'Shall I book this grooming slot and create checkout?'},{role:'user',content:'Yes, proceed'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}},undefined,()=>{});
  assert.equal(modelCalls,1,'action execution must reuse the grounded plan, not ask the model again');
@@ -80,6 +81,8 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
  const tasks=ctx.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='crm_tasks'").get();if(tasks)assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM crm_tasks").get().n,0);
  const payment=ctx.sqlite.prepare("SELECT booking_id,amount,currency,status FROM booking_payments WHERE customer_id=?").get(customerId);assert.notEqual(payment.status,"captured");
  const capture={action:"simulate_event",bookingId:payment.booking_id,eventType:"payment.captured",eventId:"evt_voice_sale_proof",gatewayPaymentId:"pay_voice_sale_proof",amount:payment.amount,currency:payment.currency};
+ // Restore the pre-existing local payment simulator context after the explicitly UAT voice phase.
+ if(previousDeploymentEnv===undefined)delete globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV;else globalThis.__GROOM_GOLDEN_ENV__.PAWSPACE_DEPLOYMENT_ENV=previousDeploymentEnv;
  const captured=await routeCall("../../app/api/grooming-payment-sandbox/route.ts","POST","/api/grooming-payment-sandbox",capture);
  assert.equal(captured.status,201,JSON.stringify(captured.body));
  assert.equal(captured.body.data.synthetic,true);
