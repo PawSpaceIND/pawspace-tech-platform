@@ -9,7 +9,7 @@ const linkage=await import("../lib/workforce-person-linkage.ts");
 
 function makeD1(sqlite){
  function statement(sql,args=[]){return{bind:(...next)=>statement(sql,next),first:async()=>sqlite.prepare(sql).get(...args)??null,run:async()=>{const info=sqlite.prepare(sql).run(...args);return{success:true,meta:{changes:Number(info.changes)}}},all:async()=>({results:sqlite.prepare(sql).all(...args)})};}
- return{prepare:(sql)=>statement(sql),batch:async(list)=>{const out=[];for(const item of list)out.push(await item.run());return out;}};
+ return{prepare:(sql)=>statement(sql),batch:async(list)=>{sqlite.exec("BEGIN");try{const out=[];for(const item of list)out.push(await item.run());sqlite.exec("COMMIT");return out;}catch(error){sqlite.exec("ROLLBACK");throw error;}}};
 }
 async function world(){
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite);
@@ -44,4 +44,11 @@ test("G16 rejected provider leave clears the pending dispatch block and cancels 
  assert.equal(await capacity.providerUnavailableForWindow(w.db,{providerId:"PROV-P",scheduledStart:"2030-10-05T04:30:00.000Z",scheduledEnd:"2030-10-05T06:30:00.000Z"}),false);
  assert.equal(w.sqlite.prepare("SELECT status FROM provider_recovery_cases WHERE booking_id='BK-1'").get().status,"cancelled");
  assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-1'").get().status,"confirmed");
+});
+
+// The same actual-function regression runs in native workerd D1 and transactional SQLite.
+test("provider leave bridge faults roll back with decision, balance and audit",async()=>{
+ const {runBridgeRegression}=await import("./provider-leave-bridge-d1-worker.ts");
+ const sqlite=new DatabaseSync(":memory:");const db=makeD1(sqlite);db.exec=async(sql)=>{sqlite.exec(sql);};
+ try{const result=await runBridgeRegression(db);assert.equal(result.ok,true);assert.equal(result.passed.length,7);}finally{sqlite.close();}
 });

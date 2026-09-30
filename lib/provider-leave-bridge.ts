@@ -20,51 +20,58 @@ async function linkedProvider(db:Db,employeeId:string){
 async function affected(db:Db,providerId:string,startsAt:string,endsAt:string){
  return(await db.prepare("SELECT id,customer_id,schedule_group_id,service_code FROM canonical_bookings WHERE provider_id=? AND scheduled_start<? AND scheduled_end>? AND status NOT IN ('completed','cancelled','refunded') ORDER BY scheduled_start").bind(providerId,endsAt,startsAt).all<Row>()).results;
 }
-async function openHandoffs(db:Db,input:{requestId:string;providerId:string;startsAt:string;endsAt:string;actorId:string}){
- const bookings=await affected(db,input.providerId,input.startsAt,input.endsAt),now=Date.now();let opened=0;
+async function prepareHandoffs(db:Db,input:{requestId:string;providerId:string;startsAt:string;endsAt:string;actorId:string}){
+ const bookings=await affected(db,input.providerId,input.startsAt,input.endsAt),now=Date.now();let opened=0;const statements:D1PreparedStatement[]=[];
  for(const booking of bookings){
   const bookingId=text(booking.id),groupId=text(booking.schedule_group_id)||bookingId;
-  const prior=await db.prepare("SELECT id FROM provider_recovery_cases WHERE booking_id=? AND failed_provider_id=? AND reason_code='provider_leave_pending' AND status IN ('open','ops_escalation') LIMIT 1").bind(bookingId,input.providerId).first<Row>();
-  if(prior)continue;const id="leave-recovery-"+crypto.randomUUID();
-  await db.batch([
-   db.prepare("INSERT INTO provider_recovery_cases (id,group_id,booking_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES (?,?,?,?,?,'open',NULL,?,?,NULL,?)").bind(id,groupId,bookingId,input.providerId,"provider_leave_pending",JSON.stringify({leaveRequestId:input.requestId,bookingPreserved:true,customerNotificationDeferredUntilApproval:true,serviceCode:text(booking.service_code)}),now,now),
-   db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"provider_leave_recovery_opened","booking",bookingId,input.actorId,JSON.stringify({leaveRequestId:input.requestId,providerId:input.providerId,bookingPreserved:true}),now)
-  ]);opened++;
+  const prior=await db.prepare("SELECT id FROM provider_recovery_cases WHERE booking_id=? AND failed_provider_id=? AND reason_code='provider_leave_pending' AND json_extract(detail_json,'$.leaveRequestId')=? AND status IN ('open','ops_escalation') LIMIT 1").bind(bookingId,input.providerId,input.requestId).first<Row>();
+  if(prior)continue;const id="leave-recovery:"+JSON.stringify([input.requestId,bookingId,input.providerId]);
+  statements.push(
+   db.prepare("INSERT OR IGNORE INTO provider_recovery_cases (id,group_id,booking_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES (?,?,?,?,?,'open',NULL,?,?,NULL,?)").bind(id,groupId,bookingId,input.providerId,"provider_leave_pending",JSON.stringify({leaveRequestId:input.requestId,bookingPreserved:true,customerNotificationDeferredUntilApproval:true,serviceCode:text(booking.service_code)}),now,now),
+   db.prepare("INSERT OR IGNORE INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(id+":opened",bookingId,"provider_leave_recovery_opened","booking",bookingId,input.actorId,JSON.stringify({leaveRequestId:input.requestId,providerId:input.providerId,bookingPreserved:true}),now)
+  );opened++;
  }
- return{affectedBookings:bookings.length,recoveryCasesOpened:opened};
+ return{statements,result:{affectedBookings:bookings.length,recoveryCasesOpened:opened}};
 }
-export async function bridgePendingProviderLeave(db:Db,input:{requestId:string;employeeId:string;startDate:string;endDate:string;actorId:string}){
+export async function preparePendingProviderLeave(db:Db,input:{requestId:string;employeeId:string;startDate:string;endDate:string;actorId:string}){
  if(!await tableExists(db,"provider_people_links")||!await tableExists(db,"provider_capacity_profiles"))return null;
  await ensureProviderLeaveBridgeTables(db);const providerId=await linkedProvider(db,input.employeeId);if(!providerId)return null;
  const prior=await db.prepare("SELECT * FROM provider_leave_blocks WHERE request_id=?").bind(input.requestId).first<Row>();
- if(prior)return{providerId,unavailabilityId:text(prior.unavailability_id),duplicatePrevented:true,...await openHandoffs(db,{requestId:input.requestId,providerId,startsAt:text(prior.starts_at),endsAt:text(prior.ends_at),actorId:input.actorId})};
+ if(prior){const handoffs=await prepareHandoffs(db,{requestId:input.requestId,providerId,startsAt:text(prior.starts_at),endsAt:text(prior.ends_at),actorId:input.actorId});return{statements:handoffs.statements,result:{providerId,unavailabilityId:text(prior.unavailability_id),duplicatePrevented:true,...handoffs.result}};}
  const startsAt=startUtc(input.startDate),endsAt=endUtc(input.endDate),now=Date.now(),unavailabilityId="PLEAVE-"+crypto.randomUUID().slice(0,12).toUpperCase();
- await db.batch([
+ const handoffs=await prepareHandoffs(db,{requestId:input.requestId,providerId,startsAt,endsAt,actorId:input.actorId});
+ const statements=[
   db.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)").bind(unavailabilityId,providerId,startsAt,endsAt,"Pending leave request "+input.requestId,input.actorId,now,now),
   db.prepare("INSERT INTO provider_leave_blocks (request_id,provider_id,employee_id,unavailability_id,starts_at,ends_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'pending',?,?)").bind(input.requestId,providerId,input.employeeId,unavailabilityId,startsAt,endsAt,now,now)
- ]);
- return{providerId,unavailabilityId,duplicatePrevented:false,...await openHandoffs(db,{requestId:input.requestId,providerId,startsAt,endsAt,actorId:input.actorId})};
+ ];
+ return{statements:[...statements,...handoffs.statements],result:{providerId,unavailabilityId,duplicatePrevented:false,...handoffs.result}};
 }
-export async function resolveProviderLeaveBridge(db:Db,input:{requestId:string;decision:"approved"|"rejected";actorId:string}){
+export async function prepareProviderLeaveDecision(db:Db,input:{requestId:string;decision:"approved"|"rejected";actorId:string}){
  if(!await tableExists(db,"provider_leave_blocks"))return null;
  await ensureProviderLeaveBridgeTables(db);const link=await db.prepare("SELECT * FROM provider_leave_blocks WHERE request_id=?").bind(input.requestId).first<Row>();if(!link)return null;
- const now=Date.now(),providerId=text(link.provider_id),unavailabilityId=text(link.unavailability_id);
+ const now=Date.now(),providerId=text(link.provider_id),unavailabilityId=text(link.unavailability_id),check=crypto.randomUUID();
+ const guard=db.prepare("INSERT INTO attendance_snapshot_checks (id,valid) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM provider_leave_blocks WHERE request_id=? AND provider_id=? AND unavailability_id=? AND status='pending') THEN 1 ELSE 0 END").bind(check,input.requestId,providerId,unavailabilityId);
+ const cleanup=db.prepare("DELETE FROM attendance_snapshot_checks WHERE id=?").bind(check);
  if(input.decision==="rejected"){
-  const nowIso=new Date(now).toISOString();await db.batch([
+  const nowIso=new Date(now).toISOString();const statements=[guard,
    db.prepare("UPDATE provider_unavailability SET status='cleared',ends_at=CASE WHEN ends_at>? THEN ? ELSE ends_at END,updated_at=? WHERE id=? AND status='active'").bind(nowIso,nowIso,now,unavailabilityId),
    db.prepare("UPDATE provider_leave_blocks SET status='rejected',updated_at=? WHERE request_id=?").bind(now,input.requestId),
    db.prepare("UPDATE provider_recovery_cases SET status='cancelled',resolved_at=?,updated_at=? WHERE failed_provider_id=? AND reason_code='provider_leave_pending' AND status='open' AND json_extract(detail_json,'$.leaveRequestId')=?").bind(now,now,providerId,input.requestId)
-  ]);return{providerId,status:"rejected",dispatchBlockCleared:true};
+  ,cleanup];return{statements,result:{providerId,status:"rejected",dispatchBlockCleared:true}};
  }
- await db.prepare("UPDATE provider_leave_blocks SET status='approved',updated_at=? WHERE request_id=?").bind(now,input.requestId).run();
+ const statements=[guard,db.prepare("UPDATE provider_leave_blocks SET status='approved',updated_at=? WHERE request_id=?").bind(now,input.requestId)];
  const rows=await db.prepare("SELECT id,booking_id FROM provider_recovery_cases WHERE failed_provider_id=? AND reason_code='provider_leave_pending' AND status='open' AND json_extract(detail_json,'$.leaveRequestId')=?").bind(providerId,input.requestId).all<Row>();let notificationsQueued=0;
  for(const recovery of rows.results){const booking=await db.prepare("SELECT id,customer_id FROM canonical_bookings WHERE id=?").bind(recovery.booking_id).first<Row>();if(!booking)continue;
-  const eventId=crypto.randomUUID(),bookingId=text(booking.id),message="Your PawSpace provider has approved leave affecting this booking. Your booking is preserved while Operations arranges and confirms cover.";
-  await db.batch([
+  const eventId="leave-approved:"+JSON.stringify([input.requestId,recovery.id]),bookingId=text(booking.id),message="Your PawSpace provider has approved leave affecting this booking. Your booking is preserved while Operations arranges and confirms cover.";
+  const recoveryCheck=crypto.randomUUID();
+  statements.push(
+   db.prepare("INSERT INTO attendance_snapshot_checks (id,valid) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM provider_recovery_cases WHERE id=? AND booking_id=? AND failed_provider_id=? AND status='open' AND reason_code='provider_leave_pending' AND json_extract(detail_json,'$.leaveRequestId')=?) THEN 1 ELSE 0 END").bind(recoveryCheck,recovery.id,bookingId,providerId,input.requestId),
+   db.prepare("DELETE FROM attendance_snapshot_checks WHERE id=?").bind(recoveryCheck),
    db.prepare("UPDATE provider_recovery_cases SET status='ops_escalation',updated_at=? WHERE id=? AND status='open'").bind(now,recovery.id),
    db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(eventId,bookingId,"provider_leave_approved_recovery","booking",bookingId,input.actorId,JSON.stringify({leaveRequestId:input.requestId,providerId,bookingPreserved:true}),now),
-   ...["push","whatsapp"].map(channel=>db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(crypto.randomUUID(),bookingId,text(booking.customer_id),channel,"provider_recovery",message,eventId,now))
-  ]);notificationsQueued+=2;
+   ...["push","whatsapp"].map(channel=>db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(eventId+":"+channel,bookingId,text(booking.customer_id),channel,"provider_recovery",message,eventId,now))
+  );notificationsQueued+=2;
  }
- return{providerId,status:"approved",dispatchBlockCleared:false,recoveryCasesEscalated:rows.results.length,notificationsQueued};
+ statements.push(cleanup);
+ return{statements,result:{providerId,status:"approved",dispatchBlockCleared:false,recoveryCasesEscalated:rows.results.length,notificationsQueued}};
 }
