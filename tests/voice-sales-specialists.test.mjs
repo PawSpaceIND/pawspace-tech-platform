@@ -42,7 +42,7 @@ async function refuse(p,status){await assert.rejects(p,e=>e instanceof Response&
 
 test("two fixed sales profiles are distinct and unknown model IDs stay generic",()=>{
  assert.equal(sales.voiceSalesService("pawspace-grooming-sales"),"grooming");assert.equal(sales.voiceSalesService("pawspace-training-sales"),"dog_training");assert.equal(sales.voiceSalesService("toString"),undefined);
- const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/paymentMethod=upi or cash/i);assert.match(groomingPrompt,/Never silently switch/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
+ const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/automated voice flow/i);assert.match(groomingPrompt,/cash may exist as a business option/i);assert.match(groomingPrompt,/offer a human teammate instead/i);assert.match(groomingPrompt,/Never silently switch/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
  for(const value of ["yes", "Yes, please", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
  for(const value of ["no", "yes but tomorrow", "yes for a different dog", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
 });
@@ -63,15 +63,15 @@ test("voice prepaid Grooming queues secure WhatsApp checkout without claiming de
  const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentProvider,"razorpay");assert.equal(payload.paymentVerified,false);assert.match(payload.paymentLink,/\/v2\/booking\?bookingId=/);
 });
 
-test("voice pay-after Grooming creates confirmed cash booking without prepaid order and queues WhatsApp confirmation",async t=>{
- const w=await world(t),plan=actions(w).slice(0,2);plan[1].arguments.paymentMode="pay_after_service";plan[1].arguments.paymentMethod="cash";
- const offer=await prepare(w,"postpay-cash",plan),result=await confirm(w,offer.id).catch(async error=>{throw new Error(error instanceof Response?await error.text():String(error));});
+test("voice pay-after Grooming creates confirmed UPI booking without prepaid order and queues WhatsApp confirmation",async t=>{
+ const w=await world(t),plan=actions(w).slice(0,2);plan[1].arguments.paymentMode="pay_after_service";plan[1].arguments.paymentMethod="upi";
+ const offer=await prepare(w,"postpay-upi",plan),result=await confirm(w,offer.id).catch(async error=>{throw new Error(error instanceof Response?await error.text():String(error));});
  assert.ok(result.bookingId);assert.equal(result.orderId,null);assert.equal(result.paymentMode,"pay_after_service");assert.equal(result.paymentVerified,false);assert.equal(w.calls.length,0);
  const booking=w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(result.bookingId);assert.equal(booking.status,"confirmed");
  const payment=w.sqlite.prepare("SELECT method,mode,status,amount_due_now FROM booking_payments WHERE booking_id=?").get(result.bookingId);
- assert.equal(payment.method,"cash");assert.equal(payment.mode,"pay_after_service");assert.equal(payment.status,"created");assert.equal(payment.amount_due_now,0);
+ assert.equal(payment.method,"upi");assert.equal(payment.mode,"pay_after_service");assert.equal(payment.status,"created");assert.equal(payment.amount_due_now,0);
  const message=w.sqlite.prepare("SELECT * FROM communication_messages WHERE id=?").get(result.paymentMessageId);assert.ok(message);assert.equal(message.template_key,"voice_booking_pay_after_confirmed");assert.equal(message.channel,"whatsapp");
- const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentMode,"pay_after_service");assert.equal(payload.paymentMethod,"cash");assert.equal(payload.paymentVerified,false);assert.equal(payload.paymentLink,undefined);
+ const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentMode,"pay_after_service");assert.equal(payload.paymentMethod,"upi");assert.equal(payload.paymentVerified,false);assert.equal(payload.paymentLink,undefined);
 });
 
 test("prepaid Grooming subscription creates pending entitlement, never multiplied bundle price",async t=>{
