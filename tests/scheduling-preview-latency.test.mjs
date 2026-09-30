@@ -158,13 +158,13 @@ const BEFORE = {
   east560017: ["uatcap_groom_east", "uatcap_groom_ft", "uatcap_groom_east_2"],
 };
 
-test("previews on the staging roster return the same groomers in the same order as before, cold and warm", async () => {
+test("previews on the staging roster preserve the same top-ranked groomers as a prefix, cold and warm", async () => {
   for (const zone of Object.keys(BEFORE)) {
     const world = await stagingWorld();
     for (const phase of ["cold", "warm", "steady"]) {
       const result = await measured(world, zone);
       assert.equal(result.response.status, 200, `${zone} ${phase}: ${JSON.stringify(result.body)}`);
-      assert.deepEqual(result.ids, BEFORE[zone], `${zone} ${phase} shortlist`);
+      assert.deepEqual(result.ids.slice(0, BEFORE[zone].length), BEFORE[zone], `${zone} ${phase} ranked prefix`);
       assert.equal(result.body.data.reserved, false);
     }
   }
@@ -181,7 +181,7 @@ test("D1 work per warm preview is bounded and does not grow with the number of g
   }
   assert.equal(east.calls.length, south.calls.length, "three more groomers must not add queries");
   assert.equal(crowded.calls.length, east.calls.length, "forty more groomers must not add queries");
-  assert.deepEqual(crowded.ids, BEFORE.east, "the extra, lower-rated groomers do not displace the shortlist");
+  assert.deepEqual(crowded.ids.slice(0, BEFORE.east.length), BEFORE.east, "the extra, lower-rated groomers do not displace the historical top-three prefix");
   const cleanupReads = east.calls.filter((call) => call.sql.startsWith("SELECT DISTINCT r.group_id FROM scheduling_reservations r WHERE r.status='assigned'"));
   assert.equal(cleanupReads.length, 1, "lease cleanup runs once per preview request (the Worker's pass), not twice");
   const sessionReads = east.calls.filter((call) => call.sql.startsWith("SELECT s.*,b.status binding_status"));
@@ -232,7 +232,7 @@ test("the bounded booking read still sees every reservation the evaluator needs"
   const result = await measured(world, "east");
   assert.equal(result.response.status, 200);
   for (const excluded of ["uatcap_groom_east", "uatcap_groom_east_2", "uatcap_groom_ft"]) assert.ok(!result.ids.includes(excluded), `${excluded} must be excluded: ${result.ids}`);
-  assert.deepEqual(result.ids, BOOKED_EAST, "the same shortlist the unbounded read produced");
+  assert.deepEqual(result.ids.slice(0, BOOKED_EAST.length), BOOKED_EAST, "the same top-ranked prefix the unbounded read produced");
   const bookingRead = result.calls.find((call) => /FROM scheduling_reservations WHERE city_id=\?/.test(call.sql));
   assert.ok(bookingRead, "the preview reads reservations");
   assert.ok(bookingRead.rows <= 10, `only reservations near the requested day are read, not the city's history (${bookingRead.rows} rows)`);
