@@ -26,7 +26,7 @@ test('fresh inspection resolves one canonical owner and previews policy without 
   if(String(url).endsWith('/api/voice-outbound')){actions.push(body.action);assert.equal(body.phone,'+919876543210');assert.equal(body.customerId,'customer');return Response.json({data:{allowed:true}});}
   assert.fail('unexpected request');
  };
- const result=await inspectVoiceSalesLaunch(env,request);assert.equal(result.dialed,false);assert.equal(result.policyAllowed,true);assert.equal(result.salesDashboardSources,2);assert.equal(result.salesDashboardUnavailable,1);assert.deepEqual(actions,['policy_preview']);
+ const result=await inspectVoiceSalesLaunch(env,request);assert.equal(result.dialed,false);assert.equal(result.policyAllowed,true);assert.equal(result.salesDashboardSources,2);assert.equal(result.salesDashboardUnavailable,1);assert.deepEqual(result.salesDashboardUnavailableSources,['Voice booking journey']);assert.deepEqual(actions,['policy_preview']);
 });
 
 test('attended pilot requires exact recipient authorization and refuses workflow reruns',()=>{

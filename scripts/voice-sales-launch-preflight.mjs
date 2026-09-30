@@ -35,7 +35,8 @@ export async function inspectVoiceSalesLaunch(env=process.env,request=fetch){
  const overviewBody=await overview.json();const operations=overviewBody.data;
  if(!overview.ok||!Array.isArray(operations?.sources)||operations.productionCertified!==false)throw Error('Deployed sales dashboard evidence is unavailable or incorrectly certified');
  const policy=await request(origin+'/api/voice-outbound',{method:'POST',headers,body:JSON.stringify({action:'policy_preview',useCase:'grooming_sales',phone,customerId,cityId:'blr'}),signal:AbortSignal.timeout(30000)});const pb=await policy.json();
- const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,provider:rb.data.transport?.provider||null,salesDashboardSources:operations.sources.length,salesDashboardUnavailable:operations.sources.filter(source=>source?.available!==true).length,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
+ const unavailableSources=operations.sources.filter(source=>source?.available!==true).map(source=>String(source?.name||'unknown').slice(0,80));
+ const evidence={customerId,destinationLast4:phone.slice(-4),mode:rb.data.gate.mode,enabled:rb.data.gate.enabled===true,provider:rb.data.transport?.provider||null,salesDashboardSources:operations.sources.length,salesDashboardUnavailable:unavailableSources.length,salesDashboardUnavailableSources:unavailableSources,policyAllowed:policy.ok&&pb.data?.allowed===true,blockedBy:pb.data?.blockedBy||(!policy.ok?`http_${policy.status}`:null),dialed:false};
  console.log('VOICE_SALES_LAUNCH_PREFLIGHT='+JSON.stringify(evidence));
  if(!evidence.enabled||!evidence.policyAllowed)throw Error('Existing voice policy has not cleared this UAT call');
  return evidence;
