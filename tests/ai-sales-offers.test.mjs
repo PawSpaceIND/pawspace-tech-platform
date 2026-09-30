@@ -163,10 +163,28 @@ test("named-package voice offer enquiries use current eligible facts without inv
  const reply=offersModule.approvedVoiceOfferInformation(message,offers);
  assert.match(reply,/₹200 off/);assert.match(reply,/₹2,399/);assert.match(reply,/validated at checkout/);assert.doesNotMatch(reply,/GROOM200|₹2,199|confirmed|created/i);
  assert.equal(offersModule.approvedVoiceOfferInformation(message,[]),null);
+ assert.equal(offersModule.approvedVoiceOfferInformation("Complete Makeover offer बताइए",offers),null);
+ assert.equal(offersModule.approvedVoiceOfferInformation("Explain the Complete Makeover offer in Tamil",offers),null);
  for(const action of ["Prepare a quote for Complete Makeover with the coupon", "Book Complete Makeover with the offer", "Apply the offer to Complete Makeover", "I accept the Complete Makeover offer"])assert.equal(offersModule.approvedVoiceOfferInformation(action,offers),null,"action request must reach governed booking logic");
  assert.equal(offersModule.approvedVoiceOfferInformation("Apply an offer to my taxi",offers),null);
  assert.equal(offersModule.approvedVoiceOfferInformation("No discounts for Complete Makeover please",offers),null);
  sqlite.prepare("UPDATE coupon_campaigns SET status='paused' WHERE code='GROOM200'").run();
  const paused=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
  assert.equal(offersModule.approvedVoiceOfferInformation(message,paused),null,"cross-sell campaign does not substitute for a paused closing offer");
+});
+
+
+test("voice acknowledges a narrow no-extras preference without swallowing price questions or booking changes",()=>{
+ for(const message of ["No extras, please. I only want the grooming information.", "No extra services please, I only want grooming.", "No extra services please. Just explain grooming."])
+  assert.equal(offersModule.voiceExtrasPreferenceReply(message),"Of course. Let’s stick to grooming for now.");
+ for(const message of ["No extras, book grooming", "No extras, what does grooming cost?", "Remove the extras from my quote", "No extras please, I want to cancel grooming", "My dog has itching, just grooming please"])
+  assert.equal(offersModule.voiceExtrasPreferenceReply(message),null);
+});
+
+test("verified English amount presentation preserves values, conditions, IDs and regional replies",()=>{
+ const raw="Regular INR 2,399. Offer ₹2,199, subject to checkout. Ref GROOM200, PIN 560038. Rs. 200 off.";
+ assert.equal(offersModule.spokenVerifiedAmounts(raw),"Regular 2,399 rupees. Offer 2,199 rupees, subject to checkout. Ref GROOM200, PIN 560038. 200 rupees off.");
+ assert.equal(offersModule.spokenVerifiedAmounts("Cost INR 100.50, payment pending."),"Cost 100.50 rupees, payment pending.");
+ assert.equal(offersModule.spokenVerifiedAmounts("कीमत ₹2,399 है।"),"कीमत ₹2,399 है।");
+ assert.equal(offersModule.spokenVerifiedAmounts("Booking INR-123 is pending."),"Booking INR-123 is pending.");
 });

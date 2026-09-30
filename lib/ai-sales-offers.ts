@@ -129,9 +129,25 @@ export function withoutApprovedVoiceDiscounts(reply:string,offers:ApprovedSalesO
  }).join("\n");
 }
 
+/** A narrow conversation preference acknowledgement, never an instruction to alter a quote. */
+export function voiceExtrasPreferenceReply(customerMessage:string){
+ const normalized=customerMessage.toLowerCase().replace(/[.,!]/g," ").replace(/\s+/g," ").trim();
+ const match=/^(?:no extras?|no extra services)(?: please)?(?: i)? (?:only want(?: the)?|only|just(?: explain)?) (grooming|training|boarding|sitting|walking)(?: information)?$/.exec(normalized);
+ return match?`Of course. Let’s stick to ${match[1]} for now.`:null;
+}
+
+/** Keep verified amounts intact while rendering English speech without currency abbreviations. */
+export function spokenVerifiedAmounts(reply:string){
+ // Regional-script replies retain their localized wording. English/code-mixed amounts are pilot only.
+ if(/[\u0900-\u0dff]/.test(reply))return reply;
+ return reply.replace(/(?:₹|\binr\b|\brs\.?)(?:\s*)(\d(?:[\d,]*\d)?(?:\.\d+)?)/gi,(_whole,amount:string)=>`${amount} rupees`);
+}
+
 /** An explicit offer enquiry about a named package is answered from eligible server facts.
  * This is information only: accepting an offer and quoting still use the governed action flow. */
 export function approvedVoiceOfferInformation(customerMessage:string,offers:ApprovedSalesOffer[]){
+ // Keep localized and explicit language-switch turns with the language-aware model.
+ if(/[\u0900-\u0dff]/.test(customerMessage)||/\b(?:hindi|tamil|malayalam|telugu|punjabi|marathi|bengali|kannada)\b/i.test(customerMessage))return null;
  if(/\b(?:prepare|create|reserve|apply|add|use|book|confirm|continue|proceed|accept)\b/i.test(customerMessage))return null;
  if(!/\b(?:offers?|coupons?|discounts?)\b/i.test(customerMessage)||/\b(?:no|without)\s+(?:offers?|coupons?|discounts?)\b|\b(?:do not|don.t)\s+(?:apply|use|add)\b/i.test(customerMessage))return null;
  const lower=customerMessage.toLowerCase();
