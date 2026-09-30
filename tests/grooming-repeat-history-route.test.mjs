@@ -41,6 +41,21 @@ function history(ctx, provider = ctx.familiar, changes = {}) {
     total_amount: 1899, created_by: "test", created_at: Date.now(), updated_at: Date.now(), ...changes };
   ctx.sqlite.prepare(`INSERT INTO canonical_bookings (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
 }
+
+test("G07 grooming preview exposes every eligible ranked groomer, not only the assignment shortlist", async t => {
+  const ctx = await world(t);
+  const day = ctx.input.scheduledStart.slice(0, 10);
+  for (let index = 0; index < 4; index++) {
+    const id = `extra-groom-${index}`;
+    ctx.sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,'blr',?,'commission','[\"grooming\"]','[\"blr-east\"]',1,4.5,70,1,30,20,60,'active',1,'2026-01-01',NULL,'test',?)").run(id, `Extra Groomer ${index}`, Date.now());
+    ctx.sqlite.prepare("INSERT INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,'blr','blr-east',?,'[\"06:00-22:00\"]','roster',?)").run(`avail-${id}`, id, day, Date.now());
+    ctx.sqlite.prepare("INSERT INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) VALUES (?,?,?,12.9716,77.6412,0,NULL,'test','test',?)").run(`base-${id}`, id, 'Indiranagar', Date.now());
+  }
+  const preview = await call(ctx);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.ok(preview.body.data.providers.length > 3, "customer choice must not truncate eligible groomers to the assignment top three");
+  assert.ok(preview.body.data.providers.some(provider => provider.id === "extra-groom-3"));
+});
 test("G07 real preview and automatic reservation use the same completed-history bonus", async t => {
   const ctx = await world(t); history(ctx);
   const preview = await call(ctx); assert.equal(preview.status, 200, JSON.stringify(preview.body));

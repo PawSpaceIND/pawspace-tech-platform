@@ -95,7 +95,7 @@ test("a preview answered at the deadline hands its unfinished work to the reques
     // The isolate is healthy afterwards: the next preview is answered normally, and nothing is handed off.
     const next = await preview(world);
     assert.equal(next.response.status, 200, JSON.stringify(next.body));
-    assert.deepEqual(next.body.data.providers.map((provider) => provider.id), ["uatcap_groom_east", "uatcap_groom_ft", "uatcap_groom_east_2"]);
+    assert.deepEqual(next.body.data.providers.map((provider) => provider.id).slice(0, 3), ["uatcap_groom_east", "uatcap_groom_ft", "uatcap_groom_east_2"], "the historical top-three ranking remains the prefix while all eligible groomers are visible");
     assert.equal(next.handedOff.length, 0, "a preview answered in time hands nothing off");
   } finally { console.log = original; }
 });
