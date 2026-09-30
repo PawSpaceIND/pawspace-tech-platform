@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {canonicalDialNumber} from '../lib/voice-call-gate.ts';
 import {authorizedLaunchTester,inspectVoiceSalesLaunch,specialistPilotAction} from '../scripts/voice-sales-launch-preflight.mjs';
 const env={PAWSPACE_VOICE_UAT_ALLOWLIST:'+91 98765 43210',EXPECTED_TESTER_SHA256:createHash('sha256').update('9876543210').digest('hex')};
+test('optional deployment preflight stays inside the certified revision concurrency lock',()=>{
+ const workflow=readFileSync(new URL('../.github/workflows/deploy-staging.yml',import.meta.url),'utf8');
+ const step=workflow.slice(workflow.indexOf('      - name: Inspect voice sales readiness under'),workflow.indexOf('      - name: Send one approved Fast2SMS smoke'));
+ assert.match(workflow,/group: pawspace-staging-sweep/);
+ assert.match(workflow,/voice_sales_preflight:[\s\S]*?type: boolean\s+default: false/);
+ assert.ok(workflow.indexOf('Verify the authorized voice preflight recipient')<workflow.indexOf('Apply D1 migrations'));
+ assert.ok(workflow.indexOf('Inspect voice sales readiness under')>workflow.indexOf('run: node tests\/e2e\/staging-certification.mjs'));
+ assert.match(step,/voice_sales_preflight == 'true'/);
+ assert.match(step,/set -o pipefail/);
+ assert.match(step,/scripts\/voice-sales-launch-preflight\.mjs/);
+ assert.doesNotMatch(step,/continue-on-error|request_call|specialistPilotAction/);
+});
 test('fresh launch requires the full authorized number, not a matching last four',()=>{
  assert.equal(authorizedLaunchTester(env),'+919876543210');
  assert.equal(authorizedLaunchTester(env),canonicalDialNumber(env,env.PAWSPACE_VOICE_UAT_ALLOWLIST));
