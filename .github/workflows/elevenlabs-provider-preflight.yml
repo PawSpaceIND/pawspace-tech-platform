@@ -1029,6 +1029,7 @@ jobs:
             const currentAgent=current?.conversation_config?.agent||{},currentPrompt=currentAgent?.prompt||{},currentTts=current?.conversation_config?.tts||{},currentTurn=current?.conversation_config?.turn||{},currentAsr=current?.conversation_config?.asr||{};
             const voiceId=currentTts.voice_id;
             if(!voiceId) throw new Error(label+' agent voice_id missing');
+            if(currentPrompt?.llm!=='custom-llm'||currentPrompt?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw new Error(label+' exact isolated staging custom brain required');
             const voiceRead=await fetch('https://api.elevenlabs.io/v1/voices/'+encodeURIComponent(voiceId),{headers:{'xi-api-key':key},signal:AbortSignal.timeout(30000)});
             const voiceMeta=await voiceRead.json().catch(()=>({}));
             if(voiceRead.ok) console.log(label+'_VOICE_SAFE='+JSON.stringify({name:voiceMeta.name||null,category:voiceMeta.category||null,labels:voiceMeta.labels||null}));
@@ -1041,6 +1042,7 @@ jobs:
                   max_conversation_duration_message:"I want to make sure we finish this properly. This call is reaching its time limit, so I can have a PawSpace teammate continue with you.",
                   prompt:{
                     ...currentPrompt,
+                    cascade_timeout_seconds:15,
                     prompt:premiumLanguagePrompt(humanCallPrompt(currentPrompt?.prompt)),
                     built_in_tools:{
                       ...(currentPrompt?.built_in_tools||{}),
@@ -1076,7 +1078,7 @@ jobs:
                   soft_timeout_config:{
                     ...(currentTurn?.soft_timeout_config||{}),
                     timeout_seconds:3,
-                    message:"Sure, give me a second.",
+                    message:"I'm checking that for you.",
                     max_soft_timeouts_per_generation:1
                   }
                 }
@@ -1088,6 +1090,7 @@ jobs:
             const result=await patch.json().catch(()=>({}));
             if(!patch.ok){console.log(JSON.stringify(result).slice(0,2000));throw new Error(label+' agent update failed '+patch.status);}
             const cc=result?.conversation_config||{},tts=cc?.tts||{},turn=cc?.turn||{},agent=cc?.agent||{};
+            if(cc?.agent?.prompt?.cascade_timeout_seconds!==15)throw new Error(label+' model response window did not persist');
             const languageReady=premiumLanguageReadiness(cc);
             if(!languageReady.allLanguagesConfigured||!languageReady.languageDetection)throw new Error(label+' premium multilingual configuration did not persist');
             console.log(label+'_MULTILINGUAL_READY='+JSON.stringify({
@@ -1098,6 +1101,7 @@ jobs:
               premiumCertified:languageReady.premiumCertified
             }));
             console.log(label+'_AUDIO_TUNED='+JSON.stringify({
+              modelResponseWindowSeconds:cc?.agent?.prompt?.cascade_timeout_seconds??null,
               profile:profile.id,
               firstMessage:agent.first_message||null,
               modelId:tts.model_id||null,
