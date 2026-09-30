@@ -3,7 +3,7 @@ import{recordBotCallDisposition}from"./bot-call-disposition";
 import{ensureCommunicationTables}from"./communication-engine";
 import{endInboundAiVoiceSession}from"./inbound-ai-telephony";
 import{ensureVoiceCallTables,reconcileVerifiedElevenLabsCompletion}from"./voice-outbound-governance";
-import { resolveElevenLabsFailureCall } from "./elevenlabs-failure-correlation";
+import { resolveElevenLabsFailureCall, resolveElevenLabsAcceptedCall } from "./elevenlabs-failure-correlation";
 
 type Env=Record<string,unknown>;type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -61,6 +61,7 @@ export async function reconcileElevenLabsPostCall(db:D1Database,payload:Row){
   if(!session)throw new Response("PawSpace voice session was not found for ElevenLabs post-call event",{status:409});
   threadId=text(session.thread_id);customerId=text(session.customer_id);
  }else if(voiceCallId){
+  await resolveElevenLabsAcceptedCall(db,{conversationId,agentId:text(data.agent_id),claimedCallId:voiceCallId});
   const call=await db.prepare("SELECT id,customer_id,lead_id,booking_id FROM voice_call_orders WHERE id=?").bind(voiceCallId).first<Row>();
   if(!call||!text(call.customer_id))throw new Response("PawSpace outbound voice call was not found for ElevenLabs post-call event",{status:409});
   outboundCall=call;customerId=text(call.customer_id);threadId=voiceThreadIdForCall(voiceCallId);

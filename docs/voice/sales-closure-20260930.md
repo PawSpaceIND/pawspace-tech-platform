@@ -42,3 +42,8 @@ Before launch record exact build, agent version, call ID and attended feedback; 
 No dashboard counter, passing configuration check or synthetic transcript certifies these live outcomes.
 No production campaign is activated as part of test execution. Native runtime cutover requires its own
 attended comparison and rollback evidence. Unresolved cases remain with staff.
+
+The user subsequently approved the current voice for the initial pilot. Localized voice discovery
+returned 401; this is an explicit pilot deferral, not a claim of localized voice certification.
+Fresh-launch preflight verifies the full authorized recipient via SHA-256, isolated staging revision,
+canonical ownership and the existing policy preview. It has no dial or policy-override operation.

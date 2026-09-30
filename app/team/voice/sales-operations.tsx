@@ -80,6 +80,15 @@ export default function VoiceSalesOperationsPanel() {
         `${display(row.id)} · ${display(row.service_code)}`, display(row.status), display(row.booking_id), display(row.payment_link_status), display(row.payment_status), display(row.provider_id),
       ])} empty={ops?.offers ? "No voice offers recorded." : "Booking journey evidence is unavailable."} />
     </TeamSection>
+    <TeamSection title="Conversation quality" note="Latest 1,000 voice turns in the past 24 hours. AI processing time excludes carrier playback and is not the customer's measured reply-start latency.">
+      <TeamStatGrid>
+        <StatCard label="Measured AI turns" value={ops?.quality?.measuredTurns ?? "Unknown"} meta={ops?.quality ? `${ops.quality.sampledTurns} sampled turns` : "Measurements unavailable"}/>
+        <StatCard label="AI processing p50" value={ops?.quality?.processingP50Ms == null ? "Unknown" : `${ops.quality.processingP50Ms} ms`}/>
+        <StatCard label="AI processing p95" value={ops?.quality?.processingP95Ms == null ? "Unknown" : `${ops.quality.processingP95Ms} ms`}/>
+        <StatCard label="Human escalations" value={ops?.quality?.handoffs ?? "Unknown"} meta="Handoff outcomes in the sampled turns"/>
+      </TeamStatGrid>
+      <p>Voice quality and cost per paid booking require complete audio, carrier-cost and payment evidence. {ops?.quality ? `${ops.quality.turnsWithCost} sampled turns have model-cost records.` : "Model-cost coverage is unknown."}</p>
+    </TeamSection>
     <TeamSection title="Inbound conversations" note="Latest 30 sessions. Transcript and customer access remain governed by existing staff permissions.">
       <TeamTable head={["Session", "State", "Language", "Customer turns", "Conversation"]} rows={(ops?.inbound ?? []).map(row => [display(row.id), display(row.status), display(row.language), display(row.turn_index), display(row.thread_id)])} empty={ops?.inbound ? "No inbound sessions recorded." : "Inbound evidence is unavailable."} />
     </TeamSection>

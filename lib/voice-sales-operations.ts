@@ -9,6 +9,7 @@ export type VoiceSalesOperations = {
   offers: Row[] | null;
   pendingWebhooks: number | null;
   pendingCrmWrites: number | null;
+  quality: { sampledTurns: number; measuredTurns: number; processingP50Ms: number | null; processingP95Ms: number | null; handoffs: number; turnsWithCost: number } | null;
 };
 
 export async function voiceSalesOperations(db: D1Database): Promise<VoiceSalesOperations> {
@@ -17,7 +18,8 @@ export async function voiceSalesOperations(db: D1Database): Promise<VoiceSalesOp
     try { const result = await query(); sources.push({ name, available: true }); return result; }
     catch { sources.push({ name, available: false }); return null; }
   }
-  const [inbound, offers, webhooks, crm] = await Promise.all([
+  const since=Date.now()-24*60*60*1000;
+  const [inbound, offers, webhooks, turns, crm] = await Promise.all([
     read('Inbound sessions', async () => (await db.prepare(
       "SELECT id,thread_id,status,language,turn_index,started_at,ended_at FROM inbound_ai_voice_sessions ORDER BY started_at DESC LIMIT 30"
     ).all<Row>()).results),
@@ -33,9 +35,13 @@ export async function voiceSalesOperations(db: D1Database): Promise<VoiceSalesOp
        ORDER BY o.created_at DESC LIMIT 30`
     ).all<Row>()).results),
     read('Post-call reconciliation', () => db.prepare("SELECT COUNT(*) count FROM elevenlabs_voice_webhooks WHERE status<>'processed'").first<{ count: number }>()),
+    read('AI processing measurements', async()=> (await db.prepare("SELECT latency_ms,outcome,cost_minor FROM ai_conversation_turns WHERE channel='voice' AND created_at>=? ORDER BY created_at DESC LIMIT 1000").bind(since).all<Row>()).results),
     read('CRM write reconciliation', () => db.prepare("SELECT COUNT(*) count FROM bot_call_disposition_operations WHERE status<>'completed'").first<{ count: number }>()),
   ]);
+  const timings=(turns??[]).map(turn=>Number(turn.latency_ms)).filter(value=>Number.isFinite(value)&&value>0).sort((a,b)=>a-b);
+  const percentile=(p:number)=>timings.length?timings[Math.max(0,Math.ceil(timings.length*p)-1)]:null;
   return {
+    quality:turns?{sampledTurns:turns.length,measuredTurns:timings.length,processingP50Ms:percentile(.5),processingP95Ms:percentile(.95),handoffs:turns.filter(turn=>turn.outcome==='handoff').length,turnsWithCost:turns.filter(turn=>turn.cost_minor!=null).length}:null,
     asOf: Date.now(), productionCertified: false,
     certificationReason: 'Operational records do not certify attended audio quality, payment completion, or launch approval.',
     sources, inbound, offers, pendingWebhooks: webhooks ? Number(webhooks.count) : null,

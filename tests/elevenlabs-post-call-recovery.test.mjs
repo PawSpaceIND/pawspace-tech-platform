@@ -1,19 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as modules from 'node:module';
+import * as nodeModule from 'node:module';
 import {freshSqlite,makeD1} from './helpers/voice-harness.mjs';
 const stubs={
  './communication-engine':'export async function ensureCommunicationTables(){}',
  './inbound-ai-telephony':'export async function endInboundAiVoiceSession(db,input){return globalThis.__postCall.end(input)}',
  './voice-outbound-governance':'export async function ensureVoiceCallTables(){};export async function reconcileVerifiedElevenLabsCompletion(db,input){return globalThis.__postCall.complete(input)}',
- './elevenlabs-failure-correlation':'export async function resolveElevenLabsFailureCall(){throw Error("not used")}',
+ './elevenlabs-failure-correlation':'export async function resolveElevenLabsFailureCall(){throw Error("not used")};export async function resolveElevenLabsAcceptedCall(){return globalThis.__postCall.identity()}',
  './elevenlabs-custom-llm':'export function voiceThreadIdForCall(id){return `THREAD-VOICE-${id}`}',
  './bot-call-disposition':'export async function recordBotCallDisposition(db,input){return globalThis.__postCall.disposition(input)}',
 };
 const urls=Object.fromEntries(Object.entries(stubs).map(([key,value])=>[key,'data:text/javascript,'+encodeURIComponent(value)]));
 const resolve=(s,c,n)=>c.parentURL?.endsWith('/lib/elevenlabs-post-call.ts')&&urls[s]?{url:urls[s],shortCircuit:true}:n(s,c);
-if(modules.registerHooks)modules.registerHooks({resolve});
-else modules.register('data:text/javascript,'+encodeURIComponent(`const urls=${JSON.stringify(urls)};export function resolve(s,c,n){return c.parentURL?.endsWith('/lib/elevenlabs-post-call.ts')&&urls[s]?{url:urls[s],shortCircuit:true}:n(s,c)}`));
+if(typeof nodeModule.registerHooks === "function")nodeModule.registerHooks({resolve});
+else nodeModule.register('data:text/javascript,'+encodeURIComponent(`const urls=${JSON.stringify(urls)};export function resolve(s,c,n){return c.parentURL?.endsWith('/lib/elevenlabs-post-call.ts')&&urls[s]?{url:urls[s],shortCircuit:true}:n(s,c)}`));
 const {reconcileElevenLabsPostCall}=await import('../lib/elevenlabs-post-call.ts');
 function world(t){
  const sqlite=freshSqlite(),db=makeD1(sqlite);t.after(()=>sqlite.close());
@@ -25,7 +25,7 @@ function world(t){
  CREATE TABLE ai_voice_calls(id TEXT,disposition TEXT,outcome TEXT,ended_at INTEGER);
  INSERT INTO voice_call_orders VALUES('call','customer','lead',NULL);
  INSERT INTO communication_threads(id,customer_id,status,updated_at) VALUES('unrelated','customer','open',9999999999999);`);
- globalThis.__postCall={end:async()=>({status:'ended'}),complete:async()=>({completed:true}),disposition:async()=>({id:'disposition'})};
+ globalThis.__postCall={identity:async()=> 'call',end:async()=>({status:'ended'}),complete:async()=>({completed:true}),disposition:async()=>({id:'disposition'})};
  const payload={type:'post_call_transcription',event_timestamp:1,data:{conversation_id:'conversation',conversation_initiation_client_data:{dynamic_variables:{pawspace_voice_call_id:'call'}},transcript:[{role:'user',message:'Hello'},{role:'agent',message:'How can I help?'}]}};
  return{sqlite,db,payload};
 }
@@ -51,3 +51,10 @@ test('inbound ElevenLabs speech updates native turn count before CRM completion 
  await assert.rejects(reconcileElevenLabsPostCall(w.db,w.payload),/CRM unavailable/);assert.equal(w.sqlite.prepare('SELECT status FROM elevenlabs_voice_webhooks').get().status,'processing');
 });
 test('mixed inbound/outbound identities fail before writing transcripts',async t=>{const w=world(t);w.payload.data.conversation_initiation_client_data.dynamic_variables.pawspace_voice_session_id='session';await assert.rejects(reconcileElevenLabsPostCall(w.db,w.payload),e=>e instanceof Response&&e.status===409);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM communication_messages').get().n,0);});
+
+test('mismatched provider acceptance writes no transcript or CRM outcome',async t=>{
+ const w=world(t);globalThis.__postCall.identity=async()=>{throw new Response('identity mismatch',{status:409})};
+ globalThis.__postCall.disposition=async()=>{assert.fail('CRM must not run')};
+ await assert.rejects(reconcileElevenLabsPostCall(w.db,w.payload),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM communication_messages').get().n,0);
+});

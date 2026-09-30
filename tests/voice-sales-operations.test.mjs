@@ -21,3 +21,13 @@ test('journey reads canonical payment and provider records, not AI claims',async
  const mismatch=await voiceSalesOperations(makeD1(sqlite));assert.equal(mismatch.offers[0].booking_id,null);assert.equal(mismatch.offers[0].payment_status,null);assert.equal(mismatch.offers[0].payment_link_status,null);
  }finally{sqlite.close();}
 });
+test('processing percentiles exclude missing measurements and never become audio certification',async()=>{
+ const sqlite=freshSqlite();try{
+ sqlite.exec('CREATE TABLE ai_conversation_turns(latency_ms INTEGER,outcome TEXT,cost_minor INTEGER,channel TEXT,created_at INTEGER)');
+ const insert=sqlite.prepare('INSERT INTO ai_conversation_turns VALUES(?,?,?,?,?)');
+ for(const latency of [0,null,500,1500,3000])insert.run(latency,'replied',null,'voice',Date.now());
+ insert.run(100,'handoff',1,'voice',Date.now());insert.run(99999,'replied',1,'chat',Date.now());
+ const {quality,productionCertified}=await voiceSalesOperations(makeD1(sqlite));
+ assert.equal(quality.sampledTurns,6);assert.equal(quality.measuredTurns,4);assert.equal(quality.processingP50Ms,500);assert.equal(quality.processingP95Ms,3000);assert.equal(quality.handoffs,1);assert.equal(quality.turnsWithCost,1);assert.equal(productionCertified,false);
+ }finally{sqlite.close();}
+});
