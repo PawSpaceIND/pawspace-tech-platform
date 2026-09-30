@@ -981,7 +981,7 @@
     "app/v2/food/subscription-invoice/page.tsx": "ee62fdee843d96b7e1e217ee62d4097cb89e5ad8ab6e9dd966bab5844907261e",
     "app/v2/food/subscription-payment/page.tsx": "a32535f2f82e9aa2e036012d181fd49ca511a96b565fbf7efcfa18ecda57ca32",
     "app/v2/food/subscriptions/page.tsx": "1b56e871309c81b90f13cdb693ab675efece1ca251384a4e54fa3855b4aa72a6",
-    "app/v2/grooming/grooming.module.css": "5addeb9c961a774aa42c3d6a795a24a397eb7daf6c4c2d134989428b1943c833",
+    "app/v2/grooming/grooming.module.css": "06077a3db7e46a5b898eb803721922292f56fe8189f8e2426ccb2daf4935d154",
     "app/v2/grooming/manage/page.tsx": "eed883ee9382a73409e5518e20e8a195bdb2fa2d2e90aa1d29d7285b61c3e96b",
     "app/v2/grooming/page.tsx": "0dab2eacac57aa80bd49108b2c5c11941719c1d9719a309a06d829b857d949c0",
     "app/v2/grooming/payment-panel.tsx": "1598736850929da1768ba35ece3eb26b295b3498fd0f2e3737670bcfb48b9b43",
