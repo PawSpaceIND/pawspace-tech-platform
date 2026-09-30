@@ -368,22 +368,29 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   let providerPromise: Promise<AiResponseProvider> | null = null;
   let speechParts: Uint8Array[] = [], preRoll: Uint8Array[] = [], speechStartedAt = 0, silenceMs = 0, assistantPlaying = false;
   let chain = Promise.resolve();
+  // Record the failing operation without logging transcripts, provider messages or credentials.
+  let processingPhase = "waiting";
 
   const processUtterance = async (pcm: Uint8Array, active: Session) => {
     const turnStarted = Date.now();
+    processingPhase = "transcribe";
     const stt = await transcribe(env, pcm, active.sampleRate, active.language);
     if (!stt.text) return;
     const llmStarted = Date.now();
+    processingPhase = "generate_reply";
     providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId,salesService:active.salesService});
     const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, await providerPromise);
     const llmMs = Date.now() - llmStarted;
     if (!generated.output) return;
+    processingPhase = "synthesize_reply";
     const tts = await synthesizeLinear16(env, generated.output, active.sampleRate);
     const assistantSegment = recordSegment(env, active, "assistant", generated.output, null, null);
     const totalMs = Date.now() - turnStarted;
     const markName = `turn-${active.segmentIndex}-end`;
     assistantPlaying = true;
+    processingPhase = "send_reply_audio";
     sendAudio(server, active, tts.audio, markName);
+    processingPhase = "record_reply";
     await assistantSegment;
     const diagnostics = nativeVoiceTurnDiagnostics({
       configuredSttLanguage: active.language,
@@ -414,18 +421,24 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "connected") return;
       if (kind === "start") {
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
+        processingPhase = "establish_session";
         session = await establishSession(env, incoming.start || {});
         if (!session.reconnected) {
+          processingPhase = "synthesize_greeting";
           const greeting = await synthesizeLinear16(env, session.openingDisclosure, session.sampleRate);
+          processingPhase = "record_greeting";
           await recordSegment(env, session, "assistant", session.openingDisclosure, null, null);
           assistantPlaying = true;
+          processingPhase = "send_greeting_audio";
           sendAudio(server, session, greeting.audio, `opening-${session.segmentIndex}-end`);
         }
+        processingPhase = "waiting_for_speech";
         return;
       }
       if (kind === "mark") { assistantPlaying = false; return; }
       if (kind === "stop") { const active = session; await closeSession(env, active, text(incoming.stop?.reason) || "callended"); session = null; server.close(1000, "Call ended"); return; }
       if (kind !== "media" || !session) return;
+      processingPhase = "receive_audio";
       const payload = text(incoming.media?.payload);
       if (!payload) return;
       let pcm: Uint8Array;
@@ -453,6 +466,13 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       }
     }).catch(async error => {
       const active = session;
+      if (active) {
+        const name = String((error as Error)?.name || "");
+        const errorClass = ["Error", "TypeError", "RangeError", "InvalidStateError", "AbortError", "TimeoutError"].includes(name) ? name : "UnknownError";
+        await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
+          .bind(crypto.randomUUID(), active.aiCallId, "agentstream_processing_failed", JSON.stringify({ phase: processingPhase, errorClass }), Date.now())
+          .run().catch(() => undefined);
+      }
       await closeSession(env, active, "agentstream_error");
       try { server.close(1011, text((error as Error)?.message).slice(0, 100) || "AgentStream processing failed"); } catch {}
     });
