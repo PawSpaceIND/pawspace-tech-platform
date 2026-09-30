@@ -58,14 +58,14 @@ if(quoteOnly){
 const context=await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'});
 validateDemoContext(context);console.log(actionsMaskCommand(context.callId));console.log(actionsMaskCommand(context.threadId));
 if(!context.callId||!context.threadId)throw Error('Governed timing context missing');
-const results=[];let quoteProof=null;
+const results=[];let quoteProof=null,phase='quote_baseline',replyObservation=null,readbacksVerified=false;
 try{
  if(quoteOnly){const pending=await rows("SELECT id FROM voice_sales_offers WHERE customer_id=? AND thread_id=? AND status='pending' AND expires_at>=?",[env.SPECIALIST_CUSTOMER_ID,context.threadId,Date.now()]);if(pending.length)throw Error('Active customer quote prevents isolated preparation');}
  for(const prompt of prompts){
-  await isolation();const started=Date.now();
+  phase='request';await isolation();const started=Date.now();
   const response=await fetch(origin+'/api/elevenlabs/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env.ELEVENLABS_LLM_SECRET},body:JSON.stringify({model:config.conversation_config.agent.prompt.custom_llm.model_id,input:prompt,elevenlabs_extra_body:{pawspace_customer_id:env.SPECIALIST_CUSTOMER_ID,pawspace_thread_id:context.threadId}}),signal:AbortSignal.timeout(30000)});
   if(!response.ok||!response.body)throw Error('Staged brain probe refused');
-  const headersMs=Date.now()-started;let firstDeltaMs=null,buffer='',completed=null,failed=false,reply='',receivedBytes=0;const decoder=new TextDecoder();
+  phase='response';const headersMs=Date.now()-started;let firstDeltaMs=null,buffer='',completed=null,failed=false,reply='',receivedBytes=0;const decoder=new TextDecoder();
   for await(const chunk of response.body){receivedBytes+=chunk.byteLength;if(receivedBytes>128*1024)throw Error('Staged brain response exceeds evidence limit');buffer+=decoder.decode(chunk,{stream:true});let newline;
    while((newline=buffer.indexOf('\n'))!==-1){const line=buffer.slice(0,newline).trim();buffer=buffer.slice(newline+1);if(!line.startsWith('data: {'))continue;const event=JSON.parse(line.slice(6));
     if(event.type==='response.output_text.delta'){reply+=String(event.delta||'');if(reply.length>12000)throw Error('Staged brain reply exceeds evidence limit');if(reply.trim()&&firstDeltaMs===null)firstDeltaMs=Date.now()-started;}
@@ -74,6 +74,7 @@ try{
    }
   }
   if(failed||!completed||firstDeltaMs===null||!completed.pawspace_timing)throw Error('Staged brain probe did not complete with timing evidence');
+  replyObservation={characters:reply.length,mentionsCompleteMakeover:/Complete Makeover/i.test(reply),mentionsNotReserved:/not reserved/i.test(reply),mentionsStaff:/team member|human|staff|cannot continue/i.test(reply),asksQuestion:/\?/.test(reply)};phase='business_readback';
   if(JSON.stringify(before)!==JSON.stringify(await bookingIds())||JSON.stringify(paymentsBefore)!==JSON.stringify(await paymentIds()))throw Error('Informational timing probe changed booking or payment sets');
   if(quoteOnly){
    const [offers,addresses,groups]=await Promise.all([
@@ -82,11 +83,15 @@ try{
     rows('SELECT id,status FROM scheduling_reservations WHERE customer_id=? ORDER BY id'),
    ]);
    if(JSON.stringify(addressesBefore)!==JSON.stringify(addresses)||JSON.stringify(reservationsBefore)!==JSON.stringify(groups))throw Error('Quote changed address or reservation records');
-   quoteProof=pendingQuoteProof(offers.filter(x=>Number(x.expires_at)>=Date.now()&&x.status==='pending'),reply);
+   readbacksVerified=true;phase='pending_quote_proof';quoteProof=pendingQuoteProof(offers.filter(x=>Number(x.expires_at)>=Date.now()&&x.status==='pending'),reply);
   }
   results.push({prompt:quoteOnly?'Saved-address unconfirmed Grooming quote (private intake omitted)':prompt,headersMs,firstValidatedDeltaMs:firstDeltaMs,totalMs:Date.now()-started,timing:safeBrainTiming(completed.pawspace_timing)});
  }
  await isolation();await app({action:'complete',callId:context.callId,outcome:quoteOnly?'synthetic_quote_only_probe':'synthetic_timing_probe',disposition:'info_shared'});
  const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,bookingSetUnchanged:true,paymentSetUnchanged:true,scope:quoteOnly?'Actual staged unconfirmed saved-address quote only; no customer confirmation, delivered checkout, capture, assignment or audio certification':'Actual staged brain timings; excludes ASR, TTS and handset',...(quoteOnly?{quoteProof,addressSetUnchanged:true,reservationRecordsUnchanged:true}:{}),results};
  await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('STAGED_BRAIN_TIMINGS='+JSON.stringify(report));
-}catch(error){await app({action:'transport_failure',callId:context.callId,reason:quoteOnly?'synthetic_quote_only_probe_failed':'synthetic_timing_probe_failed',reconnected:false}).catch(()=>{});throw Error('Staged brain verification failed; no phone call or confirmation was sent');}
+}catch(error){
+ const known=new Set(['Active customer quote prevents isolated preparation','Staged brain probe refused','Staged brain probe did not complete with timing evidence','Informational timing probe changed booking or payment sets','Quote changed address or reservation records','One persisted pending quote required','Pending quote evidence invalid','Staged timing evidence invalid']);
+ const report={revision:env.EXPECTED_SHA,dialed:false,premiumCertified:false,passed:false,phase,reason:known.has(error?.message)?error.message:'Staged verification failed',replyObservation,readbacksVerified,confirmationSent:false,scope:'Failed non-dialing quote/timing probe; private input and raw provider errors omitted'};
+ await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('STAGED_PROBE_FAILURE='+JSON.stringify(report));
+ await app({action:'transport_failure',callId:context.callId,reason:quoteOnly?'synthetic_quote_only_probe_failed':'synthetic_timing_probe_failed',reconnected:false}).catch(()=>{});throw Error('Staged brain verification failed; no phone call or confirmation was sent');}
