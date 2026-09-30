@@ -30,8 +30,7 @@ async function openThread(db: Db, customerId: string, leadId?: string | null) {
 }
 
 function outboundVoiceUseCaseFor(row: Row) {
-  const lifecycle = text(row.lifecycle_code),sourceType=text(row.source_type);
-  if(lifecycle==="requested_callback"||sourceType==="customer_requested_callback")return "customer_requested_callback";
+  const lifecycle = text(row.lifecycle_code);
   return ["fresh_lead", "dormant_lead"].includes(lifecycle) ? "lead_qualification" : "sales_pitch";
 }
 
