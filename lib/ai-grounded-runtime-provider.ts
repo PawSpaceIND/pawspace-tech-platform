@@ -142,7 +142,7 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
    if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
   }
  }
- const envelope=parseGroundedActionEnvelope(result.text),reply=safePetMedicalReply(envelope?.reply||result.text,medicalQuestion,Boolean(envelope?.actions.length));return{text:reply,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(reply,eligibleOffers),highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}
+ const envelope=parseGroundedActionEnvelope(result.text),reply=safePetMedicalReply(envelope?.reply||result.text,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);return{text:reply,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(reply,eligibleOffers),highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}
 
 /**
  * Every rupee amount in a reply is a real price in the server-owned catalogue supplied for this turn.
