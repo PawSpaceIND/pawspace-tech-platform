@@ -111,7 +111,9 @@ test("a Meet & Greet is not order value - it is paid through its own conversion 
   assert.equal(result.orderValue, 150000, "counting the Meet & Greet in order value would pay for it twice");
 });
 
-test("a conversion can only be recorded against this trainer's real Meet & Greet", async () => {
+test("a conversion can only be recorded against this trainer's real Meet & Greet", async (t) => {
+  // Conversion timestamps belong to the explicitly seeded September payroll period.
+  t.mock.method(Date, "now", () => Date.parse("2026-09-15T12:00:00Z"));
   const { sqlite, db, engine } = await seedTrainer();
   const meetGreet = addBooking(sqlite, { amount: 500, packageCode: "trainer-meet-greet" });
   const someoneElses = addBooking(sqlite, { amount: 500, packageCode: "trainer-meet-greet", provider: OTHER_TRAINER });
@@ -138,7 +140,9 @@ test("a conversion can only be recorded against this trainer's real Meet & Greet
   assert.ok(ok, "a genuine conversion must record");
 });
 
-test("the same conversion recorded twice is paid once", async () => {
+test("the same conversion recorded twice is paid once", async (t) => {
+  // Conversion timestamps belong to the explicitly seeded September payroll period.
+  t.mock.method(Date, "now", () => Date.parse("2026-09-15T12:00:00Z"));
   const { sqlite, db, engine } = await seedTrainer();
   const meetGreet = addBooking(sqlite, { amount: 500, packageCode: "trainer-meet-greet" });
   const converted = addBooking(sqlite, { amount: 20000 });
@@ -150,7 +154,24 @@ test("the same conversion recorded twice is paid once", async () => {
   assert.equal(result.meetGreetConversionCount, 1, "one conversion is one payment");
 });
 
-test("the reported total is the sum of the components it reports", async () => {
+test("a conversion recorded in October is paid in October, even for September bookings", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-10-01T00:00:00Z"));
+  const { sqlite, db, engine } = await seedTrainer();
+  const meetGreet = addBooking(sqlite, { amount: 500, packageCode: "trainer-meet-greet" });
+  const converted = addBooking(sqlite, { amount: 20000 });
+  await engine.recordMeetGreetConversion(db, { trainerId: TRAINER, meetGreetBookingId: meetGreet, convertedBookingId: converted, actorId: "ops@pawspace.in" });
+
+  const september = await compute(engine, db);
+  assert.equal(september.meetGreetConversionCount, 0);
+  assert.equal(september.meetGreetIncentive, 0);
+  const october = await engine.computeTrainerMonthlyIncentive(db, { trainerId: TRAINER, monthStart: "2026-10-01", actorId: "finance@pawspace.in" });
+  assert.equal(october.meetGreetConversionCount, 1);
+  assert.equal(october.meetGreetIncentive, 1000);
+});
+
+test("the reported total is the sum of the components it reports", async (t) => {
+  // Conversion timestamps belong to the explicitly seeded September payroll period.
+  t.mock.method(Date, "now", () => Date.parse("2026-09-15T12:00:00Z"));
   const { sqlite, db, engine } = await seedTrainer();
   addBooking(sqlite, { amount: 200000 });
   const meetGreet = addBooking(sqlite, { amount: 500, packageCode: "trainer-meet-greet" });
