@@ -31,11 +31,14 @@ export async function selectStagingModel(env=process.env,request=fetch){
   if(vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='true')throw Error('Sandbox payments required');assertDemoPhonePauseMetadata(vars);
   const readiness=await get(origin+'/api/voice-outbound',{cookie});assertDemoRuntimePhonePause(vars,readiness.b.data?.gate);
  }
- await isolation();const url=eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),headers={'xi-api-key':env.ELEVENLABS_API_KEY,'content-type':'application/json'};
+ await isolation();
+ const coverage=(await get(origin+'/api/ai-business-configuration?mode=coverage',{cookie})).b.data;
+ if(!Number.isInteger(coverage?.requiredTopics)||coverage.requiredTopics<1||coverage.activeTopics!==coverage.requiredTopics||coverage.sourceMatchedTopics!==coverage.requiredTopics)throw Error('Reviewed service knowledge is not fully active on staging');
+ const url=eleven+'/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID),headers={'xi-api-key':env.ELEVENLABS_API_KEY,'content-type':'application/json'};
  const before=(await get(url,headers)).b,patch=serviceModelPatch(before);
  if(before.conversation_config.agent.prompt.custom_llm.model_id!=='pawspace-service-sales')await get(url,headers,{method:'PATCH',body:JSON.stringify(patch)});
  const after=(await get(url,headers)).b;verifyServiceModelChange(before,after);await isolation();
- const report={revision:env.EXPECTED_SHA,model:'pawspace-service-sales',onlyModelSelectorChanged:true,phoneCallsPaused:true,dialed:false,productionChanged:false,premiumCertified:false};
+ const report={revision:env.EXPECTED_SHA,model:'pawspace-service-sales',onlyModelSelectorChanged:true,reviewedKnowledgeTopics:coverage.requiredTopics,phoneCallsPaused:true,dialed:false,productionChanged:false,premiumCertified:false};
  await mkdir('voice-model-results',{recursive:true});await writeFile('voice-model-results/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));return report;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await selectStagingModel();
