@@ -266,6 +266,7 @@ test("V2: a goal match is labelled on its package button and never selected for 
   // Right after the name, so each button's accessible name still starts with the plan name.
   assert.match(page, /<strong>\{item\.name\}<\/strong>\{recommendation\?\.basis==="goals"&&recommendation\.packageCode===item\.package_code&&<small className=\{styles\.block\}>Best match for \{recommendation\.matchedGoals\.join\(" \+ "\)\}<\/small>\}/);
   assert.match(page, /const\[packageCode,setPackageCode\]=useState\("training-4-puppy"\)/, "the default plan is unchanged");
-  assert.equal([...page.matchAll(/setPackageCode\(/g)].length, 1, "only the customer's own tap selects a package");
+  assert.equal([...page.matchAll(/setPackageCode\(/g)].length, 2, "each route layout selects a package only through the customer's own tap");
+  assert.equal([...page.matchAll(/onClick=\{\(\)=>setPackageCode\(item\.package_code\)\}/g)].length, 2, "both package selectors require an explicit tap");
   assert.match(page, /onClick=\{\(\)=>setPackageCode\(item\.package_code\)\}/);
 });
