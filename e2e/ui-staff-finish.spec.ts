@@ -54,7 +54,8 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
   }else if(screen==='people/provider-training'){
    await expect(content.getByRole('heading',{name:'Provider training & SOP library',exact:true})).toBeVisible();
    for(const name of ['Title','Summary','Content sections (one per line)','Quiz question','Quiz options (separate with |; first index is 0)']){const field=content.getByLabel(name,{exact:true});await expect(field).toBeVisible();await field.focus();expect(await field.evaluate(e=>e===document.activeElement)).toBe(true);}
-   await expect(content.getByLabel('Service',{exact:true})).toHaveValue('all');await expect(content.getByLabel('Pass %',{exact:true})).toHaveValue('80');
+   const service=content.getByRole('combobox',{name:'Service',exact:true});await expect(service).toBeVisible();await expect(service).toHaveValue('all');await service.focus();expect(await service.evaluate(e=>e===document.activeElement)).toBe(true);
+   await expect(content.getByLabel('Pass %',{exact:true})).toHaveValue('80');
    for(const el of await content.locator('main button,main input,main select,main header a').all())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);
    await expect(content.getByRole('button',{name:'Save draft',exact:true})).toBeEnabled();
   }else if(screen==='operations')await expect(content.getByRole('link').filter({hasText:'Open →'})).toHaveCount(5);
