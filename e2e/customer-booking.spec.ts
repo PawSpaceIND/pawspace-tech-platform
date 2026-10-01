@@ -161,7 +161,16 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await ops.goto("/staging-login"); await dismissPrivacy(ops); await ops.getByPlaceholder("shared UAT access code").fill(access!);
     const signedIn = ops.waitForResponse(r => r.url().endsWith("/api/staging-login") && r.request().method() === "POST");
     await ops.getByRole("button", { name: /Manager \(operations/ }).click(); expect((await signedIn).status()).toBe(200); await ops.waitForURL("**/booking-command-center");
-    const prepared = await host.request.post("/api/boarding-proof", { data: { stayId, action: "prepare_media", idempotencyKey: `board-proof-${bookingId}`, purpose: "stay_update", mimeType: "image/jpeg", sizeBytes: 128, sha256: "c".repeat(64) } }); expect(prepared.status(), await prepared.text()).toBe(200);
+    const preparePayload = { stayId, action: "prepare_media", idempotencyKey: `board-proof-${bookingId}`, purpose: "stay_update", mimeType: "image/jpeg", sizeBytes: 128, sha256: "c".repeat(64) };
+    let prepared: Awaited<ReturnType<typeof host.request.post>> | undefined;
+    for (let attempt = 0; attempt < 2 && !prepared; attempt++) {
+      try { prepared = await host.request.post("/api/boarding-proof", { data: preparePayload }); }
+      catch (error) {
+        if (attempt === 1 || !/ECONNRESET|socket hang up|connection reset/i.test(error instanceof Error ? error.message : String(error))) throw error;
+      }
+    }
+    if (!prepared) throw new Error("boarding proof prepare did not return after one transport-reset retry");
+    expect(prepared.status(), await prepared.text()).toBe(200);
     const asset = (await prepared.json()).data, mediaRef = String(asset.mediaRef), uploadToken = String(asset.upload.token);
     const finalized = await ops.request.post("/api/boarding-proof", { data: { stayId, action: "sandbox_finalize_media", idempotencyKey: `board-finalize-${bookingId}`, mediaRef, uploadToken, storageObjectId: `e2e-board-${bookingId}` } }); expect(finalized.status(), await finalized.text()).toBe(200);
     const selfScan = await host.request.post("/api/boarding-proof", { data: { stayId, action: "record_media_scan", idempotencyKey: `board-self-scan-${bookingId}`, mediaRef, scanResult: "clean", reason: "Uploader must not self-approve" } }); expect(selfScan.status()).toBe(403);
