@@ -202,6 +202,7 @@ export function exotelTelephony(env: Env): TelephonyProvider {
 }
 
 export const ELEVENLABS_EXOTEL_PROVIDER = "elevenlabs_exotel";
+export const NATIVE_VOICE_RUNTIME = "native";
 export const ELEVENLABS_TELEPHONY_SECRET_NAMES = ["ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_AGENT_PHONE_NUMBER_ID"] as const;
 export const ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES = [...ELEVENLABS_TELEPHONY_SECRET_NAMES, "ELEVENLABS_INIT_WEBHOOK_SECRET", "ELEVENLABS_LLM_SECRET", "ELEVENLABS_WEBHOOK_SECRET"] as const;
 const productionVoiceRuntime = (env: Env) => val(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production" || val(env, "PAWSPACE_PRODUCTION_ENFORCE").toLowerCase() === "true";
@@ -306,18 +307,28 @@ export function localSimulatorTelephony(env: Env): TelephonyProvider {
 }
 
 export function selectTelephonyProvider(env: Env): TelephonyProvider {
-  if (val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase() === "elevenlabs") {
+  const runtime = val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase();
+  if (runtime === "elevenlabs") {
     // An explicit provider pin is an authority boundary, not a preference. Missing credentials
     // must leave the call disconnected even when a different carrier is fully configured.
     return elevenLabsExotelTelephony(env);
   }
+  if (runtime === NATIVE_VOICE_RUNTIME) {
+    if (!telephonyCredentialsConfigured(env)) return disconnectedTelephony;
+    try { if (!approvedStreamUrl(env)) return disconnectedTelephony; } catch { return disconnectedTelephony; }
+    return exotelTelephony(env);
+  }
+  // A misspelled explicit runtime must not silently switch providers. Blank keeps the legacy selector
+  // for existing simulator/local tests until the rollout is fully migrated to named runtimes.
+  if (runtime) return disconnectedTelephony;
   if (val(env, "PAWSPACE_VOICE_TRANSPORT") === LOCAL_SIMULATOR_PROVIDER && voiceMode(env) !== "live") return localSimulatorTelephony(env);
   if (telephonyCredentialsConfigured(env)) return exotelTelephony(env);
   return disconnectedTelephony;
 }
 
 export function telephonyProviderStatus(env: Env) {
+  const runtime = val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase();
   const provider = selectTelephonyProvider(env);
-  const requiredNames = val(env, "PAWSPACE_VOICE_RUNTIME").toLowerCase() === "elevenlabs" ? [...VOICE_TELEPHONY_SECRET_NAMES, ...(productionVoiceRuntime(env) ? ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES : ELEVENLABS_TELEPHONY_SECRET_NAMES)] : VOICE_TELEPHONY_SECRET_NAMES;
-  return { provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: requiredNames.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
+  const requiredNames = runtime === "elevenlabs" ? [...VOICE_TELEPHONY_SECRET_NAMES, ...(productionVoiceRuntime(env) ? ELEVENLABS_PRODUCTION_VOICE_SECRET_NAMES : ELEVENLABS_TELEPHONY_SECRET_NAMES)] : VOICE_TELEPHONY_SECRET_NAMES;
+  return { runtime: runtime || "legacy", provider: provider.provider, status: provider.status, productionCapable: provider.productionCapable, recordingApproved: callRecordingApproved(env), missingSecretNames: requiredNames.filter(name => !val(env, name)), webhookMechanisms: ["hmac_sha256_signature", "http_basic"], streamConfigured: Boolean(val(env, "PAWSPACE_VOICE_STREAM_URL")), truth: { verifiedAgainstLiveProvider: false, callsPlaced: 0 } };
 }

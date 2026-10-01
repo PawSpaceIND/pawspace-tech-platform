@@ -30,6 +30,10 @@ const safeModelRef = (value: unknown) => {
   const ref = String(value ?? "").trim().slice(0, 160);
   return /^[A-Za-z0-9@/._:-]+$/.test(ref) ? ref : "configured";
 };
+const safeTtsProvider = (value: unknown) => {
+  const provider = String(value ?? "").trim().toLowerCase();
+  return provider === "elevenlabs" || provider === "workers_ai" ? provider : "configured";
+};
 
 export function resolveCarrierSttLanguage(value: unknown): CarrierSttLanguage {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -62,6 +66,8 @@ export function nativeVoiceTurnDiagnostics(input: {
   assistantChars: unknown;
   sttModel: unknown;
   ttsModel: unknown;
+  ttsProvider?: unknown;
+  ttsFallbackUsed?: unknown;
   outcome: unknown;
 }) {
   const totalMs = boundedInt(input.totalMs), target = boundedInt(input.latencyTargetMs);
@@ -81,6 +87,8 @@ export function nativeVoiceTurnDiagnostics(input: {
     assistantChars: boundedInt(input.assistantChars),
     sttModel: safeModelRef(input.sttModel),
     ttsModel: safeModelRef(input.ttsModel),
+    ttsProvider: safeTtsProvider(input.ttsProvider),
+    ttsFallbackUsed: input.ttsFallbackUsed === true,
     outcome: String(input.outcome ?? "").trim().slice(0, 80),
   });
 }

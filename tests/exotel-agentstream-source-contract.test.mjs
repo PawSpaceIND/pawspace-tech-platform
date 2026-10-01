@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const bridge = fs.readFileSync(new URL("../lib/exotel-agentstream.ts", import.meta.url), "utf8");
+const nativeTts = fs.readFileSync(new URL("../lib/voice-native-tts.ts", import.meta.url), "utf8");
 const provider = fs.readFileSync(new URL("../lib/voice-telephony-provider.ts", import.meta.url), "utf8");
 const worker = fs.readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
 const scheduler = fs.readFileSync(new URL("../lib/voice-carrier-uat-scheduler.ts", import.meta.url), "utf8");
@@ -16,17 +17,19 @@ test("AgentStream carrier route is outside the PawSpace browser session gateway"
 test("AgentStream validates carrier identity and uses linear16 media envelopes", () => {
   assert.match(bridge, /accountSid !== text\(env\.EXOTEL_SID\)/);
   assert.match(bridge, /provider_call_id=\?/);
-  assert.match(bridge, /encoding: "linear16"/);
+  assert.match(nativeTts, /encoding: "linear16"/);
   assert.match(bridge, /event: "media"/);
   assert.match(bridge, /event: "clear"/);
   assert.match(bridge, /event: "mark"/);
 });
 
-test("carrier speech path keeps Whisper and avoids piping MeloTTS MP3 into Exotel PCM", () => {
+test("carrier speech path keeps Whisper and uses a replaceable linear16 TTS boundary", () => {
   assert.match(bridge, /@cf\/openai\/whisper-large-v3-turbo/);
-  assert.match(bridge, /@cf\/deepgram\/aura-2-en/);
-  assert.match(bridge, /encoding: "linear16"/);
-  assert.doesNotMatch(bridge, /@cf\/myshell-ai\/melotts/);
+  assert.match(nativeTts, /@cf\/deepgram\/aura-2-en/);
+  assert.match(nativeTts, /eleven_flash_v2_5/);
+  assert.match(nativeTts, /encoding: "linear16"/);
+  assert.match(bridge, /synthesizeNativeCarrierTts/);
+  assert.doesNotMatch(nativeTts, /@cf\/myshell-ai\/melotts/);
 });
 
 test("Exotel dialer selects direct bidirectional streaming when a governed wss endpoint is configured", () => {
@@ -104,5 +107,8 @@ test("native AgentStream auto-detects STT language and records safe turn-quality
   assert.match(bridge, /nativeVoiceTurnDiagnostics\(/);
   assert.match(bridge, /transcriptChars: stt\.text\.length/);
   assert.match(bridge, /assistantChars: generated\.output\.length/);
-  assert.match(bridge, /ttsModel: text\(env\.VOICE_CARRIER_TTS_MODEL\) \|\| EXOTEL_AGENTSTREAM_TTS_MODEL/);
+  assert.match(bridge, /synthesizeNativeCarrierTts\(env, output, sampleRate\)/);
+  assert.match(bridge, /ttsModel: tts\.model/);
+  assert.match(bridge, /ttsProvider: tts\.provider/);
+  assert.match(bridge, /ttsFallbackUsed: tts\.fallbackUsed/);
 });
