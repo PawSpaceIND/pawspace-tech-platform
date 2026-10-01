@@ -3,6 +3,7 @@ import Link from"next/link";
 import{useEffect,useState}from"react";
 import{StatCard}from"../../../components/ui";
 import StaffModule from "../../../components/staff-workspace/StaffModule";
+import styles from "./provider-training-content.module.css";
 
 type Row=Record<string,unknown>;
 type Overview={modules:Array<Row&{id:string;title:string;service_code:string;status:string;version:number;pass_pct:number;required:number;quizQuestions:number;providersPassedCurrentVersion:number;totalAttempts:number}>;providers:Array<{providerId:string;name:string;trainingReady:boolean;requiredComplete:number;requiredTotal:number}>;metrics:{published:number;draft:number;providersNotReady:number}};
@@ -22,7 +23,7 @@ export default function ProviderTrainingPage(){
   const quiz=[{question,options:options.split("|").map(option=>option.trim()).filter(Boolean),answerIndex:Number(answerIndex)}];
   void run({action:"save_module",title,serviceCode,summary,sections:sections.split("\n").map(section=>section.trim()).filter(Boolean),quiz,passPct:Number(passPct)},"Module saved as draft");
  }
- return <StaffModule><main style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"inherit",display:"grid",gap:16}}>
+ return <StaffModule><main className={styles.training} style={{maxWidth:1400,margin:"0 auto",padding:24,fontFamily:"inherit",display:"grid",gap:16}}>
   <header><Link href="/team/people">← People home</Link><p>TEAM OS · PEOPLE · PROVIDER TRAINING</p><h1>Provider training & SOP library</h1><p>Versioned SOP modules with a real pass mark. Republishing a module invalidates completions — retraining is the point of a content change.</p></header>
   {overview&&<section style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(140px,1fr))",gap:12}} data-staff-grid="stats">
    {[["Published modules",overview.metrics.published],["Drafts",overview.metrics.draft],["Providers not ready",overview.metrics.providersNotReady]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
@@ -31,12 +32,12 @@ export default function ProviderTrainingPage(){
   <section style={{display:"grid",gridTemplateColumns:"minmax(0,.9fr) minmax(0,1.1fr)",gap:16,alignItems:"start"}} data-staff-grid="split">
    <article style={{border:"1px solid var(--staff-line)",borderRadius:"calc(14px * var(--paw-radius-scale))",padding:16}}>
     <h2>Author a module</h2>
-    <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
-    <select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}>{["all","grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","pet_food","pet_relocation"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select>
-    <input placeholder="Summary" value={summary} onChange={event=>setSummary(event.target.value)} style={{width:"100%",marginBottom:6}}/>
-    <textarea placeholder="Content sections (one per line)" value={sections} onChange={event=>setSections(event.target.value)} style={{width:"100%",minHeight:80,marginBottom:6}}/>
-    <input placeholder="Quiz question" value={question} onChange={event=>setQuestion(event.target.value)} style={{width:"100%",marginBottom:6}}/>
-    <input placeholder="Options separated by | (first is index 0)" value={options} onChange={event=>setOptions(event.target.value)} style={{width:"100%",marginBottom:6}}/>
+    <label className={styles.field}><span>Title</span><input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/></label>
+    <label className={styles.field}><span>Service</span><select aria-label="Service" value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}>{["all","grooming","dog_training","boarding","pet_sitting","pet_taxi","dog_walking","pet_food","pet_relocation"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select></label>
+    <label className={styles.field}><span>Summary</span><input placeholder="Summary" value={summary} onChange={event=>setSummary(event.target.value)} style={{width:"100%",marginBottom:6}}/></label>
+    <label className={styles.field}><span>Content sections (one per line)</span><textarea placeholder="Content sections (one per line)" value={sections} onChange={event=>setSections(event.target.value)} style={{width:"100%",minHeight:80,marginBottom:6}}/></label>
+    <label className={styles.field}><span>Quiz question</span><input placeholder="Quiz question" value={question} onChange={event=>setQuestion(event.target.value)} style={{width:"100%",marginBottom:6}}/></label>
+    <label className={styles.field}><span>Quiz options (separate with |; first index is 0)</span><input placeholder="Options separated by | (first is index 0)" value={options} onChange={event=>setOptions(event.target.value)} style={{width:"100%",marginBottom:6}}/></label>
     <div style={{display:"flex",gap:8,marginBottom:6}}>
      <label>Correct index <input value={answerIndex} onChange={event=>setAnswerIndex(event.target.value)} style={{width:60}}/></label>
      <label>Pass % <input value={passPct} onChange={event=>setPassPct(event.target.value)} style={{width:60}}/></label>

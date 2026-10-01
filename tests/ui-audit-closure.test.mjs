@@ -1,3 +1,4 @@
+import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -37,9 +38,16 @@ import {uiProgramContract,uiJsxExpressions,uiImperativeContract} from '../script
 const originalPrograms=JSON.parse(read('tests/fixtures/ui-audit-logic-contract.json'));
 // Historical program hashes stay pinned. Reverse only these exact reviewed CSS imports.
 function reviewedProgramSource(source,file){
+ source=reverseFinancePrecision(source,file);
+ if(file==='app/team/people/provider-training/page.tsx'){
+  const {replacements}=JSON.parse(read('tests/fixtures/ui-provider-training-next-preservation.json'));
+  for(const [before,after] of [...replacements].reverse()){assert.equal(source.split(after).length,2,'Exactly one Provider Training presentation hook');source=source.replace(after,before);}
+  return source;
+ }
  const imports={
   'app/team/finance/finance-ledger.tsx':'\nimport styles from "./finance-content.module.css";',
   'app/team/finance/boarding/boarding-finance-workspace.tsx':'\nimport styles from "./boarding-content.module.css";',
+  'app/team/finance/training/page.tsx':'\nimport styles from "./training-content.module.css";',
  };
  const exact=imports[file];
  if(!exact)return source;
@@ -121,6 +129,17 @@ test('Atlas rendering keeps repeated records without truncating long replies',()
  assert.match(html,/<li>Record 199: ₹200<\/li>/);
 });
 
+// Newly labelled Training scroll wrappers reverse exactly; original JSX expressions stay signed.
+function reviewedTrainingJsxSource(source,file){
+ if(file==='app/team/people/provider-training/page.tsx')return reviewedProgramSource(source,file);
+ if(file!=='app/team/finance/training/page.tsx')return source;
+ const {replacements}=JSON.parse(read('tests/fixtures/ui-training-finance-next-preservation.json'));
+ for(const [before,after] of [...replacements].reverse()){
+  assert.equal(source.split(after).length,2,'Exactly one reviewed Training display hook');
+  source=source.replace(after,before);
+ }
+ return source;
+}
 for(const [file,original] of Object.entries(originalPrograms.jsxOriginal)) {
  test(`UI audit preserves JSX data expressions with explicit presentation deltas: ${file}`,()=>{
   const expected=[...original];
@@ -128,7 +147,7 @@ for(const [file,original] of Object.entries(originalPrograms.jsxOriginal)) {
    assert.deepEqual(expected.slice(patch.index,patch.index+patch.remove.length),patch.remove,'Review patch must match its historical expression range');
    expected.splice(patch.index,patch.remove.length,...patch.insert);
   }
-  assert.deepEqual(uiJsxExpressions(read(file),file),expected);
+  assert.deepEqual(uiJsxExpressions(reviewedTrainingJsxSource(read(file),file),file),expected);
  });
 }
 test('JSX protection covers every original imperative baseline',()=>{

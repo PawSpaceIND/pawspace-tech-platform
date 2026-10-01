@@ -1,0 +1,8 @@
+.training :is(input,select,button){min-height:48px!important;max-width:100%;box-sizing:border-box;}
+.training textarea{min-height:112px!important;max-width:100%;box-sizing:border-box;}
+.training .field{display:grid;gap:6px;margin-bottom:16px;font-weight:600;}
+.training .field :is(input,select,textarea){margin-bottom:0!important;font-weight:400;}
+.training header a{display:inline-flex;align-items:center;min-height:48px;}
+.training :is(input,select,textarea,button,a):focus-visible{outline:3px solid var(--paw-link);outline-offset:2px;}
+.training article div{flex-wrap:wrap;}
+@media(max-width:600px){.training{padding:16px!important;}.training [data-staff-grid="split"],.training [data-staff-grid="stats"]{grid-template-columns:minmax(0,1fr)!important;}}

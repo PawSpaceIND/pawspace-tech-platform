@@ -1,0 +1,14 @@
+/* Existing Training Finance decisions remain unchanged; opt-in reading and keyboard targets. */
+.training.training :is(button,input,select) { min-height:48px; box-sizing:border-box; max-width:100%; }
+.training header a { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; }
+.training h1 { font-size:clamp(26px,3vw,36px) !important; line-height:1.2; }
+.training button { margin-block:4px; line-height:1.4; }
+.trainingTable { min-width:0; max-width:100%; overscroll-behavior-inline:contain; scrollbar-gutter:stable; }
+.training .trainingTable table { min-width:900px !important; line-height:1.5; }
+.trainingTable :is(th,td) { font-variant-numeric:tabular-nums; }
+.trainingTable th { font-size:14px; }
+.training .trainingTable:focus-visible { outline:3px solid var(--paw-link); outline-offset:-3px; }
+.training :is(button,a):focus-visible { outline:3px solid var(--paw-link); outline-offset:3px; }
+@media(max-width:600px) { .training header > div:last-child { display:flex; flex-wrap:wrap; width:100%; } }
+
+.training header small { color:var(--paw-link) !important; }

@@ -159,7 +159,7 @@ for(const species of ['cat','other','pet']) {
 
 test('pre-completion sitting finance clarifies tax status without enabling settlement',async({page})=>{
   await fixture(page);
-  await page.route('**/api/sitting-finance*',route=>route.fulfill({json:{data:{booking:{status:'confirmed',total_amount:399,captured_amount:399,payment_status:'captured'},cancellations:[],dateChanges:[],refunds:[],settlement:null,reconciliation:{status:'attention_required',refund_state:'none',settlement_state:'not_due',tax_state:'configuration_required'}}}}));
+  await page.route('**/api/sitting-finance*',route=>route.fulfill({json:{data:{booking:{id:'UI-UAT-BOOKING',status:'confirmed',total_amount:399,captured_amount:399,payment_status:'captured'},cancellations:[],dateChanges:[],refunds:[],settlement:null,reconciliation:{status:'attention_required',refund_state:'none',settlement_state:'not_due',tax_state:'configuration_required'}}}}));
   await page.goto('/team/finance/sitting?bookingId=UI-UAT-BOOKING');
   await expect(page.getByText(/Settlement and tax reconciliation pending service completion/)).toBeVisible();
   await expect(page.getByRole('button',{name:'Prepare canonical settlement',exact:true})).toBeDisabled();
