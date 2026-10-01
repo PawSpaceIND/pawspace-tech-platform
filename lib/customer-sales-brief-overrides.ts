@@ -2,14 +2,15 @@ import {authFailure,type AuthenticatedActor} from './server-auth';
 import {hasPermission} from './platform-security';
 import type {OrganizationalScope} from './organizational-scope';
 import {normalizeLeadServiceCode} from './lead-lifecycle-governance';
-import {isPawSpaceServiceCode,pawspaceServices} from './service-control';
+import {pawspaceServices} from './service-control';
 import {authorizeCustomerSalesBriefRecord} from './customer-sales-brief-source';
 import {validateSalesBriefOverride,type SalesOverride} from './customer-sales-brief';
 
 export function salesBriefServiceCode(value:unknown){
  if(typeof value!=='string'||value.length>80)throw authFailure('Known service is required',400);
  const service=normalizeLeadServiceCode(value);
- if(service!=='general_inquiry'&&!isPawSpaceServiceCode(value)&&!pawspaceServices.some(item=>normalizeLeadServiceCode(item.code)===service))throw authFailure('Known service is required',400);
+ const supportedServices=new Set(['general_inquiry',...pawspaceServices.map(item=>normalizeLeadServiceCode(item.code))]);
+ if(!supportedServices.has(service))throw authFailure('Known service is required',400);
  return service;
 }
 export type SalesBriefOverrideCommand={action:'set'|'clear';customerId:string;serviceCode:string;dimension:SalesOverride['dimension'];value?:string;reason:string;expiresAt?:number};
