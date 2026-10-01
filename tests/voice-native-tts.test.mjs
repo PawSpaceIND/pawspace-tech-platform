@@ -110,6 +110,19 @@ test("native TTS readiness uses the same approved-origin validation as execution
   assert.equal(ready.workersAiConfigured, true);
 });
 
+test("native TTS readiness does not advertise an unavailable explicit fallback", () => {
+  const ready = nativeCarrierTtsReadiness({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+    PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: "elevenlabs",
+    PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "workers_ai",
+  });
+  assert.equal(ready.configured, true);
+  assert.equal(ready.primary, "elevenlabs");
+  assert.equal(ready.fallback, null);
+  assert.equal(ready.workersAiConfigured, false);
+});
+
 test("malformed ElevenLabs PCM is rejected inside the provider attempt and falls back", async (t) => {
   const original = globalThis.fetch;
   t.after(() => { globalThis.fetch = original; });
@@ -128,14 +141,14 @@ test("malformed ElevenLabs PCM is rejected inside the provider attempt and falls
   assert.equal(result.fallbackUsed, true);
 });
 
-test("ElevenLabs PCM is exposed progressively before the provider stream completes", async (t) => {
+test("ElevenLabs PCM is exposed progressively after one carrier-safe preflight chunk", async (t) => {
   const original = globalThis.fetch;
   t.after(() => { globalThis.fetch = original; });
   let source;
   globalThis.fetch = async () => new Response(new ReadableStream({
     start(controller) {
       source = controller;
-      controller.enqueue(new Uint8Array(64));
+      controller.enqueue(new Uint8Array(3200));
     },
   }), { status: 200, headers: { "content-type": "audio/pcm" } });
 
@@ -146,13 +159,31 @@ test("ElevenLabs PCM is exposed progressively before the provider stream complet
   const reader = result.result.getReader();
   const first = await reader.read();
   assert.equal(first.done, false);
-  assert.equal(first.value.byteLength, 64);
+  assert.equal(first.value.byteLength, 3200);
   source.enqueue(new Uint8Array(64));
   source.close();
   const second = await reader.read();
   assert.equal(second.done, false);
   assert.equal(second.value.byteLength, 64);
   assert.equal((await reader.read()).done, true);
+});
+
+test("ElevenLabs read failure before the first carrier frame falls back safely", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(64)); },
+    pull(controller) { controller.error(new Error("synthetic provider stream failure")); },
+  }), { status: 200, headers: { "content-type": "audio/pcm" } });
+  const result = await synthesizeNativeCarrierTts({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+    PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: "elevenlabs",
+    PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "workers_ai",
+    AI: { run: async () => pcm },
+  }, "Recover before playback.", 8000);
+  assert.equal(result.provider, "workers_ai");
+  assert.equal(result.fallbackUsed, true);
 });
 
 test("oversized ElevenLabs responses cancel the provider body before returning", async (t) => {
