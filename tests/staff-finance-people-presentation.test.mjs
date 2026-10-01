@@ -42,10 +42,21 @@ function reverseReviewedBoardingContent(source,path){
  return source;
 }
 
+// Exact Training landmarks/styles reverse to the unchanged historical business contract.
+function reverseReviewedTrainingContent(source,path){
+ if(path!=="app/team/finance/training/page.tsx")return source;
+ const {replacements}=JSON.parse(read('tests/fixtures/ui-training-finance-next-preservation.json'));
+ for(const [before,after] of [...replacements].reverse()){
+  assert.equal(source.split(after).length,2,'Exactly one reviewed Training presentation hook');
+  source=source.replace(after,before);
+ }
+ return source;
+}
+
 for(const [path,expected] of Object.entries(contract.files)) {
   test('Finance/People presentation preserves every non-style AST node: '+path,()=>{
     const source=read(path);
-    assert.equal(staffSemanticContract(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(source,path),path),path),path),expected.semantic);
+    assert.equal(staffSemanticContract(reverseReviewedTrainingContent(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(source,path),path),path),path),path),expected.semantic);
     const file=parseStaffPage(source,path);let roots=0;
     function walk(node){if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='StaffModule')roots++;ts.forEachChild(node,walk);}
     walk(file);assert.equal(roots,expected.mainRoots,'Every original main, including loading/error returns, stays framed.');

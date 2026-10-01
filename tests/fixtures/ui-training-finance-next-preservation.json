@@ -1,0 +1,27 @@
+{
+  "base": "65957fc195bb3eeeaf580b9d13c7483d9ca7fff3",
+  "file": "app/team/finance/training/page.tsx",
+  "beforeHash": "4278dfb1a64f10d4567e5a9f1c5554ea62a398bf5187f5312512abab748b846c",
+  "replacements": [
+    [
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";",
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";\nimport styles from \"./training-content.module.css\";"
+    ],
+    [
+      "<StaffModule><main style=",
+      "<StaffModule><main className={styles.training} style="
+    ],
+    [
+      "<div style={{overflowX:\"auto\"}}><table",
+      "<div className={styles.trainingTable} role=\"region\" aria-label=\"Training invoices; scroll horizontally for all columns\" tabIndex={0} style={{overflowX:\"auto\"}}><table"
+    ],
+    [
+      "<div style={{overflowX:\"auto\"}}><table",
+      "<div className={styles.trainingTable} role=\"region\" aria-label=\"Training cancellation and refund cases; scroll horizontally for all columns\" tabIndex={0} style={{overflowX:\"auto\"}}><table"
+    ],
+    [
+      "<div style={{overflowX:\"auto\"}}><table",
+      "<div className={styles.trainingTable} role=\"region\" aria-label=\"Trainer payout statements; scroll horizontally for all columns\" tabIndex={0} style={{overflowX:\"auto\"}}><table"
+    ]
+  ]
+}
