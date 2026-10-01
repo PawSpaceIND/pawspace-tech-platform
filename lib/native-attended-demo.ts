@@ -15,7 +15,7 @@ async function hash(value: string) {
  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), b => b.toString(16).padStart(2, "0")).join("");
 }
 function environment(env: Env) {
- const version = text((env.CF_VERSION_METADATA as Row | undefined)?.id);
+ const version = text((env.PAWSPACE_VERSION_METADATA as Row | undefined)?.id);
  if (text(env.PAWSPACE_DEPLOYMENT_ENV) !== "staging" || text(env.PAWSPACE_PAYMENT_ENV) !== "sandbox"
   || text(env.FORBID_PRODUCTION) !== "true" || text(env.PAWSPACE_VOICE_PHONE_TESTS_PAUSED) !== "true"
   || text(env.PAWSPACE_VOICE_ENV) !== "disabled" || !/^[a-f0-9]{40}$/.test(text(env.PAWSPACE_STAGING_BUILD_SHA))
@@ -62,7 +62,7 @@ export async function assertNativeDemoSession(db: D1Database, env: Env, callId: 
 async function streamKey(env: Env) {
  return crypto.subtle.importKey("raw",new TextEncoder().encode(text(env.EXOTEL_WEBHOOK_SECRET)),{name:"HMAC",hash:"SHA-256"},false,["sign","verify"]);
 }
-const streamMessage=(callId:string,expiresAt:number,env:Env)=>new TextEncoder().encode(`native-attended-stream:${callId}:${expiresAt}:${text(env.PAWSPACE_STAGING_BUILD_SHA)}:${text((env.CF_VERSION_METADATA as Row | undefined)?.id)}`);
+const streamMessage=(callId:string,expiresAt:number,env:Env)=>new TextEncoder().encode(`native-attended-stream:${callId}:${expiresAt}:${text(env.PAWSPACE_STAGING_BUILD_SHA)}:${text((env.PAWSPACE_VERSION_METADATA as Row | undefined)?.id)}`);
 export async function nativeAttendedStreamUrl(env:Env,admitted:{callId:string;expiresAt:number}) {
  environment(env);
  const signature=new Uint8Array(await crypto.subtle.sign("HMAC",await streamKey(env),streamMessage(admitted.callId,admitted.expiresAt,env)));
