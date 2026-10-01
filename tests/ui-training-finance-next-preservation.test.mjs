@@ -1,3 +1,4 @@
+import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import {registerHooks} from 'node:module';
 import test from 'node:test';
@@ -9,7 +10,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
 const receipt=JSON.parse(readFileSync(new URL('./fixtures/ui-training-finance-next-preservation.json',import.meta.url),'utf8'));
 test('Training Finance preserves every original business byte after exact presentation reversal',()=>{
- let source=reverseFinancePrecision(readFileSync(new URL('../'+receipt.file,import.meta.url),'utf8'),receipt.file);
+ let source=reverseFinancePrecision(reverseTrainingReadGeneration(readFileSync(new URL('../'+receipt.file,import.meta.url),'utf8'),receipt.file),receipt.file);
  for(const [before,after] of [...receipt.replacements].reverse()){
  assert.equal(source.split(after).length,2,'Exactly one reviewed scoped hook/landmark');source=source.replace(after,before);
  }

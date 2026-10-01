@@ -1,3 +1,4 @@
+import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -38,7 +39,7 @@ import {uiProgramContract,uiJsxExpressions,uiImperativeContract} from '../script
 const originalPrograms=JSON.parse(read('tests/fixtures/ui-audit-logic-contract.json'));
 // Historical program hashes stay pinned. Reverse only these exact reviewed CSS imports.
 function reviewedProgramSource(source,file){
- source=reverseFinancePrecision(source,file);
+ source=reverseFinancePrecision(reverseTrainingReadGeneration(source,file),file);
  if(file==='app/team/people/provider-training/page.tsx'){
   const {replacements}=JSON.parse(read('tests/fixtures/ui-provider-training-next-preservation.json'));
   for(const [before,after] of [...replacements].reverse()){assert.equal(source.split(after).length,2,'Exactly one Provider Training presentation hook');source=source.replace(after,before);}
