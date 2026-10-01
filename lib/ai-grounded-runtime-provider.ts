@@ -1,3 +1,4 @@
+import { MAYA_FUNERAL_POLICY, mayaFuneralCatalogue } from "./maya-funeral-policy";
 import{needsImmediateVetGuidance}from"./ai-emergency-guidance";
 import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-information";
 import {currentGroomingCatalogue} from "./ai-current-catalogue";
@@ -119,7 +120,7 @@ export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:Auth
   const grooming=await currentGroomingCatalogue(db);
   const cc=input.canonicalContext as Row;
   const minimalContext={customer:cc.customer??null,pets:cc.pets??[],bookings:cc.bookings??[],thread:cc.thread??null,conversationHistory:cc.conversationHistory??[],asOf:cc.asOf??Date.now(),timezone:"Asia/Kolkata"};
-  return{context:{...minimalContext,approvedKnowledge:knowledge,catalogueTool:null,catalogue:{grooming:compact(grooming,["package_code","name","description","base_price","currency","tax_inclusive","slot_minutes","version","effective_from","effective_to"]),source:"server_owned_read_only_catalogue_tables"},groundingPolicy:{readOnlyGrounding:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true}},groundingRefs:knowledgeRefs(knowledge)};
+  return{context:{...minimalContext,approvedKnowledge:knowledge,operationalFaq:{funeral:MAYA_FUNERAL_POLICY},catalogueTool:null,catalogue:{funeral:mayaFuneralCatalogue(),grooming:compact(grooming,["package_code","name","description","base_price","currency","tax_inclusive","slot_minutes","version","effective_from","effective_to"]),source:"server_owned_read_only_catalogue_tables"},groundingPolicy:{readOnlyGrounding:true,mutationsAuthorizedOnlyViaGovernedActionPlane:true}},groundingRefs:knowledgeRefs(knowledge)};
  }
  // These are independent read-only grounding operations. Keep every authority and
  // catalogue check, but avoid paying their network round trips one after another.
@@ -132,9 +133,10 @@ export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:Auth
 return subscriptions;})(),
  listServiceControls(db),
  ]);
- const catalogue={...snapshot,groomingSubscriptions:subscriptions};
+ const catalogue={...snapshot,groomingSubscriptions:subscriptions,funeral:mayaFuneralCatalogue()};
  const serviceDirectory=services.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled,disabledReason:service.disabledReason}));
  const operationalFaq={
+  funeral:MAYA_FUNERAL_POLICY,
   payments:"Explain business payment timing and methods from approved service knowledge separately from the channel's executable permissions. An existing prepaid-only voice checkout capability is not a company-wide ban on pay-after-service. Business permission does not newly authorise the voice tool. Do not infer payment timing from cash or UPI, or invent collection milestones or credit activation. Verify booking-linked recorded and reconciled receipt; a claim, screenshot or payment-order creation is not payment success.",
   taxes:"Use the matching current package tax_inclusive flag or the customer-specific quote/invoice. A missing flag is unknown, not inclusive or exclusive. Do not add tax to an inclusive amount, calculate partner GST, or infer surcharges from a base price.",
   cancellations:"Cancellation and reschedule eligibility is service-policy specific. Never promise a refund; refund and payment disputes go to a human reviewer.",
@@ -239,7 +241,7 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
  });
 }
 /** The words that name each catalogue group's service in a reply. */
-const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay|day[- ]?care/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};
+const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay|day[- ]?care/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/,funeral:/funeral|cremat|burial|ash|poojari|pandit|freezer/};
 
 
 /** Only persisted, same-customer turns enter sales memory; caller-supplied chat history is not trusted. */

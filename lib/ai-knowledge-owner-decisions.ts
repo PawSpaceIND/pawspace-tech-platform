@@ -97,7 +97,7 @@ export const AI_KNOWLEDGE_OWNER_DECISIONS=[
     "id": "taxi_funeral_scope",
     "category": "commercial_policy",
     "owner": "Specialist Operations",
-    "question": "Confirm final Taxi and Funeral inclusions, extra charges and specialist arrangements. Relocation is separately confirmed as enquiry-only without instant booking or payment collection.",
+    "question": "Taxi inclusions still need final confirmation. Funeral rates, pickup cutoff, overnight freezer and 50/50 Razorpay payment terms were approved by the owner on 1 October 2026 (maya-funeral-policy.ts). Staff must still confirm site availability, burial location, exact ash plantation kit, transport inclusions for burial/wooden cremation and any exception. Live funeral deposit-link execution remains an implementation gap. Relocation remains enquiry-only without instant booking or payment collection.",
     "affected": [
       "pet_taxi",
       "funeral"

@@ -120,3 +120,23 @@ test('Taxi information enquiries cannot expose legacy synthetic route fares',asy
  await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
  const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.catalogue.petTaxi,[]);assert.equal(cc.catalogueTool,null);assert.deepEqual(cc.availableActionTools,[]);
 });
+
+test('funeral owner tariff and intake reach both voice grounding paths without executing payments',async t=>{
+ const w=await world(t);
+ const {pricesMatchCatalogue}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const mock=stubFetch(()=>{throw Error('Read-only funeral grounding must not send links or call providers');});t.after(()=>mock.restore());
+ for(const fastVoice of [false,true]){
+  const {context}=await buildGroundedAiTurnContext(w.db,{actor,threadId:'THREAD-KB',customerId:'CUS-KB',intent:'service_info',channel:'voice',query:'pet funeral cremation',canonicalContext:{customer:{customerId:'CUS-KB'}},fastVoice});
+  assert.deepEqual(context.catalogue.funeral.map(r=>r.base_price),[7000,9000,16000,2000,6000,7500,2000]);
+  assert.equal(context.operationalFaq.funeral.advancePercent,50);
+  assert.equal(context.operationalFaq.funeral.execution,'staff_required');
+  assert.equal(context.operationalFaq.funeral.pickupCutoffHour,16);
+  assert.ok(context.operationalFaq.funeral.requiredIntake.includes('secondaryContactPhone'));
+  assert.ok(pricesMatchCatalogue('Electric cremation costs ₹7,000. Ash plantation costs ₹7,500.',context.catalogue));
+  assert.equal(pricesMatchCatalogue('Electric cremation costs ₹7,999.',context.catalogue),false);
+  assert.equal(pricesMatchCatalogue('Ash plantation costs ₹7,000.',context.catalogue),false);
+  assert.equal(pricesMatchCatalogue('Electric cremation costs ₹16,000.',context.catalogue),false);
+  assert.match(JSON.stringify(context.approvedKnowledge),/primary and secondary contact/);
+ }
+ assert.equal(mock.calls.length,0);
+});
