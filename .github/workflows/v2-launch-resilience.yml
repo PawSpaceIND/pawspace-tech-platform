@@ -63,9 +63,12 @@ jobs:
           - name: desktop-engines
             browsers: chromium firefox webkit
             projects: --project=desktop-chromium --project=desktop-firefox --project=desktop-webkit
-          - name: mobile-devices
-            browsers: chromium webkit
-            projects: --project=android-360 --project=iphone-390 --project=small-320 --project=tablet-768
+          - name: mobile-chromium
+            browsers: chromium
+            projects: --project=android-360 --project=small-320
+          - name: mobile-webkit
+            browsers: webkit
+            projects: --project=iphone-390 --project=tablet-768
           - name: chromium-route-matrix
             browsers: chromium
             projects: --project=all-route-visual-matrix
