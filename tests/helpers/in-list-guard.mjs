@@ -64,8 +64,13 @@ export function findUnchunkedInLists(fileName, source, bounded = BOUNDED_IN_LIST
     if (!RAW_PLACEHOLDER_BUILD.test(line)) return;
     // The ONLY thing that makes a built list safe: it is being fed a bounded chunk.
     if (line.includes("chunkedIn")) return;
-    const flat = squash(line);
-    if (allowed.some((expression) => flat.includes(expression))) return;
+    let unbounded = squash(line);
+    for (const expression of allowed) {
+      const escaped = expression.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Remove only the reviewed expression. A second raw list on this line must still fail.
+      unbounded = unbounded.replace(new RegExp(`(?<![\\w$.])${escaped}`, "g"), "");
+    }
+    if (!RAW_PLACEHOLDER_BUILD.test(unbounded)) return;
     offenders.push(`${fileName}:${index + 1}`);
   });
   return offenders;

@@ -294,3 +294,15 @@ test("guard: AI outcomes exempt only the fixed collected-status vocabulary", asy
   assert.equal(findUnchunkedInLists("ai-analytics.ts", source + "\n" + unsafe).length, 1);
   assert.equal(findUnchunkedInLists("ai-analytics.ts", source.replace('COLLECTED_PAYMENT_STATUSES.map', 'bookingIds.map')).length, 1);
 });
+
+test("guard: a bounded expression cannot conceal a second unbounded list on the same line", () => {
+  const bounded = 'COLLECTED_PAYMENT_STATUSES.map(()=>"?").join(",")';
+  const unsafe = 'rows.map(()=>"?").join(",")';
+  for (const source of [`const fixed=${bounded}; const dynamic=${unsafe};`,
+    `const dynamic=${unsafe}; const fixed=${bounded};`,
+    `const query=\`WHERE status IN ($\{${bounded}}) AND id IN ($\{${unsafe}})\`;`]) {
+    assert.deepEqual(findUnchunkedInLists("ai-analytics.ts", source), ["ai-analytics.ts:1"]);
+  }
+  assert.deepEqual(findUnchunkedInLists("ai-analytics.ts", `const fixed=${bounded}; const second=${bounded};`), []);
+  assert.deepEqual(findUnchunkedInLists("ai-analytics.ts", `const spoof=UNBOUNDED_${bounded};`), ["ai-analytics.ts:1"]);
+});
