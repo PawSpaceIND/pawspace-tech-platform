@@ -283,7 +283,10 @@ export async function runWalkingPersona({ page, browser, baseURL, sandboxLogin, 
     const providerFinance = await walker.request.post("/api/walking-finance", { data: { bookingId, action: "record_session_payment", sessionId, paymentReference: "LOCAL-UNAUTHORIZED", idempotencyKey: `walking-provider-finance:${bookingId}` }, maxRedirects: 0 });
     expect(providerFinance.status()).toBe(403); expect((await readFinance()).sessions[0].payment_event_status).toBe("due");
     const unpaidSettlement = await finance.request.post("/api/walking-finance", { data: { bookingId, action: "prepare_settlement", idempotencyKey: `walking-unpaid:${bookingId}` }, maxRedirects: 0 });
-    expect(unpaidSettlement.status(), await unpaidSettlement.text()).toBe(409); expect(await unpaidSettlement.text()).toContain("sandbox-paid");
+    expect(unpaidSettlement.status(), await unpaidSettlement.text()).toBe(409);
+    expect(await unpaidSettlement.json()).toEqual({ error: "Unable to update Dog Walking finance" });
+    const unpaidFinance = await readFinance();
+    expect(unpaidFinance.sessions[0].payment_event_status).toBe("due"); expect(unpaidFinance.settlement).toBeNull();
     await finance.goto(`/v2/team/finance/walking?bookingId=${encodeURIComponent(bookingId)}`); await dismissPrivacy(finance);
     await expect(finance.getByRole("heading", { name: "Walking payment & reconciliation", exact: true })).toBeVisible();
     await expect(finance.getByPlaceholder("Canonical Walking booking ID")).toHaveValue(bookingId);
@@ -303,8 +306,9 @@ export async function runWalkingPersona({ page, browser, baseURL, sandboxLogin, 
     const held = nextPost(finance, "/api/walking-finance", "approve_settlement");
     await finance.getByRole("button", { name: "Approve provider payable", exact: true }).click();
     const heldResponse = await held; expect(heldResponse.status(), await heldResponse.text()).toBe(409);
-    expect(await heldResponse.text()).toContain("7 days after the last walk");
-    await expect(finance.getByRole("alert")).toContainText("7 days after the last walk");
+    expect(await heldResponse.json()).toEqual({ error: "Unable to update Dog Walking finance" });
+    await expect(finance.getByRole("alert")).toContainText("Unable to update Dog Walking finance");
+    expect((await readFinance()).settlement).toMatchObject({ approval_status: "awaiting_finance_approval", payout_status: "accrued", eligible_at: Number(readiness.eligibleAt) });
     const reconciled = nextPost(finance, "/api/walking-finance", "reconcile");
     await finance.getByRole("button", { name: "Run reconciliation", exact: true }).click();
     expect((await okJson(await reconciled)).data).toMatchObject({ status: "attention_required", paidTotal: result.totalAmount, unpaidCompletedTotal: 0, settlementState: "awaiting_finance_approval", taxState: "resolved" });
