@@ -1131,7 +1131,7 @@
     "lib/training-programme.ts": "94e1364f6f3a03275c6d6fe942244f5700d11b89316acac6b907efcde67453ee",
     "lib/training-provider-projection.ts": "17d9739c018b47d7f9a6447f3bcfb3a23c70c1745bc4e65613649d4bb07536c1",
     "lib/training-session-client.ts": "7f262a43fce8dca06fb071afa94a2d7b09ad4801b6fd5971aeeb2d72250c0964",
-    "lib/training-session-lifecycle.ts": "b9010f20cc64b6ce9ccfda4d1e14f0f5c2b29ec3a86f5fe7516dd11db16a56ab",
+    "lib/training-session-lifecycle.ts": "9be52dd68464bed9507ce1f3f0aa43b87e31b115e5edfe38490f244337f2e4cc",
     "lib/training-session-preview.ts": "12a6d65af650b6ecbdbb1b79a7d2251cd7d919e06389147e3b4925135e8f42d6",
     "lib/trust-safety-blocklist.ts": "d26a64619bde188b101e28a2178c31de48b50bd8bbff54b860a4d969614ab4be",
     "lib/trust-safety-governance.ts": "2d8dddf4b4a9a311b4ebd4a2dcd7d447e1642ce7945dff107cb72a9ab143c19d",
