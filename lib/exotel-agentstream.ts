@@ -70,7 +70,6 @@ type Session = {
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
-const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 
 export function nativeVoiceSalesService(useCase: unknown): VoiceSalesService | undefined {
   const value = text(useCase);

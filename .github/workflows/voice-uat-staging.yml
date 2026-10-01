@@ -20,6 +20,7 @@ on:
       - 'lib/voice-outbound-governance.ts'
       - 'tests/voice-native-tts.test.mjs'
       - 'tests/exotel-agentstream-source-contract.test.mjs'
+      - 'tests/exotel-agentstream-lifecycle.test.mjs'
   workflow_dispatch:
     inputs:
       confirm:
@@ -115,7 +116,7 @@ jobs:
       - name: Install and validate voice contracts
         run: |
           npm run install:ci
-          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs tests/voice-agentstream-quality.test.mjs tests/voice-native-tts.test.mjs tests/voice-native-agentstream-uat.test.mjs
+          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs tests/exotel-agentstream-lifecycle.test.mjs tests/voice-agentstream-quality.test.mjs tests/voice-native-tts.test.mjs tests/voice-native-agentstream-uat.test.mjs
       - name: Build
         run: npm run build
       - name: Configure isolated staging base
