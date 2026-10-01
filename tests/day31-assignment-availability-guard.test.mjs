@@ -22,6 +22,9 @@ import { world } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__D31_AVAIL_DB__", "__D31_AVAIL_ENV__");
 
+// Freeze time before the held slot so an availability change overlaps that slot on every run.
+test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-01T03:00:00.000Z") }));
+
 const PROVIDER = "PRV-D31-AVL";
 const GROUP = "GRP-D31-AVL";
 const OPS = "ops@pawspace.in";
