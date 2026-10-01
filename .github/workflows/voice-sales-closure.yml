@@ -1,0 +1,47 @@
+name: Voice sales closure
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/team/voice/**'
+      - 'app/api/voice-outbound/**'
+      - 'lib/*voice*'
+      - 'lib/elevenlabs-*'
+      - 'tests/*voice*'
+      - 'tests/elevenlabs-*'
+      - 'e2e/voice-console-human-readiness.spec.ts'
+      - '.github/workflows/voice-sales-closure.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+      APP_ENV: staging
+      PW_STAFF_UAT_ACCESS_CODE: pawspace-e2e-access-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Verify post-call recovery and evidence truth
+        run: node --experimental-strip-types --test tests/elevenlabs-post-call-recovery.test.mjs tests/voice-sales-operations.test.mjs tests/inbound-ai-voice-turn.test.mjs tests/elevenlabs-language-profile.test.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Verify existing call controls and sales overview on desktop and mobile
+        run: npx playwright test e2e/voice-console-human-readiness.spec.ts --project=chromium --project=mobile-chromium --workers=1 --retries=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voice-sales-closure-browser-evidence
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: warn

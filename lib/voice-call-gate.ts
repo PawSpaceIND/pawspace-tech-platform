@@ -124,6 +124,7 @@ export function statusCallbackUrl(env: Env): string | null {
 
 export function resolveVoiceCallGate(env: Env): VoiceCallGate {
   const mode = voiceMode(env);
+  if (isTrue(env, "PAWSPACE_VOICE_PHONE_TESTS_PAUSED")) return { ok: false, status: 503, reason: "Phone calls are paused by the user; renewed approval is required", mode };
   if (mode === "disabled") return { ok: false, status: 503, reason: "Voice calling is disabled (set PAWSPACE_VOICE_ENV=\"uat\" in an approved UAT environment)", mode };
   if (!isTrue(env, "PAWSPACE_VOICE_UAT_APPROVED")) return { ok: false, status: 503, reason: "Voice calling is not approved for this environment (set PAWSPACE_VOICE_UAT_APPROVED=\"true\")", mode };
   if (mode === "live" && !isTrue(env, "PAWSPACE_VOICE_LIVE_APPROVED")) return { ok: false, status: 503, reason: "Live voice calling is not approved (set PAWSPACE_VOICE_LIVE_APPROVED=\"true\"). Complete controlled UAT first.", mode };

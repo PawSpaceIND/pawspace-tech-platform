@@ -1,3 +1,4 @@
+import{needsImmediateVetGuidance,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
 /**
  * The PawSpace web chat bot: WATI-style guided flows with buttons, in front of PawSpace AI.
  *
@@ -381,6 +382,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  crossSell?:BotCrossSell}):BotTurnResult{
  const crossSell=input.crossSell===undefined?DEFAULT_CROSS_SELL:input.crossSell;
  const text=String(input.text||"").trim().slice(0,800),state:BotState={...previous,answers:{...previous.answers}};
+ if(needsImmediateVetGuidance(text))return{state:{...initialBotState(),status:"done",...(state.leadId?{leadId:state.leadId}:{})},reply:{text:IMMEDIATE_VET_GUIDANCE,choices:[],inputHint:null},event:{type:"none"},display:text};
  const options=state.status==="collecting"?(stepsFor(flowByCode(state.flow)!,input.signedIn)[state.step]?.choices||[]):WEB_CHAT_MENU;
  // Numbers select only the current step's own buttons; "2" typed as an answer must not mean "Start over".
  const picked=matchChoice(options,{text,choiceId:input.choiceId})||matchChoice([START_OVER,ASK_AI,REQUEST_CALL,TALK_TO_TEAM,...(state.status==="done"&&crossSellFor(crossSell,previous.answers)?[GROOMING_OFFER,PAY_LATER]:[])],{text,choiceId:input.choiceId},false);

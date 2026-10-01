@@ -163,3 +163,14 @@ test("the objects only a migration can create are the ones the deploy step exist
     assert.ok(tables.has(table), `${table} is created by the migration set`);
   }
 });
+
+test("post-call reconciliation is queryable before ElevenLabs sends a webhook", async () => {
+  const db = await deploymentShapedDatabase();
+  assert.deepEqual(applyAll(db), []);
+
+  const columns = db.prepare("PRAGMA table_info(elevenlabs_voice_webhooks)").all().map((row) => row.name);
+  assert.deepEqual(columns, [
+    "event_id", "conversation_id", "event_type", "status", "detail_json", "created_at", "processed_at",
+  ]);
+  assert.equal(db.prepare("SELECT count(*) AS count FROM elevenlabs_voice_webhooks").get().count, 0);
+});

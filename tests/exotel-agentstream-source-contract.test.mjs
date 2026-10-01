@@ -61,9 +61,9 @@ test("native AgentStream uses PawSpace specialist sales profiles with scheduling
 
 test("native AgentStream speaks the governed opening disclosure before normal turns", () => {
   assert.match(bridge, /SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=\?/);
-  assert.match(bridge, /synthesizeLinear16\(env, session\.openingDisclosure, session\.sampleRate\)/);
-  assert.match(bridge, /recordSegment\(env, session, "assistant", session\.openingDisclosure/);
-  assert.match(bridge, /sendAudio\(server, session, greeting\.audio/);
+  assert.match(bridge, /synthesizeLinear16\(env, active\.openingDisclosure, active\.sampleRate\)/);
+  assert.match(bridge, /recordSegment\(env, active, "assistant", active\.openingDisclosure/);
+  assert.match(bridge, /queueAudio\(active, greeting\.audio/);
 });
 
 test("native AgentStream preserves bounded canonical voice follow-up history", () => {
@@ -86,7 +86,7 @@ test("native AgentStream canonicalizes connection evidence and is reconnect-idem
   assert.match(bridge, /reconnect_count=reconnect_count\+1/);
   assert.match(bridge, /MAX\(segment_index\)/);
   assert.match(bridge, /created \? "agentstream_started" : "agentstream_reconnected"/);
-  assert.match(bridge, /if \(!session\.reconnected\)/);
+  assert.match(bridge, /if \(!active\.reconnected\)/);
 });
 
 test("native AgentStream transport interruption stays reconnectable until explicit stop", () => {

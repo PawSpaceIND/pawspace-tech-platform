@@ -15,7 +15,7 @@ test("UAT prompts classify realistic service, booking and refund queries determi
 
 test("voice persona is TTS-safe while chat and WhatsApp permit structured replies",()=>{
  const voice=runtime.pawspaceChannelSystemPrompt("voice");
- assert.match(voice,/No markdown/);assert.match(voice,/no bullets/);assert.match(voice,/no emojis/);assert.match(voice,/one to three short sentences/);
+ assert.match(voice,/No markdown/);assert.match(voice,/no bullets/);assert.match(voice,/no emojis/);assert.match(voice,/two short sentences/);assert.match(voice,/35 to 55 words/);assert.match(voice,/Brevity must never remove a binding price condition/);assert.match(voice,/Emergency guidance takes priority over brevity/);
  const chat=runtime.pawspaceChannelSystemPrompt("chat");assert.match(chat,/bullets/);assert.match(chat,/payment link/);
  const whatsapp=runtime.pawspaceChannelSystemPrompt("whatsapp");assert.match(whatsapp,/compact bullets/);assert.match(whatsapp,/payment links/);
 });

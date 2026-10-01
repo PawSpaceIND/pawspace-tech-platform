@@ -24,6 +24,20 @@ async function world(t, partial = false) {
 }
 const order=w=>w.sqlite.prepare('SELECT state,connected_at FROM voice_call_orders WHERE id=?').get(w.call.callId);
 const marker=w=>w.sqlite.prepare('SELECT status FROM elevenlabs_voice_webhooks').get()?.status;
+test('failed post-call conversation persists speech but closes the real ledger as provider_error',async t=>{
+ const w=await world(t),before=w.sqlite.prepare('SELECT * FROM canonical_customers').all();
+ w.payload.type='post_call_transcription';
+ Object.assign(w.payload.data,{status:'failed',conversation_initiation_client_data:{dynamic_variables:{pawspace_voice_call_id:w.call.callId}},transcript:[{role:'user',message:'Yeah, please.'},{role:'agent',message:'Sure, give me a second.'}]});
+ await post.reconcileElevenLabsPostCall(w.db,w.payload);
+ assert.equal(order(w).state,'provider_error');
+ assert.equal(marker(w),'processed');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE template_key='elevenlabs_post_call'").get().n,2);
+ assert.ok(w.sqlite.prepare('SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?').get(w.call.callId).released_at);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM crm_tasks').get().n,1);
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_customers').all(),before);
+ assert.equal((await post.reconcileElevenLabsPostCall(w.db,w.payload)).duplicatePrevented,true);
+ assert.equal(w.network.calls.length,1,'reconciliation must never request another call');
+});
 test('failure without dynamic variables matches exact acceptance and releases only that dial reservation',async t=>{
   const w=await world(t), before=w.sqlite.prepare('SELECT * FROM canonical_customers').all();
   const result=await post.reconcileElevenLabsPostCall(w.db,w.payload);

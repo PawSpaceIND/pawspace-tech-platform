@@ -161,6 +161,12 @@ jobs:
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
           PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          ELEVENLABS_INIT_WEBHOOK_SECRET: ${{ secrets.ELEVENLABS_INIT_WEBHOOK_SECRET }}
+          ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
+          ELEVENLABS_WEBHOOK_SECRET: ${{ secrets.ELEVENLABS_WEBHOOK_SECRET }}
           IDFY_URL: ${{ vars.IDFY_URL }}
           PROVIDER_AGREEMENT_ESIGN_KEY_ID: ${{ vars.PROVIDER_AGREEMENT_ESIGN_KEY_ID }}
           META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
@@ -200,6 +206,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
+          ELEVENLABS_AGENT_PHONE_NUMBER_ID: ${{ secrets.ELEVENLABS_AGENT_PHONE_NUMBER_ID }}
+          ELEVENLABS_INIT_WEBHOOK_SECRET: ${{ secrets.ELEVENLABS_INIT_WEBHOOK_SECRET }}
+          ELEVENLABS_LLM_SECRET: ${{ secrets.ELEVENLABS_LLM_SECRET }}
+          ELEVENLABS_WEBHOOK_SECRET: ${{ secrets.ELEVENLABS_WEBHOOK_SECRET }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
@@ -236,8 +249,14 @@ jobs:
               "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
               "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET", "SENTRY_DSN"
             ];
+            // Disabled voice needs no new credential. Enabled pinned voice must never inherit
+            // an incomplete old Worker configuration or fall back to another carrier.
+            if (process.env.PAWSPACE_VOICE_ENV === "uat") requiredNames.push(
+              "ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "ELEVENLABS_AGENT_PHONE_NUMBER_ID",
+              "ELEVENLABS_INIT_WEBHOOK_SECRET", "ELEVENLABS_LLM_SECRET", "ELEVENLABS_WEBHOOK_SECRET"
+            );
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required production provider, communication or identity secret is missing");
+            if (Object.values(values).some(value => !String(value).trim())) throw new Error("a required production provider, communication or identity secret is missing");
             if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
             const pilotAllowlist = String(process.env.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS || "").trim();
             if (pilotAllowlist) values.PAWSPACE_PAYMENT_PILOT_BOOKING_IDS = pilotAllowlist;
@@ -270,6 +289,7 @@ jobs:
           if ((cfg.vars || {}).PAWSPACE_PAYMENT_LIVE_APPROVED !== "false") fail("live payment approval is not locked false");
           if ("PAWSPACE_PAYMENT_PILOT_BOOKING_IDS" in (cfg.vars || {})) fail("payment pilot booking IDs must be a Worker secret, never a plaintext wrangler var");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_RUNTIME !== "elevenlabs") fail("ordinary production voice runtime is not pinned to ElevenLabs");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
           for (const name of ["IDFY_URL", "PROVIDER_AGREEMENT_ESIGN_KEY_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_PHONE_NUMBER_ID"]) {

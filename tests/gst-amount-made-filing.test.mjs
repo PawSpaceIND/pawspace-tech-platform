@@ -27,7 +27,11 @@ const PROD_ENV = { NODE_ENV: "production", PAWSPACE_LOCAL_PREVIEW: "off" };
 const ENTITY = "SEEDFE-TKPET", REG = "SEEDTR-TKPET-KA", POLICY = "SEEDTP-TKPET-1", GSTIN = "29AAICT7352F1Z0";
 const SELLER = { legalName: "TK PETCARE SOLUTIONS PRIVATE LIMITED", gstin: GSTIN, stateCode: "29", state: "Karnataka", address: "Jayanagar 9th Block, Bengaluru, Karnataka 560041" };
 const MAKER = "maker@pawspace.in", CHECKER = "checker@pawspace.in", FINANCE = "finance@pawspace.in";
-const IST = 330 * 60_000, NOW = Date.now(), PERIOD = new Date(NOW + IST).toISOString().slice(0, 7);
+// This case verifies same-period amounts, not the governed UTC-ledger/IST-return variance.
+// A recent completed noon-UTC fixture belongs to the same month in both calendars.
+const fixtureClock = new Date();
+const NOW = Date.UTC(fixtureClock.getUTCFullYear(), fixtureClock.getUTCMonth(), fixtureClock.getUTCDate() - 1, 12);
+const IST = 330 * 60_000, PERIOD = new Date(NOW + IST).toISOString().slice(0, 7);
 const [Y, M] = PERIOD.split("-").map(Number), START = Date.UTC(Y, M - 1, 1) - IST, END = Date.UTC(M === 12 ? Y + 1 : Y, M === 12 ? 0 : M, 1) - IST;
 const FY = M >= 4 ? String(Y) : String(Y - 1);
 const scope = { entityId: ENTITY, registrationId: REG, periodCode: PERIOD, reason: "monthly filing" };
