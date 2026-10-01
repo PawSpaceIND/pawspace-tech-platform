@@ -88,3 +88,11 @@ test('Daycare prices bind to Boarding catalogue rows without accepting another s
  assert.equal(pricesMatchCatalogue('Daycare costs 799 rupees.',catalogue),false);
  assert.equal(pricesMatchCatalogue('Grooming costs 499 rupees.',catalogue),false);
 });
+
+test('routine vet booking information remains answerable while symptoms keep medical protection',async()=>{
+ const {isPetMedicalQuestion}=await import('../lib/ai-grounded-runtime-provider.ts');
+ assert.equal(isPetMedicalQuestion('Please explain how I can arrange a routine veterinary consultation, without booking anything yet.'),false);
+ assert.equal(isPetMedicalQuestion('How can I arrange a vet consultation for my dog who is coughing?'),true);
+ assert.equal(isPetMedicalQuestion('My rabbit is sick. What service can help?'),true);
+ assert.equal(isPetMedicalQuestion('My dog has mild itching.'),true);
+});

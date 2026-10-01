@@ -631,4 +631,11 @@ The real model completed Grooming, Training, Boarding and Sitting bookings in an
 
 The real-model service conversation also exposed a Daycare price-verification false refusal: the Boarding catalogue alias omitted the word Daycare. The validator now recognizes that alias while retaining package/amount binding and rejecting prices borrowed from another service.
 
-Actual-model evaluation modes cover all-service knowledge and the four currently executable booking service codes. Reports explicitly retain `allServicesBookable:false`. Taxi, Fresh Food, Relocation, Funeral and Vet checkout are not enabled by this change. Their route/fleet, inventory, specialist-case and clinical-intake paths still need integration and verification. Phone calls remain paused. No complete, premium, hosted payment, delivery, provider-acceptance or production certification is claimed.
+Actual-model evaluation modes cover all-service knowledge and five executable booking service codes, including the additional Taxi adapter. Reports explicitly retain `allServicesBookable:false`. Fresh Food, Relocation, Funeral and Vet checkout are not enabled by this change. Their inventory, specialist-case and clinical-intake paths still need integration and verification. Phone calls remain paused. No complete, premium, hosted payment, delivery, provider-acceptance or production certification is claimed.
+
+
+### Taxi and routine vet-service information
+
+Taxi now prepares fares through the existing address-based route quote, validates vehicle capacity, reads pickup/drop/vehicle/deposit terms, and executes the canonical booking and fleet reservation only after separate confirmation. The isolated test mocks Maps and payments; it does not certify hosted Maps, payment capture or customer fulfilment. The public Taxi API retains its normal actor resolution and permissions. Routine questions about arranging a vet consultation are classified as service information; symptom questions retain the clinical referral protections.
+
+The 14-turn actual-model knowledge evaluation on `a71486e6` passed with zero bookings or payment requests. The final Taxi-inclusive source still needs actual-model evaluation and exact-source CI. PR #1199 was merged externally as `257fb596` and deployed to staging by run `36802806659`; its tree matches the previously verified `a3abdfbd`. This expansion is tracked separately in draft PR #1215.

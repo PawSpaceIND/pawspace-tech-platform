@@ -421,3 +421,33 @@ test('a stay quote cannot be reused by another conversation or for a changed car
  await refuse(confirmedStaySalesPayload(w.db,{...input,providerId:'ANOTHER-PROVIDER'}),409);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+test('Taxi voice checkout uses routed fare and fleet booking after separate confirmation',async t=>{
+ const w=await world(t,'pet_taxi');
+ await (await import('../lib/taxi-fleet-governance.ts')).ensureTaxiFleetTables(w.db);
+ for(const provider of w.sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE services_json LIKE '%pet_taxi%'").all())
+  for(const car of w.sqlite.prepare('SELECT id FROM taxi_fleet_vehicles WHERE active=1').all())
+   w.sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility(provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(provider.id,car.id);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,GOOGLE_MAPS_SERVER_API_KEY_UAT:'synthetic-test-key',GOOGLE_ROUTES_SERVER_API_KEY_UAT:'synthetic-test-key',PAWSPACE_MAPS_ENV:'sandbox'};
+ const paymentFetch=globalThis.fetch;let mapRequests=0;
+ globalThis.fetch=async(url,init)=>{
+  const u=new URL(String(url));
+  if(u.hostname==='maps.googleapis.com'){
+   mapRequests++;const pickup=u.searchParams.get('address').startsWith('12');
+   return Response.json({status:'OK',results:[{formatted_address:u.searchParams.get('address'),geometry:{location:{lat:pickup?12.9784:12.9352,lng:pickup?77.6408:77.6245}}}]});
+  }
+  if(u.hostname==='routes.googleapis.com'){mapRequests++;return Response.json({routes:[{distanceMeters:8000,duration:'1200s'}]});}
+  return paymentFetch(url,init);
+ };
+ const plan=actions(w,'citroen_ec3','split_50_50');delete plan[0].arguments.cadenceDays;
+ plan[1].arguments.taxi={originLabel:'12 Test Street',destinationLabel:'24 Test Street, Koramangala, Bengaluru',passengerCount:1,luggageCount:0,tripType:'one_way',ridePurpose:'regular',waitingMinutes:0,hyperactivePet:false};
+ const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'taxi-voice',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);assert.equal(mapRequests,3);
+ assert.match(offer.summary,/Vehicle: Citroen eC3/);assert.match(offer.summary,/12 Test Street/);
+ const result=await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);assert.equal(result.paymentVerified,false);
+ assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,'pet_taxi');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM taxi_fleet_reservations WHERE status='confirmed'").get().n,1);
+ assert.equal((await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'})).duplicatePrevented,true);
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});

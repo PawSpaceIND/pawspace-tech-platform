@@ -26,6 +26,14 @@ globalThis.fetch = async (url, init) => {
     modelDrafts.push({ status: response.status, text, catalogue: context.catalogue });
     return response;
   }
+  if (scenario === 'all-bookings') {
+    const parsed=new URL(String(url));
+    if(parsed.hostname==='maps.googleapis.com'){
+      const pickup=parsed.searchParams.get('address').startsWith('12');
+      return Response.json({status:'OK',results:[{formatted_address:parsed.searchParams.get('address'),geometry:{location:{lat:pickup?12.9784:12.9352,lng:pickup?77.6408:77.6245}}}]});
+    }
+    if(parsed.hostname==='routes.googleapis.com')return Response.json({routes:[{distanceMeters:8000,duration:'1200s'}]});
+  }
   assert.equal(String(url), 'https://api.razorpay.com/v1/orders', 'Unexpected external request is forbidden');
   paymentRequests++;
   const body = JSON.parse(init.body);
@@ -80,6 +88,13 @@ try {
     world.sqlite.prepare("INSERT OR IGNORE INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) VALUES (?,?,?,12.9716,77.5946,0,NULL,'test','test',?)").run('eval-base-' + provider.id, provider.id, 'Test base', now);
     for (const zone of JSON.parse(provider.zones_json)) world.sqlite.prepare("INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,'[\"09:00-19:00\"]','roster',?)").run(provider.id + ':' + zone + ':2026-10-20', provider.id, provider.city_id, zone, '2026-10-20', now);
   }
+  if(scenario==='all-bookings'){
+    await (await import('../lib/taxi-fleet-governance.ts')).ensureTaxiFleetTables(world.db);
+    for(const provider of world.sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE services_json LIKE '%pet_taxi%'").all())
+      for(const car of world.sqlite.prepare('SELECT id FROM taxi_fleet_vehicles WHERE active=1').all())
+        world.sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility(provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(provider.id,car.id);
+    globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,GOOGLE_MAPS_SERVER_API_KEY_UAT:'synthetic-test-key',GOOGLE_ROUTES_SERVER_API_KEY_UAT:'synthetic-test-key',PAWSPACE_MAPS_ENV:'sandbox'};
+  }
   const history = [], countBookings = () => world.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get() ? world.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n : 0;
   async function turn(message) {
     const started = Date.now();
@@ -94,10 +109,11 @@ try {
       {service:'dog_training',package:'Meet & Greet',date:21,end:'11 AM',mode:'prepaid'},
       {service:'boarding',package:'Standard Stay',date:22,end:'2 PM',mode:'prepaid'},
       {service:'pet_sitting',package:'Home Visit',date:23,end:'11 AM',mode:'prepaid'},
+      {service:'pet_taxi',package:'Pet Taxi with an eligible recommended vehicle',date:24,end:'1 PM',mode:'split_50_50',details:'Pickup is 12 Test Street; drop-off is 24 Test Street, Koramangala, Bengaluru. This is a regular one-way trip with one passenger, no luggage, no waiting time, and Milo is not hyperactive. Please recommend the appropriate vehicle and read its name and fare back for confirmation.'},
     ];
     for (const item of cases) {
       const before=countBookings(),beforePayment=paymentRequests;
-      await turn(`Please prepare an unconfirmed quote for ${item.service}, ${item.package}, for my saved dog Milo, ${item.mode}, October ${item.date} 2026 from 10 AM to ${item.end} India time, at 12 Test Street, Bengaluru, PIN 560038. This is one appointment. Do not reserve or create a booking or payment order yet. Read back the quote and ask for my separate confirmation.`);
+      await turn(`Please prepare an unconfirmed quote for ${item.service}, ${item.package}, for my saved dog Milo, ${item.mode}, October ${item.date} 2026 from 10 AM to ${item.end} India time, at 12 Test Street, Bengaluru, PIN 560038. This is one appointment. ${item.details || ""} Do not reserve or create a booking or payment order yet. Read back the quote and ask for my separate confirmation.`);
       const offer=await sales.pendingVoiceSalesOffer(world.db,threadId,customerId,'all_services');
       assert.ok(offer,`No stored offer for ${item.service}`);
       assert.equal(offer.service_code,item.service);
@@ -110,7 +126,7 @@ try {
       assert.ok(result.bookingId);assert.equal(result.paymentVerified,false);
       assert.equal(world.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,item.service);
     }
-    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','pet_taxi','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model and four canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
+    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model and five canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
     await mkdir('artifacts/maya-runtime-sale',{recursive:true});await writeFile('artifacts/maya-runtime-sale/report.json',JSON.stringify(report,null,2));console.log('MAYA_ALL_SERVICE_BOOKINGS='+JSON.stringify(report));
   } else if (scenario === 'concierge' || scenario === 'all-services') {
     const checks = [
