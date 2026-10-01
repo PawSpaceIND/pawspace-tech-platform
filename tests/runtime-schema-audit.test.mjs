@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { auditRuntimeSchemaCoverage } from "../scripts/runtime-schema-audit.mjs";
 
 const MONEY_TABLE = /(?:payment|journal|partner|earning|payable|gateway|refund|settlement|tax|gst|invoice|outbox)/i;
@@ -21,4 +24,14 @@ test("critical money-path SQL is not migration-only", () => {
     [],
     `critical money tables are consumed at runtime but exist only in drizzle migrations:\n${JSON.stringify(critical, null, 2)}`,
   );
+});
+
+test("dynamic SQL sources do not turn the following ORDER keyword into a table", () => {
+  const root = mkdtempSync(join(tmpdir(), "paw-schema-audit-"));
+  try {
+    mkdirSync(join(root, "lib"));
+    writeFileSync(join(root, "lib/query.ts"), 'db.prepare(`SELECT * FROM ${source} ${conditions} ORDER BY at DESC`);\n' + 'db.prepare("SELECT * FROM genuinely_missing");');
+    const audit = auditRuntimeSchemaCoverage(root);
+    assert.deepEqual(audit.missing.map(row => row.table), ["genuinely_missing"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

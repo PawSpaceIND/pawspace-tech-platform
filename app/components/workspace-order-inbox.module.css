@@ -1,7 +1,7 @@
 .host { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:8px; font-family:var(--paw-font); color:var(--paw-text); }
 .host button,.dialog button,.dialog a { min-height:48px; box-sizing:border-box; padding:12px; border:1px solid var(--paw-line); border-radius:var(--paw-control-radius); font:inherit; background:var(--paw-surface); color:var(--paw-text); }
 .host button { display:inline-flex; align-items:center; gap:8px; }
-.host b { border-radius:12px; padding:2px 8px; background:var(--paw-primary); color:var(--paw-on-primary); }
+.host b { border-radius:var(--paw-control-radius); padding:2px 8px; background:var(--paw-primary); color:var(--paw-on-primary); }
 .notice { font-size:14px; line-height:1.5; }
 .dialog { box-sizing:border-box; width:min(480px,calc(100vw - 24px)); max-height:85dvh; overflow:auto; border:1px solid var(--paw-line); border-radius:var(--paw-card-radius); background:var(--paw-surface); color:var(--paw-text); padding:20px; font-family:var(--paw-font); }
 .dialog::backdrop { background:rgba(0,0,0,.35); }

@@ -146,7 +146,7 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await expect(requestsTab.locator("b")).toBeVisible();
     await dismissPrivacy(host); await requestsTab.click();
     await expect(host.getByRole("heading", { name: "Awaiting host response", exact: true })).toBeVisible();
-    const offer = host.getByText(bookingId, { exact: false }).first().locator("xpath=ancestor::button[1]"); await offer.click();
+    const offer = host.getByRole("button").filter({ has: host.getByText(bookingId, { exact: false }) }); await offer.click();
     const accepted = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "accept");
     await host.getByRole("button", { name: "Accept & lock capacity", exact: true }).click(); expect((await accepted).status()).toBe(200);
     await host.goto(`/host?bookingId=${encodeURIComponent(bookingId)}`);
