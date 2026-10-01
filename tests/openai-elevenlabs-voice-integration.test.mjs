@@ -351,7 +351,7 @@ test("timing separates governance and reservation without bypassing either contr
  const input={systemPrompt:"system",userPrompt:"hello",channel:"voice",onTiming:stage=>{marks.push(stage);}};
  try{
   assert.equal((await adapter.requestAiDraft(input)).connected,true);
-  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted"]);
+  assert.deepEqual(marks,["governanceStarted","governanceCompleted","reservationStarted","reservationCompleted","providerRequestStarted","providerHeadersReceived","providerBodyCompleted","providerAccountingCompleted"]);
   marks.length=0;
   assert.equal((await adapter.requestAiDraft(input)).failure,"quota_exceeded");
   assert.equal(stub.calls.length,1);
