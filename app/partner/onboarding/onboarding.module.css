@@ -51,4 +51,4 @@
 .step { min-width:0; padding-top:0; line-height:1.5; overflow-wrap:normal; word-break:normal; }
 .step b { position:static; margin:0 auto 8px; }
 .page.page .field select { white-space:nowrap; overflow-wrap:normal; text-overflow:ellipsis; }
-@media(max-width:420px) { .page.page .field select { font-size:14px !important; padding-inline:8px; } }
+@media(max-width:420px) { .page.page .field select { font-size:14px !important; padding-left:6px !important; padding-right:6px !important; } }

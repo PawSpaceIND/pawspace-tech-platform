@@ -7,6 +7,7 @@ import {salesBriefServiceCode} from '../../../lib/customer-sales-brief-overrides
 
 /** Advisory evidence read only. Unknown contact eligibility cannot authorize dispatch. */
 export async function GET(request:Request){try{
+ const actor=await authorize(request,'customers.view'),db=await database();
  const url=new URL(request.url);
  if([...url.searchParams.keys()].some(key=>!['customerId','serviceCode','channel'].includes(key)))throw authFailure('Only customer and service may be requested',400);
  const customerId=url.searchParams.get('customerId')?.trim();
@@ -14,7 +15,6 @@ export async function GET(request:Request){try{
  const serviceCode=salesBriefServiceCode(url.searchParams.get('serviceCode'));
  const channel=url.searchParams.get('channel')??'voice';
  if(!['voice','whatsapp','sms','email'].includes(channel))throw authFailure('Supported contact channel is required',400);
- const actor=await authorize(request,'customers.view'),db=await database();
  const scope=await resolveManagerOrganizationalScope(db,actor);
  await authorizeCustomerSalesBriefRecord(db,{actor,scope,customerId});
  const checkedAt=Date.now();

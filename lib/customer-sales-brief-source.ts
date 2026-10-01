@@ -1,3 +1,4 @@
+import {createDegradationLog} from './degraded-reads';
 import {readSalesBriefCentralConsent} from './customer-sales-brief-central-consent';
 import {readCustomerSalesPaymentEvidence} from './customer-sales-payment-evidence';
 import {hasPermission} from './platform-security';
@@ -7,8 +8,6 @@ import {normalizeLeadServiceCode} from './lead-lifecycle-governance';
 import {buildCustomerSalesBrief,type SalesBriefInput,type SalesIntent,type SalesOverride} from './customer-sales-brief';
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??'').trim();
-const list=(v:unknown):string[]=>{try{const r=JSON.parse(text(v)||'[]');return Array.isArray(r)?r.filter(x=>typeof x==='string'):[];}catch{return[];}};
-const parse=(v:unknown):Row=>{try{const r=JSON.parse(text(v)||'{}');return r&&typeof r==='object'&&!Array.isArray(r)?r:{};}catch{return{};}};
 const deny:()=>never=()=>{throw authFailure('Customer sales brief is outside authorized CRM scope',403);};
 /** Reused by reads and audited overrides; actor/scope are resolved on the server. */
 export async function authorizeCustomerSalesBriefRecord(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string}){
@@ -31,8 +30,11 @@ export async function collectCustomerSalesBrief(db:D1Database,input:{actor:Authe
  if(!Number.isFinite(input.asOf)||input.asOf<0)deny();
  const customer=await authorizeCustomerSalesBriefRecord(db,input);
  const serviceCode=normalizeLeadServiceCode(input.serviceCode);if(!serviceCode)throw new Error('Service required');
+ const degradation=createDegradationLog();
+ const list=(v:unknown):string[]=>{try{const r=JSON.parse(text(v)||'[]');return Array.isArray(r)?r.filter(x=>typeof x==='string'):[];}catch{return degradation.note('sales_brief_list',new Error('Malformed stored list'),[]);}};
+ const parse=(v:unknown):Row=>{try{const r=JSON.parse(text(v)||'{}');return r&&typeof r==='object'&&!Array.isArray(r)?r:{};}catch{return degradation.note('sales_brief_detail',new Error('Malformed stored detail'),{});}};
  const sourceStatus:Record<string,string>={};
- const read=async(name:string,sql:string,values:unknown[]=[])=>{try{const r=await db.prepare(sql).bind(...values).all<Row>();sourceStatus[name]='available';return r.results;}catch{sourceStatus[name]='unavailable';return null;}};
+ const read=async(name:string,sql:string,values:unknown[]=[])=>{try{const r=await db.prepare(sql).bind(...values).all<Row>();sourceStatus[name]='available';return r.results;}catch{sourceStatus[name]='unavailable';return degradation.note(name,new Error('Source read unavailable'),null);}};
  const [recent,fulfilled,dispositions,opportunities,audit,prefs,enginePrefs,leads,subscriptions,centralConsent]=await Promise.all([
   read('recentBookings','SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND (? IS NULL OR lower(city_id)=lower(?)) ORDER BY updated_at DESC,id DESC LIMIT 20',[input.customerId,input.scope?.cityId??null,input.scope?.cityId??null]),
   read('fulfilledHistory',"SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND (? IS NULL OR lower(city_id)=lower(?)) AND status='completed' ORDER BY updated_at DESC,id DESC LIMIT 2",[input.customerId,input.scope?.cityId??null,input.scope?.cityId??null]),
@@ -88,5 +90,5 @@ export async function collectCustomerSalesBrief(db:D1Database,input:{actor:Authe
   const reconciliationStatus=['pending_reconciliation','reconciled_confirmed','reconciled_not_found'].includes(recorded)?recorded:'unknown';
   return[{ref:text(d.id),serviceCode:normalizeLeadServiceCode(d.service),observedAt:Number(d.created_at),claims,reconciliationStatus,moneyVerified:false,bookingVerified:false,canonicalRecordLink:null}];
  })??null;
- return{...brief,sourceStatus,paymentContext:paymentEvidence.records,claimContext,bookingContext:recent?.map(b=>({id:text(b.id),serviceCode:normalizeLeadServiceCode(b.service_code),status:text(b.status),scheduledStart:text(b.scheduled_start)}))??null,subscriptionContext:subscriptions?.map(s=>({id:text(s.id),planCode:text(s.plan_code),status:text(s.status),expiresAt:Number(s.expires_at),active:text(s.status)==='active'&&Number(s.started_at)<=input.asOf&&Number(s.expires_at)>input.asOf}))??null,lifecycleBasis:paymentEvidence.status==='available'?'canonical_fulfillment_or_reconciled_retained_purchase':'canonical_fulfillment_only_payment_unknown'};
+ return{...brief,sourceStatus,degradedReads:degradation.entries(),paymentContext:paymentEvidence.records,claimContext,bookingContext:recent?.map(b=>({id:text(b.id),serviceCode:normalizeLeadServiceCode(b.service_code),status:text(b.status),scheduledStart:text(b.scheduled_start)}))??null,subscriptionContext:subscriptions?.map(s=>({id:text(s.id),planCode:text(s.plan_code),status:text(s.status),expiresAt:Number(s.expires_at),active:text(s.status)==='active'&&Number(s.started_at)<=input.asOf&&Number(s.expires_at)>input.asOf}))??null,lifecycleBasis:paymentEvidence.status==='available'?'canonical_fulfillment_or_reconciled_retained_purchase':'canonical_fulfillment_only_payment_unknown'};
 }
