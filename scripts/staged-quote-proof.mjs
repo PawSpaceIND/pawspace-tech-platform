@@ -101,7 +101,7 @@ export function quoteReplyDiagnostic(turn){
 }
 
 // Known non-dialing audio demo 36793666839 only; not a general customer-case reset.
-export const offerRepairRevision='5c4d7e780024574dd7f900c1026d5e355e04a47c';
+export const offerRepairRevision='a3abdfbd6ae546047d05dc358640b2c094c17ffc';
 export const offerIncidentStart=Date.parse('2026-10-01T00:00:00Z');
 export const offerIncidentEnd=Date.parse('2026-10-01T00:01:00Z');
 export const offerIncidentPrompt='The Complete Makeover price feels high. Is there an approved offer for that package?';
