@@ -1,20 +1,17 @@
+import {readCustomerSalesPaymentEvidence} from './customer-sales-payment-evidence';
 import {hasPermission} from './platform-security';
 import {isManagerScopedActor,requireManagerDomain,CRM_MANAGER_DOMAIN,type OrganizationalScope} from './organizational-scope';
-import type {AuthenticatedActor} from './server-auth';
+import {authFailure,type AuthenticatedActor} from './server-auth';
 import {normalizeLeadServiceCode} from './lead-lifecycle-governance';
 import {buildCustomerSalesBrief,type SalesBriefInput,type SalesIntent,type SalesOverride} from './customer-sales-brief';
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??'').trim();
 const list=(v:unknown):string[]=>{try{const r=JSON.parse(text(v)||'[]');return Array.isArray(r)?r.filter(x=>typeof x==='string'):[];}catch{return[];}};
 const parse=(v:unknown):Row=>{try{const r=JSON.parse(text(v)||'{}');return r&&typeof r==='object'&&!Array.isArray(r)?r:{};}catch{return{};}};
-const deny:()=>never=()=>{throw Response.json({error:'Customer sales brief is outside authorized CRM scope'},{status:403});};
-/** Evidence reads only: no ensure/DDL, no dispatch, no new tag store or money claims.
- * scope must come from the established authenticated organizational resolver, not request JSON.
- * contactDecision must be a fresh result of canonical channel/contact governance, never a client flag.
- * Missing decision fails closed; current recorded opt-outs still take precedence over a supplied allow.
- */
-export async function collectCustomerSalesBrief(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string;serviceCode:string;asOf:number;contactDecision?:SalesBriefInput['contact']}){
- if(!hasPermission(input.actor.permissions,'customers.view')||!Number.isFinite(input.asOf)||input.asOf<0)deny();
+const deny:()=>never=()=>{throw authFailure('Customer sales brief is outside authorized CRM scope',403);};
+/** Reused by reads and audited overrides; actor/scope are resolved on the server. */
+export async function authorizeCustomerSalesBriefRecord(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string}){
+ if(!hasPermission(input.actor.permissions,'customers.view'))deny();
  if(isManagerScopedActor(input.actor)&&!input.scope)deny();
  requireManagerDomain(input.scope,CRM_MANAGER_DOMAIN);
  const customer=await db.prepare("SELECT id,city_id FROM canonical_customers WHERE id=? AND merged_into IS NULL").bind(input.customerId).first<Row>();
@@ -22,15 +19,25 @@ export async function collectCustomerSalesBrief(db:D1Database,input:{actor:Authe
  if(!hasPermission(input.actor.permissions,'customers.manage')&&!isManagerScopedActor(input.actor)){
   const assigned=await db.prepare("SELECT a.id FROM lead_assignments a JOIN lead_work_items l ON l.id=a.lead_id WHERE l.customer_id=? AND a.status='current' AND lower(a.employee_email)=? LIMIT 1").bind(input.customerId,input.actor.email.toLowerCase()).first<Row>();if(!assigned)deny();
  }
+ return customer;
+}
+/** Evidence reads only: no ensure/DDL, no dispatch, no new tag store or money claims.
+ * scope must come from the established authenticated organizational resolver, not request JSON.
+ * contactDecision must be a fresh result of canonical channel/contact governance, never a client flag.
+ * Missing decision fails closed; current recorded opt-outs still take precedence over a supplied allow.
+ */
+export async function collectCustomerSalesBrief(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string;serviceCode:string;asOf:number;contactDecision?:SalesBriefInput['contact']}){
+ if(!Number.isFinite(input.asOf)||input.asOf<0)deny();
+ const customer=await authorizeCustomerSalesBriefRecord(db,input);
  const serviceCode=normalizeLeadServiceCode(input.serviceCode);if(!serviceCode)throw new Error('Service required');
  const sourceStatus:Record<string,string>={};
  const read=async(name:string,sql:string,values:unknown[]=[])=>{try{const r=await db.prepare(sql).bind(...values).all<Row>();sourceStatus[name]='available';return r.results;}catch{sourceStatus[name]='unavailable';return null;}};
  const [recent,fulfilled,dispositions,opportunities,audit,prefs,enginePrefs,leads,subscriptions]=await Promise.all([
-  read('recentBookings','SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? ORDER BY updated_at DESC,id DESC LIMIT 20',[input.customerId]),
-  read('fulfilledHistory',"SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND status='completed' ORDER BY updated_at DESC,id DESC LIMIT 2",[input.customerId]),
-  read('callTags','SELECT d.id,d.primary_tag,d.tags_json,d.contacted,d.opted_out,d.created_at,d.cross_sell_services_json,l.service FROM bot_call_dispositions d JOIN lead_work_items l ON l.id=d.lead_id AND l.customer_id=d.contact_id WHERE d.contact_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT 100',[input.customerId]),
+  read('recentBookings','SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND lower(city_id)=lower(?) ORDER BY updated_at DESC,id DESC LIMIT 20',[input.customerId,text(customer.city_id)]),
+  read('fulfilledHistory',"SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND lower(city_id)=lower(?) AND status='completed' ORDER BY updated_at DESC,id DESC LIMIT 2",[input.customerId,text(customer.city_id)]),
+  read('callTags','SELECT d.id,d.primary_tag,d.tags_json,d.contacted,d.opted_out,d.created_at,d.cross_sell_services_json,d.claim_tags_json,d.reconciliation_status,l.service FROM bot_call_dispositions d JOIN lead_work_items l ON l.id=d.lead_id AND l.customer_id=d.contact_id WHERE d.contact_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT 100',[input.customerId]),
   read('opportunities','SELECT id,opportunity_type,service_code,reason,status,updated_at FROM canonical_revenue_opportunities WHERE customer_id=? ORDER BY updated_at DESC,id DESC LIMIT 100',[input.customerId]),
-  read('overrides',"SELECT id,action,actor_email,detail_json,created_at FROM crm_engine_audit_events WHERE entity_type='customer' AND entity_id=? AND action IN ('sales_brief_override','sales_brief_override_clear') ORDER BY created_at DESC,id DESC LIMIT 100",[input.customerId]),
+  read('overrides',"SELECT id,action,actor_email,detail_json,created_at FROM crm_engine_audit_events WHERE entity_type='customer' AND entity_id=? AND action IN ('sales_brief_override','sales_brief_override_clear') ORDER BY created_at DESC,rowid DESC LIMIT 100",[input.customerId]),
   read('contactPreferences','SELECT opt_out,marketing_consent FROM customer_contact_preferences WHERE customer_id=?',[input.customerId]),
   read('communicationPreferences','SELECT marketing FROM communication_preferences WHERE customer_id=?',[input.customerId]),
   read('leadOptOut','SELECT opt_out FROM lead_work_items WHERE customer_id=?',[input.customerId]),
@@ -54,10 +61,20 @@ export async function collectCustomerSalesBrief(db:D1Database,input:{actor:Authe
  const optOut=(prefs??[]).some(p=>Number(p.opt_out)===1)||(enginePrefs??[]).some(p=>Number(p.marketing)===0)||(leads??[]).some(p=>Number(p.opt_out)===1)||(dispositions??[]).some(d=>Number(d.opted_out)===1);
  const consentMissing=!prefs?.length||Number(prefs[0]?.marketing_consent)!==1;
  if(optOut||consentMissing||prefs===null||enginePrefs===null||leads===null||dispositions===null)contact={allowed:false,reason:optOut?'marketing_opt_out':prefs===null||enginePrefs===null||leads===null||dispositions===null?'contact_source_unavailable':'marketing_consent_missing',checkedAt:input.asOf,nextEligibleAt:null};
+ const paymentEvidence=await readCustomerSalesPaymentEvidence(db,{permissions:input.actor.permissions,customerId:input.customerId,cityId:text(customer.city_id),asOf:input.asOf});
  const history=fulfilled===null||recent===null?null:[...new Map([...recent,...fulfilled].map(b=>[text(b.id),{id:text(b.id),serviceCode:normalizeLeadServiceCode(b.service_code),status:text(b.status),verifiedPurchase:false,observedAt:Number(b.updated_at)}])).values()];
- const brief=buildCustomerSalesBrief({customerId:input.customerId,cityId:text(customer.city_id),serviceCode,asOf:input.asOf,access:{allowed:true,customerId:input.customerId,cityId:input.scope?.cityId??null},bookings:history,intents:dispositions===null?null:intents,opportunities:opportunities===null&&dispositions===null?null:taggedOpportunities,contact,overrides});
- // No payment ledger is read here. An unfulfilled booking may be paid or unpaid, so it cannot prove a prospect lifecycle.
+ const brief=buildCustomerSalesBrief({customerId:input.customerId,cityId:text(customer.city_id),serviceCode,asOf:input.asOf,access:{allowed:true,customerId:input.customerId,cityId:input.scope?.cityId??null},bookings:history===null?null:[...history,...(paymentEvidence.purchases??[])],intents:dispositions===null?null:intents,opportunities:opportunities===null&&dispositions===null?null:taggedOpportunities,contact,overrides});
+ // An unverified/unpaid booking alone cannot establish a purchase or a definitive prospect lifecycle.
  if(brief.lifecycle.value==='prospect'&&recent?.length)brief.lifecycle.value='unknown';
- sourceStatus.paymentHistory='not_read';
- return{...brief,sourceStatus,bookingContext:recent?.map(b=>({id:text(b.id),serviceCode:normalizeLeadServiceCode(b.service_code),status:text(b.status),scheduledStart:text(b.scheduled_start)}))??null,subscriptionContext:subscriptions?.map(s=>({id:text(s.id),planCode:text(s.plan_code),status:text(s.status),expiresAt:Number(s.expires_at),active:text(s.status)==='active'&&Number(s.started_at)<=input.asOf&&Number(s.expires_at)>input.asOf}))??null,lifecycleBasis:'canonical_fulfillment_only_no_payment_claim'};
+ sourceStatus.paymentHistory=paymentEvidence.status;
+ // Existing reconciliations are operational attestations, not structured ledger bindings.
+ // Preserve their status for follow-up without promoting a call claim into purchase evidence.
+ const claimContext=dispositions?.flatMap(d=>{
+  const claims=list(d.claim_tags_json).filter(tag=>tag==='paid'||tag==='converted');
+  if(!claims.length)return[];
+  const recorded=text(d.reconciliation_status);
+  const reconciliationStatus=['pending_reconciliation','reconciled_confirmed','reconciled_not_found'].includes(recorded)?recorded:'unknown';
+  return[{ref:text(d.id),serviceCode:normalizeLeadServiceCode(d.service),observedAt:Number(d.created_at),claims,reconciliationStatus,moneyVerified:false,bookingVerified:false,canonicalRecordLink:null}];
+ })??null;
+ return{...brief,sourceStatus,paymentContext:paymentEvidence.records,claimContext,bookingContext:recent?.map(b=>({id:text(b.id),serviceCode:normalizeLeadServiceCode(b.service_code),status:text(b.status),scheduledStart:text(b.scheduled_start)}))??null,subscriptionContext:subscriptions?.map(s=>({id:text(s.id),planCode:text(s.plan_code),status:text(s.status),expiresAt:Number(s.expires_at),active:text(s.status)==='active'&&Number(s.started_at)<=input.asOf&&Number(s.expires_at)>input.asOf}))??null,lifecycleBasis:paymentEvidence.status==='available'?'canonical_fulfillment_or_reconciled_retained_purchase':'canonical_fulfillment_only_payment_unknown'};
 }

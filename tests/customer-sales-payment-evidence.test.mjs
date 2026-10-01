@@ -1,0 +1,29 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__SALES_PAYMENT_EVIDENCE_DB__');
+const {readCustomerSalesPaymentEvidence}=await import('../lib/customer-sales-payment-evidence.ts');
+const now=1800000000000;
+function world(){const sqlite=new DatabaseSync(':memory:');sqlite.exec(`
+ CREATE TABLE canonical_customers(id TEXT,city_id TEXT,merged_into TEXT);
+ CREATE TABLE canonical_bookings(id TEXT,customer_id TEXT,city_id TEXT,service_code TEXT,status TEXT,updated_at INTEGER);
+ CREATE TABLE booking_payments(id TEXT,booking_id TEXT,customer_id TEXT,status TEXT,updated_at INTEGER);
+ CREATE TABLE payment_reconciliation_records(payment_id TEXT,booking_id TEXT,captured_amount REAL,refunded_amount REAL,updated_at INTEGER);
+ INSERT INTO canonical_customers VALUES('C','blr',NULL),('OTHER','hyd',NULL);
+ `);const queries=[];const stmt=(sql,args=[])=>({bind:(...a)=>stmt(sql,a),all:async()=>{queries.push(sql);return{results:sqlite.prepare(sql).all(...args)};}});return{sqlite,queries,db:{prepare:sql=>stmt(sql)}};}
+const run=(w,extra={})=>readCustomerSalesPaymentEvidence(w.db,{permissions:['finance.view','reports.view'],customerId:'C',cityId:'blr',asOf:now,...extra});
+function seed(w,id='B',extra={}){const r={customer:'C',city:'blr',paymentCustomer:'C',bookingStatus:'confirmed',paymentStatus:'captured',paymentAt:now-10,captured:100,refunded:0,reconciledAt:now-1,reconBooking:id,...extra};w.sqlite.prepare('INSERT INTO canonical_bookings VALUES(?,?,?,?,?,?)').run(id,r.customer,r.city,'grooming',r.bookingStatus,now-20);w.sqlite.prepare('INSERT INTO booking_payments VALUES(?,?,?,?,?)').run('P-'+id,id,r.paymentCustomer,r.paymentStatus,r.paymentAt);w.sqlite.prepare('INSERT INTO payment_reconciliation_records VALUES(?,?,?,?,?)').run('P-'+id,r.reconBooking,r.captured,r.refunded,r.reconciledAt);}
+test('reconciled deposit is a purchase, never proof the full price is paid',async()=>{const w=world();seed(w);const e=await run(w);assert.equal(e.status,'available');assert.equal(e.purchases.length,1);assert.equal(e.records[0].captureVerified,true);assert.equal(e.records[0].fullyPaid,null);assert.ok(w.queries.every(sql=>/^SELECT/.test(sql)));});
+test('recorded paid tag/status without matching ledger remains unknown',async()=>{const w=world();seed(w,'B',{paymentStatus:'paid',reconBooking:'WRONG'});const e=await run(w);assert.equal(e.records[0].retainedPurchaseVerified,null);assert.deepEqual(e.purchases,[]);});
+test('partial refund preserves retained purchase; full refund does not',async()=>{const w=world();seed(w,'PART',{paymentStatus:'partially_refunded',refunded:50});seed(w,'FULL',{paymentStatus:'refunded',refunded:100});const e=await run(w);assert.equal(e.purchases.length,1);assert.equal(e.purchases[0].id,'PART');assert.ok(e.records.every(r=>r.refundRecorded===true));});
+test('zero cash, authorized, created and failed states never prove a retained purchase',async()=>{for(const paymentStatus of ['created','authorized','failed']){const w=world();seed(w,'B',{paymentStatus});assert.equal((await run(w)).purchases.length,0);}const w=world();seed(w,'B',{captured:0});assert.equal((await run(w)).purchases.length,0);});
+test('both financial and report grants required before any money query',async()=>{for(const permissions of [[],['reports.view'],['finance.view']]){const w=world();seed(w);const e=await run(w,{permissions});assert.equal(e.status,'restricted');assert.equal(e.records,null);assert.equal(w.queries.length,0);}});
+test('customer, payment owner, booking city and reconciliation booking cannot cross scope',async()=>{for(const extra of [{customer:'OTHER'},{city:'hyd'},{paymentCustomer:'OTHER'}]){const w=world();seed(w,'B',extra);assert.deepEqual((await run(w)).records,[]);}const w=world();seed(w);assert.deepEqual((await run(w,{cityId:'hyd'})).records,[]);});
+test('merged customer is excluded',async()=>{const w=world();seed(w);w.sqlite.exec("UPDATE canonical_customers SET merged_into='OTHER' WHERE id='C'");assert.deepEqual((await run(w)).records,[]);});
+test('failed or absent ledger is unavailable, never zero paid customers',async()=>{const w=world();seed(w);w.sqlite.exec('DROP TABLE payment_reconciliation_records');const e=await run(w);assert.equal(e.status,'unavailable');assert.equal(e.records,null);assert.equal(e.purchases,null);});
+test('future, stale, negative and impossible refund reconciliation fails unknown',async()=>{for(const extra of [{reconciledAt:now+1},{reconciledAt:now-100},{captured:-1},{refunded:101},{captured:null}]){const w=world();seed(w,'B',extra);const e=await run(w);assert.equal(e.records[0].retainedPurchaseVerified,null);assert.equal(e.purchases.length,0);}});
+test('old reconciled purchases remain available beyond latest twenty payment contexts',async()=>{const w=world();seed(w,'OLD1',{paymentAt:now-1000,reconciledAt:now-900});seed(w,'OLD2',{paymentAt:now-2000,reconciledAt:now-1900});for(let i=0;i<21;i++)seed(w,'NEW'+i,{paymentStatus:'created',captured:0});const e=await run(w);assert.equal(e.records.length,22);assert.deepEqual(new Set(e.purchases.map(r=>r.id)),new Set(['OLD1','OLD2']));});
+test('cancelled capture stays visible for exception follow-up without becoming repeat purchase',async()=>{const w=world();seed(w,'CANCEL',{bookingStatus:'cancelled'});const e=await run(w);assert.equal(e.records[0].captureVerified,true);assert.equal(e.purchases[0].status,'cancelled');});
+
+test('invalid newer historical attestations cannot hide old valid purchase proofs',async()=>{const w=world();seed(w,'VALID1',{paymentAt:now-1000,reconciledAt:now-900});seed(w,'VALID2',{paymentAt:now-2000,reconciledAt:now-1900});for(let i=0;i<21;i++)seed(w,'BAD'+i,{paymentStatus:'created',captured:100});const e=await run(w);assert.deepEqual(new Set(e.purchases.map(r=>r.id)),new Set(['VALID1','VALID2']));});

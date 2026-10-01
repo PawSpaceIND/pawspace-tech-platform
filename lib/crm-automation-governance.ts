@@ -8,8 +8,9 @@ export async function ensureCrmAutomationGovernance(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS crm_automation_dead_letters (id TEXT PRIMARY KEY,dispatch_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,journey_code TEXT NOT NULL,channel TEXT NOT NULL,reason TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
 ]);}
 
-export async function automationDecision(db:Db,input:{customerId:string;purpose:"marketing"|"service";channel:string;now?:number}):Promise<AutomationDecision>{
- await ensureCrmAutomationGovernance(db);const now=input.now??Date.now();
+/** readOnly reuses all policy checks without initializing schema; failed reads propagate as unknown. */
+export async function automationDecision(db:Db,input:{customerId:string;purpose:"marketing"|"service";channel:string;now?:number},options:{readOnly?:boolean}={}):Promise<AutomationDecision>{
+ if(!options.readOnly)await ensureCrmAutomationGovernance(db);const now=input.now??Date.now();
  // customer_contact_preferences is owned by the Customer-360 stack; on a cold DB the direct read
  // crashed the whole decision with a 500. A missing table means the same thing as a missing row:
  // no recorded consent (marketing stays blocked below, service contact stays allowed).
@@ -29,7 +30,7 @@ export async function automationDecision(db:Db,input:{customerId:string;purpose:
  // A recorded opt-out in EITHER store blocks, which fails closed and is the only reading under which
  // consent means anything. Silence in a store is not an opt-out, so a customer who has opted in stays
  // reachable.
- const engineConsent=await db.prepare("SELECT service_updates,marketing FROM communication_preferences WHERE customer_id=?").bind(input.customerId).first<Row>().catch(()=>null);
+ const engineConsent=await db.prepare("SELECT service_updates,marketing FROM communication_preferences WHERE customer_id=?").bind(input.customerId).first<Row>().catch(error=>{if(options.readOnly)throw error;return null;});
  if(input.purpose==="marketing"&&Number(engineConsent?.marketing)===0)return{allowed:false,reason:"marketing_opt_out",policyStatus:"blocked",nextEligibleAt:null};
  if(input.purpose==="service"&&Number(engineConsent?.service_updates)===0)return{allowed:false,reason:"service_updates_opt_out",policyStatus:"blocked",nextEligibleAt:null};
  if(input.purpose==="marketing"&&!Boolean(Number(consent?.marketing_consent||0)))return{allowed:false,reason:"marketing_consent_missing",policyStatus:"blocked",nextEligibleAt:null};
