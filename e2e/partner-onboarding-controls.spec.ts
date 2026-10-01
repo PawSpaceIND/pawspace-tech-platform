@@ -30,14 +30,23 @@ for(const width of [320,391,768,1440])for(const style of ['professional','cartoo
   const option=page.getByText('Fixture answer A',{exact:true});
   const submit=page.getByRole('button',{name:'Submit application',exact:true});
   const measurements={back:await measure(back),option:await measure(option),submit:await measure(submit)};
+  const progress=await page.getByText('Qualification',{exact:true}).evaluate(label=>{
+   const cells=Array.from(label.parentElement!.children);return cells.map(cell=>{const node=Array.from(cell.childNodes).find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent?.trim());if(!node)throw new Error('Missing progress text');const range=document.createRange();range.selectNodeContents(node);const box=cell.getBoundingClientRect();return {text:node.textContent?.trim(),cell:{left:box.left,right:box.right,top:box.top,bottom:box.bottom},textRects:Array.from(range.getClientRects()).map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}))};});
+  });
+  if(!baseline){expect(progress).toHaveLength(7);for(const item of progress)for(const r of item.textRects){expect(r.left).toBeGreaterThanOrEqual(item.cell.left-1);expect(r.right).toBeLessThanOrEqual(item.cell.right+1);}for(let i=0;i<progress.length;i++)for(let j=i+1;j<progress.length;j++)for(const a of progress[i].textRects)for(const b of progress[j].textRects)expect(Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top))).toBe(0);}
+
   if(!baseline){for(const m of Object.values(measurements)){expect(m.height).toBeGreaterThanOrEqual(44);expect(m.width).toBeGreaterThanOrEqual(44);expect(m.contrast).toBeGreaterThanOrEqual(4.5);}}
   await option.getByRole('radio').focus();await page.keyboard.press('Space');await expect(option.getByRole('radio')).toBeChecked();await expect(page.getByRole('button',{name:'Submit answers',exact:true})).toBeEnabled();
   if(!baseline)expect(await option.evaluate(e=>getComputedStyle(e).outlineStyle)).not.toBe('none');
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2);
   await page.screenshot({path:info.outputPath(`qualification-${baseline?'baseline':'candidate'}-${head}.png`),fullPage:true,animations:'disabled'});
   errorState=true;await page.reload();const error=page.getByRole('alert').filter({hasText:'Synthetic snapshot unavailable'});await expect(error).toBeVisible();const errorMeasurement=await measure(error);if(!baseline)expect(errorMeasurement.contrast).toBeGreaterThanOrEqual(4.5);
+
+  const city=page.getByLabel('City',{exact:true});await expect(city).toHaveValue('BLR');
+  const cityText=await city.evaluate(element=>{const select=element as HTMLSelectElement,css=getComputedStyle(select),canvas=document.createElement('canvas'),context=canvas.getContext('2d')!;context.font=css.font;const rect=select.getBoundingClientRect();return {value:select.value,text:select.selectedOptions[0].text,textWidth:context.measureText(select.selectedOptions[0].text).width,availableWidth:rect.width-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)-parseFloat(css.borderLeftWidth)-parseFloat(css.borderRightWidth)-24,whiteSpace:css.whiteSpace,height:rect.height};});
+  if(!baseline){expect(cityText.whiteSpace).toBe('nowrap');expect(cityText.textWidth).toBeLessThanOrEqual(cityText.availableWidth);expect(cityText.height).toBeGreaterThanOrEqual(44);}
   await page.screenshot({path:info.outputPath(`error-${baseline?'baseline':'candidate'}-${head}.png`),fullPage:true,animations:'disabled'});
-  await info.attach('measured-controls',{body:JSON.stringify({sourceHead:head,baseline,stylesheetSource:baseline?'11dbcc13a4f8696ad2db02e34784eb8c9f7e1197':head,width,style,theme,mode,measurements,error:errorMeasurement,writes}),contentType:'application/json'});
+  await info.attach('measured-controls',{body:JSON.stringify({sourceHead:head,baseline,stylesheetSource:baseline?'11dbcc13a4f8696ad2db02e34784eb8c9f7e1197':head,width,style,theme,mode,measurements,progress,cityText,error:errorMeasurement,writes}),contentType:'application/json'});
   expect(writes).toEqual([]);
  });
 }

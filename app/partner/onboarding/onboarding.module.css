@@ -45,3 +45,10 @@
 .errorBox { background:var(--paw-feedback-danger-bg); color:var(--paw-danger); border-color:var(--paw-danger); }
 .option { min-height:44px; box-sizing:border-box; padding:10px 0; }
 .backLink:focus-visible,.btn:focus-visible,.btnGhost:focus-visible,.option:has(input:focus-visible) { outline:3px solid var(--paw-link); outline-offset:3px; }
+
+/* Each progress label gets its own cell; native selects keep a single text line. */
+.stepper { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px 8px; }
+.step { min-width:0; padding-top:0; line-height:1.5; overflow-wrap:normal; word-break:normal; }
+.step b { position:static; margin:0 auto 8px; }
+.page.page .field select { white-space:nowrap; overflow-wrap:normal; text-overflow:ellipsis; }
+@media(max-width:420px) { .page.page .field select { font-size:14px !important; } }

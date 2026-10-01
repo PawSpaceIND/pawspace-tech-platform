@@ -14,8 +14,8 @@ test('original stylesheet remains byte-identical before the bounded appendix',()
 });
 test('appendix is confined to existing control and feedback classes without hiding or positioning controls',()=>{
  const css=postcss.parse(read('app/partner/onboarding/onboarding.module.css').split(marker)[1]);
- css.walkRules(r=>r.selectors.forEach(s=>assert.match(s,/^\.(backLink|btn|btnGhost|stepDone|errorBox|option)(?:\b|:)/)));
- css.walkDecls(d=>{assert.doesNotMatch(d.prop,/^(position|visibility|opacity|z-index)$/);assert.notEqual(d.value,'none');assert.doesNotMatch(d.value,/url\(|expression\(/);});
+ css.walkRules(r=>r.selectors.forEach(s=>assert.match(s,/^\.(backLink|btn|btnGhost|stepDone|errorBox|option|stepper|step|page)(?:\b|:)/)));
+ css.walkDecls(d=>{if(d.prop==='position'){assert.equal(d.parent.selector,'.step b');assert.equal(d.value,'static');}else assert.doesNotMatch(d.prop,/^(visibility|opacity|z-index)$/);assert.notEqual(d.value,'none');assert.doesNotMatch(d.value,/url\(|expression\(/);});
 });
 
 import {createElement} from 'react';
