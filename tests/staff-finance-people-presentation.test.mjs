@@ -17,10 +17,35 @@ function reverseReviewedSittingDisclosure(source,path){
  return source.replace(sittingDisplayImport,'').replace(sittingDisplayParagraph,historicalSittingParagraph);
 }
 
+// Reverse only the reviewed Finance CSS import/classes; the historical semantic digest stays pinned.
+function reverseReviewedFinanceContent(source,path){
+ if(path!=="app/team/finance/page.tsx")return source;
+ const {reversals}=JSON.parse(read('tests/fixtures/ui-finance-next-preservation.json'));
+ const cssImport='\nimport styles from "./finance-content.module.css";';
+ assert.equal(source.split(cssImport).length,2,'Exactly one reviewed Finance stylesheet import');
+ source=source.replace(cssImport,'');
+ for(const [before,after] of [...reversals['page.tsx']].reverse()){
+  assert.equal(source.split(after).length,2,'Exactly one reviewed Finance presentation hook');
+  source=source.replace(after,before);
+ }
+ return source;
+}
+
+// Reverse only the reviewed Boarding stylesheet and two scoped class hooks.
+function reverseReviewedBoardingContent(source,path){
+ if(path!=="app/team/finance/boarding/boarding-finance-workspace.tsx")return source;
+ const {replacements}=JSON.parse(read('tests/fixtures/ui-boarding-finance-next-preservation.json'));
+ for(const [before,after] of [...replacements].reverse()){
+  assert.equal(source.split(after).length,2,'Exactly one reviewed Boarding presentation hook');
+  source=source.replace(after,before);
+ }
+ return source;
+}
+
 for(const [path,expected] of Object.entries(contract.files)) {
   test('Finance/People presentation preserves every non-style AST node: '+path,()=>{
     const source=read(path);
-    assert.equal(staffSemanticContract(reverseReviewedSittingDisclosure(source,path),path),expected.semantic);
+    assert.equal(staffSemanticContract(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(source,path),path),path),path),expected.semantic);
     const file=parseStaffPage(source,path);let roots=0;
     function walk(node){if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='StaffModule')roots++;ts.forEachChild(node,walk);}
     walk(file);assert.equal(roots,expected.mainRoots,'Every original main, including loading/error returns, stays framed.');
