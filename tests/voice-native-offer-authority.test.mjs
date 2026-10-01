@@ -83,3 +83,25 @@ test('native confirmation refuses an offer until delivered and a late mark canno
  assert.equal(w.sqlite.prepare("SELECT status FROM native_voice_offer_authority WHERE turn_key='A'").get().status,'cancelled');
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+test('persisted assistant transcript cannot authorize native Yes without a carrier mark ACK', async t => {
+ const w=await world(t);await sales.beginNativeVoiceOfferTurn(w.db,'queued',w.threadId,w.customerId);
+ const a=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'queued',nativeTurnKey:'queued',actions:actions(w)});
+ const now=Date.now();w.sqlite.prepare("INSERT INTO communication_messages(id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'exotel','voice','outbound','lifecycle','voice_transcript_segment',?,'received',?,'voice-test',?,?)").run('MSG-queued-transcript',w.threadId,w.customerId,JSON.stringify({text:a.summary}),'queued-transcript',now,now);
+ await sales.beginNativeVoiceOfferTurn(w.db,'yes-queued',w.threadId,w.customerId);
+ await refuse(sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,offerId:a.id,confirmation:'yes',nativeTurnKey:'yes-queued'}),409);
+ assert.equal(w.calls.length,0);assert.equal(bookingCount(w),0);
+ await sales.cancelNativeVoiceOfferTurn(w.db,'queued',w.threadId,w.customerId);
+ await sales.acknowledgeNativeVoiceOfferTurn(w.db,'queued',w.threadId,w.customerId);
+ await refuse(sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,offerId:a.id,confirmation:'yes',nativeTurnKey:'yes-queued'}),409);
+ assert.equal(w.calls.length,0);assert.equal(bookingCount(w),0);
+});
+
+test('a current carrier-acknowledged native offer permits explicit confirmation', async t => {
+ const w=await world(t);await sales.beginNativeVoiceOfferTurn(w.db,'heard',w.threadId,w.customerId);
+ const a=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'heard',nativeTurnKey:'heard',actions:actions(w)});
+ await sales.acknowledgeNativeVoiceOfferTurn(w.db,'heard',w.threadId,w.customerId);
+ await sales.beginNativeVoiceOfferTurn(w.db,'yes-heard',w.threadId,w.customerId);
+ await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,offerId:a.id,confirmation:'yes',nativeTurnKey:'yes-heard'});
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});

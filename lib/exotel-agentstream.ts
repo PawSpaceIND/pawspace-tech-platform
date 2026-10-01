@@ -549,8 +549,6 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       ctx.waitUntil(diagnostic(active, "agentstream_speech_started", { purpose: "opening", stage: taskStage, sampleRate: active.sampleRate }));
       const greeting = await synthesizeLinear16(env, active.openingDisclosure, active.sampleRate, controller.signal);
       assertCurrent(active, version);
-      taskStage = "opening_text";
-      await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
       ctx.waitUntil(diagnostic(active, "agentstream_text_generated", {
         purpose: "opening",
         chars: active.openingDisclosure.length,
@@ -559,9 +557,12 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
         ttsModel: greeting.model,
         ttsFallbackUsed: greeting.fallbackUsed,
       }));
-      assertCurrent(active, version);
       taskStage = "opening_send";
       await queueAudio(active, greeting.stream, `opening-${active.segmentIndex}-end`, version, startedAt, controller, "opening");
+      assertCurrent(active, version);
+      taskStage = "opening_text";
+      await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
+      assertCurrent(active, version);
     } catch (error) {
       await failProcessing(error, active, taskStage, startedAt, version);
     } finally {
@@ -601,9 +602,6 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       const tts = await synthesizeLinear16(env, generated.output, active.sampleRate, controller.signal);
       assertCurrent(active, version);
 
-      taskStage = "turn_text";
-      await recordSegment(env, active, "assistant", generated.output, null, null);
-      assertCurrent(active, version);
       ctx.waitUntil(diagnostic(active, "agentstream_text_generated", {
         purpose: "turn", chars: Math.min(1_000_000, generated.output.length),
         ttsMs: Math.min(600_000, tts.readyMs), ttsProvider: tts.provider,
@@ -613,6 +611,9 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       taskStage = "turn_send";
       const markName = `turn-${active.segmentIndex}-end`;
       const sent = await queueAudio(active, tts.stream, markName, version, turnStarted, controller, "turn");
+      assertCurrent(active, version);
+      taskStage = "turn_text";
+      await recordSegment(env, active, "assistant", generated.output, null, null);
       assertCurrent(active, version);
       const totalMs = Date.now() - turnStarted;
       const diagnostics = nativeVoiceTurnDiagnostics({

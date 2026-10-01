@@ -111,6 +111,15 @@ test("native AgentStream handles media immediately, cancels stale speech, and st
   assert.match(bridge, /firstAudioMs: sent\.firstAudioMs/);
 });
 
+test("native AgentStream persists assistant history only after carrier queue succeeds", () => {
+  const openingQueue = bridge.indexOf('await queueAudio(active, greeting.stream');
+  const openingPersist = bridge.indexOf('await recordSegment(env, active, "assistant", active.openingDisclosure');
+  const turnQueue = bridge.indexOf('await queueAudio(active, tts.stream');
+  const turnPersist = bridge.indexOf('await recordSegment(env, active, "assistant", generated.output');
+  assert.ok(openingQueue >= 0 && openingPersist > openingQueue);
+  assert.ok(turnQueue >= 0 && turnPersist > turnQueue);
+});
+
 test("native AgentStream auto-detects STT language and records safe turn-quality telemetry", () => {
   assert.match(bridge, /resolveCarrierSttLanguage\(env\.VOICE_AGENTSTREAM_STT_LANGUAGE\)/);
   assert.match(bridge, /whisperInputLanguage\(language\)/);
