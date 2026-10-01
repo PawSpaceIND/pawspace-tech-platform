@@ -1,0 +1,121 @@
+{
+  "base": "11dbcc13a4f8696ad2db02e34784eb8c9f7e1197",
+  "salesOriginal": "0b15bd16c67f7394f8c6edba5ad24b032a228a95",
+  "onboardingOriginal": "eeca0e3f37a2e1da4eeb89c2bc538c56f05b884b",
+  "salesGuardEntries": [
+    {
+      "file": "tests/fixtures/staff-operations-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": "app/team/sales/page.tsx",
+      "old": "790f7d9b73520919cc15250f29fc18a8028d2b4e9eddb079ec154fab10f0b25f",
+      "new": "c2ffaa3cdfabba2142d060a8c76f647aa442feb335793d5b8982957bbb5ffe10"
+    },
+    {
+      "file": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/staff-admin-self-service-contract.json",
+      "key": "app/team/sales/page.tsx",
+      "old": "790f7d9b73520919cc15250f29fc18a8028d2b4e9eddb079ec154fab10f0b25f",
+      "new": "c2ffaa3cdfabba2142d060a8c76f647aa442feb335793d5b8982957bbb5ffe10"
+    },
+    {
+      "file": "tests/fixtures/staff-admin-self-service-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/staff-crm-control-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/staff-team-completion-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/inbox-workspace-contract.json",
+      "key": "app/team/sales/page.tsx",
+      "old": "790f7d9b73520919cc15250f29fc18a8028d2b4e9eddb079ec154fab10f0b25f",
+      "new": "c2ffaa3cdfabba2142d060a8c76f647aa442feb335793d5b8982957bbb5ffe10"
+    },
+    {
+      "file": "tests/fixtures/inbox-workspace-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/ui-mainline-integration-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/ui-display-truth-contract.json",
+      "key": "app/team/sales/page.tsx",
+      "old": "790f7d9b73520919cc15250f29fc18a8028d2b4e9eddb079ec154fab10f0b25f",
+      "new": "c2ffaa3cdfabba2142d060a8c76f647aa442feb335793d5b8982957bbb5ffe10"
+    },
+    {
+      "file": "tests/fixtures/ui-display-truth-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    },
+    {
+      "file": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": "app/team/sales/page.tsx",
+      "old": "790f7d9b73520919cc15250f29fc18a8028d2b4e9eddb079ec154fab10f0b25f",
+      "new": "c2ffaa3cdfabba2142d060a8c76f647aa442feb335793d5b8982957bbb5ffe10"
+    },
+    {
+      "file": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": "lib/crm-automation-governance.ts",
+      "old": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+      "new": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b"
+    }
+  ],
+  "onboardingGuardEntries": {
+    "base": "11dbcc13a4f8696ad2db02e34784eb8c9f7e1197",
+    "oldCSSHash": "727181e7b6a79477eeb50781490775b08605831dcf2a103a592788da8c32290c",
+    "newCSSHash": "0ceb79e15e3afa55fd782c2a4bcfbf7ba20727789822aba6654c88febfd3c1c4",
+    "guardFiles": [
+      "tests/fixtures/partner-services-presentation-contract.json",
+      "tests/fixtures/staff-admin-self-service-contract.json",
+      "tests/fixtures/inbox-workspace-contract.json",
+      "tests/fixtures/ui-display-truth-contract.json",
+      "tests/fixtures/customer-partner-theme-contract.json"
+    ],
+    "actualBaselineMeasurements": "pending hosted run",
+    "visualQA": "pending",
+    "publication": "not performed",
+    "focusedTests": {
+      "passed": 94,
+      "failed": 0
+    },
+    "browserCasesPrepared": 48
+  },
+  "browserQA": "pending",
+  "published": false,
+  "validation": {
+    "focusedCombinedPassed": 276,
+    "nativeFallbackPassed": 101,
+    "staffNavigationBrandPassed": 32,
+    "typecheck": "passed",
+    "onboardingBrowserCasesListed": 48,
+    "actualBrowser": "pending"
+  }
+}

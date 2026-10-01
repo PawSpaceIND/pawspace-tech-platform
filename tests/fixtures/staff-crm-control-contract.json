@@ -778,7 +778,7 @@
     "lib/coupon-governance-client.ts": "1de85412012668b4db84b1d2865058d3fddf35cf003b304cde8598e312f75d04",
     "lib/coupon-governance.ts": "c75f179e4652af493956795d501cb4e5e64c3039b175a0dcf54f07a408cf2426",
     "lib/coupon-reapply-guard.ts": "22556786935fbf01365ecb773b1e8b89414ec859368ed5bc53b58fe89a7fae9f",
-    "lib/crm-automation-governance.ts": "0f5f7f55ae3230623b27ec6c4ae1a1bb9611460fb653b88f2c20c9b1dc56c62d",
+    "lib/crm-automation-governance.ts": "3c8bba8980466389178fd61a7bcd782afbc00d3eccf8c22046896f8cdaec455b",
     "lib/crm-contact-list.ts": "f4f083daf46019c942176190d670a2660f18125ca8a330d64a744ee2dae4dc30",
     "lib/crm-email-sync.ts": "adfc4ab129bfaca20cb71f655ee51806e76910f82890f83d02e41f7620e5cbc9",
     "lib/crm-inquiry-classification.ts": "a0744ecda5b3635f08bb76851c44cdfe6b1d0454c8d11cd305ab5b183eae00cc",
