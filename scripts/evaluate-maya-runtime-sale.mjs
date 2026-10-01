@@ -143,7 +143,7 @@ try {
       { message: 'I need care just during the daytime, not overnight. Do you offer daycare?', required: /daycare|daytime|day care/i },
       { message: 'How does your pet taxi service work, and what pickup information would you need?', required: /pickup|pick.up|transport|taxi/i },
       { message: 'I am moving to another city with my cat. How can your relocation team help?', required: /relocation|mov|travel/i },
-      { message: 'What fresh pet food options can your team help me explore?', required: /food|meal|diet/i },
+      { message: 'What fresh food options can I ask PawSpace about, and how is payment handled?', required: /food|meal|diet/i },
       { message: 'My pet has passed away. What funeral or memorial support does PawSpace provide?', required: /sorry|condolence|loss/i, forbidden: /discount|coupon|grooming|cross.sell/i },
       { message: 'Please explain how I can arrange a routine veterinary consultation, without booking anything yet.', required: /vet|consultation/i }
     );
