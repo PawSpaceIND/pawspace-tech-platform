@@ -142,3 +142,27 @@ test('funeral owner tariff and intake reach both voice grounding paths without e
  }
  assert.equal(mock.calls.length,0);
 });
+
+test('actual Maya provider receives care descriptions without fixed host or sitter prices',async t=>{
+ const w=await world(t);
+ for(const owner of ['lib/boarding-governance.ts','lib/sitting-governance.ts']){
+  const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');applyOwnedDdl(w.sqlite,owner);
+ }
+ await (await import('../lib/boarding-governance.ts')).ensureBoardingGovernanceTables(w.db);
+ await (await import('../lib/sitting-governance.ts')).ensureSittingGovernanceTables(w.db);
+ let request;
+ const mock=stubFetch((url,init)=>{request=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'Daycare is daytime care. Prices depend on the available host; complete booking in the PawSpace app.'});});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='How does daycare work?';
+ await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ const context=JSON.parse(request.input).canonicalContext;
+ for(const key of ['boarding','petSitting']){
+  assert.ok(context.catalogue[key].length>0);
+  for(const row of context.catalogue[key]){
+   assert.equal(row.base_price_per_pet,undefined);assert.equal(row.extra_pet_price,undefined);
+   assert.equal(row.pricingBasis,'available_provider_quote');assert.equal(row.bookingChannel,'customer_app');
+  }
+ }
+ assert.match(request.instructions,/Catalogue defaults are not customer quotes/);
+ assert.match(request.instructions,/final booking in the PawSpace app/);
+ assert.match(request.instructions,/first pickup, drop and date\/time/);
+});

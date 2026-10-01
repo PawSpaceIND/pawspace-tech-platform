@@ -1,3 +1,4 @@
+import { publishStayRates } from "./helpers/voice-stay-rate-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setupJourney } from "./helpers/grooming-journey-harness.mjs";
@@ -363,24 +364,47 @@ test('eligible named-package offer passes final governance without a model or st
  assert.match(r.turn.output,/200 rupees off/);assert.notEqual(r.turn.outcome,'handoff');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
 
+
 for (const [service, packageCode, hours] of [['boarding', 'boarding-4h', 4], ['pet_sitting', 'sitting-visit-60', 1]]) {
- test(`voice ${service} quotes the exact care window and creates one canonical booking only after confirmation`, async t => {
-  const w = await world(t, service);
-  const plan = actions(w, packageCode);
-  delete plan[0].arguments.cadenceDays;
+ test(`voice ${service} reads a verified caregiver quote and requires customer app checkout`, async t => {
+  const w = await world(t, service); await publishStayRates(w,service,packageCode);
+  const plan = actions(w, packageCode); delete plan[0].arguments.cadenceDays;
   plan[0].arguments.scheduledEnd = new Date(Date.parse(start) + hours * 3600000).toISOString();
-  const offer = await prepare(w, `stay-${service}`, plan).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
-  assert.equal(bookingCount(w), 0);
-  assert.equal(w.calls.length, 0);
-  assert.match(offer.summary, /Care ends/);
-  assert.match(offer.summary, /Recommended caregiver/);
-  const confirmed = await confirm(w, offer.id).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
-  assert.equal(bookingCount(w), 1);
-  assert.equal(w.calls.length, 1);
-  assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(confirmed.bookingId).service_code, service);
-  assert.equal(confirmed.paymentVerified, false);
-  assert.equal((await confirm(w, offer.id)).duplicatePrevented, true);
-  assert.equal(bookingCount(w), 1);
+  // An earlier executable offer cannot survive a service switch to a stay.
+  await sales.ensureVoiceSalesOffers(w.db);
+  w.sqlite.prepare("INSERT INTO voice_sales_offers(id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) VALUES ('OLD','old',?,?,'grooming','pending','{}','[]','old',?,1)").run(w.threadId,w.customerId,Date.now()+60000);
+  const offer = await prepare(w, `stay-${service}`, plan);
+  assert.match(offer.summary,/7,999 rupees/); assert.match(offer.summary,/Complete the booking in the PawSpace app/);
+  assert.doesNotMatch(offer.summary,/Shall I reserve|Shall I.*book/);
+  assert.equal(offer.bookingPath,service==='boarding'?'/v2/boarding':'/v2/sitting');
+  const stored=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
+  assert.equal(stored.status,'app_only'); assert.deepEqual(JSON.parse(stored.actions_json),[]);
+  assert.equal(JSON.parse(stored.quote_json).priceSource,'provider_rate');
+  assert.equal(w.sqlite.prepare("SELECT status FROM voice_sales_offers WHERE id='OLD'").get().status,'superseded');
+  assert.equal(await sales.pendingVoiceSalesOffer(w.db,w.threadId,w.customerId,'all_services'),null);
+  assert.deepEqual(await prepare(w, `stay-${service}`, plan),offer);
+  await refuse(confirm(w,offer.id),409);
+  const provider={salesService:'all_services',status:'connected',provider:'test',modelRef:'test',async generate(){throw Error('Stay yes must not invoke the model');}};
+  const yes=await turn(w,'Yes, please.','stay-app-yes-'+service,provider);
+  assert.equal(yes.turn.policyDecision,'provider_priced_app_booking_required');
+  assert.match(yes.turn.output,/complete this caregiver booking in the PawSpace app/);
+  // A legacy pending offer is blocked too, even if it retains an executable action chain.
+  w.sqlite.prepare("UPDATE voice_sales_offers SET status='pending',actions_json=? WHERE id=?").run(JSON.stringify(plan),offer.id);
+  await refuse(confirm(w,offer.id),409);
+  await refuse(sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'}),409);
+  const legacyYes=await turn(w,'Yes, please.','stay-legacy-yes-'+service,provider);
+  assert.equal(legacyYes.turn.policyDecision,'provider_priced_app_booking_required');
+  assert.match(legacyYes.turn.output,/available caregiver's price/);
+  assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'superseded');
+  assert.equal(bookingCount(w),0); assert.equal(w.calls.length,0);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
+ });
+ test(`voice ${service} refuses catalogue fallback pricing without a published caregiver rate`,async t=>{
+  const w=await world(t,service),plan=actions(w,packageCode);delete plan[0].arguments.cadenceDays;
+  plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+hours*3600000).toISOString();
+  await assert.rejects(prepare(w,'no-rate-'+service,plan),e=>e instanceof Response && e.status===409); // no customer quote or action
+  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers').get().n,0);
  });
 }
 
@@ -407,18 +431,11 @@ test('Boarding cannot quote a pet whose vaccination has not been verified',async
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
 
-test('a stay quote cannot be reused by another conversation or for a changed caregiver',async t=>{
- const w=await world(t,'pet_sitting');
- const plan=actions(w,'sitting-visit-60');delete plan[0].arguments.cadenceDays;
- plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+3600000).toISOString();
+test('stay information cannot be confirmed by another conversation',async t=>{
+ const w=await world(t,'pet_sitting');await publishStayRates(w,'pet_sitting','sitting-visit-60');
+ const plan=actions(w,'sitting-visit-60');delete plan[0].arguments.cadenceDays;plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+3600000).toISOString();
  const offer=await prepare(w,'stay-owner',plan);
- const stored=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
- const quote=JSON.parse(stored.quote_json), args=JSON.parse(stored.actions_json)[1].arguments;
- w.sqlite.prepare("UPDATE voice_sales_offers SET status='executing' WHERE id=?").run(offer.id);
- const {confirmedStaySalesPayload}=await import('../lib/voice-stay-sales.ts');
- const input={threadId:w.threadId,customerId:w.customerId,service:'pet_sitting',args,petCount:1,scheduledStart:start,scheduledEnd:plan[0].arguments.scheduledEnd,providerId:quote.recommendedProvider.id};
- await refuse(confirmedStaySalesPayload(w.db,{...input,threadId:'ANOTHER-THREAD'}),403);
- await refuse(confirmedStaySalesPayload(w.db,{...input,providerId:'ANOTHER-PROVIDER'}),409);
+ await refuse(sales.confirmVoiceSalesOffer(w.db,{actor,threadId:'ANOTHER-THREAD',customerId:w.customerId,service:'pet_sitting',offerId:offer.id,confirmation:'yes'}),403);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
 
@@ -459,4 +476,13 @@ test('Taxi pickup equivalence never ignores a different street or PIN',async()=>
  const {canonicalTaxiPickup}=await import('../lib/voice-taxi-sales.ts');
  assert.equal(canonicalTaxiPickup('12 Test Street','12 Test Street, PIN 560038','560038'),'12 Test Street, PIN 560038');
  for(const origin of ['13 Test Street','12 Test Street, PIN 560039','12 Test Street, PIN 560038, another address','560038'])assert.throws(()=>canonicalTaxiPickup(origin,'12 Test Street, PIN 560038','560038'));
+});
+
+for(const toolCode of ['schedule.reserve','provider.assignment.execute_policy'])test(`AI stay ${toolCode} cannot bypass customer app checkout`,async t=>{
+ const w=await world(t,'boarding');
+ const {executeGovernedConversationTool}=await import('../lib/ai-first-control-plane.ts');
+ const result=await executeGovernedConversationTool(w.db,{actor,toolCode,threadId:w.threadId,customerId:w.customerId,intent:'booking_create',channel:'voice',arguments:actions(w,'boarding-4h')[0].arguments,idempotencyKey:'stay-direct-'+toolCode,customerConfirmed:true}).catch(e=>e);
+ assert.ok(result instanceof Response && result.status===409,'direct tool must refuse stay capacity mutation');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });

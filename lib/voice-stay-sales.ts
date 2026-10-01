@@ -58,6 +58,9 @@ export async function prepareStaySalesQuote(db: D1Database, input: {
   paymentMode: text(booking.paymentMode) as "prepaid" | "split_50_50",
   cityId: available.cityId, zoneId: available.zoneId, providerId: text(provider.id),
  });
+ if (!("priceSource" in quote) || !("providerId" in quote) || quote.priceSource !== "provider_rate" || quote.providerId !== text(provider.id)) {
+  throw refuse("The available caregiver has no verified published rate for this care window. Please complete price review in the PawSpace app or with the team");
+ }
  // The quoted provider's rate must also be the rate/provider the customer confirms.
  schedule.preferredProviderId = provider.id;
  booking[service === "boarding" ? "boardingQuoteId" : "sittingQuoteId"] = quote.quoteId;
