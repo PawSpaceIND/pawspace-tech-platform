@@ -78,8 +78,11 @@ export async function confirmedStaySalesPayload(db: D1Database, input: {
  const saved = JSON.parse(text(owner.quote_json)) as Row;
  const provider = saved.recommendedProvider as Row | undefined;
  if (text(provider?.id) !== input.providerId) throw refuse("The quoted caregiver changed; a new quote and confirmation are required");
- const table = input.service === "boarding" ? "boarding" : "sitting";
- const quote = await db.prepare(`SELECT q.*,p.name FROM ${table}_commercial_quotes q JOIN ${table}_commercial_packages p ON p.package_code=q.package_code AND p.version=q.package_version WHERE q.id=? AND q.status='open' AND q.expires_at>=? AND p.active=1 AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?)`)
+ // Keep both table references explicit so the schema audit verifies each service.
+ const statement = input.service === "boarding"
+  ? db.prepare("SELECT q.*,p.name FROM boarding_commercial_quotes q JOIN boarding_commercial_packages p ON p.package_code=q.package_code AND p.version=q.package_version WHERE q.id=? AND q.status='open' AND q.expires_at>=? AND p.active=1 AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?)")
+  : db.prepare("SELECT q.*,p.name FROM sitting_commercial_quotes q JOIN sitting_commercial_packages p ON p.package_code=q.package_code AND p.version=q.package_version WHERE q.id=? AND q.status='open' AND q.expires_at>=? AND p.active=1 AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?)");
+ const quote = await statement
   .bind(quoteId, Date.now(), input.scheduledStart.slice(0, 10), input.scheduledStart.slice(0, 10)).first<Row>();
  if (!quote || text(quote.package_code) !== text(input.args.packageCode) || text(quote.payment_mode) !== text(input.args.paymentMode)
   || Number(quote.pet_count) !== input.petCount || Date.parse(text(quote.scheduled_start)) !== Date.parse(input.scheduledStart)
