@@ -29,7 +29,7 @@
     "docs/uat/2026-09-24-paid-journey-remediation.md": "e30fa3b5e4db36d006a92f6a30e944eff187f7e82e21fe33a4d334031f1eaae5",
     "e2e/paid-journey-remediation.spec.ts": "ade05702571c0bf81391a4fe1f997f5285e1d501cdd60e9bea351c9a07d1974b",
     "e2e/uat-btm-e2e.spec.ts": "db2e840c4729bad4a10f947738ee50c16f615a9bed370df619daec7fcb4d8887",
-    "e2e/v2-grooming.spec.ts": "d985c7238f51b90bbe65ca1bd056e05998504bb11c90db650d4c4efbb474c55d",
+    "e2e/v2-grooming.spec.ts": "72e4a1c8eb60948b0618e8c4eb7658e479f803f572e8bbc2af9af94d1ce0f0b9",
     "lib/ai-provider-adapter.ts": "3d4bfaf3891586f9d2efc44fa2f53be290ee19a78d1143c4d2feab846a71604b",
     "lib/api-gateway.ts": "3e00cc1a972fff573173e2271ae87af26d9bae092b319d0b0f870a4553b38045",
     "lib/boarding-stay-lifecycle.ts": "ba09632bf6da58ad01ac5723b544a1806aa2f60b3ed30f064c6fbc5762b6edae",
