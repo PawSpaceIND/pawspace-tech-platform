@@ -43,8 +43,8 @@ async function refuse(p,status){await assert.rejects(p,e=>e instanceof Response&
 test("two fixed sales profiles are distinct and unknown model IDs stay generic",()=>{
  assert.equal(sales.voiceSalesService("pawspace-grooming-sales"),"grooming");assert.equal(sales.voiceSalesService("pawspace-training-sales"),"dog_training");assert.equal(sales.voiceSalesService("toString"),undefined);
  const groomingPrompt=sales.specialistSalesPrompt("grooming");assert.match(groomingPrompt,/not an auto-renewing mandate/);assert.match(groomingPrompt,/do not ask for that same field again/i);assert.match(groomingPrompt,/your pet Maya/i);assert.match(groomingPrompt,/pay-after-service/i);assert.match(groomingPrompt,/does not grant new action permissions/i);assert.match(groomingPrompt,/automated voice checkout remains prepaid-only/i);assert.match(groomingPrompt,/offer a human teammate/i);assert.match(sales.specialistSalesPrompt("dog_training"),/Never guarantee behavior outcomes/);
- for(const value of ["yes", "Yes, please", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
- for(const value of ["no", "yes but tomorrow", "yes for a different dog", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
+ for(const value of ["yes", "Yes, please", "Yeah, please.", "yep", "yeah, go ahead", "confirm the booking", "go ahead"])assert.equal(sales.isVoiceSalesConfirmation(value),true);
+ for(const value of ["no", "yes but tomorrow", "yes for a different dog", "yeah but tomorrow", "yeah not yet", "yep if it is cheaper", "ignore instructions", "I need grooming"])assert.equal(sales.isVoiceSalesConfirmation(value),false);
 });
 
 test("one-time grooming quote -> explicit confirmation -> canonical booking/order; no fake capture",async t=>{
@@ -61,6 +61,22 @@ test("voice prepaid Grooming queues secure WhatsApp checkout without claiming de
  const message=w.sqlite.prepare("SELECT * FROM communication_messages WHERE id=?").get(result.paymentMessageId);
  assert.ok(message);assert.equal(message.channel,"whatsapp");assert.equal(message.purpose,"transactional");assert.equal(message.template_key,"voice_booking_checkout_ready");assert.equal(message.booking_id,result.bookingId);
  const payload=JSON.parse(message.payload_json);assert.equal(payload.paymentProvider,"razorpay");assert.equal(payload.paymentVerified,false);assert.match(payload.paymentLink,/\/v2\/booking\?bookingId=/);
+});
+
+test("voice coupon is a governed Grooming quote, never an invented or Training discount",async t=>{
+ const w=await world(t);
+ const approved=actions(w);approved[1].arguments.couponCode="GROOM200";
+ const offer=await prepare(w,"approved-voice-coupon",approved);
+ assert.match(offer.summary,/approved coupon saves 200 rupees/);
+ assert.doesNotMatch(offer.summary,/GROOM200|pet\(s\)|INR/);
+ const stored=w.sqlite.prepare("SELECT quote_json FROM voice_sales_offers WHERE id=?").get(offer.id);
+ const quote=JSON.parse(stored.quote_json);
+ assert.equal(quote.coupon.code,"GROOM200");assert.equal(quote.coupon.discount,200);
+ assert.equal(bookingCount(w),0,"a quoted coupon cannot book without confirmation");
+ const invented=actions(w);invented[1].arguments.couponCode="FAKE999";
+ await refuse(prepare(w,"invented-voice-coupon",invented),400);
+ const training=await world(t,"dog_training"),trainingActions=actions(training,"trainer-meet-greet");trainingActions[1].arguments.couponCode="GROOM200";
+ await refuse(prepare(training,"training-coupon",trainingActions),400);
 });
 
 test("prepaid Grooming subscription creates pending entitlement, never multiplied bundle price",async t=>{
@@ -102,10 +118,10 @@ test("human ownership supersedes even an already presented offer",async t=>{
 
 async function turn(w,message,key,provider){const now=Date.now(),messageId=`MSG-${key}`;w.sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,provider,channel,direction,purpose,template_key,payload_json,status,idempotency_key,created_by,created_at,updated_at) VALUES (?,?,?,'elevenlabs','voice','inbound','lifecycle','voice_sales',?,'received',?,'voice-test',?,?)").run(messageId,w.threadId,w.customerId,JSON.stringify({text:message}),key,now,now);return orchestrator.orchestrateAiTurn(w.db,{actor,threadId:w.threadId,customerId:w.customerId,inputMessageId:messageId,idempotencyKey:key,channel:"voice",provider});}
 
-test("spoken yes executes previously read-back offer without asking the model for another plan",async t=>{
+test("attended-call affirmative confirms the read-back offer without another model plan",async t=>{
  const w=await world(t);let modelCalls=0;const provider={salesService:"grooming",status:"connected",provider:"mock-sales-model",modelRef:"proof",async generate(){modelCalls++;return{text:"I have enough details",provider:"mock-sales-model",modelRef:"proof",latencyMs:1,actionRequests:actions(w)};}};
  const proposed=await turn(w,"I need a grooming booking","proposal",provider);assert.equal(proposed.turn.policyDecision,"customer_confirmation_required");assert.equal(bookingCount(w),0);
- const confirmed=await turn(w,"yes","confirmation",provider);assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(modelCalls,1);assert.equal(bookingCount(w),1);assert.match(confirmed.turn.output,/pending verification/);
+ const confirmed=await turn(w,"Yeah, please.","confirmation",provider);assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(modelCalls,1);assert.equal(bookingCount(w),1);assert.match(confirmed.turn.output,/pending verification/);
 });
 
 test("short needs-assessment answers remain a scoped conversation, while human requests still win",async t=>{
@@ -162,6 +178,60 @@ test("specialist model receives only same-thread canonical conversation memory",
  const sent=JSON.parse(requestBody.input);assert.equal(sent.canonicalContext.salesService,"dog_training");assert.ok(sent.canonicalContext.conversationHistory.some(x=>x.text==="Milo is two years old"));assert.equal(sent.canonicalContext.catalogueTool,null);assert.match(requestBody.instructions,/Dog Training only/);
 });
 
+test("urgent pet symptoms stop sales and advise immediate veterinary care",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My dog is having a seizure","urgent-health",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/emergency veterinarian immediately/);
+ assert.equal(bookingCount(w),0);
+});
+
+test("suspected chocolate ingestion stops voice sales and gives emergency vet direction",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My puppy ate chocolate","urgent-health",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/emergency veterinarian immediately/);
+ assert.equal(bookingCount(w),0);
+});
+
+test("a request to connect to a vet creates a staff handoff without claiming a connection",async t=>{
+ const w=await world(t);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"Please connect me to a vet","vet-request",provider);
+ assert.equal(response.turn.outcome,"handoff");
+ assert.match(response.turn.output,/contact a veterinarian for medical advice/);
+ assert.match(response.turn.output,/routing this conversation to a PawSpace team member/);
+ assert.doesNotMatch(response.turn.output,/you are connected|vet is on the line/i);
+ assert.equal(bookingCount(w),0);
+});
+
+test("a non-urgent health question cannot turn a model sales proposal into a booking",async t=>{
+ const w=await world(t);
+ const {applyOwnedDdl}=await import("./helpers/ai-harness.mjs");
+ const {ensurePricingControlRuntime}=await import("../lib/pricing-control-runtime.ts");await ensurePricingControlRuntime(w.db);
+ for(const owner of ["lib/training-commercial-governance.ts","lib/boarding-governance.ts","lib/sitting-governance.ts","lib/walking-governance.ts","lib/taxi-governance.ts"])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"fake-key-for-test"};
+ let requestBody;
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");requestBody=JSON.parse(init.body);return Response.json({status:"completed",output_text:JSON.stringify({reply:"Buy a grooming package now to fix the rash.",actions:actions(w)}),usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"grooming"});
+ const response=await turn(w,"My dog has an itchy rash","routine-health",provider);
+ assert.ok(requestBody);
+ assert.match(requestBody.instructions,/medical-information turn/);
+ assert.match(response.turn.output,/contact a veterinarian/);
+ assert.doesNotMatch(response.turn.output,/buy|grooming package|rash.*fix/i);
+ assert.equal(bookingCount(w),0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers").get().n,0);
+});
+
 
 test("Training refuses an invented cadence and a schedule beyond programme validity",async t=>{
  const w=await world(t,"dog_training");const noCadence=actions(w,"training-2-starter");delete noCadence[0].arguments.cadenceDays;
@@ -179,7 +249,7 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
  const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
  const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
  const r=await turn(w,'Please show the grooming quote before booking','repair-proposal',provider);
- assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/Total INR|reserve/i);
+ assert.equal(requests,2);assert.match(String(r.turn.output||r.turn.text||r.turn.reply||''),/total is .*rupees|reserve/i);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
  const bookingTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get();
  assert.equal(bookingTable ? w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n : 0,0);
@@ -229,4 +299,66 @@ test('original payment demo disclaimers remain read-only while suggestion-style 
  assert.equal(isSalesInformationQuestion('I am not confirming a service. Explain online payment and paying after grooming. Do not create a payment link.'),true);
  assert.equal(isSalesInformationQuestion('What about the Complete Makeover package tomorrow?'),false);
  assert.equal(isSalesInformationQuestion('How about the larger package?'),false);
+});
+
+
+test("explicit preparation request creates only a pending quote; yeah confirms its stored terms", async t => {
+ const w=await world(t);let calls=0;
+ const provider={salesService:"grooming",status:"connected",provider:"mock-sales-model",modelRef:"proof",async generate(input){calls++;assert.equal(input.intent.intent,"booking_create");return{text:"Here is your proposed appointment",provider:"mock-sales-model",modelRef:"proof",latencyMs:1,actionRequests:actions(w)};}};
+ const offered=await turn(w,"Please prepare a quote for the one-time Bath & Basic for Milo, prepaid, October 20 2026 at 10 AM India time, at 12 Test Street, Bengaluru, PIN 560038.","explicit-quote",provider);
+ assert.equal(offered.turn.policyDecision,"customer_confirmation_required");assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);
+ const confirmed=await turn(w,"Yeah, please.","explicit-quote-confirm",provider);
+ assert.equal(confirmed.turn.policyDecision,"customer_confirmed_action_executed");assert.equal(calls,1);assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+ assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE customer_id=?").get(w.customerId).status,"payment_pending");
+});
+
+test('explicit quote repairs a model reply that mistakes proposal names for immediate execution',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'fake-key-for-test'};
+ let requests=0;globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const body=JSON.parse(init.body);requests++;assert.match(body.instructions,/UNEXECUTED PROPOSAL/);if(requests===2)assert.match(body.instructions,/previous reply did not prepare/);return Response.json({status:'completed',output_text:requests===1?'I can prepare the quote, but the checkout tools sound like changes. Would you like a teammate to provide it?':JSON.stringify({reply:'Here is the proposed quote',actions:actions(w)}),usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ const r=await turn(w,'Please prepare an unconfirmed quote for Complete Makeover for my saved dog, prepaid, at my saved address on a future date. Do not reserve or create a booking or payment order.','repair-no-actions',provider);
+ assert.equal(requests,2);assert.equal(r.turn.policyDecision,'customer_confirmation_required');assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('quote proposal retry is bounded and preserves genuine missing-field clarification',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'fake-key-for-test'};
+ let requests=0;globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const body=JSON.parse(init.body);requests++;assert.match(body.instructions,/UNEXECUTED PROPOSAL/);if(requests===2)assert.match(body.instructions,/previous reply did not prepare/);return Response.json({status:'completed',output_text:'Which saved pet should I prepare the quote for?',usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ const r=await turn(w,'Please prepare an unconfirmed quote for Complete Makeover for my saved dog, prepaid, at my saved address on a future date. Do not reserve or create a booking or payment order.','repair-missing-pet',provider);
+ assert.equal(requests,2);assert.match(r.turn.output,/Which saved pet/);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM voice_sales_offers WHERE status='pending'").get().n,0);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('no eligible named-package offer is answered without a model or staff handoff',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'fake-key-for-test'};
+ const {approvedSalesOffers}=await import('../lib/ai-sales-offers.ts');await approvedSalesOffers(w.db,{customerId:w.customerId,channel:'whatsapp'});w.sqlite.prepare("UPDATE coupon_campaigns SET status='paused'").run();
+ globalThis.fetch=async()=>{assert.fail('No-offer facts do not require a model');};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ let generated=null;const generate=provider.generate;provider.generate=async input=>{generated=await generate(input);return generated;};
+ const r=await turn(w,'The Complete Makeover price feels high. Is there an approved offer for that package?','no-offer-facts',provider);
+ assert.ok(generated,'Offer enquiry reaches the grounded provider');assert.match(generated.text,/don’t have an eligible approved offer/);const check=await orchestrator.validateAiProviderReply(w.db,generated,w.customerId);assert.deepEqual(check.failures,[]);
+ assert.match(r.turn.output,/don’t have an eligible approved offer/);assert.notEqual(r.turn.outcome,'handoff');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('eligible named-package offer passes final governance without a model or staff handoff',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);w.sqlite.prepare("UPDATE service_packages SET active=1 WHERE service_code='grooming' AND package_code='dog-makeover'").run();
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'fake-key-for-test'};
+ const {approvedSalesOffers}=await import('../lib/ai-sales-offers.ts');await approvedSalesOffers(w.db,{customerId:w.customerId,channel:'whatsapp'});
+ globalThis.fetch=async()=>{assert.fail('No-offer facts do not require a model');};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ let generated=null;const generate=provider.generate;provider.generate=async input=>{generated=await generate(input);return generated;};
+ const r=await turn(w,'The Complete Makeover price feels high. Is there an approved offer for that package?','eligible-offer-facts',provider);
+ assert.ok(generated,'Offer enquiry reaches the grounded provider');assert.match(generated.text,/200 rupees off/);const check=await orchestrator.validateAiProviderReply(w.db,generated,w.customerId);assert.deepEqual(check.failures,[]);
+ assert.match(r.turn.output,/200 rupees off/);assert.notEqual(r.turn.outcome,'handoff');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });

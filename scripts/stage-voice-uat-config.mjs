@@ -21,6 +21,7 @@ const cityId = pick("UAT_CITY_ID", "PAWSPACE_VOICE_UAT_CITY_ID");
 const consentSource = pick("UAT_CONSENT_SOURCE_REF", "PAWSPACE_VOICE_UAT_CONSENT_SOURCE");
 
 const problems = [];
+if (cfg.vars?.PAWSPACE_VOICE_PHONE_TESTS_PAUSED === "true" || pick("PAWSPACE_VOICE_PHONE_TESTS_PAUSED").toLowerCase() === "true") problems.push("Phone calls are paused by the user; do not reactivate voice UAT");
 if (cfg.name !== "pawspace-staging" || cfg.vars?.PAWSPACE_DEPLOYMENT_ENV !== "staging") problems.push("base config is not the isolated pawspace-staging profile");
 if (!approved) problems.push("PAWSPACE_VOICE_UAT_APPROVED must be exactly true for this explicit workflow");
 try { if (!callback || new URL(callback).protocol !== "https:") problems.push("EXOTEL_CALLBACK_URL must be an absolute https URL"); } catch { problems.push("EXOTEL_CALLBACK_URL is malformed"); }

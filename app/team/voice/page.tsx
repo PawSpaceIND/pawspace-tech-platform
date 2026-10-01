@@ -1,5 +1,6 @@
 "use client";
 /** Staff operator console for governed automated outbound voice. */
+import VoiceSalesOperationsPanel from "./sales-operations";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
 import { maskedNumber, operatorDialDecision, previewMatchesForm, type OperatorForm, type OperatorPreview } from "../../../lib/voice-operator-console";
@@ -122,11 +123,12 @@ export default function VoiceOperatorPage() {
   return (
     <TeamShell
       eyebrow="PAWSPACE TEAM · VOICE OPERATIONS"
-      title="Automated outbound calling"
+      title="AI voice and sales operations"
       description="Every call is gated by the environment, consent and opt-out records, quiet hours, the recipient allow-list and a per-recipient cap. This screen cannot enable voice; it reports and operates only what the server permits."
       nav={[{ href: "/team/ai", label: "AI governance" }, { href: "/team/cases", label: "Cases" }, { href: "/team", label: "Team home", primary: true }]}
       status={<><TeamAlert tone="error">{error}</TeamAlert><TeamAlert tone="info">{notice}</TeamAlert></>}
     >
+      <VoiceSalesOperationsPanel />
       <TeamStatGrid>
         <StatCard label="Calling" value={gate ? (gate.enabled ? "ENABLED" : "DISABLED") : "…"} meta={gate?.blockedReason ?? `mode ${gate?.mode ?? "—"}`} />
         <StatCard label="Allow-listed numbers" value={gate?.allowlistSize ?? "…"} meta="a number outside this list is refused" />

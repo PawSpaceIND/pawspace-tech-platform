@@ -78,6 +78,14 @@ on:
         description: 'Required exact certified PR736 SHA when a relay target origin is supplied'
         required: false
         default: ''
+      voice_sales_preflight:
+        description: 'Inspect voice sales readiness without dialing while the staging deployment lock is held'
+        type: boolean
+        default: false
+      expected_tester_sha256:
+        description: 'Required full authorized recipient SHA-256 when voice sales preflight is selected'
+        required: false
+        default: ''
 
 jobs:
   deploy:
@@ -121,6 +129,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify the authorized voice preflight recipient before deployment
+        if: ${{ github.event.inputs.voice_sales_preflight == 'true' }}
+        env:
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_TESTER_SHA256: ${{ github.event.inputs.expected_tester_sha256 }}
+        run: node --input-type=module -e "import {authorizedLaunchTester} from './scripts/voice-sales-launch-preflight.mjs'; authorizedLaunchTester(process.env);"
       - name: Verify existing staging voice routing before deployment
         env:
           PAWSPACE_DEPLOYMENT_ENV: staging
@@ -154,6 +168,7 @@ jobs:
       # any is missing, too short, or equal to one of the values that was committed.
       - name: Configure staging (name + D1 + sandbox)
         env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
           PAWSPACE_UAT_PERSONAS: ${{ github.event.inputs.test_customer_personas }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           STAGING_WORKER_PLACEMENT_REGION: ${{ vars.STAGING_WORKER_PLACEMENT_REGION }}
@@ -163,6 +178,7 @@ jobs:
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_ORIGIN: ${{ github.event.inputs.razorpay_relay_target_origin }}
           PAWSPACE_RAZORPAY_SANDBOX_RELAY_TARGET_SHA: ${{ github.event.inputs.razorpay_relay_target_sha }}
+          PAWSPACE_VOICE_PHONE_TESTS_PAUSED: ${{ vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED }}
         run: node scripts/stage-config.mjs
       # The 45 files in drizzle/ reached no deployed environment: the only `d1 migrations apply` in
       # the repository targets a throwaway preview database, so ten tables that no ensure*Tables()
@@ -413,6 +429,29 @@ jobs:
           ROLLBACK_REFERENCE: ${{ steps.rollback.outputs.reference }}
           EVIDENCE_PATH: staging-certification.json
         run: node tests/e2e/staging-certification.mjs
+
+      # Keep inspection in this deploy job: a separately queued job can inspect a later shared build.
+      # A policy refusal fails this optional launch gate; it never authorizes or places a call.
+      - name: Inspect voice sales readiness under the staging deployment lock
+        if: ${{ github.event.inputs.voice_sales_preflight == 'true' }}
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXPECTED_TESTER_SHA256: ${{ github.event.inputs.expected_tester_sha256 }}
+        run: |
+          set -o pipefail
+          node --experimental-strip-types scripts/voice-sales-launch-preflight.mjs | tee voice-sales-preflight.log
+      - name: Upload sanitized no-call launch evidence
+        if: ${{ always() && github.event.inputs.voice_sales_preflight == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-sales-launch-preflight
+          path: voice-sales-preflight.log
+          if-no-files-found: warn
 
       # Only an explicit manual approval enables this step. It signs in as the disposable founder UAT
       # persona, sends the fixed route-defined message to the FIRST allowlisted number, and records only

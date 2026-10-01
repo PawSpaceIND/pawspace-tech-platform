@@ -41,7 +41,7 @@ test('premium multilingual prompt is idempotent and protects canonical booking s
 });
 test('premium quality targets require natural, complete, transferable booking calls',()=>{
  assert.equal(PREMIUM_CALL_TARGETS.replyStartP95Ms,2000);
- const good=evaluatePremiumCallQuality({replyStartP50Ms:900,replyStartP95Ms:1700,toolAcknowledgementMs:700,maxSilentGapMs:600,naturalTurns:12,repeatedKnownFacts:0,bookingCompleted:true,gracefulEnding:true,humanTransferReady:true});
+ const good=evaluatePremiumCallQuality({replyStartP50Ms:900,replyStartP95Ms:1700,toolAcknowledgementMs:700,maxSilentGapMs:600,naturalTurns:12,repeatedKnownFacts:0,callDurationSeconds:300,bookingCompleted:true,gracefulEnding:true,humanTransferReady:true});
  assert.equal(good.pass,true);
  const slow=evaluatePremiumCallQuality({...good.metrics,replyStartP95Ms:2500});
  assert.equal(slow.pass,false);assert.equal(slow.checks.replyP95,false);
@@ -55,7 +55,8 @@ test('multilingual readiness distinguishes language enablement from premium loca
  assert.equal(ready.allLanguagesConfigured,true);
  assert.equal(ready.languageDetection,true);
  assert.equal(ready.localizedVoicesComplete,true);
- assert.equal(ready.premiumCertified,true);
+ assert.equal(ready.configurationComplete,true);
+ assert.equal(ready.premiumCertified,false);
  const fallback=premiumLanguageReadiness({language_presets:premiumLanguagePresets(),agent:{prompt}});
  assert.equal(fallback.allLanguagesConfigured,true);
  assert.equal(fallback.premiumCertified,false);
@@ -68,4 +69,21 @@ test('multilingual readiness distinguishes language enablement from premium loca
  assert.equal(malformed.configuredCodes.includes('hi'),false);
  assert.equal(malformed.configuredCodes.includes('ta'),false);
  assert.equal(malformed.premiumCertified,false);
+});
+
+for(const invalid of [null,undefined,"",-1,NaN,Infinity,"900"]){
+ test(`premium latency rejects unmeasured or invalid input ${String(invalid)}`,()=>{
+  const metrics={replyStartP50Ms:900,replyStartP95Ms:1700,toolAcknowledgementMs:700,maxSilentGapMs:600,naturalTurns:12,repeatedKnownFacts:0,callDurationSeconds:300,bookingCompleted:true,gracefulEnding:true,humanTransferReady:true};
+  for(const key of ['replyStartP50Ms','replyStartP95Ms','toolAcknowledgementMs','maxSilentGapMs','repeatedKnownFacts'])assert.equal(evaluatePremiumCallQuality({...metrics,[key]:invalid}).pass,false,key);
+ });
+}
+
+
+test('premium call duration must be measured and remain within the ten-minute ceiling',()=>{
+ const good={replyStartP50Ms:900,replyStartP95Ms:1700,toolAcknowledgementMs:700,maxSilentGapMs:600,naturalTurns:12,repeatedKnownFacts:0,callDurationSeconds:600,bookingCompleted:true,gracefulEnding:true,humanTransferReady:true};
+ assert.equal(evaluatePremiumCallQuality(good).pass,true);
+ for(const duration of [600.01,601,0,-1,null,undefined,'600',NaN,Infinity]){
+  const result=evaluatePremiumCallQuality({...good,callDurationSeconds:duration});
+  assert.equal(result.pass,false,String(duration));assert.equal(result.checks.callDuration,false);
+ }
 });

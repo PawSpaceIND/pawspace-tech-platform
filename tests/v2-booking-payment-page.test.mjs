@@ -67,12 +67,12 @@ const MANAGE = "../app/v2/booking/training-manage.tsx";
 const trainingSession = (n, status) => ({ id: `TS-${n}`, programme_id: "TP-1", booking_id: "B1", sequence_no: n, provider_id: "train_kiran", scheduled_start: `2036-10-0${n}T04:30:00.000Z`, scheduled_end: `2036-10-0${n}T05:30:00.000Z`, status, attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null });
 const trainingRecord = (statuses, programme = {}) => ({ programme: { id: "TP-1", booking_id: "B1", provider_id: "train_kiran", plan_code: "obedience-starter", plan_name: "Starter Plan", status: "scheduled", total_sessions: statuses.length, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 0, meet_booking_id: null, pricing_snapshot_json: "{}", ...programme }, sessions: statuses.map((status, index) => trainingSession(index + 1, status)), events: [] });
 async function renderManage(record, inactive = false, now = Date.parse("2026-09-29T00:00:00.000Z")) {
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const React = await import("react");
-  const mod = await import(MANAGE);
   const originalNow = Date.now;
   Date.now = () => now;
   try {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const React = await import("react");
+    const mod = await import(MANAGE);
     return renderToStaticMarkup(React.createElement(mod.default, { bookingId: "B1", record, inactive, onRescheduled() {} })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   } finally {
     Date.now = originalNow;
@@ -80,13 +80,19 @@ async function renderManage(record, inactive = false, now = Date.parse("2026-09-
 }
 
 test("an open Training programme offers a new time for its next unlocked session and a cancellation review", async () => {
-  const text = await renderManage(trainingRecord(["scheduled", "locked", "locked"]));
-  assert.match(text, /Change or cancel your programme/);
-  assert.match(text, /Next session 1 · 1 Oct, 10:00 am IST\. Only your next upcoming session can be rescheduled, up to 24 hours before it starts\./);
-  assert.match(text, /Request reschedule/);
-  assert.match(text, /Request programme cancellation \/ refund review/);
-  // Later sessions unlock one at a time, so the section never offers one of them.
-  assert.doesNotMatch(text, /Next session [23]/);
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-09-29T04:30:00.000Z");
+  try {
+    const text = await renderManage(trainingRecord(["scheduled", "locked", "locked"]));
+    assert.match(text, /Change or cancel your programme/);
+    assert.match(text, /Next session 1 · 1 Oct, 10:00 am IST\. Only your next upcoming session can be rescheduled, up to 24 hours before it starts\./);
+    assert.match(text, /Request reschedule/);
+    assert.match(text, /Request programme cancellation \/ refund review/);
+    // Later sessions unlock one at a time, so the section never offers one of them.
+    assert.doesNotMatch(text, /Next session [23]/);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("a session already awaiting a new time, or already under way, is not offered again", async () => {
@@ -166,4 +172,18 @@ test("the booking page labels a captured split's balance and never offers a Pet 
   assert.match(source, /balancePayableNow!==false/, "payment is offered only when the balance may be paid now");
   assert.match(source, /stage=\{balanceStage\?"balance":undefined\}/);
   assert.match(source, /requested after drop-off/);
+});
+
+// An unchanged fixture must not age into or out of the business-policy boundary as CI runs later.
+test("Training manage never offers self-service for past, invalid, or inside-window dates", async () => {
+  const now = Date.parse("2026-10-02T04:30:00.000Z");
+  for (const start of ["2026-10-01T04:30:00.000Z", "not-a-date", new Date(now).toISOString(), new Date(now + 86400000 - 1).toISOString()]) {
+    const record = trainingRecord(["scheduled", "locked"]); record.sessions[0].scheduled_start = start;
+    const text = await renderManage(record, false, now);
+    assert.doesNotMatch(text, /Request reschedule/);
+    assert.match(text, /require PawSpace support/);
+    assert.match(text, /Request programme cancellation \/ refund review/);
+  }
+  const record = trainingRecord(["scheduled", "locked"]); record.sessions[0].scheduled_start = new Date(now + 86400000).toISOString();
+  assert.match(await renderManage(record, false, now), /Request reschedule/);
 });

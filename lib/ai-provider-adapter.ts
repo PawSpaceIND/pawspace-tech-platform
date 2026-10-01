@@ -365,10 +365,16 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
 // Retry generation only, before speech or action execution. Each attempt uses the same
 // governance, quota and circuit controls, with its own usage reservation.
+export const VOICE_GENERATION_BUDGET_MS=10_000;
 export async function requestAiDraftWithVoiceRecovery(input:Parameters<typeof requestAiDraft>[0]):Promise<AiDraftResult>{
- const started=Date.now(),budget=Number(input.timeoutMs)||DEFAULT_TIMEOUT_MS;
- const first=await requestAiDraft(input);
- if(first.connected||input.channel!=="voice"||input.onDelta||!["provider_error","network","rate_limited"].includes(first.failure))return first;
+ if(input.channel!=="voice"||input.onDelta)return requestAiDraft(input);
+ const started=Date.now(),requested=Number(input.timeoutMs),configured=aiTimeoutMs(await runtimeEnv());
+ const budget=Math.min(configured,Number.isFinite(requested)&&requested>0?Math.max(MIN_TIMEOUT_MS,requested):configured,VOICE_GENERATION_BUDGET_MS);
+ // Leave time for one recovery before any speech or booking action. A single stalled
+ // generation must not consume the entire call's model-response window.
+ const firstAttemptBudget=budget>=2*MIN_TIMEOUT_MS?Math.floor(budget/2):budget;
+ const first=await requestAiDraft({...input,timeoutMs:firstAttemptBudget});
+ if(first.connected||!["timeout","provider_error","network","rate_limited"].includes(first.failure))return first;
  const remaining=budget-(Date.now()-started);
  if(remaining<MIN_TIMEOUT_MS)return first;
  try{input.onTiming?.("voiceProviderRetry");}catch{/* Diagnostics cannot change recovery. */}

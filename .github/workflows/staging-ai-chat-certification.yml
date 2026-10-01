@@ -2,6 +2,15 @@ name: Staging AI chat certification
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Use certify, or activate-approved-maya-staging for the user-approved knowledge pack'
+        default: 'certify'
+        required: true
+      expected_sha:
+        description: 'Exact certified staging SHA required for knowledge activation'
+        default: ''
+        required: false
   push:
     branches: [main]
     paths:
@@ -13,6 +22,7 @@ permissions:
 
 jobs:
   certify:
+    if: ${{ inputs.confirm != 'activate-approved-maya-staging' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 5
@@ -33,3 +43,38 @@ jobs:
           name: staging-ai-chat-certification
           path: staging-ai-chat-certification.json
           if-no-files-found: warn
+  activate-maya-knowledge:
+    if: ${{ inputs.confirm == 'activate-approved-maya-staging' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 10
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+      PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Install pinned verification dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify certified revision and isolated staging before activation
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Activate approved Maya knowledge and verify active pet-care sources
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node scripts/activate-maya-knowledge-staging.mjs
+      - name: Verify staging revision and isolation after activation
+        run: node tests/e2e/staging-certification.mjs --isolation-only

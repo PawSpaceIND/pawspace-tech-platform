@@ -57,10 +57,11 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
 {
  const {readFileSync}=await import('node:fs');
  const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
- test('review: a recorded zero Training progress score is loaded as zero, not replaced by the default',()=>{
-  const trainer=read('app/trainer/page.tsx');
-  for(const key of ['focus','recall','impulse','parent'])assert.match(trainer,new RegExp(`${key}:Number\\(progress\\.${key}\\?\\?7\\)`),key);
-  assert.doesNotMatch(trainer,/Number\(progress\.[a-z]+\|\|7\)/);
+ test('review: a recorded zero Training progress stays zero and missing assessments are never invented',async()=>{
+  const {trainingProgressFromRecord,trainingProgressReady}=await import('../lib/training-progress-editor.ts');
+  const scores=trainingProgressFromRecord({focus:0,recall:8});
+  assert.deepEqual(scores,{focus:0,recall:8,impulse:null,parent:null});
+  assert.equal(trainingProgressReady(scores),false);
  });
  test('review: legacy /training keeps its own booking/payment page instead of jumping into V2',()=>{
   const training=read('app/training/page.tsx');
@@ -79,7 +80,7 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(trainer,/const attendanceOnly:Record<string,unknown>=\{report:\{attendance:report\.attendance\}\}/,'only attendance is saved at start, so no default scores are recorded');
   assert.match(trainer,/onClick=\{\(\)=>void startSession\(\)\}>Start session</);
   assert.match(trainer,/<span>ATTENDANCE & SAFETY<\/span>.*\{attendanceControls\}<\/section><div className=\{styles\.actions\}><button disabled=\{busy\} onClick=\{\(\)=>void act\("save_report",\{report\}\)\}>Save report/,'the in-session report keeps the confirmations editable');
-  assert.match(trainer,/!selected\.ownerHandover\|\|!attendanceReady\} onClick=\{\(\)=>void act\("complete",\{report\}\)\}/,'completion waits for a genuine confirmation');
+  assert.match(trainer,/!selected\.ownerHandover\|\|!attendanceReady\|\|!trainingProgressReady\(scores\)\} onClick=\{\(\)=>void act\("complete",\{report\}\)\}/,'completion waits for a genuine confirmation');
   assert.match(trainer,/const attendanceReady=safeArea&&\(attendanceMode!=="parent"\|\|parentConfirmed\);/);
   assert.match(trainer,/<strong>\{trainerName\|\|providerId\}<\/strong>/,'the header shows the trainer name, falling back to the provider id');
  });

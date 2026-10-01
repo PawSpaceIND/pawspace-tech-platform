@@ -362,13 +362,25 @@ for(const [message,status,failure] of [
 
 
 test("buffered voice generation recovers from one transient provider error",async()=>{
- withEnv();let attempt=0;
+ withEnv({PAWSPACE_AI_PROVIDER_TIMEOUT_MS:"10000"});let attempt=0;
  const stub=stubFetch(()=>++attempt===1?jsonResponse({error:{message:"temporary"}},503):jsonResponse(textBody("Which package would you like?")));
  try{const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"Welcome",channel:"voice",timeoutMs:10000});assert.equal(result.connected,true);assert.equal(stub.calls.length,2);}finally{stub.restore();}
 });
 test("voice recovery is bounded and never retries client errors or a streaming request",async()=>{
  for(const config of [{status:503,onDelta:undefined,expected:2},{status:400,onDelta:undefined,expected:1},{status:503,onDelta:()=>{},expected:1}]){
- withEnv();const stub=stubFetch(()=>jsonResponse({error:{message:"error"}},config.status));
+ withEnv({PAWSPACE_AI_PROVIDER_TIMEOUT_MS:"10000"});const stub=stubFetch(()=>jsonResponse({error:{message:"error"}},config.status));
  try{const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"hello",channel:"voice",timeoutMs:10000,onDelta:config.onDelta});assert.equal(result.connected,false);assert.equal(stub.calls.length,config.expected);}finally{stub.restore();}
  }
+});
+
+
+test("buffered voice aborts a stalled draft and recovers once before any action",async()=>{
+ withEnv({PAWSPACE_AI_PROVIDER_TIMEOUT_MS:"3000"});
+ const stub=stubFetch((_url,init,attempt)=>attempt===1?new Promise((_resolve,reject)=>init.signal.addEventListener("abort",()=>reject(Object.assign(new Error("aborted"),{name:"AbortError"})))):jsonResponse(textBody("Understood. Grooming only. What date suits Milo?")));
+ try{const started=Date.now();const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"No extras",channel:"voice",timeoutMs:3000});assert.equal(result.connected,true);assert.match(result.text,/Grooming only/);assert.equal(stub.calls.length,2);assert.ok(stub.calls[0].init.signal.aborted);assert.ok(Date.now()-started<4000);}finally{stub.restore();}
+});
+test("two stalled voice attempts exhaust one shared budget without a third request",async()=>{
+ withEnv({PAWSPACE_AI_PROVIDER_TIMEOUT_MS:"2400"});
+ const stub=stubFetch((_url,init)=>new Promise((_resolve,reject)=>init.signal.addEventListener("abort",()=>reject(Object.assign(new Error("aborted"),{name:"AbortError"})))));
+ try{const started=Date.now();const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"hello",channel:"voice",timeoutMs:30000});assert.equal(result.connected,false);assert.equal(result.failure,"timeout");assert.equal(stub.calls.length,2);assert.ok(Date.now()-started<3400,"the configured ceiling covers both attempts together");}finally{stub.restore();}
 });

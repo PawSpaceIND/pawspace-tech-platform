@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__VOICE_AUDIO_CONTRACT_DB__", "__VOICE_AUDIO_CONTRACT_ENV__");
+const speech = await import("../lib/voice-workers-ai.ts");
 
 const workers = fs.readFileSync(new URL("../lib/voice-workers-ai.ts", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/ai-voice-uat/route.ts", import.meta.url), "utf8");
@@ -8,11 +12,28 @@ const page = fs.readFileSync(new URL("../app/team/voice/page.tsx", import.meta.u
 const overlay = fs.readFileSync(new URL("../scripts/stage-voice-uat-config.mjs", import.meta.url), "utf8");
 const workflow = fs.readFileSync(new URL("../.github/workflows/voice-uat-staging.yml", import.meta.url), "utf8");
 
-test("Workers AI defaults to the approved UAT STT and TTS models", () => {
+test("Workers AI defaults to the approved UAT STT and TTS models", async () => {
   assert.match(workers, /DEFAULT_VOICE_STT_MODEL = "@cf\/openai\/whisper-large-v3-turbo"/);
   assert.match(workers, /DEFAULT_VOICE_TTS_MODEL = "@cf\/myshell-ai\/melotts"/);
   assert.match(workers, /if \(!workersAiConfigured\(env\)\) return disconnectedStt/);
   assert.match(workers, /if \(!workersAiConfigured\(env\)\) return disconnectedTts/);
+  const calls = [];
+  const env = { AI: { async run(model, input) {
+    calls.push({ model, input });
+    return model.includes("whisper") ? { text: "I need boarding for my pet." } : { audio: "AAECAw==" };
+  } } };
+  const heard = await speech.resolveWorkersAiStt(env).transcribe({ audioRef: "data:audio/mpeg;base64,AAECAw==" });
+  assert.equal(heard.text, "I need boarding for my pet.");
+  assert.equal(calls[0].model, "@cf/openai/whisper-large-v3-turbo");
+  assert.deepEqual(calls[0].input.audio, [0, 1, 2, 3]);
+  const spoken = await speech.resolveWorkersAiTts(env).synthesize({ text: "Let me help with boarding.", language: "en" });
+  assert.equal(calls[1].model, "@cf/myshell-ai/melotts");
+  assert.equal(calls[1].input.prompt, "Let me help with boarding.");
+  assert.equal(spoken.audioRef, "data:audio/mpeg;base64,AAECAw==");
+  for (const absent of [{}, { AI: {} }]) {
+    assert.equal(speech.resolveWorkersAiStt(absent).status, "not_connected");
+    assert.equal(speech.resolveWorkersAiTts(absent).status, "not_connected");
+  }
 });
 
 test("operator audit exposes governed transcript segments and voice events", () => {

@@ -132,7 +132,9 @@ const isPlainColumn = (token) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(token);
 /** Every SQL-looking string literal in a source file. */
 function sqlLiterals(source) {
   const found = [];
-  for (const match of source.matchAll(/(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)) {
+  // Keep escape and ordinary-character branches disjoint. Otherwise an unfinished
+  // literal with many escapes causes exponential backtracking across both branches.
+  for (const match of source.matchAll(/(["'`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g)) {
     const text = match[2];
     if (/\b(SELECT|INSERT\s+INTO|UPDATE)\b/i.test(text)) found.push({ text, index: match.index });
   }

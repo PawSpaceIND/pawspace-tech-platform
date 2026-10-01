@@ -1,0 +1,58 @@
+name: Taxi custody boundaries
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - lib/taxi-lifecycle.ts
+      - lib/taxi-finance-governance.ts
+      - tests/taxi-recovery-boundaries.test.mjs
+      - tests/taxi-custody-finance.test.mjs
+      - tests/walking-taxi-ops-hardening.test.mjs
+      - .github/workflows/taxi-recovery-boundaries.yml
+
+permissions:
+  contents: read
+
+jobs:
+  taxi-recovery:
+    name: Hermetic Taxi custody regression
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Execute real lifecycle and route code against local SQLite
+        run: >-
+          node --experimental-strip-types --test --test-concurrency=1
+          tests/taxi-recovery-boundaries.test.mjs
+          tests/taxi-custody-finance.test.mjs
+          tests/taxi-gate2.test.mjs
+          tests/taxi-gate3.test.mjs
+          tests/taxi-unpaid-hold-expiry.test.mjs
+          tests/taxi-gate4.test.mjs
+          tests/taxi-gate5.test.mjs
+          tests/launch-partner-lifecycle-refusals.test.mjs
+      - name: Existing lifecycle and replacement compatibility
+        env:
+          PAWSPACE_LOCAL_PREVIEW: 'on'
+        run: >-
+          node --experimental-strip-types --test --test-concurrency=1
+          tests/lifecycle-toctou-guards.test.mjs
+          tests/ptja-w3-terminal-booking-states.test.mjs
+          tests/walking-taxi-ops-hardening.test.mjs
+      - name: Lint changed lifecycle and regression
+        run: >-
+          npx --no-install eslint lib/taxi-lifecycle.ts lib/taxi-finance-governance.ts
+          tests/taxi-recovery-boundaries.test.mjs tests/taxi-custody-finance.test.mjs
