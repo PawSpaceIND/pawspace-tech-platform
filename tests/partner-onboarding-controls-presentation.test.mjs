@@ -17,3 +17,15 @@ test('appendix is confined to existing control and feedback classes without hidi
  css.walkRules(r=>r.selectors.forEach(s=>assert.match(s,/^\.(backLink|btn|btnGhost|stepDone|errorBox|option)(?:\b|:)/)));
  css.walkDecls(d=>{assert.doesNotMatch(d.prop,/^(position|visibility|opacity|z-index)$/);assert.notEqual(d.value,'none');assert.doesNotMatch(d.value,/url\(|expression\(/);});
 });
+
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__PARTNER_ONBOARDING_CONTROL_RENDER__');
+const {default:PartnerOnboardingPage}=await import('../app/partner/onboarding/page.tsx');
+test('actual onboarding page withholds application and qualification controls until session hydration',()=>{
+ const html=renderToStaticMarkup(createElement(PartnerOnboardingPage));
+ assert.match(html,/^<main\b/);
+ assert.doesNotMatch(html,/<form|<input|<select|<button|Start application|Submit answers|Accept agreement/);
+ assert.match(html,/<\/main>$/);
+});
