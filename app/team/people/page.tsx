@@ -4,6 +4,7 @@ import Link from"next/link";
 import{Badge,EmptyState,StatCard}from"../../components/ui";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
+import presentation from "../presentation-next/staff-content.module.css";
 
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
 
@@ -66,11 +67,11 @@ export default function PeoplePage(){
 
   <section className={styles.panel}>
    <div className={styles.panelHead}><h2>People workspaces</h2></div>
-   <nav className={styles.nav} aria-label="People workspaces">{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav>
+   <nav className={`${styles.nav} ${presentation.workspaces}`} aria-label="People workspaces">{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav>
   </section>
 
   <section className={styles.panel}>
-   <label className={styles.field}>Find someone<input value={query} onChange={event=>setQuery(event.target.value)} placeholder="name, code, email, team or role" /></label>
+   <label className={`${styles.field} ${presentation.search}`}>Find someone<input value={query} onChange={event=>setQuery(event.target.value)} placeholder="name, code, email, team or role" /></label>
   </section>
 
   {loading?<EmptyState title="Loading the employee record" body="Reading the canonical People foundation…" />
@@ -85,7 +86,7 @@ export default function PeoplePage(){
        </div>
        <code className={styles.muted}>{row.id}</code>
       </div>
-      <div className={styles.recordMeta}>
+      <div className={`${styles.recordMeta} ${presentation.details}`}>
        <span><b>Role:</b> <span className={title.set?"":styles.muted}>{title.text}</span></span>
        <span><b>Team:</b> <span className={team.set?"":styles.muted}>{team.text}</span></span>
        <span><b>Work email:</b> {row.work_email}</span>
