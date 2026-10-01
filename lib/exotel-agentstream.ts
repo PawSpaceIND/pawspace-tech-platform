@@ -6,6 +6,7 @@ import { nativeVoiceTurnDiagnostics, resolveCarrierSttLanguage, whisperInputLang
 import { transitionVoiceCall } from "./voice-outbound-governance";
 import { canVoiceCallTransition, isVoiceCallState } from "./voice-call-state";
 import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
+import { DEFAULT_WORKERS_NATIVE_TTS_MODEL, synthesizeNativeCarrierTts } from "./voice-native-tts";
 import type { VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
@@ -14,7 +15,7 @@ import type { AuthenticatedActor } from "./server-auth";
 // event is still authenticated against an already-created Exotel call ledger row and the configured
 // account SID before any audio is accepted.
 export const EXOTEL_AGENTSTREAM_PATH = "/voice/exotel/agentstream";
-export const EXOTEL_AGENTSTREAM_TTS_MODEL = "@cf/deepgram/aura-2-en";
+export const EXOTEL_AGENTSTREAM_TTS_MODEL = DEFAULT_WORKERS_NATIVE_TTS_MODEL;
 export const EXOTEL_AGENTSTREAM_STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 export const VOICE_TURN_LATENCY_TARGET_MS = 1_500;
 
@@ -375,13 +376,11 @@ async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, languag
 
 async function synthesizeLinear16(env: Env, output: string, sampleRate: number) {
   const started = Date.now();
-  // MeloTTS remains the in-app/default TTS. Its documented output is MP3, which cannot be placed on
-  // AgentStream as raw linear16. The carrier bridge therefore uses a Workers-AI TTS model that exposes
-  // linear16 directly, avoiding a lossy/slow MP3 decode+resample step inside the live socket.
-  const model = text(env.VOICE_CARRIER_TTS_MODEL) || EXOTEL_AGENTSTREAM_TTS_MODEL;
-  const result = await ai(env).run(model, { text: output, encoding: "linear16", container: "none", sample_rate: sampleRate, speaker: text(env.VOICE_CARRIER_TTS_SPEAKER) || "luna" }, { returnRawResponse: true });
-  const audio = validatedLinear16(await responseBytes(result), sampleRate);
-  return { audio, latencyMs: Date.now() - started };
+  // The native PawSpace call owns turn-taking, memory and actions. TTS is a replaceable renderer:
+  // direct ElevenLabs speech when configured, with an explicit Workers AI fallback for UAT.
+  const synthesized = await synthesizeNativeCarrierTts(env, output, sampleRate);
+  const audio = validatedLinear16(await responseBytes(synthesized.result), sampleRate);
+  return { audio, latencyMs: Date.now() - started, provider: synthesized.provider, model: synthesized.model, fallbackUsed: synthesized.fallbackUsed };
 }
 
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
@@ -505,7 +504,9 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       transcriptChars: stt.text.length,
       assistantChars: generated.output.length,
       sttModel: stt.model,
-      ttsModel: text(env.VOICE_CARRIER_TTS_MODEL) || EXOTEL_AGENTSTREAM_TTS_MODEL,
+      ttsModel: tts.model,
+      ttsProvider: tts.provider,
+      ttsFallbackUsed: tts.fallbackUsed,
       outcome: generated.outcome,
     });
     await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(
@@ -535,7 +536,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
           assertLive(active);
           setStage("opening_text");
           await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
-          ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "opening", chars: active.openingDisclosure.length, ttsMs: Math.min(600_000, greeting.latencyMs) }));
+          ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "opening", chars: active.openingDisclosure.length, ttsMs: Math.min(600_000, greeting.latencyMs), ttsProvider: greeting.provider, ttsModel: greeting.model, ttsFallbackUsed: greeting.fallbackUsed }));
           assertLive(active);
           setStage("opening_send");
           queueAudio(active, greeting.audio, `opening-${active.segmentIndex}-end`);
