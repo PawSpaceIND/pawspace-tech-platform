@@ -283,3 +283,14 @@ test("real execution: Accounts exact-booking scope excludes unrelated refund and
   assert.equal(scoped.providerPayable.count, 0);
 });
 
+
+
+test("guard: AI outcomes exempt only the fixed collected-status vocabulary", async () => {
+  const source = await readFile(new URL("../lib/ai-analytics.ts", import.meta.url), "utf8");
+  const { COLLECTED_PAYMENT_STATUSES } = await import("../lib/collected-funds.ts");
+  assert.deepEqual([...COLLECTED_PAYMENT_STATUSES], ["captured", "paid", "refunded", "partially_refunded"]);
+  assert.deepEqual(findUnchunkedInLists("ai-analytics.ts", source), []);
+  const unsafe = 'const sql = ids.map(() => "?").join(",");';
+  assert.equal(findUnchunkedInLists("ai-analytics.ts", source + "\n" + unsafe).length, 1);
+  assert.equal(findUnchunkedInLists("ai-analytics.ts", source.replace('COLLECTED_PAYMENT_STATUSES.map', 'bookingIds.map')).length, 1);
+});

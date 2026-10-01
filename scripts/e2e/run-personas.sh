@@ -17,6 +17,8 @@ export PAWSPACE_VOICE_TRANSPORT="local_simulator_non_production"
 export PAWSPACE_SCHEDULING_ENV="uat"
 export PAWSPACE_MEDIA_ENV="uat"
 export PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="on"
+# Disposable local-only signing key: exercises the real webhook receiver, never a provider call.
+export PW_PERSONA_WEBHOOK_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 
 # The persistent Sitting journey books ahead, then proves provider execution in the same browser case.
 # Advance only the server-owned clock into that care window. service-execution-clock.ts independently
@@ -32,11 +34,11 @@ if [ "${CI:-}" = "true" ]; then
     echo "[persona-e2e] refusing to start: CI must provision .dev.vars before service-clock injection" >&2
     exit 1
   fi
-  python3 - "$ROOT/.dev.vars" "$PAWSPACE_UAT_SERVICE_CLOCK" "$PAWSPACE_UAT_EXECUTION_NOW_MS" <<'PYVARS'
+  python3 - "$ROOT/.dev.vars" "$PAWSPACE_UAT_SERVICE_CLOCK" "$PAWSPACE_UAT_EXECUTION_NOW_MS" "$PW_PERSONA_WEBHOOK_SECRET" <<'PYVARS'
 import json, sys
 from pathlib import Path
 path=Path(sys.argv[1])
-updates={"PAWSPACE_UAT_SERVICE_CLOCK":sys.argv[2],"PAWSPACE_UAT_EXECUTION_NOW_MS":sys.argv[3]}
+updates={"PAWSPACE_UAT_SERVICE_CLOCK":sys.argv[2],"PAWSPACE_UAT_EXECUTION_NOW_MS":sys.argv[3],"RAZORPAY_WEBHOOK_SECRET_SANDBOX":sys.argv[4]}
 lines=path.read_text().splitlines()
 lines=[line for line in lines if not any(line.startswith(key+"=") for key in updates)]
 lines.extend(f"{key}={json.dumps(value)}" for key,value in updates.items())

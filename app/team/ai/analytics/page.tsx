@@ -24,6 +24,7 @@ type Data = {
   delivery: { byStatus: Array<Breakdown & { status: string }> };
   voice: { byOutcome: Array<Breakdown & { status: string; outcome: string; liveAgentTransfers: number; reconnects: number }> };
   conversion: { canonicalBookingLinkedThreads: number };
+  bookingOutcomes?: {status: "available" | "unavailable";reason: string | null;scope: string | null;counts: Record<string, number | null>};
   csat: { responses: number; averageRating: number | null };
   definitions: Record<string, string>;
 };
@@ -131,6 +132,22 @@ export default function AiAnalyticsPage() {
           <MetricBars title="Policy decisions" items={data.policy.byDecision.map(row => ({ label: pretty(row.decision), value: row.count }))} />
           <MetricBars title="Message delivery events" note="All-time, all channels; independent of the filters above. Event counts may overlap for the same message." items={data.delivery.byStatus.map(row => ({ label: pretty(row.status), value: row.count }))} />
         </VisualGrid>}
+
+        <TeamSection title="AI-linked booking outcomes" note="Distinct canonical bookings linked to the selected AI-turn cohort. Current lifecycle/payment evidence, including outcomes after the turn window; observational linkage, not AI-attributed sales or resolution. Financial permission and organizational scope required.">
+          {data.bookingOutcomes?.status === "available" ? <>
+            <p>Scope: {data.bookingOutcomes.scope}. Collections include partial payments and historical collections before refunds; they do not mean fully paid or net revenue. Cancelled collections may represent refund liabilities. Missing booking links are excluded; missing payment records are shown separately.</p>
+            <TeamTable head={["Outcome", "Distinct bookings"]} rows={[
+              ["Linked canonical bookings", data.bookingOutcomes.counts.linkedBookings ?? DASH],
+              ["With recorded collections", data.bookingOutcomes.counts.bookingsWithCollections ?? DASH],
+              ["Completed", data.bookingOutcomes.counts.completedBookings ?? DASH],
+              ["Completed with collections", data.bookingOutcomes.counts.completedWithCollections ?? DASH],
+              ["Collections below current booking total", data.bookingOutcomes.counts.collectionsBelowBookingTotal ?? DASH],
+              ["With refund evidence", data.bookingOutcomes.counts.bookingsWithRefundEvidence ?? DASH],
+              ["Cancelled with collections", data.bookingOutcomes.counts.cancelledWithCollections ?? DASH],
+              ["Without a payment record", data.bookingOutcomes.counts.bookingsWithoutPaymentRecord ?? DASH],
+            ]} />
+          </> : <TeamAlert tone="info">{data.bookingOutcomes?.reason === "source_unavailable" ? "Booking outcomes unavailable: a required source could not be read. Unknown outcomes are not zero." : "Booking outcomes unavailable: financial permission and a provisioned organizational scope are required."}</TeamAlert>}
+        </TeamSection>
 
         <TeamSection title="By channel"><TeamTable head={["Channel", "Turns"]} rows={data.volume.byChannel.map((row) => [pretty(row.channel), row.count])} empty="No turns on any channel in this window." /></TeamSection>
         <TeamSection title="By intent" note="Intent is a deterministic keyword heuristic, not a model probability."><TeamTable head={["Intent", "Turns", "Handed off"]} rows={data.volume.byIntent.map((row) => [pretty(row.intent), row.count, row.handoffs])} /></TeamSection>

@@ -149,6 +149,10 @@ export function seed(dbPath = locateDb()) {
     ["host_maya_rohan","Maya & Rohan","9000000953"], ["host_sana","Sana F.","9000000954"],
     ["host_arjun_tara","Arjun & Tara","9000000955"], ["host_priya_dev","Priya & Dev","9000000956"],
     ["sit_sana","Sana F.","9000000945"], ["sit_neha","Neha P.","9000000946"], ["sit_asha","Asha R.","9000000947"],
+    // Exact normal-OTP mappings from scripts/uat-staging-provider-capacity.sql.
+    ["uatcap_train_east","Arjun T. (UAT East)","9000000932"],
+    ["walk_asha","Asha R.","9000000986"], ["walk_kiran","Kiran M.","9000000987"], ["walk_nisha","Nisha P.","9000000989"],
+    ["taxi_meera","Meera S.","9000000980"], ["taxi_rahul","Rahul K.","9000000981"],
   ]) out.push(upsert(db, "canonical_providers", {
     id: provider[0], name: provider[1], phone: provider[2], city_id: "blr", source: "e2e_seed", created_at: now, updated_at: now,
   }));
@@ -160,9 +164,26 @@ export function seed(dbPath = locateDb()) {
     ["host_maya_rohan", '["00:00-23:59"]'], ["host_sana", '["00:00-23:59"]'],
     ["host_arjun_tara", '["00:00-23:59"]'], ["host_priya_dev", '["00:00-23:59"]'],
     ["sit_sana", '["09:00-19:00"]'], ["sit_neha", '["09:00-19:00"]'], ["sit_asha", '["09:00-19:00"]'],
+    ["uatcap_train_east", '["09:00-19:00"]'],
+    ["walk_asha", '["06:00-21:00"]'], ["walk_kiran", '["06:00-21:00"]'], ["walk_nisha", '["06:00-21:00"]'],
+    ["taxi_meera", '["06:00-21:00"]'], ["taxi_rahul", '["06:00-21:00"]'],
   ]) out.push(upsert(db, "scheduling_availability", {
     id: `e2e_roster_${providerId}_${personaServiceDate}_blr-east`, provider_id: providerId, city_id: "blr",
     zone_id: "blr-east", date: personaServiceDate, windows_json: windowsJson, source: "roster", updated_at: now,
+  }));
+  // Copy the one documented East trainer's bounded UAT profile, not the high-capacity team seat.
+  // All other service providers keep the runtime's existing capacity and eligibility rules.
+  out.push(upsert(db, "provider_capacity_profiles", {
+    id: "uatcap_train_east", city_id: "blr", name: "Arjun T. (UAT East)", provider_model: "full_time",
+    services_json: '["dog_training"]', zones_json: '["blr-east"]', live: 1, rating: 4.9, quality_score: 95,
+    capacity: 1, travel_buffer_minutes: 45, max_daily_jobs: 8, acceptance_timeout_minutes: 3,
+    status: "active", version: 1, effective_from: "2026-01-01", effective_to: null,
+    updated_by: "founder_seed", updated_at: now,
+  }));
+  out.push(upsert(db, "provider_home_base", {
+    id: "E2E-HOME-TRAIN-EAST", provider_id: "uatcap_train_east", address: "UAT base: Indiranagar, Bengaluru 560038",
+    latitude: 12.9784, longitude: 77.6408, effective_from: 0, effective_until: null,
+    reason: "Disposable copy of documented UAT trainer home base", updated_by: "e2e_seed", created_at: now,
   }));
   out.push(upsert(db, "customer_identity_links", {
     email: IDENTITIES.customer.email, customer_id: CUSTOMER_ID, status: "active", verified_at: now, updated_at: now,

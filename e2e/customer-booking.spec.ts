@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { runTrainingPersona } from "./helpers/training-persona";
+import { runWalkingPersona } from "./helpers/walking-persona";
+import { runTaxiPersona } from "./helpers/taxi-persona";
 
 const phone = process.env.PW_CUSTOMER_PHONE || `9${String(Date.now()).slice(-9)}`;
 const stayRunJitter = Number(String(Date.now()).slice(-1));
@@ -643,4 +646,16 @@ test("grooming: Cat selects saved cat and package empty state can select it dire
  await saved.click();
  await expect(page.getByRole("button",{name:"Choose address and requested time",exact:true})).toBeEnabled();
  await page.screenshot({path:test.info().outputPath("grooming-cat-direct-selection.png"),fullPage:true});
+});
+
+test("training: V2 Meet & Greet -> simulated capture -> trainer completion and finance", async ({ page, browser, baseURL }) => {
+  await runTrainingPersona({ page, browser, baseURL: baseURL!, sandboxLogin, ensureCustomerPet });
+});
+
+test("walking: V2 pay-after booking -> recorded route and completion -> governed finance", async ({ page, browser, baseURL }) => {
+  await runWalkingPersona({ page, browser, baseURL, sandboxLogin, ensureCustomerPet });
+});
+
+test("taxi: V2 route quote -> split simulated capture -> driver completion and owner finance", async ({ page, browser, baseURL }) => {
+  await runTaxiPersona({ page, browser, baseURL, sandboxLogin, ensureCustomerPet });
 });

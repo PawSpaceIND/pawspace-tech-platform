@@ -16,6 +16,33 @@ if [ "${PAWSPACE_PAYMENT_LIVE_APPROVED:-false}" != "false" ]; then
   exit 1
 fi
 
+# CI supplies one UAT Maps key in .dev.vars. Preserve that binding alone, never source the file
+# or carry inherited provider/live settings into this disposable sandbox. Accept the workflow's
+# JSON-quoted format and fail before rewriting or starting anything if that binding is ambiguous.
+PERSONA_UAT_MAPS_BINDING="$(python3 - "$DEV_VARS" <<'PYMAPS'
+import json, re, sys
+from pathlib import Path
+
+try:
+    path = Path(sys.argv[1])
+    lines = path.read_text().splitlines() if path.exists() else []
+    candidates = [line for line in lines if re.match(r"^\s*(?:export\s+)?GOOGLE_MAPS_SERVER_API_KEY_UAT\b", line)]
+    if len(candidates) > 1:
+        raise ValueError()
+    if candidates:
+        match = re.fullmatch(r'\s*GOOGLE_MAPS_SERVER_API_KEY_UAT\s*=\s*(".*")\s*', candidates[0])
+        if not match:
+            raise ValueError()
+        value = json.loads(match.group(1))
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
+            raise ValueError()
+        print("GOOGLE_MAPS_SERVER_API_KEY_UAT=" + json.dumps(value))
+except (OSError, UnicodeError, ValueError):
+    print("[persona-e2e] refusing to start: invalid or duplicate UAT Maps binding", file=sys.stderr)
+    sys.exit(1)
+PYMAPS
+)"
+
 export NODE_ENV="${NODE_ENV:-test}"
 export APP_ENV="${APP_ENV:-staging}"
 export FORBID_PRODUCTION="${FORBID_PRODUCTION:-true}"
@@ -56,6 +83,10 @@ PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="on"
 PAWSPACE_UAT_SERVICE_CLOCK="$PAWSPACE_UAT_SERVICE_CLOCK"
 PAWSPACE_UAT_EXECUTION_NOW_MS="$PAWSPACE_UAT_EXECUTION_NOW_MS"
 EOF_VARS
+if [ -n "$PERSONA_UAT_MAPS_BINDING" ]; then
+  printf '%s\n' "$PERSONA_UAT_MAPS_BINDING" >> "$DEV_VARS"
+fi
+unset PERSONA_UAT_MAPS_BINDING
 
 export WRANGLER_LOG_PATH="${WRANGLER_LOG_PATH:-.wrangler/e2e.log}"
 export MINIFLARE_REGISTRY_PATH="${MINIFLARE_REGISTRY_PATH:-.wrangler/e2e-registry}"
