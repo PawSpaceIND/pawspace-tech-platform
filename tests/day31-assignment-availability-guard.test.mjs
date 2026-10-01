@@ -25,8 +25,12 @@ installWorkersHooks("__D31_AVAIL_DB__", "__D31_AVAIL_ENV__");
 const PROVIDER = "PRV-D31-AVL";
 const GROUP = "GRP-D31-AVL";
 const OPS = "ops@pawspace.in";
-const START = "2026-10-01T04:00:00.000Z";   // 09:30 IST
-const END = "2026-10-01T05:30:00.000Z";     // 11:00 IST
+// Keep the appointment safely in the future. These checks exercise interval overlap, not a
+// calendar date; a fixed 2026-10-01 slot became historical while CI was still running that day.
+const START_MS = Date.now() + 24 * 60 * 60 * 1000;
+const END_MS = START_MS + 90 * 60 * 1000;
+const START = new Date(START_MS).toISOString();
+const END = new Date(END_MS).toISOString();
 
 async function seedSlot() {
   const { sqlite, db } = world("__D31_AVAIL_DB__", "__D31_AVAIL_ENV__");
@@ -79,12 +83,14 @@ test("the overlap boundary is exact in both directions", async () => {
    * overlap it - refusing those would cancel good bookings for no reason. One millisecond further
    * in and it does overlap, and must refuse.
    */
+  const beforeStart = new Date(START_MS - 2 * 60 * 60 * 1000).toISOString();
+  const afterEnd = new Date(END_MS + 2 * 60 * 60 * 1000).toISOString();
   const cases = [
-    ["ends exactly at appointment start", "2026-10-01T02:00:00.000Z", START, true],
-    ["ends one ms into the appointment", "2026-10-01T02:00:00.000Z", "2026-10-01T04:00:00.001Z", false],
-    ["starts exactly at appointment end", END, "2026-10-01T08:00:00.000Z", true],
-    ["starts one ms before appointment end", "2026-10-01T05:29:59.999Z", "2026-10-01T08:00:00.000Z", false],
-    ["fully contains the appointment", "2026-10-01T00:00:00.000Z", "2026-10-01T23:00:00.000Z", false],
+    ["ends exactly at appointment start", beforeStart, START, true],
+    ["ends one ms into the appointment", beforeStart, new Date(START_MS + 1).toISOString(), false],
+    ["starts exactly at appointment end", END, afterEnd, true],
+    ["starts one ms before appointment end", new Date(END_MS - 1).toISOString(), afterEnd, false],
+    ["fully contains the appointment", new Date(START_MS - 4 * 60 * 60 * 1000).toISOString(), new Date(END_MS + 4 * 60 * 60 * 1000).toISOString(), false],
   ];
   for (const [label, startsAt, endsAt, shouldConfirm] of cases) {
     const { sqlite, db, capacity } = await seedSlot();
