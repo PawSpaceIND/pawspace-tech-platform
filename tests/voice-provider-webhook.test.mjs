@@ -344,6 +344,10 @@ test("provider selection is fail-closed and never picks the simulator in live mo
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv()).provider, telephony.LOCAL_SIMULATOR_PROVIDER);
   // Only the explicit transport name selects it, and never when the environment claims to be live.
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" })).provider, "exotel");
+  assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", PAWSPACE_VOICE_RUNTIME: "native", PAWSPACE_VOICE_STREAM_URL: "wss://uat.pawspace.in/voice/exotel/agentstream" })).provider, "exotel");
+  assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", PAWSPACE_VOICE_RUNTIME: "native", PAWSPACE_VOICE_STREAM_URL: "" })).provider, "not_connected", "native runtime requires AgentStream");
+  assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", PAWSPACE_VOICE_RUNTIME: "native", PAWSPACE_VOICE_STREAM_URL: "https://not-websocket.invalid" })).provider, "not_connected", "native runtime refuses non-WSS streaming");
+  assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", PAWSPACE_VOICE_RUNTIME: "typo" })).provider, "not_connected");
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_ENV: "live" })).provider, "exotel");
   const partial = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", EXOTEL_WEBHOOK_SECRET: "" });
   assert.equal(telephony.selectTelephonyProvider(partial).provider, "not_connected", "a half-configured provider is not connected");
