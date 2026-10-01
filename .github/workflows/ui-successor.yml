@@ -1,0 +1,46 @@
+name: Grouped UI successor (visual QA pending)
+on:
+  pull_request:
+    paths: ['app/**', 'tests/fixtures/*contract.json', 'tests/*presentation*.test.mjs', 'tests/*appearance*.test.mjs', 'e2e/ui-successor.spec.ts', 'playwright.ui-successor.config.ts', '.github/workflows/ui-successor.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ui-successor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm run install:ci
+      - name: Preserve reviewed sources and presentation contracts
+        run: node --experimental-strip-types --test tests/v2-account-presentation-preservation.test.mjs tests/training-family-presentation.test.mjs tests/schedule-readiness-presentation.test.mjs tests/mobile-appearance-preference.test.mjs tests/staff-style-token-propagation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/staff-crm-control-presentation.test.mjs tests/staff-operations-presentation.test.mjs tests/staff-team-completion-presentation.test.mjs tests/ui-display-truth.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Render actual application with isolated synthetic requests
+        run: npx playwright test --config playwright.ui-successor.config.ts --shard=${{ matrix.shard }}/4
+      - name: Upload exact-head visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-successor-${{ github.sha }}-${{ matrix.shard }}
+          path: |
+            test-results/ui-successor
+            test-results/ui-successor-results.json
+          retention-days: 7

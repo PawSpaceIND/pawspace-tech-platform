@@ -258,6 +258,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const streaming = Boolean(input.onDelta) && providerRef === "openai";
   try {
     let response: Response;
+    mark("providerRequestStarted");
     try {
       response = providerRef === "openai"
         ? await fetch(OPENAI_RESPONSES_URL, {
@@ -276,6 +277,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
+    mark("providerHeadersReceived");
     if (!response.ok) {
       let failure = aiFailureForStatus(response.status);
       // Classify known configuration failures without exposing the provider response or credentials.
@@ -312,6 +314,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             let event: { type?: unknown; delta?: unknown; response?: { status?: unknown; usage?: { total_tokens?: unknown; input_tokens?: unknown; output_tokens?: unknown } } };
             try { event = JSON.parse(payload); } catch { continue; }
             if (event.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
+              if (!streamed) mark("providerFirstText");
               streamed += event.delta;
               input.onDelta?.(event.delta);
             } else if (event.type === "response.completed" && event.response) {
@@ -326,6 +329,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       } catch {
         return await finishFailure(controller.signal.aborted ? "timeout" : "network");
       }
+      mark("providerBodyCompleted");
       if (!streamed.trim()) return await finishFailure("empty_output");
       if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: usageTokens });
       return {
@@ -343,12 +347,14 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
+    mark("providerBodyCompleted");
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return await finishFailure("malformed_output"); }
     const extracted = providerRef === "openai" ? extractOpenAiText(parsed) : extractAiText(parsed);
     if ("failure" in extracted) return await finishFailure(extracted.failure);
 
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: extracted.usageTokens });
+    mark("providerAccountingCompleted");
     return {
       connected: true,
       text: extracted.text,

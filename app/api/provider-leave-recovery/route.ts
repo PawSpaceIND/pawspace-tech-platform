@@ -1,0 +1,4 @@
+import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{executeProviderLeaveRecovery}from"../../../lib/provider-leave-recovery-execution";
+type Body={recoveryCaseId?:string};
+export async function POST(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");const body=await request.json() as Body,recoveryCaseId=String(body.recoveryCaseId||"").trim();if(!recoveryCaseId)return Response.json({error:"recoveryCaseId is required"},{status:400});const db=await database(),data=await executeProviderLeaveRecovery(db,{recoveryCaseId,actorId:actor.email});await securityAudit(db,actor,"provider.leave.recovery.execute","provider_recovery_case",recoveryCaseId,"completed",{status:data.status,replacementProviderId:data.replacementProviderId??null});return Response.json({data});}catch(error){return authError(error,"Unable to execute provider leave recovery");}}

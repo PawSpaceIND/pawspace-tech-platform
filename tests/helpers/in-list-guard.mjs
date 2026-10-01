@@ -29,6 +29,7 @@ const squash = (value) => value.replace(/\s+/g, "");
  * that cannot grow with production data.
  */
 export const BOUNDED_IN_LISTS = {
+  "ai-analytics.ts": [{ expression: 'COLLECTED_PAYMENT_STATUSES.map(()=>"?")', why: "the four compile-time collected-funds status literals; never booking/result-set IDs" }],
   "communication-engine.ts": [{ expression: 'allowed.map(()=>"?")', why: "the literal statuses one delivery event may advance from" }],
   "boarding-ops-governance.ts": [{ expression: 'petIds.map(()=>"?")', why: "pet ids of a single stay" }],
   "grooming-payment-reconciliation.ts": [{ expression: 'reconciliationSchemaObjects.map(()=>"?")', why: "the six compile-time schema objects required by reconciliation" }],
@@ -63,8 +64,13 @@ export function findUnchunkedInLists(fileName, source, bounded = BOUNDED_IN_LIST
     if (!RAW_PLACEHOLDER_BUILD.test(line)) return;
     // The ONLY thing that makes a built list safe: it is being fed a bounded chunk.
     if (line.includes("chunkedIn")) return;
-    const flat = squash(line);
-    if (allowed.some((expression) => flat.includes(expression))) return;
+    let unbounded = squash(line);
+    for (const expression of allowed) {
+      const escaped = expression.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Remove only the reviewed expression. A second raw list on this line must still fail.
+      unbounded = unbounded.replace(new RegExp(`(?<![\\w$.])${escaped}`, "g"), "");
+    }
+    if (!RAW_PLACEHOLDER_BUILD.test(unbounded)) return;
     offenders.push(`${fileName}:${index + 1}`);
   });
   return offenders;

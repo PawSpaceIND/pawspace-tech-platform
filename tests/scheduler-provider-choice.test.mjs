@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
+import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,rmSync,existsSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join,delimiter} from "node:path";
+import {fileURLToPath} from "node:url";
+import {spawnSync} from "node:child_process";
 import {DatabaseSync} from "node:sqlite";
 import {installWorkersHooks} from "./helpers/module-hooks.mjs";
 import {d1} from "./helpers/execution-harness.mjs";
@@ -98,4 +102,100 @@ test("scheduler CI triggers for every executed regression and its shared fixture
 test("scheduler CI watches transitive engine, capacity, identity and application-shell changes", () => {
   for (const path of ["backend/src/scheduling.ts", "lib/provider-capacity-governance.ts", "lib/platform-session.ts", "worker/index.ts", "app/v2/layout.tsx", "vite.config.ts", "wrangler.toml"])
     assert.ok(covered(path), `Missing transitive scheduler CI trigger: ${path}`);
+});
+
+
+// Execute the real shell entrypoint with all runtime commands replaced by local stubs. Never read
+// the checkout's .dev.vars: these tests create only fake credentials in a disposable directory.
+const personaServe = fileURLToPath(new URL("../scripts/e2e/serve.sh", import.meta.url));
+function runPersonaServe(t, bindings, overrides = {}) {
+ const cwd = mkdtempSync(join(tmpdir(), "pawspace-persona-bindings-"));
+ t.after(() => rmSync(cwd, {recursive:true,force:true}));
+ const bin = join(cwd, "bin"), log = join(cwd, "commands.log"), vars = join(cwd, ".dev.vars");
+ mkdirSync(bin);
+ for (const command of ["npx","node","npm"]) writeFileSync(join(bin,command), `#!/bin/sh\nprintf '%s\\n' '${command}' >> "$PERSONA_STUB_LOG"\nexit 0\n`, {mode:0o755});
+ if (bindings !== null) writeFileSync(vars, bindings);
+ const result = spawnSync("bash", [personaServe], {cwd,encoding:"utf8",timeout:5000,env:{
+  PATH:bin+delimiter+process.env.PATH, PERSONA_STUB_LOG:log,
+  PW_UAT_SERVICE_DATE:"2026-10-05", PAWSPACE_UAT_EXECUTION_NOW_MS:"1791189000000",
+  PAWSPACE_PAYMENT_ENV:"sandbox", PAWSPACE_PAYMENT_LIVE_APPROVED:"false", ...overrides,
+ }});
+ assert.ifError(result.error);
+ return {...result,executedBinding:existsSync(join(cwd,"should-not-exist")),bindings:existsSync(vars)?readFileSync(vars,"utf8"):null,
+  commands:existsSync(log)?readFileSync(log,"utf8").trim().split("\n"):[]};
+}
+function assertPersonaSandbox(result) {
+ assert.equal(result.status,0,result.stderr);
+ assert.equal(result.executedBinding,false);
+ assert.deepEqual(result.commands,["npx","node","npm"]);
+ const actual = Object.fromEntries(result.bindings.trim().split("\n").map(line => {
+  const equals=line.indexOf("=");return [line.slice(0,equals),JSON.parse(line.slice(equals+1))];
+ }));
+ assert.equal(actual.PAWSPACE_DEPLOYMENT_ENV,"e2e");
+ assert.equal(actual.FORBID_PRODUCTION,"true");
+ assert.equal(actual.PAWSPACE_PAYMENT_ENV,"sandbox");
+ assert.equal(actual.PAWSPACE_PAYMENT_LIVE_APPROVED,"false");
+ assert.equal(actual.PAWSPACE_SCHEDULING_ENV,"uat");
+ assert.equal(actual.PAWSPACE_MEDIA_ENV,"uat");
+ assert.equal(actual.PAWSPACE_IDENTITY_ENV,"sandbox");
+ assert.equal(actual.PAWSPACE_UAT_SERVICE_CLOCK,"on");
+ assert.equal(actual.PAWSPACE_UAT_EXECUTION_NOW_MS,"1791189000000");
+ return actual;
+}
+test("persona shell starts without a Maps key and retains only its explicit sandbox defaults", t => {
+ const result=runPersonaServe(t,null),actual=assertPersonaSandbox(result);
+ assert.equal(Object.hasOwn(actual,"GOOGLE_MAPS_SERVER_API_KEY_UAT"),false);
+});
+test("persona shell retains the workflow's quoted UAT Maps key and discards every other inherited binding", t => {
+ const secret="fake_uat_maps_key-not-a-real-credential";
+ const result=runPersonaServe(t,[`GOOGLE_MAPS_SERVER_API_KEY_UAT=${JSON.stringify(secret)}`,
+  'GOOGLE_MAPS_SERVER_API_KEY="fake-live-maps"','RAZORPAY_KEY_SECRET_LIVE="fake-live-payment"',
+  'ELEVENLABS_API_KEY="fake-provider-secret"','OPENAI_API_KEY="fake-ai-secret"',
+  'PAWSPACE_PAYMENT_ENV="live"','PAWSPACE_PAYMENT_LIVE_APPROVED="true"',
+  'PAWSPACE_DEPLOYMENT_ENV="production"','FORBID_PRODUCTION="false"',
+  'PAWSPACE_UAT_SIGNING_KEY="fake-inherited-signing-key"',
+  'UNRECOGNIZED_BINDING="discard-me"','IGNORED_COMMAND=$(touch should-not-exist)',
+ ].join("\n"));
+ const actual=assertPersonaSandbox(result);
+ assert.equal(actual.GOOGLE_MAPS_SERVER_API_KEY_UAT,secret);
+ assert.equal(actual.PAWSPACE_UAT_SIGNING_KEY,"pawspace-e2e-signing-key-local-only-20260911");
+ for(const key of ["GOOGLE_MAPS_SERVER_API_KEY","RAZORPAY_KEY_SECRET_LIVE","ELEVENLABS_API_KEY","OPENAI_API_KEY","UNRECOGNIZED_BINDING","IGNORED_COMMAND"])assert.equal(Object.hasOwn(actual,key),false,key);
+ assert.equal(result.stdout.includes(secret),false);assert.equal(result.stderr.includes(secret),false);
+ assert.equal(result.bindings.includes("fake-live"),false);assert.equal(result.bindings.includes("fake-provider"),false);
+});
+for(const [label,bindings] of [
+ ["unterminated",'GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret'],
+ ["unquoted",'GOOGLE_MAPS_SERVER_API_KEY_UAT=fake-secret'],
+ ["shell interpolation",'GOOGLE_MAPS_SERVER_API_KEY_UAT="$(touch should-not-exist)"'],
+ ["embedded line break",'GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret\\nPAWSPACE_PAYMENT_ENV=live"'],
+ ["empty",'GOOGLE_MAPS_SERVER_API_KEY_UAT=""'],
+ ["duplicate",'GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret-one"\nGOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret-two"'],
+ ["export duplicate",'GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret-one"\nexport GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret-two"'],
+])test(`persona shell refuses ${label} Maps bindings before rewrite or runtime commands`,t=>{
+ const result=runPersonaServe(t,bindings);
+ assert.notEqual(result.status,0);assert.deepEqual(result.commands,[]);assert.equal(result.executedBinding,false);
+ assert.equal(result.bindings,bindings,"invalid input must not be partly rewritten");
+ assert.equal(result.stdout,"");
+ assert.equal(result.stderr.trim(),"[persona-e2e] refusing to start: invalid or duplicate UAT Maps binding");
+ assert.equal(result.stderr.includes("fake-secret"),false);
+});
+for(const override of [{PAWSPACE_PAYMENT_ENV:"live"},{PAWSPACE_PAYMENT_LIVE_APPROVED:"true"}])test(`persona shell retains its live-money refusal: ${Object.keys(override)[0]}`,t=>{
+ const bindings='GOOGLE_MAPS_SERVER_API_KEY_UAT="fake-secret"';
+ const result=runPersonaServe(t,bindings,override);
+ assert.notEqual(result.status,0);assert.deepEqual(result.commands,[]);assert.equal(result.bindings,bindings);
+ assert.match(result.stderr,/refusing to start/);assert.equal(result.stderr.includes("fake-secret"),false);
+});
+
+test("persona shell binds only its explicit disposable synthetic webhook key", t => {
+ const key="a".repeat(64);
+ const result=runPersonaServe(t,'RAZORPAY_WEBHOOK_SECRET_SANDBOX="discard-inherited-key"',{PW_PERSONA_WEBHOOK_SECRET:key});
+ const actual=assertPersonaSandbox(result);
+ assert.equal(actual.RAZORPAY_WEBHOOK_SECRET_SANDBOX,key);
+ assert.equal(result.stdout.includes(key),false);
+ assert.equal(result.stderr.includes(key),false);
+});
+test("persona shell refuses a malformed disposable webhook key before runtime commands", t => {
+ const result=runPersonaServe(t,null,{PW_PERSONA_WEBHOOK_SECRET:'bad-key'});
+ assert.equal(result.status,1);
+ assert.deepEqual(result.commands,[]);
 });

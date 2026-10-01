@@ -1,0 +1,303 @@
+{
+  "base": "7decb60cee7b597ca6a00ffd54acf5bf2831a71f",
+  "status": "Root independently reviewed source; exact28protected keys and2AST entries applied locally, hosted visual QA pending",
+  "protectedEntries": [
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": [
+        "protected",
+        "app/training/page.tsx"
+      ],
+      "before": "ca8cf10458d271d9ad781a9233ab2ed8fac6ed77a3e94732c183cba29945f30a",
+      "after": "bf52c33c05e74d35636a8ad17c92c5b2caadebab1d505d1c1ac69beb6d4f68d5"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": [
+        "protected",
+        "app/components/staff-workspace/staff-console.module.css"
+      ],
+      "before": "d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3",
+      "after": "160abaae8c6f328cf8b3011b7aab25dab6dda181177a8398fd368d1f3ed2d087"
+    },
+    {
+      "manifest": "tests/fixtures/customer-partner-theme-contract.json",
+      "key": [
+        "protected",
+        "app/walking/page.tsx"
+      ],
+      "before": "d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94",
+      "after": "c66d2189d2de589849db4380791b6ec9bbd50e43c1bfb82c15799a8db9dd6dc9"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "key": [
+        "protected",
+        "app/training/page.tsx"
+      ],
+      "before": "ca8cf10458d271d9ad781a9233ab2ed8fac6ed77a3e94732c183cba29945f30a",
+      "after": "bf52c33c05e74d35636a8ad17c92c5b2caadebab1d505d1c1ac69beb6d4f68d5"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "key": [
+        "protected",
+        "app/components/staff-workspace/staff-console.module.css"
+      ],
+      "before": "d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3",
+      "after": "160abaae8c6f328cf8b3011b7aab25dab6dda181177a8398fd368d1f3ed2d087"
+    },
+    {
+      "manifest": "tests/fixtures/inbox-workspace-contract.json",
+      "key": [
+        "protected",
+        "app/walking/page.tsx"
+      ],
+      "before": "d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94",
+      "after": "c66d2189d2de589849db4380791b6ec9bbd50e43c1bfb82c15799a8db9dd6dc9"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": [
+        "protected",
+        "app/training/page.tsx"
+      ],
+      "before": "ca8cf10458d271d9ad781a9233ab2ed8fac6ed77a3e94732c183cba29945f30a",
+      "after": "bf52c33c05e74d35636a8ad17c92c5b2caadebab1d505d1c1ac69beb6d4f68d5"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": [
+        "protected",
+        "app/components/staff-workspace/staff-console.module.css"
+      ],
+      "before": "d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3",
+      "after": "160abaae8c6f328cf8b3011b7aab25dab6dda181177a8398fd368d1f3ed2d087"
+    },
+    {
+      "manifest": "tests/fixtures/partner-services-presentation-contract.json",
+      "key": [
+        "protected",
+        "app/walking/page.tsx"
+      ],
+      "before": "d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94",
+      "after": "c66d2189d2de589849db4380791b6ec9bbd50e43c1bfb82c15799a8db9dd6dc9"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/staff-admin-self-service-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/staff-crm-control-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/staff-operations-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/staff-team-completion-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "key": [
+        "protected",
+        "app/v2/account/page.tsx"
+      ],
+      "before": "a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d",
+      "after": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "key": [
+        "protected",
+        "app/training/page.tsx"
+      ],
+      "before": "ca8cf10458d271d9ad781a9233ab2ed8fac6ed77a3e94732c183cba29945f30a",
+      "after": "bf52c33c05e74d35636a8ad17c92c5b2caadebab1d505d1c1ac69beb6d4f68d5"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "key": [
+        "protected",
+        "app/mobile-app/page.tsx"
+      ],
+      "before": "4c1a1e55d1d8dc30e5483c972c4be8fed9e7750c1734c8d3a9119f464d7f4063",
+      "after": "30ba3bc51ae87a4184a58f57d21c2c76019ead1bdf3a5ed3669c2bceda260b29"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "key": [
+        "protected",
+        "app/components/staff-workspace/staff-console.module.css"
+      ],
+      "before": "d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3",
+      "after": "160abaae8c6f328cf8b3011b7aab25dab6dda181177a8398fd368d1f3ed2d087"
+    },
+    {
+      "manifest": "tests/fixtures/ui-display-truth-contract.json",
+      "key": [
+        "protected",
+        "app/walking/page.tsx"
+      ],
+      "before": "d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94",
+      "after": "c66d2189d2de589849db4380791b6ec9bbd50e43c1bfb82c15799a8db9dd6dc9"
+    }
+  ],
+  "astEntries": [
+    {
+      "manifest": "tests/fixtures/v2-ui-wiring-contract.json",
+      "key": [
+        "files",
+        "app/training/page.tsx"
+      ],
+      "before": {
+        "sha256": "67e4443015c556f32793009f3776df305686f7955d556139cac67989c1dcf447",
+        "functions": 86,
+        "declarations": 99,
+        "interactionProps": 51,
+        "conditions": 34
+      },
+      "after": {
+        "sha256": "bfdee7cc3ab75b5b4cc4298c55430a3955e74d76bd9298136bc7490e96742c73",
+        "functions": 87,
+        "declarations": 99,
+        "interactionProps": 54,
+        "conditions": 34
+      }
+    },
+    {
+      "manifest": "tests/fixtures/v2-ui-wiring-contract.json",
+      "key": [
+        "files",
+        "app/walking/page.tsx"
+      ],
+      "before": {
+        "sha256": "fe989f6c38e30a949eea1506e729996a32ee62b07721b062620f23a059d04e67",
+        "functions": 34,
+        "declarations": 48,
+        "interactionProps": 42,
+        "conditions": 12
+      },
+      "after": {
+        "sha256": "2875648ae714157e45a05eb2d801d450a36d6ee243a7cbece50784ad573a89f6",
+        "functions": 34,
+        "declarations": 48,
+        "interactionProps": 48,
+        "conditions": 12
+      }
+    }
+  ],
+  "reconciledMain": "cceeceba21db95d510d81b235cb17f76db22a88b"
+}

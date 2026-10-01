@@ -1,6 +1,6 @@
 import{isTaxiRideChannel}from"../../../lib/taxi-ride-channels";
 import{CANONICAL_PET_UPSERT}from"../../../lib/canonical-pet-upsert";
-import{database,requireCustomerOwnership,requirePermission,resolveActor}from"../../../lib/server-auth";
+import{database,requireCustomerOwnership,requirePermission,resolveActor,type AuthenticatedActor}from"../../../lib/server-auth";
 import{governTaxiRideBooking,ensureTaxiRideTables}from"../../../lib/taxi-ride-governance";
 import{holdTaxiFleetVehicle,confirmTaxiFleetHoldStatement,assertTaxiFleetHoldConfirmed}from"../../../lib/taxi-fleet-governance";
 import{assertTaxiPickupInServiceArea}from"../../../lib/taxi-service-area";
@@ -39,7 +39,8 @@ async function readBundle(db:D1Database,booking:Row,duplicatePrevented:boolean){
  * it is logged here and answered with a plain retry sentence - the request is idempotent, so a retry
  * replays or finishes the same booking and never books twice. */
 async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Pet Taxi booking failed"},error.status||500)}console.error("[taxi-ride-bookings] unexpected failure",error);return Response.json({error:"PawSpace could not finish reserving your Pet Taxi just now. Please try again in a moment - trying again will not book twice.",code:"TAXI_BOOKING_RETRY",retryAfterSeconds:5},{status:503,headers:{"cache-control":"no-store","retry-after":"5"}})}
-export async function POST(request:Request){let releaseHeldVehicle:(()=>Promise<void>)|null=null;try{sameOriginWrite(request);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const channel=input.channel||"customer_app";
+export async function POST(request:Request){return executeTaxiRideBookingRequest(request);}
+export async function executeTaxiRideBookingRequest(request:Request,actorOverride?:AuthenticatedActor){let releaseHeldVehicle:(()=>Promise<void>)|null=null;try{sameOriginWrite(request);const actor=actorOverride??await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const channel=input.channel||"customer_app";
  /*
   * The channel selects which authorization runs, so an UNRECOGNISED one ran none of them.
   * `customer_app` and `boarding_cross_sell` require customer ownership; `assisted_staff` requires

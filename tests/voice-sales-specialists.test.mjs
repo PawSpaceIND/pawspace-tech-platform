@@ -362,3 +362,101 @@ test('eligible named-package offer passes final governance without a model or st
  assert.ok(generated,'Offer enquiry reaches the grounded provider');assert.match(generated.text,/200 rupees off/);const check=await orchestrator.validateAiProviderReply(w.db,generated,w.customerId);assert.deepEqual(check.failures,[]);
  assert.match(r.turn.output,/200 rupees off/);assert.notEqual(r.turn.outcome,'handoff');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+for (const [service, packageCode, hours] of [['boarding', 'boarding-4h', 4], ['pet_sitting', 'sitting-visit-60', 1]]) {
+ test(`voice ${service} quotes the exact care window and creates one canonical booking only after confirmation`, async t => {
+  const w = await world(t, service);
+  const plan = actions(w, packageCode);
+  delete plan[0].arguments.cadenceDays;
+  plan[0].arguments.scheduledEnd = new Date(Date.parse(start) + hours * 3600000).toISOString();
+  const offer = await prepare(w, `stay-${service}`, plan).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
+  assert.equal(bookingCount(w), 0);
+  assert.equal(w.calls.length, 0);
+  assert.match(offer.summary, /Care ends/);
+  assert.match(offer.summary, /Recommended caregiver/);
+  const confirmed = await confirm(w, offer.id).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
+  assert.equal(bookingCount(w), 1);
+  assert.equal(w.calls.length, 1);
+  assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(confirmed.bookingId).service_code, service);
+  assert.equal(confirmed.paymentVerified, false);
+  assert.equal((await confirm(w, offer.id)).duplicatePrevented, true);
+  assert.equal(bookingCount(w), 1);
+ });
+}
+
+test('all-service Maya cannot activate the superseded Walking pay-after-service UAT flow',async t=>{
+ const w=await world(t);const plan=actions(w,'walking-30','pay_after_service');plan[0].arguments.serviceCode='dog_walking';
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'walking-policy-conflict',actions:plan}),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('all-service Maya refuses an unsupported service before making reservations or payment orders',async t=>{
+ const w=await world(t);
+ const plan=actions(w);plan[0].arguments.serviceCode='fresh_food';
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'unsupported',actions:plan}),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
+});
+
+test('Boarding cannot quote a pet whose vaccination has not been verified',async t=>{
+ const w=await world(t,'boarding');
+ w.sqlite.prepare("UPDATE canonical_pets SET vaccination_status='not_provided' WHERE id=?").run(w.petId);
+ const plan=actions(w,'boarding-4h');delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+4*3600000).toISOString();
+ await refuse(prepare(w,'unverified-stay',plan),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('a stay quote cannot be reused by another conversation or for a changed caregiver',async t=>{
+ const w=await world(t,'pet_sitting');
+ const plan=actions(w,'sitting-visit-60');delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+3600000).toISOString();
+ const offer=await prepare(w,'stay-owner',plan);
+ const stored=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
+ const quote=JSON.parse(stored.quote_json), args=JSON.parse(stored.actions_json)[1].arguments;
+ w.sqlite.prepare("UPDATE voice_sales_offers SET status='executing' WHERE id=?").run(offer.id);
+ const {confirmedStaySalesPayload}=await import('../lib/voice-stay-sales.ts');
+ const input={threadId:w.threadId,customerId:w.customerId,service:'pet_sitting',args,petCount:1,scheduledStart:start,scheduledEnd:plan[0].arguments.scheduledEnd,providerId:quote.recommendedProvider.id};
+ await refuse(confirmedStaySalesPayload(w.db,{...input,threadId:'ANOTHER-THREAD'}),403);
+ await refuse(confirmedStaySalesPayload(w.db,{...input,providerId:'ANOTHER-PROVIDER'}),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+for(const redundantPin of [false,true])test('Taxi voice checkout uses routed fare and fleet booking after separate confirmation; duplicate PIN='+redundantPin,async t=>{
+ const w=await world(t,'pet_taxi');
+ await (await import('../lib/taxi-fleet-governance.ts')).ensureTaxiFleetTables(w.db);
+ for(const provider of w.sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE services_json LIKE '%pet_taxi%'").all())
+  for(const car of w.sqlite.prepare('SELECT id FROM taxi_fleet_vehicles WHERE active=1').all())
+   w.sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility(provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(provider.id,car.id);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,GOOGLE_MAPS_SERVER_API_KEY_UAT:'synthetic-test-key',GOOGLE_ROUTES_SERVER_API_KEY_UAT:'synthetic-test-key',PAWSPACE_MAPS_ENV:'sandbox'};
+ const paymentFetch=globalThis.fetch;let mapRequests=0;
+ globalThis.fetch=async(url,init)=>{
+  const u=new URL(String(url));
+  if(u.hostname==='maps.googleapis.com'){
+   mapRequests++;const pickup=u.searchParams.get('address').startsWith('12');
+   return Response.json({status:'OK',results:[{formatted_address:u.searchParams.get('address'),geometry:{location:{lat:pickup?12.9784:12.9352,lng:pickup?77.6408:77.6245}}}]});
+  }
+  if(u.hostname==='routes.googleapis.com'){mapRequests++;return Response.json({routes:[{distanceMeters:8000,duration:'1200s'}]});}
+  return paymentFetch(url,init);
+ };
+ const plan=actions(w,'citroen_ec3','split_50_50');delete plan[0].arguments.cadenceDays;
+ if(redundantPin)plan[0].arguments.serviceAddress+=', PIN '+plan[0].arguments.servicePincode;
+ plan[0].arguments.scheduledStart='2026-10-20T10:00:00+05:30'; // Model output uses the caller's India offset.
+ plan[1].arguments.taxi={originLabel:'12 Test Street',destinationLabel:'24 Test Street, Koramangala, Bengaluru',passengerCount:1,luggageCount:0,tripType:'one_way',ridePurpose:'regular',waitingMinutes:0,hyperactivePet:false};
+ const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'taxi-voice',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);assert.equal(mapRequests,3);
+ assert.equal(w.sqlite.prepare('SELECT scheduled_start FROM taxi_ride_quotes').get().scheduled_start,start);
+ assert.match(offer.summary,/Vehicle: Citroen eC3/);assert.match(offer.summary,/12 Test Street/);
+ const result=await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);assert.equal(result.paymentVerified,false);
+ assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,'pet_taxi');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM taxi_fleet_reservations WHERE status='confirmed'").get().n,1);
+ assert.equal((await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'})).duplicatePrevented,true);
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});
+
+test('Taxi pickup equivalence never ignores a different street or PIN',async()=>{
+ const {canonicalTaxiPickup}=await import('../lib/voice-taxi-sales.ts');
+ assert.equal(canonicalTaxiPickup('12 Test Street','12 Test Street, PIN 560038','560038'),'12 Test Street, PIN 560038');
+ for(const origin of ['13 Test Street','12 Test Street, PIN 560039','12 Test Street, PIN 560038, another address','560038'])assert.throws(()=>canonicalTaxiPickup(origin,'12 Test Street, PIN 560038','560038'));
+});

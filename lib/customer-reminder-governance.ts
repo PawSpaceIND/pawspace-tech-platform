@@ -1,4 +1,5 @@
-import { enqueueCommunication, ensureCommunicationTables, type CommunicationChannel } from "./communication-engine";
+import { centralConsentAllows } from "./communication-governance";
+import { enforceCommunicationDispatchPolicy, enqueueCommunication, ensureCommunicationTables, type CommunicationChannel } from "./communication-engine";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -34,23 +35,64 @@ export async function ensureReminderGovernanceTables(db: Db) {
  * reminders observable end-to-end while keeping WhatsApp/SMS/email fail-closed. A future provider
  * adapter must be a separate, explicitly enabled boundary; this consumer can never send externally.
  */
+function reminderRuleForTemplate(template: string) {
+  if (template === "grooming_rebooking_reminder") return "rule-grooming-rebook";
+  if (template === "subscription_unused_sessions_reminder") return "rule-subscription-unused";
+  if (template === "subscription_renewal_reminder") return "rule-subscription-renewal";
+  return null;
+}
+
 export async function consumeCustomerReminderSandboxOutbox(db:Db,input:{asOf?:number;limit?:number}={}){
   await ensureReminderGovernanceTables(db);await ensureCommunicationTables(db);
   const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(500,Math.floor(input.limit??100)));
-  const rows=await db.prepare("SELECT o.message_id,o.status,m.channel,m.template_key FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id WHERE m.purpose='lifecycle' AND o.status IN ('queued','scheduled','retry_pending') AND o.next_attempt_at<=? ORDER BY o.next_attempt_at ASC LIMIT ?").bind(asOf,limit).all<Row>();
+  // Only this provider-free sink owns these leases. An unmarked or external dispatch claim may
+  // represent an uncertain send and must remain held for its owning delivery boundary.
+  await db.prepare("UPDATE communication_outbox SET status='retry_pending',next_attempt_at=?,locked_at=NULL,last_error=NULL,updated_at=? WHERE status='dispatching' AND last_error GLOB 'reminder_sandbox_claim:*' AND locked_at<=? AND EXISTS (SELECT 1 FROM communication_messages m WHERE m.id=communication_outbox.message_id AND m.purpose='lifecycle' AND m.template_key IN ('grooming_rebooking_reminder','subscription_unused_sessions_reminder','subscription_renewal_reminder') AND m.status IN ('queued','scheduled','retry_pending') AND m.provider_reference IS NULL AND m.provider IS NULL)").bind(asOf,asOf,asOf-5*60_000).run();
+  const rows=await db.prepare("SELECT o.message_id,o.status,m.customer_id,m.channel,m.template_key FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id WHERE m.purpose='lifecycle' AND m.template_key IN ('grooming_rebooking_reminder','subscription_unused_sessions_reminder','subscription_renewal_reminder') AND o.status IN ('queued','scheduled','retry_pending') AND m.status IN ('queued','scheduled','retry_pending') AND m.provider IS NULL AND m.provider_reference IS NULL AND o.next_attempt_at<=? ORDER BY o.next_attempt_at ASC LIMIT ?").bind(asOf,limit).all<Row>();
   let sandboxDelivered=0,duplicatePrevented=0;
   for(const row of rows.results){
     const messageId=String(row.message_id);
     const prior=await db.prepare("SELECT message_id FROM reminder_sandbox_deliveries WHERE message_id=?").bind(messageId).first<Row>();
     if(prior){duplicatePrevented++;continue;}
+    const claimToken = `reminder_sandbox_claim:${crypto.randomUUID()}`;
+    const claim = await db.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=?,updated_at=?,last_error=? WHERE message_id=? AND status IN ('queued','scheduled','retry_pending') AND next_attempt_at<=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND template_key=? AND status IN ('queued','scheduled','retry_pending') AND provider IS NULL AND provider_reference IS NULL)").bind(asOf,asOf,claimToken,messageId,asOf,messageId,String(row.template_key)).run();
+    if (!Number(claim.meta?.changes || 0)) { duplicatePrevented++; continue; }
+    const ruleId = reminderRuleForTemplate(String(row.template_key));
+    if (ruleId && !await ruleActive(db,[ruleId])) {
+      await db.batch([
+        db.prepare("UPDATE communication_outbox SET status='scheduled',next_attempt_at=?,locked_at=NULL,updated_at=? WHERE message_id=? AND status='dispatching' AND last_error=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL)").bind(asOf+5*60_000,asOf,messageId,claimToken,messageId,String(row.template_key)),
+        db.prepare("UPDATE communication_messages SET status='scheduled',updated_at=? WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL AND EXISTS (SELECT 1 FROM communication_outbox WHERE message_id=? AND status='scheduled' AND last_error=?)").bind(asOf,messageId,String(row.template_key),messageId,claimToken),
+        db.prepare("UPDATE communication_outbox SET last_error='reminder_rule_paused' WHERE message_id=? AND status='scheduled' AND last_error=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND status='scheduled' AND template_key=? AND provider IS NULL AND provider_reference IS NULL)").bind(messageId,claimToken,messageId,String(row.template_key)),
+      ]);
+      continue;
+    }
+    const customerId = String(row.customer_id);
+    const pref = await db.prepare("SELECT service_updates FROM communication_preferences WHERE customer_id=?").bind(customerId).first<Row>();
+    const customer = pref?.service_updates == null && await tableExists(db,"canonical_customers") ? await db.prepare("SELECT consent_json FROM canonical_customers WHERE id=?").bind(customerId).first<Row>() : null;
+    let serviceUpdates: unknown = pref?.service_updates;
+    if (customer) {
+      try { serviceUpdates = JSON.parse(String(customer.consent_json)).serviceUpdates; } catch { serviceUpdates = null; }
+    }
+    if (serviceUpdates === false || serviceUpdates === 0 || !await centralConsentAllows(db,customerId,String(row.channel))) {
+      await db.batch([
+        db.prepare("UPDATE communication_outbox SET status='suppressed',locked_at=NULL,updated_at=? WHERE message_id=? AND status='dispatching' AND last_error=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL)").bind(asOf,messageId,claimToken,messageId,String(row.template_key)),
+        db.prepare("UPDATE communication_messages SET status='suppressed',updated_at=? WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL AND EXISTS (SELECT 1 FROM communication_outbox WHERE message_id=? AND status='suppressed' AND last_error=?)").bind(asOf,messageId,String(row.template_key),messageId,claimToken),
+        db.prepare("UPDATE communication_outbox SET last_error='current_consent_refused' WHERE message_id=? AND status='suppressed' AND last_error=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND status='suppressed' AND template_key=? AND provider IS NULL AND provider_reference IS NULL)").bind(messageId,claimToken,messageId,String(row.template_key)),
+      ]);
+      continue;
+    }
+    const gate = await enforceCommunicationDispatchPolicy(db,messageId,asOf,claimToken,String(row.template_key));
+    if (!gate.allowed) continue;
     const detail={channel:String(row.channel),templateKey:String(row.template_key),providerConnector:"disabled",externalDelivery:false};
-    await db.batch([
-      db.prepare("INSERT INTO reminder_sandbox_deliveries (message_id,delivery_status,adapter,external_delivery,detail_json,processed_at) VALUES (?,'sandbox_delivered','governed_uat_sink',0,?,?)").bind(messageId,JSON.stringify(detail),asOf),
-      db.prepare("UPDATE communication_outbox SET status='sandbox_delivered',last_error=NULL,locked_at=NULL,updated_at=? WHERE message_id=?").bind(asOf,messageId),
-      db.prepare("UPDATE communication_messages SET status='sandbox_delivered',provider='governed_uat_sink',provider_reference=NULL,updated_at=? WHERE id=?").bind(asOf,messageId),
-      db.prepare("INSERT INTO communication_message_delivery_events (id,message_id,provider,event_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),messageId,"governed_uat_sink",`sandbox:${messageId}`,"delivered",JSON.stringify(detail),asOf),
+    const completed = await db.batch([
+      db.prepare("UPDATE communication_outbox SET status='sandbox_delivered',locked_at=NULL,updated_at=? WHERE message_id=? AND status='dispatching' AND last_error=? AND EXISTS (SELECT 1 FROM communication_messages WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL)").bind(asOf,messageId,claimToken,messageId,String(row.template_key)),
+      db.prepare("UPDATE communication_messages SET status='sandbox_delivered',provider='governed_uat_sink',provider_reference=NULL,updated_at=? WHERE id=? AND status IN ('queued','scheduled','retry_pending') AND template_key=? AND provider IS NULL AND provider_reference IS NULL AND EXISTS (SELECT 1 FROM communication_outbox WHERE message_id=? AND status='sandbox_delivered' AND last_error=?)").bind(asOf,messageId,String(row.template_key),messageId,claimToken),
+      db.prepare("INSERT INTO reminder_sandbox_deliveries (message_id,delivery_status,adapter,external_delivery,detail_json,processed_at) SELECT ?,'sandbox_delivered','governed_uat_sink',0,?,? WHERE EXISTS (SELECT 1 FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id WHERE o.message_id=? AND o.status='sandbox_delivered' AND o.last_error=? AND m.status='sandbox_delivered' AND m.provider='governed_uat_sink')").bind(messageId,JSON.stringify(detail),asOf,messageId,claimToken),
+      db.prepare("INSERT INTO communication_message_delivery_events (id,message_id,provider,event_id,event_type,detail_json,created_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM reminder_sandbox_deliveries d JOIN communication_outbox o ON o.message_id=d.message_id WHERE d.message_id=? AND o.status='sandbox_delivered' AND o.last_error=?)").bind(crypto.randomUUID(),messageId,"governed_uat_sink",`sandbox:${messageId}`,"delivered",JSON.stringify(detail),asOf,messageId,claimToken),
+      db.prepare("UPDATE communication_outbox SET last_error=NULL WHERE message_id=? AND status='sandbox_delivered' AND last_error=?").bind(messageId,claimToken),
     ]);
-    sandboxDelivered++;
+    if (Number(completed[2]?.meta?.changes || 0)) sandboxDelivered++;
+    else duplicatePrevented++;
   }
   return{scanned:rows.results.length,sandboxDelivered,duplicatePrevented,deliveryStatus:"sandbox_delivered",adapter:"governed_uat_sink",externalDelivery:false,connectorsEnabled:false};
 }
@@ -145,6 +187,10 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
 export async function generateSubscriptionReminders(db: Db, input: { actorId: string; asOf?: number }) {
   await ensureReminderGovernanceTables(db);
   if (!(await tableExists(db, "customer_grooming_subscriptions")) || !(await tableExists(db, "canonical_bookings"))) return { sessionReminders: 0, renewalReminders: 0, suppressed: 0, subscriptionsScanned: 0, skipped: true };
+  const [unusedActive, renewalActive] = await Promise.all([
+    ruleActive(db, ["rule-subscription-unused"]),
+    ruleActive(db, ["rule-subscription-renewal"]),
+  ]);
   const asOf = input.asOf ?? Date.now();
   const policy = await currentCadencePolicy(db);
   const subs = await db.prepare(
@@ -156,7 +202,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
     const total = Number(sub.total_sessions), consumed = Number(sub.sessions_consumed), expiresAt = Number(sub.expires_at);
     const channel = await preferredChannel(db, customerId);
 
-    if (consumed < total) {
+    if (unusedActive && consumed < total) {
       const lastActivity = await db.prepare(
         "SELECT MAX(scheduled_start) last FROM canonical_bookings WHERE customer_id=? AND service_code='grooming' AND status NOT IN ('cancelled','draft')"
       ).bind(customerId).first<Row>();
@@ -176,7 +222,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
     }
 
     const daysToExpiry = Math.floor((expiresAt - asOf) / day);
-    if (daysToExpiry >= 0 && daysToExpiry <= policy.subscriptionRenewalDays) {
+    if (renewalActive && daysToExpiry >= 0 && daysToExpiry <= policy.subscriptionRenewalDays) {
       const cycleKey = `subscription_renewal:${subscriptionId}`;
       const result = await enqueueCommunication(db, {
         customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
@@ -205,12 +251,12 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
  * The mapping is the platform's own: rule-grooming-rebook names the grooming rebooking generator, and
  * rule-subscription-unused / rule-subscription-renewal name the subscription one.
  *
- * LIMIT, deliberately not papered over: the subscription generator serves TWO rules, so it is skipped
- * only when BOTH are inactive. Deactivating one of that pair alone still runs the generator. Giving it
- * per-rule granularity means teaching the generator which rule each reminder belongs to, which is a
- * larger change than this correction; it is recorded in the audit ledger.
+ * The subscription generator checks each rule independently before evaluating its trigger, including
+ * direct generator callers. The sweep skips its scan altogether when both rules are paused.
  */
 async function ruleActive(db: Db, ids: string[]) {
+  // Missing legacy governance is compatible; operational read errors must stop the sweep.
+  if (!await tableExists(db, "lifecycle_reminder_rules")) return true;
   // Queried one id at a time rather than through an IN list. The repository's own guard
   // (tests/helpers/in-list-guard.mjs) rejects a placeholder list built from a variable-length array,
   // and it is right to: that shape breaks past D1's 100-bound-parameter cap as soon as the list grows
@@ -219,7 +265,7 @@ async function ruleActive(db: Db, ids: string[]) {
   // shape rather than reproducing it.)
   let known = 0;
   for (const id of ids) {
-    const row = await db.prepare("SELECT active FROM lifecycle_reminder_rules WHERE id=?").bind(id).first<Row>().catch(() => null);
+    const row = await db.prepare("SELECT active FROM lifecycle_reminder_rules WHERE id=?").bind(id).first<Row>();
     if (!row) continue;
     known += 1;
     if (Number(row.active) === 1) return true;
