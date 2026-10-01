@@ -64,9 +64,10 @@ test("native AgentStream uses PawSpace specialist sales profiles with scheduling
 
 test("native AgentStream speaks the governed opening disclosure before normal turns", () => {
   assert.match(bridge, /SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=\?/);
-  assert.match(bridge, /synthesizeLinear16\(env, active\.openingDisclosure, active\.sampleRate\)/);
+  assert.match(bridge, /synthesizeLinear16\(env, active\.openingDisclosure, active\.sampleRate, controller\.signal\)/);
   assert.match(bridge, /recordSegment\(env, active, "assistant", active\.openingDisclosure/);
-  assert.match(bridge, /queueAudio\(active, greeting\.audio/);
+  assert.match(bridge, /streamAudio\(server, active, greeting\.audio, markName/);
+  assert.match(bridge, /agentstream_first_audio/);
 });
 
 test("native AgentStream preserves bounded canonical voice follow-up history", () => {
@@ -107,8 +108,26 @@ test("native AgentStream auto-detects STT language and records safe turn-quality
   assert.match(bridge, /nativeVoiceTurnDiagnostics\(/);
   assert.match(bridge, /transcriptChars: stt\.text\.length/);
   assert.match(bridge, /assistantChars: generated\.output\.length/);
-  assert.match(bridge, /synthesizeNativeCarrierTts\(env, output, sampleRate\)/);
+  assert.match(bridge, /synthesizeNativeCarrierTts\(env, output, sampleRate, \{ signal \}\)/);
+  assert.match(bridge, /firstAudioMs,/);
   assert.match(bridge, /ttsModel: tts\.model/);
   assert.match(bridge, /ttsProvider: tts\.provider/);
   assert.match(bridge, /ttsFallbackUsed: tts\.fallbackUsed/);
+});
+
+test("native AgentStream handles caller media immediately and invalidates stale assistant work", () => {
+  assert.doesNotMatch(bridge, /chain\s*=\s*chain\.then/);
+  assert.match(bridge, /speechEpoch = interruptGeneration\(active\)/);
+  assert.match(bridge, /activeTtsAbort\?\.abort\(\)/);
+  assert.match(bridge, /event: "clear"/);
+  assert.match(bridge, /ctx\.waitUntil\(processUtterance\(utterance, active, epoch\)\)/);
+  assert.match(bridge, /epoch !== generationEpoch/);
+});
+
+test("native carrier TTS streams validated PCM instead of buffering the full response", () => {
+  assert.match(nativeTts, /result\.body/);
+  assert.doesNotMatch(nativeTts, /response\.arrayBuffer\(\)/);
+  assert.match(nativeTts, /validatePcmStream/);
+  assert.match(bridge, /const part = await reader\.read\(\)/);
+  assert.match(bridge, /agentstream_first_audio/);
 });

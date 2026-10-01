@@ -38,6 +38,7 @@ test("turn diagnostics are PII-safe, bounded, and keep TTS truth English-only", 
     sttMs: 240,
     llmMs: 410,
     ttsMs: 190,
+    firstAudioMs: 760,
     totalMs: 840,
     latencyTargetMs: 1500,
     transcriptChars: 42,
@@ -57,6 +58,7 @@ test("turn diagnostics are PII-safe, bounded, and keep TTS truth English-only", 
     sttMs: 240,
     llmMs: 410,
     ttsMs: 190,
+    firstAudioMs: 760,
     totalMs: 840,
     latencyTargetMs: 1500,
     targetMet: true,
@@ -81,6 +83,7 @@ test("diagnostics reject unsafe metadata shapes instead of echoing them", () => 
     sttMs: -1,
     llmMs: Infinity,
     ttsMs: 999999,
+    firstAudioMs: 999999,
     totalMs: 999999,
     latencyTargetMs: 1500,
     transcriptChars: 999999,
@@ -99,7 +102,9 @@ test("diagnostics reject unsafe metadata shapes instead of echoing them", () => 
   assert.equal(result.sttMs, 0);
   assert.equal(result.llmMs, 0);
   assert.equal(result.ttsMs, 60_000);
+  assert.equal(result.firstAudioMs, 60_000);
   assert.equal(result.totalMs, 60_000);
+  assert.equal(result.targetMet, false);
   assert.equal(result.transcriptChars, 60_000);
   assert.equal(result.assistantChars, 60_000);
   assert.equal(result.outcome.length, 80);
