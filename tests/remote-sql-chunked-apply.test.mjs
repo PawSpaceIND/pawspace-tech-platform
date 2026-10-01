@@ -33,6 +33,11 @@ installWorkersHooks("__REMOTE_SQL_DB__", "__REMOTE_SQL_ENV__");
 
 const capacity = await import("../lib/provider-capacity-governance.ts");
 const aiRollout = await import("../lib/ai-audience-rollout.ts");
+const aiConfig = await import("../lib/ai-business-configuration.ts");
+const aiHandoff = await import("../lib/ai-human-handoff.ts");
+const bookingCore = await import("../lib/canonical-booking-core-schema.ts");
+const voiceSales = await import("../lib/voice-sales-specialists.ts");
+const whatsappControl = await import("../lib/whatsapp-conversation-control.ts");
 const { ensureBoardingStayLifecycleTables } = await import("../lib/boarding-stay-lifecycle.ts");
 const { ensureTaxiFleetTables } = await import("../lib/taxi-fleet-governance.ts");
 const transient = await import("../lib/d1-transient.ts");
@@ -87,6 +92,11 @@ async function deploymentShapedDatabase() {
   const db = makeD1(sqlite);
   await capacity.ensureProviderCapacityTables(db);
   await aiRollout.ensureAiAudienceRolloutTables(db);
+  await aiConfig.ensureAiBusinessConfiguration(db);
+  await aiHandoff.ensureAiHumanHandoff(db);
+  await bookingCore.ensureCanonicalBookingCoreTables(db);
+  await voiceSales.ensureVoiceSalesOffers(db);
+  await whatsappControl.ensureWhatsAppConversationControl(db);
   return sqlite;
 }
 const schemaOf = (sqlite) => sqlite.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
