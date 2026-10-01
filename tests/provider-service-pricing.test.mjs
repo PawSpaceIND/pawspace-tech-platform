@@ -9,6 +9,9 @@ const boarding=await import("../lib/boarding-governance.ts");
 const sitting=await import("../lib/sitting-governance.ts");
 const live=await import("../lib/live-commercial-quotes.ts");
 
+// Keep quote windows and rate effective dates reproducible as the real calendar advances.
+test.beforeEach(t=>t.mock.timers.enable({apis:["Date"],now:new Date("2026-09-30T00:00:00.000Z")}));
+
 async function world(model="commission_standard"){
  const ctx=freshCountingD1();globalThis.__PROVIDER_PRICE_DB__=ctx.db;await terms.ensureCommercialTermsTables(ctx.db);await boarding.ensureBoardingGovernanceTables(ctx.db);const now=Date.now();
  await ctx.db.prepare("INSERT INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed,onboarding_fee,renewal_fee,renewal_months,effective_from,reason,created_by,approved_by,approval_reference,created_at,updated_at) VALUES ('TERM','boarding','P1',1,'active',?,?,?,?,0,0,0,12,'2026-01-01','provider self pricing test','maker','checker','TEST',?,?)").bind(model,model==="direct_employee"?0:.70,model==="commission_standard"?"provider_gst_on_behalf":"none",.18,now,now).run();return ctx;
