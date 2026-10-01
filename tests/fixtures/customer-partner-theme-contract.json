@@ -429,7 +429,7 @@
     "app/components/staff-workspace/navigation.ts": "2d4730c7a555c4fa33856ce3da7915418687e6f34397a0d37ff693f04d186bd4",
     "app/components/staff-workspace/staff-console.module.css": "890e94b5baefd6d6dffb347dd0a57d63a9f061b5793b191eae3cbb17573cc2a5",
     "app/components/staff-workspace/staff-module.module.css": "42e08f82d15cdaeacdac3823f0f4cd3f5d3d35488bc42e49abd0000b8002d86f",
-    "app/components/staff-workspace/staff-workspace.module.css": "b78ede82f6fdd6d7b9cce7e3f60372bec588e36b98630acff16cb98dccfee06e",
+    "app/components/staff-workspace/staff-workspace.module.css": "5f49104b7d3d0019b6ece1817c7780422bec9a0f9f72db7b5229c4fb2bc3d6d1",
     "app/components/test-sync-panel.module.css": "c46439c3bd344a210c438901b4391699138c9f91251b86cea600266d7f1c30d0",
     "app/components/test-sync-panel.tsx": "8ec30fa87885161722eefce509c7ab3862ea06cf81e94c50934e698751502567",
     "app/components/ui/Badge.tsx": "36f61af970cc021b29e77d1932b1d029b54068b232111396a535b8293cfd2a81",
