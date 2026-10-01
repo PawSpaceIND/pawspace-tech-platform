@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { rejects } from "node:assert/strict";
 
 /*
  * Employee / admin journey: workspace visibility -> control surfaces -> refund adjudication.
@@ -6,6 +7,9 @@ import { test, expect } from "@playwright/test";
  */
 const AS_ADMIN = { "oai-authenticated-user-email": "e2e.admin@pawspace.test", cookie: "pawspace_admin_mfa=e2e-admin-mfa-session-token" };
 test.use({ extraHTTPHeaders: AS_ADMIN });
+function waitingRequestSuccessAnnouncements(page:Page){
+ return page.getByRole('status').filter({hasText:/Request WAITING-GROUP cancelled\.|(?:Partner acceptance and customer|Customer) booking confirmation is still pending\.|Partner acceptance and customer booking confirmation are still pending\./});
+}
 
 test("the team workspace renders for an admin", async ({ page }) => {
   const res = await page.goto("/team", { waitUntil: "domcontentloaded" });
@@ -180,6 +184,18 @@ for(const outcome of ["full_time","commission","cancel","conflict","incomplete"]
  await submit.click();
  await expect.poll(()=>submitted).toEqual({groupId:"WAITING-GROUP",expectedRevision:revision,action:outcome==="cancel"?"cancel":"assign",...(outcome==="cancel"?{}:{providerId:"WAITING-PROVIDER"}),reason:"Reviewed the customer request"});
  if(outcome==="conflict"||outcome==="incomplete"){
-  await expect(form.getByRole("textbox",{name:"Reason",exact:true})).toHaveValue("Reviewed the customer request");await expect(submit).toBeDisabled();await expect(page.getByRole("alert")).toBeVisible();await expect(page.locator('[role="status"]:not([class*="navHint"])')).toHaveCount(0);await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Manage request",exact:true})).toBeVisible();
+  await expect(form.getByRole("textbox",{name:"Reason",exact:true})).toHaveValue("Reviewed the customer request");await expect(submit).toBeDisabled();await expect(page.getByRole("alert")).toBeVisible();await expect(waitingRequestSuccessAnnouncements(page)).toHaveCount(0);await page.getByRole("button",{name:"Refresh schedule",exact:true}).click();await expect(page.getByRole("button",{name:"Manage request",exact:true})).toBeVisible();
  }else{const message=outcome==="cancel"?"Request WAITING-GROUP cancelled.":outcome==="commission"?"Partner acceptance and customer booking confirmation are still pending.":"Customer booking confirmation is still pending.";await expect(page.getByRole("status").filter({hasText:message})).toBeVisible();}
+});
+
+test('the waiting-request failure assertion rejects success messages while permitting an unrelated inbox announcement',async({page})=>{
+ await page.setContent('<span role="status" id="inbox-notice">1 new order update. Open your inbox to review.</span>');
+ await expect(waitingRequestSuccessAnnouncements(page)).toHaveCount(0);
+ for(const message of ['Request WAITING-GROUP cancelled.','Customer booking confirmation is still pending.','Partner acceptance and customer booking confirmation are still pending.']){
+  await page.evaluate(text=>{const notice=document.createElement('p');notice.id='false-confirmation';notice.setAttribute('role','status');notice.textContent=text;document.body.appendChild(notice);},message);
+  await rejects(()=>expect(waitingRequestSuccessAnnouncements(page)).toHaveCount(0,{timeout:100}),/toHaveCount/);
+  await page.locator('#false-confirmation').evaluate(element=>element.remove());
+  await expect(waitingRequestSuccessAnnouncements(page)).toHaveCount(0);
+ }
+ await expect(page.locator('#inbox-notice')).toHaveText('1 new order update. Open your inbox to review.');
 });

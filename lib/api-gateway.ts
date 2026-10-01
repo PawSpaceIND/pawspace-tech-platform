@@ -49,6 +49,7 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/control-runtime-switches")return method==="GET"?"audit.view":"settings.manage";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
+  if(url.pathname==="/api/workspace-order-updates"&&["GET","POST"].includes(method))return "bookings.view";
   // Test issuer enforces staging locks, access code and fixed fixtures before any session exists.
   if(url.pathname==="/api/uat-customer-switch")return null;
   if(url.pathname==="/api/uat-provider-switch")return null;

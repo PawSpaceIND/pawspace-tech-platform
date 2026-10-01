@@ -125,7 +125,7 @@ test("a completed grooming booking past the cadence queues exactly one lifecycle
   const [message] = messages(sqlite);
   assert.equal(message.template_key, "grooming_rebooking_reminder");
   assert.equal(message.status, "queued");
-  assert.equal(message.idempotency_key, "grooming_rebooking:CU-1:1", "keyed to the cadence cycle, not just the customer");
+  assert.equal(message.idempotency_key, "grooming_rebooking:CU-1:BK-1:1", "keyed to the cadence cycle, not just the customer");
 });
 
 test("a booking inside the cadence window is not due yet", async () => {
@@ -182,7 +182,7 @@ test("a customer who still has not rebooked is reminded again at the next cadenc
   // three rapid enqueues can share one and the ORDER BY falls through to a random UUID. The claim
   // here is that all three cadence cycles produced a reminder, not the order the rows landed in.
   assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key).sort(), [
-    "grooming_rebooking:CU-5:1", "grooming_rebooking:CU-5:2", "grooming_rebooking:CU-5:3",
+    "grooming_rebooking:CU-5:BK-5:1", "grooming_rebooking:CU-5:BK-5:2", "grooming_rebooking:CU-5:BK-5:3",
   ], "day 15/30/45 are distinct cycles — dedup must not silence the whole lifecycle");
 });
 
@@ -464,7 +464,7 @@ test("two cities are reminded independently on the same sweep", async () => {
   seedBooking(sqlite, { id: "BK-HYD", customerId: "CU-HYD", status: "completed", startMs: NOW - 20 * DAY, endMs: NOW - 20 * DAY + 3600000, city: "hyd" });
   const result = await reminders.generateGroomingRebookingReminders(db, { actorId: "system", asOf: NOW });
   assert.equal(result.queued, 2);
-  assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key).sort(), ["grooming_rebooking:CU-BLR:1", "grooming_rebooking:CU-HYD:1"]);
+  assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key).sort(), ["grooming_rebooking:CU-BLR:BK-BLR:1", "grooming_rebooking:CU-HYD:BK-HYD:1"]);
 });
 
 for (const [unused, renewal] of [[0, 1], [1, 0], [0, 0], [1, 1]]) {
