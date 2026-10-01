@@ -27,3 +27,5 @@ test('old reconciled purchases remain available beyond latest twenty payment con
 test('cancelled capture stays visible for exception follow-up without becoming repeat purchase',async()=>{const w=world();seed(w,'CANCEL',{bookingStatus:'cancelled'});const e=await run(w);assert.equal(e.records[0].captureVerified,true);assert.equal(e.purchases[0].status,'cancelled');});
 
 test('invalid newer historical attestations cannot hide old valid purchase proofs',async()=>{const w=world();seed(w,'VALID1',{paymentAt:now-1000,reconciledAt:now-900});seed(w,'VALID2',{paymentAt:now-2000,reconciledAt:now-1900});for(let i=0;i<21;i++)seed(w,'BAD'+i,{paymentStatus:'created',captured:100});const e=await run(w);assert.deepEqual(new Set(e.purchases.map(r=>r.id)),new Set(['VALID1','VALID2']));});
+
+test('explicit authorized global scope includes same-customer bookings across cities',async()=>{const w=world();seed(w,'GLOBAL',{city:'hyd'});assert.equal((await run(w,{scopeCityId:null})).purchases.length,1);assert.equal((await run(w,{scopeCityId:'blr'})).purchases.length,0);});
