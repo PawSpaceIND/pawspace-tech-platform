@@ -362,3 +362,71 @@ test('eligible named-package offer passes final governance without a model or st
  assert.ok(generated,'Offer enquiry reaches the grounded provider');assert.match(generated.text,/200 rupees off/);const check=await orchestrator.validateAiProviderReply(w.db,generated,w.customerId);assert.deepEqual(check.failures,[]);
  assert.match(r.turn.output,/200 rupees off/);assert.notEqual(r.turn.outcome,'handoff');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+for (const [service, packageCode, hours] of [['boarding', 'boarding-4h', 4], ['pet_sitting', 'sitting-visit-60', 1]]) {
+ test(`voice ${service} quotes the exact care window and creates one canonical booking only after confirmation`, async t => {
+  const w = await world(t, service);
+  const plan = actions(w, packageCode);
+  delete plan[0].arguments.cadenceDays;
+  plan[0].arguments.scheduledEnd = new Date(Date.parse(start) + hours * 3600000).toISOString();
+  const offer = await prepare(w, `stay-${service}`, plan).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
+  assert.equal(bookingCount(w), 0);
+  assert.equal(w.calls.length, 0);
+  assert.match(offer.summary, /Care ends/);
+  assert.match(offer.summary, /Recommended caregiver/);
+  const confirmed = await confirm(w, offer.id).catch(async e => { throw new Error(e instanceof Response ? await e.text() : String(e)); });
+  assert.equal(bookingCount(w), 1);
+  assert.equal(w.calls.length, 1);
+  assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(confirmed.bookingId).service_code, service);
+  assert.equal(confirmed.paymentVerified, false);
+  assert.equal((await confirm(w, offer.id)).duplicatePrevented, true);
+  assert.equal(bookingCount(w), 1);
+ });
+}
+
+test('all-service Maya creates a Walking booking after confirmation without a prepaid payment order', async t => {
+ const w=await world(t,'dog_walking');
+ const plan=actions(w,'walking-30','pay_after_service');
+ delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+30*60000).toISOString();
+ const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'walking-broker',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.match(offer.summary,/after each completed walk/);
+ assert.equal((await sales.pendingVoiceSalesOffer(w.db,w.threadId,w.customerId,'all_services')).id,offer.id);
+ const result=await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'Yes, please.'}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+ assert.equal(bookingCount(w),1);assert.equal(w.calls.length,0);assert.equal(result.orderId,null);
+ assert.match(result.output,/walking booking has been created/);
+ assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,'dog_walking');
+});
+
+test('all-service Maya refuses an unsupported service before making reservations or payment orders',async t=>{
+ const w=await world(t);
+ const plan=actions(w);plan[0].arguments.serviceCode='fresh_food';
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'unsupported',actions:plan}),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
+});
+
+test('Boarding cannot quote a pet whose vaccination has not been verified',async t=>{
+ const w=await world(t,'boarding');
+ w.sqlite.prepare("UPDATE canonical_pets SET vaccination_status='not_provided' WHERE id=?").run(w.petId);
+ const plan=actions(w,'boarding-4h');delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+4*3600000).toISOString();
+ await refuse(prepare(w,'unverified-stay',plan),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('a stay quote cannot be reused by another conversation or for a changed caregiver',async t=>{
+ const w=await world(t,'pet_sitting');
+ const plan=actions(w,'sitting-visit-60');delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+3600000).toISOString();
+ const offer=await prepare(w,'stay-owner',plan);
+ const stored=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);
+ const quote=JSON.parse(stored.quote_json), args=JSON.parse(stored.actions_json)[1].arguments;
+ w.sqlite.prepare("UPDATE voice_sales_offers SET status='executing' WHERE id=?").run(offer.id);
+ const {confirmedStaySalesPayload}=await import('../lib/voice-stay-sales.ts');
+ const input={threadId:w.threadId,customerId:w.customerId,service:'pet_sitting',args,petCount:1,scheduledStart:start,scheduledEnd:plan[0].arguments.scheduledEnd,providerId:quote.recommendedProvider.id};
+ await refuse(confirmedStaySalesPayload(w.db,{...input,threadId:'ANOTHER-THREAD'}),403);
+ await refuse(confirmedStaySalesPayload(w.db,{...input,providerId:'ANOTHER-PROVIDER'}),409);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});

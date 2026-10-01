@@ -9,7 +9,7 @@ const key = String(process.env.PAWSPACE_OPENAI_API_KEY || '').trim();
 if (!key) throw Error('Runtime model evaluation credential missing');
 const model = String(process.env.PAWSPACE_AI_VOICE_MODEL || 'gpt-5.6-luna');
 const scenario = String(process.env.VOICE_SALE_SCENARIO || 'booking');
-assert.ok(['booking', 'concierge'].includes(scenario), 'Unsupported isolated scenario');
+assert.ok(['booking', 'concierge', 'all-services', 'all-bookings'].includes(scenario), 'Unsupported isolated scenario');
 const actor = { email: 'elevenlabs-voice@system.pawspace', name: 'Synthetic Runtime Evaluation', roleCode: 'service_elevenlabs_voice', permissions: ['communications.manage', 'customers.manage', 'bookings.manage', 'scheduling.book'], developmentPreview: false, identitySource: 'workspace', principalType: 'identity_subject', principalKey: 'service:elevenlabs-voice' };
 const customerId = 'CUS-MAYA-SYNTHETIC', petId = 'PET-MAYA-SYNTHETIC', threadId = 'THREAD-MAYA-SYNTHETIC';
 const start = '2026-10-20T04:30:00.000Z', end = '2026-10-20T06:30:00.000Z';
@@ -58,7 +58,14 @@ try {
   await orchestrator.ensureAiConversationOrchestrator(world.db);
   const { applyOwnedDdl } = await import('../tests/helpers/ai-harness.mjs');
   for (const owner of ['lib/training-commercial-governance.ts', 'lib/boarding-governance.ts', 'lib/sitting-governance.ts', 'lib/walking-governance.ts', 'lib/taxi-governance.ts']) applyOwnedDdl(world.sqlite, owner);
-  if (scenario === 'concierge') {
+  if (scenario.startsWith('all-')) {
+    await (await import('../lib/training-commercial-governance.ts')).ensureTrainingCommercialTables(world.db);
+    await (await import('../lib/boarding-governance.ts')).ensureBoardingGovernanceTables(world.db);
+    await (await import('../lib/sitting-governance.ts')).ensureSittingGovernanceTables(world.db);
+    await (await import('../lib/walking-governance.ts')).ensureWalkingGovernanceTables(world.db);
+    await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(world.db);
+  }
+  if (scenario !== 'booking') {
     // Publish the repository's reviewed knowledge only inside this temporary in-memory fixture.
     await (await import('../lib/maya-knowledge-base.ts')).seedMayaKnowledge(world.db, { maker: 'synthetic-maker@pawspace.test', checker: 'synthetic-checker@pawspace.test' });
   }
@@ -76,12 +83,37 @@ try {
   const history = [], countBookings = () => world.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get() ? world.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n : 0;
   async function turn(message) {
     const started = Date.now();
-    const result = await runElevenLabsGroundedTurn(world.db, { model: 'pawspace-grooming-sales', input: [...history, { role: 'user', content: message }], elevenlabs_extra_body: { pawspace_customer_id: customerId, pawspace_thread_id: threadId } });
+    const result = await runElevenLabsGroundedTurn(world.db, { model: scenario.startsWith('all-') ? 'pawspace-service-sales' : 'pawspace-grooming-sales', input: [...history, { role: 'user', content: message }], elevenlabs_extra_body: { pawspace_customer_id: customerId, pawspace_thread_id: threadId } });
     turns.push({ customer: message, maya: result.output, elapsedMs: Date.now() - started, path: result.path });
     history.push({ role: 'user', content: message }, { role: 'assistant', content: result.output });
     return result;
   }
-  if (scenario === 'concierge') {
+  if (scenario === 'all-bookings') {
+    const cases = [
+      {service:'grooming',package:'Complete Makeover',date:20,end:'12 PM',mode:'prepaid'},
+      {service:'dog_training',package:'Meet & Greet',date:21,end:'11 AM',mode:'prepaid'},
+      {service:'boarding',package:'Standard Stay',date:22,end:'2 PM',mode:'prepaid'},
+      {service:'pet_sitting',package:'Home Visit',date:23,end:'11 AM',mode:'prepaid'},
+      {service:'dog_walking',package:'30-minute Solo Walk',date:24,end:'10:30 AM',mode:'pay_after_service'},
+    ];
+    for (const item of cases) {
+      const before=countBookings(),beforePayment=paymentRequests;
+      await turn(`Please prepare an unconfirmed quote for ${item.service}, ${item.package}, for my saved dog Milo, ${item.mode}, October ${item.date} 2026 from 10 AM to ${item.end} India time, at 12 Test Street, Bengaluru, PIN 560038. This is one appointment. Do not reserve or create a booking or payment order yet. Read back the quote and ask for my separate confirmation.`);
+      const offer=await sales.pendingVoiceSalesOffer(world.db,threadId,customerId,'all_services');
+      assert.ok(offer,`No stored offer for ${item.service}`);
+      assert.equal(offer.service_code,item.service);
+      assert.equal(countBookings(),before);
+      assert.equal(paymentRequests,beforePayment);
+      await turn('Yes, please.');
+      assert.equal(countBookings(),before+1,`Exactly one ${item.service} booking after confirmation`);
+      assert.equal(paymentRequests,beforePayment+(item.service==='dog_walking'?0:1));
+      const result=JSON.parse(world.sqlite.prepare('SELECT result_json FROM voice_sales_offers WHERE id=?').get(offer.id).result_json);
+      assert.ok(result.bookingId);assert.equal(result.paymentVerified,false);
+      assert.equal(world.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,item.service);
+    }
+    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,scope:'Actual model and canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
+    await mkdir('artifacts/maya-runtime-sale',{recursive:true});await writeFile('artifacts/maya-runtime-sale/report.json',JSON.stringify(report,null,2));console.log('MAYA_ALL_SERVICE_BOOKINGS='+JSON.stringify(report));
+  } else if (scenario === 'concierge' || scenario === 'all-services') {
     const checks = [
       { message: 'I need boarding for Milo for two nights. What do you need from me?', required: /boarding|stay|host/i, forbidden: /how many nights|grooming/i, maxWords: 70 },
       { message: 'Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?', required: /Complete Makeover/i },
@@ -90,6 +122,16 @@ try {
       { message: 'The Complete Makeover price feels high. Is there an approved offer for that package?', required: /offer|discount|sav(?:e|ing)|200/i, forbidden: /GROOM200|GROOM400/ },
       { message: 'Milo has mild itching but is otherwise behaving normally. What general information can you share?', required: /vet(?:erinarian)?/i, forbidden: /\bGROOM\d+\b|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i, maxWords: 80 }
     ];
+    if (scenario === 'all-services') checks.push(
+      { message: 'For a different enquiry: what does your dog training service help with?', required: /train|behavio|cues/i },
+      { message: 'What is the difference between pet sitting at my home and boarding at a host home?', required: /sitt/i },
+      { message: 'I need care just during the daytime, not overnight. Do you offer daycare?', required: /daycare|daytime|day care/i },
+      { message: 'How does your pet taxi service work, and what pickup information would you need?', required: /pickup|pick.up|transport|taxi/i },
+      { message: 'I am moving to another city with my cat. How can your relocation team help?', required: /relocation|mov|travel/i },
+      { message: 'What fresh pet food options can your team help me explore?', required: /food|meal|diet/i },
+      { message: 'My pet has passed away. What funeral or memorial support does PawSpace provide?', required: /sorry|condolence|loss/i, forbidden: /discount|coupon|grooming|cross.sell/i },
+      { message: 'Please explain how I can arrange a routine veterinary consultation, without booking anything yet.', required: /vet|consultation/i }
+    );
     for (const check of checks) {
       const reply = await turn(check.message);
       if (check.required) assert.match(reply.output, check.required, check.message);
