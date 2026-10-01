@@ -440,9 +440,11 @@ test('Taxi voice checkout uses routed fare and fleet booking after separate conf
   return paymentFetch(url,init);
  };
  const plan=actions(w,'citroen_ec3','split_50_50');delete plan[0].arguments.cadenceDays;
+ plan[0].arguments.scheduledStart='2026-10-20T10:00:00+05:30'; // Model output uses the caller's India offset.
  plan[1].arguments.taxi={originLabel:'12 Test Street',destinationLabel:'24 Test Street, Koramangala, Bengaluru',passengerCount:1,luggageCount:0,tripType:'one_way',ridePurpose:'regular',waitingMinutes:0,hyperactivePet:false};
  const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'taxi-voice',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);assert.equal(mapRequests,3);
+ assert.equal(w.sqlite.prepare('SELECT scheduled_start FROM taxi_ride_quotes').get().scheduled_start,start);
  assert.match(offer.summary,/Vehicle: Citroen eC3/);assert.match(offer.summary,/12 Test Street/);
  const result=await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
  assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);assert.equal(result.paymentVerified,false);

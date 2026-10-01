@@ -16,6 +16,9 @@ export async function prepareTaxiSalesQuote(_db: D1Database, input: { schedule: 
  }
  if (schedule.occurrences !== undefined && Number(schedule.occurrences) !== 1 || schedule.cadenceDays !== undefined || schedule.weekdays !== undefined) throw refuse("Taxi uses one quoted trip window",400);
  if (booking.requirements !== undefined || booking.boardingRequirements !== undefined) throw refuse("Provide Taxi handling needs in the ride details",400);
+ // The canonical scheduler stores UTC ISO strings; quote the same instant in that form.
+ const start=Date.parse(text(schedule.scheduledStart));if(!Number.isFinite(start))throw refuse("A valid Taxi pickup time is required",400);
+ schedule.scheduledStart=new Date(start).toISOString();
  const { POST } = await import("../app/api/taxi-commercial/route");
  const response = await POST(new Request("https://internal.pawspace/api/taxi-commercial",{
   method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({
