@@ -612,7 +612,7 @@
     "app/partner-mobile/page.tsx": "e35b66a7a9c56ea3f917ea7a48307db4182daba2615f34d2e61a7d5f5bfe6640",
     "app/partner-mobile/partner-mobile.module.css": "594a80768870e66e049e49ebd5337d071b9a2c7a48e229e2f03b364562420017",
     "app/v2/account/page.tsx": "ec0d033f7bd66cc7a5774f66e1d923a0e67ee6839dafcdcc0884b07346fd88f2",
-    "app/v2/activity/page.tsx": "4c70fa7b27c5ddda9f3bc822e494924d73c0d2120b84acdd4594b08669607233",
+    "app/v2/activity/page.tsx": "ed9e7f33f0cd906e4264464ee5e758aead3a253cdc78dcecdf0543b8b9a972fe",
     "app/v2/boarding/manage/page.tsx": "ef35b8ad9d9705edc1737f842fdf5767d1dca90937a5be510c62dad1c170cec2",
     "app/v2/boarding/page.tsx": "46dcb7e397a3e7b40b0690b47e52eb26d5b28b85ccc9495aa5b7e382c0aa52f0",
     "app/v2/booking-confirmation/page.tsx": "bd057c4c54433edb0fe7af9b16e6354ec0af256433ffd4fb5cfe7088ec7ec8c7",

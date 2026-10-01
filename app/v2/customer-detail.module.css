@@ -30,3 +30,40 @@
 .page .hero .eyebrow { color:var(--brand-hero-text) !important; }
 /* Preserve full navigation words on the smallest supported phone width. */
 .page .dock a { padding-inline:4px !important; white-space:nowrap; }
+
+/* Care activity, booking details and confirmation: existing content, clearer actions. */
+.page .shell { width:min(1120px,100%); }
+.page .topbar { gap:12px; margin-bottom:24px; }
+.page .brand,.page .back { min-height:48px; box-sizing:border-box; display:inline-flex; align-items:center; }
+.page .topbar > a { min-height:48px; display:inline-flex; align-items:center; color:var(--paw-link); }
+.page .hero { padding:clamp(24px,4vw,40px); margin-bottom:24px; }
+.page .hero h1 { line-height:1.12; letter-spacing:-.025em; }
+.page .hero p { line-height:1.65; }
+.page .grid { gap:24px; align-items:start; }
+.page .card { padding:clamp(20px,3vw,28px); min-width:0; }
+.page .card h2 { font-size:22px; line-height:1.3; margin-bottom:10px; }
+.page .booking { grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:16px; padding-block:8px; }
+.page .booking > div { min-width:0; }
+.page .booking h3 { font-size:18px; line-height:1.4; overflow-wrap:anywhere; }
+.page .booking p { margin-block:8px 12px; line-height:1.6; }
+.page .booking a { display:flex; align-items:center; width:fit-content; min-height:48px; box-sizing:border-box; margin-top:12px; padding:10px 14px; border:1px solid var(--brand-line); border-radius:var(--paw-control-radius); background:var(--brand-raised); color:var(--paw-link); font-weight:750; text-underline-offset:3px; }
+.page .booking+.booking { margin-top:18px; padding-top:24px; }
+.page .money { font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--brand-text) !important; }
+.page .empty { padding:28px 16px; background:var(--brand-raised); border-radius:var(--paw-card-radius); color:var(--brand-muted); line-height:1.6; }
+.page :is(a,button,input,select,textarea):focus-visible { outline:3px solid var(--brand-gold); outline-offset:3px; }
+.page .dock a { min-height:48px; box-sizing:border-box; }
+.page :is(.primary,.danger) { min-height:48px; font:inherit; font-weight:750; }
+.page .actions { gap:12px; align-items:center; }
+.page .actions :is(a,button) { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; padding:10px 14px; border:1px solid var(--brand-line); border-radius:var(--paw-control-radius); color:var(--brand-text); background:var(--brand-raised); font:inherit; font-weight:750; text-underline-offset:3px; }
+/* These scrollable care pages share the existing utilities, without fixed tap interception. */
+:global(body):has(.page) :global(.paw-appearance-trigger),
+:global(body):has(.page) :global(.ps-order-fab) { position:relative !important; inset:auto !important; transform:none !important; display:flex; width:fit-content; margin:12px 16px 12px auto; }
+:global(body):has(.page) :global(.ps-order-fab) { padding-bottom:0; margin-bottom:calc(110px + env(safe-area-inset-bottom,0px)); }
+:global(body):has(.page) :global(.paw-appearance-trigger) { min-height:48px !important; min-width:48px !important; }
+@media(max-width:720px) {
+ .page .grid { gap:18px; }
+ .page .booking { grid-template-columns:minmax(0,1fr); gap:10px; }
+ .page .booking .money { grid-row:2; }
+ .page .booking a { max-width:100%; }
+ .page .row { flex-wrap:wrap; gap:8px 16px; }
+}
