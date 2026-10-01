@@ -122,6 +122,7 @@ test("native AgentStream handles caller media immediately and invalidates stale 
   assert.match(bridge, /event: "clear"/);
   assert.match(bridge, /ctx\.waitUntil\(processUtterance\(utterance, active, epoch\)\)/);
   assert.match(bridge, /epoch !== generationEpoch/);
+  assert.match(bridge, /epoch !== generationEpoch \? new GenerationCancelled\(\) : error/);
 });
 
 test("native carrier TTS streams validated PCM instead of buffering the full response", () => {

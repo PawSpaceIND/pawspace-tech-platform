@@ -524,7 +524,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
         assertCurrent(active, epoch);
         rememberQueuedAudio(active, markName, streamed);
       } catch (error) {
-        await failProcessing(active, error, stage, stageStarted);
+        await failProcessing(active, epoch !== generationEpoch ? new GenerationCancelled() : error, stage, stageStarted);
       } finally {
         if (activeTtsAbort === controller) activeTtsAbort = null;
       }
@@ -600,7 +600,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
         crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify(diagnostics), Date.now(),
       ).run();
     } catch (error) {
-      await failProcessing(active, error, stage, stageStarted);
+      await failProcessing(active, epoch !== generationEpoch ? new GenerationCancelled() : error, stage, stageStarted);
     } finally {
       if (controller && activeTtsAbort === controller) activeTtsAbort = null;
     }
