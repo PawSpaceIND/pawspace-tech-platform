@@ -25,6 +25,11 @@ installWorkersHooks("__MIGRATION_DB__", "__MIGRATION_ENV__");
 
 const capacity = await import("../lib/provider-capacity-governance.ts");
 const aiRollout = await import("../lib/ai-audience-rollout.ts");
+const aiConfig = await import("../lib/ai-business-configuration.ts");
+const aiHandoff = await import("../lib/ai-human-handoff.ts");
+const bookingCore = await import("../lib/canonical-booking-core-schema.ts");
+const voiceSales = await import("../lib/voice-sales-specialists.ts");
+const whatsappControl = await import("../lib/whatsapp-conversation-control.ts");
 
 const DIR = "drizzle";
 const FILES = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
@@ -43,6 +48,11 @@ async function deploymentShapedDatabase() {
   const db = makeD1(sqlite);
   await capacity.ensureProviderCapacityTables(db);
   await aiRollout.ensureAiAudienceRolloutTables(db);
+  await aiConfig.ensureAiBusinessConfiguration(db);
+  await aiHandoff.ensureAiHumanHandoff(db);
+  await bookingCore.ensureCanonicalBookingCoreTables(db);
+  await voiceSales.ensureVoiceSalesOffers(db);
+  await whatsappControl.ensureWhatsAppConversationControl(db);
   return sqlite;
 }
 
