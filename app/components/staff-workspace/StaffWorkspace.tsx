@@ -1,5 +1,6 @@
 "use client";
 
+import WorkspaceOrderInbox from "../workspace-order-inbox";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -87,6 +88,6 @@ export default function StaffWorkspace({ actor: suppliedActor, actorPending = fa
         <details><summary>Other experiences</summary><Link href="/">Customer home</Link><Link href="/v2">Customer app</Link><Link href="/v2/employee">Employee workspace</Link><Link href="/partner">Partner workspace</Link><Link href="/v2/partner">V2 Partner workspace</Link></details>
       </div>
     </aside>
-    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}><div ref={utilityRef} className={visual.utility} data-paw-appearance-slot="staff" />{staffSignInNeeded && <p className={styles.signInNotice} role="alert">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>
+    <div className={styles.content} id="staff-workspace-content" tabIndex={-1}><WorkspaceOrderInbox/><div ref={utilityRef} className={visual.utility} data-paw-appearance-slot="staff" />{staffSignInNeeded && <p className={styles.signInNotice} role="alert">{navigationError}{signInUrl && <> <Link href={signInUrl}>Sign in as staff</Link></>}</p>}{children}</div>
   </div>;
 }

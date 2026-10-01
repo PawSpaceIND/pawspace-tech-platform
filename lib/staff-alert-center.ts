@@ -91,7 +91,30 @@ async function dailyClosureAlerts(db:Db,asOf:number,actorId:string){if(!(await t
 
 export async function runStaffAlertSweep(db:Db,input:{actorId:string;asOf?:number}){const asOf=input.asOf??Date.now();await ensureStaffAlertTables(db);const warnings:string[]=[];try{await ensureLeadSlaTables(db);await runLeadSlaGovernance(db,{actorId:input.actorId,asOf});}catch(error){warnings.push(`lead_sla:${error instanceof Error?error.message:String(error)}`);}try{await ensureUnifiedCaseTables(db);await syncNativeCases(db,input.actorId);await runUnifiedCaseEscalations(db,{actorId:input.actorId,asOf});}catch(error){warnings.push(`case_sync:${error instanceof Error?error.message:String(error)}`);}const leads=await leadAlerts(db,asOf,input.actorId),cases=await caseAlerts(db,asOf,input.actorId),boarding=await boardingAcceptanceAlerts(db,asOf,input.actorId),payments=await paymentFailureAlerts(db,asOf,input.actorId),customerNotifications=await caseCustomerNotifications(db,asOf,input.actorId);let dailyClosure={created:0,skipped:true as boolean};try{dailyClosure=await dailyClosureAlerts(db,asOf,input.actorId);}catch(error){warnings.push(`daily_closure:${error instanceof Error?error.message:String(error)}`);}let autoResolved={resolved:0};try{autoResolved=await autoResolveClearedAlerts(db,asOf,input.actorId);}catch(error){warnings.push(`auto_resolve:${error instanceof Error?error.message:String(error)}`);}if(customerNotifications.errors.length)warnings.push(...customerNotifications.errors.map(error=>`customer_notification:${error}`));return{asOf,created:leads.created+cases.created+boarding.created+payments.created+dailyClosure.created,leads,cases,boarding,payments,dailyClosure,autoResolved,customerNotifications,warnings,automaticMode:"governed_runner_available",runnerBoundary:"/api/staff-alert-runner",backgroundSchedulerConfigured:false,customerNotificationTransport:"canonical_chat_outbox",externalDelivery:false,productionReady:false};}
 
-export async function staffAlertDirectory(db:Db){await ensureStaffAlertTables(db);const now=Date.now(),alerts=await db.prepare("SELECT * FROM staff_alerts ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,due_at ASC LIMIT 250").all<Row>(),summary=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) open,SUM(CASE WHEN status='acknowledged' THEN 1 ELSE 0 END) acknowledged,SUM(CASE WHEN status='open' AND severity='critical' THEN 1 ELSE 0 END) critical,SUM(CASE WHEN status='open' AND due_at<=? THEN 1 ELSE 0 END) overdue FROM staff_alerts").bind(now).first<Row>();return{summary,alerts:alerts.results,truth:{thresholds:"source_policy_derived",hardcodedTwentyMinuteRule:false,automaticMode:"governed_runner_available",runnerBoundary:"/api/staff-alert-runner",backgroundSchedulerConfigured:false,customerNotificationTransport:"canonical_chat_outbox",externalDelivery:false,productionReady:false}};}
+// Resolve a linked booking before customer scope: a conflicting customer reference must never
+// disclose a booking from another city. Alerts without a resolvable canonical city fail closed.
+async function staffAlertCityPredicate(db:Db,cityId?:string|null){
+ if(!cityId)return{sql:"",predicate:"",bindings:[] as string[]};
+ const hasBookings=await tableExists(db,"canonical_bookings"),hasCustomers=await tableExists(db,"canonical_customers");
+ const bookingRef="COALESCE(NULLIF(a.booking_id,''),CASE WHEN a.source_type='canonical_booking' THEN NULLIF(a.source_id,'') END)";
+ const bookingCity=hasBookings?`(SELECT lower(b.city_id) FROM canonical_bookings b WHERE b.id=${bookingRef})`:"NULL";
+ const customerCity=hasCustomers?"(SELECT lower(c.city_id) FROM canonical_customers c WHERE c.id=a.customer_id)":"NULL";
+ const predicate=`(CASE WHEN ${bookingRef} IS NOT NULL THEN ${bookingCity} ELSE ${customerCity} END)=?`;
+ return{sql:` WHERE ${predicate}`,predicate,bindings:[cityId.toLowerCase()]};
+}
+
+export async function staffAlertVisibleInCity(db:Db,alertId:string,cityId:string){
+ if(!cityId.trim())return false;
+ await ensureStaffAlertTables(db);const scope=await staffAlertCityPredicate(db,cityId);
+ return Boolean(await db.prepare(`SELECT a.id FROM staff_alerts a${scope.sql} AND a.id=?`).bind(...scope.bindings,alertId).first<Row>());
+}
+
+export async function staffAlertDirectory(db:Db,input:{cityId?:string|null}={}){
+ await ensureStaffAlertTables(db);const now=Date.now(),scope=await staffAlertCityPredicate(db,input.cityId);
+ const alerts=await db.prepare(`SELECT a.* FROM staff_alerts a${scope.sql} ORDER BY CASE a.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,a.due_at ASC LIMIT 250`).bind(...scope.bindings).all<Row>();
+ const summary=await db.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) open,SUM(CASE WHEN status='acknowledged' THEN 1 ELSE 0 END) acknowledged,SUM(CASE WHEN status='open' AND severity='critical' THEN 1 ELSE 0 END) critical,SUM(CASE WHEN status='open' AND due_at<=? THEN 1 ELSE 0 END) overdue FROM staff_alerts a${scope.sql}`).bind(now,...scope.bindings).first<Row>();
+ return{summary,alerts:alerts.results,truth:{thresholds:"source_policy_derived",hardcodedTwentyMinuteRule:false,automaticMode:"governed_runner_available",runnerBoundary:"/api/staff-alert-runner",backgroundSchedulerConfigured:false,customerNotificationTransport:"canonical_chat_outbox",externalDelivery:false,productionReady:false}};
+}
 
 /** Thrown when the actor may not act on this particular alert. The route turns it into a 403. */
 export class StaffAlertAuthorityError extends Error{
@@ -114,21 +137,24 @@ export class StaffAlertAuthorityError extends Error{
  * overwritten while the `INSERT OR IGNORE` dropped the duplicate event, leaving the row crediting one
  * person and the audit trail crediting another.
  */
-export async function updateStaffAlert(db:Db,input:{alertId:string;action:"acknowledge"|"resolve";actorId:string;actorPermissions:string[]}){await ensureStaffAlertTables(db);const row=await db.prepare("SELECT * FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();if(!row)throw new Error("Staff alert not found");
+export async function updateStaffAlert(db:Db,input:{alertId:string;action:"acknowledge"|"resolve";actorId:string;actorPermissions:string[];cityId?:string|null}){await ensureStaffAlertTables(db);const row=await db.prepare("SELECT * FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();if(!row)throw new Error("Staff alert not found");
  const decision=authorizeStaffAlertAction({email:input.actorId,permissions:input.actorPermissions},row,input.action);
  // Refused before any write: an unauthorised attempt must leave both tables exactly as it found them.
  if(!decision.allowed)throw new StaffAlertAuthorityError(decision.reason,decision.authority.owner);
- const now=Date.now(),eventKey=`alert:${input.alertId}:${input.action}`;
+ const now=Date.now(),eventKey=`alert:${input.alertId}:${input.action}`,scope=await staffAlertCityPredicate(db,input.cityId);
+ const cityGuard=scope.predicate?` AND ${scope.predicate}`:"";
  if(input.action==="acknowledge"){
   if(text(row.status)==="resolved")throw new Error("Resolved alert cannot be acknowledged");
-  const changed=await db.prepare("UPDATE staff_alerts SET status='acknowledged',acknowledged_at=COALESCE(acknowledged_at,?),acknowledged_by=COALESCE(acknowledged_by,?),updated_at=? WHERE id=? AND status!='resolved'").bind(now,input.actorId,now,input.alertId).run();
+  const changed=await db.prepare(`UPDATE staff_alerts AS a SET status='acknowledged',acknowledged_at=COALESCE(acknowledged_at,?),acknowledged_by=COALESCE(acknowledged_by,?),updated_at=? WHERE a.id=? AND status!='resolved'${cityGuard}`).bind(now,input.actorId,now,input.alertId,...scope.bindings).run();
+  if(scope.predicate&&Number(changed.meta?.changes||0)===0)throw new StaffAlertAuthorityError("Staff alert is no longer available in your organizational scope or status",decision.authority.owner);
   if(Number(changed.meta?.changes||0)>0)await db.prepare("INSERT OR IGNORE INTO staff_alert_events (id,idempotency_key,alert_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,'{}',?)").bind(uid("ALE"),eventKey,input.alertId,input.action,input.actorId,now).run();
   const after=await db.prepare("SELECT acknowledged_at,acknowledged_by FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();
   return{alertId:input.alertId,status:"acknowledged" as const,acknowledgedBy:text(after?.acknowledged_by)||null,acknowledgedAt:after?.acknowledged_at==null?null:Number(after.acknowledged_at),alreadyAcknowledged:text(row.status)==="acknowledged"};
  }
- const changed=await db.prepare("UPDATE staff_alerts SET status='resolved',resolved_at=?,resolved_by=?,updated_at=? WHERE id=? AND status!='resolved'").bind(now,input.actorId,now,input.alertId).run();
+ const changed=await db.prepare(`UPDATE staff_alerts AS a SET status='resolved',resolved_at=?,resolved_by=?,updated_at=? WHERE a.id=? AND status!='resolved'${cityGuard}`).bind(now,input.actorId,now,input.alertId,...scope.bindings).run();
  const firstResolution=Number(changed.meta?.changes||0)>0;
  // Only a resolution that actually changed the row writes an event, so the two can never diverge.
  if(firstResolution)await db.prepare("INSERT OR IGNORE INTO staff_alert_events (id,idempotency_key,alert_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,'{}',?)").bind(uid("ALE"),eventKey,input.alertId,input.action,input.actorId,now).run();
- const after=await db.prepare("SELECT resolved_at,resolved_by FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();
+ const after=await db.prepare(`SELECT status,resolved_at,resolved_by FROM staff_alerts a WHERE a.id=?${cityGuard}`).bind(input.alertId,...scope.bindings).first<Row>();
+ if(scope.predicate&&!firstResolution&&text(after?.status)!=="resolved")throw new StaffAlertAuthorityError("Staff alert is no longer resolved in your organizational scope",decision.authority.owner);
  return{alertId:input.alertId,status:"resolved" as const,resolvedBy:text(after?.resolved_by)||null,resolvedAt:after?.resolved_at==null?null:Number(after.resolved_at),alreadyResolved:!firstResolution};}

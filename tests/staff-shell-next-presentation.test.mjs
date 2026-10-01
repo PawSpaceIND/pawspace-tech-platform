@@ -9,9 +9,18 @@ const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const css=read('app/components/staff-workspace/staff-workspace.module.css');
 const split=css.split('\n/* STAFF SHELL NEXT:');
-test('Existing shell CSS and component requests, permissions, navigation and state remain byte-identical',()=>{
+test('Existing shell CSS and all three shells remain byte-identical outside the explicit order-inbox mounts',()=>{
  assert.equal(hash(split[0]),'b78ede82f6fdd6d7b9cce7e3f60372bec588e36b98630acff16cb98dccfee06e');
- assert.equal(hash(read('app/components/staff-workspace/StaffWorkspace.tsx')),'17a8fb4cc17eae8d5424566b962584a9193f0021fa4e0df2043ab8a707f1f432');
+ for(const [path,importPath,mount,before] of [
+  ['app/components/staff-workspace/StaffWorkspace.tsx','../workspace-order-inbox','<WorkspaceOrderInbox/>','17a8fb4cc17eae8d5424566b962584a9193f0021fa4e0df2043ab8a707f1f432'],
+  ['app/components/partner-presentation/PartnerModule.tsx','../workspace-order-inbox','<WorkspaceOrderInbox/>','89e595716ad28b5baee90eef57a7b2d6d16881c41db4bf150a0af5aa5c96dfd6'],
+  ['app/partner-app/layout.tsx','../components/workspace-order-inbox','    <WorkspaceOrderInbox/>\n','6f461b09c547aa6b1215f63182c6ee349d83bc32b754243a28623575f8c44de0']
+ ]) {
+  const source=read(path),inboxImport=`import WorkspaceOrderInbox from "${importPath}";\n`;
+  assert.equal(source.split(inboxImport).length,2,path+': one explicit inbox import');
+  assert.equal(source.split(mount).length,2,path+': one explicit inbox mount');
+  assert.equal(hash(source.replace(inboxImport,'').replace(mount,'')),before,path+': all other bytes preserved');
+ }
 });
 test('New shell styles retain every control and theme while increasing touch access',()=>{
  const added=split[1]; assert.ok(added);
