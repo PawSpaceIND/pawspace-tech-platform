@@ -645,7 +645,7 @@ test("SIT-13 cancellation: a delivered stay cannot be refunded, and no one appro
 
   /* Segregation of duties: the requester must not approve their own refund. */
   const selfApprove = await attempt(() => fin.mutateSittingFinance(w.db, {
-    bookingId: BOOKING, action: "approve_cancel", actorId: CUSTOMER,
+    bookingId: BOOKING, action: "approve_cancel", cancellationRequestId:opened.value.requestId, actorId: CUSTOMER,
     idempotencyKey: "sit-ac-1", reason: "approving my own request", approvedRefundAmount: 1598,
   }));
   assert.equal(selfApprove.ok, false, "the requester must not approve their own cancellation");
@@ -653,7 +653,7 @@ test("SIT-13 cancellation: a delivered stay cannot be refunded, and no one appro
 
   /* A refund can never exceed what was actually collected. */
   const overRefund = await attempt(() => fin.mutateSittingFinance(w.db, {
-    bookingId: BOOKING, action: "approve_cancel", actorId: "finance@pawspace.test",
+    bookingId: BOOKING, action: "approve_cancel", cancellationRequestId:opened.value.requestId, actorId: "finance@pawspace.test",
     idempotencyKey: "sit-ac-2", reason: "finance approves this cancellation", approvedRefundAmount: 99999,
   }));
   assert.equal(overRefund.ok, false, "a refund larger than the money collected must be refused");

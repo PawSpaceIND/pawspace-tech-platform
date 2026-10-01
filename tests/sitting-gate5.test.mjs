@@ -51,9 +51,15 @@ async function opsWorld(options = {}) {
     bookingId: seeded.bookingId, action, actorId: extra.actorId ?? OPS,
     idempotencyKey: extra.idempotencyKey ?? nextKey("SG5"), ...extra,
   });
-  const financeAct = (action, extra = {}) => finance.mutateSittingFinance(db, {
-    bookingId: seeded.bookingId, action, actorId: extra.actorId ?? OPS, idempotencyKey: nextKey("SG5-FIN"), ...extra,
-  });
+  const selected={};
+  const financeAct = async (action, extra = {}) => {
+    const field={approve_cancel:'cancellationRequestId',record_refund:'refundId',apply_date_change:'dateChangeRequestId'}[action];
+    const result=await finance.mutateSittingFinance(db, {bookingId:seeded.bookingId,action,actorId:extra.actorId ?? OPS,idempotencyKey:nextKey("SG5-FIN"),...(field?{[field]:selected[field]}:{}),...extra});
+    if(action==='request_cancel')selected.cancellationRequestId=result.requestId;
+    if(action==='request_date_change')selected.dateChangeRequestId=result.requestId;
+    if(action==='approve_cancel')selected.refundId=result.refundId;
+    return result;
+  };
   const flagsFor = async () => {
     const snapshot = await ops.getSittingOpsSnapshot(db);
     const row = snapshot.bookings.find((entry) => String(entry.id) === seeded.bookingId);
