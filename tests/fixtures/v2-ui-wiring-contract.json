@@ -37,10 +37,10 @@
       "conditions": 11
     },
     "app/training/page.tsx": {
-      "sha256": "67e4443015c556f32793009f3776df305686f7955d556139cac67989c1dcf447",
-      "functions": 86,
+      "sha256": "bfdee7cc3ab75b5b4cc4298c55430a3955e74d76bd9298136bc7490e96742c73",
+      "functions": 87,
       "declarations": 99,
-      "interactionProps": 51,
+      "interactionProps": 54,
       "conditions": 34
     },
     "app/v2/chat/page.tsx": {
@@ -72,10 +72,10 @@
       "conditions": 3
     },
     "app/walking/page.tsx": {
-      "sha256": "fe989f6c38e30a949eea1506e729996a32ee62b07721b062620f23a059d04e67",
+      "sha256": "2875648ae714157e45a05eb2d801d450a36d6ee243a7cbece50784ad573a89f6",
       "functions": 34,
       "declarations": 48,
-      "interactionProps": 42,
+      "interactionProps": 48,
       "conditions": 12
     }
   },

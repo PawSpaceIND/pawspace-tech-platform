@@ -1,0 +1,46 @@
+{
+  "app/training/page.tsx": [
+    [
+      "<input type=\"date\" value={date}",
+      "<input type=\"date\" disabled={accountLoading||catalogueLoading} value={date}"
+    ],
+    [
+      "<input type=\"time\" value={time}",
+      "<input type=\"time\" disabled={accountLoading||catalogueLoading} value={time}"
+    ],
+    [
+      "disabled={packageCode===\"trainer-meet-greet\"} onChange={event=>setCadenceDays",
+      "disabled={accountLoading||catalogueLoading||packageCode===\"trainer-meet-greet\"} onChange={event=>setCadenceDays"
+    ],
+    [
+      "<label>First session date",
+      "{(accountLoading||catalogueLoading)&&<p role=\"status\">Loading your account and training plans before choosing a session\u2026</p>}<label>First session date"
+    ]
+  ],
+  "app/walking/page.tsx": [
+    [
+      "<button className={type===",
+      "<button disabled={accountLoading||quoteLoading} className={type==="
+    ],
+    [
+      "<select value={duration}",
+      "<select disabled={accountLoading||quoteLoading} value={duration}"
+    ],
+    [
+      "<input type=\"date\" value={startDate}",
+      "<input type=\"date\" disabled={accountLoading||quoteLoading} value={startDate}"
+    ],
+    [
+      "<button className={weekdays.includes(day.value)?",
+      "<button disabled={accountLoading||quoteLoading} className={weekdays.includes(day.value)?"
+    ],
+    [
+      "<button key={item.label} className={slot===index?",
+      "<button disabled={accountLoading||quoteLoading} key={item.label} className={slot===index?"
+    ],
+    [
+      "<div className={styles.switch}>",
+      "{(accountLoading||quoteLoading)&&<p role=\"status\">Loading your account and walk options before choosing a schedule\u2026</p>}<div className={styles.switch}>"
+    ]
+  ]
+}

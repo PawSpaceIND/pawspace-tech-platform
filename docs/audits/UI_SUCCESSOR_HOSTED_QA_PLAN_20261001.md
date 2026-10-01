@@ -1,0 +1,29 @@
+# Grouped UI successor — hosted browser QA plan (pending)
+
+This candidate is local and not visually accepted. After independent source/guard review, publish ONE draft successor. No production deploy or merge until exact-head required gates and independent screenshot review pass. Mac XPC retry stopped; no alternate browser install/OS permission change.
+
+## Exact application scope
+
+Modified: app/v2/account/page.tsx (copy+CSS hooks only); app/training/page.tsx (V2 family wrapper+existing initial-loading guards); app/components/staff-workspace/staff-console.module.css (2 radius aliases); app/mobile-app/page.tsx (appearance import/effects/event detail only); app/walking/page.tsx (6 existing schedule-control loading guards+explanation only).
+
+New: app/v2/account/account.module.css; app/training/training-family-map.ts; app/training/training-family-choices.tsx; app/training/training-family-choices.module.css; app/mobile-app/appearance-preference.ts. No backend/provider/pricing/payment/auth/API/schema/storage-policy files changed. Existing Professional default/palettes unchanged; appearance remains device-local.
+
+Tests: exact reversed-original byte guards, Training frozen-catalogue mapping/SSR/negative tests and original AST normalization, source-derived delayed-readiness native prop SSR, mobile150 precedence combinations/storage denial, staff radius consumption.38focused pass. Actual delayed React hydration remains pending, not proved by SSR.
+
+28 reviewed protected entries and2 AST entries are enumerated in UI_SUCCESSOR_GUARD_REVIEW_20261001.json with full before/after values. Exactly reviewed manifest entries are applied; no broad normalization or assertion waiver proposed. Shared manifests need captain coordination with1217/1216/1215/1207. Changes to readiness disabled props are explicitly approved UI guard behavior; claim unchanged canonical handlers, not unchanged all control props.
+
+## Hosted actual-app route and fixture strategy
+
+Use existing loopback real app server scripts/e2e/serve.sh through Playwright, not generated HTML/mockup renderer. Add a separate e2e/ui-successor.spec.ts and playwright.ui-successor.config.ts with the same loopback-only resolveUiAuditServer guard. One UI-successor workflow using existing install/Chromium/server conventions, Node22.15+; uploaded artifacts named with full Git head, screenshot PNGs + report JSON + trace-on-failure. Existing1207 tests/config untouched. New browser test/config/workflow files are authored and list58cases; actual hosted execution/screenshots remain pending.
+
+All /api/** intercepted to synthetic fixtures. Only known read-only catalogue/account/zone/quote-preview responses fulfilled; unknown requests denied. Canonical reservations/bookings, payment intents/captures, communications, settings/account mutations blocked and asserted absent. Quote POST is intercepted locally, never sent to remote. Test backend remains sandbox and FORBID_PRODUCTION=true. No user credentials/state copied.
+
+Matrix320/391/768/1440 ×Professional/Fun ×Emerald/Signature/Coral ×light/dark, fresh context per case.48 combinations; route groups can be sharded while each worker stays1. Screens: signed-out Account; actual Training families selected Puppy/Obedience/Behavioral/Leash/Meet/unknown; Walking schedule pending/ready; signed-in synthetic staff shared console/cards (relocation-enquiries); mobile preference transitions. Checknohorizontaloverflow, heading/copy visibility, dynamic choice price/session/payment equality with syntheticcanonicalvalues, keyboard native details/tab/selection, selected plan remains visible, target>=44px, current text contrast on actual computed background. Capture top and expanded/selected states, scroll lower controls; inspect representative PNGs manually including all widths/styles/modes, do not accept solely on DOM assertions.
+
+Training initial account and catalogue requests deferred independently: before both release date/time/cadence disabled with loading message; release either first stilldisabled; release both enabled (Meetcadence exception). Fill nondefault date/time, selectplan, repeat palette/mode/style events and confirm input values, handler selection and scheduledStart in intercepted quote remain exact. Pause quote/availability to test normal edits remain reachable after initial readiness. NoReserve clicked. Failure account/catalogue surfaces retain existing error messaging; record if control recovery needs separate followup.
+
+Walking defer account and initial catalogue/quote responses: schedule disabled until existing flags clear; release in alternate orders, verify no early edit possible, then choose date/time/duration/weekdays. Quote refresh disables transiently; verify choices persist when responses arrive. Assert intercepted quote scheduledStart/duration/weekday list matches inputs. NoReserve clicked. Testrapidprevious-response cancellation without changing application effects.
+
+Mobile: set only fixture-origin existing keys; wait actual controller hydration then repeated/interrupted CustomEvent/storage updates; globalhtml dataset and localtheme/mode agree; invalid/retired values normalize consistently; cleared key returns current global fallback; platformdefault honoured; System responds to OS-emulation change; denied-storage setter propagates via event detail; cross-tab updates tested on same isolated context. Route change V2->mobile->partner/staff and back retainsselected globalstyle/palette/mode. Reset fixture context/viewport at teardown; userprofile untouched.
+
+After exact-head artifacts: inspect screenshots and console/server errors, verify fullhead embedded report + artifact digest, fixactualdefects without relaxing guards, rerun focused+required hostedgates. Rootindependentvisualreview/captainmerge required. Draft PR title: Account, Training and shared appearance consistency; body must say visual QA pending until artifacts actually verified.

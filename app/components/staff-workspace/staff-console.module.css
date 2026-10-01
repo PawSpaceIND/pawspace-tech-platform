@@ -9,7 +9,7 @@
   --ds-danger-50:var(--staff-danger-bg); --ds-danger-500:var(--staff-danger); --ds-danger-600:var(--staff-danger);
   --ds-info-50:var(--staff-raised); --ds-info-500:var(--staff-primary);
   --ds-text-xs:.8125rem; --ds-text-sm:.875rem; --ds-text-base:1rem; --ds-text-lg:1.125rem; --ds-text-2xl:1.75rem; --ds-text-3xl:2rem;
-  --ds-radius-full:10px; --ds-radius-lg:16px; --ds-shadow-sm:var(--staff-shadow); --ds-shadow-md:var(--staff-shadow);
+  --ds-radius-full:var(--paw-control-radius); --ds-radius-lg:var(--paw-card-radius); --ds-shadow-sm:var(--staff-shadow); --ds-shadow-md:var(--staff-shadow);
   --line:var(--staff-line); --purple:var(--staff-primary); --ink:var(--staff-text); --muted:var(--staff-muted);
   color:var(--staff-text); background:var(--staff-bg); font-family:var(--paw-font); font-size:1rem; line-height:1.55;
   min-width:0;

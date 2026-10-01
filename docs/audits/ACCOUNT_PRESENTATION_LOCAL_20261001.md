@@ -1,0 +1,11 @@
+# Local Account presentation slice — not published
+
+Authoritative main f49dbabdf6c9a93e48ec93ce9b4821ae90c0e42f fetched successfully and isolated into account-presentation worktree. Open GitHub PRs1210/1209/1207/1199 diffs checked: none touches app/v2/account/page.tsx or shared customer-detail CSS. Captain's Grooming worktree and publication untouched.
+
+Two production files plus focused test and this audit note: Account page (3customer-facing text replacements and4CSSclasshooks plusCSSimport), new account.module.css, new focused preservation test. The original shared stylesheet remains byte-identical. Hero heading: Your pet family, all in one place. Hero body: Keep your profile, pets and saved addresses together for your PawSpace bookings. Signed-out helper uses one-time-code wording and same home link. Existing shared hero also appears signed-in; no signed-in account actions/copy beyond that hero changed.
+
+Home link and Appearance button minimum44px/48px mobile targets, signed-out Sign in from home minimum48px/full-width mobile,16px helper-to-CTA spacing and keyboard focus ring. No hide/reorder/sticky overlay/theme changes. Existing palettes/styles inherit unchanged. UI copy only; all routes/handlers/state/effects/API/permission/validation/business values remain exactoriginalbytes after reversing the reviewed text/CSShooks. Preservation test hashes the entire reversedsource to authoritative originalSHA256a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d.
+
+6focused tests passed0fail/skips: new complete-source invariance/CSSscope guards, existing V2 account parity/route-execution and account-tools auth checks. TSsyntaxdiagnostics0;diffcheckpassed. No heavybuild/install/browser/screenshots. Actual320/391/485px theme/keyboard/touch/overflow QA remains with UAT. Verify signed-out state and appearance dialog/link navigation using read-only synthetic fixture/session; no real account mutation. No uplift claim.
+
+No preservation manifests edited: changed Account page has exactbyte guards in existingfixtures. Captain must review ONLY that source digest entry before adding thisslice to an approvedexistinglane; fullpreservationgate is notclaimedgreen. No newPR or publication and no attempt to touch deniedmanifestpublication paths. This is a standalone localpatch for captainreview, not merged into Grooming branch.
