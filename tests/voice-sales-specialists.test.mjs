@@ -422,7 +422,7 @@ test('a stay quote cannot be reused by another conversation or for a changed car
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
 
-test('Taxi voice checkout uses routed fare and fleet booking after separate confirmation',async t=>{
+for(const redundantPin of [false,true])test('Taxi voice checkout uses routed fare and fleet booking after separate confirmation; duplicate PIN='+redundantPin,async t=>{
  const w=await world(t,'pet_taxi');
  await (await import('../lib/taxi-fleet-governance.ts')).ensureTaxiFleetTables(w.db);
  for(const provider of w.sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE services_json LIKE '%pet_taxi%'").all())
@@ -440,6 +440,7 @@ test('Taxi voice checkout uses routed fare and fleet booking after separate conf
   return paymentFetch(url,init);
  };
  const plan=actions(w,'citroen_ec3','split_50_50');delete plan[0].arguments.cadenceDays;
+ if(redundantPin)plan[0].arguments.serviceAddress+=', PIN '+plan[0].arguments.servicePincode;
  plan[0].arguments.scheduledStart='2026-10-20T10:00:00+05:30'; // Model output uses the caller's India offset.
  plan[1].arguments.taxi={originLabel:'12 Test Street',destinationLabel:'24 Test Street, Koramangala, Bengaluru',passengerCount:1,luggageCount:0,tripType:'one_way',ridePurpose:'regular',waitingMinutes:0,hyperactivePet:false};
  const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'taxi-voice',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
@@ -452,4 +453,10 @@ test('Taxi voice checkout uses routed fare and fleet booking after separate conf
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM taxi_fleet_reservations WHERE status='confirmed'").get().n,1);
  assert.equal((await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'yes'})).duplicatePrevented,true);
  assert.equal(bookingCount(w),1);assert.equal(w.calls.length,1);
+});
+
+test('Taxi pickup equivalence never ignores a different street or PIN',async()=>{
+ const {canonicalTaxiPickup}=await import('../lib/voice-taxi-sales.ts');
+ assert.equal(canonicalTaxiPickup('12 Test Street','12 Test Street, PIN 560038','560038'),'12 Test Street, PIN 560038');
+ for(const origin of ['13 Test Street','12 Test Street, PIN 560039','12 Test Street, PIN 560038, another address','560038'])assert.throws(()=>canonicalTaxiPickup(origin,'12 Test Street, PIN 560038','560038'));
 });

@@ -3,13 +3,24 @@ const text = (value: unknown) => String(value ?? "").trim();
 const object = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const refuse = (message: string, status = 409) => new Response(message, { status });
 
+/** Strip only a duplicate terminal PIN matching the separately validated PIN. Never geocode a guessed address. */
+export function canonicalTaxiPickup(origin: unknown, address: unknown, pincode: unknown): string {
+ const pin=text(pincode),pickup=text(address),given=text(origin);
+ if(!/^[1-9][0-9]{5}$/.test(pin)||!pickup||!given)throw refuse("Confirm the complete pickup address and its PIN",400);
+ const suffix=new RegExp(`(?:,\\s*|\\s+)(?:PIN\\s+)?${pin}$`,"i");
+ const normalized=(value:string)=>value.replace(suffix,"").trim();
+ if(!normalized(given)||normalized(given)!==normalized(pickup))throw refuse("Confirm the complete pickup address, its PIN and the drop address",400);
+ return pickup;
+}
+
 /** Address routing, vehicle capacity and fares come from the existing Taxi quote endpoint. */
 export async function prepareTaxiSalesQuote(_db: D1Database, input: { schedule: Row; booking: Row; petCount: number }): Promise<Row> {
  const { schedule, booking } = input, taxi = object(booking.taxi);
  const allowed = ["originLabel","destinationLabel","returnDropLabel","passengerCount","luggageCount","tripType","ridePurpose","waitingMinutes","vehicleClass","hyperactivePet"];
  if (Object.keys(taxi).some(key => !allowed.includes(key))) throw refuse("Taxi route and fare fields must come from the server",400);
  if (booking.paymentMode !== "split_50_50") throw refuse("Taxi requires confirmation of its 50 percent booking fee terms",400);
- if (!text(taxi.originLabel) || !text(taxi.destinationLabel) || text(taxi.originLabel) !== text(schedule.serviceAddress)) throw refuse("Confirm the complete pickup address, its PIN and the drop address",400);
+ if (!text(taxi.destinationLabel)) throw refuse("Confirm the drop address",400);
+ taxi.originLabel=canonicalTaxiPickup(taxi.originLabel,schedule.serviceAddress,schedule.servicePincode);
  if (!Number.isInteger(taxi.passengerCount) || !Number.isInteger(taxi.luggageCount) || !Number.isInteger(taxi.waitingMinutes)
   || typeof taxi.hyperactivePet !== "boolean" || !["one_way","round_trip"].includes(text(taxi.tripType)) || !["regular","airport"].includes(text(taxi.ridePurpose))) {
   throw refuse("Confirm passenger and luggage counts, trip type, purpose, waiting time and pet handling needs",400);
