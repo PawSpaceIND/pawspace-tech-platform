@@ -140,6 +140,44 @@ test("V2 contract: care -> single booking -> verified capture -> canonical confi
   await previewCare(page);
   await expect(page.getByRole("link", { name: "Close grooming booking" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  // Regress desktop payment text collapsing into the address grid and crossing the CTA.
+  const summaryAudit = await page.getByRole("group", { name: "Payment timing" }).evaluate(group => {
+    const summary = group.closest("aside")!, outer = summary.getBoundingClientRect();
+    const boxes = [...group.children].map(child => child.getBoundingClientRect());
+    const buttons = [...group.querySelectorAll("button")];
+    const line = (element: Element) => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      return [...range.getClientRects()].every(rect => rect.left >= outer.left && rect.right <= outer.right && rect.bottom <= outer.bottom);
+    };
+    const luminance = (color: string) => {
+      const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {
+        const v = value / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+      }); return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
+    };
+    const contrast = (element: Element, surface: Element = summary) => {
+      const a = luminance(getComputedStyle(element).color), b = luminance(getComputedStyle(surface).backgroundColor);
+      return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    };
+    const captions = [group.querySelector(":scope > small"), ...summary.querySelectorAll('[class*="safe"] p,[class*="footnote"]')].filter(Boolean) as Element[];
+    const coupon = summary.querySelector('[role="group"][aria-label="Coupon code"]')!;
+    const couponHelper = coupon.querySelector(":scope > small")!;
+    const helperStyle = getComputedStyle(couponHelper);
+    const helperBounds = couponHelper.getBoundingClientRect();
+    return {
+      couponHelperContrast: contrast(couponHelper, coupon),
+      couponHelperVisible: helperBounds.width > 0 && helperBounds.height > 0 && helperStyle.visibility === "visible" && Number(helperStyle.opacity) > 0,
+      stacked: boxes.every((box, i) => i === 0 || box.top >= boxes[i - 1].bottom - 1),
+      contained: [...group.querySelectorAll("b,small,strong"), ...captions].every(line),
+      choicesFit: buttons.every(button => button.scrollHeight <= button.clientHeight + 1 && button.clientHeight >= 44),
+      contrast: captions.map(element => contrast(element)),
+    };
+  });
+  expect(summaryAudit.couponHelperVisible).toBe(true);
+  expect(summaryAudit.couponHelperContrast).toBeGreaterThanOrEqual(4.5);
+  expect(summaryAudit.stacked).toBe(true);
+  expect(summaryAudit.contained).toBe(true);
+  expect(summaryAudit.choicesFit).toBe(true);
+  expect(summaryAudit.contrast.every(ratio => ratio >= 4.5)).toBe(true);
   await page.screenshot({ path: test.info().outputPath("v2-grooming-care.png"), fullPage: true });
   await page.getByRole("button", { name: /Reserve & review payment/ }).evaluate(element => {
     (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click();
