@@ -32,6 +32,7 @@ import { applyIdempotentMigrationFile } from "../scripts/schema/apply-idempotent
 installWorkersHooks("__REMOTE_SQL_DB__", "__REMOTE_SQL_ENV__");
 
 const capacity = await import("../lib/provider-capacity-governance.ts");
+const aiRollout = await import("../lib/ai-audience-rollout.ts");
 const { ensureBoardingStayLifecycleTables } = await import("../lib/boarding-stay-lifecycle.ts");
 const { ensureTaxiFleetTables } = await import("../lib/taxi-fleet-governance.ts");
 const transient = await import("../lib/d1-transient.ts");
@@ -83,7 +84,9 @@ test("chunks keep statement order and stay under the size limit", () => {
 // ---------------------------------------------------------------------------------------------
 async function deploymentShapedDatabase() {
   const sqlite = new DatabaseSync(":memory:");
-  await capacity.ensureProviderCapacityTables(makeD1(sqlite));
+  const db = makeD1(sqlite);
+  await capacity.ensureProviderCapacityTables(db);
+  await aiRollout.ensureAiAudienceRolloutTables(db);
   return sqlite;
 }
 const schemaOf = (sqlite) => sqlite.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").all();
