@@ -15,7 +15,7 @@ test('staff cards and controls consume the selected global style radii',()=>{
 });
 test('only the reviewed radii and scoped label colour changed',()=>{
  const css=read('app/components/staff-workspace/staff-console.module.css').replace('--ds-radius-full:var(--paw-control-radius); --ds-radius-lg:var(--paw-card-radius);','--ds-radius-full:10px; --ds-radius-lg:16px;')
-  .replace('\n/* A section label is content text, including on dark staff surfaces. */\n.console :global(.eyebrow) { color:var(--staff-text); }\n','');
+  .replace('\n/* A section label is content text, including on dark staff surfaces. */\n.console header > p[style*="--ds-primary-500"] { color:var(--staff-text) !important; }\n','');
  assert.equal(createHash('sha256').update(css).digest('hex'),'d0209881dcebdb02e62d0d631177684e08c5d06f8b899dabe17c6c3fb3a054e3');
 });
 import {createElement} from 'react';

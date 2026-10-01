@@ -33,4 +33,4 @@
 .console :where(h2,h3) { font-weight:700; }
 
 /* A section label is content text, including on dark staff surfaces. */
-.console :global(.eyebrow) { color:var(--staff-text); }
+.console header > p[style*="--ds-primary-500"] { color:var(--staff-text) !important; }

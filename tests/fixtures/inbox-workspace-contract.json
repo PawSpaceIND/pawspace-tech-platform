@@ -398,7 +398,7 @@
     "app/components/staff-workspace/StaffModule.tsx": "e1eae8900de5022ca777e46fbc97c94961e4ab5e8c438f7b96ed53e91087366d",
     "app/components/staff-workspace/StaffWorkspace.tsx": "17a8fb4cc17eae8d5424566b962584a9193f0021fa4e0df2043ab8a707f1f432",
     "app/components/staff-workspace/display-state.ts": "64a060f3cbb67d3962da3d94c1ee049be849d212e02e383ce7ab5212029f6557",
-    "app/components/staff-workspace/staff-console.module.css": "975a890d3734fcf1d6dfe9b644411a7cca1622932379d1ea92b95c8a2b93c1dd",
+    "app/components/staff-workspace/staff-console.module.css": "890e94b5baefd6d6dffb347dd0a57d63a9f061b5793b191eae3cbb17573cc2a5",
     "app/components/staff-workspace/staff-module.module.css": "42e08f82d15cdaeacdac3823f0f4cd3f5d3d35488bc42e49abd0000b8002d86f",
     "app/components/staff-workspace/staff-workspace.module.css": "b78ede82f6fdd6d7b9cce7e3f60372bec588e36b98630acff16cb98dccfee06e",
     "app/components/test-sync-panel.module.css": "c46439c3bd344a210c438901b4391699138c9f91251b86cea600266d7f1c30d0",
