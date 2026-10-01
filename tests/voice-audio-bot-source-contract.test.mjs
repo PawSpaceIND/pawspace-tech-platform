@@ -53,14 +53,21 @@ test("voice staging overlay is explicit, isolated and keeps recipient/provider d
   assert.match(overlay, /PAWSPACE_VOICE_RUNTIME: "elevenlabs"/);
   assert.match(overlay, /PAWSPACE_VOICE_NATIVE_UAT_APPROVED: "true"/);
   assert.match(overlay, /VOICE_AGENTSTREAM_STT_LANGUAGE: "auto"/);
+  assert.match(overlay, /PAWSPACE_VOICE_NATIVE_TTS_PROVIDER/);
+  assert.match(overlay, /PAWSPACE_VOICE_NATIVE_TTS_FALLBACK/);
+  assert.match(overlay, /ELEVENLABS_TTS_MODEL_ID/);
   assert.match(overlay, /cfg\.ai = \{ binding: "AI" \}/);
   assert.match(overlay, /PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT/);
-  for (const name of ["PAWSPACE_VOICE_UAT_ALLOWLIST", "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"]) {
+  for (const name of ["PAWSPACE_VOICE_UAT_ALLOWLIST", "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET", "ELEVENLABS_API_KEY", "ELEVENLABS_TTS_VOICE_ID"]) {
     assert.match(overlay, new RegExp(`delete cfg\\.vars\\[secretName\\]`));
     assert.match(workflow, new RegExp(`secrets\\.${name}`));
   }
   assert.match(workflow, /tests\/voice-agentstream-quality\.test\.mjs/);
+  assert.match(workflow, /tests\/voice-native-tts\.test\.mjs/);
   assert.match(workflow, /tests\/voice-native-agentstream-uat\.test\.mjs/);
+  assert.match(workflow, /native carrier TTS: direct ElevenLabs TTS when configured; Workers AI linear16 fallback otherwise/);
+  assert.match(workflow, /ElevenLabs role on native path: speech generation only/);
+  assert.match(workflow, /Deploy voice-enabled isolated staging[\s\S]*ELEVENLABS_API_KEY: \$\{\{ secrets\.ELEVENLABS_API_KEY \}\}[\s\S]*ELEVENLABS_TTS_VOICE_ID: \$\{\{ secrets\.ELEVENLABS_TTS_VOICE_ID \}\}/);
   assert.match(workflow, /ordinary voice runtime: ElevenLabs \(unchanged\)/);
   assert.match(workflow, /controlled native AgentStream UAT override: enabled for explicit staff UAT only/);
   assert.match(workflow, /AgentStream STT language mode: auto-detect/);

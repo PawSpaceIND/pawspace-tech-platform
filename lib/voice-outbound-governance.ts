@@ -29,6 +29,7 @@ import { centralConsentAllows, recordGlobalOptOut } from "./communication-govern
 import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
 import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_CALL_STATES, VOICE_RETRYABLE_STATES, VOICE_TERMINAL_STATES, type VoiceCallState } from "./voice-call-state";
 import { exotelTelephony, selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
+import { nativeCarrierTtsReadiness } from "./voice-native-tts";
 
 type Db = D1Database;
 type Env = Record<string, unknown>;
@@ -1014,6 +1015,7 @@ export async function voiceOutboundReadiness(db: Db, env: Env, asOf = Date.now()
   return {
     gate: voiceCallReadiness(env),
     transport: telephonyProviderStatus(env),
+    nativeTts: nativeCarrierTtsReadiness(env),
     useCases: VOICE_USE_CASES.map(useCase => ({ ...useCase, availableNow: !useCase.requiresSalesApproval || salesOutboundApproved(env) })),
     scripts: scripts.results.map(row => ({ useCase: text(row.use_case), active: Number(row.active) === 1, claimsApproved: Number(row.claims_approved) === 1, version: Number(row.version) })),
     productionCallsPlaced: Number(placed?.n || 0),

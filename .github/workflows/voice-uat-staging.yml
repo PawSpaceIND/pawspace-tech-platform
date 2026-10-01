@@ -14,6 +14,12 @@ on:
       - '.github/workflows/voice-uat-staging.yml'
       - 'scripts/voice-uat-preflight.mjs'
       - 'scripts/stage-voice-uat-config.mjs'
+      - 'lib/exotel-agentstream.ts'
+      - 'lib/voice-native-tts.ts'
+      - 'lib/voice-telephony-provider.ts'
+      - 'lib/voice-outbound-governance.ts'
+      - 'tests/voice-native-tts.test.mjs'
+      - 'tests/exotel-agentstream-source-contract.test.mjs'
   workflow_dispatch:
     inputs:
       confirm:
@@ -109,7 +115,7 @@ jobs:
       - name: Install and validate voice contracts
         run: |
           npm run install:ci
-          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs tests/voice-agentstream-quality.test.mjs tests/voice-native-agentstream-uat.test.mjs
+          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs tests/voice-agentstream-quality.test.mjs tests/voice-native-tts.test.mjs tests/voice-native-agentstream-uat.test.mjs
       - name: Build
         run: npm run build
       - name: Configure isolated staging base
@@ -183,6 +189,9 @@ jobs:
         env:
           PAWSPACE_VOICE_UAT_APPROVED: 'true'
           PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: 'true'
+          PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: ${{ vars.PAWSPACE_VOICE_NATIVE_TTS_PROVIDER }}
+          PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: ${{ vars.PAWSPACE_VOICE_NATIVE_TTS_FALLBACK }}
+          ELEVENLABS_TTS_MODEL_ID: ${{ vars.ELEVENLABS_TTS_MODEL_ID }}
           EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
           EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
         run: node scripts/stage-voice-uat-config.mjs
@@ -200,6 +209,8 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_TTS_VOICE_ID: ${{ secrets.ELEVENLABS_TTS_VOICE_ID }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
         run: |
           set -euo pipefail
@@ -208,9 +219,10 @@ jobs:
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET","PAWSPACE_VOICE_UAT_ALLOWLIST"];
-            const values=Object.fromEntries(names.map(name=>[name,process.env[name]||""]));
+            const required=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET","PAWSPACE_VOICE_UAT_ALLOWLIST"];
+            const values=Object.fromEntries(required.map(name=>[name,process.env[name]||""]));
             if(Object.values(values).some(value=>!value))throw new Error("required voice UAT secret missing");
+            for(const name of ["ELEVENLABS_API_KEY","ELEVENLABS_TTS_VOICE_ID"]){const value=String(process.env[name]||"").trim();if(value)values[name]=value;}
             writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           '
           npx wrangler deploy --message "staging $DEPLOY_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
@@ -237,7 +249,9 @@ jobs:
             echo '- Workers AI binding requested: yes'
             echo '- STT: @cf/openai/whisper-large-v3-turbo'
             echo '- in-app TTS: @cf/myshell-ai/melotts'
-            echo '- carrier TTS: @cf/deepgram/aura-2-en (linear16)'
+            echo '- native carrier TTS: direct ElevenLabs TTS when configured; Workers AI linear16 fallback otherwise'
+            echo '- native TTS default model: eleven_flash_v2_5'
+            echo '- ElevenLabs role on native path: speech generation only; PawSpace owns conversation, memory and actions'
             echo '- Exotel secret names populated: yes'
             echo '- account SID accepted from EXOTEL_SID or EXOTEL_ACCOUNT_SID alias: yes'
             echo '- seven-parameter UAT preflight: passed'
