@@ -77,7 +77,7 @@
     "tests/elevenlabs-provider-preflight.test.mjs": "88afa0b5938be293089ea4d2469a7cd7ccbd3f2683f7b2d6316402f3ac8252c6",
     "tests/elevenlabs-worker-gateway.test.mjs": "933c0b0fed0267b2100419eaf6fc319d279a0368cdb52db288f099593a853d3d",
     "tests/lp-d02-d10-provider-workspace-projection.test.mjs": "b32fdfd9b17a28b29d98d15448b3f97763f7a8ba9e725c28ff8ea13c0913f8bc",
-    "tests/openai-elevenlabs-voice-integration.test.mjs": "1c6530c5019d5edeef0f89041a3f2024b59837a583086e1ae2b45fc43ab590a0",
+    "tests/openai-elevenlabs-voice-integration.test.mjs": "9d849b6e0676d9aeddeac3448eb9f426f083ea79ea4f3705f446575884ca615a",
     "tests/paid-journey-remediation.test.mjs": "998b31487a69301abf5ed317558b96fb114a66668942f37dbb9d1cf7de929a6a",
     "tests/partner-current-payment-balance.test.mjs": "3b102d161d119e3a92be2adcecc16bb4358051909de804840142589910e8b29f",
     "tests/partner-job-projection-contract.test.mjs": "1b5e04072deba29c7ee8efee77f32ee7fed79862f8c957b0ba6b982d63dfc768",
