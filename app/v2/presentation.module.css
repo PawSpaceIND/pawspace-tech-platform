@@ -141,3 +141,26 @@
 :global(body:has([data-pawspace-v2]) .cookie-consent a) { color:var(--v2-utility-text) !important; }
 :global(body:has([data-pawspace-v2]) .cookie-consent button) { background:var(--v2-utility-bg) !important; color:var(--v2-utility-text) !important; border-color:var(--v2-utility-line) !important; }
 :global(body:has([data-pawspace-v2]) .cookie-consent button:last-child) { background:var(--v2-utility-primary) !important; color:var(--v2-utility-on-primary) !important; }
+
+/* Grooming's form actions can scroll through every fixed FAB offset. Keep both existing
+   utilities in the footer flow on phones; the form retains its full usable width. */
+@media (max-width: 820px) {
+  :global(body:has([data-pawspace-v2]):has(#v2-grooming-address) .paw-appearance-trigger),
+  :global(body:has([data-pawspace-v2]):has(#v2-grooming-address) .ps-order-fab) {
+    position: relative !important;
+    inset: auto !important;
+    transform: none !important;
+    display: flex;
+    width: fit-content;
+    margin: 12px 16px 12px auto;
+  }
+  :global(body:has([data-pawspace-v2]):has(#v2-grooming-address) .paw-appearance-trigger) {
+    height: auto; padding: 10px 14px;
+  }
+  :global(body:has([data-pawspace-v2]):has(#v2-grooming-address) .paw-appearance-trigger > span:last-child) {
+    display: inline;
+  }
+  :global(body:has([data-pawspace-v2]):has(#v2-grooming-address) .ps-order-fab) {
+    margin-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+}
