@@ -7,12 +7,16 @@ const bookings=services.map((serviceCode,i)=>({id:`UI-${i}`,serviceCode,packageN
 const jobs=bookings.map((b,i)=>({bookingId:b.id,serviceCode:b.serviceCode,packageName:b.packageName,scheduledStart:at,scheduledEnd:end,petCount:1,status:i===1?'completed':i===3?'cancelled':'confirmed',customerFirstName:'UI fixture',group:i===1?'completed':i===3?'past':'upcoming',needsActionReason:null,stayId:null,carePlanStatus:null,nextSlotStart:null,addOns:[],safetyRequirements:[],offer:null}));
 for(const width of [320,412,820,1440])for(const style of ['professional','cartoon'])test(`remaining UI populated screens ${width} ${style}`,async({page},info)=>{
  const theme=width===320?'emerald':width===412?'coral':'signature',mode=style==='cartoon'?'dark':'light';
- const writes:string[]=[];
+ const writes:string[]=[],existingAutomaticActions:unknown[]=[];
  await page.setViewportSize({width,height:900});
  await page.addInitScript(({style,theme,mode})=>{localStorage.setItem('pawspace.visual-style',style);localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.cookie-consent.v1','essential');},{style,theme,mode});
  await page.route('**/api/**',async route=>{
   const r=route.request(),path=new URL(r.url()).pathname;
   const reply=(data:unknown)=>route.fulfill({json:{data}});
+  // The unchanged signed-in Account mounts an automatic referral ensure. Mock and assert its exact intent.
+  if(path==='/api/referral-governance'&&r.method()==='POST'&&r.postDataJSON()?.action==='ensure_code'){
+   existingAutomaticActions.push(r.postDataJSON());return reply({code:'SYNTHETIC-ONLY',codeId:'UI-REF',duplicatePrevented:true});
+  }
   if(path==='/api/customer-checkout'&&r.method()==='POST'&&r.postDataJSON()?.action==='status'){const training=r.postDataJSON().bookingId==='UI-TRAIN',id=training?'UI-TRAIN':'UI-1';return reply({bookingId:id,environment:'sandbox',confirmation:{ready:true,bookingId:id,serviceCode:training?'dog_training':'boarding',packageName:training?'Synthetic Training care':'Synthetic Boarding care',bookingStatus:'confirmed',paymentId:'UI-PAY',paymentMode:'prepaid',paymentStatus:'captured',transactionId:null,amountDueNow:0,totalAmount:1900,currency:'INR',providerId:'UI-PRV',providerName:'Synthetic host',providerModel:'commission',workOrderStatus:'assigned',scheduledStart:at,scheduledEnd:end,updatedAt:1,pets:[{id:'UI-PET',name:'Synthetic pet',species:'dog',breed:null}]}});}
   if(r.method()!=='GET'){writes.push(path);return route.fulfill({status:409,json:{error:'Writes forbidden in presentation fixture'}});}
   if(path==='/api/identity-session')return reply({subjectType:'customer',subjectId:'UI-CUSTOMER'});
@@ -20,6 +24,7 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
   if(path==='/api/training-programmes')return reply({programme:{id:'UI-PROGRAMME',booking_id:'UI-TRAIN',provider_id:'UI-PRV',plan_code:'UI-PLAN',plan_name:'Synthetic Training care',status:'scheduled',total_sessions:1,completed_sessions:0,no_show_sessions:0,cancelled_sessions:0,meet_booking_id:null,pricing_snapshot_json:'{}'},sessions:[{id:'UI-SESSION',programme_id:'UI-PROGRAMME',booking_id:'UI-TRAIN',sequence_no:1,provider_id:'UI-PRV',scheduled_start:at,scheduled_end:end,status:'scheduled',attendance_json:'{}',homework_json:'{}',progress_json:'{}',evidence_json:'{}',started_at:null,completed_at:null}],events:[]});
   if(path==='/api/service-review')return reply({pending:[]});
   if(path==='/api/customer-support-case')return reply({cases:[]});
+  if(path==='/api/referral-governance')return reply({programmes:[],rewards:[]});
   if(path==='/api/partner-job-feed')return reply({providerId:'UI-PRV',needsAction:[],today:[],upcoming:jobs.filter(j=>j.group==='upcoming'),completed:jobs.filter(j=>j.group==='completed'),needsOperations:[],past:jobs.filter(j=>j.group==='past'),counts:{needsAction:0,today:0,upcoming:2,completed:1,total:4}});
   if(path==='/api/provider-service-rates')return reply({rates:[],options:[{serviceCode:'boarding',packageCode:'UI-PACK',name:'Synthetic Boarding overnight',floorPrice:699,cityId:'blr',zoneId:'blr-east'},{serviceCode:'pet_sitting',packageCode:'UI-SIT',name:'Synthetic Sitting visit',floorPrice:499,cityId:'blr',zoneId:'blr-east'}]});
   if(path.includes('relocation'))return reply({cases:[],inquiries:[]});
@@ -55,5 +60,5 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
  await page.goto('/v2/account');await expect(page.getByRole('heading',{name:'Profile',exact:true})).toBeVisible();await capture('account-regression');
  await page.goto('/v2/support');await expect(page.getByRole('textbox',{name:'Title',exact:true})).toBeVisible();await capture('support-regression');
  await page.goto('/v2/booking?bookingId=UI-TRAIN');await expect(page.getByRole('region',{name:'Manage your programme'})).toBeVisible();await page.getByRole('button',{name:'Request programme cancellation / refund review'}).click();await expect(page.getByRole('form',{name:'Request programme cancellation'})).toBeVisible();await expect(page.getByRole('button',{name:'Send cancellation request'})).toBeDisabled();await capture('training-manage-regression');
- expect(writes).toEqual([]);await info.attach('source-and-synthetic-scope',{body:JSON.stringify({head,width,style,theme,mode,writes,physicalDevice:false,externalRequests:false}),contentType:'application/json'});
+ expect(writes).toEqual([]);expect(existingAutomaticActions).toEqual([{action:'ensure_code',customerId:'UI-CUSTOMER',programmeId:'uat-referral-programme'}]);await info.attach('source-and-synthetic-scope',{body:JSON.stringify({head,width,style,theme,mode,writes,existingAutomaticActions,physicalDevice:false,externalRequests:false}),contentType:'application/json'});
 });
