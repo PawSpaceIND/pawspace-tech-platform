@@ -106,14 +106,13 @@ async function signInFixtureFinance(page: Page, bookingId: string) {
   const signedIn = nextPost(page, "/api/staging-login");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   expect((await signedIn).status()).toBe(200);
-  // Custom seeded identities land at /me; entering Finance must enforce the real MFA guard.
+  // Custom seeded identities land at /me; verify the real Finance API MFA guard before enrolling.
   await page.waitForURL("**/me");
-  await page.goto("/team/finance");
-  await page.waitForURL("**/mfa?next=%2Fteam%2Ffinance");
   const session = await okJson(await page.request.get("/api/staging-login", { maxRedirects: 0 }));
   expect(session).toMatchObject({ enabled: true, signedInAs: { email: "e2e.finance@pawspace.test", role: "finance" } });
   const beforeMfa = await page.request.get(`/api/walking-finance?bookingId=${encodeURIComponent(bookingId)}`, { maxRedirects: 0 });
   expect(beforeMfa.status()).toBe(401); expect(await beforeMfa.json()).toEqual({ error: "MFA required" });
+  await page.goto("/mfa?next=%2Fteam%2Ffinance");
   await expect(page.getByRole("heading", { name: "Verify your authenticator code", exact: true })).toBeVisible();
   await page.getByLabel("6-digit authenticator code", { exact: true }).fill(fixtureTotp());
   const verified = nextPost(page, "/api/v1/auth/mfa/verify");
