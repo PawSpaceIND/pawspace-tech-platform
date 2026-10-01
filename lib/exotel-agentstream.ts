@@ -7,7 +7,7 @@ import { transitionVoiceCall } from "./voice-outbound-governance";
 import { canVoiceCallTransition, isVoiceCallState } from "./voice-call-state";
 import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
 import { DEFAULT_WORKERS_NATIVE_TTS_MODEL, NativeCarrierTtsAudioError, NativeCarrierTtsCancelledError, synthesizeNativeCarrierTts } from "./voice-native-tts";
-import type { VoiceSalesService } from "./voice-sales-specialists";
+import { beginNativeVoiceOfferTurn, cancelNativeVoiceOfferTurn, acknowledgeNativeVoiceOfferTurn, type VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
 // Exotel AgentStream is raw signed little-endian PCM over JSON/WebSocket. This module is deliberately
@@ -24,7 +24,9 @@ const END_SILENCE_MS = 350;
 const PRE_ROLL_MS = 250;
 const SPEECH_RMS_THRESHOLD = 420;
 const AGENTSTREAM_ACTIVE_STATES = new Set(["connected", "speaking", "listening"]);
-// Exotel AgentStream outbound media is byte-bounded: each payload is 3,200–100,000 bytes and a multiple of 320.\n// The carrier buffers these payloads; a clear event flushes buffered playback on barge-in.\nconst EXOTEL_MIN_OUTBOUND_CHUNK_BYTES = 3_200;
+// Exotel AgentStream outbound media is byte-bounded: each payload is 3,200–100,000 bytes and a multiple of 320.
+// The carrier buffers these payloads; a clear event flushes buffered playback on barge-in.
+const EXOTEL_MIN_OUTBOUND_CHUNK_BYTES = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
@@ -251,8 +253,10 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
   return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language, segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
 }
-async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null) {
+async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null, guard?: () => void) {
   const messageId = `MSG-VOICE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, now = Date.now(), index = session.segmentIndex++;
+  const turnKey = `exotel-agentstream:${session.providerCallId}:${index}`;
+  if (speaker === "customer" && provider) { await beginNativeVoiceOfferTurn(env.DB,turnKey,session.threadId,session.customerId); guard?.(); }
   const direction = speaker === "customer" ? "inbound" : "outbound";
   await env.DB.batch([
     env.DB.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,?,'voice','transactional','voice_transcript_segment',?,'received',?,NULL,?,?,?, ?,?)")
@@ -277,13 +281,15 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
     threadId: session.threadId,
     customerId: session.customerId,
     inputMessageId: messageId,
-    idempotencyKey: `exotel-agentstream:${session.providerCallId}:${index}`,
+    idempotencyKey: turnKey,
+    nativeTurnKey: turnKey,
+    assertCurrent: guard,
     channel: "voice",
     provider: contextualProvider,
     voiceFollowupIntent,
   });
   const row = (turn.turn || null) as Row | null;
-  return { output: text(row?.output || row?.output_text), outcome: text(row?.outcome) || (row ? "draft_review_required" : "pending") };
+  return { turnKey, output: text(row?.output || row?.output_text), outcome: text(row?.outcome) || (row ? "draft_review_required" : "pending") };
 }
 
 async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, language: CarrierSttLanguage) {
@@ -401,12 +407,14 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   let session: Session | null = null;
   let transportOpen = true, terminated = false;
   let currentMark: string | null = null;
-  const pendingMarks = new Map<string, { session: Session; queuedAt: number; bytes: number; frames: number }>();
+  const pendingMarks = new Map<string, { session: Session; queuedAt: number; bytes: number; frames: number; turnKey?: string; version: number }>();
   let providerPromise: Promise<AiResponseProvider> | null = null;
   let speechParts: Uint8Array[] = [], preRoll: Uint8Array[] = [], speechStartedAt = 0, silenceMs = 0, assistantPlaying = false;
   let speechGeneration = 0, generationVersion = 0;
   const activeTtsControllers = new Set<AbortController>();
   let controlChain = Promise.resolve();
+  let activeOfferTurnKey: string | null = null;
+  let authorityFence: Promise<unknown> = Promise.resolve();
 
   const assertLive = (active: Session) => {
     if (!transportOpen || terminated || server.readyState !== 1 || session !== active) throw new TransportClosed();
@@ -421,6 +429,14 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
 
   const cancelStaleGeneration = (active: Session, reason: "caller_speech" | "stop" | "transport_closed") => {
     const hadGeneration = activeTtsControllers.size > 0, hadPlayback = assistantPlaying;
+    const cancelledKeys = new Set([...pendingMarks.values()].map(mark => mark.turnKey).filter((key): key is string => Boolean(key)));
+    if (activeOfferTurnKey) cancelledKeys.add(activeOfferTurnKey);
+    activeOfferTurnKey = null;
+    if (cancelledKeys.size) {
+      authorityFence = authorityFence.then(() => Promise.all([...cancelledKeys].map(key => cancelNativeVoiceOfferTurn(env.DB,key,active.threadId,active.customerId))));
+      ctx.waitUntil(authorityFence.catch(error => failProcessing(error,active,"llm",Date.now())));
+    }
+
     generationVersion++;
     for (const controller of activeTtsControllers) controller.abort();
     activeTtsControllers.clear();
@@ -453,6 +469,13 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       return;
     }
     terminated = true;
+    const cancelledKeys = new Set([...pendingMarks.values()].map(mark => mark.turnKey).filter((key): key is string => Boolean(key)));
+    if (activeOfferTurnKey) cancelledKeys.add(activeOfferTurnKey);
+    activeOfferTurnKey = null;
+    if (cancelledKeys.size) {
+      authorityFence = authorityFence.then(() => Promise.all([...cancelledKeys].map(key => cancelNativeVoiceOfferTurn(env.DB,key,active.threadId,active.customerId))));
+      ctx.waitUntil(authorityFence.catch(error => failProcessing(error,active,"llm",Date.now())));
+    }
     generationVersion++;
     for (const controller of activeTtsControllers) controller.abort(); activeTtsControllers.clear();
     if (active) {
@@ -506,7 +529,7 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     });
     assertCurrent(active, version);
     if (pendingMarks.size >= 32) pendingMarks.delete(pendingMarks.keys().next().value!);
-    pendingMarks.set(markName, { session: active, queuedAt, bytes: sent.bytes, frames: sent.frames });
+    pendingMarks.set(markName, { session: active, queuedAt, bytes: sent.bytes, frames: sent.frames, version, ...(purpose === "turn" && activeOfferTurnKey ? { turnKey: activeOfferTurnKey } : {}) });
     currentMark = markName;
     ctx.waitUntil(diagnostic(active, "agentstream_audio_queued", {
       markName, bytes: sent.bytes, frames: sent.frames, sampleRate: active.sampleRate,
@@ -563,7 +586,10 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       });
       const provider = await providerPromise;
       assertCurrent(active, version);
-      const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, provider);
+      await authorityFence;
+      assertCurrent(active,version);
+      activeOfferTurnKey = `exotel-agentstream:${active.providerCallId}:${active.segmentIndex}`;
+      const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, provider, () => assertCurrent(active,version));
       assertCurrent(active, version);
       const llmMs = Date.now() - llmStarted;
       if (!generated.output) return;
@@ -688,6 +714,12 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "mark") {
         const name = text(incoming.mark?.name), pending = pendingMarks.get(name);
         if (pending && (!incoming.stream_sid || text(incoming.stream_sid) === pending.session.streamSid)) {
+          if (pending.turnKey) {
+            assertCurrent(pending.session,pending.version);
+            await acknowledgeNativeVoiceOfferTurn(env.DB,pending.turnKey,pending.session.threadId,pending.session.customerId);
+            assertCurrent(pending.session,pending.version);
+            if (activeOfferTurnKey === pending.turnKey) activeOfferTurnKey = null;
+          }
           pendingMarks.delete(name);
           if (currentMark === name) { assistantPlaying = false; currentMark = null; }
           ctx.waitUntil(diagnostic(pending.session, "agentstream_audio_mark_ack", {

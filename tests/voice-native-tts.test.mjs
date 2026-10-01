@@ -205,3 +205,34 @@ test("oversized ElevenLabs responses cancel the provider body before returning",
   }, "Too much audio.", 8000), /audio_too_large/);
   assert.equal(cancelled, true);
 });
+
+test("Workers AI stalled body wakes on caller cancellation", async () => {
+  const abort = new AbortController(); let cancelled = false;
+  const env = { PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: "workers_ai", AI: { run: async () => new ReadableStream({ cancel() { cancelled = true; } }) } };
+  const pending = synthesizeNativeCarrierTts(env, "Synthetic speech", 8000, { signal: abort.signal });
+  setTimeout(() => abort.abort(), 20);
+  await assert.rejects(Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error("stalled read did not wake")), 200))]), /cancel/i);
+  assert.equal(cancelled, true);
+});
+
+test("ElevenLabs stalled preflight wakes on caller cancellation without fetch abort assistance", async (t) => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  const abort = new AbortController(); let cancelled = false;
+  globalThis.fetch = async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "content-type": "audio/pcm" } });
+  const pending = synthesizeNativeCarrierTts({ ELEVENLABS_API_KEY: "test-key", ELEVENLABS_TTS_VOICE_ID: "synthetic", PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "none" }, "Synthetic speech", 8000, { signal: abort.signal });
+  setTimeout(() => abort.abort(), 20);
+  await assert.rejects(Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error("stalled read did not wake")), 200))]), /cancel/i);
+  assert.equal(cancelled, true);
+});
+
+test("ElevenLabs stalled progressive tail wakes at the speech deadline", async (t) => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  let cancelled = false;
+  globalThis.fetch = async () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(3200)); }, cancel() { cancelled = true; } }), { headers: { "content-type": "audio/pcm" } });
+  const speech = await synthesizeNativeCarrierTts({ ELEVENLABS_API_KEY: "test-key", ELEVENLABS_TTS_VOICE_ID: "synthetic", PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "none", VOICE_SPEECH_TIMEOUT_MS: 800 }, "Synthetic speech", 8000);
+  const reader = speech.result.getReader(); assert.equal((await reader.read()).value.byteLength,3200);
+  let watchdog;
+  try { await assert.rejects(Promise.race([reader.read(), new Promise((_, reject) => { watchdog=setTimeout(() => reject(new Error("deadline did not wake read")), 1600); })]), /timed out/); }
+  finally { clearTimeout(watchdog); reader.releaseLock(); }
+  assert.equal(cancelled, true);
+});

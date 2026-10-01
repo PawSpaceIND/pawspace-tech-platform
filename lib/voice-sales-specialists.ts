@@ -49,10 +49,29 @@ export async function ensureVoiceSalesOffers(db: D1Database) {
  return ensureD1Once(db,"voice_sales_offers",async()=>{
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS voice_sales_offers (id TEXT PRIMARY KEY,turn_key TEXT NOT NULL UNIQUE,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,status TEXT NOT NULL,quote_json TEXT NOT NULL,actions_json TEXT NOT NULL,summary TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL,confirmed_at INTEGER,result_json TEXT,completed_at INTEGER)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS native_voice_offer_authority (turn_key TEXT PRIMARY KEY,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS voice_sales_offers_thread ON voice_sales_offers(thread_id,customer_id,status,created_at)"),
  ]);
  });
 }
+// Carrier turns must retain authority at the atomic offer commit and receive a matching playout mark.
+export async function beginNativeVoiceOfferTurn(db: D1Database, turnKey: string, threadId: string, customerId: string) {
+ await ensureVoiceSalesOffers(db);
+ await db.prepare("INSERT OR IGNORE INTO native_voice_offer_authority (turn_key,thread_id,customer_id,status,updated_at) VALUES (?,?,?,'awaiting',?)").bind(turnKey,threadId,customerId,Date.now()).run();
+}
+export async function cancelNativeVoiceOfferTurn(db: D1Database, turnKey: string, threadId: string, customerId: string) {
+ await ensureVoiceSalesOffers(db);
+ await db.batch([
+  db.prepare("INSERT OR IGNORE INTO native_voice_offer_authority (turn_key,thread_id,customer_id,status,updated_at) VALUES (?,?,?,'cancelled',?)").bind(turnKey,threadId,customerId,Date.now()),
+  db.prepare("UPDATE native_voice_offer_authority SET status='cancelled',updated_at=? WHERE turn_key=? AND thread_id=? AND customer_id=?").bind(Date.now(),turnKey,threadId,customerId),
+  db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE turn_key=? AND thread_id=? AND customer_id=? AND status IN ('pending','app_only')").bind(turnKey,threadId,customerId),
+ ]);
+}
+export async function acknowledgeNativeVoiceOfferTurn(db: D1Database, turnKey: string, threadId: string, customerId: string) {
+ await ensureVoiceSalesOffers(db);
+ await db.prepare("UPDATE native_voice_offer_authority SET status='delivered',updated_at=? WHERE turn_key=? AND thread_id=? AND customer_id=? AND status='awaiting'").bind(Date.now(),turnKey,threadId,customerId).run();
+}
+const nativeCommitFence = "EXISTS (SELECT 1 FROM native_voice_offer_authority WHERE turn_key=? AND thread_id=? AND customer_id=? AND status='awaiting')";
 async function assertOwner(db: D1Database, threadId: string, customerId: string, actor: AuthenticatedActor) {
  if (!actor.email.endsWith("@system.pawspace") || !actor.permissions.includes("communications.manage")) throw refusal("Voice sales service actor required", 403);
  const thread = await db.prepare("SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
@@ -123,7 +142,7 @@ export async function bookingPaymentLink(bookingId: string, channel: SalesOfferC
  try { const { env } = await import("cloudflare:workers"); const configured = String((env as unknown as Row).PAWSPACE_PUBLIC_ORIGIN || "").trim(); if (/^https:\/\/[a-z0-9.-]+$/i.test(configured)) origin = configured; } catch { /* default origin */ }
  return `${origin}${path}`;
 }
-export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel }): Promise<{id:string;summary:string;expiresAt:number;bookingPath?:string}> {
+export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel; nativeTurnKey?: string }): Promise<{id:string;summary:string;expiresAt:number;bookingPath?:string}> {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  if (input.service === "all_services") {
   const requested = text(input.actions[0]?.arguments?.serviceCode);
@@ -182,8 +201,8 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   const summary = `${text(provider.name)} is currently available for ${text(quote.packageName)}, from ${date(schedule.scheduledStart)} to ${date(schedule.scheduledEnd)} India time. This caregiver's quote is ${money(quote.totalAmount)} for ${counted(quote.petCount,"pet")}. Complete the booking in the PawSpace app. Availability and price will be checked again there; nothing is reserved, booked or paid yet.`;
   const offerId = id(), now = Date.now(), expiresAt = Math.min(now + 10 * 60000, Number(quote.expiresAt) || Infinity);
   await db.batch([
-   db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending'").bind(input.threadId,input.customerId),
-   db.prepare("INSERT INTO voice_sales_offers (id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) VALUES (?,?,?,?,?,'app_only',?,'[]',?,?,?)").bind(offerId,input.turnKey,input.threadId,input.customerId,input.service,JSON.stringify(quote),summary,expiresAt,now),
+   db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending' AND (? IS NULL OR "+nativeCommitFence+")").bind(input.threadId,input.customerId,input.nativeTurnKey??null,input.nativeTurnKey??null,input.threadId,input.customerId),
+   db.prepare("INSERT INTO voice_sales_offers (id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) SELECT ?,?,?,?,?,'app_only',?,'[]',?,?,? WHERE ? IS NULL OR "+nativeCommitFence).bind(offerId,input.turnKey,input.threadId,input.customerId,input.service,JSON.stringify(quote),summary,expiresAt,now,input.nativeTurnKey??null,input.nativeTurnKey??null,input.threadId,input.customerId),
   ]);
   return { id: offerId, summary, expiresAt, bookingPath };
  }
@@ -205,25 +224,26 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
  const actions: AiActionRequest[] = [{ toolCode: "schedule.reserve", arguments: schedule }, { toolCode: "booking.create", arguments: booking }, { toolCode: "checkout.payment_order.create", arguments: {} }];
  const offerId = id(), now = Date.now(), expiresAt = Math.min(now + 10 * 60000, Number(quote.expiresAt) || Infinity), summary = summaryFor(input.service, quote, schedule, input.channel || "voice");
  await db.batch([
-  db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending'").bind(input.threadId, input.customerId),
-  db.prepare("INSERT INTO voice_sales_offers (id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) VALUES (?,?,?,?,?,'pending',?,?,?,?,?)").bind(offerId, input.turnKey, input.threadId, input.customerId, input.service, JSON.stringify(quote), JSON.stringify(actions), summary, expiresAt, now),
+  db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending' AND (? IS NULL OR "+nativeCommitFence+")").bind(input.threadId,input.customerId,input.nativeTurnKey??null,input.nativeTurnKey??null,input.threadId,input.customerId),
+  db.prepare("INSERT INTO voice_sales_offers (id,turn_key,thread_id,customer_id,service_code,status,quote_json,actions_json,summary,expires_at,created_at) SELECT ?,?,?,?,?,'pending',?,?,?,?,? WHERE ? IS NULL OR "+nativeCommitFence).bind(offerId,input.turnKey,input.threadId,input.customerId,input.service,JSON.stringify(quote),JSON.stringify(actions),summary,expiresAt,now,input.nativeTurnKey??null,input.nativeTurnKey??null,input.threadId,input.customerId),
  ]);
  return { id: offerId, summary, expiresAt };
 }
-export async function pendingVoiceSalesOffer(db: D1Database, threadId: string, customerId: string, service: VoiceSalesService) {
+export async function pendingVoiceSalesOffer(db: D1Database, threadId: string, customerId: string, service: VoiceSalesService, requireNativeDelivery = false) {
  await ensureVoiceSalesOffers(db);
- if (service === "all_services") return db.prepare("SELECT * FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(threadId, customerId).first<Row>();
- return db.prepare("SELECT * FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND service_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(threadId, customerId, service).first<Row>();
+ const delivered = requireNativeDelivery ? " AND EXISTS (SELECT 1 FROM native_voice_offer_authority a WHERE a.turn_key=voice_sales_offers.turn_key AND a.thread_id=voice_sales_offers.thread_id AND a.customer_id=voice_sales_offers.customer_id AND a.status='delivered')" : "";
+ if (service === "all_services") return db.prepare("SELECT * FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND status='pending'"+delivered+" ORDER BY created_at DESC LIMIT 1").bind(threadId, customerId).first<Row>();
+ return db.prepare("SELECT * FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND service_code=? AND status='pending'"+delivered+" ORDER BY created_at DESC LIMIT 1").bind(threadId, customerId, service).first<Row>();
 }
-export async function invalidateVoiceSalesOffers(db: D1Database, threadId: string, customerId: string) {
+export async function invalidateVoiceSalesOffers(db: D1Database, threadId: string, customerId: string, nativeTurnKey?: string) {
  await ensureVoiceSalesOffers(db);
- await db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending'").bind(threadId, customerId).run();
+ await db.prepare("UPDATE voice_sales_offers SET status='superseded' WHERE thread_id=? AND customer_id=? AND status='pending' AND (? IS NULL OR "+nativeCommitFence+")").bind(threadId,customerId,nativeTurnKey??null,nativeTurnKey??null,threadId,customerId).run();
 }
 function resultValue(value: unknown, key: string): string {
  const row = object(value); if (typeof row[key] === "string") return row[key] as string;
  for (const child of Object.values(row)) if (child && typeof child === "object") { const found = resultValue(child, key); if (found) return found; } return "";
 }
-export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; offerId: string; confirmation: string; channel?: SalesOfferChannel }) {
+export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; offerId: string; confirmation: string; channel?: SalesOfferChannel; nativeTurnKey?: string; assertCurrent?: () => void }) {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  if (!isVoiceSalesConfirmation(input.confirmation)) throw refusal("A separate unambiguous confirmation of the quoted offer is required", 400);
  if (input.service === "all_services") {
@@ -248,7 +268,8 @@ export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: Aut
   const current=await db.prepare("SELECT q.id FROM training_commercial_quotes q JOIN training_commercial_packages p ON p.package_code=q.package_code AND p.version=q.package_version WHERE q.id=? AND q.status='open' AND q.expires_at>=? AND p.active=1 AND p.effective_from<=? AND (p.effective_to IS NULL OR p.effective_to>=?)").bind(text(quote.quoteId),Date.now(),text(actions[0].arguments.scheduledStart).slice(0,10),text(actions[0].arguments.scheduledStart).slice(0,10)).first<Row>();
   if(!current)throw refusal("The Training quote or package changed; review a fresh quote before confirming");
  }
- const claimed = await db.prepare("UPDATE voice_sales_offers SET status='executing',confirmed_at=? WHERE id=? AND status='pending' AND expires_at>=?").bind(Date.now(), input.offerId, Date.now()).run();
+ input.assertCurrent?.();
+ const claimed = await db.prepare("UPDATE voice_sales_offers SET status='executing',confirmed_at=? WHERE id=? AND status='pending' AND expires_at>=? AND (? IS NULL OR ("+nativeCommitFence+" AND EXISTS (SELECT 1 FROM native_voice_offer_authority a WHERE a.turn_key=voice_sales_offers.turn_key AND a.thread_id=voice_sales_offers.thread_id AND a.customer_id=voice_sales_offers.customer_id AND a.status='delivered')))").bind(Date.now(),input.offerId,Date.now(),input.nativeTurnKey??null,input.nativeTurnKey??null,input.threadId,input.customerId).run();
  if (Number(claimed.meta?.changes) !== 1) throw refusal("This offer is already being processed");
  let groupId = "", bookingId = "", orderId = "";
  try {

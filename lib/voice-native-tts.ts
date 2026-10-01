@@ -19,10 +19,14 @@ export class NativeCarrierTtsCancelledError extends Error {
   constructor() { super("Native TTS generation was cancelled"); this.name = "NativeCarrierTtsCancelledError"; }
 }
 class NativeTtsConfigurationError extends Error {}
+class NativeTtsTimeoutError extends Error {}
 
 export const DEFAULT_ELEVENLABS_NATIVE_TTS_MODEL = "eleven_flash_v2_5";
 export const DEFAULT_WORKERS_NATIVE_TTS_MODEL = "@cf/deepgram/aura-2-en";
-const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;\n// Hold one full Exotel-minimum carrier chunk before exposing provider audio. Failures before the first\n// audible frame remain eligible for provider fallback without sacrificing progressive playback after it.\nconst NATIVE_TTS_PREFLIGHT_BYTES = 3_200;
+const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;
+// Hold one full Exotel-minimum carrier chunk before exposing provider audio. Failures before the first
+// audible frame remain eligible for provider fallback without sacrificing progressive playback after it.
+const NATIVE_TTS_PREFLIGHT_BYTES = 3_200;
 const RAW_AUDIO_TYPES = new Set(["application/octet-stream", "audio/pcm", "audio/raw", "audio/x-pcm"]);
 const WAV_AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/wave"]);
 const ALLOWED_ELEVENLABS_BASES = new Set([
@@ -134,12 +138,25 @@ function validatedLinear16(bytes: Uint8Array, sampleRate: number): Uint8Array {
   if (bytes.byteLength % 2) throw new NativeCarrierTtsAudioError("invalid_audio");
   return bytes;
 }
+async function readWithAbort(reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal) {
+  throwIfAborted(signal);
+  if (!signal) return reader.read();
+  return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const abort = () => {
+      reject(signal.reason instanceof NativeTtsTimeoutError ? signal.reason : new NativeCarrierTtsCancelledError());
+      void reader.cancel().catch(() => undefined);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    reader.read().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
+}
 async function collectStream(stream: ReadableStream<Uint8Array>, signal?: AbortSignal) {
   const reader = stream.getReader(), parts: Uint8Array[] = []; let size = 0;
   try {
     while (true) {
       throwIfAborted(signal);
-      const next = await reader.read(); if (next.done) break;
+      const next = await readWithAbort(reader, signal); if (next.done) break;
       if (!(next.value instanceof Uint8Array)) throw new NativeCarrierTtsAudioError("invalid_audio");
       size += next.value.byteLength;
       if (size > MAX_NATIVE_AUDIO_BYTES) { await reader.cancel(); throw new NativeCarrierTtsAudioError("audio_too_large"); }
@@ -183,10 +200,10 @@ async function synthesizeElevenLabs(env: Env, output: string, sampleRate: number
   const model = text(env.ELEVENLABS_TTS_MODEL_ID) || DEFAULT_ELEVENLABS_NATIVE_TTS_MODEL;
   const base = elevenLabsBase(env), outputFormat = pcmOutputFormat(sampleRate);
   const controller = new AbortController();
-  const externalAbort = () => controller.abort();
+  const externalAbort = () => controller.abort(new NativeCarrierTtsCancelledError());
   if (options.signal?.aborted) throw new NativeCarrierTtsCancelledError();
   options.signal?.addEventListener("abort", externalAbort, { once: true });
-  const timer = setTimeout(() => controller.abort(), speechTimeoutMs(env));
+  const timer = setTimeout(() => controller.abort(new NativeTtsTimeoutError("ElevenLabs direct TTS timed out")), speechTimeoutMs(env));
   (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
   const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener("abort", externalAbort); };
   let response: Response;
@@ -222,7 +239,7 @@ async function synthesizeElevenLabs(env: Env, output: string, sampleRate: number
   try {
     while (primedBytes < NATIVE_TTS_PREFLIGHT_BYTES) {
       throwIfAborted(options.signal);
-      const next = await reader.read();
+      const next = await readWithAbort(reader, controller.signal);
       if (next.done) { ended = true; break; }
       if (!(next.value instanceof Uint8Array)) throw new NativeCarrierTtsAudioError("invalid_audio");
       primed.push(next.value); primedBytes += next.value.byteLength;
@@ -244,7 +261,7 @@ async function synthesizeElevenLabs(env: Env, output: string, sampleRate: number
       try {
         throwIfAborted(options.signal);
         while (!done && buffered.byteLength < 2) {
-          const next = await reader.read();
+          const next = await readWithAbort(reader, controller.signal);
           if (next.done) { done = true; break; }
           if (!(next.value instanceof Uint8Array)) throw new NativeCarrierTtsAudioError("invalid_audio");
           total += next.value.byteLength;
