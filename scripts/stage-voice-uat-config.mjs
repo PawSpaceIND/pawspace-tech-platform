@@ -55,6 +55,9 @@ cfg.vars = {
   VOICE_AGENTSTREAM_STT_LANGUAGE: "auto",
   VOICE_TTS_MODEL: "@cf/myshell-ai/melotts",
   VOICE_CARRIER_TTS_MODEL: "@cf/deepgram/aura-2-en",
+  PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: pick("PAWSPACE_VOICE_NATIVE_TTS_PROVIDER") || "auto",
+  PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: pick("PAWSPACE_VOICE_NATIVE_TTS_FALLBACK") || "workers_ai",
+  ELEVENLABS_TTS_MODEL_ID: pick("ELEVENLABS_TTS_MODEL_ID") || "eleven_flash_v2_5",
   VOICE_SPEECH_TIMEOUT_MS: "12000",
 };
 cfg.ai = { binding: "AI" };
@@ -63,7 +66,8 @@ for (const secretName of [
   "PAWSPACE_VOICE_UAT_ALLOWLIST", "PAWSPACE_VOICE_UAT_TEST_NUMBER",
   "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_ACCOUNT_SID", "EXOTEL_CALLER_ID",
   "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
+  "ELEVENLABS_API_KEY", "ELEVENLABS_TTS_VOICE_ID",
 ]) delete cfg.vars[secretName];
 
 writeFileSync(path, JSON.stringify(cfg));
-console.log("Voice UAT overlay applied: ordinary routing pinned to ElevenLabs, controlled native AgentStream UAT enabled, STT auto-detection enabled, carrier linear16 TTS pinned; secret values withheld.");
+console.log("Voice UAT overlay applied: ordinary routing remains unchanged, controlled native AgentStream UAT enabled, STT auto-detection enabled, native carrier TTS provider/fallback configured; secret values withheld.");
