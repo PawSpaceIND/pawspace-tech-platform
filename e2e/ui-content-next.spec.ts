@@ -44,7 +44,9 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
   const updates=page.locator('.ps-order-fab');await expect(updates).toBeVisible();
   expect(await updates.evaluate(e=>{const s=getComputedStyle(e);return[s.position,s.top,s.right,s.bottom,s.left];})).toEqual(['relative','0px','0px','0px','0px']);
   await updates.getByRole('button',{name:'Order notifications',exact:true}).click();await expect(page.getByRole('dialog',{name:'PawSpace order notifications'})).toBeVisible();await page.getByRole('button',{name:'Close notifications'}).click();
-  await page.evaluate(()=>window.scrollTo(0,0));
+  await info.attach(`focus-before-default-${name}`,{body:JSON.stringify(await page.evaluate(()=>({tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.slice(0,80)}))),contentType:'application/json'});
+  await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();window.scrollTo(0,0);});
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
   await page.screenshot({path:info.outputPath(`${name}-${head}.png`),fullPage:true});
  };
  await page.goto('/v2/activity');await expect(page.getByRole('heading',{name:'Upcoming & active'})).toBeVisible();
