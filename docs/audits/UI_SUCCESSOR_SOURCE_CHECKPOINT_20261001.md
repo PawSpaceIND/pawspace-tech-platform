@@ -1,6 +1,6 @@
 # Grouped UI successor — source verified; visual QA pending
 
-Base7decb60cee7b597ca6a00ffd54acf5bf2831a71f; branchfeat/ui-account-training-theme-20261001; isolatedui-successor worktree. Account/Training/theme draft worktrees preserved. No backend/pricing/payment/auth/API/persistence-policy changes. Root independently reviewed source and authorized exact28protected keys across8manifests plus2AST entries. Fresh openPRsource ownership clear; shared manifests touched ONLYapprovedkeys, proven by JSONdiff. No guard waiver.
+Originalbase7decb60cee7b597ca6a00ffd54acf5bf2831a71f; normallymergedcurrentmaincceeceba21db95d510d81b235cb17f76db22a88b; branchfeat/ui-account-training-theme-20261001; isolatedui-successor worktree. Account/Training/theme draft worktrees preserved. No backend/pricing/payment/auth/API/persistence-policy changes. Root independently reviewed source and authorized exact28protected keys across8manifests plus2AST entries. Fresh openPRsource ownership clear; shared manifests touched ONLYapprovedkeys, proven by JSONdiff. No guard waiver.
 
 Application changes: Account copy/scoped touch spacing; V2 Training native four-family disclosures with exactoriginalchoicecallback/dynamicvalues, Behavioral assessment-led, Meet & Greet separate, unknownfutureplans retained; shared staff radii followselectedstyle; mobiledevicepreferences mirrorcurrentglobalprecedence with eventdetailfallback; existing Training and Walking initial-loading flags disableschedulecontrols withloading explanations. Bookingcallbacks, requests, commercialvalues/defaults preserved by exactreversal/negativeguards. Readinesscontrolprops intentionallychange; sourcefoundenabledpendingcontrols butdidnotprovelostinputrootcause.
 
@@ -11,3 +11,5 @@ Hosted actual-app suite implemented: e2e/ui-successor.spec.ts,playwright.ui-succ
 Macbrowser read-onlyforeground/XPC failed;authorizedobservationstalledandowncommandcancelledexit130. No browserCLIinstalled. Noalternativetools/OSpermissions/retry/build/serverstarted;user tabs/apps/viewport/preferencesuntouched. LibrarypreparedhelpersavefailedbeforeuploadDNS/TLS,noIDs. NoalternateLibrarytransfer.
 
 Next:publishoneclearlymarkedDraftPRandmonitoractual58casehostedresults/artifacts. Fixobserveddefectswithoutwaivers. Rootindependentimageinspection+requiredgatesbeforecaptainmerge/deploy. No visual/CTRclaims.
+
+After normal main reconciliation:189guard tests and full bounded-memory TypeScript pass; canonical-booking source equals currentmain exactly. Only28reviewedprotected keys and2AST entries differ in manifests versus currentmain. Candidate remains visual-QA-pending.
