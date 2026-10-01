@@ -22,7 +22,7 @@ class NativeTtsConfigurationError extends Error {}
 
 export const DEFAULT_ELEVENLABS_NATIVE_TTS_MODEL = "eleven_flash_v2_5";
 export const DEFAULT_WORKERS_NATIVE_TTS_MODEL = "@cf/deepgram/aura-2-en";
-const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;
+const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;\n// Hold one full Exotel-minimum carrier chunk before exposing provider audio. Failures before the first\n// audible frame remain eligible for provider fallback without sacrificing progressive playback after it.\nconst NATIVE_TTS_PREFLIGHT_BYTES = 3_200;
 const RAW_AUDIO_TYPES = new Set(["application/octet-stream", "audio/pcm", "audio/raw", "audio/x-pcm"]);
 const WAV_AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/wave"]);
 const ALLOWED_ELEVENLABS_BASES = new Set([
@@ -74,10 +74,16 @@ function requestedProvider(env: Env): NativeCarrierTtsProvider {
   if (elevenLabsCredentialsConfigured(env)) { elevenLabsBase(env); return "elevenlabs"; }
   return "workers_ai";
 }
+function providerConfigured(provider: NativeCarrierTtsProvider, env: Env) {
+  return provider === "elevenlabs" ? elevenLabsConfigured(env) : workersAiConfigured(env);
+}
 function requestedFallback(env: Env, primary: NativeCarrierTtsProvider): NativeCarrierTtsProvider | null {
   const configured = lower(env.PAWSPACE_VOICE_NATIVE_TTS_FALLBACK);
   if (configured === "none") return null;
-  if (configured === "elevenlabs" || configured === "workers_ai") return configured === primary ? null : configured;
+  if (configured === "elevenlabs" || configured === "workers_ai") {
+    if (configured === primary) return null;
+    return providerConfigured(configured, env) ? configured : null;
+  }
   if (configured) throw new NativeTtsConfigurationError("Unsupported native TTS fallback provider");
   return primary === "elevenlabs" && workersAiConfigured(env) ? "workers_ai" : null;
 }
@@ -214,7 +220,7 @@ async function synthesizeElevenLabs(env: Env, output: string, sampleRate: number
 
   const reader = response.body.getReader(), primed: Uint8Array[] = []; let primedBytes = 0, ended = false;
   try {
-    while (primedBytes < 48) {
+    while (primedBytes < NATIVE_TTS_PREFLIGHT_BYTES) {
       throwIfAborted(options.signal);
       const next = await reader.read();
       if (next.done) { ended = true; break; }
