@@ -284,8 +284,8 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   const paymentStatusRecorded=verifyFirstService&&submittedPaymentStatus==="captured"&&!offlineAuthorized?"created":submittedPaymentStatus;
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
+  await ensureProviderBookingGuard(db);
   if(input.serviceCode==="grooming"){
-    await ensureProviderBookingGuard(db);
     const governedGross=couponCommercial?.orderValue??input.totalAmount;
     try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:governedGross-groomingAddOnTotal,submittedAmountDueNow:input.payment.mode==="prepaid"?governedGross-groomingAddOnTotal:0,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return json({error:error instanceof Error?error.message:"Invalid Grooming package or price"},409);}
     const gross=governed.totalAmount+groomingAddOnTotal,finalAmount=couponCommercial?.finalAmount??gross;
@@ -322,16 +322,14 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   // idempotency replay above so history stays replayable, and before every booking, pet, payment,
   // work-order and lifecycle write, so a mismatched payload costs nothing.
   if(reservations.results.some(row=>String(row.city_id)!==input.cityId||String(row.zone_id)!==input.zoneId))return json({error:"The booking city/zone does not match the reserved provider's city and zone"},409);
-  if(input.serviceCode==="grooming"){
-    const unavailable=(await Promise.all(reservations.results.map(row=>providerUnavailableForWindow(db,{providerId:String(row.provider_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end)})))).some(Boolean);
-    if(unavailable){
-      const unavailableAt=Date.now(),reason="Provider became unavailable before booking confirmation";
-      await db.batch([
-        db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(input.scheduleGroupId),
-        db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,reason,unavailableAt,input.scheduleGroupId),
-      ]);
-      return json({error:reason,code:"provider_unavailable_before_booking",reassignmentRequired:true},409);
-    }
+  const unavailable=(await Promise.all(reservations.results.map(row=>providerUnavailableForWindow(db,{providerId:String(row.provider_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end)})))).some(Boolean);
+  if(unavailable){
+    const unavailableAt=Date.now(),reason="Provider became unavailable before booking confirmation";
+    await db.batch([
+      db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(input.scheduleGroupId),
+      db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,reason,unavailableAt,input.scheduleGroupId),
+    ]);
+    return json({error:reason,code:"provider_unavailable_before_booking",reassignmentRequired:true},409);
   }
   let trainingCommercial:Awaited<ReturnType<typeof governTrainingBooking>>|null=null;
   if(input.serviceCode==="dog_training"){
@@ -524,7 +522,7 @@ export async function executeCanonicalBookingRequest(request:Request,actorOverri
   const entitlementActive=paymentStatusPersisted==="captured";
   const statements=[
     db.prepare("INSERT INTO booking_reservation_confirmation_guards (group_id,checked_at) VALUES (?,?)").bind(input.scheduleGroupId,now),
-    ...(input.serviceCode==="grooming"?[db.prepare("INSERT INTO provider_booking_confirmation_guards (group_id,created_at) VALUES (?,?)").bind(input.scheduleGroupId,now)]:[]),
+    db.prepare("INSERT INTO provider_booking_confirmation_guards (group_id,created_at) VALUES (?,?)").bind(input.scheduleGroupId,now),
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
     ...resolvedPets.map(pet=>db.prepare(CANONICAL_PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,bookingStatus,"customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
