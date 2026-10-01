@@ -150,7 +150,9 @@ export async function runWalkingPersona({ page, browser, baseURL, sandboxLogin, 
     await page.goto("/v2/walking"); await dismissPrivacy(page);
     await expect(page.locator("main[data-v2-walking='true']")).toBeVisible();
     await expect(page.getByRole("heading", { name: "How often should we walk?", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Pet", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "One-time walk", exact: true }).click();
+    await expect(page.getByRole("complementary", { name: "Walking order summary", exact: true })).toContainText("One-time walk · 30 min");
     await page.getByRole("combobox", { name: "Pet", exact: true }).selectOption(dog.id);
     await page.getByRole("combobox", { name: "Walk duration", exact: true }).selectOption("30");
     await page.getByLabel("Start from", { exact: true }).fill(date);

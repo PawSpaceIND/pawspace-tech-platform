@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { expect, test, type Browser, type Page, type Response } from "@playwright/test";
 import { openFixtureFinance } from "./training-persona";
 
@@ -31,7 +32,7 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   expect(process.env.PAWSPACE_UAT_SERVICE_CLOCK).toBe("on");
   const date = process.env.PW_UAT_SERVICE_DATE;
   expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-  test.info().annotations.push({ type: "simulation", description: "Local synthetic D1/OTP and service clock; real configured UAT Google geocoding/Routes for public Bengaluru locations; authenticated staff capture simulator; synthetic route telemetry. No payment-provider call, voice call, physical GPS or native-device claim." });
+  test.info().annotations.push({ type: "simulation", description: "Local synthetic D1/OTP and service clock; real configured UAT Google geocoding/Routes for public Bengaluru locations; authenticated locally signed synthetic webhook; synthetic route telemetry. No payment-provider call, voice call, physical GPS or native-device claim." });
 
   // Reuse the documented persona customer, avoiding new guessed phone identities.
   await sandboxLogin(page, "9000000912");
@@ -111,12 +112,16 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
       const linked = await finance!.request.post("/api/grooming-payment-sandbox", { data: { action: "link_order", bookingId, gatewayOrderId: `order_taxi_${stage}_${bookingId}` } });
       expect(linked.status(), await linked.text()).toBe(201);
       expect((await linked.json()).data).toMatchObject({ environment: "sandbox", synthetic: true });
-      const payload = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_taxi_${stage}_${bookingId}`, gatewayPaymentId: `pay_taxi_${stage}_${bookingId}`, amount, currency: "INR" };
-      const first = await finance!.request.post("/api/grooming-payment-sandbox", { data: payload });
-      expect(first.status(), await first.text()).toBe(201);
-      expect((await first.json()).data).toMatchObject({ environment: "sandbox", synthetic: true, result: { status: "processed", duplicate: false } });
-      const replay = await finance!.request.post("/api/grooming-payment-sandbox", { data: payload });
-      expect(replay.status(), await replay.text()).toBe(201); expect((await replay.json()).data.result.duplicate).toBe(true);
+      const secret = process.env.PW_PERSONA_WEBHOOK_SECRET;
+      expect(secret, "the disposable persona runner must provision its own local webhook key").toBeTruthy();
+      const eventId = `evt_taxi_${stage}_${bookingId}`;
+      const raw = JSON.stringify({ event: "payment.captured", created_at: Math.floor(Date.now()/1000), payload: { payment: { entity: { id: `pay_taxi_${stage}_${bookingId}`, order_id: `order_taxi_${stage}_${bookingId}`, amount: Math.round(amount*100), currency: "INR", status: "captured", method: "upi", notes: { bookingId } } } } });
+      const headers = { "content-type": "application/json", "x-razorpay-event-id": eventId, "x-razorpay-signature": createHmac("sha256",secret!).update(raw).digest("hex") };
+      const first = await finance!.request.post("/api/razorpay-webhook", { data: raw, headers });
+      expect(first.status(), await first.text()).toBe(200);
+      expect(await first.json()).toMatchObject({ ok: true, environment: "sandbox", status: "processed", atomicCapture: true, duplicateCapture: false });
+      const replay = await finance!.request.post("/api/razorpay-webhook", { data: raw, headers });
+      expect(replay.status(), await replay.text()).toBe(200); expect(await replay.json()).toMatchObject({ok:true,duplicate:true});
     };
     await capture("fee", fee);
     const schedule = async () => { const r = await page.request.get(`/api/taxi-adjustments?scope=customer&bookingId=${encodeURIComponent(bookingId)}`); expect(r.status(), await r.text()).toBe(200); return (await r.json()).data.paymentSchedule; };
@@ -185,6 +190,6 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
     await page.screenshot({ path: test.info().outputPath("customer-taxi-completed.png"), fullPage: true });
     await driver.screenshot({ path: test.info().outputPath("taxi-driver-completed.png"), fullPage: true });
     await finance.screenshot({ path: test.info().outputPath("taxi-finance-completed.png"), fullPage: true });
-    console.log("TAXI-PERSISTENT", JSON.stringify({ bookingId, paymentId, providerId, vehicleId: booking.reservedVehicle.id, quoteId: quote.quoteId, total, bookingFee: fee, finalBalance: balance, customerStatus: "completed", partnerStatus: "completed", paymentStatus: "captured", paymentEvidence: "staff_sandbox_simulator", routeProvider: "google_routes_uat", routeSamples: 2, productionGpsVerified: false, settlementBeneficiary: settlement.beneficiaryId, payoutStatus: settlement.payoutStatus, tax: settlement.tax, liveMoney: false }));
+    console.log("TAXI-PERSISTENT", JSON.stringify({ bookingId, paymentId, providerId, vehicleId: booking.reservedVehicle.id, quoteId: quote.quoteId, total, bookingFee: fee, finalBalance: balance, customerStatus: "completed", partnerStatus: "completed", paymentStatus: "captured", paymentEvidence: "locally_signed_synthetic_webhook", routeProvider: "google_routes_uat", routeSamples: 2, productionGpsVerified: false, settlementBeneficiary: settlement.beneficiaryId, payoutStatus: settlement.payoutStatus, tax: settlement.tax, liveMoney: false }));
   } finally { await Promise.allSettled([driver.close(), ...(finance ? [finance.close()] : [])]); }
 }
