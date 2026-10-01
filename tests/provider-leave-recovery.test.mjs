@@ -54,7 +54,7 @@ test("provider leave bridge faults roll back with decision, balance and audit",a
 });
 
 
-test("G19 approved Grooming leave can execute a capacity-safe replacement without changing booking identity or window",async()=>{
+for(const race of [null,"cancelled","reassigned"])test(`G19 Grooming leave preserves booking identity and concurrent ${race??"unchanged state"}`,async()=>{
  const sqlite=new DatabaseSync(":memory:"),db=makeD1(sqlite),now=Date.now(),start="2030-10-05T04:30:00.000Z",end="2030-10-05T06:30:00.000Z";
  await capacity.ensureProviderCapacityTables(db);await linkage.ensureWorkforcePersonLinkTables(db);
  sqlite.exec("CREATE TABLE scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
@@ -72,7 +72,17 @@ test("G19 approved Grooming leave can execute a capacity-safe replacement withou
  sqlite.prepare("INSERT INTO scheduling_reservations VALUES ('RES-G19','GRP-G19','LEAVE-ORIG','grooming','blr','blr-east','CUS-G19','[]',?,?,1,1,NULL,'assigned','{}',?)").run(start,end,now);
  sqlite.prepare("INSERT INTO scheduling_assignment_decisions VALUES ('GRP-G19','LEAVE-ORIG','assigned','scheduler','initial',?,'{}')").run(now);
  sqlite.prepare("INSERT INTO provider_recovery_cases (id,group_id,booking_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES ('REC-G19','GRP-G19','BK-G19','LEAVE-ORIG','provider_leave_pending','ops_escalation',NULL,'{\"leaveRequestId\":\"LVR-G19\",\"bookingPreserved\":true}',?,NULL,?)").run(now,now);
+ if(race){const batch=db.batch;let injected=false;db.batch=async statements=>{if(!injected&&statements.length===7){injected=true;sqlite.prepare("UPDATE canonical_bookings SET status=?,provider_id=? WHERE id='BK-G19'").run(race==="cancelled"?"cancelled":"assigned",race==="reassigned"?"OTHER":"LEAVE-ORIG");}return batch(statements);};}
  const executor=await import("../lib/provider-leave-recovery-execution.ts"),result=await executor.executeProviderLeaveRecovery(db,{recoveryCaseId:"REC-G19",actorId:"ops@test"});
+ if(race){
+  assert.equal(result.status,"ops_escalation");assert.equal(result.execution,"booking_changed_before_replacement");
+  const current=sqlite.prepare("SELECT status,provider_id FROM canonical_bookings WHERE id='BK-G19'").get();
+  assert.equal(current.status,race==="cancelled"?"cancelled":"assigned");assert.equal(current.provider_id,race==="reassigned"?"OTHER":"LEAVE-ORIG");
+  assert.equal(sqlite.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id='BK-G19'").get().provider_id,"LEAVE-ORIG");
+  assert.equal(sqlite.prepare("SELECT provider_id FROM scheduling_reservations WHERE group_id='GRP-G19'").get().provider_id,"LEAVE-ORIG");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_customer_notifications").get().n,0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events").get().n,0);return;
+ }
  assert.equal(result.status,"resolved");assert.equal(result.replacementProviderId,"LEAVE-REPL");
  assert.deepEqual({...sqlite.prepare("SELECT id,provider_id,scheduled_start,scheduled_end,status FROM canonical_bookings WHERE id='BK-G19'").get()},{id:"BK-G19",provider_id:"LEAVE-REPL",scheduled_start:start,scheduled_end:end,status:"assigned"});
  assert.equal(sqlite.prepare("SELECT provider_id,status FROM provider_work_orders WHERE booking_id='BK-G19'").get().provider_id,"LEAVE-REPL");
