@@ -10,3 +10,5 @@
 .training .trainingTable:focus-visible { outline:3px solid var(--paw-link); outline-offset:-3px; }
 .training :is(button,a):focus-visible { outline:3px solid var(--paw-link); outline-offset:3px; }
 @media(max-width:600px) { .training header > div:last-child { display:flex; flex-wrap:wrap; width:100%; } }
+
+.training header small { color:var(--paw-link) !important; }
