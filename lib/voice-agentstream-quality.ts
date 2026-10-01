@@ -60,6 +60,7 @@ export function nativeVoiceTurnDiagnostics(input: {
   sttMs: unknown;
   llmMs: unknown;
   ttsMs: unknown;
+  firstAudioMs?: unknown;
   totalMs: unknown;
   latencyTargetMs: unknown;
   transcriptChars: unknown;
@@ -70,7 +71,7 @@ export function nativeVoiceTurnDiagnostics(input: {
   ttsFallbackUsed?: unknown;
   outcome: unknown;
 }) {
-  const totalMs = boundedInt(input.totalMs), target = boundedInt(input.latencyTargetMs);
+  const totalMs = boundedInt(input.totalMs), target = boundedInt(input.latencyTargetMs), firstAudioMs = boundedInt(input.firstAudioMs);
   return Object.freeze({
     configuredSttLanguage: input.configuredSttLanguage,
     detectedSttLanguage: safeLanguage(input.detectedSttLanguage),
@@ -80,6 +81,8 @@ export function nativeVoiceTurnDiagnostics(input: {
     sttMs: boundedInt(input.sttMs),
     llmMs: boundedInt(input.llmMs),
     ttsMs: boundedInt(input.ttsMs),
+    firstAudioMs,
+    firstAudioTargetMet: target > 0 && firstAudioMs > 0 && firstAudioMs <= target,
     totalMs,
     latencyTargetMs: target,
     targetMet: target > 0 && totalMs <= target,
