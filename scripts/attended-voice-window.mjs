@@ -38,6 +38,7 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch,opti
   const a=await request(origin+'/api/voice-outbound?scope=ai_self_test',{headers:{cookie},signal:AbortSignal.timeout(5000)}),ab=await a.json();
   if(!r.ok||!a.ok)throw Error('Effective attended approval read refused');
   const gate=b.data?.gate,ai=ab.data;
+  console.log('ATTENDED_RUNTIME_GATE='+JSON.stringify({attempt,provider:b.data?.transport?.provider,mode:gate?.mode,enabled:gate?.enabled,blockedReason:gate?.blockedReason,uatApproved:gate?.uatApproved,salesOutboundApproved:gate?.salesOutboundApproved,allowlistSize:gate?.allowlistSize,missingSecretNames:gate?.missingSecretNames,selfTestMode:ai?.mode,selfTestApproved:ai?.approved,singleRecipient:ai?.singleRecipient}));
   effective=b.data?.transport?.provider==='elevenlabs_exotel'&&gate?.mode==='uat'&&gate?.enabled===true&&gate?.uatApproved===true&&gate?.salesOutboundApproved===true&&gate?.allowlistSize===1&&ai?.mode==='uat'&&ai?.approved===true&&ai?.singleRecipient===true;
   if(effective)break;
   if(attempt<4)await delay(2000);
