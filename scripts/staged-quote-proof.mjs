@@ -101,12 +101,20 @@ export function quoteReplyDiagnostic(turn){
 }
 
 // Known non-dialing audio demo 36793666839 only; not a general customer-case reset.
-export const offerRepairRevision='a3abdfbd6ae546047d05dc358640b2c094c17ffc';
+export const offerRepairRevision='257fb5968d5ef52e7f33b2a18a429e83a83c7ad0';
 export const offerIncidentStart=Date.parse('2026-10-01T00:00:00Z');
 export const offerIncidentEnd=Date.parse('2026-10-01T00:01:00Z');
 export const offerIncidentPrompt='The Complete Makeover price feels high. Is there an approved offer for that package?';
+export const offerIncidentPartial='The Complete Makeover price feels high.';
+function incidentInput(row){try{const p=JSON.parse(row.payload_json);return ['text','message','body','content'].map(k=>p?.[k]).find(v=>typeof v==='string'&&v.trim())?.trim();}catch{return null;}}
+function exactOfferTurnSet(turns,call,customerId){
+ if(!Array.isArray(turns)||![1,2].includes(turns.length))return false;
+ const full=turns.filter(t=>incidentInput(t)===offerIncidentPrompt);if(full.length!==1)return false;
+ const partial=turns.filter(t=>t!==full[0]);
+ return partial.length===0||partial.every(t=>incidentInput(t)===offerIncidentPartial&&t.customer_id===customerId&&t.thread_id===full[0].thread_id&&t.session_id===full[0].session_id&&t.created_at>=call.started_at&&t.created_at<full[0].created_at&&t.provider==='openai'&&t.policy_decision==='draft_review_required'&&t.outcome==='draft_review_required'&&t.handoff_reason==null&&t.direction==='inbound'&&t.input_actor==='elevenlabs-voice@system.pawspace'&&t.input_channel==='voice'&&t.input_provider==='elevenlabs');
+}
 export function syntheticOfferRepairChecks({revision,customerId,handoffs,calls,turns,expectedPrompt}){
- const h=handoffs?.[0]||{},c=calls?.[0]||{},t=turns?.[0]||{};
+ const h=handoffs?.[0]||{},c=calls?.[0]||{},t=turns?.find(row=>incidentInput(row)===offerIncidentPrompt)||{};
  const incidentTime=x=>typeof x==='number'&&Number.isFinite(x)&&x>=offerIncidentStart&&x<offerIncidentEnd;
  let payload;try{payload=JSON.parse(t.payload_json);}catch{}
  const actual=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());
@@ -115,7 +123,7 @@ export function syntheticOfferRepairChecks({revision,customerId,handoffs,calls,t
   expectedPromptBounded:expectedPrompt===offerIncidentPrompt,
   singleHandoff:Array.isArray(handoffs)&&handoffs.length===1,
   singleCall:Array.isArray(calls)&&calls.length===1,
-  singleTurn:Array.isArray(turns)&&turns.length===1,
+  exactKnownTurnSet:exactOfferTurnSet(turns,c,customerId),
   ownedRecords:Boolean(customerId)&&h.customer_id===customerId&&c.customer_id===customerId&&t.customer_id===customerId,
   sameThread:Boolean(h.thread_id)&&h.thread_id===c.thread_id&&h.thread_id===t.thread_id,
   sameSession:Boolean(h.session_id)&&h.session_id===t.session_id,
@@ -150,9 +158,10 @@ export function scopeSyntheticOfferActivity({calls,turns,laterMessages}) {
 }
 
 export function syntheticOfferContinuationClear({activity,otherHandoffs,threadId}) {
- if(!threadId||!activity||activity.diagnostic?.postCallInboundCount!==0||!Array.isArray(activity.laterMessages)||activity.laterMessages.length!==1||!Array.isArray(otherHandoffs))return false;
+ if(!threadId||!activity||activity.diagnostic?.postCallInboundCount!==0||!Array.isArray(activity.laterMessages)||![1,2].includes(activity.laterMessages.length)||!Array.isArray(otherHandoffs))return false;
  if(otherHandoffs.some(h=>h.thread_id===threadId&&['queued','staff_active'].includes(h.status)))return false;
- const m=activity.laterMessages[0];let payload;try{payload=JSON.parse(m.payload_json);}catch{return false;}
- const value=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());
- return value?.trim()===offerIncidentPrompt&&m.channel==='voice'&&m.created_by==='elevenlabs-voice@system.pawspace';
+ const messages=activity.laterMessages;
+ if(messages.some(m=>m.channel!=='voice'||m.created_by!=='elevenlabs-voice@system.pawspace'))return false;
+ if(messages.length===1)return incidentInput(messages[0])===offerIncidentPrompt;
+ return incidentInput(messages[0])===offerIncidentPartial&&incidentInput(messages[1])===offerIncidentPrompt&&messages[0].created_at<messages[1].created_at;
 }

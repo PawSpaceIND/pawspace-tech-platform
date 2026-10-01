@@ -4,10 +4,10 @@ import {PREMIUM_AUDIO_SCENARIOS} from '../scripts/premium-audio-scenarios.mjs';
 import {DEMO_LIMITS} from '../scripts/voice-demo-output-boundary.mjs';
 import {premiumArtifactPaths,validatedPremiumReport,serializePremiumReport,serializePremiumSummary} from '../scripts/premium-audio-output-boundary.mjs';
 const proof={passed:true,userTurns:3,finalTranscriptMatched:true,bidirectionalAudio:true,audioEvidence:'observed_live_stream'};
-function report(index=0){const selected=PREMIUM_AUDIO_SCENARIOS[index];return{scenario:selected.id,revision:'a'.repeat(40),turns:selected.turns.map(item=>({scenario:item.id,prompt:'untrusted replacement',transcript:'Synthetic microphone transcript',reply:'Actual observed answer',inputToPlaybackCompletedMs:1800,utteranceEndToFirstAudioMs:400.25,utteranceEndToReplyEventMs:null,audioBytes:2400,nonSilentBytes:1800,playbackComplete:true})),proof};}
-test('genuine nine-turn measurements survive while reports cannot claim carrier or premium certification',()=>{
+function report(index=0){const selected=PREMIUM_AUDIO_SCENARIOS[index];return{scenario:selected.id,revision:'a'.repeat(40),turns:selected.turns.map(item=>({scenario:item.id,prompt:'untrusted replacement',transcript:'Synthetic microphone transcript',reply:'Actual observed answer',inputToPlaybackCompletedMs:1800,utteranceEndToFirstAudioMs:400.25,utteranceEndToReplyEventMs:null,audioBytes:2400,nonSilentBytes:1800,playbackComplete:true})),proof:{...proof,userTurns:selected.turns.length}};}
+test('genuine all-service measurements survive while reports cannot claim carrier or premium certification',()=>{
  const data=JSON.parse(serializePremiumSummary(PREMIUM_AUDIO_SCENARIOS.map((_,i)=>report(i))));
- assert.equal(data.demonstrations.length,3);assert.equal(data.demonstrations.flatMap(x=>x.turns).length,9);
+ assert.equal(data.demonstrations.length,3);assert.equal(data.demonstrations.flatMap(x=>x.turns).length,16);
  assert.equal(data.demonstrations[0].turns[0].utteranceEndToFirstAudioMs,400.25);
  assert.equal(data.demonstrations[0].turns[0].utteranceEndToReplyEventMs,null);
  assert.equal(data.premiumCertified,false);assert.equal(data.dialed,false);assert.equal(data.nativeCarrierCertified,false);

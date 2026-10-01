@@ -44,3 +44,14 @@ test('offer continuation requires the sole known input, no later inbound and no 
  const later=scopeSyntheticOfferActivity({calls:f.calls,turns:f.turns,laterMessages:[m,{...m,created_at:f.calls[0].ended_at+1}]});assert.equal(syntheticOfferContinuationClear({...input,activity:later}),false);
  for(const change of [{created_by:'human'},{channel:'chat'},{payload_json:'invalid'},{payload_json:JSON.stringify({text:'A genuine new question'})}])assert.equal(syntheticOfferContinuationClear({...input,activity:{...activity,laterMessages:[{...m,...change}]}}),false);
 });
+
+
+test('only the exact verified split utterance may precede the synthetic offer failure',()=>{
+ const f=offerRepairFixture();f.calls[0].started_at-=100;
+ const partial={...f.turns[0],created_at:f.turns[0].created_at-1,payload_json:JSON.stringify({text:'The Complete Makeover price feels high.'}),policy_decision:'draft_review_required',outcome:'draft_review_required',handoff_reason:null};
+ f.turns.push(partial);assert.equal(syntheticOfferRepairProof(f).singleKnownSyntheticIncident,true);
+ const messages=[partial,f.turns[0]].map(t=>({created_at:t.created_at,payload_json:t.payload_json,created_by:t.input_actor,channel:t.input_channel}));
+ const activity=scopeSyntheticOfferActivity({calls:f.calls,turns:f.turns,laterMessages:messages});assert.equal(syntheticOfferContinuationClear({activity,otherHandoffs:[],threadId:f.turns[0].thread_id}),true);
+ for(const patch of [{payload_json:JSON.stringify({text:'Please book it'})},{input_actor:'customer'},{customer_id:'another'},{session_id:'another'},{outcome:'handoff'},{created_at:f.turns[0].created_at+1}])assert.throws(()=>syntheticOfferRepairProof({...f,turns:[f.turns[0],{...partial,...patch}]}));
+ assert.equal(syntheticOfferContinuationClear({activity:{...activity,laterMessages:[...messages].reverse()},otherHandoffs:[],threadId:f.turns[0].thread_id}),false);
+});
