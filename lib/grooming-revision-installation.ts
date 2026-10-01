@@ -1,3 +1,5 @@
+import { chunkedIn } from "./d1-chunked-in";
+
 /** Generated from the candidate SQL archive. Read-only readiness; never runs lazy DDL.
  * Verify definitions as well as names, so stale/no-op triggers cannot masquerade as an install. */
 const expectedGroomingTriggers = [
@@ -233,10 +235,10 @@ const expectedGroomingTriggers = [
 export const groomingRevisionTriggers = expectedGroomingTriggers.map(trigger=>trigger.name);
 const normalize=(sql:string)=>sql.replace(/\s+/g," ").replace(/;\s*$/,"").trim();
 export async function assertGroomingRevisionInstallation(db:D1Database) {
- const placeholders=groomingRevisionTriggers.map(()=>"?").join(",");
- const installed=await db.prepare(`SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN (${placeholders})`)
-   .bind(...groomingRevisionTriggers).all<{name:string;sql:string}>();
- const definitions=new Map(installed.results.map(trigger=>[trigger.name,normalize(trigger.sql)]));
+ const installed=await chunkedIn(groomingRevisionTriggers,async(names,placeholders)=>
+   (await db.prepare(`SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN (${placeholders})`)
+     .bind(...names).all<{name:string;sql:string}>()).results);
+ const definitions=new Map(installed.map(trigger=>[trigger.name,normalize(trigger.sql)]));
  const marker=await db.prepare("SELECT schema_version FROM grooming_revision_installation WHERE id=1").first<{schema_version:number}>();
  if (marker?.schema_version!==2 || expectedGroomingTriggers.some(trigger=>definitions.get(trigger.name)!==normalize(trigger.sql))) {
    throw new Response("Grooming revision installation incomplete",{status:409});
