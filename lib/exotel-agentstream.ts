@@ -26,7 +26,7 @@ const SPEECH_RMS_THRESHOLD = 420;
 const AGENTSTREAM_ACTIVE_STATES = new Set(["connected", "speaking", "listening"]);
 // Exotel AgentStream outbound media is byte-bounded: each payload is 3,200–100,000 bytes and a multiple of 320.
 // The carrier buffers these payloads; a clear event flushes buffered playback on barge-in.
-const EXOTEL_MIN_OUTBOUND_CHUNK_BYTES = 3_200;
+const EXOTEL_MIN_OUTBOUND_MEDIA_BYTES = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
@@ -317,7 +317,7 @@ async function synthesizeLinear16(env: Env, output: string, sampleRate: number, 
 
 function sendAudioFrame(socket: WebSocket, session: Session, raw: Uint8Array, terminal = false) {
   if (socket.readyState !== 1) throw new TransportClosed();
-  const paddedLength = terminal ? Math.max(EXOTEL_MIN_OUTBOUND_CHUNK_BYTES, Math.ceil(raw.byteLength / 320) * 320) : raw.byteLength;
+  const paddedLength = terminal ? Math.max(EXOTEL_MIN_OUTBOUND_MEDIA_BYTES, Math.ceil(raw.byteLength / 320) * 320) : raw.byteLength;
   const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
   socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
 }
@@ -343,10 +343,10 @@ async function sendAudioStream(socket: WebSocket, session: Session, stream: Read
       if (!(next.value instanceof Uint8Array) || !next.value.byteLength) continue;
       bytes += next.value.byteLength;
       pending = pending.byteLength ? concat([pending, next.value]) : new Uint8Array(next.value);
-      while (pending.byteLength >= EXOTEL_MIN_OUTBOUND_CHUNK_BYTES) {
+      while (pending.byteLength >= EXOTEL_MIN_OUTBOUND_MEDIA_BYTES) {
         assertCurrent();
-        sendAudioFrame(socket, session, pending.subarray(0, EXOTEL_MIN_OUTBOUND_CHUNK_BYTES));
-        pending = pending.subarray(EXOTEL_MIN_OUTBOUND_CHUNK_BYTES); frames++;
+        sendAudioFrame(socket, session, pending.subarray(0, EXOTEL_MIN_OUTBOUND_MEDIA_BYTES));
+        pending = pending.subarray(EXOTEL_MIN_OUTBOUND_MEDIA_BYTES); frames++;
         if (firstAudioMs === null) { firstAudioMs = Date.now() - options.turnStarted; options.onFirstAudio(firstAudioMs); }
       }
     }
