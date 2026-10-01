@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {d1} from './helpers/execution-harness.mjs';
 import {ensureGroomingRevisionPrerequisiteTables} from '../lib/grooming-revision-schema.ts';
-import {assertGroomingRevisionInstallation} from '../lib/grooming-revision-installation.ts';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__GROOMING_REVISION_SCHEMA_DB__','__GROOMING_REVISION_SCHEMA_ENV__');
+const {assertGroomingRevisionInstallation}=await import('../lib/grooming-revision-installation.ts');
 test('explicit revision prerequisites preserve durable state and do not activate authority',async()=>{
  const sqlite=new DatabaseSync(':memory:');const db=d1(sqlite);
  try {

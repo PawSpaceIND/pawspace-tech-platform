@@ -2,7 +2,7 @@ import { chunkedIn } from "./d1-chunked-in";
 
 /** Generated from the candidate SQL archive. Read-only readiness; never runs lazy DDL.
  * Verify definitions as well as names, so stale/no-op triggers cannot masquerade as an install. */
-const expectedGroomingTriggers = [
+export const expectedGroomingTriggers = [
   {
     "name": "conversation_revision_insert",
     "sql": "CREATE TRIGGER conversation_revision_insert AFTER INSERT ON communication_threads BEGIN\n  INSERT INTO conversation_ownership_revisions(thread_id,revision) VALUES(NEW.id,1)\n    ON CONFLICT(thread_id) DO UPDATE SET revision=revision+1;\nEND"

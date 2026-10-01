@@ -191,3 +191,31 @@ Evidence must record Worker version, D1 database ID, exact main/candidate/migrat
 ### Runtime prerequisite ownership
 
 `ensureGroomingRevisionPrerequisiteTables` explicitly prepares the four revision tables before governed installation. It does not install triggers, seed counters, mark readiness, or run on request paths. Existing durable revisions and incarnations are preserved on replay. Hosted installation still requires the existing owned prerequisites, worker drain, governed migration sequencing and hosted D1 qualification; readiness remains read-only and fails closed until the reviewed installation is complete.
+
+
+### Incremental runtime installer reconciliation (source candidate)
+
+This correction is based on remote #1222 head `927b4d11607861265e4bd9640bbbcd2f41f9b81a`, preserving the prerequisite owner and both fixture-clock commits. `groomingRevisionPrerequisiteDdl` is exported from `lib/grooming-revision-schema.ts`; both its preparer and the installer use those sole declarations. No duplicate runtime DDL owner is added. The old six-file candidate remains isolated separately and was not pushed over the advanced branch.
+
+`POST /api/ai-bootstrap` gains an explicit `operation: install_grooming_revision_schema` branch with existing same-origin authentication and `settings.manage`, refusal of preview identities and client seed/approval fields, and completion audit. Existing seed semantics remain on their own path. No ordinary Worker request/scheduled bootstrap or dual-mode activation is added.
+
+The operation requires a server-held `PAWSPACE_GROOMING_SCHEMA_INSTALL_APPROVAL` receipt read directly from the Worker environment: purpose `grooming_revision_installation`, binding `DB` (including exact configured D1 object identity), schema version 2, exact authenticated actor email, hosting deployment incarnation, approval ID, `workersDrained: true`, expiry within one hour, and exact expected installation epoch/incarnation and database incarnation (null before initialization). Nothing was provisioned or invoked remotely. Operator issuance must establish/maintain the actual worker and ingress drain, withdraw the receipt after use, and rotate deployment incarnation as required. Source code cannot independently establish that external maintenance protocol.
+
+Before writes, the installer checks platform-owned prerequisite tables/columns, token-level revision-table definitions and live PRAGMA column/key/collation/index/foreign-key contracts. Formatting, comments and identifier quoting are allowed without erasing quoted CHECK values or SQL operators. Unsupported syntax and semantic changes fail closed; unexpected revision-table triggers/indexes are refused. Existing expected triggers remain compared exactly and are repaired only under the maintenance approval.
+
+One guarded batch creates missing revision tables, seeds persistent incarnations, asserts the preflight trigger snapshot, expected incarnations and database-time approval expiry, advances installation epoch before trigger changes, backfills existing threads without reset, repairs changed trigger definitions, publishes marker 2 and asserts final definitions, resulting epoch and expiry. An intact installation changes no revision/schema state and records its completion audit in a batch guarded before and after the audit. Tests cover competing initial installs, partial failure rollback, stale approval, expiry at commit, administrative trigger races and invalidating old leases across a repair gap. Real D1 trigger preparation/batch rollback and the receipt/drain lifecycle remain hosted qualification gates before operational invocation.
+
+Independent review must cover this exact incremental candidate before updating #1222. Fresh remote-head compare and publisher coordination are required; any update preserves external ancestry and uses no force-push.
+
+Local reconciled validation: **152/152 tests passed**, including original ownership/handoff/payment, installer and prerequisite tests, all **16 schema governance** checks, and the preserved pricing/availability clock suites. Seven scoped candidate modules have zero TypeScript diagnostics; this is not a repository-wide typecheck or hosted D1 result.
+
+
+### Completion audit review correction
+
+An injected `security_audit_events` completion-insert failure reproduced the P2 report: the previous endpoint returned an error after initialization or repair had already committed (repair advanced epoch 2 to 3). The endpoint now supplies the existing `securityAuditStatement` builder to the trusted installer. That completed audit and the resulting readiness assertion are in the same installation transaction; the endpoint makes no separate post-commit completion write. Audit or final-assertion failure rolls back schema/repair, epoch and completion together. Intact replay retains its audit semantics in a guarded audit-only batch, leaves revision/schema state unchanged, and is retryable after audit failure. A successful repair audit records its committed installation epoch and approval ID. Hosted D1 transaction qualification remains required.
+
+The audit-cleared candidate was replayed onto #1222 head `0abbdf6d8189359195649fdc942b84dc098c1ac6`. Existing provider booking guards, fixture-clock changes, migration prerequisite fixtures and chunked trigger-readiness lookup are preserved; the trigger-manifest delta against that head is only its export. No remote installation or activation is performed.
+
+The external chunked-lookup import also required the existing prerequisite test to install the repository loader hooks before dynamically importing readiness. This test-only integration correction preserves application imports and covers both loader paths.
+
+Latest-base validation on `0abbdf6d`: **193/193 combined tests passed**, including D1 migration pipeline/chunked replay, IN-list fanout and provider booking transaction regressions. The installer/prerequisite suites also passed **36/36** through the fallback loader. Scoped TypeScript diagnostics remain zero for seven candidate modules; no repository build or hosted installer was run.
