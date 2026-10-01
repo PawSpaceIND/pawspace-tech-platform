@@ -16,7 +16,7 @@
     ],
     [
       "<select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:\"100%\",marginBottom:6}}>{[\"all\",\"grooming\",\"dog_training\",\"boarding\",\"pet_sitting\",\"pet_taxi\",\"dog_walking\",\"pet_food\",\"pet_relocation\"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select>",
-      "<label className={styles.field}><span>Service</span><select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:\"100%\",marginBottom:6}}>{[\"all\",\"grooming\",\"dog_training\",\"boarding\",\"pet_sitting\",\"pet_taxi\",\"dog_walking\",\"pet_food\",\"pet_relocation\"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select></label>"
+      "<label className={styles.field}><span>Service</span><select aria-label=\"Service\" value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:\"100%\",marginBottom:6}}>{[\"all\",\"grooming\",\"dog_training\",\"boarding\",\"pet_sitting\",\"pet_taxi\",\"dog_walking\",\"pet_food\",\"pet_relocation\"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select></label>"
     ],
     [
       "<input placeholder=\"Summary\" value={summary} onChange={event=>setSummary(event.target.value)} style={{width:\"100%\",marginBottom:6}}/>",
