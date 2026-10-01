@@ -35,6 +35,7 @@
 .page .shell { width:min(1120px,100%); }
 .page .topbar { gap:12px; margin-bottom:24px; }
 .page .brand,.page .back { min-height:48px; box-sizing:border-box; display:inline-flex; align-items:center; }
+.page .topbar > a { min-height:48px; display:inline-flex; align-items:center; color:var(--paw-link); }
 .page .hero { padding:clamp(24px,4vw,40px); margin-bottom:24px; }
 .page .hero h1 { line-height:1.12; letter-spacing:-.025em; }
 .page .hero p { line-height:1.65; }
@@ -52,6 +53,8 @@
 .page :is(a,button,input,select,textarea):focus-visible { outline:3px solid var(--brand-gold); outline-offset:3px; }
 .page .dock a { min-height:48px; box-sizing:border-box; }
 .page :is(.primary,.danger) { min-height:48px; font:inherit; font-weight:750; }
+.page .actions { gap:12px; align-items:center; }
+.page .actions :is(a,button) { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; padding:10px 14px; border:1px solid var(--brand-line); border-radius:var(--paw-control-radius); color:var(--brand-text); background:var(--brand-raised); font:inherit; font-weight:750; text-underline-offset:3px; }
 @media(max-width:720px) {
  .page .grid { gap:18px; }
  .page .booking { grid-template-columns:minmax(0,1fr); gap:10px; }
