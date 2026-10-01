@@ -22,7 +22,10 @@ class NativeTtsConfigurationError extends Error {}
 
 export const DEFAULT_ELEVENLABS_NATIVE_TTS_MODEL = "eleven_flash_v2_5";
 export const DEFAULT_WORKERS_NATIVE_TTS_MODEL = "@cf/deepgram/aura-2-en";
-const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;\n// Hold one full Exotel-minimum carrier chunk before exposing provider audio. Failures before the first\n// audible frame remain eligible for provider fallback without sacrificing progressive playback after it.\nconst NATIVE_TTS_PREFLIGHT_BYTES = 3_200;
+const MAX_NATIVE_AUDIO_BYTES = 8 * 1024 * 1024;
+// Hold one full Exotel-minimum carrier chunk before exposing provider audio. Failures before the first
+// audible frame remain eligible for provider fallback without sacrificing progressive playback after it.
+const NATIVE_TTS_PREFLIGHT_BYTES = 3_200;
 const RAW_AUDIO_TYPES = new Set(["application/octet-stream", "audio/pcm", "audio/raw", "audio/x-pcm"]);
 const WAV_AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/wave"]);
 const ALLOWED_ELEVENLABS_BASES = new Set([
