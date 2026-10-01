@@ -1,3 +1,6 @@
+import { claimNativeAttendedDemo, assertNativeDemoSession, auditNativeAttendedDemo, nativeAttendedStreamUrl } from "./native-attended-demo";
+import { resolveCanonicalRecipientOwnership } from "./canonical-recipient-ownership";
+import { voiceAllowlist } from "./voice-call-gate";
 import { correlationFromVoiceTransitions } from "./voice-handset-evidence";
 /**
  * Outbound voice calling: the pre-dial policy gate, the call ledger, and the provider-event receiver.
@@ -209,7 +212,9 @@ export type VoiceCallRequest = {
 const CONTROLLED_UAT_FREQUENCY_TOKEN = Symbol("controlled-voice-uat-frequency-isolation");
 const CONTROLLED_UAT_SPECIALIST_TOKEN = Symbol("controlled-specialist-voice-uat");
 const CONTROLLED_NATIVE_AGENTSTREAM_TOKEN = Symbol("controlled-native-agentstream-uat");
+const ATTENDED_NATIVE_TOKEN = Symbol("native-attended-one-use-admission");
 type InternalVoiceCallRequest = VoiceCallRequest & {
+  [ATTENDED_NATIVE_TOKEN]?: Awaited<ReturnType<typeof claimNativeAttendedDemo>>;
   [CONTROLLED_UAT_FREQUENCY_TOKEN]?: true;
   [CONTROLLED_UAT_SPECIALIST_TOKEN]?: true;
   [CONTROLLED_NATIVE_AGENTSTREAM_TOKEN]?: true;
@@ -299,7 +304,8 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const checks: VoicePolicyCheck[] = [];
   const add = (code: string, passed: boolean, blockedState: VoiceCallState, detail: string) => { checks.push({ code, passed, blockedState, detail }); return passed; };
 
-  const gate = resolveVoiceCallGate(env);
+  const attended = (input as InternalVoiceCallRequest)[ATTENDED_NATIVE_TOKEN];
+  const gate = attended ? { ok: true as const, mode: "uat" as const, allowlist: voiceAllowlist(env), recordingApproved: false, salesOutboundApproved: true } : resolveVoiceCallGate(env);
   add("voice_enabled", gate.ok, "blocked_disabled", gate.ok ? `Voice enabled in ${gate.mode} mode` : gate.reason);
 
   // The route enforces this too; recording it here means the ledger shows WHY a call was refused even
@@ -308,7 +314,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   add("caller_authority", permitted, "blocked_permission", permitted ? "Caller holds communications.call and customers.manage" : "Caller may not launch automated voice calls");
 
   const useCase = voiceUseCase(input.useCase);
-  const useCaseOk = Boolean(useCase) && (!useCase!.requiresSalesApproval || salesOutboundApproved(env)) && (!useCase!.requiresBooking || Boolean(text(input.bookingId)));
+  const useCaseOk = Boolean(useCase) && (!useCase!.requiresSalesApproval || Boolean(attended) || salesOutboundApproved(env)) && (!useCase!.requiresBooking || Boolean(text(input.bookingId)));
   add("use_case_approved", useCaseOk, "blocked_use_case",
     !useCase ? `Unsupported voice use case: ${text(input.useCase)}`
       : useCase.requiresSalesApproval && !salesOutboundApproved(env) ? `Outbound sales calling is not approved (PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED)`
@@ -344,7 +350,7 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
   const localHour = new Date(now + IST_OFFSET_MINUTES * 60_000).getUTCHours();
   const quiet = inQuietHours(localHour, policy.quietStart, policy.quietEnd);
   const specialistUat = controlledSpecialistUat(env, input, phoneKey);
-  const nativeAgentStreamUat = controlledNativeAgentStreamUat(env, input, phoneKey);
+  const nativeAgentStreamUat = Boolean(attended) || controlledNativeAgentStreamUat(env, input, phoneKey);
   const nativeSalesUat = nativeAgentStreamUat && (text(input.useCase) === "grooming_sales" || text(input.useCase) === "training_sales");
   const quietBypass = specialistUat || nativeSalesUat;
   add("quiet_hours", quietBypass || !quiet, "blocked_quiet_hours", quietBypass && quiet
@@ -365,7 +371,8 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
       : capOk ? `${attempts24h} of ${dailyCap} calls used in the last 14 days`
         : `Frequency cap reached (${attempts24h}/${dailyCap} in 14d${weekly ? `, ${Number(weekly.n || 0)}/${policy.promotionalCap7d} marketing in 7d` : ""})`);
 
-  const provider = nativeAgentStreamUat ? exotelTelephony(env) : selectTelephonyProvider(env);
+  // Only this call receives a signed stream URL; global environment and customer pause stay unchanged.
+  const provider = attended ? exotelTelephony({...env,PAWSPACE_VOICE_STREAM_URL:await nativeAttendedStreamUrl(env,attended)}) : nativeAgentStreamUat ? exotelTelephony(env) : selectTelephonyProvider(env);
   const providerOk = provider.status === "connected" || provider.status === "simulated";
   if (nativeAgentStreamUat) add("native_agentstream_stream", nativeAgentStreamUrlConfigured(env), "provider_unavailable", nativeAgentStreamUrlConfigured(env) ? "Controlled native UAT has an approved WSS AgentStream URL" : "Controlled native UAT requires PAWSPACE_VOICE_STREAM_URL");
   add("provider_configured", providerOk, "provider_unavailable", providerOk ? `Transport ${provider.provider} (${provider.status})` : "No telephony provider is connected");
@@ -380,12 +387,12 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     phoneKey,
     useCase,
     provider,
-    mode: voiceMode(env),
+    mode: attended ? "uat" as const : voiceMode(env),
     attempts24h,
     consentDecision: consentGranted ? "granted" : consent ? "revoked" : "missing",
     optOutDecision: optOut || leadOptOut ? "opted_out" : "clear",
     quietHoursDecision: quietBypass && quiet ? "uat_bypass" : quiet ? "inside" : "outside",
-    recordingAllowed: callRecordingApproved(env),
+    recordingAllowed: attended ? false : callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
     dailyCap, capWindowStart: now - 14 * 86_400_000,
@@ -537,7 +544,8 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
 
   const policy = await evaluateVoiceCallPolicy(db, env, input);
   const useCase = policy.useCase;
-  const id = uid("VCALL");
+  const attended = input[ATTENDED_NATIVE_TOKEN];
+  const id = attended?.callId || uid("VCALL");
   try {
     await db.prepare("INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,campaign_id,customer_id,lead_id,booking_id,city_id,phone_key,phone_last4,dial_number,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_of,retry_attempt,requested_by,requested_at,updated_at) VALUES (?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?,?, 'requested',?,?,?,?,?,?,?,?,?,?)")
       .bind(id, idempotencyKey, text(input.useCase), useCase?.purpose || "unknown", text(input.campaignId) || null, text(input.customerId) || null, text(input.leadId) || null, text(input.bookingId) || null, text(input.cityId) || "blr", phoneKey, phoneKey.slice(-4), dialNumber, policy.mode, policy.provider.provider, policy.provider.productionCapable ? 1 : 0, policy.consentDecision, policy.optOutDecision, policy.quietHoursDecision, policy.attempts24h, policy.recordingAllowed ? 1 : 0, text(input.retryOf) || null, Number(input.retryAttempt || 0), input.actorId, now, now).run();
@@ -589,6 +597,12 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
   // recording references while this ledger received nothing.
   const callbackUrl = statusCallbackUrl(env) || "";
   try {
+    if (attended) {
+      await resolveCanonicalRecipientOwnership(db,env,{phone:dialNumber,customerId,requireSuppliedPhone:true});
+      await assertNativeDemoSession(db,env,id,customerId);
+      if (!nativeCarrierTtsReadiness(env).configured) throw new Error("Native demo speech is not configured");
+      await auditNativeAttendedDemo(db,id,"provider_submitted");
+    }
     const handle = await policy.provider.createCall({
       callRef: id, toNumber: dialNumber, statusCallbackUrl: callbackUrl,
       recordingAllowed: policy.recordingAllowed, simulatedOutcome: input.simulatedOutcome ?? null,
@@ -597,7 +611,9 @@ async function requestOutboundVoiceCallInternal(db: Db, env: Env, input: Interna
     });
     await db.prepare("UPDATE voice_call_orders SET provider_call_id=?,production_call=?,updated_at=? WHERE id=?").bind(handle.providerCallId, handle.productionCall ? 1 : 0, now, id).run();
     await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall, ...(handle.providerCorrelation ? { providerCorrelation: handle.providerCorrelation } : {}) }, asOf: now });
+    if (attended) await auditNativeAttendedDemo(db,id,"provider_accepted");
   } catch (error) {
+    if (attended) await auditNativeAttendedDemo(db,id,"provider_unknown");
     const unavailable = error instanceof TelephonyProviderUnavailable;
     // The recipient was never reached, so the slot goes back rather than silently consuming their
     // allowance for the day.
@@ -730,6 +746,7 @@ export async function terminateVoiceRetryLoop(db:Db,input:{callId:string;actorId
 }
 
 export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; actorId: string; actorPermissions: string[]; idempotencyKey?: string; asOf?: number }) {
+  if (input.callId.startsWith("NDEMO-")) throw new Response("An attended demo attempt cannot be retried",{status:403});
   await ensureVoiceCallTables(db);
   const original = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(input.callId).first<Row>();
   if (!original) throw new Error("Voice call not found");
@@ -1022,4 +1039,15 @@ export async function voiceOutboundReadiness(db: Db, env: Env, asOf = Date.now()
     unappliedProviderEvents: Number(unapplied?.n || 0),
     callsOpenOverAnHour: Number(stuck?.n || 0),
   };
+}
+
+/** One-use native demo; grant provisioning is deliberately outside this inactive source change. */
+export async function requestNativeAttendedDemoCall(db: Db, env: Env, input: {grantId:string;token:string;actor:{email:string;permissions:string[]};customerId:string;phone:string}) {
+ await resolveCanonicalRecipientOwnership(db,env,{phone:input.phone,customerId:input.customerId,requireSuppliedPhone:true});
+ const admitted = await claimNativeAttendedDemo(db,env,input);
+ try {
+  const result = await requestOutboundVoiceCallInternal(db,env,{idempotencyKey:`native-attended:${admitted.callId}`,useCase:"grooming_sales",phone:input.phone,customerId:input.customerId,cityId:"blr",campaignId:"native_attended_demo",actorId:input.actor.email,actorPermissions:input.actor.permissions,asOf:Date.now(),[ATTENDED_NATIVE_TOKEN]:admitted});
+  if (!result.dialed) await auditNativeAttendedDemo(db,admitted.callId,"refused");
+  return result;
+ } catch(error) { await auditNativeAttendedDemo(db,admitted.callId,"provider_unknown"); throw error; }
 }

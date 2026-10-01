@@ -1,3 +1,4 @@
+import { assertNativeDemoBusinessAllowed } from "./native-attended-demo";
 import { ensureD1Once } from "./d1-ensure-once.js";
 import { assertAiMayReply } from "./ai-human-handoff";
 import { quoteGroomingBookingWithLiveMultiPet } from "./live-grooming-governance";
@@ -244,6 +245,7 @@ function resultValue(value: unknown, key: string): string {
  for (const child of Object.values(row)) if (child && typeof child === "object") { const found = resultValue(child, key); if (found) return found; } return "";
 }
 export async function confirmVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; offerId: string; confirmation: string; channel?: SalesOfferChannel; nativeTurnKey?: string; assertCurrent?: () => void }) {
+ await assertNativeDemoBusinessAllowed(db,input.threadId);
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  if (!isVoiceSalesConfirmation(input.confirmation)) throw refusal("A separate unambiguous confirmation of the quoted offer is required", 400);
  if (input.service === "all_services") {

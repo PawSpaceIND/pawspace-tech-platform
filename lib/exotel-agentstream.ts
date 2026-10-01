@@ -1,3 +1,4 @@
+import { assertNativeDemoSession, auditNativeAttendedDemo, verifyNativeDemoStreamTicket } from "./native-attended-demo";
 import { orchestrateAiTurn, type AiProviderInput, type AiResponseProvider } from "./ai-conversation-orchestrator";
 import { createGroundedAiRuntimeProvider } from "./ai-grounded-runtime-provider";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
@@ -69,6 +70,7 @@ type Session = {
   openingDisclosure: string;
   salesService: VoiceSalesService | undefined;
   salesDispatchItemId: string | null;
+  demoExpiresAt: number | null;
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -207,20 +209,22 @@ async function ensureAgentStreamConnected(db: D1Database, order: Row) {
   }
 }
 
-async function establishSession(env: Env, start: AgentStart): Promise<Session> {
+async function establishSession(env: Env, start: AgentStart, demoTicketCallId: string | null = null): Promise<Session> {
   await ensureAiVoiceUatTables(env.DB);
   const providerCallId = text(start.call_sid), accountSid = text(start.account_sid), streamSid = text(start.stream_sid);
   if (!providerCallId || !streamSid) throw new Error("AgentStream start is missing call_sid or stream_sid");
   if (!accountSid || accountSid !== text(env.EXOTEL_SID)) throw new Error("AgentStream account_sid does not match the configured Exotel account");
   const order = await env.DB.prepare("SELECT id,customer_id,lead_id,booking_id,use_case,state,provider,provider_call_id,ai_call_id,consent_decision,opt_out_decision,mode FROM voice_call_orders WHERE provider='exotel' AND provider_call_id=? ORDER BY requested_at DESC LIMIT 1").bind(providerCallId).first<Row>();
   if (!order) throw new Error("AgentStream call is not present in the governed outbound ledger");
+  if (demoTicketCallId ? text(order.id)!==demoTicketCallId : text(order.id).startsWith("NDEMO-")) throw new Error("Native demo requires its exact authenticated stream ticket");
   if (!text(order.customer_id)) throw new Error("AgentStream voice AI requires a canonical customer");
   if (text(order.consent_decision) !== "granted" || text(order.opt_out_decision) !== "clear") throw new Error("AgentStream call has no current voice consent or is opted out");
   if (text(env.PAWSPACE_VOICE_ENV) === "uat" && text(order.mode) !== "uat") throw new Error("AgentStream UAT cannot bind a non-UAT call");
 
   const customerId = text(order.customer_id), useCase = text(order.use_case);
+  const demoExpiresAt = await assertNativeDemoSession(env.DB,env,text(order.id),customerId,true);
   const script = await env.DB.prepare("SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=?").bind(useCase).first<Row>();
-  const openingDisclosure = text(script?.opening_disclosure);
+  const openingDisclosure = demoExpiresAt ? `${text(script?.opening_disclosure)} This is your attended demo. I can explain services and quotes, but cannot create bookings, reserve slots or take payments.` : text(script?.opening_disclosure);
   if (!script || Number(script.active) !== 1 || !openingDisclosure || openingDisclosure.length > 1200) throw new Error("AgentStream opening disclosure is unavailable");
   const sampleRate = Number(start.media_format?.sample_rate || 8000);
   if (![8000, 16000, 24000].includes(sampleRate)) throw new Error("AgentStream sample rate is unsupported");
@@ -251,9 +255,10 @@ async function establishSession(env: Env, start: AgentStart): Promise<Session> {
   const salesService = nativeVoiceSalesService(useCase);
   const routing=await env.DB.prepare("SELECT context_json FROM outbound_routing_queue WHERE voice_call_id=? ORDER BY updated_at DESC LIMIT 1").bind(order.id).first<Row>();
   let salesDispatchItemId:string|null=null;try{salesDispatchItemId=text((JSON.parse(text(routing?.context_json)||"{}")as Row).aiSalesDispatchItemId)||null;}catch{}
-  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language, segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId };
+  return { streamSid, providerCallId, ledgerCallId: text(order.id), aiCallId, threadId, customerId, sampleRate, language, segmentIndex, reconnected: !created, useCase, openingDisclosure, salesService, salesDispatchItemId, demoExpiresAt };
 }
 async function recordSegment(env: Env, session: Session, speaker: "customer" | "assistant", transcript: string, confidence: number | null, provider: AiResponseProvider | null, guard?: () => void) {
+  if (session.demoExpiresAt) await assertNativeDemoSession(env.DB,env,session.ledgerCallId,session.customerId);
   const messageId = `MSG-VOICE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, now = Date.now(), index = session.segmentIndex++;
   const turnKey = `exotel-agentstream:${session.providerCallId}:${index}`;
   if (speaker === "customer" && provider) { await beginNativeVoiceOfferTurn(env.DB,turnKey,session.threadId,session.customerId); guard?.(); }
@@ -277,7 +282,7 @@ async function recordSegment(env: Env, session: Session, speaker: "customer" | "
     },
   };
   const turn = await orchestrateAiTurn(env.DB, {
-    actor: serviceActor,
+    actor: session.demoExpiresAt ? {...serviceActor,permissions:["communications.manage","customers.manage"]} : serviceActor,
     threadId: session.threadId,
     customerId: session.customerId,
     inputMessageId: messageId,
@@ -397,7 +402,9 @@ async function closeSession(env: Env, session: Session | null, reason: string, f
 export async function handleExotelAgentStream(request: Request, env: Env, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   if (new URL(request.url).pathname !== EXOTEL_AGENTSTREAM_PATH) return new Response("Not found", { status: 404 });
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("WebSocket upgrade required", { status: 426 });
-  if (text(env.PAWSPACE_VOICE_ENV) !== "uat" && text(env.PAWSPACE_VOICE_ENV) !== "live") return new Response("Voice carrier streaming is disabled", { status: 403 });
+  let demoTicketCallId:string|null=null;
+  try{demoTicketCallId=await verifyNativeDemoStreamTicket(env.DB,env,request);}catch{return new Response("Native demo stream admission refused",{status:403});}
+  if (!demoTicketCallId && text(env.PAWSPACE_VOICE_ENV) !== "uat" && text(env.PAWSPACE_VOICE_ENV) !== "live") return new Response("Voice carrier streaming is disabled", { status: 403 });
   if (!env.AI) return new Response("Workers AI binding is unavailable", { status: 503 });
 
   const Pair = (globalThis as unknown as { WebSocketPair: new () => { 0: WebSocket; 1: WebSocket } }).WebSocketPair;
@@ -418,9 +425,10 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
 
   const assertLive = (active: Session) => {
     if (!transportOpen || terminated || server.readyState !== 1 || session !== active) throw new TransportClosed();
+    if (active.demoExpiresAt && Date.now() >= active.demoExpiresAt) throw new Error("Native attended demo expired");
   };
   const isCurrent = (active: Session, version: number) =>
-    transportOpen && !terminated && server.readyState === 1 && session === active && generationVersion === version;
+    transportOpen && !terminated && server.readyState === 1 && session === active && generationVersion === version && (!active.demoExpiresAt || Date.now() < active.demoExpiresAt);
   const assertCurrent = (active: Session, version: number) => {
     assertLive(active);
     if (generationVersion !== version) throw new StaleGeneration();
@@ -707,8 +715,14 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
       if (kind === "start") {
         eventStage = "start";
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
-        const active = await establishSession(env, incoming.start || {});
+        const active = await establishSession(env, incoming.start || {},demoTicketCallId);
         session = active;
+        if (active.demoExpiresAt) {
+          let checking=false;
+          const revocationTimer=setInterval(()=>{if(session!==active||terminated){clearInterval(revocationTimer);return;}if(checking)return;checking=true;ctx.waitUntil(assertNativeDemoSession(env.DB,env,active.ledgerCallId,active.customerId).then(()=>{},error=>failProcessing(error,active,"stop",Date.now())).finally(()=>{checking=false;}));},1000);
+          const expiryTimer=setTimeout(()=>{ctx.waitUntil(failProcessing(new Error("Native attended demo expired"),active,"stop",Date.now()));},Math.max(0,active.demoExpiresAt-Date.now()));
+          server.addEventListener("close",()=>{clearTimeout(expiryTimer);clearInterval(revocationTimer);ctx.waitUntil(auditNativeAttendedDemo(env.DB,active.ledgerCallId,"ended"));});
+        }
         assertLive(active);
         if (!active.reconnected) ctx.waitUntil(runOpening(active, generationVersion));
         return;
