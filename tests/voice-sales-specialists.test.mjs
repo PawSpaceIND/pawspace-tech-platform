@@ -176,7 +176,7 @@ test("specialist model receives only same-thread canonical conversation memory",
  let requestBody;globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");requestBody=JSON.parse(init.body);return Response.json({status:"completed",output_text:"Has Milo had any previous training?",usage:{total_tokens:20}});};
  const {createGroundedAiRuntimeProvider}=await import("../lib/ai-grounded-runtime-provider.ts");const provider=await createGroundedAiRuntimeProvider(w.db,actor,"voice",{salesService:"dog_training"});
  const r=await turn(w,"He pulls on the leash","history-goal",provider);assert.notEqual(r.turn.outcome,"handoff");assert.ok(requestBody);
- const sent=JSON.parse(requestBody.input);assert.equal(sent.canonicalContext.salesService,"dog_training");assert.ok(sent.canonicalContext.conversationHistory.some(x=>x.text==="Milo is two years old"));assert.equal(sent.canonicalContext.catalogueTool,null);assert.match(requestBody.instructions,/Dog Training only/);
+ const sent=JSON.parse(requestBody.input);assert.equal(sent.canonicalContext.salesService,"dog_training");assert.ok(sent.canonicalContext.conversationHistory.some(x=>x.content==="Milo is two years old"));assert.equal(sent.canonicalContext.catalogueTool,null);assert.match(requestBody.instructions,/Dog Training only/);
 });
 
 test("urgent pet symptoms stop sales and advise immediate veterinary care",async t=>{
