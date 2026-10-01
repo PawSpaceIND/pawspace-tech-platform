@@ -89,7 +89,7 @@
    Payment content keeps out of a lane on the right edge; on phones and tablets both buttons stack in that lane.
    Hooks: the shared payment surface, the /v2/booking balance card, the Razorpay return page and Grooming checkout. */
 .canvas section[aria-label$=" payment"],
-.canvas section[aria-label="Payment status"] { max-width: min(600px, calc(100% - 58px)); }
+.canvas section[aria-label="Payment status"] { max-width: min(600px, calc(100% - 56px)); }
 .canvas main[data-pawspace-mobile] { padding-right: 72px; }
 /* The return page's column is 520px wide, but review-overrides.css lifts that cap on customer routes up to 1100px wide,
    and on 821-1100px windows the column then ran under the labelled Appearance button. */

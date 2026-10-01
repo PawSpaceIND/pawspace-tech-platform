@@ -40,10 +40,6 @@ test('care actions and forms gain reachable focus and touch treatment without hi
 
 // Execute the actual page, including its CSS-module hooks and existing empty state.
 // SSR does not run useEffect, so this assertion neither loads nor saves provider rates.
-import {createElement} from 'react';
-import {renderToStaticMarkup} from 'react-dom/server';
-import {installWorkersHooks} from './helpers/module-hooks.mjs';
-installWorkersHooks('__UI_CONTENT_NEXT_RENDER__');
 const {default:PartnerRates}=await import('../app/partner/rates/page.tsx');
 test('actual provider rates page renders its responsive root and reachable existing empty state',()=>{
  const html=renderToStaticMarkup(createElement(PartnerRates));
