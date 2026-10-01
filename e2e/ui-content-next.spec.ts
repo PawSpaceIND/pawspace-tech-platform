@@ -30,6 +30,7 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   await page.evaluate(()=>document.fonts.ready);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2);
+  expect(await page.getByRole('button',{name:'Change PawSpace appearance'}).evaluate(e=>getComputedStyle(e).position)).toBe('relative');
   await page.screenshot({path:info.outputPath(`${name}-${head}.png`),fullPage:true});
  };
  await page.goto('/v2/activity');await expect(page.getByRole('heading',{name:'Upcoming & active'})).toBeVisible();
@@ -38,8 +39,9 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
  await page.goto('/v2/booking?bookingId=UI-1');await expect(page.getByRole('heading',{name:'Synthetic Boarding care'})).toBeVisible();expect((await page.getByRole('button',{name:'Refresh status'}).boundingBox())!.height).toBeGreaterThanOrEqual(48);await expect(page.getByText('Payment: paid',{exact:false})).toBeVisible();await capture('booking');
  await page.goto('/partner/jobs');await expect(page.getByTestId('partner-job-UI-0')).toBeVisible();await expect(page.getByRole('heading',{name:'Upcoming (4)'})).toBeVisible();
  expect(await page.getByRole('heading',{name:'Upcoming (4)'}).evaluate(e=>getComputedStyle(e).fontSize)).toBe('16px');
+ const contrast=await page.getByTestId('partner-job-UI-0').locator('[data-status]').evaluate(e=>{const s=getComputedStyle(e),rgb=(x:string)=>x.match(/[\d.]+/g)!.slice(0,3).map(Number),lum=(a:number[])=>a.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0),a=lum(rgb(s.color)),b=lum(rgb(s.backgroundColor));return(Math.max(a,b)+.05)/(Math.min(a,b)+.05);});expect(contrast).toBeGreaterThanOrEqual(4.5);
  for(const link of await page.locator('[data-testid^="partner-workspace-"]').all())expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(48);await capture('jobs');
  await page.goto('/partner/rates');await expect(page.getByRole('spinbutton')).toHaveCount(2);
- const rate=page.getByRole('spinbutton').first();expect((await rate.boundingBox())!.height).toBeGreaterThanOrEqual(48);await expect(rate).toHaveAttribute('min','699');await rate.fill('698');await expect(page.getByRole('button',{name:'Save rate'}).first()).toBeDisabled();await rate.fill('720');await expect(page.getByRole('button',{name:'Save rate'}).first()).toBeEnabled();await rate.focus();expect(await rate.evaluate(e=>getComputedStyle(e).outlineStyle)).not.toBe('none');await capture('rates');
+ const rate=page.getByRole('spinbutton').first();expect((await rate.boundingBox())!.height).toBeGreaterThanOrEqual(48);await expect(rate).toHaveAttribute('min','699');await rate.fill('698');await expect(page.getByRole('button',{name:'Save rate'}).first()).toBeDisabled();await rate.fill('720');await expect(page.getByRole('button',{name:'Save rate'}).first()).toBeEnabled();await page.getByRole('button',{name:'Save rate'}).first().click({trial:true});await rate.focus();expect(await rate.evaluate(e=>getComputedStyle(e).outlineStyle)).not.toBe('none');await capture('rates');
  expect(writes).toEqual([]);await info.attach('source-and-synthetic-scope',{body:JSON.stringify({head,width,style,theme,mode,writes,physicalDevice:false,externalRequests:false}),contentType:'application/json'});
 });

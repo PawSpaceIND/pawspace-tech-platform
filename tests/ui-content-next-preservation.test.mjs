@@ -7,7 +7,8 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 for(const [path,hash] of Object.entries(baseline))test(`existing handlers, state and requests are preserved: ${path}`,()=>{
  let source=read(path);
  if(path.includes('/activity/'))source=source.replace('See upcoming care, check booking details and revisit past visits.','This view reads the same canonical PawSpace customer record used by checkout, partner operations and finance.').replace('Find your past visits, cancellations and refunds here.','Completed, cancelled and refunded bookings remain attached to your family record.');
- else source=source.replace('import styles from "../work-content.module.css";\n','').replace(/ className=\{styles\.(jobs|rates|jobCard|workspaceLink|jobSection|rateCard)\}/g,'');
+ else source=source.replace('import styles from "../work-content.module.css";\n','').replace(/ className=\{styles\.(jobs|rates|jobCard|workspaceLink|jobSection|rateCard|status)\}/g,'');
+ source=source.replace(' data-status={job.status}','');
  assert.equal(createHash('sha256').update(source).digest('hex'),hash);
 });
 test('responsive rate cards keep the existing number field and save authority',()=>{

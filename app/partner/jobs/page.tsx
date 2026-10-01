@@ -45,7 +45,7 @@ export default function PartnerJobsPage(){
   const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} className={styles.jobCard} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
       <span><b>{job.serviceCode}</b> · {job.packageName} <small style={{color:C.dim}}>for {job.customerFirstName}</small></span>
-      <span style={chip(statusColor(job.status))}>{job.status.replace(/_/g," ")}</span>
+      <span className={styles.status} data-status={job.status} style={chip(statusColor(job.status))}>{job.status.replace(/_/g," ")}</span>
     </div>
     <div style={{color:C.dim,fontSize:13,display:"flex",gap:14,flexWrap:"wrap"}}>
       <span>{when(job.scheduledStart)} → {when(job.scheduledEnd)}</span>

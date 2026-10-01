@@ -55,6 +55,10 @@
 .page :is(.primary,.danger) { min-height:48px; font:inherit; font-weight:750; }
 .page .actions { gap:12px; align-items:center; }
 .page .actions :is(a,button) { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; padding:10px 14px; border:1px solid var(--brand-line); border-radius:var(--paw-control-radius); color:var(--brand-text); background:var(--brand-raised); font:inherit; font-weight:750; text-underline-offset:3px; }
+/* These scrollable care pages share the existing utilities, without fixed tap interception. */
+:global(body):has(.page) :global(.paw-appearance-trigger),
+:global(body):has(.page) :global(.ps-order-fab) { position:relative !important; inset:auto !important; transform:none !important; display:flex; width:fit-content; margin:12px 16px 12px auto; }
+:global(body):has(.page) :global(.ps-order-fab) { padding-bottom:16px; }
 @media(max-width:720px) {
  .page .grid { gap:18px; }
  .page .booking { grid-template-columns:minmax(0,1fr); gap:10px; }
