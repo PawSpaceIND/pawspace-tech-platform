@@ -55,3 +55,9 @@ test('only the exact verified split utterance may precede the synthetic offer fa
  for(const patch of [{payload_json:JSON.stringify({text:'Please book it'})},{input_actor:'customer'},{customer_id:'another'},{session_id:'another'},{outcome:'handoff'},{created_at:f.turns[0].created_at+1}])assert.throws(()=>syntheticOfferRepairProof({...f,turns:[f.turns[0],{...partial,...patch}]}));
  assert.equal(syntheticOfferContinuationClear({activity:{...activity,laterMessages:[...messages].reverse()},otherHandoffs:[],threadId:f.turns[0].thread_id}),false);
 });
+test('brain timing retains bounded provider stages and drops untrusted fields',()=>{
+ const input={path:'orchestrator',providerRequestStarted:100,providerHeadersReceived:500,providerBodyCompleted:600,providerAccountingCompleted:700,secret:'must not appear'};
+ const safe=safeBrainTiming(input);
+ assert.equal(safe.providerBodyCompleted,600);assert.equal(safe.providerAccountingCompleted,700);assert.equal('secret' in safe,false);
+ assert.throws(()=>safeBrainTiming({...input,providerFirstText:-1}));
+});

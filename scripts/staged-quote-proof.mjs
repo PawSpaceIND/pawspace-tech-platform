@@ -36,7 +36,7 @@ export function pendingQuoteProof(rows,reply,now=Date.now()){
 }
 
 export function safeBrainTiming(input){
- const marks=['runtimeEnv','auth','bodyRead','bodyParse','database','schema','context','inboundWriteStarted','handoffChecked','provider','groundingStarted','groundingCompleted','governanceStarted','governanceCompleted','reservationStarted','reservationCompleted','canonicalContext','model','replyWrite','orchestrator'];
+ const marks=['runtimeEnv','auth','bodyRead','bodyParse','database','schema','context','inboundWriteStarted','handoffChecked','provider','groundingStarted','groundingCompleted','governanceStarted','governanceCompleted','reservationStarted','reservationCompleted','providerRequestStarted','providerHeadersReceived','providerFirstText','providerBodyCompleted','providerAccountingCompleted','canonicalContext','model','replyWrite','orchestrator'];
  if(!input||typeof input!=='object'||!['orchestrator','fast','emergency_guidance','human_handoff'].includes(input.path))throw Error('Staged timing evidence invalid');
  const out={path:input.path};
  for(const key of marks){const v=input[key];if(v!==undefined){if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>120000)throw Error('Staged timing evidence invalid');out[key]=v;}}
