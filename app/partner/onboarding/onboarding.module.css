@@ -37,3 +37,11 @@
 .question legend{font-weight:700;font-size:14px;margin-bottom:8px}
 .option{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;cursor:pointer}
 .agreementText{white-space:pre-wrap;max-height:280px;overflow:auto;border:1px solid var(--ps-border);border-radius:calc(10px * var(--paw-radius-scale));padding:14px;font-size:13px;line-height:1.6;background:var(--ps-ivory);margin:10px 0}
+
+/* Partner onboarding: presentation-only target and foreground consistency. */
+.backLink { display:inline-flex; align-items:center; min-height:44px; padding:8px 4px; box-sizing:border-box; }
+.btn,.btnGhost { min-height:44px; box-sizing:border-box; border-radius:var(--paw-control-radius); }
+.btn,.stepDone b { background:var(--paw-primary); color:var(--paw-on-primary); }
+.errorBox { background:var(--paw-feedback-danger-bg); color:var(--paw-danger); border-color:var(--paw-danger); }
+.option { min-height:44px; box-sizing:border-box; padding:10px 0; }
+.backLink:focus-visible,.btn:focus-visible,.btnGhost:focus-visible,.option:has(input:focus-visible) { outline:3px solid var(--paw-link); outline-offset:3px; }

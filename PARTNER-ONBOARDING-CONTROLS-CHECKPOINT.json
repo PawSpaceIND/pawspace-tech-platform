@@ -1,0 +1,20 @@
+{
+  "base": "11dbcc13a4f8696ad2db02e34784eb8c9f7e1197",
+  "oldCSSHash": "727181e7b6a79477eeb50781490775b08605831dcf2a103a592788da8c32290c",
+  "newCSSHash": "0ceb79e15e3afa55fd782c2a4bcfbf7ba20727789822aba6654c88febfd3c1c4",
+  "guardFiles": [
+    "tests/fixtures/partner-services-presentation-contract.json",
+    "tests/fixtures/staff-admin-self-service-contract.json",
+    "tests/fixtures/inbox-workspace-contract.json",
+    "tests/fixtures/ui-display-truth-contract.json",
+    "tests/fixtures/customer-partner-theme-contract.json"
+  ],
+  "actualBaselineMeasurements": "pending hosted run",
+  "visualQA": "pending",
+  "publication": "not performed",
+  "focusedTests": {
+    "passed": 94,
+    "failed": 0
+  },
+  "browserCasesPrepared": 48
+}

@@ -1,0 +1,56 @@
+name: Partner onboarding controls (visual QA pending)
+on:
+  pull_request:
+    paths: ['app/partner/onboarding/**', 'tests/partner-onboarding-controls-presentation.test.mjs', 'e2e/partner-onboarding-controls.spec.ts', 'playwright.partner-onboarding-controls.config.ts', '.github/workflows/partner-onboarding-controls.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: partner-onboarding-controls-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm run install:ci
+      - name: Source preservation and theme guards
+        run: node --experimental-strip-types --test tests/partner-onboarding-controls-presentation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Measure actual original stylesheet
+        run: |
+          cp app/partner/onboarding/onboarding.module.css /tmp/partner-onboarding-candidate.css
+          git show 11dbcc13a4f8696ad2db02e34784eb8c9f7e1197:app/partner/onboarding/onboarding.module.css > app/partner/onboarding/onboarding.module.css
+          UI_ONBOARDING_BASELINE=true npx playwright test --config playwright.partner-onboarding-controls.config.ts
+          mv test-results/partner-onboarding-controls test-results/partner-onboarding-baseline
+          mv test-results/partner-onboarding-controls-results.json test-results/partner-onboarding-baseline-results.json
+      - name: Restore and verify candidate controls
+        if: always()
+        run: |
+          cp /tmp/partner-onboarding-candidate.css app/partner/onboarding/onboarding.module.css
+          npx playwright test --config playwright.partner-onboarding-controls.config.ts
+      - name: Upload exact-source before/after evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: partner-onboarding-controls-${{ github.sha }}
+          path: |
+            test-results/partner-onboarding-controls
+            test-results/partner-onboarding-baseline
+            test-results/partner-onboarding-controls-results.json
+            test-results/partner-onboarding-baseline-results.json
+          retention-days: 7
