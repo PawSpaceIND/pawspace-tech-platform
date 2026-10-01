@@ -97,7 +97,13 @@ test("native AgentStream transport interruption stays reconnectable until explic
   assert.match(bridge, /recordTransportInterruption\(env, active, "socket_closed"\)/);
   assert.match(bridge, /recordTransportInterruption\(env, active, "socket_error"\)/);
   assert.match(bridge, /kind === "stop".*closeSession\(env, active/s);
-  assert.doesNotMatch(bridge, /addEventListener\("close".*closeSession/s);
+  // Bound the assertion to close callbacks: the demo cleanup listener appears before
+  // the explicit-stop handler, whose required closeSession must not be mistaken for cleanup.
+  const closeCallbacks = [...bridge.matchAll(/server\.addEventListener\("close",\s*\(\)\s*=>\s*\{([\s\S]*?)\}\);/g)];
+  assert.equal(closeCallbacks.length, 2, "inspect both demo cleanup and ordinary transport callbacks");
+  for (const [, callback] of closeCallbacks) assert.doesNotMatch(callback, /closeSession/);
+  assert.match(closeCallbacks[0][1], /clearTimeout\(expiryTimer\)/);
+  assert.match(closeCallbacks[1][1], /recordTransportInterruption\(env, active, "socket_closed"\)/);
 });
 
 test("native AgentStream handles media immediately, cancels stale speech, and streams first audio", () => {
