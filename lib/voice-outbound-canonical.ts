@@ -61,3 +61,8 @@ export async function requestControlledNativeAgentStreamUatCall(db: Db, env: Env
   const canonical = await canonicalRequest(db, env, input as VoiceRequest);
   return base.requestControlledNativeAgentStreamUatCall(db, env, canonical);
 }
+
+export async function requestNativeAttendedDemoCall(db:Db,env:Env,input:Parameters<typeof base.requestNativeAttendedDemoCall>[2]) {
+ const owner=await resolveCanonicalRecipientOwnership(db,env,{phone:input.phone,customerId:input.customerId,requireSuppliedPhone:true});
+ return base.requestNativeAttendedDemoCall(db,env,{...input,customerId:owner.customerId,phone:owner.dialNumber});
+}
