@@ -10,7 +10,7 @@ type Row=Record<string,unknown>;
 export type BoardingFinanceData={bookingId:string;stay:Row;cancellations:Row[];changes:Row[];refunds:Row[];settlement:Row|null;reconciliation:Row|null};
 export type BoardingFinanceQueueData={items:Row[];limit:number};
 type BookingActions={approveCancel:(row:Row)=>void;recordRefund:(row:Row)=>void;applyDateChange:(row:Row)=>void;issueInvoice:()=>void;configureTax:()=>void;prepareSettlement:()=>void;reconcile:()=>void};
-const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(Number(value||0));
+const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value||0));
 const label=(value:unknown)=>String(value||"not configured").replaceAll("_"," ");
 const problemText=(problem:unknown,fallback:string)=>problem instanceof Error?problem.message:fallback;
 

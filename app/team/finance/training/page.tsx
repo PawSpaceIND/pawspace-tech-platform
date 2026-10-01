@@ -10,7 +10,7 @@ type Row=Record<string,unknown>;
 type CancellationFinance={policies:Row[];cases:Row[];refunds:Row[];creditNotes:Row[];liveRefund:false;liveTaxFiling:false};
 type FinanceData={invoices:Row[];earnings:Row[];payouts:Row[];taxPolicies:Row[];compensationRules:Row[];events:Row[];livePayout:false;executionMode:string;cancellation:CancellationFinance};
 type Reconciliation={summary:{programmes:number;reconciled:number;exceptions:number};records:Array<{programmeId:string;bookingId:string;status:string;issues:string[];paymentStatus:string;invoiceStatus:string}>;source:string;liveMoney:false};
-const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(Number(value||0));
+const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value||0));
 const label=(value:unknown)=>String(value||"not configured").replaceAll("_"," ");
 // Mirrors issueTrainingInvoice: only an unnumbered draft with a published tax policy and a FULLY_PAID package payment can be numbered.
 const invoiceBlock=(row:Row)=>row.invoice_number?"Invoice already issued":String(row.status)!=="draft_ready_for_number"?"Needs a published tax policy":String(row.payment_status)!=="FULLY_PAID"?"Available once the package is fully paid":"";

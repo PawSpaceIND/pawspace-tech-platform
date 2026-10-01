@@ -1,0 +1,23 @@
+{
+  "base": "adfdefe4584bf5c7dc54ac516622eb9812b9839a",
+  "files": [
+    {
+      "file": "app/team/finance/boarding/boarding-finance-workspace.tsx",
+      "beforeHash": "c193df804fe7b8833881c64f8e26117472459a26c52d2f5927cad99953c4e1f4",
+      "before": "maximumFractionDigits:0",
+      "after": "minimumFractionDigits:2,maximumFractionDigits:2"
+    },
+    {
+      "file": "app/team/finance/sitting/sitting-finance-workspace.tsx",
+      "beforeHash": "97eb65693544a3dba0a34698755752f1cdd23b9731f1cef1f087ecc3101947d5",
+      "before": "maximumFractionDigits:0",
+      "after": "minimumFractionDigits:2,maximumFractionDigits:2"
+    },
+    {
+      "file": "app/team/finance/training/page.tsx",
+      "beforeHash": "2fa43eeba6cfecd47a05ec57e8ce346e634356a53f7f2291d778abda303941f5",
+      "before": "maximumFractionDigits:0",
+      "after": "minimumFractionDigits:2,maximumFractionDigits:2"
+    }
+  ]
+}

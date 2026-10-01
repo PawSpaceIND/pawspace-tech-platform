@@ -1,3 +1,4 @@
+import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -7,7 +8,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';
 const receipt=JSON.parse(readFileSync(new URL('./fixtures/ui-boarding-finance-next-preservation.json',import.meta.url),'utf8'));
 test('Boarding Finance preserves every original source byte after exact presentation reversal',()=>{
- let source=readFileSync(new URL('../'+receipt.file,import.meta.url),'utf8');
+ let source=reverseFinancePrecision(readFileSync(new URL('../'+receipt.file,import.meta.url),'utf8'),receipt.file);
  for(const [before,after] of [...receipt.replacements].reverse()){
  assert.equal(source.split(after).length,2,'Exactly one scoped reviewed hook');source=source.replace(after,before);
  }
@@ -25,7 +26,7 @@ test('actual Boarding loader keeps its existing labeled input, disabled/empty ga
 test('actual Boarding loaded snapshot retains canonical values and completion gate',()=>{
  const data={bookingId:'UI-ONLY',stay:{booking_status:'confirmed',stay_status:'active',total_amount:1398,payment_status:'captured',city_id:'blr'},cancellations:[],refunds:[{id:'R',status:'sandbox_pending',amount:279.6}],changes:[],settlement:null,reconciliation:null};
  const html=renderToStaticMarkup(h(BoardingFinanceBooking,{data,busy:false,on:Object.fromEntries(['approveCancel','recordRefund','applyDateChange','issueInvoice','configureTax','prepareSettlement','reconcile'].map(k=>[k,denied]))}));
- assert.match(html,/₹1,398/);assert.match(html,/₹280/);assert.match(html,/captured/);
+ assert.match(html,/₹1,398/);assert.match(html,/₹279\.60/);assert.match(html,/captured/);
  assert.match(html,/button disabled="">Prepare canonical settlement/);
  assert.match(html,/Record sandbox refund/);assert.match(html,/No live payout|no live payout/);
  const queue=renderToStaticMarkup(h(BoardingFinanceQueue,{queue:{items:[],limit:100},error:'',busy:false,onOpen:denied}));

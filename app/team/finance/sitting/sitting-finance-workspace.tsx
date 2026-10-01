@@ -8,7 +8,7 @@ import StaffModule from "../../../components/staff-workspace/StaffModule";
 
 type Row=Record<string,unknown>;
 type FinanceData={booking:Row;cancellations:Row[];dateChanges:Row[];refunds:Row[];settlement:Row|null;reconciliation:Row|null;sandboxOnly:true};
-const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(Number(value||0));
+const money=(value:unknown)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value||0));
 const label=(value:unknown)=>String(value||"not configured").replaceAll("_"," ");
 
 export default function SittingFinanceWorkspace({initialBookingId}:{initialBookingId:string}){
