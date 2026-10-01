@@ -112,7 +112,7 @@ test('the canonical runtime sends the new sales policy with the same-thread fact
  assert.match(requestBody.instructions,/Defer the detailed care checklist/i);
  assert.doesNotMatch(requestBody.instructions,/3 or 4|three or four/i);
  const sent=JSON.parse(requestBody.input);
- assert.ok(sent.canonicalContext.conversationHistory.some(row=>row.text==='Milo needs boarding for two nights.'));
+ assert.ok(sent.canonicalContext.conversationHistory.some(row=>row.content==='Milo needs boarding for two nights.'));
  assert.equal(sent.canonicalContext.salesService,'boarding');
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0);
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM communication_outbox').get().n,0);
