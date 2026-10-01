@@ -1,6 +1,9 @@
 /** Read-only in-app evidence. A booking status is never payment-capture evidence. */
 export type WorkspaceOrderUpdate={id:string;recordId:string;kind:'booking'|'food';serviceCode:string;status:string;title:string;at:number;readAt?:number|null};
 export type WorkspaceOrderCursor={at:number;id:string};
+export async function ensureWorkspaceOrderTables(db:D1Database){
+ await db.prepare(`CREATE TABLE IF NOT EXISTS workspace_order_reads (recipient_key TEXT NOT NULL,event_id TEXT NOT NULL,read_at INTEGER NOT NULL,PRIMARY KEY(recipient_key,event_id))`).run();
+}
 const pending=new Set(['payment_pending','awaiting_payment','pending_payment']);
 export function workspaceOrderUpdate(row:Record<string,unknown>,kind:'booking'|'food'='booking'):WorkspaceOrderUpdate{
  const recordId=String(row.id),status=String(row.status),serviceCode=kind==='food'?'fresh_food':String(row.service_code);
@@ -8,8 +11,9 @@ export function workspaceOrderUpdate(row:Record<string,unknown>,kind:'booking'|'
  return {id:`${kind}:${recordId}:${status}`,recordId,kind,serviceCode,status,title,at:Number(row.updated_at??row.created_at)};
 }
 export function uniqueWorkspaceUpdates(items:WorkspaceOrderUpdate[]){return [...new Map(items.map(item=>[item.id,item])).values()].sort((a,b)=>b.at-a.at||b.id.localeCompare(a.id));}
-/** Latest canonical rows, paginated and city-scoped. No sweep, DDL, communications or mutation. */
+/** Latest canonical rows, paginated and city-scoped; only the acknowledgement schema is initialized. */
 export async function readStaffWorkspaceOrderUpdates(db:D1Database,cityId:string|null,recipientKey:string,before?:WorkspaceOrderCursor){
+ await ensureWorkspaceOrderTables(db);
  const tables=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('canonical_bookings','food_orders')").all<{name:string}>();
  if(!tables.results.some(t=>t.name==='canonical_bookings'))throw new Error('Booking updates unavailable');
  const food=tables.results.some(t=>t.name==='food_orders');

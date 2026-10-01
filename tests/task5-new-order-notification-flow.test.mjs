@@ -75,8 +75,8 @@ test('N-E04 cursor/reconnect: tied timestamps and same booking/food IDs paginate
  await ack(ADMIN,'booking:TIED-001:confirmed');w.sqlite.exec("UPDATE canonical_bookings SET status='in_progress',updated_at=501 WHERE id='TIED-001'");const caught=await get(ADMIN);assert.equal(caught.body.data.unread,106);assert.equal(caught.body.data.items[0].id,'booking:TIED-001:in_progress');
  assert.equal((await get(ADMIN,'/api/workspace-order-updates?cursor=bad')).status,400);
 });
-test('N-E05 migration gate: a read cannot create acknowledgement storage or mutate booking state to conceal a missing migration',async t=>{
- const w=await fixture(t,{migrate:false});booking(w,'MIGRATION-BOOKING');const before=w.sqlite.prepare('SELECT * FROM canonical_bookings').all();const read=await get(ADMIN);assert.equal(read.status,500,'schema failure remains visible');assert.equal(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='workspace_order_reads'").get(),undefined);assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_bookings').all(),before);
+test('N-E05 cold schema: a read initializes empty acknowledgement storage without changing bookings',async t=>{
+ const w=await fixture(t,{migrate:false});booking(w,'MIGRATION-BOOKING');const before=w.sqlite.prepare('SELECT * FROM canonical_bookings').all();const read=await get(ADMIN);assert.equal(read.status,200);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM workspace_order_reads').get().n,0);assert.equal(read.body.data.unread,1);assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_bookings').all(),before);
 });
 
 test('N-E06 booking-to-inbox: actual saved-pet reserve/canonical POST stays pending until trusted synthetic capture, with status-specific read identity',async t=>{
