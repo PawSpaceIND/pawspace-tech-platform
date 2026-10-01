@@ -162,7 +162,7 @@ test("named-package voice offer enquiries use current eligible facts without inv
  const message="The Complete Makeover price feels high. Is there an approved offer for that package?";
  const reply=offersModule.approvedVoiceOfferInformation(message,offers);
  assert.match(reply,/₹200 off/);assert.match(reply,/₹2,399/);assert.match(reply,/validated at checkout/);assert.doesNotMatch(reply,/GROOM200|₹2,199|confirmed|created/i);
- assert.equal(offersModule.approvedVoiceOfferInformation(message,[]),null);
+ const noOffer=offersModule.approvedVoiceOfferInformation(message,[]);assert.match(noOffer,/don’t have an eligible approved offer for Complete Makeover/);assert.doesNotMatch(noOffer,/₹|GROOM|off the|confirmed|created/i);assert.equal(offersModule.offerClaimsApproved(noOffer,[]),true);
  assert.equal(offersModule.approvedVoiceOfferInformation("Complete Makeover offer बताइए",offers),null);
  assert.equal(offersModule.approvedVoiceOfferInformation("Explain the Complete Makeover offer in Tamil",offers),null);
  for(const action of ["Prepare a quote for Complete Makeover with the coupon", "Book Complete Makeover with the offer", "Apply the offer to Complete Makeover", "I accept the Complete Makeover offer"])assert.equal(offersModule.approvedVoiceOfferInformation(action,offers),null,"action request must reach governed booking logic");
@@ -170,7 +170,7 @@ test("named-package voice offer enquiries use current eligible facts without inv
  assert.equal(offersModule.approvedVoiceOfferInformation("No discounts for Complete Makeover please",offers),null);
  sqlite.prepare("UPDATE coupon_campaigns SET status='paused' WHERE code='GROOM200'").run();
  const paused=await offersModule.approvedSalesOffers(db,{asOf:ASOF,customerId:"CUS-DEFAULT"});
- assert.equal(offersModule.approvedVoiceOfferInformation(message,paused),null,"cross-sell campaign does not substitute for a paused closing offer");
+ assert.match(offersModule.approvedVoiceOfferInformation(message,paused),/don’t have an eligible approved offer/,"cross-sell campaign does not substitute for a paused closing offer");
 });
 
 
