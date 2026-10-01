@@ -28,8 +28,8 @@ test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-
 const PROVIDER = "PRV-D31-AVL";
 const GROUP = "GRP-D31-AVL";
 const OPS = "ops@pawspace.in";
-const START = "2030-10-01T04:00:00.000Z";   // 09:30 IST
-const END = "2030-10-01T05:30:00.000Z";     // 11:00 IST
+const START = "2026-10-01T04:00:00.000Z";   // 09:30 IST
+const END = "2026-10-01T05:30:00.000Z";     // 11:00 IST
 
 async function seedSlot() {
   const { sqlite, db } = world("__D31_AVAIL_DB__", "__D31_AVAIL_ENV__");
@@ -83,11 +83,11 @@ test("the overlap boundary is exact in both directions", async () => {
    * in and it does overlap, and must refuse.
    */
   const cases = [
-    ["ends exactly at appointment start", "2030-10-01T02:00:00.000Z", START, true],
-    ["ends one ms into the appointment", "2030-10-01T02:00:00.000Z", "2030-10-01T04:00:00.001Z", false],
-    ["starts exactly at appointment end", END, "2030-10-01T08:00:00.000Z", true],
-    ["starts one ms before appointment end", "2030-10-01T05:29:59.999Z", "2030-10-01T08:00:00.000Z", false],
-    ["fully contains the appointment", "2030-10-01T00:00:00.000Z", "2030-10-01T23:00:00.000Z", false],
+    ["ends exactly at appointment start", "2026-10-01T02:00:00.000Z", START, true],
+    ["ends one ms into the appointment", "2026-10-01T02:00:00.000Z", "2026-10-01T04:00:00.001Z", false],
+    ["starts exactly at appointment end", END, "2026-10-01T08:00:00.000Z", true],
+    ["starts one ms before appointment end", "2026-10-01T05:29:59.999Z", "2026-10-01T08:00:00.000Z", false],
+    ["fully contains the appointment", "2026-10-01T00:00:00.000Z", "2026-10-01T23:00:00.000Z", false],
   ];
   for (const [label, startsAt, endsAt, shouldConfirm] of cases) {
     const { sqlite, db, capacity } = await seedSlot();
@@ -103,7 +103,7 @@ test("the overlap boundary is exact in both directions", async () => {
 
 test("a cancelled reservation does not keep blocking the group", async () => {
   const { sqlite } = await seedSlot();
-  blockWindow(sqlite, "2030-10-01T00:00:00.000Z", "2030-10-01T23:00:00.000Z");
+  blockWindow(sqlite, "2026-10-01T00:00:00.000Z", "2026-10-01T23:00:00.000Z");
   assert.equal(confirmBooking(sqlite).confirmed, false);
   sqlite.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").run(GROUP);
   assert.equal(confirmBooking(sqlite).confirmed, true,
