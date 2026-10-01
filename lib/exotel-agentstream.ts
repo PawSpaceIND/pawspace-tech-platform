@@ -472,9 +472,10 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
     const cancelledKeys = new Set([...pendingMarks.values()].map(mark => mark.turnKey).filter((key): key is string => Boolean(key)));
     if (activeOfferTurnKey) cancelledKeys.add(activeOfferTurnKey);
     activeOfferTurnKey = null;
-    if (cancelledKeys.size) {
-      authorityFence = authorityFence.then(() => Promise.all([...cancelledKeys].map(key => cancelNativeVoiceOfferTurn(env.DB,key,active.threadId,active.customerId))));
-      ctx.waitUntil(authorityFence.catch(error => failProcessing(error,active,"llm",Date.now())));
+    const cancelledSession = active;
+    if (cancelledKeys.size && cancelledSession) {
+      authorityFence = authorityFence.then(() => Promise.all([...cancelledKeys].map(key => cancelNativeVoiceOfferTurn(env.DB,key,cancelledSession.threadId,cancelledSession.customerId))));
+      ctx.waitUntil(authorityFence.catch(error => failProcessing(error,cancelledSession,"llm",Date.now())));
     }
     generationVersion++;
     for (const controller of activeTtsControllers) controller.abort(); activeTtsControllers.clear();
