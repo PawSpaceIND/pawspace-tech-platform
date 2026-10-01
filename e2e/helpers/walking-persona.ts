@@ -106,7 +106,9 @@ async function signInFixtureFinance(page: Page, bookingId: string) {
   const signedIn = nextPost(page, "/api/staging-login");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   expect((await signedIn).status()).toBe(200);
-  // Finance identities follow the application's MFA redirect, including custom seeded identities.
+  // Custom seeded identities land at /me; entering Finance must enforce the real MFA guard.
+  await page.waitForURL("**/me");
+  await page.goto("/team/finance");
   await page.waitForURL("**/mfa?next=%2Fteam%2Ffinance");
   const session = await okJson(await page.request.get("/api/staging-login", { maxRedirects: 0 }));
   expect(session).toMatchObject({ enabled: true, signedInAs: { email: "e2e.finance@pawspace.test", role: "finance" } });

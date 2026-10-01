@@ -185,3 +185,17 @@ for(const override of [{PAWSPACE_PAYMENT_ENV:"live"},{PAWSPACE_PAYMENT_LIVE_APPR
  assert.notEqual(result.status,0);assert.deepEqual(result.commands,[]);assert.equal(result.bindings,bindings);
  assert.match(result.stderr,/refusing to start/);assert.equal(result.stderr.includes("fake-secret"),false);
 });
+
+test("persona shell binds only its explicit disposable synthetic webhook key", t => {
+ const key="a".repeat(64);
+ const result=runPersonaServe(t,'RAZORPAY_WEBHOOK_SECRET_SANDBOX="discard-inherited-key"',{PW_PERSONA_WEBHOOK_SECRET:key});
+ const actual=assertPersonaSandbox(result);
+ assert.equal(actual.RAZORPAY_WEBHOOK_SECRET_SANDBOX,key);
+ assert.equal(result.stdout.includes(key),false);
+ assert.equal(result.stderr.includes(key),false);
+});
+test("persona shell refuses a malformed disposable webhook key before runtime commands", t => {
+ const result=runPersonaServe(t,null,{PW_PERSONA_WEBHOOK_SECRET:'bad-key'});
+ assert.equal(result.status,1);
+ assert.deepEqual(result.commands,[]);
+});

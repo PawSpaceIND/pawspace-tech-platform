@@ -87,6 +87,14 @@ if [ -n "$PERSONA_UAT_MAPS_BINDING" ]; then
   printf '%s\n' "$PERSONA_UAT_MAPS_BINDING" >> "$DEV_VARS"
 fi
 unset PERSONA_UAT_MAPS_BINDING
+# Only the persona runner's disposable local key may enable synthetic signed webhook proof.
+if [ -n "${PW_PERSONA_WEBHOOK_SECRET:-}" ]; then
+  if [[ ! "$PW_PERSONA_WEBHOOK_SECRET" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[persona-e2e] refusing invalid disposable webhook signing key" >&2
+    exit 1
+  fi
+  printf 'RAZORPAY_WEBHOOK_SECRET_SANDBOX="%s"\n' "$PW_PERSONA_WEBHOOK_SECRET" >> "$DEV_VARS"
+fi
 
 export WRANGLER_LOG_PATH="${WRANGLER_LOG_PATH:-.wrangler/e2e.log}"
 export MINIFLARE_REGISTRY_PATH="${MINIFLARE_REGISTRY_PATH:-.wrangler/e2e-registry}"
