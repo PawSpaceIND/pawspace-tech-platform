@@ -910,3 +910,76 @@ for (const existingDirectory of [false,true]) {
     assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,1);
   });
 }
+
+for (const retry of [false,true]) test(`NULL preference canonical opt-out after ${retry?'retry':'enqueue'}`, async()=>{
+ const w=await world(); const queued=await queuedLifecycle(w,'review-null');
+ if(retry) await w.comms.failOutboxAttempt(w.db,queued.messageId,'temporary_failure');
+ seedCustomer(w.sqlite,'review-null',{serviceUpdates:false});
+ setPreference(w.sqlite,'review-null',{serviceUpdates:null});
+ const result=await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+DAY});
+ assert.equal(result.sandboxDelivered,0);
+});
+for(const state of ['queued','retry_pending','dispatching']) test(`foreign lifecycle ${state} is outside reminder ownership`,async()=>{
+ const w=await world(); await queuedLifecycle(w,'review-foreign');
+ w.sqlite.prepare("UPDATE communication_messages SET template_key='training_lifecycle_foreign'").run();
+ w.sqlite.prepare("UPDATE communication_outbox SET status=?,last_error=?,next_attempt_at=?,locked_at=?").run(state,state==='dispatching'?'reminder_sandbox_claim:expired':null,NOW-DAY,state==='dispatching'?NOW-DAY:null);
+ const beforeMessage=w.sqlite.prepare("SELECT * FROM communication_messages").get();
+ const beforeOutbox=w.sqlite.prepare("SELECT * FROM communication_outbox").get();
+ const result=await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+DAY});
+ assert.equal(result.sandboxDelivered,0);
+ assert.deepEqual(w.sqlite.prepare("SELECT * FROM communication_messages").get(),beforeMessage);
+ assert.deepEqual(w.sqlite.prepare("SELECT * FROM communication_outbox").get(),beforeOutbox);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+});
+
+for(const boundary of ['selection','completion']) test(`foreign template change at ${boundary} cannot deliver`,async()=>{
+ const w=await world(); await queuedLifecycle(w,'template-race');
+ if(boundary==='selection') {
+  const prepare=w.db.prepare;
+  w.db.prepare=(sql)=>{
+   const stmt=prepare(sql);
+   if(sql.startsWith('SELECT o.message_id')) {
+    const bind=stmt.bind;
+    stmt.bind=(...args)=>{const bound=bind(...args);const all=bound.all;bound.all=async()=>{
+     const rows=await all();w.sqlite.prepare("UPDATE communication_messages SET template_key='foreign_lifecycle'").run();return rows;
+    };return bound;};
+   }
+   return stmt;
+  };
+ } else {
+  const batch=w.db.batch;
+  w.db.batch=async(list)=>{
+   if(list.some(stmt=>stmt.sql.includes('INSERT INTO reminder_sandbox_deliveries'))) w.sqlite.prepare("UPDATE communication_messages SET template_key='foreign_lifecycle'").run();
+   return batch(list);
+  };
+ }
+ assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+ assert.equal(messages(w.sqlite)[0].status,'queued');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+});
+for(const [preference,canonical,expected] of [[false,true,0],[true,false,1],[null,true,1]]) test(`service preference ${preference} with canonical ${canonical} retains precedence`,async()=>{
+ const w=await world();await queuedLifecycle(w,'consent-precedence');
+ seedCustomer(w.sqlite,'consent-precedence',{serviceUpdates:canonical});
+ setPreference(w.sqlite,'consent-precedence',{serviceUpdates:preference});
+ assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,expected);
+});
+
+for(const reason of ['quiet_hours','communication_policy_unavailable']) for(const replacement of ['foreign_lifecycle','subscription_renewal_reminder']) test(`template change during ${reason} preserves projections (${replacement})`,async()=>{
+ const w=await world();await queuedLifecycle(w,'policy-template-race');
+ const quiet=Date.parse('2026-02-02T17:00:00Z');
+ if(reason==='communication_policy_unavailable') w.sqlite.exec('DELETE FROM communication_policies');
+ const batch=w.db.batch;
+ let beforeMessage,beforeOutbox;
+ w.db.batch=async(list)=>{
+  if(list.some(stmt=>stmt.sql.startsWith("UPDATE communication_messages SET status='scheduled'"))) {
+   w.sqlite.prepare('UPDATE communication_messages SET template_key=?').run(replacement);
+   beforeMessage=w.sqlite.prepare('SELECT * FROM communication_messages').get();
+   beforeOutbox=w.sqlite.prepare('SELECT * FROM communication_outbox').get();
+  }
+  return batch(list);
+ };
+ assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:quiet})).sandboxDelivered,0);
+ assert.ok(beforeMessage,'policy scheduling boundary was reached');
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM communication_messages').get(),beforeMessage);
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM communication_outbox').get(),beforeOutbox);
+});
