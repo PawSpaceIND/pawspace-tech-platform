@@ -43,7 +43,9 @@ test("turn diagnostics are PII-safe, bounded, and keep TTS truth English-only", 
     transcriptChars: 42,
     assistantChars: 78,
     sttModel: "@cf/openai/whisper-large-v3-turbo",
-    ttsModel: "@cf/deepgram/aura-2-en",
+    ttsModel: "eleven_flash_v2_5",
+    ttsProvider: "elevenlabs",
+    ttsFallbackUsed: false,
     outcome: "responded",
   });
   assert.deepEqual(result, {
@@ -61,7 +63,9 @@ test("turn diagnostics are PII-safe, bounded, and keep TTS truth English-only", 
     transcriptChars: 42,
     assistantChars: 78,
     sttModel: "@cf/openai/whisper-large-v3-turbo",
-    ttsModel: "@cf/deepgram/aura-2-en",
+    ttsModel: "eleven_flash_v2_5",
+    ttsProvider: "elevenlabs",
+    ttsFallbackUsed: false,
     outcome: "responded",
   });
   assert.ok(!("transcript" in result));
@@ -83,11 +87,15 @@ test("diagnostics reject unsafe metadata shapes instead of echoing them", () => 
     assistantChars: 999999,
     sttModel: "bad model secret=abc",
     ttsModel: "bad model secret=xyz",
+    ttsProvider: "bad provider secret=xyz",
+    ttsFallbackUsed: true,
     outcome: "x".repeat(200),
   });
   assert.equal(result.detectedSttLanguage, null);
   assert.equal(result.sttModel, "configured");
   assert.equal(result.ttsModel, "configured");
+  assert.equal(result.ttsProvider, "configured");
+  assert.equal(result.ttsFallbackUsed, true);
   assert.equal(result.sttMs, 0);
   assert.equal(result.llmMs, 0);
   assert.equal(result.ttsMs, 60_000);
