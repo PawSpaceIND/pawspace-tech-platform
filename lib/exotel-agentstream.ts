@@ -24,7 +24,9 @@ const END_SILENCE_MS = 350;
 const PRE_ROLL_MS = 250;
 const SPEECH_RMS_THRESHOLD = 420;
 const AGENTSTREAM_ACTIVE_STATES = new Set(["connected", "speaking", "listening"]);
-// Exotel AgentStream outbound media is byte-bounded: each payload is 3,200–100,000 bytes and a multiple of 320.\n// The carrier buffers these payloads; a clear event flushes buffered playback on barge-in.\nconst EXOTEL_MIN_OUTBOUND_CHUNK_BYTES = 3_200;
+// Exotel AgentStream outbound media is byte-bounded: each payload is 3,200–100,000 bytes and a multiple of 320.
+// The carrier buffers these payloads; a clear event flushes buffered playback on barge-in.
+const EXOTEL_MIN_OUTBOUND_CHUNK_BYTES = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
