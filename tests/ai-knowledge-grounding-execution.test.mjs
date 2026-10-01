@@ -100,11 +100,14 @@ test('routine vet booking information remains answerable while symptoms keep med
 
 test('multi-service quote instructions do not impose Grooming on a Training request',async t=>{
  const w=await world(t);let sent;
+ await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(w.db);
  const mock=stubFetch((url,init)=>{sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'Which saved pet should attend the trainer assessment?',usage:{total_tokens:20}});});t.after(()=>mock.restore());
  const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='Prepare an unconfirmed dog training Meet and Greet quote.';
  await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
  assert.match(sent.instructions,/serviceCode:"chosen enabled service code"/);
  assert.doesNotMatch(sent.instructions,/Use exactly these argument schemas: schedule.reserve=\{serviceCode:"grooming"/);
  assert.match(sent.instructions,/Training=dog_training/);
+ assert.match(sent.instructions,/booking.create.arguments.taxi/);
+ const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.catalogue.petTaxi,[]);assert.equal(context.catalogueTool,null);
  assert.match(sent.instructions,/separate explicit customer confirmation/);
 });
