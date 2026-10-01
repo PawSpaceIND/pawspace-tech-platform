@@ -25,3 +25,8 @@
 .page .dock .active { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
 
 .page.page { background:var(--brand-bg) !important; color:var(--brand-text) !important; font-family:var(--paw-font) !important; --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong); --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line); }
+
+/* Hero labels use the foreground selected for this dark brand surface. */
+.page .hero .eyebrow { color:var(--brand-hero-text) !important; }
+/* Preserve full navigation words on the smallest supported phone width. */
+.page .dock a { padding-inline:4px !important; white-space:nowrap; }

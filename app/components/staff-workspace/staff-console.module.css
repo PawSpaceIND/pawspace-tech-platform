@@ -31,3 +31,6 @@
 .console :where(label:has(>input:not([type="checkbox"]):not([type="radio"])),label:has(>select),label:has(>textarea)) { display:grid; gap:6px; min-width:0; align-content:start; }
 .console :where(h1) { font-weight:750; }
 .console :where(h2,h3) { font-weight:700; }
+
+/* A section label is content text, including on dark staff surfaces. */
+.console :global(.eyebrow) { color:var(--staff-text); }

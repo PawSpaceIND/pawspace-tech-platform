@@ -1,4 +1,4 @@
-import {test,expect,type Page,type TestInfo} from '@playwright/test';
+import {test,expect,type Locator,type Page,type TestInfo} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 const sourceHead=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 const codes=['trainer-meet-greet','training-2-starter','training-4-puppy','training-8-basic','training-8-leash','training-12-leash','training-12-advanced','training-16-pro','future-plan'];
@@ -34,6 +34,17 @@ async function fixture(page:Page,{signedIn=true,accountGate,catalogueGate}:{sign
 }
 async function appearance(page:Page,style:string,theme:string,mode:string){await page.addInitScript(({style,theme,mode})=>{if(localStorage.getItem('pawspace.visual-style')===null)localStorage.setItem('pawspace.visual-style',style);if(localStorage.getItem('pawspace.customer.theme')===null)localStorage.setItem('pawspace.customer.theme',theme);if(localStorage.getItem('pawspace.customer.appearance')===null)localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.cookie-consent','essential');},{style,theme,mode});}
 async function rendered(page:Page){await expect(page.locator('html')).toHaveAttribute('data-paw-theme',/emerald|signature|coral/);const privacy=page.getByRole('button',{name:'Essential only',exact:true});if(await privacy.isVisible())await privacy.click();}
+async function readableLabel(label:Locator){
+ const ratio=await label.evaluate(element=>{
+  const rgb=(value:string)=>{if(!/^rgba?\(/.test(value))throw new Error(`Unsupported computed colour: ${value}`);return value.match(/[\d.]+/g)!.map(Number);};
+  const foreground=rgb(getComputedStyle(element).color);let ancestor:Element|null=element,background:number[]|null=null;
+  while(ancestor){const colour=rgb(getComputedStyle(ancestor).backgroundColor);if((colour[3]??1)===1){background=colour;break;}if((colour[3]??1)!==0)throw new Error('Contrast review needs an opaque background');ancestor=ancestor.parentElement;}
+  if(!background||(foreground[3]??1)!==1)throw new Error('Contrast review needs opaque foreground and background');
+  const luminance=(colour:number[])=>colour.slice(0,3).map(v=>{const s=v/255;return s<=.04045?s/12.92:((s+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+  const a=luminance(foreground),b=luminance(background);return(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+ });
+ expect(ratio,'visible small heading contrast').toBeGreaterThanOrEqual(4.5);
+}
 async function evidence(page:Page,info:TestInfo,name:string){
  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width+2);
  await page.screenshot({path:info.outputPath(`${name}-${sourceHead}.png`),fullPage:true,animations:'disabled'});
@@ -44,6 +55,12 @@ for(const width of [320,391,768,1440])for(const style of ['professional','cartoo
   await page.setViewportSize({width,height:900});await appearance(page,style,theme,mode);
   await fixture(page,{signedIn:false});await page.goto('/v2/account');await rendered(page);await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   await expect(page.getByText('Your pet family, all in one place.',{exact:true})).toBeVisible();
+  await readableLabel(page.getByText('YOUR PAWSPACE ACCOUNT',{exact:true}));
+  for(const name of ['Activity','Account']){
+   const link=page.getByRole('navigation',{name:'PawSpace V2 navigation'}).getByRole('link',{name:new RegExp(name)});
+   const lines=await link.evaluate(element=>{const text=Array.from(element.childNodes).find(node=>node.nodeType===Node.TEXT_NODE&&node.textContent?.trim());if(!text)throw new Error('Navigation label missing');const range=document.createRange();range.selectNodeContents(text);return range.getClientRects().length;});
+   expect(lines,'navigation label stays on one line').toBe(1);
+  }
   const signIn=page.getByRole('link',{name:'Sign in from home',exact:true});await expect(signIn).toBeVisible();expect((await signIn.boundingBox())!.height).toBeGreaterThanOrEqual(44);await evidence(page,info,'account');
   await page.unroute('**/api/**');const writes=await fixture(page);await page.goto('/v2/training');await rendered(page);
   await expect(page.getByText('Selected programme:',{exact:false}).first()).toBeVisible();
@@ -53,6 +70,7 @@ for(const width of [320,391,768,1440])for(const style of ['professional','cartoo
   for(const plan of plans){const choice=page.getByRole('button',{name:new RegExp(plan.name)});await expect(choice).toHaveCount(1);await expect(choice).toContainText(plan.base_price.toLocaleString('en-IN'));}
   const choice=page.getByRole('button',{name:/Fixture programme 1/});await choice.scrollIntoViewIfNeeded();await choice.click();await expect(choice).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('status').filter({hasText:'Selected programme:'})).toContainText('Fixture programme 1');await evidence(page,info,'training');
   await page.goto('/team/relocation-enquiries');await rendered(page);await expect(page.getByRole('heading',{name:'Submitted relocation enquiries',exact:true})).toBeVisible();
+  await readableLabel(page.locator('[data-staff-module] .eyebrow').first());
   await expect.poll(()=>page.locator('[data-staff-module]').evaluate(e=>getComputedStyle(e).getPropertyValue('--ds-radius-lg').trim())).toBe(style==='cartoon'?'24px':'16px');await evidence(page,info,'staff');expect(writes).toEqual([]);
  });
 }
