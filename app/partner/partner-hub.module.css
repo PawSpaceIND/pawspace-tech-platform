@@ -40,3 +40,5 @@
  .hub .actions { display:grid; width:100%; }
  .hub :is(.primary,.secondary) { width:100%; justify-content:center; text-align:center; }
 }
+
+.hub .hero p.status strong { color:inherit !important; }
