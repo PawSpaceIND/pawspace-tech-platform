@@ -171,13 +171,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  const offerInformation=channel==="voice"&&!input.onDelta&&!medicalQuestion?approvedVoiceOfferInformation(input.inputText,eligibleOffers):null;
  if(offerInformation)return{text:spokenVerifiedAmounts(offerInformation),provider:"approved_offer_catalogue",modelRef:"server_owned_offers",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedVoiceDiscounts(offerInformation,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(offerInformation,eligibleOffers),highImpactAction:false,actionRequests:[]};
  if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
- // Provider transcripts are untrusted dialogue, never canonical action or price authority.
- const suppliedHistory=Array.isArray(input.context?.conversationHistory)?input.context.conversationHistory:[];
- const conversationHistory=[...history,...suppliedHistory].slice(-64).flatMap((row:unknown)=>{
-  if(!row||typeof row!=="object")return[];
-  const message=row as {role?:unknown;content?:unknown};
-  return (message.role==="user"||message.role==="assistant")&&typeof message.content==="string"?[{role:message.role,content:message.content.slice(0,1000)}]:[];
- });
+ // Both sources are untrusted dialogue, never canonical action or price authority.
+ const conversationHistory=mergeVoiceConversationHistory(history,input.context?.conversationHistory);
  if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory});
  systemPrompt+=`\n\n${MAYA_STAY_POLICY}`;
  if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:options.salesService==="grooming"||options.salesService==="all_services"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}
@@ -261,6 +256,23 @@ const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscr
 
 
 /** Only persisted, same-customer turns enter sales memory; caller-supplied chat history is not trusted. */
+export function mergeVoiceConversationHistory(persisted:unknown,supplied:unknown){
+ const normalize=(value:unknown)=>Array.isArray(value)?value.slice(-64).flatMap((row:unknown)=>{
+  if(!row||typeof row!=="object")return[];
+  const message=row as {role?:unknown;content?:unknown;text?:unknown};
+  const content=typeof message.content==="string"?message.content:message.text;
+  return (message.role==="user"||message.role==="assistant")&&typeof content==="string"&&content.trim()?[{role:message.role,content:content.slice(0,1000)}]:[];
+ }):[];
+ const prior=normalize(persisted),incoming=normalize(supplied);
+ // Remove only contiguous overlap at the join, never equal text elsewhere: a caller
+ // may repeat a correction after intervening turns. Incoming order/current turn wins.
+ let overlap=0;
+ for(let size=Math.min(prior.length,incoming.length);size>0;size--){
+  if(prior.slice(-size).every((row,index)=>row.role===incoming[index].role&&row.content===incoming[index].content)){overlap=size;break;}
+ }
+ return [...prior,...incoming.slice(overlap)].slice(-64);
+}
+
 async function specialistConversationHistory(db:D1Database,threadId:string,customerId:string){
  const rows=await db.prepare("SELECT m.payload_json,t.output_text FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id AND m.thread_id=t.thread_id AND m.customer_id=t.customer_id WHERE t.thread_id=? AND t.customer_id=? ORDER BY t.created_at DESC,t.rowid DESC LIMIT 6").bind(threadId,customerId).all<Row>();
  return rows.results.reverse().flatMap(row=>{let payload:Row={};try{payload=JSON.parse(text(row.payload_json))as Row;}catch{}return[{role:"user",text:text(payload.text).slice(0,600)},{role:"assistant",text:text(row.output_text).slice(0,1000)}];});
