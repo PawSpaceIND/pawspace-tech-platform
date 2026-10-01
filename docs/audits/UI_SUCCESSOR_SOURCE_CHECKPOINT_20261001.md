@@ -13,3 +13,5 @@ Macbrowser read-onlyforeground/XPC failed;authorizedobservationstalledandowncomm
 Next:publishoneclearlymarkedDraftPRandmonitoractual58casehostedresults/artifacts. Fixobserveddefectswithoutwaivers. Rootindependentimageinspection+requiredgatesbeforecaptainmerge/deploy. No visual/CTRclaims.
 
 After normal main reconciliation:189guard tests and full bounded-memory TypeScript pass; canonical-booking source equals currentmain exactly. Only28reviewedprotected keys and2AST entries differ in manifests versus currentmain. Candidate remains visual-QA-pending.
+
+Hosted23b757efchat run36812000207/job110208874133 failed static-only test ratchet160>158 beforebrowser, independently reproduced locally. Added actualAccountPage SSR and actualStaffModule/Card/Button SSR to thetwoownedtests, preserving all existing byte/negativechecks and unchangedbudget.198source/guard/ratchettestsnowpass;newtestslintclean. No application/manifests changes. Hosted visualmatrix remains pending newhead.

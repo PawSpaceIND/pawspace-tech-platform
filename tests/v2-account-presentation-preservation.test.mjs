@@ -23,3 +23,16 @@ test('Account stylesheet remains confined to three presentation hooks',()=>{
  css.walkRules(rule=>{ for(const selector of rule.selectors)assert.match(selector,/^\.(utility|signIn|signedOut)(?:\b|:)/); });
  css.walkDecls(decl=>{assert.doesNotMatch(decl.value,/url\(|expression\(|javascript:/i);assert.notEqual(decl.prop,'position');});
 });
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__ACCOUNT_PRESENTATION_RENDER__');
+const {default:AccountPage}=await import('../app/v2/account/page.tsx');
+test('actual Account component renders the plain-language heading and existing appearance opener',()=>{
+ const html=renderToStaticMarkup(createElement(AccountPage));
+ assert.ok(html.includes('Your pet family, all in one place.'));
+ assert.ok(html.includes('Keep your profile, pets and saved addresses together for your PawSpace bookings.'));
+ assert.match(html,/Choose style &amp; colours/);
+ assert.match(html,/href="\/v2"/);
+ assert.doesNotMatch(html,/canonical customer record|Family details without leaving V2/);
+});
