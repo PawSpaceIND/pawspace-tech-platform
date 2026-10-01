@@ -20,6 +20,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { freshSqlite, makeD1 } from "./helpers/taxi-harness.mjs";
@@ -126,6 +127,16 @@ test("grooming trigger-manifest fencing stays below Cloudflare D1 expression dep
   assert.match(sql, /WITH expected_grooming_triggers\(name,sql\) AS \(\s*VALUES/);
   assert.doesNotMatch(sql, /FROM sqlite_master WHERE type='trigger' AND \(\(/,
     "the 57-trigger manifest must be joined as rows, not expanded into a deep OR expression");
+});
+
+test("grooming trigger-manifest fencing executes safely at D1 depth 100", () => {
+  const output = execFileSync("python3", [
+    "tests/helpers/grooming-migration-depth-regression.py",
+    "--candidate", "drizzle/0045_grooming_dual_mode_revisions.sql",
+  ], { encoding: "utf8" });
+  assert.match(output, /RED confirmed: baseline rejected at expression depth 100/);
+  assert.match(output, /114\/114 missing\/altered-trigger cases fence/);
+  assert.match(output, /PASS: all 57 unique exact trigger definitions/);
 });
 
 test("the migration set sent as chunks builds exactly the schema the file-by-file runner builds, and re-sending it changes nothing", async () => {
