@@ -509,8 +509,8 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
         assertCurrent(active, epoch);
         stage = "opening_text"; stageStarted = Date.now();
         await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
-        assertCurrent(active, epoch);
         ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "opening", chars: active.openingDisclosure.length, ttsMs: Math.min(600_000, greeting.latencyMs), ttsProvider: greeting.provider, ttsModel: greeting.model, ttsFallbackUsed: greeting.fallbackUsed }));
+        assertCurrent(active, epoch);
         const markName = `opening-${active.segmentIndex}-end`;
         stage = "opening_send"; stageStarted = Date.now();
         const streamed = await streamAudio(server, active, greeting.audio, markName, {
@@ -559,8 +559,8 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
 
       stage = "turn_text"; stageStarted = Date.now();
       await recordSegment(env, active, "assistant", generated.output, null, null);
-      assertCurrent(active, epoch);
       ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "turn", chars: Math.min(1_000_000, generated.output.length) }));
+      assertCurrent(active, epoch);
 
       const markName = `turn-${active.segmentIndex}-end`;
       stage = "turn_send"; stageStarted = Date.now();
