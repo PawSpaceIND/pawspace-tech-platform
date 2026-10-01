@@ -99,3 +99,39 @@ export function quoteReplyDiagnostic(turn){
  const redactedWording=text.toLowerCase().match(/[a-z]+|[?.!,:;]/g)?.slice(0,160).map(token=>common.has(token)||/^[?.!,:;]$/.test(token)?token:'[omitted]').join(' ')||'';
  return{redactedWording,characters:text.length,knownWords:['quote','prepare','coat','size','weight','aggression','vaccination','duration','service','prepaid','grooming','confirm','saved','pet','dog','health','requirements','temperament','booking','available','reserve','price','payment','order','need','cannot','sorry','safety','offer','details','consent','one-time','subscription','information','provide','could','check','you','anything','else','help','with','that','confirming','confirmation','unconfirmed','draft','read','separate','terms','once','ready','want','like','proceed','would','can','will','make','changes','before','first','for','your','my','the','an','not','without','create'].filter(word=>new RegExp('\\b'+word+'\\b','i').test(text)),reason:matches.length===1?matches[0]:'unclassified',serverQuoteRetry:text.startsWith("I couldn't prepare that booking yet:"),asksQuestion:text.includes('?'),questionTopics:{pet:/\b(?:which pet|pet name|which dog|breed|age)\b/i.test(text),address:/\b(?:address|PIN|pincode)\b/i.test(text),appointment:/\b(?:date|time|appointment)\b/i.test(text),package:/\b(?:package|grooming|makeover)\b/i.test(text)},policyDecision:['customer_confirmation_required','clarification_required','sales_offer_retry_required','information_only_action_rejected'].includes(turn?.policy_decision)?turn.policy_decision:'other'};
 }
+
+// Known non-dialing audio demo 36793666839 only; not a general customer-case reset.
+export const offerRepairRevision='5c4d7e780024574dd7f900c1026d5e355e04a47c';
+export const offerIncidentStart=Date.parse('2026-10-01T00:00:00Z');
+export const offerIncidentEnd=Date.parse('2026-10-01T00:01:00Z');
+export const offerIncidentPrompt='The Complete Makeover price feels high. Is there an approved offer for that package?';
+export function syntheticOfferRepairChecks({revision,customerId,handoffs,calls,turns,expectedPrompt}){
+ const h=handoffs?.[0]||{},c=calls?.[0]||{},t=turns?.[0]||{};
+ const incidentTime=x=>typeof x==='number'&&Number.isFinite(x)&&x>=offerIncidentStart&&x<offerIncidentEnd;
+ let payload;try{payload=JSON.parse(t.payload_json);}catch{}
+ const actual=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());
+ return{
+  repairedRevision:revision===offerRepairRevision,
+  expectedPromptBounded:expectedPrompt===offerIncidentPrompt,
+  singleHandoff:Array.isArray(handoffs)&&handoffs.length===1,
+  singleCall:Array.isArray(calls)&&calls.length===1,
+  singleTurn:Array.isArray(turns)&&turns.length===1,
+  ownedRecords:Boolean(customerId)&&h.customer_id===customerId&&c.customer_id===customerId&&t.customer_id===customerId,
+  sameThread:Boolean(h.thread_id)&&h.thread_id===c.thread_id&&h.thread_id===t.thread_id,
+  sameSession:Boolean(h.session_id)&&h.session_id===t.session_id,
+  handoffIdentity:/^AIHO-[a-f0-9-]{36}$/.test(h.id||''),
+  handoffRequester:h.requested_by==='elevenlabs-voice@system.pawspace',
+  queuedPolicyRisk:h.status==='queued'&&h.reason==='policy_risk',
+  noStaffActivity:h.taken_over_by==null&&h.taken_over_at==null&&h.resumed_by==null&&h.resumed_at==null,
+  handoffInIncident:incidentTime(h.created_at),callInIncident:incidentTime(c.started_at),turnInIncident:incidentTime(t.created_at),
+  syntheticInbound:c.transport_provider==='sandbox_simulator'&&c.direction==='inbound'&&c.consent_status==='verified',
+  callCreator:c.created_by==='founder@pawspace.in',callFailed:c.status==='failed'&&c.disposition==='synthetic_audio_demo_failed'&&incidentTime(c.ended_at),
+  policyTurn:t.provider==='openai'&&t.outcome==='handoff'&&t.policy_decision==='blocked_high_impact'&&t.handoff_reason==='policy_risk',
+  canonicalVoiceInput:t.direction==='inbound'&&t.input_actor==='elevenlabs-voice@system.pawspace'&&t.input_channel==='voice'&&t.input_provider==='elevenlabs',
+  exactInput:typeof expectedPrompt==='string'&&actual?.trim()===expectedPrompt.trim(),
+ };
+}
+export function syntheticOfferRepairProof(input){
+ if(!Object.values(syntheticOfferRepairChecks(input)).every(v=>v===true))throw Error('Exact synthetic offer incident not proven');
+ return{singleKnownSyntheticIncident:true,staffTakeoverObserved:false,exactInputVerified:true,governedStaffResumeRequired:true,dialed:false};
+}

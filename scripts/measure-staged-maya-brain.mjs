@@ -1,10 +1,10 @@
 // Actual isolated staged brain timings or unconfirmed saved-address quote; never confirms a booking.
 import {writeFile,mkdir} from 'node:fs/promises';
 import {readDemoJson,validateDemoContext,actionsMaskCommand} from './voice-demo-output-boundary.mjs';
-import {quoteReplyDiagnostic,savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt,syntheticQuoteRepairProof,syntheticQuoteRepairChecks,quoteRepairRevision,quoteIncidentStart,quoteIncidentEnd} from './staged-quote-proof.mjs';
+import {offerRepairRevision,offerIncidentStart,offerIncidentEnd,offerIncidentPrompt,syntheticOfferRepairProof,quoteReplyDiagnostic,savedQuotePrompt,pendingQuoteProof,safeBrainTiming,savedQuotePrerequisites,quoteHandoffReceipt,syntheticQuoteRepairProof,syntheticQuoteRepairChecks,quoteRepairRevision,quoteIncidentStart,quoteIncidentEnd} from './staged-quote-proof.mjs';
 import {authorizedLaunchTester} from './voice-sales-launch-preflight.mjs';
 import {assertDemoPhonePauseMetadata,assertDemoRuntimePhonePause} from './voice-demo-scenarios.mjs';
-const env=process.env,repairOnly=env.MAYA_BRAIN_PROBE_MODE==='repair_quote_handoff',inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites','repair_quote_handoff'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
+const env=process.env,offerRepair=env.MAYA_BRAIN_PROBE_MODE==='repair_offer_handoff',repairOnly=offerRepair||env.MAYA_BRAIN_PROBE_MODE==='repair_quote_handoff',inspectOnly=env.MAYA_BRAIN_PROBE_MODE==='quote_prerequisites',quoteOnly=['quote_only','quote_prerequisites','repair_quote_handoff','repair_offer_handoff'].includes(env.MAYA_BRAIN_PROBE_MODE),origin='https://pawspace-staging.karthik-fce.workers.dev';
 authorizedLaunchTester(env);
 if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||'')||!env.SPECIALIST_CUSTOMER_ID||!env.ELEVENLABS_API_KEY||!env.GROOMING_AGENT_ID)throw Error('Exact demo prerequisites missing');
 const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
@@ -49,25 +49,26 @@ if(quoteOnly){
  ]);
 
  if(repairOnly){
-  if(env.EXPECTED_SHA!==quoteRepairRevision||pets.length>=20)throw Error('Verified repair revision required');
-  const handoffs=await rows("SELECT * FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active') AND created_at>=? AND created_at<?",[env.SPECIALIST_CUSTOMER_ID,quoteIncidentStart,quoteIncidentEnd]);
+  const repairRevision=offerRepair?offerRepairRevision:quoteRepairRevision,incidentStart=offerRepair?offerIncidentStart:quoteIncidentStart,incidentEnd=offerRepair?offerIncidentEnd:quoteIncidentEnd;
+  if(env.EXPECTED_SHA!==repairRevision||pets.length>=20)throw Error('Verified repair revision required');
+  const handoffs=await rows("SELECT * FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active') AND created_at>=? AND created_at<?",[env.SPECIALIST_CUSTOMER_ID,incidentStart,incidentEnd]);
   if(handoffs.length!==1)throw Error('Exact synthetic quote incident not proven');
   const h=handoffs[0];console.log(actionsMaskCommand(h.thread_id));console.log(actionsMaskCommand(h.id));
   const otherHandoffsBefore=await rows('SELECT id,status,taken_over_by,taken_over_at,resumed_by,resumed_at FROM ai_handoffs WHERE customer_id=? AND id<>? ORDER BY id',[env.SPECIALIST_CUSTOMER_ID,h.id]);
   const [calls,turns,laterMessages,pending]=await Promise.all([
-   rows("SELECT * FROM ai_voice_calls WHERE customer_id=? AND thread_id=? AND started_at>=? AND started_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart,quoteIncidentEnd]),
-   rows("SELECT t.*,m.payload_json,m.direction,m.created_by input_actor,m.channel input_channel,m.provider input_provider FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id WHERE t.customer_id=? AND t.thread_id=? AND t.created_at>=? AND t.created_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart,quoteIncidentEnd]),
-   rows("SELECT payload_json,created_by,channel FROM communication_messages WHERE customer_id=? AND thread_id=? AND direction='inbound' AND created_at>=? ORDER BY created_at LIMIT 20",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,quoteIncidentStart]),
+   rows("SELECT * FROM ai_voice_calls WHERE customer_id=? AND thread_id=? AND started_at>=? AND started_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,incidentStart,incidentEnd]),
+   rows("SELECT t.*,m.payload_json,m.direction,m.created_by input_actor,m.channel input_channel,m.provider input_provider FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id WHERE t.customer_id=? AND t.thread_id=? AND t.created_at>=? AND t.created_at<?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,incidentStart,incidentEnd]),
+   rows("SELECT payload_json,created_by,channel FROM communication_messages WHERE customer_id=? AND thread_id=? AND direction='inbound' AND created_at>=? ORDER BY created_at LIMIT 20",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,incidentStart]),
    rows("SELECT id FROM voice_sales_offers WHERE customer_id=? AND thread_id=? AND status='pending' AND expires_at>=?",[env.SPECIALIST_CUSTOMER_ID,h.thread_id,Date.now()]),
   ]);
   const selected=pets.find(p=>pets.filter(other=>other.name===p.name).length===1);if(!selected)throw Error('Exact synthetic quote incident not proven');
-  const expectedPrompt=savedQuotePrompt(pets,addresses,geocodes,quoteIncidentStart,selected.id);
-  const proof=syntheticQuoteRepairProof({revision:env.EXPECTED_SHA,customerId:env.SPECIALIST_CUSTOMER_ID,handoffs,calls,turns,expectedPrompt});
+  const expectedPrompt=offerRepair?offerIncidentPrompt:savedQuotePrompt(pets,addresses,geocodes,quoteIncidentStart,selected.id);
+  const proof=(offerRepair?syntheticOfferRepairProof:syntheticQuoteRepairProof)({revision:env.EXPECTED_SHA,customerId:env.SPECIALIST_CUSTOMER_ID,handoffs,calls,turns,expectedPrompt});
   if(!laterMessages.length||laterMessages.length>=20||pending.length||laterMessages.some(m=>{let payload;try{payload=JSON.parse(m.payload_json);}catch{return true;}const text=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());return text?.trim()!==expectedPrompt.trim()||m.channel!=='voice'||m.created_by!=='elevenlabs-voice@system.pawspace';}))throw Error('Later customer activity prevents synthetic cleanup');
   async function handoffApi(body){const path='/api/ai-human-handoff'+(body?'':'?threadId='+encodeURIComponent(h.thread_id)+'&customerId='+encodeURIComponent(env.SPECIALIST_CUSTOMER_ID));const r=await fetch(origin+path,{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Governed synthetic cleanup refused');return b.data;}
   await isolation();const snapshot=await handoffApi();
   if(snapshot?.current?.id!==h.id||snapshot.current.status!=='queued'||snapshot.current.reason!=='policy_risk'||snapshot.current.taken_over_by!=null||snapshot.current.taken_over_at!=null||!Array.isArray(snapshot.events)||snapshot.events.length!==1||snapshot.events[0].event_type!=='handoff_requested')throw Error('Synthetic handoff changed; no cleanup performed');
-  const reason='Reset only the self-generated unconfirmed-quote policy false-positive from sandbox probe 36786494207 after verified quote-parser repair; no phone outreach';
+  const reason=offerRepair?'Resume only the self-generated named-package offer policy-risk case from non-dialing audio demo 36793666839 after certified offer-response repair; no phone outreach':'Reset only the self-generated unconfirmed-quote policy false-positive from sandbox probe 36786494207 after verified quote-parser repair; no phone outreach';
   const body={threadId:h.thread_id,customerId:env.SPECIALIST_CUSTOMER_ID,reason};
   const taken=await handoffApi({...body,action:'take_over'});
   if(taken?.handoff?.id!==h.id||taken.handoff.status!=='staff_active'||taken.handoff.taken_over_by!=='founder@pawspace.in')throw Error('Explicit staff takeover not verified; AI remains paused');

@@ -453,7 +453,7 @@ jobs:
   # particular build to still be live is a race this cannot reliably win. The provider is the same
   # one the Worker calls, so time-to-first-token measured here is the floor the voice turn can reach.
   measure-staged-maya-brain:
-    if: ${{ inputs.confirm == 'measure-staged-maya-brain' || inputs.confirm == 'probe-staged-maya-quote' || inputs.confirm == 'inspect-staged-maya-quote' || inputs.confirm == 'repair-staged-maya-quote' }}
+    if: ${{ inputs.confirm == 'measure-staged-maya-brain' || inputs.confirm == 'probe-staged-maya-quote' || inputs.confirm == 'inspect-staged-maya-quote' || inputs.confirm == 'repair-staged-maya-quote' || inputs.confirm == 'repair-staged-maya-offer' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency:
@@ -470,7 +470,7 @@ jobs:
         run: node --experimental-strip-types --test tests/staged-quote-proof.test.mjs
       - name: Measure actual staged brain timings or prepare an unconfirmed quote without dialing
         env:
-          MAYA_BRAIN_PROBE_MODE: ${{ inputs.confirm == 'repair-staged-maya-quote' && 'repair_quote_handoff' || inputs.confirm == 'probe-staged-maya-quote' && 'quote_only' || inputs.confirm == 'inspect-staged-maya-quote' && 'quote_prerequisites' || 'timing' }}
+          MAYA_BRAIN_PROBE_MODE: ${{ inputs.confirm == 'repair-staged-maya-offer' && 'repair_offer_handoff' || inputs.confirm == 'repair-staged-maya-quote' && 'repair_quote_handoff' || inputs.confirm == 'probe-staged-maya-quote' && 'quote_only' || inputs.confirm == 'inspect-staged-maya-quote' && 'quote_prerequisites' || 'timing' }}
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
