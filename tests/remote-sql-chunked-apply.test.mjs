@@ -121,6 +121,13 @@ function applyPlan(sqlite, steps) {
   return sent;
 }
 
+test("grooming trigger-manifest fencing stays below Cloudflare D1 expression depth", () => {
+  const sql = read("drizzle/0045_grooming_dual_mode_revisions.sql");
+  assert.match(sql, /WITH expected_grooming_triggers\(name,sql\) AS \(\s*VALUES/);
+  assert.doesNotMatch(sql, /FROM sqlite_master WHERE type='trigger' AND \(\(/,
+    "the 57-trigger manifest must be joined as rows, not expanded into a deep OR expression");
+});
+
 test("the migration set sent as chunks builds exactly the schema the file-by-file runner builds, and re-sending it changes nothing", async () => {
   const files = fs.readdirSync("drizzle").filter((f) => f.endsWith(".sql")).sort();
   const reference = await deploymentShapedDatabase();
