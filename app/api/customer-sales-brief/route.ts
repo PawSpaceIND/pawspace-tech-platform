@@ -24,6 +24,6 @@ export async function GET(request:Request){try{
   const decision=await automationDecision(db,{customerId,purpose:'marketing',channel,now:checkedAt},{readOnly:true});
   contactDecision={allowed:decision.allowed,reason:decision.reason,checkedAt,nextEligibleAt:decision.nextEligibleAt};
  }catch{/* Failed canonical policy reads remain unavailable; no allow or dispatch is invented. */}
- const data=await collectCustomerSalesBrief(db,{actor,scope,customerId,serviceCode,asOf:Date.now(),contactDecision});
+ const data=await collectCustomerSalesBrief(db,{actor,scope,customerId,serviceCode,asOf:Date.now(),contactChannel:channel,contactDecision});
  return Response.json({data,capabilities:{editOverrides:hasPermission(actor.permissions,'customers.manage')},contactChannel:channel},{headers:{'cache-control':'no-store'}});
 }catch(error){return authError(error,'Unable to load customer sales brief');}}

@@ -15,6 +15,7 @@ export async function salesBriefWorld(dbGlobal,envGlobal){const w=world(dbGlobal
  CREATE TABLE canonical_revenue_opportunities(id TEXT,customer_id TEXT,opportunity_type TEXT,service_code TEXT,reason TEXT,status TEXT,updated_at INTEGER);
  CREATE TABLE crm_engine_audit_events(id TEXT PRIMARY KEY,entity_type TEXT,entity_id TEXT,action TEXT,actor_email TEXT,detail_json TEXT,created_at INTEGER);
  CREATE TABLE customer_contact_preferences(customer_id TEXT,opt_out INTEGER,marketing_consent INTEGER,service_consent INTEGER,whatsapp_consent INTEGER,sms_consent INTEGER,email_consent INTEGER);
+ CREATE TABLE communication_consent(customer_id TEXT PRIMARY KEY,global_opt_out INTEGER DEFAULT 0,whatsapp_allowed INTEGER,email_allowed INTEGER,voice_allowed INTEGER,sms_allowed INTEGER);
  CREATE TABLE communication_preferences(customer_id TEXT,marketing INTEGER,service_updates INTEGER);
  CREATE TABLE customer_grooming_subscriptions(id TEXT,customer_id TEXT,plan_code TEXT,status TEXT,started_at INTEGER,expires_at INTEGER,sessions_reserved INTEGER,sessions_consumed INTEGER,total_sessions INTEGER);
  CREATE TABLE booking_payments(id TEXT,booking_id TEXT,customer_id TEXT,status TEXT,updated_at INTEGER);

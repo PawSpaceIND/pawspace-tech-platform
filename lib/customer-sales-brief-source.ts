@@ -1,3 +1,4 @@
+import {readSalesBriefCentralConsent} from './customer-sales-brief-central-consent';
 import {readCustomerSalesPaymentEvidence} from './customer-sales-payment-evidence';
 import {hasPermission} from './platform-security';
 import {isManagerScopedActor,requireManagerDomain,CRM_MANAGER_DOMAIN,type OrganizationalScope} from './organizational-scope';
@@ -26,22 +27,31 @@ export async function authorizeCustomerSalesBriefRecord(db:D1Database,input:{act
  * contactDecision must be a fresh result of canonical channel/contact governance, never a client flag.
  * Missing decision fails closed; current recorded opt-outs still take precedence over a supplied allow.
  */
-export async function collectCustomerSalesBrief(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string;serviceCode:string;asOf:number;contactDecision?:SalesBriefInput['contact']}){
+export async function collectCustomerSalesBrief(db:D1Database,input:{actor:AuthenticatedActor;scope:OrganizationalScope|null;customerId:string;serviceCode:string;asOf:number;contactChannel?:string;contactDecision?:SalesBriefInput['contact']}){
  if(!Number.isFinite(input.asOf)||input.asOf<0)deny();
  const customer=await authorizeCustomerSalesBriefRecord(db,input);
  const serviceCode=normalizeLeadServiceCode(input.serviceCode);if(!serviceCode)throw new Error('Service required');
  const sourceStatus:Record<string,string>={};
  const read=async(name:string,sql:string,values:unknown[]=[])=>{try{const r=await db.prepare(sql).bind(...values).all<Row>();sourceStatus[name]='available';return r.results;}catch{sourceStatus[name]='unavailable';return null;}};
- const [recent,fulfilled,dispositions,opportunities,audit,prefs,enginePrefs,leads,subscriptions]=await Promise.all([
+ const [recent,fulfilled,dispositions,opportunities,audit,prefs,enginePrefs,leads,subscriptions,centralConsent]=await Promise.all([
   read('recentBookings','SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND (? IS NULL OR lower(city_id)=lower(?)) ORDER BY updated_at DESC,id DESC LIMIT 20',[input.customerId,input.scope?.cityId??null,input.scope?.cityId??null]),
   read('fulfilledHistory',"SELECT id,service_code,status,scheduled_start,updated_at FROM canonical_bookings WHERE customer_id=? AND (? IS NULL OR lower(city_id)=lower(?)) AND status='completed' ORDER BY updated_at DESC,id DESC LIMIT 2",[input.customerId,input.scope?.cityId??null,input.scope?.cityId??null]),
   read('callTags','SELECT d.id,d.primary_tag,d.tags_json,d.contacted,d.opted_out,d.created_at,d.cross_sell_services_json,d.claim_tags_json,d.reconciliation_status,l.service FROM bot_call_dispositions d JOIN lead_work_items l ON l.id=d.lead_id AND l.customer_id=d.contact_id WHERE d.contact_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT 100',[input.customerId]),
   read('opportunities','SELECT id,opportunity_type,service_code,reason,status,updated_at FROM canonical_revenue_opportunities WHERE customer_id=? ORDER BY updated_at DESC,id DESC LIMIT 100',[input.customerId]),
-  read('overrides',"SELECT id,action,actor_email,detail_json,created_at FROM crm_engine_audit_events WHERE entity_type='customer' AND entity_id=? AND action IN ('sales_brief_override','sales_brief_override_clear') ORDER BY created_at DESC,rowid DESC LIMIT 100",[input.customerId]),
+  read('overrides',`SELECT id,action,actor_email,detail_json,created_at FROM (
+   SELECT id,action,actor_email,detail_json,created_at,ROW_NUMBER() OVER (
+    PARTITION BY json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.dimension')
+    ORDER BY created_at DESC,rowid DESC) latest
+   FROM crm_engine_audit_events WHERE entity_type='customer' AND entity_id=?
+    AND action IN ('sales_brief_override','sales_brief_override_clear')
+    AND lower(trim(json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.serviceCode')))=?
+    AND json_extract(CASE WHEN json_valid(detail_json) THEN detail_json ELSE '{}' END,'$.dimension') IN ('readiness','subscriptionPotential','crossSellPotential')
+  ) WHERE latest=1`,[input.customerId,serviceCode]),
   read('contactPreferences','SELECT opt_out,marketing_consent FROM customer_contact_preferences WHERE customer_id=?',[input.customerId]),
   read('communicationPreferences','SELECT marketing FROM communication_preferences WHERE customer_id=?',[input.customerId]),
   read('leadOptOut','SELECT opt_out FROM lead_work_items WHERE customer_id=?',[input.customerId]),
   read('subscriptions','SELECT id,plan_code,status,started_at,expires_at,sessions_reserved,sessions_consumed,total_sessions FROM customer_grooming_subscriptions WHERE customer_id=? ORDER BY started_at DESC,id DESC LIMIT 20',[input.customerId]),
+  readSalesBriefCentralConsent(db,{customerId:input.customerId,channel:input.contactChannel??'voice'}),
  ]);
  const evidence=(ref:string,at:unknown,reason:string)=>({ref,observedAt:Number(at),expiresAt:Number(at)+7*86400000,reason});
  const intents:SalesIntent[]=[];const taggedOpportunities:NonNullable<SalesBriefInput['opportunities']>=[];
@@ -57,7 +67,9 @@ export async function collectCustomerSalesBrief(db:D1Database,input:{actor:Authe
   if(event.action==='sales_brief_override_clear')continue;
   overrides.push({ref:text(event.id),customerId:input.customerId,serviceCode:service,dimension:dimension as SalesOverride['dimension'],value:text(detail.value),actorId:text(event.actor_email),createdAt:Number(event.created_at),observedAt:Number(event.created_at),expiresAt:Number(detail.expiresAt),reason:text(detail.reason)});
  }
+ sourceStatus.centralConsent=centralConsent.status;
  let contact=input.contactDecision??null;
+ if(centralConsent.allowed!==true)contact={allowed:false,reason:centralConsent.reason,checkedAt:input.asOf,nextEligibleAt:null};
  const optOut=(prefs??[]).some(p=>Number(p.opt_out)===1)||(enginePrefs??[]).some(p=>Number(p.marketing)===0)||(leads??[]).some(p=>Number(p.opt_out)===1)||(dispositions??[]).some(d=>Number(d.opted_out)===1);
  const consentMissing=!prefs?.length||Number(prefs[0]?.marketing_consent)!==1;
  if(optOut||consentMissing||prefs===null||enginePrefs===null||leads===null||dispositions===null)contact={allowed:false,reason:optOut?'marketing_opt_out':prefs===null||enginePrefs===null||leads===null||dispositions===null?'contact_source_unavailable':'marketing_consent_missing',checkedAt:input.asOf,nextEligibleAt:null};
