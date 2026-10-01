@@ -16,6 +16,9 @@ async function fixture(page:Page,{signedIn=true,accountGate,catalogueGate}:{sign
   if(path==='/api/customer-profile')return data({customerId:account.customerId,customerName:account.name,phone:account.primaryPhone});
   if(path==='/api/training-commercial'&&request.method()==='GET'){await catalogueGate?.promise;return data({packages:plans,source:'synthetic-ui',liveMoney:false});}
   if(path==='/api/training-commercial'&&request.method()==='POST'){const input=request.postDataJSON(),plan=plans.find(p=>p.package_code===input.packageCode)!;return data({quoteId:'UI-SUCCESSOR-Q',packageCode:plan.package_code,packageName:plan.name,packageVersion:1,sessions:plan.sessions,validityDays:plan.validity_days,petCount:input.petCount,minutesPerSession:60,basePrice:plan.base_price,totalAmount:plan.base_price,discount:0,amountDueNow:plan.base_price,paymentMode:input.paymentMode,meetAndGreet:Boolean(plan.meet_and_greet),expiresAt:Date.now()+600000,liveMoney:false});}
+  if(path==='/api/uat-scheduling'&&request.method()==='POST'&&request.postDataJSON()?.action==='preview'){
+   const input=request.postDataJSON();return data({...input,providers:[],availabilityChecked:true,reserved:false,occurrences:Array.from({length:input.occurrences},(_,index)=>({start:new Date(Date.parse(input.scheduledStart)+index*(input.cadenceDays??7)*86400000).toISOString(),end:new Date(Date.parse(input.scheduledEnd)+index*(input.cadenceDays??7)*86400000).toISOString()}))});
+  }
   if(path==='/api/training-trainers')return data({providers:[],source:'synthetic-ui',liveAvailability:false});
   if(path==='/api/training-requirements')return data({requirements:[]});
   if(path==='/api/walking-commercial'){await catalogueGate?.promise;if(request.method()==='GET')return data({packages:[],liveMoney:false});const input=request.postDataJSON();return data({...input,quoteId:'UI-SUCCESSOR-WQ',packageName:'Fixture walk',packageVersion:1,durationMinutes:input.packageCode==='walking-60'?60:30,perWalkAmount:271,totalAmount:271*input.walkCount,amountDueNow:0,expiresAt:Date.now()+600000,liveMoney:false});}
@@ -76,8 +79,8 @@ test('mobile repeated preference events, route reload and denied storage agree w
 });
 
 test('mobile cross-tab removal, platform default, System and route transitions share existing device preference',async({page,context},info)=>{
- const writes=await fixture(page);await page.goto('/mobile-app');await rendered(page);
- const other=await context.newPage();await fixture(other);await other.goto('/v2/account');await rendered(other);
+ const writes=await fixture(page,{signedIn:false});await page.goto('/mobile-app');await rendered(page);
+ const other=await context.newPage();await fixture(other,{signedIn:false});await other.goto('/v2/account');await rendered(other);
  await other.evaluate(()=>{localStorage.setItem('pawspace.platform.default-theme','signature');localStorage.removeItem('pawspace.customer.theme');localStorage.setItem('pawspace.customer.appearance','system');localStorage.setItem('pawspace.visual-style','cartoon');});
  await page.emulateMedia({colorScheme:'dark'});await expect(page.locator('html')).toHaveAttribute('data-paw-theme','signature');await expect(page.locator('main[data-pawspace-mobile]')).toHaveAttribute('data-theme','signature');await expect(page.locator('html')).toHaveAttribute('data-paw-mode','dark');await expect(page.locator('main[data-pawspace-mobile]')).toHaveAttribute('data-mode','dark');
  await page.emulateMedia({colorScheme:'light'});await expect(page.locator('main[data-pawspace-mobile]')).toHaveAttribute('data-mode','light');
