@@ -37,7 +37,7 @@
     "app/api/admin/sales-targets/route.ts": "d7caf96f2b753fd82e85948e2c420ba511d0f04b026654bb44403f50351aeb1e",
     "app/api/admin/tally-ingest/route.ts": "449a4fb1d2eb865496c598c7d6a8ff305b7cb4f0fcdc5de1d38fb0cee16b1df5",
     "app/api/ai-analytics/route.ts": "69974bbd47dcab740d507530eaa8150d33eb06cadd8e7d0c4a5b5bc799b6b461",
-    "app/api/ai-bootstrap/route.ts": "d36945b9ff3cca2d10efda47eb3ba5222ff695e8437615cf3b8c07ee9f5fbde4",
+    "app/api/ai-bootstrap/route.ts": "134c44d521e89b5518f4ef7e8690af33e98b45d660bd5dfe1f09ecec6394dc84",
     "app/api/ai-business-configuration/route.ts": "284a6cdd0a3b6e20d8b83657b06ad12ecf931cf740b327c442d9f55c217f6974",
     "app/api/ai-conversation/route.ts": "4e9e3e444728bd72805cb7a5506065d0acf07aa810637ad1291c39100002942a",
     "app/api/ai-human-handoff/route.ts": "16f5ea2a6a7ab46f85b69cbf02189d853b2b7d1150d3c1a2419cd0a21e1122be",
