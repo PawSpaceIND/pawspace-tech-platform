@@ -87,14 +87,14 @@ test('close during pending greeting TTS refuses sends and preserves reconnectabl
   assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM ai_voice_segments').get().n,0);
 });
 
-test('close during greeting persistence retains generated text without claiming audio queued', async t => {
+test('close during post-send greeting persistence keeps already-queued speech truthful', async t => {
   const w=await world(t), entered=deferred(), done=deferred();
   w.db.onSql('INSERT INTO communication_messages',async()=>{entered.resolve();await done.promise;});
   w.server.message(start); await entered.promise; w.server.disconnect(); done.resolve(); await w.drain();
   assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM ai_voice_segments').get().n,1);
   assert.equal(w.events('agentstream_text_generated').length,1);
-  assert.equal(w.events('agentstream_audio_queued').length,0);
-  assert.equal(w.server.sendAttempts,0); assert.equal(w.state(),'connected'); assert.equal(w.aiStatus(),'active');
+  assert.equal(w.events('agentstream_audio_queued').length,1);
+  assert.equal(w.server.sendAttempts,2); assert.equal(w.state(),'connected'); assert.equal(w.aiStatus(),'active');
   assert.equal(w.events('agentstream_processing_abandoned')[0].stage,'opening_text');
 });
 
@@ -127,12 +127,13 @@ test('provider exception persists bounded stage telemetry, not raw exception or 
   assert.equal(JSON.stringify(w.server.closes).includes('secret'),false);
 });
 
-test('unexpected send exception while socket remains open is a fatal provider error',async t=>{
+test('unexpected send exception never persists an unheard opening transcript',async t=>{
   const w=await world(t); w.server.send=()=>{throw new Error('synthetic send exception');};
   w.server.message(start); await w.drain();
   assert.equal(w.state(),'provider_error'); assert.equal(w.aiStatus(),'failed');
   assert.equal(w.events('agentstream_processing_failed')[0].stage,'opening_send');
   assert.equal(w.events('agentstream_text_generated').length,1); assert.equal(w.events('agentstream_audio_queued').length,0);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_voice_segments WHERE speaker='assistant'").get().n,0);
 });
 
 function wav(rate=8000,format=1) {
@@ -141,6 +142,23 @@ function wav(rate=8000,format=1) {
   v.setUint16(20,format,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);
   write(36,'data');v.setUint32(40,640,true);return bytes;
 }
+test('turn send failure persists the customer but not the unheard assistant reply',async t=>{
+  let ttsCalls=0;
+  const w=await world(t,async model=>{
+    if(model.includes('whisper'))return {text:'Synthetic customer sentence'};
+    ttsCalls++;return new Uint8Array(640);
+  });
+  w.server.message(start);await w.drain();
+  const openingMark=w.events('agentstream_audio_queued')[0].markName;
+  w.server.message({event:'mark',stream_sid:'synthetic-stream',mark:{name:openingMark}});await w.drain();
+  w.server.send=()=>{throw new Error('synthetic turn send exception');};
+  w.server.message(speechEnvelope());w.server.message(silenceEnvelope);await w.drain();
+  assert.equal(ttsCalls,2);assert.equal(w.state(),'provider_error');assert.equal(w.aiStatus(),'failed');
+  assert.equal(w.events('agentstream_processing_failed')[0].stage,'turn_send');
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_voice_segments WHERE speaker='customer'").get().n,1);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_voice_segments WHERE speaker='assistant'").get().n,1);
+});
+
 test('matching mono PCM WAV is stripped to raw little-endian frames; incompatible WAV fails',async t=>{
   const w=await world(t,async()=>new Response(wav(),{headers:{'content-type':'audio/wav'}})); w.server.message(start); await w.drain();
   assert.equal(w.events('agentstream_audio_queued')[0].bytes,640);
@@ -174,6 +192,22 @@ const speechEnvelope = () => {
   return {event:'media',media:{payload:Buffer.from(pcm).toString('base64')}};
 };
 const silenceEnvelope = {event:'media',media:{payload:Buffer.alloc(5600).toString('base64')}};
+
+test('caller speech bypasses pending opening TTS and starts recognition immediately', async t => {
+  const openingEntered=deferred(),openingDone=deferred(),sttEntered=deferred();let ttsCalls=0;
+  const w=await world(t,async model=>{
+    if(model.includes('whisper')){sttEntered.resolve();return {text:'Synthetic customer sentence'};}
+    if(++ttsCalls===1){openingEntered.resolve();return openingDone.promise;}
+    return new Uint8Array(640);
+  });
+  w.server.message(start);await openingEntered.promise;
+  w.server.message(speechEnvelope());w.server.message(silenceEnvelope);
+  let timer;await Promise.race([sttEntered.promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('media waited behind opening TTS')),500);timer.unref?.();})]);clearTimeout(timer);
+  openingDone.resolve(new Uint8Array(640));await w.drain();
+  assert.equal(w.events('agentstream_audio_queued').some(event=>String(event.markName).startsWith('opening-')),false);
+  const [barge]=w.events('agentstream_barge_in');assert.equal(barge.generationCancelled,true);
+});
+
 for (const failureStage of ['stt','turn_tts']) test(`${failureStage} failure during a customer turn records its distinct canonical failure`,async t=>{
   let ttsCalls=0;
   const w=await world(t,async model=>{
