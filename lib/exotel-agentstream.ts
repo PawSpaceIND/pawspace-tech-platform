@@ -387,11 +387,11 @@ async function synthesizeLinear16(env: Env, output: string, sampleRate: number) 
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
   if (socket.readyState !== 1) throw new TransportClosed();
   let frames = 0;
-  // Exotel documents chunks as multiples of 320 bytes. Pad only the terminal chunk with digital silence.
+  // Preserve the carrier minimum on every frame, including a short terminal chunk.
   for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
     if (socket.readyState !== 1) throw new TransportClosed();
     const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
-    const paddedLength = Math.ceil(raw.byteLength / 320) * 320;
+    const paddedLength = Math.max(outboundFrameBytes, Math.ceil(raw.byteLength / 320) * 320);
     const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
     socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
     frames++;
@@ -419,7 +419,7 @@ async function closeSession(env: Env, session: Session | null, reason: string, f
   if (!session) return;
   const now = Date.now();
   await env.DB.batch([
-    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN ? ELSE status END,outcome=COALESCE(outcome,?),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(failed ? "failed" : "completed", failed ? "processing_failed" : "carrier_ended", reason, now, session.aiCallId),
+    env.DB.prepare("UPDATE ai_voice_calls SET status=CASE WHEN status='active' THEN ? ELSE status END,outcome=COALESCE(outcome,?),disposition=COALESCE(disposition,?),ended_at=COALESCE(ended_at,?) WHERE id=?").bind(failed ? "failed" : "completed", failed ? "provider_failure" : "carrier_ended", reason, now, session.aiCallId),
     env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), session.aiCallId, "agentstream_stopped", JSON.stringify({ reason }), now),
   ]).catch(() => undefined);
   try {

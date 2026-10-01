@@ -460,6 +460,12 @@ test("a sales reply may quote only prices that are in the server-owned catalogue
   assert.equal(grounded.pricesMatchCatalogue("A grooming session starts at 1349 rupees.", catalogue), true, "the service named is enough");
   assert.equal(grounded.pricesMatchCatalogue("Just Trim is ₹999 today only.", catalogue), false, "an invented price must not count as grounded");
   assert.equal(grounded.pricesMatchCatalogue("Grooming for your dog is ₹499.", catalogue), false, "a taxi fare must not ground a grooming price");
+  assert.equal(grounded.pricesMatchCatalogue("Grooming Just Trim costs 1349 rupees.", catalogue), false, "another grooming package cannot ground Just Trim");
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is 1349 rupees; Essential Bath is 1599 rupees.", catalogue), false, "swapping two valid package prices is still wrong");
+  assert.equal(grounded.pricesMatchCatalogue("Just Trim is 1599 rupees; Essential Bath is 1349 rupees.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("1599 rupees for Just Trim.", catalogue), true);
+  assert.equal(grounded.pricesMatchCatalogue("1349 rupees for Just Trim.", catalogue), false);
+  assert.equal(grounded.pricesMatchCatalogue("Grooming starts at 1349 rupees. Just Trim costs 1599 rupees.", catalogue), true, "a later sentence must not relabel an earlier generic starting price");
   assert.equal(grounded.pricesMatchCatalogue("We have great grooming packages.", catalogue), true, "no amount quoted, nothing to verify");
   const started = Date.now();
   grounded.pricesMatchCatalogue("1,".repeat(50_000) + "x", catalogue);

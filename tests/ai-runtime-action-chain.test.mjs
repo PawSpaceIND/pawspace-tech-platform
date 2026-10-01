@@ -19,6 +19,14 @@ test("grounded provider accepts only bounded registered action envelopes",()=>{
  assert.equal(fenced?.actions[0]?.toolCode,"schedule.reserve");
 });
 
+test("a serialized proposal inside reply retains tool validation and cannot merge plans",()=>{
+ const inner={reply:"",actions:[{toolCode:"schedule.reserve",arguments:{serviceCode:"grooming"}},{toolCode:"booking.create",arguments:{packageCode:"dog-basic"}},{toolCode:"checkout.payment_order.create",arguments:{}}]};
+ assert.deepEqual(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:JSON.stringify(inner)})),inner);
+ assert.equal(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:JSON.stringify(inner),actions:inner.actions})),null);
+ assert.equal(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:JSON.stringify({reply:JSON.stringify(inner)})})),null);
+ assert.equal(grounded.parseGroundedActionEnvelope(JSON.stringify({reply:JSON.stringify({reply:"",actions:[{toolCode:"payment.capture",arguments:{}}]})})),null);
+});
+
 test("customer confirmation detector is explicit and negative-safe",()=>{
  assert.equal(orchestrator.isExplicitCustomerActionConfirmation("Yes, go ahead and book this"),true);
  assert.equal(orchestrator.isExplicitCustomerActionConfirmation("I need grooming"),false);

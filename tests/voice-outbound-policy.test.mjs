@@ -808,3 +808,10 @@ test("controlled specialist UAT bypasses quiet hours only for the single allowli
   assert.equal(q.passed, 1);
   assert.match(q.detail, /Controlled specialist UAT bypassed quiet hours/);
 });
+
+// A deployment approval must never override the human user's explicit stop.
+test("user phone pause refuses an otherwise approved call before any provider dial", async () => {
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_PHONE_TESTS_PAUSED: "true" });
+  const result = await gov.requestOutboundVoiceCall(db, env, callInput());
+  assertRefused(sqlite, result, "blocked_disabled", "voice_enabled");
+});

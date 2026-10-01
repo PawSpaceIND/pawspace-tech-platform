@@ -3,7 +3,7 @@ import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-in
 import {currentGroomingCatalogue} from "./ai-current-catalogue";
 import{policyEnquiryTopic,POLICY_INFORMATION_DIRECTIVE}from"./ai-policy-enquiry";
 import {voiceCalendarContext} from "./voice-calendar-context";
-import { specialistSalesPrompt, type VoiceSalesService } from "./voice-sales-specialists";
+import { specialistSalesPrompt, isVoiceSalesQuoteRequest, type VoiceSalesService } from "./voice-sales-specialists";
 import{aiProviderConnection,requestAiDraftWithVoiceRecovery}from"./ai-provider-adapter";
 import{prepareAiToolExecution,type AiToolChannel,type AiToolIntent}from"./ai-tool-registry";
 import{isExplicitCustomerActionConfirmation}from"./ai-conversation-orchestrator";
@@ -12,7 +12,7 @@ import type{AiToolCode}from"./ai-tool-registry";
 import type{AuthenticatedActor}from"./server-auth";
 import{latestSalesPromptContext,renderProtectedQuotaDirective}from"./ai-sales-goal-orchestrator";
 import{listServiceControls}from"./service-control";
-import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,type ApprovedSalesOffer}from"./ai-sales-offers";
+import{APPROVED_OFFERS_DIRECTIVE,approvedSalesOffers,offerClaimsApproved,offerGroundingRows,withoutApprovedDiscounts,withoutApprovedVoiceDiscounts,spokenApprovedOfferReply,approvedVoiceOfferInformation,voiceExtrasPreferenceReply,spokenVerifiedAmounts,type ApprovedSalesOffer}from"./ai-sales-offers";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -21,6 +21,18 @@ const CHAT_ORCHESTRATOR_DEADLINE_MS=15_000;
 
 const ACTION_TOOLS=new Set<AiToolCode>(["schedule.reserve","booking.create","checkout.payment_order.create","booking.reschedule","booking.cancel","provider.assignment.execute_policy"]);
 const BASE_PROMPT=`You are the PawSpace AI concierge for pet parents in India. Use only the canonical context and approved PawSpace knowledge supplied for this turn. Never invent a service, price, discount, availability, policy, booking state, provider state, payment state, or completed action. Prices and service facts must come from the server-owned catalogue snapshot or approved knowledge in the supplied context. If one requested fact is missing or ambiguous, explain the supported facts and identify the precise missing detail. Ask a focused clarification or request the appropriate team review; never guess or stop an ordinary enquiry merely because one detail is unavailable. Never issue or promise refunds, capture payments, change prices, activate campaigns, merge customers, or send an outbound communication without the required governed authority. You may reserve capacity, create a canonical booking, create a Razorpay payment order, execute a policy-safe reschedule/cancellation, or trigger deterministic provider assignment only through the registered governed action tools and only when the tool confirms success; the policy engine, not the model, chooses provider eligibility and assignment. Pet emergencies, safety concerns, refund or payment disputes, provider no-shows, and complex complaints require immediate human handling. Do not give veterinary diagnosis or treatment advice. When a customer-confirmed operational action is ready, respond ONLY as strict JSON: {"reply":"brief customer-safe reply","actions":[{"toolCode":"registered.tool","arguments":{}}]}. You may request at most 6 actions. Never include providerId, price, amount, payment status, refund amount, or other server-authoritative values. For a booking checkout chain, request schedule.reserve, then booking.create, then checkout.payment_order.create in that order. Use exactly these argument schemas: schedule.reserve={serviceCode:"grooming",petIds:["canonical-pet-id"],serviceAddress:"full address",servicePincode:"6-digit pincode",scheduledStart:"ISO timestamp",scheduledEnd:"ISO timestamp"}; booking.create={petIds:["canonical-pet-id"],packageCode:"catalogue package code",paymentMode:"prepaid"}; checkout.payment_order.create={}. Omit scheduleGroupId and bookingId because the runtime injects them from prior server results. Never claim an action succeeded in reply text; the PawSpace runtime replaces it with canonical execution results. For informational replies with no action, plain text is allowed.`;
+export const VOICE_COUPON_DIRECTIVE="\nFor a voice offer, do not read the coupon code aloud unless asked. If the caller accepts an eligible approvedOffers coupon for Grooming, include its exact code in booking.couponCode in the unconfirmed proposal. The server will validate the WhatsApp checkout eligibility and read back the actual discounted total before a separate confirmation.";
+export const PET_CARE_DIRECTIVE=`Pet-care role: answer the customer's actual question first using current approved knowledge, for dogs, cats and other pets when species-specific support exists. Explain routine health and hygiene in plain language without claiming to be a veterinarian, diagnosing, prescribing medication or doses, or promising that home care is safe. If the question concerns symptoms, disease, injury, medicine, diet for illness or another medical decision, advise contacting a veterinarian in every answer. For possible emergency signs, stop selling and advise immediate veterinary care and human help. For a non-urgent medical concern, give useful general information and the vet recommendation; mention an available PawSpace vet consultation only if the live service directory supports it, without claiming that a vet is already connected or available. For ordinary nonmedical needs, suggest at most one relevant next service based on the pet and stated need; only the live catalogue and approved offers can supply price, coupon, eligibility or availability. Do not cross-sell during distress, a complaint, bereavement, or after the customer declines.`;
+const PET_MEDICAL_QUESTION=/\b(vet(?:erinarian)?|veterinary|medical|health (?:issue|concern|problem|question)|sick|illness|disease|symptom|vomit(?:ing|ed)?|diarrh(?:ea|oea)|fever|limp(?:ing)?|itch(?:ing|y)?|rash|wound|infection|injur(?:y|ed)|pain|bleed(?:ing)?|poison(?:ed|ing)?|seizure|medicine|medication|drug|dose|vaccine|vaccination|allerg(?:y|ies)|not eating|won.t eat|not drinking|letharg(?:y|ic)|cough(?:ing)?|sneez(?:ing)?|difficulty breathing|can.t breathe|lump|swelling|swollen|discharge|(?:losing|lost) weight|weight loss|loss of appetite|constipat(?:ed|ion)|urinat(?:ing|ion)|blood.{0,30}(?:urine|stool)|skin (?:problem|redness|irritation)|ear (?:infection|discharge)|dental (?:pain|problem)|tick bite|parasite|worm(?:s)?|ate chocolate)\b/i;
+export function isPetMedicalQuestion(message:string){return PET_MEDICAL_QUESTION.test(message);}
+export function ensureVeterinaryReferral(reply:string,medical:boolean){return medical&&!/\b(?:contact|consult|speak (?:to|with)|see|call|visit)\b.{0,50}\b(?:a |your |an )?(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\b/i.test(reply)?`${reply.trim()} Please contact a veterinarian about this medical concern.`:reply;}
+export function safePetMedicalReply(reply:string,medical:boolean,actionsProposed=false){
+ if(!medical)return reply;
+ const safe=actionsProposed||/\b(coupon|discount|buy|purchase|checkout|payment|package|book (?:grooming|training|boarding)|limited.time)\b|₹|\bINR\s*\d/i.test(reply)
+  ?"I can share general pet-care information, but I cannot assess your pet's condition here."
+  :reply;
+ return ensureVeterinaryReferral(safe,true);
+}
 /**
  * PawSpace AI on web chat is a sales agent, not a help desk: every conversation should end in a booking.
  * Persuasive, never deceptive - the price, offer and availability rules above still bind every word.
@@ -29,9 +41,9 @@ export const WEB_CHAT_SALES_DIRECTIVE=`Sales role: you are PawSpace's sales agen
 const CHANNEL_PROMPTS:Record<AiToolChannel,string>={
  chat:`Channel: Chat/Web. You may use short paragraphs, bullets, simple rich text, and a payment link only when a governed server tool supplied that exact link. Keep answers clear and action oriented.\n\n${WEB_CHAT_SALES_DIRECTIVE}`,
  whatsapp:`Channel: WhatsApp. You may use compact bullets and simple emphasis. Keep the response scannable and concise. Include payment links only when a governed server tool supplied the exact link.`,
- voice:`Channel: Voice/TTS. Speak naturally in short conversational sentences. No markdown, no bullets, no emojis, no URLs unless the caller explicitly asks for one, no tables, and no long monologues. Prefer one to three short sentences, then ask a brief follow-up when needed.`,
+ voice:`Channel: Voice/TTS. Speak naturally in short conversational sentences. No markdown, no bullets, no emojis, no URLs unless the caller explicitly asks for one, no tables, and no long monologues. For ordinary informational answers, aim for two short sentences and roughly 35 to 55 words: answer the question first, then ask one useful next question when needed. Do not recite the complete intake checklist in one turn. For boarding intake, briefly summarize the essential categories from approved knowledge and ask first for the missing dates or location; gather the remaining details conversationally. If the caller explicitly requests a complete explanation, give the requested detail in manageable spoken chunks. Brevity must never remove a binding price condition, eligibility limitation, requested fact, required quote readback or separate confirmation. For a non-urgent pet-health question, give concise general information and a veterinarian referral; do not recite unrelated emergency symptoms unless the caller asks or the current concern warrants them. Emergency guidance takes priority over brevity. Answer the service the caller actually asked about from enabled serviceDirectory and approvedKnowledge, even when executable booking actions are limited to a specialty. Never replace a boarding or walking enquiry with grooming. Ask one useful needs question, then recommend the most suitable supported option with a brief reason rather than presenting a package menu. Stay in the established conversation language unless the caller explicitly asks to change it or clearly speaks a full turn in another language; a filler, pet name, number, date, PIN or address alone is not a language switch. After the main need is answered, one relevant optional cross-service suggestion is allowed from the enabled directory; do not cross-sell during booking confirmation, medical or emergency concerns, Funeral and Memorial, payment disputes or complaints.`,
 };
-export function pawspaceChannelSystemPrompt(channel:AiToolChannel){return`${BASE_PROMPT}\n\n${CHANNEL_PROMPTS[channel]}`;}
+export function pawspaceChannelSystemPrompt(channel:AiToolChannel){return`${BASE_PROMPT}\n\n${PET_CARE_DIRECTIVE}\n\n${CHANNEL_PROMPTS[channel]}`;}
 const VOICE_FAST_PROMPT=`You are PawSpace's AI grooming concierge for a live phone call in India.
 Use only the canonical customer, pet, booking and grooming-catalogue data supplied in this turn. Never invent price, package, availability, booking/payment/provider status, discount, policy or completed action.
 Keep every spoken reply to one or two short natural sentences and ask only the next necessary question.
@@ -44,13 +56,36 @@ Allowed tools are schedule.reserve, booking.create, checkout.payment_order.creat
 
 const HUMAN_EXCEPTION_PATTERNS=[
  /\b(refund|money back|payment dispute|charged twice|wrong charge)\b/i,
- /\b(emergency|not breathing|collapsed|seizure|bleeding|poisoned|injured|accident)\b/i,
+ /\b(emergency|not breathing|collapsed|seizure|bleeding|poisoned|injured|accident|ate chocolate)\b/i,
+ /\b(?:connect|transfer|put me through|let me speak|talk|speak|call)\b.{0,45}\b(?:a |an |the )?(?:vet(?:erinarian)?|animal doctor)\b/i,
  /\b(provider|trainer|groomer|sitter|walker|driver).{0,24}\b(no[- ]?show|did not come|didn't come|not arrived|never arrived)\b/i,
  /\b(complaint|very unhappy|serious issue|escalate this|service failure)\b/i,
 ];
 export function requiresImmediateHumanHandoff(input:string){return needsImmediateVetGuidance(input)||!policyEnquiryTopic(input)&&HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
 export function parseGroundedActionEnvelope(raw:string):{reply:string;actions:AiActionRequest[]}|null{
- let value=raw.trim();const fenced=value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);if(fenced)value=fenced[1].trim();if(!value.startsWith("{")||!value.endsWith("}"))return null;let parsed:unknown;try{parsed=JSON.parse(value)}catch{return null;}if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return null;const row=parsed as Row,reply=text(row.reply),rawActions=row.actions===undefined?[]:row.actions;if(!Array.isArray(rawActions)||rawActions.length>6)return null;const actions:AiActionRequest[]=[];for(const item of rawActions){if(!item||typeof item!=="object"||Array.isArray(item))return null;const action=item as Row,toolCode=text(action.toolCode) as AiToolCode;if(!ACTION_TOOLS.has(toolCode)||!action.arguments||typeof action.arguments!=="object"||Array.isArray(action.arguments))return null;actions.push({toolCode,arguments:action.arguments as Record<string,unknown>});}return{reply,actions};
+ const parse=(source:string,depth:number):{reply:string;actions:AiActionRequest[]}|null=>{
+  let value=source.trim();const fenced=value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);if(fenced)value=fenced[1].trim();
+  if(!value.startsWith("{")||!value.endsWith("}"))return null;
+  let parsed:unknown;try{parsed=JSON.parse(value)}catch{return null;}
+  if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return null;
+  const row=parsed as Row,reply=text(row.reply),rawActions=row.actions===undefined?[]:row.actions;
+  if(!Array.isArray(rawActions)||rawActions.length>6)return null;
+  // Some models serialize the entire proposal inside reply. Normalize one wrapper
+  // only, with the same registered-tool validation; never merge competing plans.
+  if(reply.trim().startsWith("{")||reply.trim().startsWith("```")){
+   if(depth>=1||rawActions.length)return null;
+   return parse(reply,depth+1);
+  }
+  const actions:AiActionRequest[]=[];
+  for(const item of rawActions){
+   if(!item||typeof item!=="object"||Array.isArray(item))return null;
+   const action=item as Row,toolCode=text(action.toolCode) as AiToolCode;
+   if(!ACTION_TOOLS.has(toolCode)||!action.arguments||typeof action.arguments!=="object"||Array.isArray(action.arguments))return null;
+   actions.push({toolCode,arguments:action.arguments as Record<string,unknown>});
+  }
+  return{reply,actions};
+ };
+ return parse(raw,0);
 }
 
 async function canonicalRows(db:D1Database,sql:string){return(await db.prepare(sql).all<Row>()).results;}
@@ -108,24 +143,45 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  buildGroundedAiTurnContext(db,{actor,threadId:input.threadId,customerId:input.customerId,intent:input.intent.intent as AiToolIntent,channel,query:input.inputText,canonicalContext:input.context,fastVoice:options.fastVoice&&!options.salesService}),
  options.fastVoice&&!options.salesService?Promise.resolve(VOICE_FAST_PROMPT):buildRuntimeSystemPrompt(db,{customerId:input.customerId,channel,dispatchItemId:options.dispatchItemId}),
  options.salesService?specialistConversationHistory(db,input.threadId,input.customerId):Promise.resolve([]),
- /* Web chat and WhatsApp sell, so they carry the offers this customer can redeem on this channel; the voice
-  * specialists quote no coupons. A failed offer read means no offer, never an invented one. */
- channel==="voice"?Promise.resolve([] as ApprovedSalesOffer[]):approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
- ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation;
+ /* Voice checkout is sent through WhatsApp, so its offers use WhatsApp eligibility.
+  * A failed offer read means no offer, never an invented one. */
+ (channel==="voice"&&options.salesService!=="grooming")||isPetMedicalQuestion(input.inputText)
+  ?Promise.resolve([] as ApprovedSalesOffer[])
+  :approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
+ ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation||medicalQuestion;
+ const eligibleOffers=options.salesService==="dog_training"?[]:offers;
+ const preferenceReply=channel==="voice"&&!input.onDelta&&!medicalQuestion?voiceExtrasPreferenceReply(input.inputText):null;
+ if(preferenceReply)return{text:preferenceReply,provider:"conversation_preference",modelRef:"server_owned_preference_acknowledgement",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
+ const offerInformation=channel==="voice"&&!input.onDelta&&!medicalQuestion?approvedVoiceOfferInformation(input.inputText,eligibleOffers):null;
+ if(offerInformation)return{text:spokenVerifiedAmounts(offerInformation),provider:"approved_offer_catalogue",modelRef:"server_owned_offers",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedVoiceDiscounts(offerInformation,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(offerInformation,eligibleOffers),highImpactAction:false,actionRequests:[]};
+ if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
  if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});
- if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:channel!=="voice"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}if(channel!=="voice"){Object.assign(grounded.context,{approvedOffers:offers});systemPrompt+=`\n\n${APPROVED_OFFERS_DIRECTIVE}`;}
- if(informationOnly){systemPrompt+="\n\n"+(policyEnquiry?POLICY_INFORMATION_DIRECTIVE:SALES_INFORMATION_DIRECTIVE);Object.assign(grounded.context,{availableActionTools:[],policyEnquiry,informationOnly:true});}
- const requestOptions={onTiming:options.onTiming,...(input.onDelta?{onDelta:input.onDelta}:{}),systemPrompt,userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),channel,intent:input.intent.intent,maxTokens:channel==="voice"?(options.salesService?700:options.fastVoice?(isExplicitCustomerActionConfirmation(input.inputText)?600:160):450):1200,timeoutMs:providerTimeoutMs};let result=await requestAiDraftWithVoiceRecovery(requestOptions);if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
+ if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:options.salesService==="grooming"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}
+ Object.assign(grounded.context,{approvedOffers:eligibleOffers});
+ if(channel!=="voice"||options.salesService==="grooming")systemPrompt+=`\n\n${APPROVED_OFFERS_DIRECTIVE}`;
+ if(channel==="voice"&&options.salesService==="grooming")systemPrompt+=VOICE_COUPON_DIRECTIVE;
+ if(options.salesService&&!informationOnly&&isVoiceSalesQuoteRequest(input.inputText))systemPrompt+="\n\nThe customer explicitly requested preparation of an unconfirmed quote. This is permission to PREPARE the proposal only, never permission to execute it. If the saved owned pet, package, payment choice, address, PIN and future appointment time are supplied, respond now with the three registered actions in order: schedule.reserve, booking.create, checkout.payment_order.create. Do not ask permission again to prepare or check availability, and do not interrupt this requested quote with optional coupon or cross-sell questions. Include a coupon only if the customer already accepted that eligible offer; otherwise prepare the regular server quote. If a required fact is missing or conflicting, ask exactly one question about that fact. The three action names describe an UNEXECUTED PROPOSAL: during this turn the server calls scheduling preview, calculates the canonical quote and stores an offer only. No slot, booking or payment order is created until a later separate confirmation. Therefore a request not to reserve or create a booking/payment order is compatible with returning these proposal actions. Do not ask a teammate to prepare the quote merely because the action names sound like mutations. Never claim reservation, booking or payment success.";
+ if(informationOnly){systemPrompt+="\n\n"+(medicalQuestion?"This is a medical-information turn. Answer the question from approved knowledge, advise contacting a veterinarian, do not sell or propose booking actions. If approved knowledge does not cover the species or concern, say so and refer to a vet.":policyEnquiry?POLICY_INFORMATION_DIRECTIVE:SALES_INFORMATION_DIRECTIVE);Object.assign(grounded.context,{availableActionTools:[],policyEnquiry,informationOnly:true});}
+ const requestOptions={onTiming:options.onTiming,...(input.onDelta&&!medicalQuestion?{onDelta:input.onDelta}:{}),systemPrompt,userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),channel,intent:input.intent.intent,maxTokens:channel==="voice"?(options.salesService?700:options.fastVoice?(isExplicitCustomerActionConfirmation(input.inputText)?600:160):450):1200,timeoutMs:providerTimeoutMs};let result=await requestAiDraftWithVoiceRecovery(requestOptions);if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
  // Repair only the model's unexecuted voice checkout proposal, once. Never retry mutations.
  // The offer builder still validates every argument and requires separate customer confirmation.
  if(channel==="voice"&&options.salesService&&!informationOnly&&!input.onDelta){
   const candidate=parseGroundedActionEnvelope(result.text);
-  if(candidate?.actions.length&&candidate.actions.map(a=>a.toolCode).join(",")!=="schedule.reserve,booking.create,checkout.payment_order.create"){
-   result=await requestAiDraftWithVoiceRecovery({...requestOptions,systemPrompt:systemPrompt+"\nYour previous checkout proposal had an invalid action sequence and was not executed. Correct the proposal using exactly three actions in this order: schedule.reserve, booking.create, checkout.payment_order.create. These actions prepare an unconfirmed quote only; do not omit booking or payment-order proposals because the caller asked to see the quote first. Reuse only the customer facts in canonical context. If required facts are missing, ask one specific question and return no actions."});
+  const missingQuoteProposal=isVoiceSalesQuoteRequest(input.inputText)&&!candidate?.actions.length;
+  if(missingQuoteProposal||candidate?.actions.length&&candidate.actions.map(a=>a.toolCode).join(",")!=="schedule.reserve,booking.create,checkout.payment_order.create"){
+   result=await requestAiDraftWithVoiceRecovery({...requestOptions,systemPrompt:systemPrompt+(missingQuoteProposal?"\nYour previous reply did not prepare the explicitly requested quote. Nothing was executed. Returning proposal actions does not reserve a slot, create a booking or create a payment order: the server previews and quotes only, then requires a later separate confirmation. If the required owned pet, package, prepaid choice, future time, address and PIN are already supplied, return the three proposal actions now. Do not ask permission again or refer to a teammate just because the customer withheld execution. If a required fact is genuinely missing or conflicting, ask one specific question and return no actions.":"\nYour previous checkout proposal had an invalid action sequence and was not executed. Correct the proposal using exactly three actions in this order: schedule.reserve, booking.create, checkout.payment_order.create. These actions prepare an unconfirmed quote only; do not omit booking or payment-order proposals because the caller asked to see the quote first. Reuse only the customer facts in canonical context. If required facts are missing, ask one specific question and return no actions.")});
    if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,failure:result.failure,...(result.status===undefined?{}:{failureStatus:result.status})};
   }
  }
- const envelope=parseGroundedActionEnvelope(result.text),reply=envelope?.reply||result.text;return{text:reply,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedDiscounts(reply,offers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(offers)}),offerClaimsVerified:offerClaimsApproved(reply,offers),highImpactAction:false,actionRequests:envelope?.actions};}};}
+ const envelope=parseGroundedActionEnvelope(result.text);
+ if(!envelope&&/^\s*(?:\{|```)/.test(result.text))return{text:"",provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,failure:"malformed_output"};
+ const customerText=envelope?(envelope.reply||(envelope.actions.length?"Let me check those booking details.":"")):result.text;
+ const reply=safePetMedicalReply(customerText,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
+ const catalogueVerifiedPrices=pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified=offerClaimsApproved(reply,eligibleOffers);
+ // Verify the original draft before rendering approved identifiers for speech. Never hide an
+ // invalid price/code, or rewrite text already emitted through the streaming callback.
+ const spoken=channel==="voice"&&!input.onDelta&&catalogueVerifiedPrices&&offerClaimsVerified?spokenVerifiedAmounts(spokenApprovedOfferReply(reply,eligibleOffers,input.inputText)):reply;
+ return{text:spoken,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices,offerClaimsVerified,highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}
 
 /**
  * Every rupee amount in a reply is a real price in the server-owned catalogue supplied for this turn.
@@ -140,7 +196,7 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
   * package, or whose service, the reply actually names. A taxi fare of 499 does not ground "grooming for
   * 499". */
  const lower=reply.toLowerCase(),groups=catalogue&&typeof catalogue==="object"?Object.entries(catalogue as Row):[];
- const rows:Array<{amounts:Set<number>;named:boolean}>=[];
+ const rows:Array<{amounts:Set<number>;named:boolean;name:string;packageCode:string;offer:boolean}>=[];
  for(const[group,value]of groups){
   if(!Array.isArray(value))continue;
   const serviceNamed=Object.entries(SERVICE_GROUP_WORDS).some(([key,pattern])=>group===key&&pattern.test(lower));
@@ -148,12 +204,31 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
    if(!item||typeof item!=="object")continue;const row=item as Row,amounts=new Set<number>();
    for(const[key,field]of Object.entries(row))if(/price|amount/i.test(key)&&Number.isFinite(Number(field))&&Number(field)>0)amounts.add(Math.round(Number(field)));
    const name=text(row.name).toLowerCase();
-   if(amounts.size)rows.push({amounts,named:serviceNamed||(name.length>2&&lower.includes(name))});
+   if(amounts.size)rows.push({amounts,named:serviceNamed||(name.length>2&&lower.includes(name)),name,packageCode:text(row.package_code),offer:group==="approvedOffers"});
   }
  }
  // Each amount starts at a digit that does not continue a number, so matching stays linear in the reply.
- const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)].map(match=>Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")))).filter(Number.isFinite);
- return amounts.every(amount=>rows.some(row=>row.named&&row.amounts.has(amount)));
+ const amounts=[...reply.slice(0,8000).matchAll(/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|\/-)/gi)];
+ return amounts.every((match,index)=>{
+  const amount=Math.round(Number(String(match[1]||match[2]).replace(/,/g,"")));
+  if(!Number.isFinite(amount))return false;
+  // Bind an explicitly named package to its adjacent amount. A service-wide match
+  // must never substitute another package's valid price or accept swapped prices.
+  const before=lower.slice(index?amounts[index-1].index!+amounts[index-1][0].length:0,match.index).split(/[.!?;](?:\s+|$)|\n/).at(-1)||"";
+  const after=lower.slice(match.index!+match[0].length,index+1<amounts.length?amounts[index+1].index:8000).split(/[.!?;](?:\s+|$)|\n/)[0]||"";
+  const preceding=rows.filter(row=>row.name.length>2&&before.includes(row.name));
+  const matchesPackage=(row:typeof rows[number])=>row.amounts.has(amount)||(!row.offer&&Boolean(row.packageCode)&&rows.some(offer=>offer.offer&&offer.named&&offer.packageCode===row.packageCode&&offer.amounts.has(amount)));
+  if(preceding.length){
+   const nearest=Math.max(...preceding.map(row=>before.lastIndexOf(row.name)));
+   return preceding.some(row=>before.lastIndexOf(row.name)===nearest&&matchesPackage(row));
+  }
+  const following=rows.filter(row=>row.name.length>2&&after.includes(row.name));
+  if(following.length){
+   const nearest=Math.min(...following.map(row=>after.indexOf(row.name)));
+   return following.some(row=>after.indexOf(row.name)===nearest&&matchesPackage(row));
+  }
+  return rows.some(row=>row.named&&row.amounts.has(amount));
+ });
 }
 /** The words that name each catalogue group's service in a reply. */
 const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};

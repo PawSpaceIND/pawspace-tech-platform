@@ -66,7 +66,8 @@ test('opening text, queued PCM, and matching carrier mark are distinct evidence'
   assert.equal(w.events('agentstream_audio_mark_ack').length,0);
   assert.deepEqual(w.server.frames.map(x=>x.event),['media','mark']);
   assert.equal(w.server.frames[0].stream_sid,'synthetic-stream');
-  assert.equal(Buffer.from(w.server.frames[0].media.payload,'base64').byteLength,640);
+  assert.equal(Buffer.from(w.server.frames[0].media.payload,'base64').byteLength,3200);
+  assert.deepEqual(Buffer.from(w.server.frames[0].media.payload,'base64').subarray(640),Buffer.alloc(2560));
   for (const mark of [{name:'foreign'},{name:queued.markName,stream:'wrong-stream'}]) {
     w.server.message({event:'mark',stream_sid:mark.stream,mark:{name:mark.name}}); await w.drain();
   }

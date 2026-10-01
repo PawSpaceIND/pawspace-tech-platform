@@ -41,3 +41,6 @@ export async function resolveElevenLabsFailureCall(db: D1Database, input: {
   }
   return callId;
 }
+
+/** The same exact persisted acceptance check applies before a successful post-call CRM write. */
+export const resolveElevenLabsAcceptedCall = resolveElevenLabsFailureCall;
