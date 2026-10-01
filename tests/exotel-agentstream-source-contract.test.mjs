@@ -104,7 +104,8 @@ test("native AgentStream handles media immediately, cancels stale speech, and st
   assert.match(bridge, /if \(kind === "media"\)/);
   assert.ok(bridge.indexOf('if (kind === "media")') < bridge.indexOf("controlChain = controlChain.then"));
   assert.match(bridge, /cancelStaleGeneration\(active, "caller_speech"\)/);
-  assert.match(bridge, /activeTtsAbort\?\.abort\(\)/);
+  assert.match(bridge, /activeTtsControllers = new Set<AbortController>\(\)/);
+  assert.match(bridge, /for \(const controller of activeTtsControllers\) controller\.abort\(\)/);
   assert.match(bridge, /sendAudioStream\(/);
   assert.match(bridge, /agentstream_first_audio/);
   assert.match(bridge, /firstAudioMs: sent\.firstAudioMs/);
