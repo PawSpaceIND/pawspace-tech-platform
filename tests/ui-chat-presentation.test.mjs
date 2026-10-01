@@ -12,7 +12,8 @@ for(const [path,expected] of Object.entries({
  'app/v2/chat/page.tsx':'60bf2ccadcfefed68858133c62220721ae50f104a7ba9fb10b7b7bca9ec990b1',
  'app/components/wati-chat/WatiConversation.tsx':'94a2cbcb18b9251502c417935085d8a8b5383555a6ceb69b1fab45814662e2f8',
  'app/components/wati-chat/wati-chat.module.css':'e7dd395378a4c42fac84c170a72358ddcb8968eb93037c3f7465ff5372670e07',
- 'app/v2/presentation.module.css':'1dbf3855516d0899bf9a57e8b8f1a6be203df7778df537b8cc38ca54644e338c',
+ // Reviewed Grooming-only mobile utility append; chat sources and assertions remain unchanged.
+ 'app/v2/presentation.module.css':'3a201fab2e8db78e646277e899222fec8528e441f529e8ae3babbc75fafed5ef',
 }))test(`Chat visual repair preserves original source: ${path}`,()=>assert.equal(hash(read(path)),expected));
 test('chat CSS repair preserves the complete pre-repair stylesheet as an exact prefix',()=>{
  const css=read('app/v2/chat/page.module.css'),at=css.indexOf(marker);
