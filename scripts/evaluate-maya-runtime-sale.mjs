@@ -9,7 +9,7 @@ const key = String(process.env.PAWSPACE_OPENAI_API_KEY || '').trim();
 if (!key) throw Error('Runtime model evaluation credential missing');
 const model = String(process.env.PAWSPACE_AI_VOICE_MODEL || 'gpt-5.6-luna');
 const scenario = String(process.env.VOICE_SALE_SCENARIO || 'booking');
-assert.ok(['booking', 'concierge'].includes(scenario), 'Unsupported isolated scenario');
+assert.ok(['booking', 'concierge', 'all-services', 'all-bookings'].includes(scenario), 'Unsupported isolated scenario');
 const actor = { email: 'elevenlabs-voice@system.pawspace', name: 'Synthetic Runtime Evaluation', roleCode: 'service_elevenlabs_voice', permissions: ['communications.manage', 'customers.manage', 'bookings.manage', 'scheduling.book'], developmentPreview: false, identitySource: 'workspace', principalType: 'identity_subject', principalKey: 'service:elevenlabs-voice' };
 const customerId = 'CUS-MAYA-SYNTHETIC', petId = 'PET-MAYA-SYNTHETIC', threadId = 'THREAD-MAYA-SYNTHETIC';
 const start = '2026-10-20T04:30:00.000Z', end = '2026-10-20T06:30:00.000Z';
@@ -25,6 +25,14 @@ globalThis.fetch = async (url, init) => {
     const request = JSON.parse(init.body), context = JSON.parse(request.input).canonicalContext;
     modelDrafts.push({ status: response.status, text, catalogue: context.catalogue });
     return response;
+  }
+  if (scenario === 'all-bookings') {
+    const parsed=new URL(String(url));
+    if(parsed.hostname==='maps.googleapis.com'){
+      const pickup=parsed.searchParams.get('address').startsWith('12');
+      return Response.json({status:'OK',results:[{formatted_address:parsed.searchParams.get('address'),geometry:{location:{lat:pickup?12.9784:12.9352,lng:pickup?77.6408:77.6245}}}]});
+    }
+    if(parsed.hostname==='routes.googleapis.com')return Response.json({routes:[{distanceMeters:8000,duration:'1200s'}]});
   }
   assert.equal(String(url), 'https://api.razorpay.com/v1/orders', 'Unexpected external request is forbidden');
   paymentRequests++;
@@ -58,7 +66,14 @@ try {
   await orchestrator.ensureAiConversationOrchestrator(world.db);
   const { applyOwnedDdl } = await import('../tests/helpers/ai-harness.mjs');
   for (const owner of ['lib/training-commercial-governance.ts', 'lib/boarding-governance.ts', 'lib/sitting-governance.ts', 'lib/walking-governance.ts', 'lib/taxi-governance.ts']) applyOwnedDdl(world.sqlite, owner);
-  if (scenario === 'concierge') {
+  if (scenario.startsWith('all-')) {
+    await (await import('../lib/training-commercial-governance.ts')).ensureTrainingCommercialTables(world.db);
+    await (await import('../lib/boarding-governance.ts')).ensureBoardingGovernanceTables(world.db);
+    await (await import('../lib/sitting-governance.ts')).ensureSittingGovernanceTables(world.db);
+    await (await import('../lib/walking-governance.ts')).ensureWalkingGovernanceTables(world.db);
+    await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(world.db);
+  }
+  if (scenario !== 'booking') {
     // Publish the repository's reviewed knowledge only inside this temporary in-memory fixture.
     await (await import('../lib/maya-knowledge-base.ts')).seedMayaKnowledge(world.db, { maker: 'synthetic-maker@pawspace.test', checker: 'synthetic-checker@pawspace.test' });
   }
@@ -73,15 +88,47 @@ try {
     world.sqlite.prepare("INSERT OR IGNORE INTO provider_home_base (id,provider_id,address,latitude,longitude,effective_from,effective_until,reason,updated_by,created_at) VALUES (?,?,?,12.9716,77.5946,0,NULL,'test','test',?)").run('eval-base-' + provider.id, provider.id, 'Test base', now);
     for (const zone of JSON.parse(provider.zones_json)) world.sqlite.prepare("INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,'[\"09:00-19:00\"]','roster',?)").run(provider.id + ':' + zone + ':2026-10-20', provider.id, provider.city_id, zone, '2026-10-20', now);
   }
+  if(scenario==='all-bookings'){
+    await (await import('../lib/taxi-fleet-governance.ts')).ensureTaxiFleetTables(world.db);
+    for(const provider of world.sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE services_json LIKE '%pet_taxi%'").all())
+      for(const car of world.sqlite.prepare('SELECT id FROM taxi_fleet_vehicles WHERE active=1').all())
+        world.sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility(provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(provider.id,car.id);
+    globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,GOOGLE_MAPS_SERVER_API_KEY_UAT:'synthetic-test-key',GOOGLE_ROUTES_SERVER_API_KEY_UAT:'synthetic-test-key',PAWSPACE_MAPS_ENV:'sandbox'};
+  }
   const history = [], countBookings = () => world.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get() ? world.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n : 0;
   async function turn(message) {
     const started = Date.now();
-    const result = await runElevenLabsGroundedTurn(world.db, { model: 'pawspace-grooming-sales', input: [...history, { role: 'user', content: message }], elevenlabs_extra_body: { pawspace_customer_id: customerId, pawspace_thread_id: threadId } });
+    const result = await runElevenLabsGroundedTurn(world.db, { model: scenario.startsWith('all-') ? 'pawspace-service-sales' : 'pawspace-grooming-sales', input: [...history, { role: 'user', content: message }], elevenlabs_extra_body: { pawspace_customer_id: customerId, pawspace_thread_id: threadId } });
     turns.push({ customer: message, maya: result.output, elapsedMs: Date.now() - started, path: result.path });
     history.push({ role: 'user', content: message }, { role: 'assistant', content: result.output });
     return result;
   }
-  if (scenario === 'concierge') {
+  if (scenario === 'all-bookings') {
+    const cases = [
+      {service:'grooming',package:'Complete Makeover',date:20,end:'12 PM',mode:'prepaid'},
+      {service:'dog_training',package:'Meet & Greet',date:21,end:'11 AM',mode:'prepaid'},
+      {service:'boarding',package:'Standard Stay',date:22,end:'2 PM',mode:'prepaid'},
+      {service:'pet_sitting',package:'Home Visit',date:23,end:'11 AM',mode:'prepaid'},
+      {service:'pet_taxi',package:'Pet Taxi with an eligible recommended vehicle',date:24,end:'1 PM',mode:'split_50_50',details:'Pickup is 12 Test Street; drop-off is 24 Test Street, Koramangala, Bengaluru. This is a regular one-way trip with one passenger, no luggage, no waiting time, and Milo is not hyperactive. Please recommend the appropriate vehicle and read its name and fare back for confirmation.'},
+    ];
+    for (const item of cases) {
+      const before=countBookings(),beforePayment=paymentRequests;
+      await turn(`Please prepare an unconfirmed quote for ${item.service}, ${item.package}, for my saved dog Milo, ${item.mode}, October ${item.date} 2026 from 10 AM to ${item.end} India time, at 12 Test Street, Bengaluru, PIN 560038. This is one appointment. ${item.details || ""} Do not reserve or create a booking or payment order yet. Read back the quote and ask for my separate confirmation.`);
+      const offer=await sales.pendingVoiceSalesOffer(world.db,threadId,customerId,'all_services');
+      assert.ok(offer,`No stored offer for ${item.service}`);
+      assert.equal(offer.service_code,item.service);
+      assert.equal(countBookings(),before);
+      assert.equal(paymentRequests,beforePayment);
+      await turn('Yes, please.');
+      assert.equal(countBookings(),before+1,`Exactly one ${item.service} booking after confirmation`);
+      assert.equal(paymentRequests,beforePayment+(item.service==='dog_walking'?0:1));
+      const result=JSON.parse(world.sqlite.prepare('SELECT result_json FROM voice_sales_offers WHERE id=?').get(offer.id).result_json);
+      assert.ok(result.bookingId);assert.equal(result.paymentVerified,false);
+      assert.equal(world.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,item.service);
+    }
+    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model and five canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
+    await mkdir('artifacts/maya-runtime-sale',{recursive:true});await writeFile('artifacts/maya-runtime-sale/report.json',JSON.stringify(report,null,2));console.log('MAYA_ALL_SERVICE_BOOKINGS='+JSON.stringify(report));
+  } else if (scenario === 'concierge' || scenario === 'all-services') {
     const checks = [
       { message: 'I need boarding for Milo for two nights. What do you need from me?', required: /boarding|stay|host/i, forbidden: /how many nights|grooming/i, maxWords: 70 },
       { message: 'Milo needs a complete body bath and full-body trim. Which one-time grooming package fits that and why?', required: /Complete Makeover/i },
@@ -90,6 +137,16 @@ try {
       { message: 'The Complete Makeover price feels high. Is there an approved offer for that package?', required: /offer|discount|sav(?:e|ing)|200/i, forbidden: /GROOM200|GROOM400/ },
       { message: 'Milo has mild itching but is otherwise behaving normally. What general information can you share?', required: /vet(?:erinarian)?/i, forbidden: /\bGROOM\d+\b|coupon|discount|book.*groom|\b(?:mg|milligrams?|dose)\b/i, maxWords: 80 }
     ];
+    if (scenario === 'all-services') checks.push(
+      { message: 'For a different enquiry: what does your dog training service help with?', required: /train|behavio|cues/i },
+      { message: 'What is the difference between pet sitting at my home and boarding at a host home?', required: /sitt/i },
+      { message: 'I need care just during the daytime, not overnight. Do you offer daycare?', required: /daycare|daytime|day care/i },
+      { message: 'How does your pet taxi service work, and what pickup information would you need?', required: /pickup|pick.up|transport|taxi/i },
+      { message: 'I am moving to another city with my cat. How can your relocation team help?', required: /relocation|mov|travel/i },
+      { message: 'What fresh food options can I ask PawSpace about, and how is payment handled?', required: /food|meal|diet/i },
+      { message: 'My pet has passed away. What funeral or memorial support does PawSpace provide?', required: /sorry|condolence|loss/i, forbidden: /discount|coupon|grooming|cross.sell/i },
+      { message: 'Please explain how I can arrange a routine veterinary consultation, without booking anything yet.', required: /vet|consultation/i }
+    );
     for (const check of checks) {
       const reply = await turn(check.message);
       if (check.required) assert.match(reply.output, check.required, check.message);

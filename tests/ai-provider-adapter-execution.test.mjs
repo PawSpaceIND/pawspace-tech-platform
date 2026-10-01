@@ -384,3 +384,19 @@ test("two stalled voice attempts exhaust one shared budget without a third reque
  const stub=stubFetch((_url,init)=>new Promise((_resolve,reject)=>init.signal.addEventListener("abort",()=>reject(Object.assign(new Error("aborted"),{name:"AbortError"})))));
  try{const started=Date.now();const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"hello",channel:"voice",timeoutMs:30000});assert.equal(result.connected,false);assert.equal(result.failure,"timeout");assert.equal(stub.calls.length,2);assert.ok(Date.now()-started<3400,"the configured ceiling covers both attempts together");}finally{stub.restore();}
 });
+
+test('voice diagnostics separate provider request, body and accounting without changing the answer', async () => {
+  withEnv();
+  const marks = [];
+  const stub = stubFetch(() => jsonResponse(textBody('Which pickup and destination would you like?')));
+  try {
+    const result = await adapter.requestAiDraft({systemPrompt:'sys',userPrompt:'taxi please',channel:'voice',onTiming:stage=>marks.push(stage)});
+    assert.equal(result.connected,true);
+    assert.equal(result.text,'Which pickup and destination would you like?');
+    const expected=['providerRequestStarted','providerHeadersReceived','providerBodyCompleted','providerAccountingCompleted'];
+    assert.deepEqual(marks.filter(mark=>expected.includes(mark)),expected);
+    const unaffected = await adapter.requestAiDraft({systemPrompt:'sys',userPrompt:'taxi please',channel:'voice',onTiming(){throw Error('diagnostic consumer failed');}});
+    assert.equal(unaffected.connected,true);
+    assert.equal(unaffected.text,result.text);
+  } finally { stub.restore(); }
+});

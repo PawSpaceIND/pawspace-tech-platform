@@ -95,7 +95,7 @@ jobs:
           path: artifacts/agent-deadlines/report.json
           retention-days: 3
   evaluate-runtime-sale:
-    if: ${{ inputs.confirm == 'evaluate-runtime-sale' || inputs.confirm == 'evaluate-runtime-concierge' }}
+    if: ${{ inputs.confirm == 'evaluate-runtime-sale' || inputs.confirm == 'evaluate-runtime-concierge' || inputs.confirm == 'evaluate-runtime-all-services' || inputs.confirm == 'evaluate-runtime-all-bookings' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     timeout-minutes: 5
@@ -109,7 +109,7 @@ jobs:
       - name: Evaluate actual sales runtime with synthetic database and mocked payments (no calls)
         env:
           VOICE_SALE_ACTION: evaluate-runtime-sale
-          VOICE_SALE_SCENARIO: ${{ inputs.confirm == 'evaluate-runtime-concierge' && 'concierge' || 'booking' }}
+          VOICE_SALE_SCENARIO: ${{ inputs.confirm == 'evaluate-runtime-all-bookings' && 'all-bookings' || inputs.confirm == 'evaluate-runtime-all-services' && 'all-services' || inputs.confirm == 'evaluate-runtime-concierge' && 'concierge' || 'booking' }}
           PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
           PAWSPACE_AI_VOICE_MODEL: ${{ vars.PAWSPACE_AI_VOICE_MODEL }}
           PAWSPACE_LOCAL_PREVIEW: 'on'

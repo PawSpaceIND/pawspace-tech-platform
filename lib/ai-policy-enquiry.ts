@@ -1,5 +1,6 @@
+import {isSalesInformationQuestion} from "./ai-sales-information";
 /** Conservative information-only policy enquiries. This does not authorise any tool or action. */
-export type PolicyEnquiryTopic='refund_process'|'complaint_process'|'booking_change_process';
+export type PolicyEnquiryTopic='refund_process'|'complaint_process'|'booking_change_process'|'payment_process';
 export const POLICY_INFORMATION_SIGNAL='policy_information_only';
 const ACTIVE_RISK=[
  /\b(?:human|person|staff|agent|representative|manager|coordinator)\b/i,
@@ -20,6 +21,8 @@ export function policyEnquiryTopic(input:string):PolicyEnquiryTopic|null{
  const text=input.normalize('NFKC').replace(/[’‘]/g,"'").replace(/\s+/g,' ').trim();
  if(ACTIVE_RISK.some(p=>p.test(text)))return null;
  if(TEMPORAL_RISK.test(text)&&!CURRENT_POLICY_QUESTION.test(text))return null;
+ // A bounded process FAQ is not a payment instruction. Keep mixed commands and disputes out.
+ if(isSalesInformationQuestion(text)&&! /\b(?:send|take|capture|charge|debit|pay|transfer|approve|execute|initiate|complete|then|ignore|bypass)\b/i.test(text)&&/\b(?:how (?:is|are) payments? handled|how (?:does|do) payments? work|when (?:is|are) payments? due|what payment methods (?:are available|do you accept))[?!.]*$/i.test(text))return 'payment_process';
  const question=text.replace(/^(?:(?:this is an (?:enquiry|inquiry) only|do not (?:issue a refund|change any booking|cancel any booking|book anything))\.\s*)+/i,'');
  // Only a process question, not a request to initiate, approve, cancel, reschedule or transfer.
  if(!/^(?:please )?(?:explain\b|how\b|what\b|if\b|where\b|can you explain\b|could you explain\b)/i.test(question))return null;

@@ -7,6 +7,11 @@ const {classifyAiIntent,orchestrateAiTurn,ensureAiConversationOrchestrator}=awai
 const {requiresImmediateHumanHandoff}=await import('../lib/ai-grounded-runtime-provider.ts');
 const {setAiRolloutStage}=await import('../lib/ai-audience-rollout.ts');
 const positives=[
+ ['What fresh food options can I ask PawSpace about, and how is payment handled?','payment_process'],
+ ['How is payment handled?','payment_process'],
+ ['How does payment work?','payment_process'],
+ ['When is payment due?','payment_process'],
+ ['What payment methods are available?','payment_process'],
  ['How does your refund review process work?','refund_process'],
  ['What is the refund policy?','refund_process'],
  ['Please explain the refund review process.','refund_process'],
@@ -25,6 +30,9 @@ for(const [question,topic]of positives)test('informational enquiry: '+question,(
  assert.equal(requiresImmediateHumanHandoff(question),false);
 });
 const negatives=[
+ 'How is payment handled? Take payment now.', 'Capture payment and explain how payment is handled.', 'What payment methods are available; charge my card.', 'How is payment handled after I was charged twice?', 'How does payment work? Transfer me to a human.',
+ 'What payment methods are available and then send payment?',
+
  'How does the refund policy work? I want a human.', 'What is the refund process? The service was very unhappy and unsafe.', 'What is the refund policy for my groomer no-show?',
  'I need a refund for yesterday.', 'I want my money back.', 'Refund my booking now.',
  'Explain the refund policy, but I was charged twice today.',
@@ -47,7 +55,7 @@ async function world(t){
  seedCustomer(w.sqlite,'CUS-POLICY','Synthetic policy tester','not-dialable');return w;
 }
 for(const channel of ['voice','chat','whatsapp'])test(channel+': actual orchestrator answers a refund-process enquiry without handoff or action',async t=>{
- const w=await world(t),question=positives[3][0];let calls=0;
+ const w=await world(t),question=positives[8][0];let calls=0;
  const messageId=await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-POLICY',customerId:'CUS-POLICY',text:question,channel,idempotencyKey:'read-only'});
  const provider={status:'connected',provider:'test-model',modelRef:'test',async generate(input){calls++;assert.ok(input.intent.signals.includes(POLICY_INFORMATION_SIGNAL));return{text:'The team reviews the purchased terms and booking and payment state. A request is not a processed refund.',provider:'test-model',modelRef:'test',latencyMs:1,confidence:0.95,catalogueVerifiedPrices:true,offerClaimsVerified:true};}};
  const result=await orchestrateAiTurn(w.db,{actor:staffActor,customerId:'CUS-POLICY',threadId:'THREAD-POLICY',inputMessageId:messageId,idempotencyKey:'read-only',channel,provider});
@@ -56,11 +64,19 @@ for(const channel of ['voice','chat','whatsapp'])test(channel+': actual orchestr
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);
 });
 for(const salesService of [undefined,'grooming'])test('enquiry cannot execute a malicious action proposal: '+(salesService||'generic'),async t=>{
- const w=await world(t),question=positives[4][0];
+ const w=await world(t),question=positives[9][0];
  const messageId=await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-POLICY',customerId:'CUS-POLICY',text:question,channel:'voice',idempotencyKey:'bad-action'});
  const provider={salesService,status:'connected',provider:'test-model',modelRef:'test',async generate(){return{text:'Doing that now',provider:'test-model',modelRef:'test',latencyMs:1,confidence:0.95,actionRequests:[{toolCode:'booking.create',arguments:{}}]};}};
  const result=await orchestrateAiTurn(w.db,{actor:staffActor,customerId:'CUS-POLICY',threadId:'THREAD-POLICY',inputMessageId:messageId,idempotencyKey:'bad-action',channel:'voice',provider});
  assert.equal(result.turn.policyDecision,'information_only_action_rejected');
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM ai_handoffs').get().n,0);
+});
+
+for(const salesService of [undefined,'all_services'])test('Food payment FAQ remains read-only through actual orchestration: '+(salesService||'generic'),async t=>{
+ const w=await world(t),question=positives[0][0];let calls=0;
+ const messageId=await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-FOOD-FAQ',customerId:'CUS-POLICY',text:question,channel:'voice',idempotencyKey:'food-faq'});
+ const provider={salesService,status:'connected',provider:'test-model',modelRef:'test',async generate(){calls++;return{text:'Food is prepaid; the team confirms the available menu and delivery options.',provider:'test-model',modelRef:'test',latencyMs:1,confidence:0.95,catalogueVerifiedPrices:true,offerClaimsVerified:true};}};
+ const result=await orchestrateAiTurn(w.db,{actor:staffActor,customerId:'CUS-POLICY',threadId:'THREAD-FOOD-FAQ',inputMessageId:messageId,idempotencyKey:'food-faq',channel:'voice',provider});
+ assert.equal(calls,1);assert.notEqual(result.turn.outcome,'handoff');assert.match(result.turn.output,/prepaid/);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM ai_handoffs').get().n,0);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings').get().n,0);
 });

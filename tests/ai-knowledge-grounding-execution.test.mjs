@@ -26,6 +26,7 @@ for(const channel of ['voice','chat','whatsapp'])test(channel+': real runtime gr
  const query='How does your refund review process work?';
  const result=await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel,inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
  assert.equal(mock.calls.length,1);assert.match(sent.instructions,/information-only policy enquiry/);assert.doesNotMatch(sent.instructions,/Specialty: Grooming only/);
+ if(channel==='voice'){assert.match(sent.instructions,/3 or 4 closely related missing questions/);assert.match(sent.instructions,/20 to 40 words/);assert.match(sent.instructions,/Keep payment or booking confirmation separate/);}
  const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.availableActionTools,[]);assert.equal(context.informationOnly,true);
  assert.match(JSON.stringify(context.approvedKnowledge),/maya_refund_process/);assert.ok(result.groundingRefs.length>0);
  const bath=context.catalogue.grooming.find(r=>r.package_code==='dog-bath');assert.equal(bath.tax_inclusive,1);assert.equal(bath.description,'Verified full package description');
@@ -78,4 +79,66 @@ for(const channel of ['voice','chat','whatsapp'])test(channel+': information que
  assert.equal(mock.calls.length,1);assert.match(sent.instructions,/read-only sales information question/);
  assert.doesNotMatch(sent.instructions,/Specialty: Grooming only/);
  const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.availableActionTools,[]);assert.ok(Array.isArray(cc.conversationHistory));
+});
+
+test('Daycare prices bind to Boarding catalogue rows without accepting another service price', async () => {
+ const {pricesMatchCatalogue}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const catalogue={boarding:[{package_code:'boarding-4h',name:'Standard Stay',base_price_per_pet:499},{package_code:'boarding-10h',name:'Premium Stay',base_price_per_pet:599}],petTaxi:[{name:'Taxi',amount:799}]};
+ assert.equal(pricesMatchCatalogue('Daycare is available for up to four hours at ₹499 or ten hours at ₹599 per pet.',catalogue),true);
+ assert.equal(pricesMatchCatalogue('Day care starts at 499 rupees.',catalogue),true);
+ assert.equal(pricesMatchCatalogue('Daycare costs 799 rupees.',catalogue),false);
+ assert.equal(pricesMatchCatalogue('Grooming costs 499 rupees.',catalogue),false);
+});
+
+test('routine vet booking information remains answerable while symptoms keep medical protection',async()=>{
+ const {isPetMedicalQuestion}=await import('../lib/ai-grounded-runtime-provider.ts');
+ assert.equal(isPetMedicalQuestion('Please explain how I can arrange a routine veterinary consultation, without booking anything yet.'),false);
+ assert.equal(isPetMedicalQuestion('How can I arrange a vet consultation for my dog who is coughing?'),true);
+ assert.equal(isPetMedicalQuestion('My rabbit is sick. What service can help?'),true);
+ assert.equal(isPetMedicalQuestion('My dog has mild itching.'),true);
+});
+
+
+test('multi-service quote instructions do not impose Grooming on a Training request',async t=>{
+ const w=await world(t);let sent;
+ await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(w.db);
+ const mock=stubFetch((url,init)=>{sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'Which saved pet should attend the trainer assessment?',usage:{total_tokens:20}});});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='Prepare an unconfirmed dog training Meet and Greet quote.';
+ await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ assert.match(sent.instructions,/serviceCode:"chosen enabled service code"/);
+ assert.doesNotMatch(sent.instructions,/Use exactly these argument schemas: schedule.reserve=\{serviceCode:"grooming"/);
+ assert.match(sent.instructions,/Training=dog_training/);
+ assert.match(sent.instructions,/booking.create.arguments.taxi/);
+ assert.match(sent.instructions,/3 or 4 closely related missing questions/);
+ const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.catalogue.petTaxi,[]);assert.equal(context.catalogueTool,null);
+ assert.match(sent.instructions,/separate explicit customer confirmation/);
+});
+
+
+test('Taxi information enquiries cannot expose legacy synthetic route fares',async t=>{
+ const w=await world(t);await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(w.db);let sent;
+ const mock=stubFetch((url,init)=>{sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'The route and vehicle determine your Taxi quote. What are the pickup and drop locations?',usage:{total_tokens:20}});});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='What determines the pet taxi price?';
+ await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.catalogue.petTaxi,[]);assert.equal(cc.catalogueTool,null);assert.deepEqual(cc.availableActionTools,[]);
+});
+
+test('funeral owner tariff and intake reach both voice grounding paths without executing payments',async t=>{
+ const w=await world(t);
+ const {pricesMatchCatalogue}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const mock=stubFetch(()=>{throw Error('Read-only funeral grounding must not send links or call providers');});t.after(()=>mock.restore());
+ for(const fastVoice of [false,true]){
+  const {context}=await buildGroundedAiTurnContext(w.db,{actor,threadId:'THREAD-KB',customerId:'CUS-KB',intent:'service_info',channel:'voice',query:'pet funeral cremation',canonicalContext:{customer:{customerId:'CUS-KB'}},fastVoice});
+  assert.deepEqual(context.catalogue.funeral.map(r=>r.base_price),[7000,9000,16000,2000,6000,7500,2000]);
+  assert.equal(context.operationalFaq.funeral.advancePercent,50);
+  assert.equal(context.operationalFaq.funeral.execution,'staff_required');
+  assert.equal(context.operationalFaq.funeral.pickupCutoffHour,16);
+  assert.ok(context.operationalFaq.funeral.requiredIntake.includes('secondaryContactPhone'));
+  assert.ok(pricesMatchCatalogue('Electric cremation costs ₹7,000. Ash plantation costs ₹7,500.',context.catalogue));
+  assert.equal(pricesMatchCatalogue('Electric cremation costs ₹7,999.',context.catalogue),false);
+  assert.equal(pricesMatchCatalogue('Ash plantation costs ₹7,000.',context.catalogue),false);
+  assert.equal(pricesMatchCatalogue('Electric cremation costs ₹16,000.',context.catalogue),false);
+  assert.match(JSON.stringify(context.approvedKnowledge),/primary and secondary contact/);
+ }
+ assert.equal(mock.calls.length,0);
 });
