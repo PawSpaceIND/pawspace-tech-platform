@@ -44,7 +44,11 @@ export function voiceQuotePolicyText(message:string){
  // Normalize only a complete, explicitly negative execution clause in a quote request.
  // Commas may coordinate reserve/book/create. Contrast, conditions and later positive
  // payment clauses stay visible to the existing policy gate.
- return message.replace(/\b(?:do not|don't|don’t)\s+(?:(?:reserve|book)(?:\s+(?:(?:a|any|the)\s+)?(?:slot|booking|reservation))?\s*(?:,\s*(?:(?:and|or)\s+)?|(?:and|or)\s+))*(?:create|take|collect|capture|process|make|send|start)\s+(?:(?:a|any|the)\s+)?(?:booking\s+(?:and|or)\s+(?:(?:a|any|the)\s+)?)?payment(?:\s+order)?\b(?:\s+(?:yet|now))?(?=\s*(?:[.!?;]|$))/gi,"");
+ const riskText=message.replace(/\b(?:do not|don't|don’t)\s+(?:(?:reserve|book)(?:\s+(?:(?:a|any|the)\s+)?(?:slot|booking|reservation))?\s*(?:,\s*(?:(?:and|or)\s+)?|(?:and|or)\s+))*(?:create|take|collect|capture|process|make|send|start)\s+(?:(?:a|any|the)\s+)?(?:booking\s+(?:and|or)\s+(?:(?:a|any|the)\s+)?)?payment(?:\s+order)?\b(?:\s+(?:yet|now))?(?=\s*(?:[.!?;]|$))/gi,"");
+ // A payment mode qualifies a read-only quote, never permission to execute payment.
+ // Only the terminal qualifier is normalized; mixed financial commands remain visible.
+ if(/\b(?:charge|capture|debit|transfer|refund|payout|execute|collect|process|initiate|send)\b/i.test(riskText))return message;
+ return riskText.replace(/\bwith\s+(?:split|prepaid|full upfront)\s+payment\b(?=\s*[.!?]*$)/gi,"");
 }
 export async function ensureVoiceSalesOffers(db: D1Database) {
  return ensureD1Once(db,"voice_sales_offers",async()=>{

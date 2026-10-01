@@ -4,7 +4,53 @@ import {createHash} from 'node:crypto';
 const files=['app/team/finance/page.tsx','app/team/finance/finance-ledger.tsx','app/team/finance/grooming-gst-panel.tsx','app/team/finance/finance-content.module.css','app/team/operations/page.tsx','app/team/people/page.tsx','app/team/presentation-next/staff-content.module.css','app/team/finance/boarding/boarding-finance-workspace.tsx','app/team/finance/boarding/boarding-content.module.css','app/team/finance/training/page.tsx','app/team/finance/training/training-content.module.css','app/team/people/provider-training/page.tsx','app/team/people/provider-training/provider-training-content.module.css'];
 const hashes=Object.fromEntries(files.map(p=>[p,createHash('sha256').update(readFileSync(p)).digest('hex')]));
 const fingerprint=createHash('sha256').update(JSON.stringify(hashes)).digest('hex');
-function contrastRatio(a:string,b:string){const lum=(v:string)=>{const c=v.match(/[\d.]+/g)!.slice(0,3).map(Number).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4;});return c[0]*.2126+c[1]*.7152+c[2]*.0722;};const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);}
+// Composite transparent paint through the actual ancestor backgrounds before measuring text.
+function contrastRatio(foreground:string,backgrounds:string[]){
+ const parse=(color:string)=>{
+  const match=/^(rgb|rgba)\(([^()]*)\)$/.exec(color.trim());
+  if(!match)throw new Error(`Unsupported contrast paint: ${color}`);
+  const parts=match[2].split(',').map(value=>value.trim());
+  if(parts.length!==(match[1]==='rgb'?3:4)||parts.some(value=>!/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)))throw new Error(`Invalid contrast paint: ${color}`);
+  const values=parts.map(Number),rgb=values.slice(0,3),alpha=values[3]??1;
+  if(rgb.some(channel=>!Number.isFinite(channel)||channel<0||channel>255)||!Number.isFinite(alpha)||alpha<0||alpha>1)throw new Error(`Out-of-range contrast paint: ${color}`);
+  return {rgb,alpha};
+ };
+ const paint=(color:string,under:number[])=>{const {rgb,alpha}=parse(color);return rgb.map((channel,i)=>channel*alpha+under[i]*(1-alpha));};
+ if(!backgrounds.some(color=>parse(color).alpha===1))throw new Error('An opaque contrast backdrop is required');
+ const background=backgrounds.reduce((under,color)=>paint(color,under),[255,255,255]);
+ const lum=(rgb:number[])=>rgb.map(channel=>{const c=channel/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;}).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
+ const a=lum(paint(foreground,background)),b=lum(background);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+}
+function textPaint(element:Element){
+ const backgrounds:string[]=[];
+ for(let node:Element|null=element;node;node=node.parentElement){
+  const style=getComputedStyle(node);
+  if(style.backgroundImage!=='none'||style.opacity!=='1'||style.filter!=='none'||style.backdropFilter!=='none'||style.mixBlendMode!=='normal'||style.textShadow!=='none')throw new Error('Unsupported contrast paint effect');
+  backgrounds.push(style.backgroundColor);
+ }
+ return {foreground:getComputedStyle(element).color,backgrounds:backgrounds.reverse()};
+}
+test('contrast calculation composites transparent paint and still rejects faint text',()=>{
+ expect(contrastRatio('rgb(72,47,43)',['rgb(255,248,244)','rgba(0,0,0,0)'])).toBeGreaterThanOrEqual(4.5);
+ expect(contrastRatio('rgb(164,56,48)',['rgb(255,248,244)'])).toBeCloseTo(6.271,3);
+ expect(contrastRatio('rgba(0,0,0,0.1)',['rgb(255,255,255)'])).toBeLessThan(4.5);
+ expect(contrastRatio('rgb(200,200,200)',['rgb(255,255,255)'])).toBeLessThan(4.5);
+});
+test('contrast rejects unsupported syntax and invalid channel ranges',()=>{
+ for(const color of ['color(display-p3 0.8 0.8 0.8)','rgb(256,0,0)','rgb(-1,0,0)','rgba(0,0,0,1.1)','rgb(20%,20%,20%)','rgb(NaN,0,0)'])expect(()=>contrastRatio(color,['rgb(255,255,255)'])).toThrow();
+ expect(()=>contrastRatio('rgb(0,0,0)',['rgba(0,0,0,0)'])).toThrow(/opaque/);
+});
+test('actual element and header paint cannot hide low contrast or unsupported effects',async({page})=>{
+ await page.setContent('<main style="background:rgb(255,255,255)"><header style="background:rgb(80,50,45)"><small style="color:rgb(72,47,43)">Measured label</small></header></main>');
+ const label=page.locator('small'),paint=await label.evaluate(textPaint);
+ expect(contrastRatio(paint.foreground,['rgb(255,255,255)'])).toBeGreaterThanOrEqual(4.5);
+ expect(contrastRatio(paint.foreground,paint.backgrounds)).toBeLessThan(4.5);
+ await page.locator('header').evaluate(element=>{(element as HTMLElement).style.opacity='0.5';});
+ await expect(label.evaluate(textPaint)).rejects.toThrow(/Unsupported contrast paint effect/);
+ await page.locator('header').evaluate(element=>{(element as HTMLElement).style.opacity='1';});
+ await label.evaluate(element=>{(element as HTMLElement).style.color='color(display-p3 0.8 0.8 0.8)';});
+ const unsupported=await label.evaluate(textPaint);expect(()=>contrastRatio(unsupported.foreground,unsupported.backgrounds)).toThrow(/Unsupported contrast paint/);
+});
 const item={bookingId:'FINANCE-UI',serviceCode:'boarding',packageName:'Synthetic two pet stay',bookingStatus:'confirmed',scheduledStart:null,bookingTotal:1398,paymentId:'PAY-UI',paymentStatus:'captured',paymentMode:'prepaid',amountDueNow:1398,scheduleStatus:'paid',balanceAmount:0,capturedAmount:1398,refundedAmount:279.60,netCollected:1118.40,gatewayStatus:'captured',reconciliationStatus:'matched',varianceAmount:0,openExceptions:0,invoiceNumber:'UI-INVOICE'};
 const data={services:[{code:'boarding',label:'Boarding',workspace:'/team/finance/boarding',bookings:1,paidBookings:1,captured:1398,refunded:279.60,attention:0}],items:[item],openExceptions:0,limit:100};
 for(const [i,width] of [320,412,820,1440].entries())for(const style of ['professional','cartoon'])test(`staff finish routes ${width} ${style}`,async({page},info)=>{
@@ -44,8 +90,11 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    if(width<=600){const inputRect=(await lookup.boundingBox())!,buttonRect=(await content.getByRole('button',{name:'Load booking',exact:true}).boundingBox())!;expect(buttonRect.y).toBeGreaterThanOrEqual(inputRect.y+inputRect.height);}
   }else if(screen==='finance/training'){
    await expect(content.getByRole('heading',{name:'Training finance & payout readiness'})).toBeVisible();
-   const colors=await content.locator('main header small').evaluate(e=>({foreground:getComputedStyle(e).color,background:getComputedStyle(e.closest('main')!).backgroundColor}));expect(contrastRatio(colors.foreground,colors.background)).toBeGreaterThanOrEqual(4.5);
    await expect(content.getByRole('row').filter({hasText:'UI-TRAINING-PAID'}).getByRole('button',{name:'Issue UAT invoice',exact:true})).toBeEnabled();
+   // Reports must hydrate before measuring the loaded page; a heading also exists in unstyled SSR.
+   await page.evaluate(()=>document.fonts.ready);
+   const colors=await content.locator('main header small').evaluate(textPaint);
+   expect(contrastRatio(colors.foreground,colors.backgrounds)).toBeGreaterThanOrEqual(4.5);
    await expect(content.getByRole('row').filter({hasText:'UI-TRAINING-PENDING'}).getByRole('button',{name:'Issue UAT invoice',exact:true})).toBeDisabled();
    await expect(content.getByRole('button',{name:'Approve sandbox instruction',exact:true})).toBeEnabled();
    const regions=content.getByRole('region',{name:/scroll horizontally/});await expect(regions).toHaveCount(3);
