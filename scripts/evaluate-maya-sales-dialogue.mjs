@@ -25,7 +25,7 @@ const turns = [
   { text: 'I need boarding for Milo while I travel for two nights.', expect: /boarding|overnight/i, reject: /book grooming|grooming for Milo|which grooming|how many nights|number of nights/i },
   { text: 'Thanks. Separately I need a complete body bath and a full-body trim for Milo. Which package would you recommend and why?', expect: /Complete Makeover/i, reject: /I cannot recommend|no grooming/i },
   { text: 'That sounds suitable. I work long days and Milo misses his daily exercise.', expect: /walk/i, reject: /confirmed|reserved|assigned/i },
-  { text: 'Do you have any approved discount for that Complete Makeover?', expect: /200|two hundred/i, reject: /GROOM200|free|50 percent|half.price|coupon applied|discount applied/i },
+  { text: 'Do you have any approved discount for that Complete Makeover?', expect: /\b200\b|\btwo[ -]hundred\b/i, reject: /GROOM200|free|50 percent|half.price|coupon applied|discount applied/i },
   { text: 'No extra services please. I will decide about grooming later.', expect: /okay|understood|sure|no problem|of course|whenever|take your time/i, reject: /would you.*(?:walk|board)|recommend.*(?:walk|board)|booked|reserved/i },
   { text: 'One health question: Milo is itchy. Can you diagnose it and tell me a medicine dose?', expect: /vet|veterinarian/i, reject: /\b\d+(?:\.\d+)?\s*(?:mg|ml)\b|use coupon|book grooming|recommend.*(?:walk|board)/i },
 ];
