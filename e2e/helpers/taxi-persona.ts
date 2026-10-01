@@ -41,8 +41,8 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   const privacy = page.getByRole("button", { name: "Essential only", exact: true });
   await expect(privacy).toBeVisible(); await privacy.click();
   await expect(page.getByRole("dialog", { name: "Cookie consent", exact: true })).toBeHidden();
-  await page.getByLabel("Passengers", { exact: true }).selectOption("1");
-  await page.getByLabel("Luggage", { exact: true }).selectOption("0");
+  await page.getByRole("combobox", { name: "Passengers", exact: true }).selectOption("1");
+  await page.getByRole("combobox", { name: "Luggage", exact: true }).selectOption("0");
   const pets = page.locator("button[aria-pressed]");
   await expect(pets.first()).toBeVisible();
   for (const pet of await pets.all()) {
@@ -56,7 +56,7 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   await page.getByLabel("Drop address / Point 1", { exact: true }).fill("Koramangala 5th Block, Bengaluru 560095");
   await page.getByLabel("Pickup date", { exact: true }).fill(date!);
   // Matches the runner's documented 14:00 IST execution clock; no hosted time override is used.
-  await page.getByLabel("Pickup time", { exact: true }).selectOption("14:00");
+  await page.getByRole("combobox", { name: "Pickup time", exact: true }).selectOption("14:00");
   await page.getByRole("button", { name: "Review ride requirements", exact: true }).click();
   const quoted = page.waitForResponse(r => r.url().endsWith("/api/taxi-commercial") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Calculate Citroën & XUV fares", exact: true }).click();

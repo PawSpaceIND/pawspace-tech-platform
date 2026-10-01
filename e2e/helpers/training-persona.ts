@@ -46,7 +46,8 @@ export async function openFixtureFinance(browser: Browser, baseURL: string): Pro
   const page = await browser.newPage({ baseURL: origin, extraHTTPHeaders: { "oai-authenticated-user-email": "e2e.finance@pawspace.test" } });
   try {
     const refused = await page.request.get("/api/training-finance");
-    expect(refused.status(), await refused.text()).toBe(403);
+    expect(refused.status()).toBe(401);
+    expect(await refused.json()).toEqual({ error: "MFA required" });
     const checking = page.waitForResponse(r => r.url().endsWith("/api/v1/auth/mfa/enroll") && r.request().method() === "POST");
     await page.goto("/mfa?next=%2Fteam%2Ffinance");
     await dismissPrivacy(page);

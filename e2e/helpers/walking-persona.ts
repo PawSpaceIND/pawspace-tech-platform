@@ -106,13 +106,12 @@ async function signInFixtureFinance(page: Page, bookingId: string) {
   const signedIn = nextPost(page, "/api/staging-login");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   expect((await signedIn).status()).toBe(200);
-  // Custom seeded staff identities land on /me. Do not read the navigation-discarded POST body.
-  await page.waitForURL("**/me");
+  // Finance identities follow the application's MFA redirect, including custom seeded identities.
+  await page.waitForURL("**/mfa?next=%2Fteam%2Ffinance");
   const session = await okJson(await page.request.get("/api/staging-login", { maxRedirects: 0 }));
   expect(session).toMatchObject({ enabled: true, signedInAs: { email: "e2e.finance@pawspace.test", role: "finance" } });
   const beforeMfa = await page.request.get(`/api/walking-finance?bookingId=${encodeURIComponent(bookingId)}`, { maxRedirects: 0 });
-  expect(beforeMfa.status()).toBe(403); expect(await beforeMfa.text()).toContain("MFA");
-  await page.goto("/mfa?next=%2Fteam%2Ffinance");
+  expect(beforeMfa.status()).toBe(401); expect(await beforeMfa.json()).toEqual({ error: "MFA required" });
   await expect(page.getByRole("heading", { name: "Verify your authenticator code", exact: true })).toBeVisible();
   await page.getByLabel("6-digit authenticator code", { exact: true }).fill(fixtureTotp());
   const verified = nextPost(page, "/api/v1/auth/mfa/verify");
@@ -152,12 +151,12 @@ export async function runWalkingPersona({ page, browser, baseURL, sandboxLogin, 
     await expect(page.locator("main[data-v2-walking='true']")).toBeVisible();
     await expect(page.getByRole("heading", { name: "How often should we walk?", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "One-time walk", exact: true }).click();
-    await page.getByLabel("Pet", { exact: true }).selectOption(dog.id);
-    await page.getByLabel("Walk duration", { exact: true }).selectOption("30");
+    await page.getByRole("combobox", { name: "Pet", exact: true }).selectOption(dog.id);
+    await page.getByRole("combobox", { name: "Walk duration", exact: true }).selectOption("30");
     await page.getByLabel("Start from", { exact: true }).fill(date);
     await page.getByRole("button", { name: /^7:00 AM\b/ }).click();
     await page.getByLabel("Walking & safety instructions").fill("Use the red harness. Avoid busy roads. Synthetic local care instructions.");
-    await page.getByLabel("Handover preference", { exact: true }).selectOption("owner");
+    await page.getByRole("combobox", { name: "Handover preference", exact: true }).selectOption("owner");
     const orderSummary = page.getByRole("complementary", { name: "Walking order summary", exact: true });
     const reserve = orderSummary.getByRole("button", { name: "Reserve walks →", exact: true });
     await expect(reserve, "booking stays disabled until the real service-zone check accepts the address").toBeDisabled();
