@@ -18,7 +18,7 @@ test('New shell styles retain every control and theme while increasing touch acc
  assert.doesNotMatch(added,/display\s*:\s*none|visibility\s*:\s*hidden|pointer-events|position\s*:\s*(?:fixed|absolute)|#[0-9a-f]{3,8}\b|!important/);
  for(const selector of ['.finder input','.home,.group a','.group summary','.navRecovery button,.navRecovery a','.sidebarFooter summary','.sidebarFooter a','.mobileBar button']) {
   const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  assert.match(added,new RegExp(escaped+' \{[^}]*min-height:48px'));
+  assert.match(added,new RegExp(escaped+String.raw` \{[^}]*min-height:48px`));
  }
  assert.match(added,/flex-wrap:wrap/); assert.match(added,/@media\(max-width:360px\)/);
  assert.match(css,/:focus-visible/); assert.match(css,/var\(--paw-font\)/);
