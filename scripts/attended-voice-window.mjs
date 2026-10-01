@@ -33,7 +33,7 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch,opti
  // Worker settings readback can precede propagation to live requests. Never dial on metadata alone.
  const delay=options.delay||((ms)=>new Promise(resolve=>setTimeout(resolve,ms)));
  let effective=false;
- for(let attempt=0;attempt<5;attempt++){
+ for(let attempt=0;attempt<30;attempt++){
   const r=await request(origin+'/api/voice-outbound',{headers:{cookie},signal:AbortSignal.timeout(5000)}),b=await r.json();
   const a=await request(origin+'/api/voice-outbound?scope=ai_self_test',{headers:{cookie},signal:AbortSignal.timeout(5000)}),ab=await a.json();
   if(!r.ok||!a.ok)throw Error('Effective attended approval read refused');
@@ -41,7 +41,7 @@ export async function openAttendedVoiceWindow(env=process.env,request=fetch,opti
   console.log('ATTENDED_RUNTIME_GATE='+JSON.stringify({attempt,provider:b.data?.transport?.provider,mode:gate?.mode,enabled:gate?.enabled,blockedReason:gate?.blockedReason,uatApproved:gate?.uatApproved,salesOutboundApproved:gate?.salesOutboundApproved,allowlistSize:gate?.allowlistSize,missingSecretNames:gate?.missingSecretNames,selfTestMode:ai?.mode,selfTestApproved:ai?.approved,singleRecipient:ai?.singleRecipient}));
   effective=b.data?.transport?.provider==='elevenlabs_exotel'&&gate?.mode==='uat'&&gate?.enabled===true&&gate?.uatApproved===true&&gate?.salesOutboundApproved===true&&gate?.allowlistSize===1&&ai?.mode==='uat'&&ai?.approved===true&&ai?.singleRecipient===true;
   if(effective)break;
-  if(attempt<4)await delay(2000);
+  if(attempt<29)await delay(2000);
  }
  if(!effective)throw Error('Attended approvals have not reached the live runtime; do not dial');
  console.log('ATTENDED_VOICE_WINDOW='+JSON.stringify({verified:true,mode:'uat',provider:'elevenlabs',nativeApproved:false,autorun:false,dialed:false}));
