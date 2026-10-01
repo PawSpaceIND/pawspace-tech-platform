@@ -174,6 +174,22 @@ const speechEnvelope = () => {
   return {event:'media',media:{payload:Buffer.from(pcm).toString('base64')}};
 };
 const silenceEnvelope = {event:'media',media:{payload:Buffer.alloc(5600).toString('base64')}};
+
+test('caller speech bypasses pending opening TTS and starts recognition immediately', async t => {
+  const openingEntered=deferred(),openingDone=deferred(),sttEntered=deferred();let ttsCalls=0;
+  const w=await world(t,async model=>{
+    if(model.includes('whisper')){sttEntered.resolve();return {text:'Synthetic customer sentence'};}
+    if(++ttsCalls===1){openingEntered.resolve();return openingDone.promise;}
+    return new Uint8Array(640);
+  });
+  w.server.message(start);await openingEntered.promise;
+  w.server.message(speechEnvelope());w.server.message(silenceEnvelope);
+  let timer;await Promise.race([sttEntered.promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('media waited behind opening TTS')),500);timer.unref?.();})]);clearTimeout(timer);
+  openingDone.resolve(new Uint8Array(640));await w.drain();
+  assert.equal(w.events('agentstream_audio_queued').some(event=>String(event.markName).startsWith('opening-')),false);
+  const [barge]=w.events('agentstream_barge_in');assert.equal(barge.generationCancelled,true);
+});
+
 for (const failureStage of ['stt','turn_tts']) test(`${failureStage} failure during a customer turn records its distinct canonical failure`,async t=>{
   let ttsCalls=0;
   const w=await world(t,async model=>{

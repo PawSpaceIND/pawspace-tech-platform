@@ -6,7 +6,7 @@ import { nativeVoiceTurnDiagnostics, resolveCarrierSttLanguage, whisperInputLang
 import { transitionVoiceCall } from "./voice-outbound-governance";
 import { canVoiceCallTransition, isVoiceCallState } from "./voice-call-state";
 import { classifyVoiceFollowup, type VoiceHistoryMessage } from "./voice-conversation-followup";
-import { DEFAULT_WORKERS_NATIVE_TTS_MODEL, synthesizeNativeCarrierTts } from "./voice-native-tts";
+import { DEFAULT_WORKERS_NATIVE_TTS_MODEL, NativeCarrierTtsAudioError, NativeCarrierTtsCancelledError, synthesizeNativeCarrierTts } from "./voice-native-tts";
 import type { VoiceSalesService } from "./voice-sales-specialists";
 import type { AuthenticatedActor } from "./server-auth";
 
@@ -29,11 +29,8 @@ const outboundFrameBytes = 3_200;
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
 type ProcessingStage = "start" | "opening_tts" | "opening_text" | "opening_send" | "stt" | "llm" | "turn_tts" | "turn_text" | "turn_send" | "media" | "stop";
-class NativeAudioError extends Error {
-  readonly code: "http_error" | "empty_audio" | "invalid_audio" | "audio_too_large";
-  constructor(code: NativeAudioError["code"]) { super(code); this.code = code; }
-}
 class TransportClosed extends Error {}
+class StaleGeneration extends Error {}
 type AiBinding = {
   run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
 };
@@ -162,75 +159,6 @@ function wavFromPcm16le(pcm: Uint8Array, sampleRate: number) {
   view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
   write(36, "data"); view.setUint32(40, pcm.byteLength, true);
   return concat([new Uint8Array(header), pcm]);
-}
-
-async function responseBytes(result: unknown): Promise<Uint8Array> {
-  if (result instanceof Response) {
-    if (!result.ok) throw new NativeAudioError("http_error");
-    const mime = (result.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-    if (mime && !["application/octet-stream", "audio/pcm", "audio/raw", "audio/x-pcm", "audio/wav", "audio/x-wav", "audio/wave"].includes(mime)) throw new NativeAudioError("invalid_audio");
-    const size = Number(result.headers.get("content-length"));
-    if (size > 8 * 1024 * 1024) throw new NativeAudioError("audio_too_large");
-    return responseBytes(result.body);
-  }
-  if (result instanceof Uint8Array) return result;
-  if (result instanceof ArrayBuffer) return new Uint8Array(result);
-  if (result instanceof ReadableStream) {
-    const reader = result.getReader(), parts: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        if (!(chunk.value instanceof Uint8Array)) throw new NativeAudioError("invalid_audio");
-        size += chunk.value.byteLength;
-        if (size > 8 * 1024 * 1024) { await reader.cancel(); throw new NativeAudioError("audio_too_large"); }
-        parts.push(chunk.value);
-      }
-    } finally { reader.releaseLock(); }
-    return concat(parts);
-  }
-  if (result && typeof result === "object") {
-    const audio = (result as Record<string, unknown>).audio;
-    if (typeof audio === "string" && audio.trim()) {
-      try { return base64ToBytes(audio); } catch { throw new NativeAudioError("invalid_audio"); }
-    }
-  }
-  throw new NativeAudioError("invalid_audio");
-}
-
-function validatedLinear16(bytes: Uint8Array, sampleRate: number): Uint8Array {
-  if (!bytes.byteLength) throw new NativeAudioError("empty_audio");
-  if (bytes.byteLength > 8 * 1024 * 1024) throw new NativeAudioError("audio_too_large");
-  const tag = (offset: number, length: number) => String.fromCharCode(...bytes.subarray(offset, offset + length));
-  if (tag(0, 4) === "RIFF") {
-    if (bytes.byteLength < 44 || tag(8, 4) !== "WAVE") throw new NativeAudioError("invalid_audio");
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (view.getUint32(4, true) + 8 !== bytes.byteLength) throw new NativeAudioError("invalid_audio");
-    let formatValid = false, pcm: Uint8Array | null = null;
-    for (let offset = 12; offset + 8 <= bytes.byteLength;) {
-      const size = view.getUint32(offset + 4, true), end = offset + 8 + size;
-      if (end > bytes.byteLength) throw new NativeAudioError("invalid_audio");
-      if (tag(offset, 4) === "fmt ") {
-        if (size < 16 || view.getUint16(offset + 8, true) !== 1 || view.getUint16(offset + 10, true) !== 1 || view.getUint32(offset + 12, true) !== sampleRate || view.getUint16(offset + 22, true) !== 16 || view.getUint16(offset + 20, true) !== 2 || view.getUint32(offset + 16, true) !== sampleRate * 2) throw new NativeAudioError("invalid_audio");
-        formatValid = true;
-      }
-      if (tag(offset, 4) === "data") pcm = bytes.subarray(offset + 8, end);
-      offset = end + (size % 2);
-    }
-    if (!formatValid || !pcm) throw new NativeAudioError("invalid_audio");
-    bytes = pcm;
-  } else if (["OggS", "fLaC"].includes(tag(0, 4)) || tag(0, 3) === "ID3" || /^\s*<(?:!doctype|html|\?xml)\b/i.test(tag(0, Math.min(24, bytes.byteLength)))) {
-    throw new NativeAudioError("invalid_audio");
-  }
-  if (/^\s*[\[{]/.test(tag(0, Math.min(24, bytes.byteLength)))) {
-    let json = false;
-    try { JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); json = true; } catch {}
-    if (json) throw new NativeAudioError("invalid_audio");
-  }
-  if (!bytes.byteLength) throw new NativeAudioError("empty_audio");
-  if (bytes.byteLength % 2) throw new NativeAudioError("invalid_audio");
-  return bytes;
 }
 
 async function openThread(db: D1Database, order: Row) {
@@ -374,30 +302,62 @@ async function transcribe(env: Env, pcm: Uint8Array, sampleRate: number, languag
   return { text: transcript, confidence: Number.isFinite(raw) ? raw : (transcript ? 0.9 : 0), latencyMs: Date.now() - started, detectedLanguage, model };
 }
 
-async function synthesizeLinear16(env: Env, output: string, sampleRate: number) {
+async function synthesizeLinear16(env: Env, output: string, sampleRate: number, signal?: AbortSignal) {
   const started = Date.now();
-  // The native PawSpace call owns turn-taking, memory and actions. TTS is a replaceable renderer:
-  // direct ElevenLabs speech when configured, with an explicit Workers AI fallback for UAT.
-  const synthesized = await synthesizeNativeCarrierTts(env, output, sampleRate);
-  const audio = validatedLinear16(await responseBytes(synthesized.result), sampleRate);
-  return { audio, latencyMs: Date.now() - started, provider: synthesized.provider, model: synthesized.model, fallbackUsed: synthesized.fallbackUsed };
+  // TTS selection now returns validated PCM as a stream. ElevenLabs can begin playback before the
+  // full response exists; Workers AI remains a validated buffered fallback behind the same boundary.
+  const synthesized = await synthesizeNativeCarrierTts(env, output, sampleRate, { signal });
+  return { stream: synthesized.result, readyMs: Date.now() - started, provider: synthesized.provider, model: synthesized.model, fallbackUsed: synthesized.fallbackUsed };
 }
 
-function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
+function sendAudioFrame(socket: WebSocket, session: Session, raw: Uint8Array, terminal = false) {
   if (socket.readyState !== 1) throw new TransportClosed();
-  let frames = 0;
-  // Preserve the carrier minimum on every frame, including a short terminal chunk.
-  for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
+  const paddedLength = terminal ? Math.max(outboundFrameBytes, Math.ceil(raw.byteLength / 320) * 320) : raw.byteLength;
+  const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
+  socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
+}
+
+async function sendAudioStream(socket: WebSocket, session: Session, stream: ReadableStream<Uint8Array>, markName: string, options: {
+  signal: AbortSignal;
+  isCurrent(): boolean;
+  turnStarted: number;
+  onFirstAudio(firstAudioMs: number): void;
+}) {
+  const reader = stream.getReader();
+  let pending = new Uint8Array(), bytes = 0, frames = 0, firstAudioMs: number | null = null;
+  const assertCurrent = () => {
+    if (options.signal.aborted || !options.isCurrent()) throw new StaleGeneration();
     if (socket.readyState !== 1) throw new TransportClosed();
-    const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
-    const paddedLength = Math.max(outboundFrameBytes, Math.ceil(raw.byteLength / 320) * 320);
-    const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
-    socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
-    frames++;
-  }
-  if (socket.readyState !== 1) throw new TransportClosed();
-  socket.send(JSON.stringify({ event: "mark", stream_sid: session.streamSid, mark: { name: markName } }));
-  return frames;
+  };
+  try {
+    while (true) {
+      assertCurrent();
+      const next = await reader.read();
+      assertCurrent();
+      if (next.done) break;
+      if (!(next.value instanceof Uint8Array) || !next.value.byteLength) continue;
+      bytes += next.value.byteLength;
+      pending = pending.byteLength ? concat([pending, next.value]) : new Uint8Array(next.value);
+      while (pending.byteLength >= outboundFrameBytes) {
+        assertCurrent();
+        sendAudioFrame(socket, session, pending.subarray(0, outboundFrameBytes));
+        pending = pending.subarray(outboundFrameBytes); frames++;
+        if (firstAudioMs === null) { firstAudioMs = Date.now() - options.turnStarted; options.onFirstAudio(firstAudioMs); }
+      }
+    }
+    assertCurrent();
+    if (pending.byteLength) {
+      sendAudioFrame(socket, session, pending, true); frames++;
+      if (firstAudioMs === null) { firstAudioMs = Date.now() - options.turnStarted; options.onFirstAudio(firstAudioMs); }
+    }
+    if (!frames) throw new NativeCarrierTtsAudioError("empty_audio");
+    assertCurrent();
+    socket.send(JSON.stringify({ event: "mark", stream_sid: session.streamSid, mark: { name: markName } }));
+    return { frames, bytes, firstAudioMs: firstAudioMs ?? 0 };
+  } catch (error) {
+    try { await reader.cancel(); } catch {}
+    throw error;
+  } finally { try { reader.releaseLock(); } catch {} }
 }
 
 async function recordStreamDiagnostic(env: Env, session: Session, event: string, detail: Row) {
@@ -440,107 +400,290 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
   (server as WebSocket & { accept(): void }).accept();
 
   let session: Session | null = null;
-  let processingSession: Session | null = null;
   let transportOpen = true, terminated = false;
-  let stage: ProcessingStage = "start", stageStarted = Date.now();
   let currentMark: string | null = null;
   const pendingMarks = new Map<string, { session: Session; queuedAt: number; bytes: number; frames: number }>();
   let providerPromise: Promise<AiResponseProvider> | null = null;
   let speechParts: Uint8Array[] = [], preRoll: Uint8Array[] = [], speechStartedAt = 0, silenceMs = 0, assistantPlaying = false;
-  let chain = Promise.resolve();
+  let speechGeneration = 0, generationVersion = 0;
+  let activeTtsAbort: AbortController | null = null;
+  let controlChain = Promise.resolve();
 
-  const setStage = (next: ProcessingStage) => { stage = next; stageStarted = Date.now(); };
   const assertLive = (active: Session) => {
     if (!transportOpen || terminated || server.readyState !== 1 || session !== active) throw new TransportClosed();
   };
-  const diagnostic = (active: Session, event: string, detail: Row) => recordStreamDiagnostic(env, active, event, detail).catch(() => undefined);
-  const queueAudio = (active: Session, audio: Uint8Array, markName: string) => {
+  const isCurrent = (active: Session, version: number) =>
+    transportOpen && !terminated && server.readyState === 1 && session === active && generationVersion === version;
+  const assertCurrent = (active: Session, version: number) => {
     assertLive(active);
-    const frames = sendAudio(server, active, audio, markName);
-    if (pendingMarks.size >= 32) pendingMarks.delete(pendingMarks.keys().next().value!);
-    pendingMarks.set(markName, { session: active, queuedAt: Date.now(), bytes: audio.byteLength, frames });
-    currentMark = markName;
-    assistantPlaying = true;
-    ctx.waitUntil(diagnostic(active, "agentstream_audio_queued", { markName, bytes: audio.byteLength, frames, sampleRate: active.sampleRate }));
+    if (generationVersion !== version) throw new StaleGeneration();
+  };
+  const diagnostic = (active: Session, event: string, detail: Row) => recordStreamDiagnostic(env, active, event, detail).catch(() => undefined);
+
+  const cancelStaleGeneration = (active: Session, reason: "caller_speech" | "stop" | "transport_closed") => {
+    const hadGeneration = Boolean(activeTtsAbort), hadPlayback = assistantPlaying;
+    generationVersion++;
+    activeTtsAbort?.abort();
+    activeTtsAbort = null;
+    if (hadPlayback && transportOpen && server.readyState === 1 && session === active) {
+      server.send(JSON.stringify({ event: "clear", stream_sid: active.streamSid }));
+    }
+    pendingMarks.clear(); currentMark = null; assistantPlaying = false;
+    if (reason === "caller_speech" && (hadGeneration || hadPlayback)) {
+      ctx.waitUntil(diagnostic(active, "agentstream_barge_in", {
+        generation: generationVersion,
+        generationCancelled: hadGeneration,
+        playbackCleared: hadPlayback,
+      }));
+    }
+    return generationVersion;
   };
 
-  const processUtterance = async (pcm: Uint8Array, active: Session) => {
-    const turnStarted = Date.now();
-    assertLive(active);
-    setStage("stt");
-    const stt = await transcribe(env, pcm, active.sampleRate, active.language);
-    assertLive(active);
-    if (!stt.text) return;
-    const llmStarted = Date.now();
-    setStage("llm");
-    providerPromise ||= createGroundedAiRuntimeProvider(env.DB,serviceActor,"voice",{dispatchItemId:active.salesDispatchItemId,salesService:active.salesService});
-    const provider = await providerPromise;
-    assertLive(active);
-    const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, provider);
-    assertLive(active);
-    const llmMs = Date.now() - llmStarted;
-    if (!generated.output) return;
-    setStage("turn_tts");
-    const tts = await synthesizeLinear16(env, generated.output, active.sampleRate);
-    assertLive(active);
-    setStage("turn_text");
-    await recordSegment(env, active, "assistant", generated.output, null, null);
-    ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "turn", chars: Math.min(1_000_000, generated.output.length) }));
-    assertLive(active);
-    const totalMs = Date.now() - turnStarted;
-    const markName = `turn-${active.segmentIndex}-end`;
-    setStage("turn_send");
-    queueAudio(active, tts.audio, markName);
-    const diagnostics = nativeVoiceTurnDiagnostics({
-      configuredSttLanguage: active.language,
-      detectedSttLanguage: stt.detectedLanguage,
-      sampleRate: active.sampleRate,
-      pcmBytes: pcm.byteLength,
-      sttMs: stt.latencyMs,
-      llmMs,
-      ttsMs: tts.latencyMs,
-      totalMs,
-      latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS,
-      transcriptChars: stt.text.length,
-      assistantChars: generated.output.length,
-      sttModel: stt.model,
-      ttsModel: tts.model,
-      ttsProvider: tts.provider,
-      ttsFallbackUsed: tts.fallbackUsed,
-      outcome: generated.outcome,
+  const failProcessing = async (error: unknown, active: Session | null, stage: ProcessingStage, startedAt: number, version?: number) => {
+    if (error instanceof TransportClosed || !transportOpen || server.readyState !== 1) {
+      if (active) await diagnostic(active, "agentstream_processing_abandoned", {
+        stage, reason: "transport_closed", elapsedMs: Math.min(600_000, Date.now() - startedAt),
+      });
+      if (!transportOpen) session = null;
+      return;
+    }
+    if (error instanceof StaleGeneration || error instanceof NativeCarrierTtsCancelledError || (version !== undefined && version !== generationVersion)) {
+      if (active) await diagnostic(active, "agentstream_generation_cancelled", {
+        stage, reason: "superseded_by_caller", elapsedMs: Math.min(600_000, Date.now() - startedAt),
+      });
+      return;
+    }
+    terminated = true;
+    generationVersion++;
+    activeTtsAbort?.abort(); activeTtsAbort = null;
+    if (active) {
+      const code = error instanceof NativeCarrierTtsAudioError ? error.code : "processing_exception";
+      await diagnostic(active, "agentstream_processing_failed", {
+        stage, code, elapsedMs: Math.min(600_000, Date.now() - startedAt),
+      });
+      const ttsFailure = error instanceof NativeCarrierTtsAudioError || stage === "opening_tts" || stage === "turn_tts";
+      const to = stage === "stt" ? "stt_failed" : ttsFailure ? "tts_failed" : "provider_error";
+      try {
+        const row = await env.DB.prepare("SELECT state FROM voice_call_orders WHERE id=?").bind(active.ledgerCallId).first<Row>();
+        if (isVoiceCallState(row?.state) && canVoiceCallTransition(row.state, to)) {
+          await transitionVoiceCall(env.DB, {
+            callId: active.ledgerCallId,
+            to,
+            reason: "agentstream_processing_failed",
+            actor: serviceActor.email,
+            detail: { source: "exotel_agentstream", stage, code },
+          });
+        }
+      } catch {
+        await diagnostic(active, "agentstream_ledger_reconciliation_failed", { stage, target: to });
+      }
+    }
+    await closeSession(env, active, "agentstream_error", true);
+    try { server.close(1011, "AgentStream processing failed"); } catch {}
+  };
+
+  const queueAudio = async (
+    active: Session,
+    stream: ReadableStream<Uint8Array>,
+    markName: string,
+    version: number,
+    turnStarted: number,
+    controller: AbortController,
+    purpose: "opening" | "turn",
+  ) => {
+    assertCurrent(active, version);
+    const queuedAt = Date.now();
+    const sent = await sendAudioStream(server, active, stream, markName, {
+      signal: controller.signal,
+      isCurrent: () => isCurrent(active, version),
+      turnStarted,
+      onFirstAudio(firstAudioMs) {
+        assistantPlaying = true;
+        currentMark = markName;
+        ctx.waitUntil(diagnostic(active, "agentstream_first_audio", {
+          purpose, firstAudioMs: Math.min(600_000, firstAudioMs), sampleRate: active.sampleRate,
+        }));
+      },
     });
-    await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(
-      crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify(diagnostics), Date.now(),
-    ).run();
+    assertCurrent(active, version);
+    if (pendingMarks.size >= 32) pendingMarks.delete(pendingMarks.keys().next().value!);
+    pendingMarks.set(markName, { session: active, queuedAt, bytes: sent.bytes, frames: sent.frames });
+    currentMark = markName;
+    ctx.waitUntil(diagnostic(active, "agentstream_audio_queued", {
+      markName, bytes: sent.bytes, frames: sent.frames, sampleRate: active.sampleRate,
+      firstAudioMs: Math.min(600_000, sent.firstAudioMs),
+    }));
+    return sent;
+  };
+
+  const runOpening = async (active: Session, version: number) => {
+    const startedAt = Date.now();
+    let taskStage: ProcessingStage = "opening_tts";
+    const controller = new AbortController();
+    activeTtsAbort = controller;
+    try {
+      assertCurrent(active, version);
+      ctx.waitUntil(diagnostic(active, "agentstream_speech_started", { purpose: "opening", stage: taskStage, sampleRate: active.sampleRate }));
+      const greeting = await synthesizeLinear16(env, active.openingDisclosure, active.sampleRate, controller.signal);
+      assertCurrent(active, version);
+      taskStage = "opening_text";
+      await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
+      ctx.waitUntil(diagnostic(active, "agentstream_text_generated", {
+        purpose: "opening",
+        chars: active.openingDisclosure.length,
+        ttsMs: Math.min(600_000, greeting.readyMs),
+        ttsProvider: greeting.provider,
+        ttsModel: greeting.model,
+        ttsFallbackUsed: greeting.fallbackUsed,
+      }));
+      assertCurrent(active, version);
+      taskStage = "opening_send";
+      await queueAudio(active, greeting.stream, `opening-${active.segmentIndex}-end`, version, startedAt, controller, "opening");
+    } catch (error) {
+      await failProcessing(error, active, taskStage, startedAt, version);
+    } finally {
+      if (activeTtsAbort === controller) activeTtsAbort = null;
+    }
+  };
+
+  const processUtterance = async (pcm: Uint8Array, active: Session, version: number) => {
+    const turnStarted = Date.now();
+    let taskStage: ProcessingStage = "stt";
+    let controller: AbortController | null = null;
+    try {
+      assertCurrent(active, version);
+      const stt = await transcribe(env, pcm, active.sampleRate, active.language);
+      assertCurrent(active, version);
+      if (!stt.text) return;
+
+      const llmStarted = Date.now();
+      taskStage = "llm";
+      providerPromise ||= createGroundedAiRuntimeProvider(env.DB, serviceActor, "voice", {
+        dispatchItemId: active.salesDispatchItemId,
+        salesService: active.salesService,
+      });
+      const provider = await providerPromise;
+      assertCurrent(active, version);
+      const generated = await recordSegment(env, active, "customer", stt.text, stt.confidence, provider);
+      assertCurrent(active, version);
+      const llmMs = Date.now() - llmStarted;
+      if (!generated.output) return;
+
+      taskStage = "turn_tts";
+      controller = new AbortController();
+      activeTtsAbort = controller;
+      const tts = await synthesizeLinear16(env, generated.output, active.sampleRate, controller.signal);
+      assertCurrent(active, version);
+
+      taskStage = "turn_text";
+      await recordSegment(env, active, "assistant", generated.output, null, null);
+      assertCurrent(active, version);
+      ctx.waitUntil(diagnostic(active, "agentstream_text_generated", {
+        purpose: "turn", chars: Math.min(1_000_000, generated.output.length),
+        ttsMs: Math.min(600_000, tts.readyMs), ttsProvider: tts.provider,
+        ttsModel: tts.model, ttsFallbackUsed: tts.fallbackUsed,
+      }));
+
+      taskStage = "turn_send";
+      const markName = `turn-${active.segmentIndex}-end`;
+      const sent = await queueAudio(active, tts.stream, markName, version, turnStarted, controller, "turn");
+      assertCurrent(active, version);
+      const totalMs = Date.now() - turnStarted;
+      const diagnostics = nativeVoiceTurnDiagnostics({
+        configuredSttLanguage: active.language,
+        detectedSttLanguage: stt.detectedLanguage,
+        sampleRate: active.sampleRate,
+        pcmBytes: pcm.byteLength,
+        sttMs: stt.latencyMs,
+        llmMs,
+        ttsMs: tts.readyMs,
+        firstAudioMs: sent.firstAudioMs,
+        totalMs,
+        latencyTargetMs: VOICE_TURN_LATENCY_TARGET_MS,
+        transcriptChars: stt.text.length,
+        assistantChars: generated.output.length,
+        sttModel: stt.model,
+        ttsModel: tts.model,
+        ttsProvider: tts.provider,
+        ttsFallbackUsed: tts.fallbackUsed,
+        outcome: generated.outcome,
+      });
+      await env.DB.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)").bind(
+        crypto.randomUUID(), active.aiCallId, "agentstream_turn", JSON.stringify(diagnostics), Date.now(),
+      ).run();
+    } catch (error) {
+      await failProcessing(error, active, taskStage, turnStarted, version);
+    } finally {
+      if (controller && activeTtsAbort === controller) activeTtsAbort = null;
+    }
+  };
+
+  const handleMedia = (incoming: AgentEvent) => {
+    const active = session;
+    if (!active || !transportOpen || terminated) return;
+    const startedAt = Date.now();
+    try {
+      const payload = text(incoming.media?.payload);
+      if (!payload) return;
+      let pcm: Uint8Array;
+      try { pcm = base64ToBytes(payload); } catch { server.close(1007, "Invalid base64 media"); return; }
+      if (!pcm.byteLength || pcm.byteLength % 2) { server.close(1007, "Invalid PCM media"); return; }
+      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / active.sampleRate) * 1000));
+      const speech = pcmRms(pcm) >= SPEECH_RMS_THRESHOLD;
+      preRoll.push(pcm);
+      while (preRoll.reduce((sum, item) => sum + item.byteLength, 0) > active.sampleRate * 2 * (PRE_ROLL_MS / 1000)) preRoll.shift();
+
+      if (speech) {
+        if (!speechStartedAt) {
+          speechStartedAt = Date.now();
+          speechParts = [...preRoll];
+          speechGeneration = cancelStaleGeneration(active, "caller_speech");
+        } else speechParts.push(pcm);
+        silenceMs = 0;
+      } else if (speechStartedAt) {
+        speechParts.push(pcm); silenceMs += frameMs;
+      }
+
+      const elapsed = speechStartedAt ? Date.now() - speechStartedAt : 0;
+      if (speechStartedAt && (silenceMs >= END_SILENCE_MS || elapsed >= MAX_UTTERANCE_MS)) {
+        const utterance = concat(speechParts), version = speechGeneration;
+        speechParts = []; preRoll = []; speechStartedAt = 0; silenceMs = 0;
+        ctx.waitUntil(processUtterance(utterance, active, version));
+      }
+    } catch (error) {
+      ctx.waitUntil(failProcessing(error, active, "media", startedAt));
+    }
   };
 
   server.addEventListener("message", (event: MessageEvent) => {
-    chain = chain.then(async () => {
+    let incoming: AgentEvent;
+    try { incoming = JSON.parse(String(event.data)) as AgentEvent; }
+    catch { server.close(1003, "Malformed AgentStream JSON"); return; }
+    const kind = text(incoming.event);
+
+    // Media intake never waits behind STT, model generation or speech rendering. If the authenticated
+    // start is still being established, wait only for that control operation without joining its queue.
+    if (kind === "media") {
+      if (session) handleMedia(incoming);
+      else {
+        const ready = controlChain;
+        ctx.waitUntil(ready.then(() => { if (session) handleMedia(incoming); }));
+      }
+      return;
+    }
+
+    let eventStage: ProcessingStage = "start";
+    const eventStarted = Date.now();
+    controlChain = controlChain.then(async () => {
       if (!transportOpen || terminated) return;
-      processingSession = session;
-      let incoming: AgentEvent;
-      try { incoming = JSON.parse(String(event.data)) as AgentEvent; } catch { server.close(1003, "Malformed AgentStream JSON"); return; }
-      const kind = text(incoming.event);
       if (kind === "connected") return;
       if (kind === "start") {
-        setStage("start");
+        eventStage = "start";
         if (session) { server.close(1002, "Duplicate AgentStream start"); return; }
         const active = await establishSession(env, incoming.start || {});
-        processingSession = active;
         session = active;
         assertLive(active);
-        if (!active.reconnected) {
-          setStage("opening_tts");
-          ctx.waitUntil(diagnostic(active, "agentstream_speech_started", { purpose: "opening", stage, sampleRate: active.sampleRate }));
-          const greeting = await synthesizeLinear16(env, active.openingDisclosure, active.sampleRate);
-          assertLive(active);
-          setStage("opening_text");
-          await recordSegment(env, active, "assistant", active.openingDisclosure, null, null);
-          ctx.waitUntil(diagnostic(active, "agentstream_text_generated", { purpose: "opening", chars: active.openingDisclosure.length, ttsMs: Math.min(600_000, greeting.latencyMs), ttsProvider: greeting.provider, ttsModel: greeting.model, ttsFallbackUsed: greeting.fallbackUsed }));
-          assertLive(active);
-          setStage("opening_send");
-          queueAudio(active, greeting.audio, `opening-${active.segmentIndex}-end`);
-        }
+        if (!active.reconnected) ctx.waitUntil(runOpening(active, generationVersion));
         return;
       }
       if (kind === "mark") {
@@ -548,77 +691,40 @@ export async function handleExotelAgentStream(request: Request, env: Env, ctx: {
         if (pending && (!incoming.stream_sid || text(incoming.stream_sid) === pending.session.streamSid)) {
           pendingMarks.delete(name);
           if (currentMark === name) { assistantPlaying = false; currentMark = null; }
-          ctx.waitUntil(diagnostic(pending.session, "agentstream_audio_mark_ack", { markName: name, bytes: pending.bytes, frames: pending.frames, ackMs: Math.min(600_000, Date.now() - pending.queuedAt) }));
+          ctx.waitUntil(diagnostic(pending.session, "agentstream_audio_mark_ack", {
+            markName: name, bytes: pending.bytes, frames: pending.frames,
+            ackMs: Math.min(600_000, Date.now() - pending.queuedAt),
+          }));
         }
         return;
       }
-      if (kind === "stop") { setStage("stop"); const active = session; terminated = true; await closeSession(env, active, "callended"); session = null; server.close(1000, "Call ended"); return; }
-      if (kind !== "media" || !session) return;
-      setStage("media");
-      const payload = text(incoming.media?.payload);
-      if (!payload) return;
-      let pcm: Uint8Array;
-      try { pcm = base64ToBytes(payload); } catch { server.close(1007, "Invalid base64 media"); return; }
-      if (!pcm.byteLength || pcm.byteLength % 2) { server.close(1007, "Invalid PCM media"); return; }
-      const frameMs = Math.max(1, Math.round((pcm.byteLength / 2 / session.sampleRate) * 1000));
-      const speech = pcmRms(pcm) >= SPEECH_RMS_THRESHOLD;
-      preRoll.push(pcm);
-      while (preRoll.reduce((sum, item) => sum + item.byteLength, 0) > session.sampleRate * 2 * (PRE_ROLL_MS / 1000)) preRoll.shift();
-      if (speech) {
-        if (!speechStartedAt) {
-          speechStartedAt = Date.now();
-          speechParts = [...preRoll];
-          if (assistantPlaying) {
-            assertLive(session);
-            server.send(JSON.stringify({ event: "clear", stream_sid: session.streamSid }));
-            // Carrier marks released by clear are not evidence that the caller heard the audio.
-            pendingMarks.clear(); currentMark = null; assistantPlaying = false;
-          }
-        } else speechParts.push(pcm);
-        silenceMs = 0;
-      } else if (speechStartedAt) {
-        speechParts.push(pcm); silenceMs += frameMs;
-      }
-      const elapsed = speechStartedAt ? Date.now() - speechStartedAt : 0;
-      if (speechStartedAt && (silenceMs >= END_SILENCE_MS || elapsed >= MAX_UTTERANCE_MS)) {
-        const utterance = concat(speechParts), active = session;
-        speechParts = []; preRoll = []; speechStartedAt = 0; silenceMs = 0;
-        await processUtterance(utterance, active);
-      }
-    }).catch(async error => {
-      const active = processingSession;
-      if (error instanceof TransportClosed || !transportOpen || server.readyState !== 1) {
-        if (active) await diagnostic(active, "agentstream_processing_abandoned", { stage, reason: "transport_closed", elapsedMs: Math.min(600_000, Date.now() - stageStarted) });
+      if (kind === "stop") {
+        eventStage = "stop";
+        const active = session;
+        terminated = true;
+        if (active) cancelStaleGeneration(active, "stop");
+        await closeSession(env, active, "callended");
         session = null;
-        return;
+        server.close(1000, "Call ended");
       }
-      terminated = true;
-      if (active) {
-        const code = error instanceof NativeAudioError ? error.code : "processing_exception";
-        await diagnostic(active, "agentstream_processing_failed", { stage, code, elapsedMs: Math.min(600_000, Date.now() - stageStarted) });
-        const to = stage === "stt" ? "stt_failed" : stage === "opening_tts" || stage === "turn_tts" ? "tts_failed" : "provider_error";
-        try {
-          const row = await env.DB.prepare("SELECT state FROM voice_call_orders WHERE id=?").bind(active.ledgerCallId).first<Row>();
-          if (isVoiceCallState(row?.state) && canVoiceCallTransition(row.state, to)) {
-            await transitionVoiceCall(env.DB, { callId: active.ledgerCallId, to, reason: "agentstream_processing_failed", actor: serviceActor.email, detail: { source: "exotel_agentstream", stage, code } });
-          }
-        } catch {
-          await diagnostic(active, "agentstream_ledger_reconciliation_failed", { stage, target: to });
-        }
-      }
-      await closeSession(env, active, "agentstream_error", true);
-      try { server.close(1011, "AgentStream processing failed"); } catch {}
-    });
-    ctx.waitUntil(chain);
+    }).catch(error => failProcessing(error, session, eventStage, eventStarted));
+    ctx.waitUntil(controlChain);
   });
+
   server.addEventListener("close", () => {
-    transportOpen = false; pendingMarks.clear(); currentMark = null;
-    const active = session; session = null;
+    transportOpen = false;
+    const active = session;
+    if (active) cancelStaleGeneration(active, "transport_closed");
+    pendingMarks.clear(); currentMark = null;
+    session = null;
     ctx.waitUntil(recordTransportInterruption(env, active, "socket_closed"));
   });
   server.addEventListener("error", () => {
-    transportOpen = false; pendingMarks.clear(); currentMark = null;
-    ctx.waitUntil(recordTransportInterruption(env, session, "socket_error"));
+    transportOpen = false;
+    const active = session;
+    if (active) cancelStaleGeneration(active, "transport_closed");
+    pendingMarks.clear(); currentMark = null;
+    ctx.waitUntil(recordTransportInterruption(env, active, "socket_error"));
   });
 
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket });

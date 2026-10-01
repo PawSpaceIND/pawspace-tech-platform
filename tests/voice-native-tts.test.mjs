@@ -96,3 +96,81 @@ test("native TTS readiness exposes configuration state without secret values", (
   });
   assert.ok(!JSON.stringify(ready).includes("test-key"));
 });
+
+test("native TTS readiness uses the same approved-origin validation as execution", () => {
+  const ready = nativeCarrierTtsReadiness({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+    ELEVENLABS_API_BASE: "https://example.invalid",
+    AI: { run: async () => pcm },
+  });
+  assert.equal(ready.configured, false);
+  assert.equal(ready.primary, null);
+  assert.equal(ready.elevenLabsConfigured, false);
+  assert.equal(ready.workersAiConfigured, true);
+});
+
+test("malformed ElevenLabs PCM is rejected inside the provider attempt and falls back", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => new Response("<html>not audio</html>", {
+    status: 200,
+    headers: { "content-type": "audio/pcm" },
+  });
+  const result = await synthesizeNativeCarrierTts({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+    PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: "elevenlabs",
+    PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "workers_ai",
+    AI: { run: async () => pcm },
+  }, "Fallback after invalid audio.", 8000);
+  assert.equal(result.provider, "workers_ai");
+  assert.equal(result.fallbackUsed, true);
+});
+
+test("ElevenLabs PCM is exposed progressively before the provider stream completes", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  let source;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      source = controller;
+      controller.enqueue(new Uint8Array(64));
+    },
+  }), { status: 200, headers: { "content-type": "audio/pcm" } });
+
+  const result = await synthesizeNativeCarrierTts({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+  }, "Stream this.", 8000);
+  const reader = result.result.getReader();
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  assert.equal(first.value.byteLength, 64);
+  source.enqueue(new Uint8Array(64));
+  source.close();
+  const second = await reader.read();
+  assert.equal(second.done, false);
+  assert.equal(second.value.byteLength, 64);
+  assert.equal((await reader.read()).done, true);
+});
+
+test("oversized ElevenLabs responses cancel the provider body before returning", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  let cancelled = false;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    pull() {},
+    cancel() { cancelled = true; },
+  }), {
+    status: 200,
+    headers: { "content-type": "audio/pcm", "content-length": String(8 * 1024 * 1024 + 1) },
+  });
+  await assert.rejects(() => synthesizeNativeCarrierTts({
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_TTS_VOICE_ID: "voice-premium",
+    PAWSPACE_VOICE_NATIVE_TTS_PROVIDER: "elevenlabs",
+    PAWSPACE_VOICE_NATIVE_TTS_FALLBACK: "none",
+  }, "Too much audio.", 8000), /audio_too_large/);
+  assert.equal(cancelled, true);
+});
