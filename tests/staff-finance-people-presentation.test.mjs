@@ -1,3 +1,4 @@
+import {reverseSittingTargetSafety} from './helpers/ui-sitting-target-safety-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,7 +69,7 @@ function reverseProviderTrainingContent(source,path){
 for(const [path,expected] of Object.entries(contract.files)) {
   test('Finance/People presentation preserves every non-style AST node: '+path,()=>{
     const source=read(path);
-    assert.equal(staffSemanticContract(reverseProviderTrainingContent(reverseReviewedTrainingContent(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(reverseFinancePrecision(source,path),path),path),path),path),path),path),expected.semantic);
+    assert.equal(staffSemanticContract(reverseProviderTrainingContent(reverseReviewedTrainingContent(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(reverseFinancePrecision(reverseSittingTargetSafety(source,path),path),path),path),path),path),path),path),expected.semantic);
     const file=parseStaffPage(source,path);let roots=0;
     function walk(node){if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='StaffModule')roots++;ts.forEachChild(node,walk);}
     walk(file);assert.equal(roots,expected.mainRoots,'Every original main, including loading/error returns, stays framed.');

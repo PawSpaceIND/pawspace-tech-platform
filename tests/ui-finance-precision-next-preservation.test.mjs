@@ -1,3 +1,4 @@
+import {reverseSittingTargetSafety} from './helpers/ui-sitting-target-safety-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -8,7 +9,7 @@ const receipt=JSON.parse(readFileSync(new URL('./fixtures/ui-finance-precision-n
 for(const item of receipt.files){
  test('exact display-only formatter reversal preserves every source byte: '+item.file,()=>{
   const source=readFileSync(new URL('../'+item.file,import.meta.url),'utf8');
-  assert.equal(createHash('sha256').update(reverseFinancePrecision(source,item.file)).digest('hex'),item.beforeHash);
+  assert.equal(createHash('sha256').update(reverseFinancePrecision(reverseSittingTargetSafety(source,item.file),item.file)).digest('hex'),item.beforeHash);
   assert.throws(()=>reverseFinancePrecision(source.replace(item.after,'maximumFractionDigits:1'),item.file),/Exactly one reviewed/);
  });
  test('actual INR formatter retains fractional refunds, tax and whole amounts: '+item.file,()=>{

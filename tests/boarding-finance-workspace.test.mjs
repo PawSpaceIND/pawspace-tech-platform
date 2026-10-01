@@ -283,7 +283,7 @@ test("STAFF-02 a loaded booking shows each action only on the row the server wil
   assert.ok(rowOf(after, "First request from the customer").includes("Approve explicitly"));
   assert.ok(!rowOf(after, "Second request from the customer").includes("Approve explicitly"));
   assert.equal(count(after, ">Record sandbox refund</button>"), 1);
-  assert.match(text(after), /₹250 · sandbox pending Record sandbox refund/);
+  assert.match(text(after), /₹250\.00 · sandbox pending Record sandbox refund/);
 });
 
 // ---------------------------------------------------------------------------------------------
