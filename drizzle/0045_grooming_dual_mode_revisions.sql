@@ -52,7 +52,10 @@ WHEN NEW.thread_id IS NOT OLD.thread_id OR NEW.revision<=OLD.revision BEGIN
 END'),
   ('conversation_revision_no_delete','CREATE '||'TRIGGER conversation_revision_no_delete BEFORE DELETE ON conversation_ownership_revisions BEGIN
  SELECT RAISE(ABORT,''ownership_revision_tombstone_required'');
-END'),
+END')
+),
+expected_grooming_triggers_2(name,sql) AS (
+ VALUES
   ('grooming_control_revision_no_reset','CREATE '||'TRIGGER grooming_control_revision_no_reset BEFORE UPDATE ON grooming_effective_control_revision
 WHEN NEW.id IS NOT OLD.id OR NEW.revision<=OLD.revision OR NEW.database_incarnation IS NOT OLD.database_incarnation BEGIN
  SELECT RAISE(ABORT,''control_revision_must_increase'');
@@ -83,7 +86,10 @@ END'),
   ('grooming_control_gce_budget_envelopes_delete','CREATE '||'TRIGGER grooming_control_gce_budget_envelopes_delete AFTER DELETE ON gce_budget_envelopes BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
-END'),
+END')
+),
+expected_grooming_triggers_3(name,sql) AS (
+ VALUES
   ('grooming_control_gce_constraints_insert','CREATE '||'TRIGGER grooming_control_gce_constraints_insert AFTER INSERT ON gce_constraints BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
@@ -115,7 +121,10 @@ END'),
   ('grooming_control_executive_runtime_config_update','CREATE '||'TRIGGER grooming_control_executive_runtime_config_update AFTER UPDATE ON executive_runtime_config BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
-END'),
+END')
+),
+expected_grooming_triggers_4(name,sql) AS (
+ VALUES
   ('grooming_control_executive_runtime_config_delete','CREATE '||'TRIGGER grooming_control_executive_runtime_config_delete AFTER DELETE ON executive_runtime_config BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
@@ -147,7 +156,10 @@ END'),
   ('grooming_control_ai_intent_versions_insert','CREATE '||'TRIGGER grooming_control_ai_intent_versions_insert AFTER INSERT ON ai_intent_versions BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
-END'),
+END')
+),
+expected_grooming_triggers_5(name,sql) AS (
+ VALUES
   ('grooming_control_ai_intent_versions_update','CREATE '||'TRIGGER grooming_control_ai_intent_versions_update AFTER UPDATE ON ai_intent_versions BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
@@ -179,7 +191,10 @@ END'),
   ('grooming_control_ai_knowledge_source_versions_delete','CREATE '||'TRIGGER grooming_control_ai_knowledge_source_versions_delete AFTER DELETE ON ai_knowledge_source_versions BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
-END'),
+END')
+),
+expected_grooming_triggers_6(name,sql) AS (
+ VALUES
   ('grooming_control_whatsapp_conversation_routing_modes_insert','CREATE '||'TRIGGER grooming_control_whatsapp_conversation_routing_modes_insert AFTER INSERT ON whatsapp_conversation_routing_modes BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
@@ -211,7 +226,10 @@ END'),
   ('grooming_control_lead_work_items_update','CREATE '||'TRIGGER grooming_control_lead_work_items_update AFTER UPDATE ON lead_work_items BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
-END'),
+END')
+),
+expected_grooming_triggers_7(name,sql) AS (
+ VALUES
   ('grooming_control_lead_work_items_delete','CREATE '||'TRIGGER grooming_control_lead_work_items_delete AFTER DELETE ON lead_work_items BEGIN
  UPDATE grooming_effective_control_revision SET revision=revision+1 WHERE id=1;
  SELECT CASE WHEN EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1) THEN 1 ELSE abs(-9223372036854775808) END;
@@ -243,7 +261,10 @@ END'),
   ('grooming_installation_epoch_no_reset','CREATE '||'TRIGGER grooming_installation_epoch_no_reset BEFORE UPDATE ON grooming_revision_installation_epoch
 WHEN NEW.id IS NOT OLD.id OR NEW.epoch<=OLD.epoch OR NEW.incarnation IS NOT OLD.incarnation BEGIN
  SELECT RAISE(ABORT,''installation_epoch_must_increase'');
-END'),
+END')
+),
+expected_grooming_triggers_8(name,sql) AS (
+ VALUES
   ('grooming_installation_epoch_no_delete','CREATE '||'TRIGGER grooming_installation_epoch_no_delete BEFORE DELETE ON grooming_revision_installation_epoch BEGIN
  SELECT RAISE(ABORT,''installation_epoch_tombstone_required'');
 END')
@@ -252,8 +273,21 @@ UPDATE grooming_revision_installation_epoch
 SET epoch=epoch+1
 WHERE id=1 AND NOT (
  (SELECT COUNT(*) FROM expected_grooming_triggers expected
-  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql)
- = (SELECT COUNT(*) FROM expected_grooming_triggers)
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_2 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_3 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_4 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_5 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_6 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_7 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 8
+ AND (SELECT COUNT(*) FROM expected_grooming_triggers_8 expected
+  JOIN sqlite_master actual ON actual.type='trigger' AND actual.name=expected.name AND actual.sql=expected.sql) = 1
  AND EXISTS(SELECT 1 FROM grooming_revision_installation WHERE id=1 AND schema_version=2)
 );
 -- Task4 REVIEW CANDIDATE. No mode/settings/enrollment changes.
