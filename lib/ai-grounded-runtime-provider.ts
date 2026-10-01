@@ -34,7 +34,7 @@ export function isPetMedicalQuestion(message:string){
  const clinicalRemainder=message.replace(/\b(?:vet(?:erinarian)?|veterinary)\b/gi,"");
  return PET_MEDICAL_QUESTION.test(message)&&!(administrative&&!PET_MEDICAL_QUESTION.test(clinicalRemainder));
 }
-export function ensureVeterinaryReferral(reply:string,medical:boolean){return medical&&!/\b(?:contact|consult|speak (?:to|with)|see|call|visit)\b.{0,50}\b(?:a |your |an )?(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\b/i.test(reply)?`${reply.trim()} Please contact a veterinarian about this medical concern.`:reply;}
+export function ensureVeterinaryReferral(reply:string,medical:boolean){return medical&&!/\b(?:contact|consult|speak (?:to|with)|see|call|visit)\b.{0,50}\b(?:a |your |an )?(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\b|\bplease\s+(?:have|ask)\s+(?:a|your|an)\s+(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\s+(?:to\s+)?(?:assess|examine|evaluate|check)\b/i.test(reply)?`${reply.trim()} Please contact a veterinarian about this medical concern.`:reply;}
 export function safePetMedicalReply(reply:string,medical:boolean,actionsProposed=false){
  if(!medical)return reply;
  const safe=actionsProposed||/\b(coupon|discount|buy|purchase|checkout|payment|package|book (?:grooming|training|boarding)|limited.time)\b|₹|\bINR\s*\d/i.test(reply)

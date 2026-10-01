@@ -43,4 +43,6 @@ Record measured reply-start latency, interruption stop and silent gaps. Threshol
 
 ## Local validation
 
-90 behavioural/grounding/voice-profile tests pass in both Node loader modes. 159 presentation preservation tests and 18 existing source/voice contracts pass. TypeScript compilation passes. Model and hosted CI validation on the enhancement revision are separate remaining gates.
+91 behavioural/grounding/voice-profile tests pass in both Node loader modes. 159 presentation preservation tests and 18 existing source/voice contracts pass. TypeScript compilation passes. Model and hosted CI validation on the enhancement revision are separate remaining gates.
+
+The medical referral guard now recognises the baseline imperative "please have a veterinarian assess Bruno" as an existing referral. Generic mentions of a vet still receive an actionable contact recommendation. 29 medical/offer tests and the final combined 250-test run pass.

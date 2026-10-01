@@ -166,3 +166,12 @@ test('actual Maya provider receives care descriptions without fixed host or sitt
  assert.match(request.instructions,/final booking in the PawSpace app/);
  assert.match(request.instructions,/first pickup, drop and date\/time/);
 });
+
+test('one actionable veterinary recommendation is not repeated by the medical reply guard',async()=>{
+ const {ensureVeterinaryReferral}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const baseline='Yes. Because itching can have several causes, please have a veterinarian assess Bruno before grooming.';
+ assert.equal(ensureVeterinaryReferral(baseline,true),baseline);
+ const ordinary='A veterinarian may assess itching in many ways.';
+ assert.match(ensureVeterinaryReferral(ordinary,true),/Please contact a veterinarian about this medical concern/);
+ assert.equal(ensureVeterinaryReferral('Please contact your vet.',true),'Please contact your vet.');
+});
