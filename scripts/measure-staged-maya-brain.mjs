@@ -47,6 +47,14 @@ if(![testerPhone,testerPhone.slice(2)].includes(customerPhone))throw Error('Demo
 if(!env.ELEVENLABS_LLM_SECRET)throw Error('Staged brain authentication missing');
 const before=await bookingIds(),paymentsBefore=await paymentIds();
 async function rows(sql,params=[env.SPECIALIST_CUSTOMER_ID]){const data=await readCf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql,params});if(!Array.isArray(data)||data.length!==1||data[0]?.success===false||!Array.isArray(data[0]?.results))throw Error('Owned quote readback refused');return data[0].results;}
+if(env.MAYA_BRAIN_PROBE_MODE==='latest_audio_readonly'){
+ const recent=await rows("SELECT t.outcome,t.policy_decision,t.handoff_reason,t.intent_code,t.intent_confidence,t.latency_ms,t.created_at,m.payload_json FROM ai_conversation_turns t JOIN communication_messages m ON m.id=t.input_message_id WHERE t.customer_id=? ORDER BY t.created_at DESC LIMIT 5");
+ const turns=recent.map(({payload_json,...turn})=>({...turn,input:classifySyntheticInput(payload_json)}));
+ const active=await rows("SELECT status,reason,created_at FROM ai_handoffs WHERE customer_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 5");
+ const turnConfig=config.conversation_config?.turn||{};
+ const report={revision:env.EXPECTED_SHA,readOnly:true,dialed:false,turns,activeHandoffs:active,voiceTiming:{softTimeoutSeconds:turnConfig.soft_timeout_config?.timeout_seconds??null,softTimeoutMessage:turnConfig.soft_timeout_config?.message??null,turnTimeout:turnConfig.turn_timeout??null}};
+ await isolation();await mkdir('voice-timing-results',{recursive:true});await writeFile('voice-timing-results/report.json',JSON.stringify(report,null,2));console.log('LATEST_AUDIO_DIAGNOSTIC='+JSON.stringify(report));process.exit(0);
+}
 const ordinaryPrompts=['My dog Bruno needs a full bath and a full body haircut. Which one-time grooming package fits that?','I am considering boarding for Bruno for two nights. What information would you need?','No extras please. I only want the grooming information.'];
 let prompts=ordinaryPrompts,addressesBefore=[],reservationsBefore=[];
 if(quoteOnly){
