@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {createElement as h} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {chromium} from '@playwright/test';
+import postcss from 'postcss';
+import {installWorkersHooks} from '../tests/helpers/module-hooks.mjs';
+installWorkersHooks('__FINANCE_VISUAL__');
+const {FinanceLedger}=await import('../app/team/finance/finance-ledger.tsx');
+const {default:Gst}=await import('../app/team/finance/grooming-gst-panel.tsx');
+const css=paths=>paths.map(p=>{const root=postcss.parse(readFileSync(new URL('../'+p,import.meta.url),'utf8'));root.walkAtRules('font-face',r=>r.remove());root.walkRules(r=>{r.selector=r.selector.replace(/:global\(([^)]+)\)/g,'$1');});return root.toString();}).join('\n');
+const styles=css(['app/pawspace-design-system.css','app/components/staff-workspace/staff-workspace.module.css','app/components/staff-workspace/staff-module.module.css','app/team/finance/finance-content.module.css']);
+const item={bookingId:'FINANCE-UI',serviceCode:'boarding',packageName:'Two pet stay · synthetic UI fixture',bookingStatus:'confirmed',scheduledStart:null,bookingTotal:1398,paymentId:'PAY-UI',paymentStatus:'captured',paymentMode:'prepaid',amountDueNow:1398,scheduleStatus:'paid',balanceAmount:0,capturedAmount:1398,refundedAmount:279.60,netCollected:1118.40,gatewayStatus:'captured',reconciliationStatus:'matched',varianceAmount:0,openExceptions:0,invoiceNumber:'UI-INVOICE'};
+const data={services:[{code:'boarding',label:'Boarding',workspace:'/team/finance/boarding',bookings:1,paidBookings:1,captured:1398,refunded:279.60,attention:0}],items:[item],openExceptions:0,limit:100};
+const body=renderToStaticMarkup(h('div',{className:'frame',style:{display:'block'}},h('div',{className:'module'},h('main',{className:'page'},h('header',{className:'header'},h('h1',{},'Finance component preview')),h(Gst),h(FinanceLedger,{data,loading:false,service:'boarding',onService:()=>{}})))));
+const dir=new URL('../../ui-finance-qa/',import.meta.url);mkdirSync(dir,{recursive:true});
+const browser=await chromium.launch({headless:true,executablePath:'/Users/karthikeyanparamasivam/Library/Caches/ms-playwright/chromium_headless_shell-1194/chrome-mac/headless_shell'});
+const receipts=[];
+try{for(const [i,width] of [320,412,820,1440].entries())for(const style of ['professional','cartoon']){
+ const theme=['emerald','signature','coral'][i%3],mode=(i%2)?'dark':'light';
+ const page=await browser.newPage({viewport:{width,height:900}});const requests=[];await page.route('**/*',r=>{requests.push(r.request().url());return r.abort();});
+ await page.setContent(`<html data-paw-theme="${theme}" data-paw-style="${style}" data-paw-mode="${mode}"><head><style>${styles}\n*{box-sizing:border-box}body{margin:0}.page{background:var(--staff-bg);color:var(--staff-text)}</style></head><body>${body}</body></html>`);
+ assert.equal(await page.getByRole('button',{name:'Publish GST setting',exact:true}).isDisabled(),true);
+ assert.equal(await page.locator('[role=region]').count(),2);
+ const geometry=await page.evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,controls:[...document.querySelectorAll('.filters button,.gstFields button,.gstFields select,.gstFields input:not([type=radio]),.gstFields fieldset label')].map(e=>({height:e.getBoundingClientRect().height,width:e.getBoundingClientRect().width,text:e.textContent?.slice(0,35)}))}));
+ assert.ok(geometry.scrollWidth<=width+1,JSON.stringify(geometry));for(const c of geometry.controls)assert.ok(c.height>=48-0.1,JSON.stringify(c));
+ const region=page.locator('[role=region]').first();await region.focus();assert.equal(await region.evaluate(e=>e===document.activeElement),true);assert.equal(await region.evaluate(e=>getComputedStyle(e).outlineOffset),'-3px');
+ await page.locator('h1').click();await page.evaluate(()=>scrollTo(0,0));
+ const file=`finance-${width}-${style}-${theme}-${mode}.png`;await page.screenshot({path:new URL(file,dir).pathname,fullPage:true});receipts.push({width,style,theme,mode,file,geometry,requests});assert.deepEqual(requests,[]);await page.close();
+}writeFileSync(new URL('receipt.json',dir),JSON.stringify({scope:'Isolated actual FinanceLedger and GST SSR component preview; no full Staff shell/hydration/requests acceptance',cases:receipts},null,2));console.log(`${receipts.length}/8 isolated rendered cases PASS`);}finally{await browser.close();}

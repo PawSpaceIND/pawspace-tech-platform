@@ -35,11 +35,31 @@ test('Atlas formatter treats content as text and retains the original response',
 
 import {uiProgramContract,uiJsxExpressions,uiImperativeContract} from '../scripts/ui-audit-logic-contract.mjs';
 const originalPrograms=JSON.parse(read('tests/fixtures/ui-audit-logic-contract.json'));
+// Historical program hashes stay pinned. Reverse only these exact reviewed CSS imports.
+function reviewedProgramSource(source,file){
+ const imports={
+  'app/team/finance/finance-ledger.tsx':'\nimport styles from "./finance-content.module.css";',
+  'app/team/finance/boarding/boarding-finance-workspace.tsx':'\nimport styles from "./boarding-content.module.css";',
+ };
+ const exact=imports[file];
+ if(!exact)return source;
+ assert.equal(source.split(exact).length,2,'Exactly one reviewed stylesheet import');
+ return source.replace(exact,'');
+}
 for(const [file,expected] of Object.entries(originalPrograms.files)) {
  test(`UI audit preserves original state, calculations and request functions: ${file}`,()=>{
-  assert.equal(uiProgramContract(read(file),file),expected);
+  assert.equal(uiProgramContract(reviewedProgramSource(read(file),file),file),expected);
  });
 }
+test('reviewed Finance stylesheet reversals retain calculation and booking-authority detection',()=>{
+ for(const [file,before,after] of [
+  ['app/team/finance/finance-ledger.tsx','maximumFractionDigits: 2','maximumFractionDigits: 0'],
+  ['app/team/finance/boarding/boarding-finance-workspace.tsx','await loadBoardingFinance(id)','await loadBoardingFinance(bookingId)'],
+ ]){
+  const source=read(file),changed=source.replace(before,after);assert.notEqual(source,changed);
+  assert.notEqual(uiProgramContract(reviewedProgramSource(changed,file),file),originalPrograms.files[file]);
+ }
+});
 test('imperative guard rejects a changed employee request rather than approving new behavior',()=>{
  const file='app/me/page.tsx',source=read(file);
  const changed=source.replace('action:"apply_leave"','action:"approve_leave"');
