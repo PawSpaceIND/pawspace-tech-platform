@@ -16,7 +16,8 @@ export function createAlignedReplyTiming(){
   },
   result(validatedReply,utteranceEndAt){
    if(invalid||!seen||typeof validatedReply!=='string'||validatedReply.length>16384||!Number.isFinite(utteranceEndAt))return null;
-   const answer=normalized(validatedReply);if(answer.length<20)return null;
+   const substantive=validatedReply.replace(/^(?:i['’]m checking that for you|let me check that|one moment|give me a second)[.!]\s*/i,'');
+   const answer=normalized(substantive);if(answer.length<20)return null;
    const prefix=answer.slice(0,Math.min(40,answer.length)),at=chars.indexOf(prefix);
    if(at<0)return null;
    return Math.max(0,arrivals[at]-utteranceEndAt);
