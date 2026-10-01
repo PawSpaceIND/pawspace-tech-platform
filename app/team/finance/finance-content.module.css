@@ -42,3 +42,6 @@
 }
 
 .ledger .tableRegion:focus-visible { outline-offset:-3px; }
+/* Analytics filters on this Finance screen share the same touch size as ledger actions. */
+.page.page :is(button,input:not([type=radio]),select) { min-height:48px; }
+:global(body):has(.page) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger) { min-height:48px !important; }

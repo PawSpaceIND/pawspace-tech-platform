@@ -11,3 +11,5 @@
 .details { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px 20px; line-height:1.6; }
 .details > span { min-width:0; overflow-wrap:anywhere; }
 @media(max-width:600px) { .queues,.workspaces,.details { grid-template-columns:minmax(0,1fr); } .queue.queue { padding:20px; } }
+:global(body):has(.queues) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger),
+:global(body):has(.workspaces) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger) { min-height:48px !important; }

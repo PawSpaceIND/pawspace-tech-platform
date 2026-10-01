@@ -26,11 +26,11 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    await expect(content.getByRole('heading',{name:'Service finance & reconciliation'})).toBeVisible();await expect(content.locator('[data-booking-id=FINANCE-UI]')).toContainText('UI-INVOICE');
    const publish=content.getByRole('button',{name:'Publish GST setting',exact:true});await expect(publish).toBeDisabled();
    await content.getByRole('button',{name:'Boarding',exact:true}).click();await expect.poll(()=>reads.some(x=>x.includes('payment-reconciliation?view=bookings&service=boarding'))).toBe(true);
-   for(const region of await content.getByRole('region',{name:/scroll horizontally/}).all()){await region.focus();expect(await region.evaluate(e=>getComputedStyle(e).outlineOffset)).toBe('-3px');}
+   for(const region of await content.getByRole('region',{name:/scroll horizontally/}).all()){await page.keyboard.press('Tab');await region.focus();expect(await region.evaluate(e=>getComputedStyle(e).outlineOffset)).toBe('-3px');}
   }else if(screen==='operations')await expect(content.getByRole('link').filter({hasText:'Open →'})).toHaveCount(5);
   else {const search=content.getByRole('textbox',{name:'Find someone'});await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();await search.fill('does-not-match');await expect(content.getByText('No one matches “does-not-match”',{exact:true})).toBeVisible();await search.fill('');await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();}
   await page.evaluate(()=>document.fonts.ready);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+1);
-  for(const el of await content.locator('button,input:not([type=radio]),select').all()){if(!await el.isVisible())continue;expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(44);}
+  for(const el of await content.locator('button,input:not([type=radio]),select').all()){if(!await el.isVisible())continue;expect((await el.boundingBox())!.height,await el.evaluate(e=>`${e.tagName} ${e.getAttribute('aria-label')||e.textContent||e.getAttribute('type')}`)).toBeGreaterThanOrEqual(44);}
   await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();scrollTo({top:0,behavior:'instant'});});await page.screenshot({path:info.outputPath(`${screen}-${fingerprint}.png`),fullPage:true});
  }
  expect(writes).toEqual([]);await info.attach('fixture-and-source',{body:JSON.stringify({width,style,theme,mode,fingerprint,hashes,writes,reads,authorizationAcceptance:false,physicalDevice:false}),contentType:'application/json'});
