@@ -106,7 +106,7 @@ test("the overlap boundary is exact in both directions", async () => {
 
 test("a cancelled reservation does not keep blocking the group", async () => {
   const { sqlite } = await seedSlot();
-  blockWindow(sqlite, "2026-10-01T00:00:00.000Z", "2026-10-01T23:00:00.000Z");
+  blockWindow(sqlite, new Date(START_MS - 4 * 60 * 60 * 1000).toISOString(), new Date(END_MS + 4 * 60 * 60 * 1000).toISOString());
   assert.equal(confirmBooking(sqlite).confirmed, false);
   sqlite.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").run(GROUP);
   assert.equal(confirmBooking(sqlite).confirmed, true,
