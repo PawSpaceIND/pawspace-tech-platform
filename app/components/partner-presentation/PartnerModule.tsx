@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import WorkspaceOrderInbox from "../workspace-order-inbox";
 import Link from "next/link";
 import styles from "./partner-presentation.module.css";
 
@@ -15,7 +16,7 @@ export default function PartnerModule({ children }: { children: ReactNode }) {
         <Link href="/partner/jobs" prefetch={false}>Assigned jobs</Link>
         <Link href="/partner/workspace" prefetch={false}>My workspace</Link>
         <Link href="/partner/onboarding" prefetch={false}>Onboarding</Link>
-      </nav>
+      </nav><WorkspaceOrderInbox/>
     </header>
     <div id="partner-workspace-content" className={styles.content} tabIndex={-1}>{children}</div>
   </div>;

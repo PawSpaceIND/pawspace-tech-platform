@@ -80,6 +80,20 @@ function serviceCard(page: import("@playwright/test").Page, name: string) {
   return page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: name }).first();
 }
 
+function boardingRequestOffer(page: import("@playwright/test").Page, bookingId: string) {
+  return page.getByRole("button").filter({ has: page.getByText(bookingId, { exact: false }) });
+}
+
+test("boarding request selection ignores a duplicate booking ID in the closed inbox", async ({ page }) => {
+  const bookingId = "PS-UAT-BOARDING-LOCATOR";
+  await page.setContent(`<dialog aria-label="Order inbox"><article><p>boarding · ${bookingId}</p><button>Mark read</button></article></dialog><main><button onclick="this.dataset.selected='true'">Standard Stay · Buddy · ${bookingId}</button><p>Booking ${bookingId}</p><button>Another stay · PS-UAT-OTHER</button></main>`);
+  await expect(page.getByRole("dialog", { name: "Order inbox" })).toHaveCount(0);
+  await expect(page.getByText(bookingId).first().locator("xpath=ancestor::button[1]")).toHaveCount(0);
+  const offer = boardingRequestOffer(page, bookingId);
+  await expect(offer).toHaveCount(1); await expect(offer).toBeVisible();
+  await offer.click(); await expect(offer).toHaveAttribute("data-selected", "true");
+});
+
 async function localBoardingCompletion(page: import("@playwright/test").Page, browser: import("@playwright/test").Browser, created: import("@playwright/test").Response) {
   const result = await created.json();
   const bookingId = String(result.data.bookingId), paymentId = String(result.data.paymentId);
@@ -146,7 +160,7 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await expect(requestsTab.locator("b")).toBeVisible();
     await dismissPrivacy(host); await requestsTab.click();
     await expect(host.getByRole("heading", { name: "Awaiting host response", exact: true })).toBeVisible();
-    const offer = host.getByText(bookingId, { exact: false }).first().locator("xpath=ancestor::button[1]"); await offer.click();
+    const offer = boardingRequestOffer(host, bookingId); await expect(offer).toHaveCount(1); await expect(offer).toBeVisible(); await offer.click();
     const accepted = host.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "accept");
     await host.getByRole("button", { name: "Accept & lock capacity", exact: true }).click(); expect((await accepted).status()).toBe(200);
     await host.goto(`/host?bookingId=${encodeURIComponent(bookingId)}`);
