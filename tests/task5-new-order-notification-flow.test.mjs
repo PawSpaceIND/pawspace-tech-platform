@@ -97,3 +97,41 @@ test('N-E06 booking-to-inbox: actual saved-pet reserve/canonical POST stays pend
  const bookSnapshot=w.sqlite.prepare('SELECT * FROM canonical_bookings WHERE id=?').get(id);const replay=await routeCall('../../app/api/canonical-bookings/route.ts','POST','/api/canonical-bookings',payload,cookie);assert.equal(replay.status,200);assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_bookings WHERE id=?').get(id),bookSnapshot);
  await gateway.processGatewayEvent(w.db,event);assert.equal((await get(MANAGER)).body.data.items.filter(i=>i.recordId===id).length,1,'replayed booking and capture cannot create duplicate visible updates');
 });
+
+test('N-E07 cold schema: failed initialization stays unavailable and retries, while foreign acknowledgements cannot provision storage',async t=>{
+ const w=await fixture(t,{migrate:false});booking(w,'COLD-OWN');booking(w,'COLD-FOREIGN',{city:'maa'});
+ assert.equal((await ack(MANAGER,'booking:COLD-FOREIGN:confirmed')).status,403);
+ assert.equal(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='workspace_order_reads'").get(),undefined);
+ const original=w.db.prepare.bind(w.db);let fail=true,ddlAttempts=0;
+ w.db.prepare=sql=>{if(sql.startsWith('CREATE TABLE IF NOT EXISTS workspace_order_reads')){ddlAttempts++;if(fail)throw new Error('Synthetic acknowledgement storage failure');}return original(sql);};
+ try{
+  const failed=await get(ADMIN);assert.equal(failed.status,500);assert.equal(failed.body.data,undefined,'failure is never an empty successful feed');
+  assert.equal(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='workspace_order_reads'").get(),undefined);
+  fail=false;assert.equal((await ack(ADMIN,'booking:COLD-OWN:confirmed')).status,200);
+  assert.equal(ddlAttempts,2,'failed initialization must remain retryable');
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM workspace_order_reads').get().n,1);
+  assert.equal((await get(ADMIN)).body.data.unread,1);
+ }finally{w.db.prepare=original;}
+});
+
+test('N-E08 cursor validation: authentication is unconditional, malformed input remains400 and cannot change scope or create storage',async t=>{
+ const w=await fixture(t,{migrate:false});booking(w,'CURSOR-OWN');
+ for(const cursor of ['bad','null','[]',JSON.stringify({at:-1,id:'booking:A'}),JSON.stringify({at:1.5,id:'booking:A'}),JSON.stringify({at:1,id:''}),JSON.stringify({at:1,id:'A'.repeat(201)})]){
+  const path='/api/workspace-order-updates?cursor='+encodeURIComponent(cursor);
+  assert.equal((await call(new Request('https://app.pawspace.in'+path))).status,401,'invalid cursor cannot bypass identity');
+  const response=await get(ADMIN,path);assert.equal(response.status,400);assert.equal(response.body.error,'Invalid update cursor');
+ }
+ assert.equal((await get(ADMIN,'/api/workspace-order-updates?cityId=maa')).status,400);
+ assert.equal(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='workspace_order_reads'").get(),undefined);
+ assert.equal((await get(ADMIN)).status,200);
+});
+
+
+test('N-E09 provider cold schema: assigned identity creates only acknowledgement storage and malformed cursor still refuses',async t=>{
+ const w=await fixture(t,{migrate:false});booking(w,'COLD-PROVIDER');const before=w.sqlite.prepare('SELECT * FROM canonical_bookings').all();
+ const cookie=await sessionCookie(w.db,'provider','groom_kiran','provider:groom_kiran');
+ const malformed=await call(new Request('https://app.pawspace.in/api/workspace-order-updates?cursor=bad',{headers:{cookie}}));assert.equal(malformed.status,400);
+ assert.equal(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='workspace_order_reads'").get(),undefined);
+ const result=await call(providerRequest(cookie));assert.equal(result.status,200,JSON.stringify(result.body));assert.deepEqual(result.body.data.items.map(i=>i.recordId),['COLD-PROVIDER']);assert.equal(result.body.data.unread,1);
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM canonical_bookings').all(),before);
+});
