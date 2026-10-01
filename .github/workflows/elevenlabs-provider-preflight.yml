@@ -492,6 +492,41 @@ jobs:
           name: maya-staged-brain-timings
           path: voice-timing-results/
           retention-days: 7
+  select-staging-maya-service-model:
+    if: ${{ inputs.confirm == 'select-staging-maya-service-model' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Validate isolated model-selector boundaries
+        run: node --experimental-strip-types --test tests/staging-maya-service-model.test.mjs
+      - name: Select the all-service staging model with phone calls paused
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node --experimental-strip-types scripts/select-staging-maya-service-model.mjs
+      - name: Save model-selector readback evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maya-staging-service-model
+          path: voice-model-results/
+          retention-days: 7
   measure-voice-llm:
     if: ${{ inputs.confirm == 'measure-voice-llm' }}
     runs-on: ubuntu-latest
