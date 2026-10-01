@@ -17,14 +17,14 @@ function moduleFixture(file,exportName,context={}){
  try{return Function(...Object.keys(context),compiled+';return '+exportName+';')(...Object.values(context));}catch(error){fs.writeFileSync(new URL('../p1-evidence-ops-evidence/debug-'+exportName+'.js',root),compiled);throw error;}
 }
 function componentFixture(file,name,context={}){
- let slots=[],cursor=0,effects=[],tree;const hooks={
- useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},
+ let slots=[],cursor=0,effects=[],tree,renderKey;const cleanups=new Map();const hooks={
+ useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;const target=slots;return[target[i],value=>{target[i]=typeof value==='function'?value(target[i]):value;}];},
  useRef(value){const i=cursor++;return slots[i]??=( {current:value});},
  useMemo(fn){cursor++;return fn();},
- useEffect(fn,deps){const i=cursor++,old=slots[i];if(!old||deps?.some((v,j)=>v!==old[j])){slots[i]=deps;effects.push(fn);}}
+ useEffect(fn,deps){const i=cursor++,old=slots[i];if(!old||deps?.some((v,j)=>v!==old[j])){slots[i]=deps;effects.push(()=>{cleanups.get(i)?.();const cleanup=fn();if(typeof cleanup==='function')cleanups.set(i,cleanup);});}}
  };const React={createElement(type,props,...children){return {type,props:{...props,children:children.length===1?children[0]:children}};},Fragment:'fragment'};
  const component=moduleFixture(file,name,{...context,...hooks,React,window:{setTimeout(){},prompt(){return'';}},fetch(){throw Error('external transport prohibited');},usePathname:()=>'/trainer',useSearchParams:()=>new URLSearchParams(),baseStyles:new Proxy({},{get:(_,k)=>k}),extraStyles:new Proxy({},{get:(_,k)=>k})});
- const render=()=>{cursor=0;tree=component();const tasks=effects;effects=[];tasks.forEach(fn=>fn());return tree;};
+ const render=()=>{cursor=0;tree=component();if(typeof tree.type==='function'&&tree.props.key!==undefined){if(renderKey!==tree.props.key){cleanups.forEach(fn=>fn());cleanups.clear();slots=[];renderKey=tree.props.key;}cursor=0;tree=tree.type(tree.props);}const tasks=effects;effects=[];tasks.forEach(fn=>fn());return tree;};
  return {render,find(predicate){const n=nodes(tree).find(predicate);assert.ok(n,'Expected actual component node');return n;},async settle(){for(let i=0;i<8;i++){await Promise.resolve();render();}},button(name){return this.find(n=>n.type==='button'&&text(n.props.children)===name);}};
 }
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject};};
@@ -51,7 +51,7 @@ for(const kind of ['boarding','sitting'])test(kind+' released settlement is clea
 });
 for(const kind of ['host','sitter'])test(kind+' proof refresh is read-only, preserves drafts and rejects stale/rejected approval',async()=>{
  let reads=0,fail=false;const writes=[];const media=kind==='host'?{id:'PHOTO',ref:'media://asset/PHOTO',purpose:'stay_update',scan_status:'clean',access_status:'ready',retention_status:'active',synthetic:0,review_status:'approved',proofReady:true}:{id:'PHOTO',mediaRef:'media://asset/PHOTO',purpose:'sitting_update',scan_status:'clean',access_status:'ready',retention_status:'active',synthetic:0,review_status:'approved',proofReady:true};
- const snapshot=()=>kind==='host'?{stay:{status:'in_progress',carePlanStatus:'ready'},media:[{...media}],medication:[],incidents:[],storage:{},communications:{}}:{status:'in_progress',media:[{...media}],medications:[],incidents:[],communications:{}};
+ const snapshot=()=>kind==='host'?{stay:{id:'SYNTHETIC',status:'in_progress',carePlanStatus:'ready'},media:[{...media}],medication:[],incidents:[],storage:{},communications:{}}:{bookingId:'SYNTHETIC',status:'in_progress',media:[{...media}],medications:[],incidents:[],communications:{}};
  const load=async()=>{reads++;if(fail)throw Error('Synthetic read error');return snapshot();};
  const f=componentFixture('app/'+kind+'/proof/page.tsx',kind==='host'?'BoardingProofPage':'SittingProofPage',{useQueryParameter:()=> 'SYNTHETIC',loadBoardingProof:load,loadSittingProof:load,isVerifiedProof:item=>item.review_status==='approved',partnerProofState:item=>item.review_status,PARTNER_PROOF_STATE_TEXT:{approved:'verified',rejected:'rejected'},updateBoardingProof:async p=>writes.push(p),updateSittingProof:async p=>writes.push(p)});
  f.render();await f.settle();const choice=kind==='host'?'Select a verified daily stay photo':'Select a verified care update photo';
@@ -76,4 +76,24 @@ test('actual Training save_report rejects A refs for B before writing, but prese
  const input={sessionId:'B',action:'save_report',actorId:'trainer',idempotencyKey:'SYNTHETIC',report:{homework:'Keep draft notes',evidenceRefs:['media://asset/A']}};
  await assert.rejects(action(db,input),error=>error instanceof Response&&error.status===409);assert.equal(writes.length,0);
  const result=await action(db,{...input,idempotencyKey:'DRAFT',report:{homework:'Keep draft notes'}});assert.equal(result.reportSaved,true);assert.equal(writes.length,1);assert.ok(writes[0].args.includes('{"text":"Keep draft notes"}'));
+});
+for(const kind of ['host','sitter'])test(kind+' A→B pending/failed/out-of-order reads and switch-back never carry A authority or drafts',async()=>{
+ let identity='A';const pendingB=deferred(),writes=[];let aReads=0;
+ const snapshot=id=>kind==='host'?{stay:{id,status:'in_progress',carePlanStatus:'ready'},media:[{id:'PHOTO-'+id,ref:'media://asset/'+id,purpose:'stay_update',review_status:'approved'}],medication:[],incidents:[],storage:{},communications:{}}:{bookingId:id,status:'in_progress',media:[{id:'PHOTO-'+id,mediaRef:'media://asset/'+id,purpose:'sitting_update',review_status:'approved'}],medications:[],incidents:[],communications:{}};
+ const load=async input=>{const id=typeof input==='string'?input:input.bookingId;if(id==='B')return pendingB.promise;aReads++;return snapshot('A');};
+ const f=componentFixture('app/'+kind+'/proof/page.tsx',kind==='host'?'BoardingProofPage':'SittingProofPage',{useQueryParameter:()=>identity,loadBoardingProof:load,loadSittingProof:load,isVerifiedProof:item=>item.review_status==='approved',partnerProofState:item=>item.review_status,PARTNER_PROOF_STATE_TEXT:{approved:'verified'},updateBoardingProof:async p=>writes.push(p),updateSittingProof:async p=>writes.push(p)});
+ f.render();await f.settle();f.find(n=>n.type==='input'&&n.props.placeholder==='Medication').props.onChange({target:{value:'A private draft'}});const choice=kind==='host'?'Select a verified daily stay photo':'Select a verified care update photo';f.find(n=>n.type==='select'&&text(n.props.children).includes(choice)).props.onChange({target:{value:'media://asset/A'}});if(kind==='host')f.find(n=>n.type==='textarea'&&n.props.placeholder==='Care update shown in the stay timeline').props.onChange({target:{value:'A care draft'}});f.render();
+ const actionName=kind==='host'?'Record daily update with verified proof':'Record care update with verified proof';assert.equal(f.button(actionName).props.disabled,false);
+ identity='B';f.render();assert.equal(f.button(actionName).props.disabled,true);assert.equal(f.find(n=>n.type==='input'&&n.props.placeholder==='Medication').props.value,'');f.button(actionName).props.onClick();await f.settle();assert.deepEqual(writes,[]);
+ pendingB.reject(Error('B read failed'));await f.settle();assert.equal(f.button(actionName).props.disabled,true);assert.deepEqual(writes,[]);
+ identity='A';f.render();assert.equal(f.button(actionName).props.disabled,true);await f.settle();assert.equal(aReads,2);assert.equal(f.find(n=>n.type==='input'&&n.props.placeholder==='Medication').props.value,'');assert.equal(f.button(actionName).props.disabled,true);
+});
+for(const kind of ['host','sitter'])test(kind+' late B success cannot replace fresh A; failed A refresh invalidates authority and retains same-identity drafts',async()=>{
+ let identity='A',fail=false;const b=deferred();
+ const snap=id=>kind==='host'?{stay:{id,status:'in_progress',carePlanStatus:'ready'},media:[],medication:[],incidents:[],storage:{},communications:{}}:{bookingId:id,status:'in_progress',media:[],medications:[],incidents:[],communications:{}};
+ const load=async input=>{const id=typeof input==='string'?input:input.bookingId;if(id==='B')return b.promise;if(fail)throw Error('A refresh refused');return snap(id);};
+ const f=componentFixture('app/'+kind+'/proof/page.tsx',kind==='host'?'BoardingProofPage':'SittingProofPage',{useQueryParameter:()=>identity,loadBoardingProof:load,loadSittingProof:load,isVerifiedProof:()=>true,partnerProofState:()=> 'approved',PARTNER_PROOF_STATE_TEXT:{approved:'verified'}});
+ f.render();await f.settle();identity='B';f.render();await Promise.resolve();identity='A';f.render();await f.settle();b.resolve(snap('B'));await f.settle();
+ assert.ok(!text(f.render()).includes('B ·'));const file=()=>f.find(n=>n.type==='input'&&n.props.type==='file');assert.equal(file().props.disabled,false);
+ f.find(n=>n.type==='input'&&n.props.placeholder==='Medication').props.onChange({target:{value:'A new draft'}});f.render();fail=true;f.button('Refresh photo approval').props.onClick();f.render();assert.equal(file().props.disabled,true);await f.settle();assert.equal(file().props.disabled,true);assert.equal(f.find(n=>n.type==='input'&&n.props.placeholder==='Medication').props.value,'A new draft');assert.ok(nodes(f.render()).some(n=>n.props.role==='alert'));
 });
