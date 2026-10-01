@@ -33,15 +33,27 @@ installWorkersHooks("__REMINDER_DB__");
 function makeD1(sqlite) {
   function statement(sql, args) {
     return {
+      sql,
       bind: (...bound) => statement(sql, bound),
       first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      execute: () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
       run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    batch: async (list) => {
+      sqlite.exec("BEGIN");
+      try {
+        const out = list.map(item => item.execute());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
     exec: async (sql) => { sqlite.exec(sql); },
   };
 }
@@ -454,3 +466,447 @@ test("two cities are reminded independently on the same sweep", async () => {
   assert.equal(result.queued, 2);
   assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key).sort(), ["grooming_rebooking:CU-BLR:1", "grooming_rebooking:CU-HYD:1"]);
 });
+
+for (const [unused, renewal] of [[0, 1], [1, 0], [0, 0], [1, 1]]) {
+  test(`subscription rules independently pause: unused=${unused}, renewal=${renewal}`, async () => {
+    const { sqlite, db, reminders } = await world();
+    sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+    for (const [id, active] of [["rule-grooming-rebook", 0], ["rule-subscription-unused", unused], ["rule-subscription-renewal", renewal]]) {
+      sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES (?,?)").run(id, active);
+    }
+    seedCustomer(sqlite, "pause-customer");
+    seedBooking(sqlite, { id: "pause-booking", customerId: "pause-customer", status: "completed", startMs: NOW - 40 * DAY, endMs: NOW - 40 * DAY });
+    seedSubscription(sqlite, { id: "pause-sub", customerId: "pause-customer", total: 6, consumed: 1, startedMs: NOW - 60 * DAY, expiresMs: NOW + 3 * DAY });
+    await reminders.generateSubscriptionReminders(db, { actorId: "system", asOf: NOW });
+    await reminders.runCustomerReminderSweep(db, { actorId: "system", asOf: NOW });
+    await reminders.runCustomerReminderSweep(db, { actorId: "system", asOf: NOW });
+    assert.deepEqual(messages(sqlite).map(m => m.template_key).sort(), [
+      ...(unused ? ["subscription_unused_sessions_reminder"] : []),
+      ...(renewal ? ["subscription_renewal_reminder"] : []),
+    ].sort());
+    assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c, unused + renewal);
+  });
+}
+
+for (const retry of [false, true]) {
+  test(`late service opt-out stops sandbox delivery after ${retry ? 'retry' : 'enqueue'}`, async () => {
+    const { sqlite, db, reminders, comms } = await world();
+    seedCustomer(sqlite, "late-optout");
+    seedBooking(sqlite, { id: "late-booking", customerId: "late-optout", status: "completed", startMs: NOW - 20 * DAY, endMs: NOW - 20 * DAY });
+    await reminders.generateGroomingRebookingReminders(db, { actorId: "system", asOf: NOW });
+    const before = sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json;
+    const [message] = messages(sqlite);
+    if (retry) await comms.failOutboxAttempt(db, message.id, "temporary_failure");
+    setPreference(sqlite, "late-optout", { serviceUpdates: false });
+    const result = await reminders.consumeCustomerReminderSandboxOutbox(db, { asOf: NOW + DAY });
+    assert.equal(result.sandboxDelivered, 0);
+    assert.equal(messages(sqlite)[0].status, "suppressed");
+    assert.equal(outbox(sqlite)[0].status, "suppressed");
+    assert.equal(sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json, before);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c, 0);
+  });
+}
+
+async function queuedLifecycle(world, key) {
+  seedCustomer(world.sqlite, key);
+  return world.comms.enqueueCommunication(world.db, { customerId: key, cityId: "blr", channel: "whatsapp", purpose: "lifecycle", idempotencyKey: key, templateKey: "grooming_rebooking_reminder", payload: {}, assignedTo: "ops-owner", createdBy: "system", asOf: NOW });
+}
+
+test("global opt-out and channel refusal after enqueue stop the sandbox sink", async () => {
+  for (const globalOptOut of [0, 1]) {
+    const w = await world();
+    await queuedLifecycle(w, "central-optout");
+    const governance = await import("../lib/communication-governance.ts");
+    await governance.ensureCommunicationGovernance(w.db);
+    w.sqlite.prepare("INSERT INTO communication_consent (customer_id,global_opt_out,whatsapp_allowed,source,updated_by,updated_at) VALUES (?,?,0,'customer_choice','customer',?)").run("central-optout",globalOptOut,NOW);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    assert.equal(messages(w.sqlite)[0].status,"suppressed");
+  }
+});
+
+test("sandbox rechecks quiet hours after enqueue and preserves the Ops handoff owner", async () => {
+  const w = await world();
+  const queued = await queuedLifecycle(w,"manual-handoff");
+  const snapshot = w.sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json;
+  // 2026-02-02 22:30 IST, after the daytime enqueue.
+  const quiet = Date.parse("2026-02-02T17:00:00Z");
+  const result = await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:quiet});
+  assert.equal(result.sandboxDelivered,0);
+  assert.equal(outbox(w.sqlite)[0].status,"scheduled");
+  assert.equal(w.sqlite.prepare("SELECT assigned_to FROM communication_threads WHERE id=?").get(queued.threadId).assigned_to,"ops-owner");
+  assert.equal(w.sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json,snapshot);
+});
+
+test("concurrent sandbox consumers deliver each reminder once", async () => {
+  const w = await world();
+  await queuedLifecycle(w,"concurrent-sink");
+  const results = await Promise.all([w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW}),w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})]);
+  assert.equal(results.reduce((n,r)=>n+r.sandboxDelivered,0),1);
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,1);
+});
+
+for (const status of ["provider_accepted","sent","delivered","read","dead_letter","suppressed","sandbox_delivered"]) {
+  test(`sandbox does not overwrite known delivery outcome ${status}`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`terminal-${status}`);
+    // Even an inconsistent queued projection must not redeliver a terminal/accepted message.
+    w.sqlite.prepare("UPDATE communication_messages SET status=? WHERE id=?").run(status,queued.messageId);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    assert.equal(messages(w.sqlite)[0].status,status);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+  });
+}
+
+test("a post-claim failure recovers only its expired sandbox lease", async () => {
+  const w = await world();
+  await queuedLifecycle(w,"lease-recovery");
+  const prepare = w.db.prepare;
+  w.db.prepare = (sql) => {
+    if (sql === "SELECT service_updates FROM communication_preferences WHERE customer_id=?") {
+      return { bind: () => ({ first: async () => { throw new Error("injected post-claim read failure"); } }) };
+    }
+    return prepare(sql);
+  };
+  await assert.rejects(w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW}), /injected post-claim/);
+  w.db.prepare = prepare;
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+60_000})).sandboxDelivered,0,"unexpired owner holds the message");
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+6*60_000})).sandboxDelivered,1,"expired sandbox-only claim is safe to recover");
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+7*60_000})).sandboxDelivered,0);
+});
+
+for (const projection of ["both", "message", "outbox"]) {
+for (const terminal of ["delivered", "read", "suppressed", "dead_letter", "provider_accepted"]) {
+  test(`completion CAS preserves concurrent ${projection} ${terminal} and records no sandbox delivery`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`race-${terminal}`);
+    const batch = w.db.batch;
+    w.db.batch = async (list) => {
+      if (list.some(item => item.sql?.includes("INSERT INTO reminder_sandbox_deliveries"))) {
+        if (projection !== "outbox") w.sqlite.prepare("UPDATE communication_messages SET status=?,provider='concurrent_provider',provider_reference='concurrent-ref' WHERE id=?").run(terminal,queued.messageId);
+        if (projection !== "message") w.sqlite.prepare("UPDATE communication_outbox SET status=?,locked_at=NULL WHERE message_id=?").run(terminal,queued.messageId);
+      }
+      return batch(list);
+    };
+    const report = await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW});
+    assert.equal(report.sandboxDelivered,0);
+    assert.equal(messages(w.sqlite)[0].status,projection === "outbox" ? "queued" : terminal);
+    assert.equal(outbox(w.sqlite)[0].status,projection === "message" ? "dispatching" : terminal);
+    if (projection !== "outbox") assert.equal(w.sqlite.prepare("SELECT provider_reference FROM communication_messages").get().provider_reference,"concurrent-ref");
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM communication_message_delivery_events WHERE provider='governed_uat_sink'").get().c,0);
+  });
+}
+
+}
+
+test("sandbox does not recover uncertain external or unowned dispatch claims", async () => {
+  const w = await world();
+  const queued = await queuedLifecycle(w,"uncertain-external");
+  w.sqlite.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=?,last_error='external_acceptance_unknown' WHERE message_id=?").run(NOW-10*60_000,queued.messageId);
+  const result = await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW});
+  assert.equal(result.sandboxDelivered,0);
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+});
+
+for (const [template, rule] of [["grooming_rebooking_reminder","rule-grooming-rebook"],["subscription_unused_sessions_reminder","rule-subscription-unused"],["subscription_renewal_reminder","rule-subscription-renewal"]]) {
+  test(`pause after enqueue holds ${rule} and resumes without a duplicate`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`late-pause-${rule}`);
+    w.sqlite.prepare("UPDATE communication_messages SET template_key=? WHERE id=?").run(template,queued.messageId);
+    w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+    w.sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES (?,0)").run(rule);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+    w.sqlite.prepare("UPDATE lifecycle_reminder_rules SET active=1 WHERE id=?").run(rule);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+6*60_000})).sandboxDelivered,1);
+    assert.equal(messages(w.sqlite).length,1);
+  });
+}
+
+test("an expired sandbox owner cannot finish a successor claim", async () => {
+  const w = await world();
+  const queued = await queuedLifecycle(w,"lease-handover");
+  const batch = w.db.batch;
+  w.db.batch = async (list) => {
+    if (list.some(item => item.sql?.includes("INSERT INTO reminder_sandbox_deliveries"))) {
+      w.sqlite.prepare("UPDATE communication_outbox SET last_error='reminder_sandbox_claim:successor',locked_at=? WHERE message_id=?").run(NOW+6*60_000,queued.messageId);
+    }
+    return batch(list);
+  };
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  assert.equal(w.sqlite.prepare("SELECT last_error FROM communication_outbox").get().last_error,"reminder_sandbox_claim:successor");
+  assert.equal(messages(w.sqlite)[0].status,"queued");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+});
+
+test("a failing completion batch rolls back and the sandbox lease can recover", async () => {
+  const w = await world();
+  await queuedLifecycle(w,"batch-failure");
+  w.sqlite.exec("CREATE TRIGGER inject_sink_failure BEFORE INSERT ON reminder_sandbox_deliveries BEGIN SELECT RAISE(ABORT,'injected sink failure'); END");
+  await assert.rejects(w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW}), /injected sink failure/);
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  assert.equal(messages(w.sqlite)[0].status,"queued");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+  w.sqlite.exec("DROP TRIGGER inject_sink_failure");
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+6*60_000})).sandboxDelivered,1);
+});
+
+for (const boundary of ["before_policy", "during_policy"]) {
+  for (const successor of ["reminder_sandbox_claim:owner-b", "external_acceptance_unknown"]) {
+    test(`quiet-hour policy preserves ${successor} ownership ${boundary}`, async () => {
+      const w = await world();
+      const queued = await queuedLifecycle(w,`policy-race-${boundary}-${successor}`);
+      const prepare = w.db.prepare;
+      const quiet = Date.parse("2026-02-02T17:00:00Z");
+      w.db.prepare = sql => {
+        const target = boundary === "before_policy" ? sql.includes("SELECT m.*,o.status outbox_status") : sql === "SELECT timezone FROM communication_preferences WHERE customer_id=?";
+        if (!target) return prepare(sql);
+        const original = prepare(sql);
+        return { ...original, bind: (...args) => {
+          const bound = original.bind(...args);
+          return { ...bound, first: async () => {
+            w.sqlite.prepare("UPDATE communication_outbox SET last_error=?,locked_at=? WHERE message_id=?").run(successor,quiet+60_000,queued.messageId);
+            return bound.first();
+          }};
+        }};
+      };
+      assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:quiet})).sandboxDelivered,0);
+      const held = w.sqlite.prepare("SELECT status,last_error,locked_at FROM communication_outbox").get();
+      assert.equal(held.status,"dispatching");
+      assert.equal(held.last_error,successor);
+      assert.equal(held.locked_at,quiet+60_000);
+      assert.equal(messages(w.sqlite)[0].status,"queued");
+      assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+    });
+  }
+}
+
+for (const evidence of ["provider", "reference"]) {
+  test(`sandbox marker with ${evidence} evidence remains an uncertain-send hold`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`marked-uncertain-${evidence}`);
+    w.sqlite.prepare("UPDATE communication_outbox SET status='dispatching',last_error='reminder_sandbox_claim:old',locked_at=? WHERE message_id=?").run(NOW-10*60_000,queued.messageId);
+    w.sqlite.prepare(`UPDATE communication_messages SET ${evidence === "provider" ? "provider" : "provider_reference"}=? WHERE id=?`).run("external-evidence",queued.messageId);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+    assert.equal(w.sqlite.prepare("SELECT last_error FROM communication_outbox").get().last_error,"reminder_sandbox_claim:old");
+  });
+}
+
+test("policy rescheduling rolls back both message and outbox when its batch fails", async () => {
+  const w = await world();
+  const queued = await queuedLifecycle(w,"atomic-policy");
+  const quiet = Date.parse("2026-02-02T17:00:00Z");
+  w.sqlite.exec("CREATE TRIGGER inject_schedule_failure BEFORE UPDATE ON communication_outbox WHEN NEW.status='scheduled' BEGIN SELECT RAISE(ABORT,'injected schedule failure'); END");
+  await assert.rejects(w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:quiet}), /injected schedule failure/);
+  assert.equal(messages(w.sqlite)[0].status,"queued");
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  assert.equal(w.sqlite.prepare("SELECT id FROM communication_messages").get().id,queued.messageId);
+});
+
+for (const evidence of ["delivered", "provider_accepted", "provider", "provider_reference"]) {
+  test(`policy scheduling preserves concurrent ${evidence} evidence`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`policy-evidence-${evidence}`);
+    const prepare = w.db.prepare;
+    w.db.prepare = sql => {
+      const original = prepare(sql);
+      if (sql !== "SELECT timezone FROM communication_preferences WHERE customer_id=?") return original;
+      return { ...original, bind: (...args) => {
+        const bound = original.bind(...args);
+        return { ...bound, first: async () => {
+          if (["delivered","provider_accepted"].includes(evidence)) w.sqlite.prepare("UPDATE communication_messages SET status=? WHERE id=?").run(evidence,queued.messageId);
+          else w.sqlite.prepare(`UPDATE communication_messages SET ${evidence}=? WHERE id=?`).run("external-evidence",queued.messageId);
+          return bound.first();
+        }};
+      }};
+    };
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:Date.parse("2026-02-02T17:00:00Z")})).sandboxDelivered,0);
+    assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+    assert.equal(messages(w.sqlite)[0].status,["delivered","provider_accepted"].includes(evidence)?evidence:"queued");
+    assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+  });
+}
+
+test("legacy policy caller without a token still schedules both projections", async () => {
+  const w = await world();
+  const queued = await queuedLifecycle(w,"legacy-policy");
+  w.sqlite.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=? WHERE message_id=?").run(NOW,queued.messageId);
+  const result = await w.comms.enforceCommunicationDispatchPolicy(w.db,queued.messageId,Date.parse("2026-02-02T17:00:00Z"));
+  assert.equal(result.status,"scheduled");
+  assert.equal(result.reason,"quiet_hours");
+  assert.equal(outbox(w.sqlite)[0].status,"scheduled");
+  assert.equal(messages(w.sqlite)[0].status,"scheduled");
+  assert.equal(w.sqlite.prepare("SELECT locked_at FROM communication_outbox").get().locked_at,null);
+});
+
+for (const transition of ["suppress", "pause"]) {
+  for (const evidence of ["provider", "provider_reference", "message_terminal", "outbox_terminal", "successor"]) {
+    test(`${transition} preserves ${evidence} arriving immediately before its transition`, async () => {
+      const w = await world();
+      const queued = await queuedLifecycle(w,`transition-${transition}-${evidence}`);
+      const snapshot = w.sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json;
+      if (transition === "suppress") setPreference(w.sqlite,`transition-${transition}-${evidence}`,{serviceUpdates:false});
+      else {
+        w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+        w.sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES ('rule-grooming-rebook',0)").run();
+      }
+      let injected = false;
+      const inject = () => {
+        if (injected) return;
+        injected = true;
+        if (evidence === "message_terminal") w.sqlite.prepare("UPDATE communication_messages SET status='delivered' WHERE id=?").run(queued.messageId);
+        else if (evidence === "outbox_terminal") w.sqlite.prepare("UPDATE communication_outbox SET status='delivered' WHERE message_id=?").run(queued.messageId);
+        else if (evidence === "successor") w.sqlite.prepare("UPDATE communication_outbox SET last_error='reminder_sandbox_claim:successor',locked_at=? WHERE message_id=?").run(NOW+60_000,queued.messageId);
+        else w.sqlite.prepare(`UPDATE communication_messages SET ${evidence}='external-evidence' WHERE id=?`).run(queued.messageId);
+      };
+      const batch = w.db.batch;
+      w.db.batch = async list => {
+        if (list.some(item => item.sql?.includes(transition === "suppress" ? "SET status='suppressed'" : "reminder_rule_paused"))) inject();
+        return batch(list);
+      };
+      // The original pause branch used a single statement, so cover that boundary before the fix.
+      const prepare = w.db.prepare;
+      w.db.prepare = sql => {
+        const original = prepare(sql);
+        if (!sql.includes("reminder_rule_paused")) return original;
+        const wrap = statement => ({ ...statement, bind: (...args) => wrap(statement.bind(...args)), run: async () => { inject(); return statement.run(); } });
+        return wrap(original);
+      };
+      assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+      assert.equal(injected,true);
+      const message = w.sqlite.prepare("SELECT * FROM communication_messages").get();
+      const held = w.sqlite.prepare("SELECT * FROM communication_outbox").get();
+      assert.equal(message.status,evidence === "message_terminal" ? "delivered" : "queued");
+      assert.equal(held.status,evidence === "outbox_terminal" ? "delivered" : "dispatching");
+      if (["provider","provider_reference"].includes(evidence)) assert.equal(message[evidence],"external-evidence");
+      if (evidence === "successor") {
+        assert.equal(held.last_error,"reminder_sandbox_claim:successor");
+        assert.equal(held.locked_at,NOW+60_000);
+      }
+      assert.equal(message.policy_json,snapshot);
+      assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+    });
+  }
+}
+
+for (const successor of [null,"reminder_sandbox_claim:successor","external_acceptance_unknown"]) {
+  test(`unavailable policy reschedule checks its token: ${successor ?? 'current owner'}`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`unavailable-${successor}`);
+    const token = "reminder_sandbox_claim:owner-a";
+    const snapshot = JSON.stringify({policyId:"missing-policy"});
+    w.sqlite.prepare("UPDATE communication_messages SET policy_json=? WHERE id=?").run(snapshot,queued.messageId);
+    w.sqlite.prepare("UPDATE communication_outbox SET status='dispatching',last_error=?,locked_at=? WHERE message_id=?").run(token,NOW,queued.messageId);
+    const prepare = w.db.prepare;
+    w.db.prepare = sql => {
+      const original = prepare(sql);
+      if (sql !== "SELECT * FROM communication_policies WHERE id=? AND active=1" || !successor) return original;
+      return {...original,bind:(...args)=>{
+        const bound = original.bind(...args);
+        return {...bound,first:async()=>{
+          w.sqlite.prepare("UPDATE communication_outbox SET last_error=?,locked_at=? WHERE message_id=?").run(successor,NOW+60_000,queued.messageId);
+          return bound.first();
+        }};
+      }};
+    };
+    const gate = await w.comms.enforceCommunicationDispatchPolicy(w.db,queued.messageId,NOW,token);
+    assert.equal(gate.status,successor ? "dispatch_claim_lost" : "scheduled");
+    assert.equal(messages(w.sqlite)[0].status,successor ? "queued" : "scheduled");
+    assert.equal(outbox(w.sqlite)[0].status,successor ? "dispatching" : "scheduled");
+    assert.equal(w.sqlite.prepare("SELECT policy_json FROM communication_messages").get().policy_json,snapshot);
+    if (successor) assert.equal(w.sqlite.prepare("SELECT last_error FROM communication_outbox").get().last_error,successor);
+    else assert.equal(gate.reason,"communication_policy_unavailable");
+  });
+}
+
+test("a real rule-read failure propagates instead of delivering a paused reminder", async () => {
+  const w = await world();
+  await queuedLifecycle(w,"rule-read-failure");
+  w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+  w.sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES ('rule-grooming-rebook',0)").run();
+  const prepare = w.db.prepare;
+  w.db.prepare = sql => {
+    if (sql === "SELECT active FROM lifecycle_reminder_rules WHERE id=?") return {bind:()=>({first:async()=>{throw new Error("injected operational rule read failure");}})};
+    return prepare(sql);
+  };
+  await assert.rejects(w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW}), /operational rule read failure/);
+  w.db.prepare = prepare;
+  assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+60_000})).sandboxDelivered,0);
+  assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+6*60_000})).sandboxDelivered,0);
+  assert.equal(outbox(w.sqlite)[0].status,"scheduled");
+  assert.equal(messages(w.sqlite)[0].status,"scheduled");
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) c FROM reminder_sandbox_deliveries").get().c,0);
+});
+
+for (const transition of ["pause", "suppress"]) {
+  test(`${transition} batch failure rolls back both projections and recovers its lease`, async () => {
+    const w = await world();
+    await queuedLifecycle(w,`rollback-${transition}`);
+    if (transition === "pause") {
+      w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+      w.sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES ('rule-grooming-rebook',0)").run();
+    } else setPreference(w.sqlite,`rollback-${transition}`,{serviceUpdates:false});
+    const reason = transition === "pause" ? "reminder_rule_paused" : "current_consent_refused";
+    w.sqlite.exec(`CREATE TRIGGER inject_transition_failure BEFORE UPDATE ON communication_outbox WHEN NEW.last_error='${reason}' BEGIN SELECT RAISE(ABORT,'injected transition rollback'); END`);
+    await assert.rejects(w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW}), /injected transition rollback/);
+    assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+    assert.equal(messages(w.sqlite)[0].status,"queued");
+    w.sqlite.exec("DROP TRIGGER inject_transition_failure");
+    if (transition === "pause") w.sqlite.prepare("UPDATE lifecycle_reminder_rules SET active=1").run();
+    const recovered = await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW+6*60_000});
+    assert.equal(recovered.scanned,1);
+    assert.equal(recovered.sandboxDelivered,transition === "pause" ? 1 : 0);
+    assert.equal(messages(w.sqlite)[0].status,transition === "pause" ? "sandbox_delivered" : "suppressed");
+    assert.equal(outbox(w.sqlite)[0].status,messages(w.sqlite)[0].status);
+  });
+}
+
+for (const marker of [null,"unmarked-claim"]) {
+  test(`expired ${marker ?? 'null'} claim is not a sandbox recovery candidate`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`unmarked-${marker}`);
+    w.sqlite.prepare("UPDATE communication_outbox SET status='dispatching',last_error=?,locked_at=? WHERE message_id=?").run(marker,NOW-10*60_000,queued.messageId);
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    const held = w.sqlite.prepare("SELECT * FROM communication_outbox").get();
+    assert.equal(held.status,"dispatching");
+    assert.equal(held.last_error,marker);
+    assert.equal(held.locked_at,NOW-10*60_000);
+  });
+}
+
+for (const evidence of ["provider","provider_reference"]) {
+  test(`pause preserves ${evidence} arriving during its rule lookup`, async () => {
+    const w = await world();
+    const queued = await queuedLifecycle(w,`rule-evidence-${evidence}`);
+    w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+    w.sqlite.prepare("INSERT INTO lifecycle_reminder_rules VALUES ('rule-grooming-rebook',0)").run();
+    const prepare = w.db.prepare;
+    w.db.prepare = sql => {
+      const original = prepare(sql);
+      if (sql !== "SELECT active FROM lifecycle_reminder_rules WHERE id=?") return original;
+      return {...original,bind:(...args)=>{
+        const bound = original.bind(...args);
+        return {...bound,first:async()=>{
+          w.sqlite.prepare(`UPDATE communication_messages SET ${evidence}='external-evidence' WHERE id=?`).run(queued.messageId);
+          return bound.first();
+        }};
+      }};
+    };
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,0);
+    assert.equal(messages(w.sqlite)[0].status,"queued");
+    assert.equal(outbox(w.sqlite)[0].status,"dispatching");
+  });
+}
+
+for (const existingDirectory of [false,true]) {
+  test(`missing rule compatibility remains intentional: directory=${existingDirectory}`, async () => {
+    const w = await world();
+    await queuedLifecycle(w,`missing-directory-${existingDirectory}`);
+    if (existingDirectory) w.sqlite.exec("CREATE TABLE lifecycle_reminder_rules (id TEXT PRIMARY KEY, active INTEGER NOT NULL)");
+    assert.equal((await w.reminders.consumeCustomerReminderSandboxOutbox(w.db,{asOf:NOW})).sandboxDelivered,1);
+  });
+}

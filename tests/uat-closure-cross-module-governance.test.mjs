@@ -40,10 +40,11 @@ test("reminder scheduler has an executable sandbox sink with explicit status and
 });
 
 test("reminder sandbox consumer closes a due lifecycle outbox record without external delivery",async()=>{
- const db=makeD1(new DatabaseSync(":memory:")),communications=await import("../lib/communication-engine.ts"),reminders=await import("../lib/customer-reminder-governance.ts"),now=Date.now();
+ const db=makeD1(new DatabaseSync(":memory:")),communications=await import("../lib/communication-engine.ts"),reminders=await import("../lib/customer-reminder-governance.ts"),now=Date.parse("2026-10-01T06:30:00Z");
  await communications.ensureCommunicationTables(db);
+ await communications.seedCommunicationPolicy(db);
  await db.prepare("INSERT INTO communication_threads (id,customer_id,status,created_at,updated_at) VALUES ('thread-1','customer-1','open',?,?)").bind(now,now).run();
- await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('message-1','thread-1','customer-1','outbound','whatsapp','lifecycle','grooming_rebooking_reminder','{}','queued','reminder-1','{}','scheduler',?,?)").bind(now,now).run();
+ await db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,direction,channel,purpose,template_key,payload_json,status,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('message-1','thread-1','customer-1','outbound','whatsapp','lifecycle','grooming_rebooking_reminder','{}','queued','reminder-1',?,'scheduler',?,?)").bind(JSON.stringify({policyId:"comm_blr_default",cityId:"blr"}),now,now).run();
  await db.prepare("INSERT INTO communication_outbox (message_id,status,next_attempt_at,attempt_count,max_attempts,updated_at) VALUES ('message-1','queued',?,0,5,?)").bind(now-1,now).run();
  const result=await reminders.consumeCustomerReminderSandboxOutbox(db,{asOf:now});
  assert.deepEqual({delivered:result.sandboxDelivered,status:result.deliveryStatus,external:result.externalDelivery},{delivered:1,status:"sandbox_delivered",external:false});
