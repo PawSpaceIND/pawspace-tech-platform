@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__UI_CONTENT_NEXT__');
+const {default:PartnerJobs}=await import('../app/partner/jobs/page.tsx');
+test('Partner jobs renders its existing workspace destination and loading state without inventing jobs',()=>{
+ const html=renderToStaticMarkup(createElement(PartnerJobs));
+ assert.match(html,/href="\/partner\/workspace"/);
+ assert.match(html,/>Your jobs<\/h1>/);
+ assert.match(html,/Loading your jobs/);
+ assert.doesNotMatch(html,/Accept job|Complete job/);
+});
 const baseline=JSON.parse(readFileSync(new URL('./fixtures/ui-content-next-preservation.json',import.meta.url),'utf8'));
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 for(const [path,hash] of Object.entries(baseline))test(`existing handlers, state and requests are preserved: ${path}`,()=>{
@@ -28,10 +40,6 @@ test('care actions and forms gain reachable focus and touch treatment without hi
 
 // Execute the actual page, including its CSS-module hooks and existing empty state.
 // SSR does not run useEffect, so this assertion neither loads nor saves provider rates.
-import {createElement} from 'react';
-import {renderToStaticMarkup} from 'react-dom/server';
-import {installWorkersHooks} from './helpers/module-hooks.mjs';
-installWorkersHooks('__UI_CONTENT_NEXT_RENDER__');
 const {default:PartnerRates}=await import('../app/partner/rates/page.tsx');
 test('actual provider rates page renders its responsive root and reachable existing empty state',()=>{
  const html=renderToStaticMarkup(createElement(PartnerRates));
