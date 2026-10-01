@@ -231,7 +231,7 @@ export function pricesMatchCatalogue(reply:string,catalogue:unknown){
  });
 }
 /** The words that name each catalogue group's service in a reply. */
-const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};
+const SERVICE_GROUP_WORDS:Record<string,RegExp>={grooming:/groom/,groomingSubscriptions:/groom/,dogTraining:/train/,boarding:/board|stay|day[- ]?care/,petSitting:/sitt/,dogWalking:/walk/,petTaxi:/taxi|cab|ride/};
 
 
 /** Only persisted, same-customer turns enter sales memory; caller-supplied chat history is not trusted. */

@@ -79,3 +79,12 @@ for(const channel of ['voice','chat','whatsapp'])test(channel+': information que
  assert.doesNotMatch(sent.instructions,/Specialty: Grooming only/);
  const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.availableActionTools,[]);assert.ok(Array.isArray(cc.conversationHistory));
 });
+
+test('Daycare prices bind to Boarding catalogue rows without accepting another service price', async () => {
+ const {pricesMatchCatalogue}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const catalogue={boarding:[{package_code:'boarding-4h',name:'Standard Stay',base_price_per_pet:499},{package_code:'boarding-10h',name:'Premium Stay',base_price_per_pet:599}],petTaxi:[{name:'Taxi',amount:799}]};
+ assert.equal(pricesMatchCatalogue('Daycare is available for up to four hours at ₹499 or ten hours at ₹599 per pet.',catalogue),true);
+ assert.equal(pricesMatchCatalogue('Day care starts at 499 rupees.',catalogue),true);
+ assert.equal(pricesMatchCatalogue('Daycare costs 799 rupees.',catalogue),false);
+ assert.equal(pricesMatchCatalogue('Grooming costs 499 rupees.',catalogue),false);
+});

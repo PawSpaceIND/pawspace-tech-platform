@@ -94,7 +94,6 @@ try {
       {service:'dog_training',package:'Meet & Greet',date:21,end:'11 AM',mode:'prepaid'},
       {service:'boarding',package:'Standard Stay',date:22,end:'2 PM',mode:'prepaid'},
       {service:'pet_sitting',package:'Home Visit',date:23,end:'11 AM',mode:'prepaid'},
-      {service:'dog_walking',package:'30-minute Solo Walk',date:24,end:'10:30 AM',mode:'pay_after_service'},
     ];
     for (const item of cases) {
       const before=countBookings(),beforePayment=paymentRequests;
@@ -111,7 +110,7 @@ try {
       assert.ok(result.bookingId);assert.equal(result.paymentVerified,false);
       assert.equal(world.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,item.service);
     }
-    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,scope:'Actual model and canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
+    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','pet_taxi','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model and four canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
     await mkdir('artifacts/maya-runtime-sale',{recursive:true});await writeFile('artifacts/maya-runtime-sale/report.json',JSON.stringify(report,null,2));console.log('MAYA_ALL_SERVICE_BOOKINGS='+JSON.stringify(report));
   } else if (scenario === 'concierge' || scenario === 'all-services') {
     const checks = [

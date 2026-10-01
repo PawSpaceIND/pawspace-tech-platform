@@ -384,19 +384,10 @@ for (const [service, packageCode, hours] of [['boarding', 'boarding-4h', 4], ['p
  });
 }
 
-test('all-service Maya creates a Walking booking after confirmation without a prepaid payment order', async t => {
- const w=await world(t,'dog_walking');
- const plan=actions(w,'walking-30','pay_after_service');
- delete plan[0].arguments.cadenceDays;
- plan[0].arguments.scheduledEnd=new Date(Date.parse(start)+30*60000).toISOString();
- const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'walking-broker',actions:plan}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
+test('all-service Maya cannot activate the superseded Walking pay-after-service UAT flow',async t=>{
+ const w=await world(t);const plan=actions(w,'walking-30','pay_after_service');plan[0].arguments.serviceCode='dog_walking';
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',turnKey:'walking-policy-conflict',actions:plan}),409);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
- assert.match(offer.summary,/after each completed walk/);
- assert.equal((await sales.pendingVoiceSalesOffer(w.db,w.threadId,w.customerId,'all_services')).id,offer.id);
- const result=await sales.confirmVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:'all_services',offerId:offer.id,confirmation:'Yes, please.'}).catch(async e=>{throw Error(e instanceof Response?await e.text():String(e));});
- assert.equal(bookingCount(w),1);assert.equal(w.calls.length,0);assert.equal(result.orderId,null);
- assert.match(result.output,/walking booking has been created/);
- assert.equal(w.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,'dog_walking');
 });
 
 test('all-service Maya refuses an unsupported service before making reservations or payment orders',async t=>{
