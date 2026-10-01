@@ -24,6 +24,7 @@ import {
 installWorkersHooks("__MIGRATION_DB__", "__MIGRATION_ENV__");
 
 const capacity = await import("../lib/provider-capacity-governance.ts");
+const aiRollout = await import("../lib/ai-audience-rollout.ts");
 
 const DIR = "drizzle";
 const FILES = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
@@ -39,7 +40,9 @@ const FILES = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
  */
 async function deploymentShapedDatabase() {
   const sqlite = new DatabaseSync(":memory:");
-  await capacity.ensureProviderCapacityTables(makeD1(sqlite));
+  const db = makeD1(sqlite);
+  await capacity.ensureProviderCapacityTables(db);
+  await aiRollout.ensureAiAudienceRolloutTables(db);
   return sqlite;
 }
 
