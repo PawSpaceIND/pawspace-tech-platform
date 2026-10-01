@@ -111,3 +111,12 @@ test('multi-service quote instructions do not impose Grooming on a Training requ
  const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.catalogue.petTaxi,[]);assert.equal(context.catalogueTool,null);
  assert.match(sent.instructions,/separate explicit customer confirmation/);
 });
+
+
+test('Taxi information enquiries cannot expose legacy synthetic route fares',async t=>{
+ const w=await world(t);await (await import('../lib/taxi-governance.ts')).ensureTaxiGovernanceTables(w.db);let sent;
+ const mock=stubFetch((url,init)=>{sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:'The route and vehicle determine your Taxi quote. What are the pickup and drop locations?',usage:{total_tokens:20}});});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='What determines the pet taxi price?';
+ await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ const cc=JSON.parse(sent.input).canonicalContext;assert.equal(cc.informationOnly,true);assert.deepEqual(cc.catalogue.petTaxi,[]);assert.equal(cc.catalogueTool,null);assert.deepEqual(cc.availableActionTools,[]);
+});
