@@ -1,4 +1,5 @@
-import { VOICE_CONVERSATION_STYLE } from "./voice-conversation-style.mjs";
+import { MAYA_STAY_POLICY, mayaStayDescriptions } from "./maya-stay-policy";
+import { VOICE_CONVERSATION_STYLE, voiceTaxiIntakeExplanation } from "./voice-conversation-style.mjs";
 import { MAYA_FUNERAL_POLICY, mayaFuneralCatalogue } from "./maya-funeral-policy";
 import{needsImmediateVetGuidance}from"./ai-emergency-guidance";
 import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-information";
@@ -33,7 +34,7 @@ export function isPetMedicalQuestion(message:string){
  const clinicalRemainder=message.replace(/\b(?:vet(?:erinarian)?|veterinary)\b/gi,"");
  return PET_MEDICAL_QUESTION.test(message)&&!(administrative&&!PET_MEDICAL_QUESTION.test(clinicalRemainder));
 }
-export function ensureVeterinaryReferral(reply:string,medical:boolean){return medical&&!/\b(?:contact|consult|speak (?:to|with)|see|call|visit)\b.{0,50}\b(?:a |your |an )?(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\b/i.test(reply)?`${reply.trim()} Please contact a veterinarian about this medical concern.`:reply;}
+export function ensureVeterinaryReferral(reply:string,medical:boolean){return medical&&!/\b(?:contact|consult|speak (?:to|with)|see|call|visit)\b.{0,50}\b(?:a |your |an )?(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\b|\bplease\s+(?:have|ask)\s+(?:a|your|an)\s+(?:vet(?:erinarian)?|veterinary clinic|animal doctor)\s+(?:to\s+)?(?:assess|examine|evaluate|check)\b/i.test(reply)?`${reply.trim()} Please contact a veterinarian about this medical concern.`:reply;}
 export function safePetMedicalReply(reply:string,medical:boolean,actionsProposed=false){
  if(!medical)return reply;
  const safe=actionsProposed||/\b(coupon|discount|buy|purchase|checkout|payment|package|book (?:grooming|training|boarding)|limited.time)\b|₹|\bINR\s*\d/i.test(reply)
@@ -134,10 +135,11 @@ export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:Auth
 return subscriptions;})(),
  listServiceControls(db),
  ]);
- const catalogue={...snapshot,groomingSubscriptions:subscriptions,funeral:mayaFuneralCatalogue()};
+ const catalogue={...snapshot,boarding:mayaStayDescriptions(snapshot.boarding),petSitting:mayaStayDescriptions(snapshot.petSitting),groomingSubscriptions:subscriptions,funeral:mayaFuneralCatalogue()};
  const serviceDirectory=services.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled,disabledReason:service.disabledReason}));
  const operationalFaq={
   funeral:MAYA_FUNERAL_POLICY,
+  stays:MAYA_STAY_POLICY,
   payments:"Explain business payment timing and methods from approved service knowledge separately from the channel's executable permissions. An existing prepaid-only voice checkout capability is not a company-wide ban on pay-after-service. Business permission does not newly authorise the voice tool. Do not infer payment timing from cash or UPI, or invent collection milestones or credit activation. Verify booking-linked recorded and reconciled receipt; a claim, screenshot or payment-order creation is not payment success.",
   taxes:"Use the matching current package tax_inclusive flag or the customer-specific quote/invoice. A missing flag is unknown, not inclusive or exclusive. Do not add tax to an inclusive amount, calculate partner GST, or infer surcharges from a base price.",
   cancellations:"Cancellation and reschedule eligibility is service-policy specific. Never promise a refund; refund and payment disputes go to a human reviewer.",
@@ -158,6 +160,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
   ?Promise.resolve([] as ApprovedSalesOffer[])
   :approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
  ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation||medicalQuestion;
+ const taxiGuidance=channel==="voice"&&!input.onDelta&&!medicalQuestion&&!policyEnquiry&&"serviceDirectory" in grounded.context&&grounded.context.serviceDirectory.some(service=>service.code==="pet_taxi"&&service.enabled)?voiceTaxiIntakeExplanation(input.inputText):null;
+ if(taxiGuidance)return{text:taxiGuidance,provider:"conversation_guidance",modelRef:"server_owned_taxi_intake",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const eligibleOffers=options.salesService==="dog_training"?[]:offers;
  const preferenceReply=channel==="voice"&&!input.onDelta&&!medicalQuestion?voiceExtrasPreferenceReply(input.inputText):null;
  if(preferenceReply)return{text:preferenceReply,provider:"conversation_preference",modelRef:"server_owned_preference_acknowledgement",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
@@ -165,6 +169,7 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  if(offerInformation)return{text:spokenVerifiedAmounts(offerInformation),provider:"approved_offer_catalogue",modelRef:"server_owned_offers",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:pricesMatchCatalogue(withoutApprovedVoiceDiscounts(offerInformation,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified:offerClaimsApproved(offerInformation,eligibleOffers),highImpactAction:false,actionRequests:[]};
  if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
  if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});
+ systemPrompt+=`\n\n${MAYA_STAY_POLICY}`;
  if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:options.salesService==="grooming"||options.salesService==="all_services"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory:history});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}
  // Legacy Taxi UAT route classes are not address-based customer fares, including on information-only turns.
  if(options.salesService==="all_services"||options.salesService==="pet_taxi"){grounded.context.catalogueTool=null;Object.assign(grounded.context.catalogue,{petTaxi:[]});}

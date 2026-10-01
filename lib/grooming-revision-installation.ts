@@ -246,10 +246,14 @@ export async function assertGroomingRevisionInstallation(db:D1Database) {
 }
 const literal=(value:string)=>"'"+value.replaceAll("'","''")+"'";
 /** sqlite_master retains DDL formatting: archive install/replay preserves these exact stored strings.
- * Different formatting is conservatively unavailable until installed via reviewed replay. */
+ * Different formatting is conservatively unavailable until installed via reviewed replay.
+ * A VALUES relation keeps expression depth bounded as the manifest grows (D1 limit: 100). */
 export const groomingInstallationPredicate = `
- (SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND (${expectedGroomingTriggers.map(trigger=>
-   "(name="+literal(trigger.name)+" AND sql="+literal(trigger.sql)+")").join(" OR ")}))=${groomingRevisionTriggers.length}
+ (WITH expected_grooming_triggers(name,sql) AS (
+  VALUES ${expectedGroomingTriggers.map(trigger=>"("+literal(trigger.name)+","+literal(trigger.sql)+")").join(",\n  ")}
+ ) SELECT COUNT(*) FROM expected_grooming_triggers expected
+  JOIN sqlite_master installed ON installed.type='trigger'
+   AND installed.name=expected.name AND installed.sql=expected.sql)=${groomingRevisionTriggers.length}
  AND EXISTS(SELECT 1 FROM grooming_revision_installation WHERE id=1 AND schema_version=2)
  AND EXISTS(SELECT 1 FROM grooming_revision_installation_epoch WHERE id=1 AND epoch BETWEEN 1 AND 9007199254740991 AND length(incarnation)>=32)
  AND EXISTS(SELECT 1 FROM grooming_effective_control_revision WHERE id=1 AND revision BETWEEN 1 AND 9007199254740991 AND length(database_incarnation)>=32)`;

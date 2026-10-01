@@ -1,0 +1,19 @@
+{
+  "frozenFoundation": "c5f476b989f788bce2d986b41e3ead273119ed23",
+  "key": "app/api/ai-bootstrap/route.ts",
+  "old": "d36945b9ff3cca2d10efda47eb3ba5222ff695e8437615cf3b8c07ee9f5fbde4",
+  "new": "134c44d521e89b5518f4ef7e8690af33e98b45d660bd5dfe1f09ecec6394dc84",
+  "manifestFiles": [
+    "tests/fixtures/staff-operations-contract.json",
+    "tests/fixtures/partner-services-presentation-contract.json",
+    "tests/fixtures/staff-admin-self-service-contract.json",
+    "tests/fixtures/staff-crm-control-contract.json",
+    "tests/fixtures/staff-team-completion-contract.json",
+    "tests/fixtures/inbox-workspace-contract.json",
+    "tests/fixtures/ui-mainline-integration-contract.json",
+    "tests/fixtures/ui-display-truth-contract.json",
+    "tests/fixtures/customer-partner-theme-contract.json"
+  ],
+  "reason": "Reviewed installer route was added by frozen foundation but its existing fingerprints were not refreshed",
+  "published": false
+}
