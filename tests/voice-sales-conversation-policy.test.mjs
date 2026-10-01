@@ -4,7 +4,27 @@ import {setupJourney} from './helpers/grooming-journey-harness.mjs';
 import {seedOwnedPet} from './helpers/saved-pet-fixture.mjs';
 import {applyOwnedDdl} from './helpers/ai-harness.mjs';
 import {humanCallPrompt} from '../lib/elevenlabs-human-call-profile.mjs';
-const {specialistSalesPrompt}=await import('../lib/voice-sales-specialists.ts');
+const {specialistSalesPrompt,voiceQuotePolicyText,isVoiceSalesConfirmation}=await import('../lib/voice-sales-specialists.ts');
+const {classifyAiIntent}=await import('../lib/ai-conversation-orchestrator.ts');
+
+test('an explicitly unconfirmed quote accepts coordinated negative execution wording',()=>{
+ for(const withheld of ['Do not reserve, book or create a payment order yet.','Do not reserve or create a booking or payment order.','Do not book a slot or create the payment order.','Don’t create a booking or a payment order yet.']){
+  const text='Please prepare an unconfirmed quote for Complete Makeover for Milo. '+withheld;
+  assert.equal(classifyAiIntent(text).policyRisk,false,withheld);
+  assert.doesNotMatch(voiceQuotePolicyText(text),/payment/i,withheld);
+  assert.equal(isVoiceSalesConfirmation(text),false);
+ }
+});
+test('positive, mixed and ambiguous payment wording keeps its risk and cannot count as confirmation',()=>{
+ for(const clause of ['Create a payment order now.','Do not reserve, but create a payment order now.','Do not create a payment order yet. Then create a payment order now.','Do not create a payment order unless I say yes.','Do not create a payment order, then take payment.']){
+  const text='Please prepare an unconfirmed quote for Complete Makeover for Milo. '+clause;
+  assert.match(voiceQuotePolicyText(text),/payment/i,clause);
+  assert.equal(classifyAiIntent(text).policyRisk,true,clause);
+  assert.equal(isVoiceSalesConfirmation(text),false,clause);
+ }
+ const notQuote='Do not reserve, book or create a payment order yet.';
+ assert.equal(voiceQuotePolicyText(notQuote),notQuote);
+});
 
 test('every voice specialty limits missing discovery to two or three questions and one for complex needs',()=>{
  for(const service of ['grooming','dog_training','boarding','pet_sitting','pet_taxi','all_services']){

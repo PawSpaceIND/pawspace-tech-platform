@@ -40,7 +40,10 @@ export function isVoiceSalesQuoteRequest(message: string) {
 /** Only quote preparation can explicitly withhold payment. Positive/mixed requests remain risky. */
 export function voiceQuotePolicyText(message:string){
  if(!isVoiceSalesQuoteRequest(message))return message;
- return message.replace(/\b(?:do not|don't|don’t)\s+(?:reserve\s+or\s+)?(?:create|take|collect|capture|process|make|send|start)\s+(?:(?:a|any|the)\s+)?(?:booking\s+or\s+)?payment(?:\s+order)?\b/gi,"");
+ // Normalize only a complete, explicitly negative execution clause in a quote request.
+ // Commas may coordinate reserve/book/create. Contrast, conditions and later positive
+ // payment clauses stay visible to the existing policy gate.
+ return message.replace(/\b(?:do not|don't|don’t)\s+(?:(?:reserve|book)(?:\s+(?:(?:a|any|the)\s+)?(?:slot|booking|reservation))?\s*(?:,\s*(?:(?:and|or)\s+)?|(?:and|or)\s+))*(?:create|take|collect|capture|process|make|send|start)\s+(?:(?:a|any|the)\s+)?(?:booking\s+(?:and|or)\s+(?:(?:a|any|the)\s+)?)?payment(?:\s+order)?\b(?:\s+(?:yet|now))?(?=\s*(?:[.!?;]|$))/gi,"");
 }
 export async function ensureVoiceSalesOffers(db: D1Database) {
  return ensureD1Once(db,"voice_sales_offers",async()=>{
