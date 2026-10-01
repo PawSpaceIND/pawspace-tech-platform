@@ -43,6 +43,12 @@ Record measured reply-start latency, interruption stop and silent gaps. Threshol
 
 ## Local validation
 
-91 behavioural/grounding/voice-profile tests pass in both Node loader modes. 159 presentation preservation tests and 18 existing source/voice contracts pass. TypeScript compilation passes. Model and hosted CI validation on the enhancement revision are separate remaining gates.
+97 behavioural/grounding/voice-profile tests pass in both Node loader modes. 159 presentation preservation tests and 18 existing source/voice contracts pass. TypeScript compilation passes. Model and hosted CI validation on the enhancement revision are separate remaining gates.
 
-The medical referral guard now recognises the baseline imperative "please have a veterinarian assess Bruno" as an existing referral. Generic mentions of a vet still receive an actionable contact recommendation. 29 medical/offer tests and the final combined 250-test run pass.
+The medical referral guard now recognises the baseline imperative "please have a veterinarian assess Bruno" as an existing referral. Generic mentions of a vet still receive an actionable contact recommendation. 29 medical/offer tests and the final combined 256-test run pass.
+
+Nested schedule arguments are also checked before an AI reservation can execute, including a conflicting outer service code. Two executed regressions prove zero capacity writes in those cases.
+
+## Stricter model result and correction
+
+Actual-model concierge run 36829524740 on a6e83cc1 removed fixed Daycare prices but failed the stricter Taxi pacing assertion: its answer still listed passengers, luggage and waiting in a 51-word reply. Do not report that run as passed. The common English Taxi-intake explanation now uses one short server-owned reply only when Taxi is enabled. Fare, price, complete-list, medical/safety, bereavement, human-request, language-switch and action enquiries cannot use it; no model or mutation is invoked for the common information shortcut. Four added classifier/provider boundary tests pass. Final combined validation is 256 tests, with 97 behavioural tests passing in both loader modes. Final actual-model re-evaluation remains required.

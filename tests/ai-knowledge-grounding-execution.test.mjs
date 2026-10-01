@@ -175,3 +175,21 @@ test('one actionable veterinary recommendation is not repeated by the medical re
  assert.match(ensureVeterinaryReferral(ordinary,true),/Please contact a veterinarian about this medical concern/);
  assert.equal(ensureVeterinaryReferral('Please contact your vet.',true),'Please contact your vet.');
 });
+
+test('common Taxi intake explanation uses enabled service knowledge with no model or mutation',async t=>{
+ const w=await world(t),mock=stubFetch(()=>{throw Error('Common information must not invoke the model');});t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='How does your pet taxi service work, and what pickup information would you need?';
+ const result=await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ assert.equal(result.modelRef,'server_owned_taxi_intake');assert.equal(mock.calls.length,0);
+ assert.match(result.text,/pickup and drop addresses/);assert.doesNotMatch(result.text,/luggage|waiting/);
+ assert.ok(result.text.split(/\s+/).length<=40);assert.deepEqual(result.actionRequests,[]);
+});
+
+test('disabled Taxi service cannot use the first-intake guidance shortcut',async t=>{
+ const w=await world(t);const controls=await import('../lib/service-control.ts');await controls.ensureServiceControlTables(w.db);
+ w.sqlite.prepare("UPDATE service_controls SET enabled=0,disabled_reason='review' WHERE service_code='pet_taxi'").run();
+ const mock=stubFetch(()=>jsonResponse({status:'completed',output_text:'Pet Taxi is temporarily unavailable for new requests.'}));t.after(()=>mock.restore());
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'}),query='How does your pet taxi service work?';
+ const result=await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel:'voice',inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
+ assert.equal(mock.calls.length,1);assert.notEqual(result.modelRef,'server_owned_taxi_intake');assert.match(result.text,/unavailable/);
+});

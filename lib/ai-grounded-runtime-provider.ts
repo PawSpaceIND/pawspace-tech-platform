@@ -1,5 +1,5 @@
 import { MAYA_STAY_POLICY, mayaStayDescriptions } from "./maya-stay-policy";
-import { VOICE_CONVERSATION_STYLE } from "./voice-conversation-style.mjs";
+import { VOICE_CONVERSATION_STYLE, voiceTaxiIntakeExplanation } from "./voice-conversation-style.mjs";
 import { MAYA_FUNERAL_POLICY, mayaFuneralCatalogue } from "./maya-funeral-policy";
 import{needsImmediateVetGuidance}from"./ai-emergency-guidance";
 import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-information";
@@ -160,6 +160,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
   ?Promise.resolve([] as ApprovedSalesOffer[])
   :approvedSalesOffers(db,{customerId:input.customerId,channel:channel==="chat"?"website":"whatsapp"}).catch(()=>[] as ApprovedSalesOffer[]),
  ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation||medicalQuestion;
+ const taxiGuidance=channel==="voice"&&!input.onDelta&&!medicalQuestion&&!policyEnquiry&&"serviceDirectory" in grounded.context&&grounded.context.serviceDirectory.some(service=>service.code==="pet_taxi"&&service.enabled)?voiceTaxiIntakeExplanation(input.inputText):null;
+ if(taxiGuidance)return{text:taxiGuidance,provider:"conversation_guidance",modelRef:"server_owned_taxi_intake",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const eligibleOffers=options.salesService==="dog_training"?[]:offers;
  const preferenceReply=channel==="voice"&&!input.onDelta&&!medicalQuestion?voiceExtrasPreferenceReply(input.inputText):null;
  if(preferenceReply)return{text:preferenceReply,provider:"conversation_preference",modelRef:"server_owned_preference_acknowledgement",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};

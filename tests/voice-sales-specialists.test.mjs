@@ -486,3 +486,12 @@ for(const toolCode of ['schedule.reserve','provider.assignment.execute_policy'])
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+for(const serviceCode of [undefined,'grooming'])test(`nested stay reservation cannot hide behind outer service ${serviceCode}`,async t=>{
+ const w=await world(t,'boarding');
+ const {executeGovernedConversationTool}=await import('../lib/ai-first-control-plane.ts');
+ const result=await executeGovernedConversationTool(w.db,{actor,toolCode:'schedule.reserve',threadId:w.threadId,customerId:w.customerId,intent:'booking_create',channel:'voice',arguments:{serviceCode,schedule:actions(w,'boarding-4h')[0].arguments},idempotencyKey:'nested-stay-'+String(serviceCode),customerConfirmed:true}).catch(e=>e);
+ assert.ok(result instanceof Response&&result.status===409);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
