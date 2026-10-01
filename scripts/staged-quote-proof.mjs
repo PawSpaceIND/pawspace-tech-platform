@@ -124,6 +124,8 @@ export function syntheticOfferRepairChecks({revision,customerId,handoffs,calls,t
   queuedPolicyRisk:h.status==='queued'&&h.reason==='policy_risk',
   noStaffActivity:h.taken_over_by==null&&h.taken_over_at==null&&h.resumed_by==null&&h.resumed_at==null,
   handoffInIncident:incidentTime(h.created_at),callInIncident:incidentTime(c.started_at),turnInIncident:incidentTime(t.created_at),
+  handoffDuringCall:typeof c.started_at==='number'&&typeof c.ended_at==='number'&&h.created_at>=c.started_at&&h.created_at<=c.ended_at,
+  inputBeforeHandoffDuringCall:typeof t.created_at==='number'&&t.created_at>=c.started_at&&t.created_at<=h.created_at,
   syntheticInbound:c.transport_provider==='sandbox_simulator'&&c.direction==='inbound'&&c.consent_status==='verified',
   callCreator:c.created_by==='founder@pawspace.in',callFailed:c.status==='failed'&&c.disposition==='synthetic_audio_demo_failed'&&incidentTime(c.ended_at),
   policyTurn:t.provider==='openai'&&t.outcome==='handoff'&&t.policy_decision==='blocked_high_impact'&&t.handoff_reason==='policy_risk',
@@ -134,4 +136,23 @@ export function syntheticOfferRepairChecks({revision,customerId,handoffs,calls,t
 export function syntheticOfferRepairProof(input){
  if(!Object.values(syntheticOfferRepairChecks(input)).every(v=>v===true))throw Error('Exact synthetic offer incident not proven');
  return{singleKnownSyntheticIncident:true,staffTakeoverObserved:false,exactInputVerified:true,governedStaffResumeRequired:true,dialed:false};
+}
+
+// A preceding synthetic call can finish inside the same minute. Keep every later inbound
+// message, but do not misclassify earlier turns as part of the failed offer call.
+export function scopeSyntheticOfferActivity({calls,turns,laterMessages}) {
+ if(!Array.isArray(calls)||calls.length!==1||!Array.isArray(turns)||!Array.isArray(laterMessages)||turns.length>=20||laterMessages.length>=20)throw Error('Synthetic offer activity scope is not bounded');
+ const c=calls[0],validTime=t=>typeof t==='number'&&Number.isFinite(t);
+ if(!validTime(c.started_at)||!validTime(c.ended_at)||c.started_at<offerIncidentStart||c.ended_at>=offerIncidentEnd||c.started_at>c.ended_at||[...turns,...laterMessages].some(r=>!validTime(r.created_at)))throw Error('Synthetic offer activity timestamps not proven');
+ const scopedTurns=turns.filter(t=>t.created_at>=c.started_at&&t.created_at<=c.ended_at);
+ const scopedLaterMessages=laterMessages.filter(m=>m.created_at>=c.started_at);
+ return {turns:scopedTurns,laterMessages:scopedLaterMessages,diagnostic:{windowTurns:turns.length,callTurns:scopedTurns.length,earlierTurns:turns.length-scopedTurns.length,laterInboundCount:scopedLaterMessages.length,postCallInboundCount:scopedLaterMessages.filter(m=>m.created_at>c.ended_at).length}};
+}
+
+export function syntheticOfferContinuationClear({activity,otherHandoffs,threadId}) {
+ if(!threadId||!activity||activity.diagnostic?.postCallInboundCount!==0||!Array.isArray(activity.laterMessages)||activity.laterMessages.length!==1||!Array.isArray(otherHandoffs))return false;
+ if(otherHandoffs.some(h=>h.thread_id===threadId&&['queued','staff_active'].includes(h.status)))return false;
+ const m=activity.laterMessages[0];let payload;try{payload=JSON.parse(m.payload_json);}catch{return false;}
+ const value=['text','message','body','content'].map(k=>payload?.[k]).find(v=>typeof v==='string'&&v.trim());
+ return value?.trim()===offerIncidentPrompt&&m.channel==='voice'&&m.created_by==='elevenlabs-voice@system.pawspace';
 }
