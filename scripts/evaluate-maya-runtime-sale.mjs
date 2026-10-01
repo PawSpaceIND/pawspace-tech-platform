@@ -95,6 +95,8 @@ try {
         world.sqlite.prepare("INSERT OR IGNORE INTO taxi_driver_vehicle_eligibility(provider_id,vehicle_id,status,created_at) VALUES (?,?,'active',1)").run(provider.id,car.id);
     globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,GOOGLE_MAPS_SERVER_API_KEY_UAT:'synthetic-test-key',GOOGLE_ROUTES_SERVER_API_KEY_UAT:'synthetic-test-key',PAWSPACE_MAPS_ENV:'sandbox'};
   }
+  const { publishStayRates } = await import("../tests/helpers/voice-stay-rate-fixture.mjs");
+  let stayInformationCount = 0;
   const history = [], countBookings = () => world.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get() ? world.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n : 0;
   async function turn(message) {
     const started = Date.now();
@@ -112,8 +114,19 @@ try {
       {service:'pet_taxi',package:'Pet Taxi with an eligible recommended vehicle',date:24,end:'1 PM',mode:'split_50_50',details:'Pickup is 12 Test Street; drop-off is 24 Test Street, Koramangala, Bengaluru. This is a regular one-way trip with one passenger, no luggage, no waiting time, and Milo is not hyperactive. Please recommend the appropriate vehicle and read its name and fare back for confirmation.'},
     ];
     for (const item of cases) {
+      const stay = item.service === 'boarding' || item.service === 'pet_sitting';
+      if (stay) await publishStayRates(world,item.service,item.service==='boarding'?'boarding-4h':'sitting-visit-60');
       const before=countBookings(),beforePayment=paymentRequests;
       await turn(`Please prepare an unconfirmed quote for ${item.service}, ${item.package}, for my saved dog Milo, ${item.mode}, October ${item.date} 2026 from 10 AM to ${item.end} India time, at 12 Test Street, Bengaluru, PIN 560038. This is one appointment. ${item.details || ""} Do not reserve or create a booking or payment order yet. Read back the quote and ask for my separate confirmation.`);
+      if (stay) {
+        const info=world.sqlite.prepare("SELECT * FROM voice_sales_offers WHERE thread_id=? AND customer_id=? AND service_code=? AND status='app_only' ORDER BY created_at DESC LIMIT 1").get(threadId,customerId,item.service);
+        assert.ok(info,`No app-only caregiver information for ${item.service}`);
+        assert.match(info.summary,/7,999 rupees/);assert.match(info.summary,/Complete the booking in the PawSpace app/);
+        assert.deepEqual(JSON.parse(info.actions_json),[]);assert.equal(JSON.parse(info.quote_json).priceSource,'provider_rate');
+        assert.equal(countBookings(),before);assert.equal(paymentRequests,beforePayment);
+        await assert.rejects(sales.confirmVoiceSalesOffer(world.db,{actor,threadId,customerId,service:'all_services',offerId:info.id,confirmation:'Yes, please.'}),e=>e instanceof Response&&e.status===409);
+        stayInformationCount++;continue;
+      }
       const offer=await sales.pendingVoiceSalesOffer(world.db,threadId,customerId,'all_services');
       assert.ok(offer,`No stored offer for ${item.service}`);
       assert.equal(offer.service_code,item.service);
@@ -126,7 +139,7 @@ try {
       assert.ok(result.bookingId);assert.equal(result.paymentVerified,false);
       assert.equal(world.sqlite.prepare('SELECT service_code FROM canonical_bookings WHERE id=?').get(result.bookingId).service_code,item.service);
     }
-    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model and five canonical service booking implementations in an isolated in-memory fixture. Payment provider mocked; no hosted booking, payment capture, handset or delivery proof.',turns};
+    const report={passed:true,scenario,dialed:false,liveDatabaseAccess:false,model,modelCalls,mockedPaymentRequests:paymentRequests,bookingCount:countBookings(),stayInformationCount,premiumCertified:false,allServicesBookable:false,blockedServices:['dog_walking','food','relocation','funeral_memorial','vet_consult'],scope:'Actual model with three governed voice checkout services and two provider-priced app-only stay enquiries in an isolated fixture. Payments mocked; no hosted booking, capture, handset or delivery proof.',turns};
     await mkdir('artifacts/maya-runtime-sale',{recursive:true});await writeFile('artifacts/maya-runtime-sale/report.json',JSON.stringify(report,null,2));console.log('MAYA_ALL_SERVICE_BOOKINGS='+JSON.stringify(report));
   } else if (scenario === 'concierge' || scenario === 'all-services') {
     const checks = [
@@ -140,8 +153,8 @@ try {
     if (scenario === 'all-services') checks.push(
       { message: 'For a different enquiry: what does your dog training service help with?', required: /train|behavio|cues/i },
       { message: 'What is the difference between pet sitting at my home and boarding at a host home?', required: /sitt/i },
-      { message: 'I need care just during the daytime, not overnight. Do you offer daycare?', required: /daycare|daytime|day care/i },
-      { message: 'How does your pet taxi service work, and what pickup information would you need?', required: /pickup|pick.up|transport|taxi/i },
+      { message: 'I need care just during the daytime, not overnight. Do you offer daycare?', required: /daycare|daytime|day care/i, forbidden: /(?:499|599|699|rupees|₹|fixed price)/i, maxWords: 45 },
+      { message: 'How does your pet taxi service work, and what pickup information would you need?', required: /pickup|pick.up|transport|taxi/i, forbidden: /luggage|waiting|hyperactive/i, maxWords: 45 },
       { message: 'I am moving to another city with my cat. How can your relocation team help?', required: /relocation|mov|travel/i },
       { message: 'What fresh food options can I ask PawSpace about, and how is payment handled?', required: /food|meal|diet/i },
       { message: 'My pet has passed away. What funeral or memorial support does PawSpace provide?', required: /sorry|condolence|loss/i, forbidden: /discount|coupon|grooming|cross.sell/i },
