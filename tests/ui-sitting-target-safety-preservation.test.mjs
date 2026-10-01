@@ -19,3 +19,24 @@ test('review reversal rejects changes to request authority, read invalidation an
   assert.throws(()=>reverseSittingTargetSafety(source.replace(before,after),receipt.file),/Exactly one reviewed Sitting/);
  }
 });
+
+// Render the real workspace: a lookup alone must not expose controls for an unloaded booking.
+import {registerHooks} from 'node:module';
+import {createElement as h} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__SITTING_PRESERVATION_TEST__');
+registerHooks({resolve(specifier,context,next){
+ if(specifier==='../../../components/ui'&&context.parentURL?.includes('/finance/sitting/sitting-finance-workspace.tsx'))return {url:new URL('../../../components/ui/index.ts',context.parentURL).href,shortCircuit:true};
+ return next(specifier,context);
+}});
+const {default:Sitting}=await import('../app/team/finance/sitting/sitting-finance-workspace.tsx');
+test('an unloaded Sitting lookup renders its ID without exposing finance actions',()=>{
+ const html=renderToStaticMarkup(h(Sitting,{initialBookingId:'SIT-LOOKUP-ONLY'}));
+ assert.match(html,/value="SIT-LOOKUP-ONLY"/);
+ assert.match(html,/Load booking/);
+ for(const action of ['Approve explicitly','Record sandbox refund','Approve date change'])assert.ok(!html.includes(action),action);
+ assert.ok(!html.includes('Booking total'));
+ const empty=renderToStaticMarkup(h(Sitting,{initialBookingId:''}));
+ assert.match(empty,/<button disabled="">Load booking<\/button>/);
+});
