@@ -26,7 +26,7 @@ for(const channel of ['voice','chat','whatsapp'])test(channel+': real runtime gr
  const query='How does your refund review process work?';
  const result=await provider.generate({threadId:'THREAD-KB',customerId:'CUS-KB',channel,inputText:query,intent:classifyAiIntent(query),context:{customer:{customerId:'CUS-KB'},pets:[],bookings:[],thread:{id:'THREAD-KB'}}});
  assert.equal(mock.calls.length,1);assert.match(sent.instructions,/information-only policy enquiry/);assert.doesNotMatch(sent.instructions,/Specialty: Grooming only/);
- if(channel==='voice'){assert.match(sent.instructions,/3 or 4 closely related missing questions/);assert.match(sent.instructions,/20 to 40 words/);assert.match(sent.instructions,/Keep payment or booking confirmation separate/);}
+ if(channel==='voice'){assert.match(sent.instructions,/at most two or three closely related missing questions/);assert.match(sent.instructions,/complex care needs.*ask only one question at a time/i);assert.doesNotMatch(sent.instructions,/3 or 4 closely related missing questions/);assert.match(sent.instructions,/20 to 40 words/);assert.match(sent.instructions,/Keep payment or booking confirmation separate/);}
  const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.availableActionTools,[]);assert.equal(context.informationOnly,true);
  assert.match(JSON.stringify(context.approvedKnowledge),/maya_refund_process/);assert.ok(result.groundingRefs.length>0);
  const bath=context.catalogue.grooming.find(r=>r.package_code==='dog-bath');assert.equal(bath.tax_inclusive,1);assert.equal(bath.description,'Verified full package description');
@@ -109,7 +109,7 @@ test('multi-service quote instructions do not impose Grooming on a Training requ
  assert.doesNotMatch(sent.instructions,/Use exactly these argument schemas: schedule.reserve=\{serviceCode:"grooming"/);
  assert.match(sent.instructions,/Training=dog_training/);
  assert.match(sent.instructions,/booking.create.arguments.taxi/);
- assert.match(sent.instructions,/3 or 4 closely related missing questions/);
+ assert.match(sent.instructions,/at most two or three closely related missing questions/);assert.match(sent.instructions,/complex care needs.*ask only one question at a time/i);assert.doesNotMatch(sent.instructions,/3 or 4 closely related missing questions/);
  const context=JSON.parse(sent.input).canonicalContext;assert.deepEqual(context.catalogue.petTaxi,[]);assert.equal(context.catalogueTool,null);
  assert.match(sent.instructions,/separate explicit customer confirmation/);
 });
