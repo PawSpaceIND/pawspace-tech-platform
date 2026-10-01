@@ -106,5 +106,5 @@ test('multi-service quote instructions do not impose Grooming on a Training requ
  assert.match(sent.instructions,/serviceCode:"chosen enabled service code"/);
  assert.doesNotMatch(sent.instructions,/Use exactly these argument schemas: schedule.reserve=\{serviceCode:"grooming"/);
  assert.match(sent.instructions,/Training=dog_training/);
- assert.match(sent.instructions,/later separate confirmation/);
+ assert.match(sent.instructions,/separate explicit customer confirmation/);
 });
