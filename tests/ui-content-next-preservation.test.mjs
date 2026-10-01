@@ -25,3 +25,20 @@ test('care actions and forms gain reachable focus and touch treatment without hi
  assert.match(customer,/:focus-visible/);assert.match(partner,/:focus-visible/);
  assert.doesNotMatch(partner,/display:\s*none|visibility:\s*hidden|pointer-events:\s*none/);
 });
+
+// Execute the actual page, including its CSS-module hooks and existing empty state.
+// SSR does not run useEffect, so this assertion neither loads nor saves provider rates.
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__UI_CONTENT_NEXT_RENDER__');
+const {default:PartnerRates}=await import('../app/partner/rates/page.tsx');
+test('actual provider rates page renders its responsive root and reachable existing empty state',()=>{
+ const html=renderToStaticMarkup(createElement(PartnerRates));
+ assert.match(html,/<main class="rates"/);
+ assert.match(html,/Set your Boarding &amp; Sitting rates/);
+ assert.match(html,/href="\/partner-mobile"/);
+ assert.ok(html.includes('No self-pricing packages are available for this provider.'));
+ assert.ok(html.includes('Confirmed bookings keep the price quoted at booking time.'));
+ assert.doesNotMatch(html,/<input|Save rate/);
+});

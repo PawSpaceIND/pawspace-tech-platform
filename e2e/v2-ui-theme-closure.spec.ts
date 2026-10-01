@@ -361,9 +361,20 @@ for (const variant of laneVariants) test(`Payment lane: order updates and appear
     const g = await page.evaluate(selector => {
       const box = (e: Element | null) => { const b = e!.getBoundingClientRect(); return {left: b.left, right: b.right, top: b.top, bottom: b.bottom}; };
       return {lane: box(document.querySelector(selector)), appearance: box(document.querySelector('.paw-appearance-trigger')),
-        updates: box(document.querySelector('.ps-order-fab > button')), width: innerWidth, scrollWidth: document.documentElement.scrollWidth};
+        updates: box(document.querySelector('.ps-order-fab > button')),
+        appearancePosition: getComputedStyle(document.querySelector('.paw-appearance-trigger')!).position,
+        updatesPosition: getComputedStyle(document.querySelector('.ps-order-fab')!).position,
+        width: innerWidth, scrollWidth: document.documentElement.scrollWidth};
     }, variant.lane);
-    expect.soft(g.lane.right + 8, `${at}: payment content keeps out of the buttons' lane`).toBeLessThanOrEqual(Math.min(g.appearance.left, g.updates.left));
+    if (variant.name === 'shared payment surface' || variant.name === 'balance status card') {
+      // Booking detail utilities now follow the content in document flow. Require both to stay there,
+      // and keep the full payment region above them; the scroll sweep below still hit-tests Pay.
+      expect(g.appearancePosition, at).toBe('relative');
+      expect(g.updatesPosition, at).toBe('relative');
+      expect.soft(g.lane.bottom + 8, `${at}: payment content precedes both footer controls`).toBeLessThanOrEqual(Math.min(g.appearance.top, g.updates.top));
+    } else {
+      expect.soft(g.lane.right + 8, `${at}: payment content keeps out of the buttons' lane`).toBeLessThanOrEqual(Math.min(g.appearance.left, g.updates.left));
+    }
     expect.soft(gap(g.appearance, g.updates), `${at}: the two buttons do not touch`).toBeGreaterThanOrEqual(8);
     if (width <= 820) {
       expect.soft(g.appearance.bottom + 8, `${at}: Appearance stacks above order updates`).toBeLessThanOrEqual(g.updates.top);
