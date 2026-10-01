@@ -31,12 +31,13 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   await page.evaluate(()=>document.fonts.ready);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2);
+  // Chromium resolves relative auto insets to zero used offsets; require no displacement.
   const appearance=page.getByRole('button',{name:'Change PawSpace appearance'});
-  expect(await appearance.evaluate(e=>{const s=getComputedStyle(e);return[s.position,s.top,s.right,s.bottom,s.left];})).toEqual(['relative','auto','auto','auto','auto']);
+  expect(await appearance.evaluate(e=>{const s=getComputedStyle(e);return[s.position,s.top,s.right,s.bottom,s.left];})).toEqual(['relative','0px','0px','0px','0px']);
   expect((await appearance.boundingBox())!.height).toBeGreaterThanOrEqual(48);
   await appearance.click();await expect(page.locator('.paw-appearance-dialog')).toBeVisible();await page.getByRole('button',{name:'Close appearance settings'}).click();
   const updates=page.locator('.ps-order-fab');await expect(updates).toBeVisible();
-  expect(await updates.evaluate(e=>{const s=getComputedStyle(e);return[s.position,s.top,s.right,s.bottom,s.left];})).toEqual(['relative','auto','auto','auto','auto']);
+  expect(await updates.evaluate(e=>{const s=getComputedStyle(e);return[s.position,s.top,s.right,s.bottom,s.left];})).toEqual(['relative','0px','0px','0px','0px']);
   await updates.getByRole('button',{name:'Order notifications',exact:true}).click();await expect(page.getByRole('dialog',{name:'PawSpace order notifications'})).toBeVisible();await page.getByRole('button',{name:'Close notifications'}).click();
   await page.evaluate(()=>window.scrollTo(0,0));
   await page.screenshot({path:info.outputPath(`${name}-${head}.png`),fullPage:true});
