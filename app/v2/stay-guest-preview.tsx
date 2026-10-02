@@ -19,7 +19,7 @@ export default function StayGuestPreview({mode,draft,onChange,onVerified}:{mode:
  <label>{mode==='sitting'&&values.sittingCare==='visit'?'Visit date':'Check-in date'}<input type="date" style={input} value={values.start} onChange={e=>update({start:e.target.value})}/></label><label>Start time<input type="time" style={input} value={values.startTime} onChange={e=>update({startTime:e.target.value})}/></label>
  {!(mode==='sitting'&&values.sittingCare==='visit')&&<><label>Check-out date<input type="date" style={input} value={values.end} onChange={e=>update({end:e.target.value})}/></label><label>End time<input type="time" style={input} value={values.endTime} onChange={e=>update({endTime:e.target.value})}/></label></>}
  </div>{!valid&&<p role="alert">Choose valid dates in ascending order and valid times.</p>}
- <button type="button" style={{...input,width:'auto'}} disabled={!valid||loading||Boolean(error)||!packages.length} onClick={()=>{onChange(values);setVerify(true);}}>Continue with these care dates</button>
+ <button type="button" data-v2-action style={{...input,width:'auto'}} disabled={!valid||loading||Boolean(error)||!packages.length} onClick={()=>{onChange(values);setVerify(true);}}>Continue with these care dates</button>
  {verify&&<section aria-label="Verify mobile before care booking"><h3>Verify your mobile</h3><p>Your care dates stay selected. We will then load your saved pets and review the exact care quote.</p><CustomerLogin embedded onLoggedIn={onVerified}/><button type="button" style={{minHeight:44}} onClick={()=>setVerify(false)}>Keep browsing</button></section>}
  </section>;
 }
