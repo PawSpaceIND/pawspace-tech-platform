@@ -1049,7 +1049,7 @@
     "lib/sitting-commercial-client.ts": "541a06a59433e0e7bddd2cf615d78d976c3fbf29767d0e9d3992f23e1e94a72c",
     "lib/sitting-customer-view.ts": "a1281e740f2bcd565341abc683056e84b0abd172b2358f49107af4a1ac51919f",
     "lib/sitting-finance-client.ts": "518b48d3b7ce94706d4e8308f7fb1d42003e32150666b665d5bf378035a726b1",
-    "lib/sitting-finance-governance.ts": "08c7ed1271658611711fb65d5f4444e923ddc3d7be0f75503966b8e3801e99d2",
+    "lib/sitting-finance-governance.ts": "e7b90157126a0f8a266e109d2875e143949367c42778bdd8a24ea946d01e4856",
     "lib/sitting-governance.ts": "80fe8c760f87da56ef5079b6bbc17b3a9cdf03267946c977e08d5252ee6e489e",
     "lib/sitting-invoice.ts": "54f59a6b061962a78ad7b57f7c1c00b89658a08eff3c7b73a32548e42db5c158",
     "lib/sitting-lifecycle-client.ts": "734af96d47d0ba9e6a0914edbf107acc368c1853cf0c996fe1d2e96939ea1d80",
