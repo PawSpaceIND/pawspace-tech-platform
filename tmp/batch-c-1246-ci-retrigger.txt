@@ -1,0 +1,1 @@
+Batch C: PR 1246 onto main tip 3f181c61; contract hashes aligned; awaiting required CI then merge+staging deploy.
