@@ -28,12 +28,19 @@ on:
         default: false
         type: boolean
 
+      read_scheduled_slots:
+        description: Read only the eight historical staging scheduler slots; skip UI proof
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
 jobs:
   prove:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: ${{ inputs.target_environment }}
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +49,12 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Test read-only diagnostic boundaries
+        if: ${{ inputs.read_scheduled_slots }}
+        run: node --test tests/atlas-proof-provenance.test.mjs tests/read-atlas-scheduled-slots.test.mjs
+
       - name: Install dependencies
+        if: ${{ !inputs.read_scheduled_slots }}
         run: npm run install:ci
 
       - name: Verify live Worker provenance
@@ -75,9 +87,11 @@ jobs:
           NODE
 
       - name: Install Chromium
+        if: ${{ !inputs.read_scheduled_slots }}
         run: npx playwright install --with-deps chromium
 
       - name: Prove Atlas UI + business truth
+        if: ${{ !inputs.read_scheduled_slots }}
         env:
           STAGING_URL: ${{ inputs.preview_url }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -91,12 +105,28 @@ jobs:
           fi
           node scripts/prove-atlas-staging.mjs
 
+      - name: Read only historical scheduled slots
+        if: ${{ inputs.read_scheduled_slots }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          WORKER_NAME: ${{ inputs.worker_name }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          if [ "$TARGET_ENVIRONMENT" != "pawspace-staging" ] || [ "$WORKER_NAME" != "pawspace-staging" ] || [ "$EXPECTED_SHA" != "b0c9e4a8b4663cba27d91ff60d20055e90d516a3" ]; then
+            echo "Historical diagnostic is pinned to staging b0c9e4" >&2
+            exit 1
+          fi
+          node scripts/read-atlas-scheduled-slots.mjs
+
       - name: Upload sanitized Atlas proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-business-proof-${{ inputs.expected_sha }}
+          name: atlas-${{ inputs.read_scheduled_slots && 'scheduled-slots' || 'business-proof' }}-${{ inputs.expected_sha }}
           path: |
+            atlas-scheduled-observability-proof.json
             atlas-staging-proof.json
             atlas-team-ai.png
             atlas-provenance-check.json
