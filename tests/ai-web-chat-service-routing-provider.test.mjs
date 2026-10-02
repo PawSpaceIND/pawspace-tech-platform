@@ -309,5 +309,31 @@ test('Atlas public care question without applying a discount does not request of
   assert.deepEqual(context.approvedOffers,[]);
   assert.match(sent.instructions,/did not request a coupon/);
   assert.doesNotMatch(result.ai.turn.output,/GROOM200|discount|coupon/i);
+});
+});
+const couponIntentCases=[
+ ['Can you explain grooming without applying an approved discount?',false],
+ ['Explain grooming without using any available coupon.',false],
+ ['Can you explain grooming without applying an extra discount?',false],
+ ['Please do not apply an approved discount for grooming.',false],
+ ['Please do not use the available coupon for grooming.',false],
+ ['Explain grooming with no extra discount.',false],
+ ['Explain grooming with no approved coupon.',false],
+ ['Please don’t use a newly approved grooming discount.',false],
+ ['Can you explain grooming without using a particularly generous available discount?',false],
+ ['Explain grooming without applying a discount, but could you show available coupons?',false],
+ ['Can you apply an approved discount for grooming?',true],
+ ['Please use the available grooming coupon.',true],
+ ['Are there any extra discounts for grooming?',true],
+];
+for(const [query,requested] of couponIntentCases)test(`Atlas public coupon intent: ${query}`,async()=>{
+ const {db}=await world(OPENAI);
+ await withFetch(()=>openAiReply('Use GROOM200 for a discount.'),async net=>{
+  const result=await adapter.runPublicAiWebChat(db,{query,careContext:{serviceCode:'grooming'},sessionKey:`atlas-negation-table-${crypto.randomUUID()}`});
+  assert.equal(net.calls.length,1);
+  const sent=JSON.parse(net.calls[0].init.body),context=JSON.parse(sent.input);
+  assert.equal(context.question,query);
+  assert.equal(context.couponRequested,requested);
+  if(!requested){assert.deepEqual(context.approvedOffers,[]);assert.match(sent.instructions,/did not request a coupon/);assert.doesNotMatch(result.ai.turn.output,/GROOM200|discount|coupon/i);}
  });
 });

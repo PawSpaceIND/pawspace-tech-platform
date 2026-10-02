@@ -7,8 +7,11 @@ export function atlasCareContext(value:unknown):AtlasCareContext|undefined{
  return Object.keys(context).length?context:undefined;
 }
 export function customerRequestedCoupon(question:string){
- // Keep a negated offer/application clause from becoming positive intent through "can" or "?".
- if(/\b(?:no|without(?:\s+(?:applying|using|adding))?|(?:do not|don't|don’t)(?:\s+(?:want|need|apply|use|add))?|not interested in)\s+(?:(?:a|an|the|any)\s+)?(?:offers?|coupons?|discounts?|promos?|promo(?:tion)? codes?|cashback)\b/i.test(question))return false;
+ // Public care assistance has no need to infer consent from a mixed/negated request.
+ // Refuse positive offer intent when any negation is present, regardless of intervening
+ // verbs or descriptive modifiers. Ambiguity stays care-only; a fresh explicit request
+ // can still check offers, whose eligibility is independently enforced by the server.
+ if(/\b(?:no|not|never|without|don't|don’t|cannot|can't|can’t|avoid|skip|exclude)\b/i.test(question))return false;
  return /\b(?:coupons?|discounts?|promo(?:tion)? codes?|cashback)\b/i.test(question)&&/(?:\?|^(?:coupons?|discounts?|promo(?:tion)? codes?|cashback)$|\b(?:any|what|which|how|can|could|please|check|find|show|apply|give|need|want|have|available|eligible|offer)\b)/i.test(question.trim());
 }
 export function hasMonetaryPromotion(reply:string){return /\b(?:discount|save|savings?|cashback)\b.{0,24}(?:₹|INR|Rs\.?|\d)|(?:₹|INR|Rs\.?)\s*\d[\d,.]*\s*(?:off|back)|\d+(?:\.\d+)?\s*%\s*(?:off|discount|cashback)/i.test(reply);}
