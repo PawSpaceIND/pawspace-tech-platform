@@ -1,3 +1,4 @@
+import {sameSavedAddress,savedAddressId} from "./saved-address-identity";
 import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 import{cityFulfilmentVerdict}from"./city-coverage-authority";
 import{geocodeAddress}from"./address-autocomplete";
@@ -25,9 +26,7 @@ async function ensureAddressTablesUncached(db:Db){
 // Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
 const addressTablesReady=new WeakSet<object>();
 async function ensureAddressTables(db:Db){if(addressTablesReady.has(db))return;await ensureAddressTablesUncached(db);addressTablesReady.add(db);}
-function comparableAddress(value:string){return value.split(",").map(part=>part.trim().toLowerCase().replace(/\s+/g," ")).filter(part=>part&&part!=="india").join(",");}
 function completeAddress(row:Row,pincode:string){return serviceAddressText({line1:String(row.line1||""),line2:String(row.line2||""),area:String(row.area||""),city:String(row.city||""),postalCode:pincode,country:"India"});}
-function addressId(customerId:string,pincode:string,address:string){let h=2166136261;for(const ch of `${customerId}|${pincode}|${address}`){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return`SD-${customerId.replace(/[^A-Za-z0-9]/g,"").slice(-20)}-${(h>>>0).toString(36)}`;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
 async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
 function fixtureCoordinates(cityId:string){switch(cityId){case"maa":return{latitude:13.0827,longitude:80.2707};case"hyd":return{latitude:17.385,longitude:78.4867};case"bom":case"mum":return{latitude:19.076,longitude:72.8777};case"pnq":case"pune":return{latitude:18.5204,longitude:73.8567};default:return{latitude:12.9716,longitude:77.5946};}}
@@ -58,10 +57,10 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   if(suppliedAddress||suppliedPincode){
     const pin=validateIndianPincode(suppliedPincode);if(!pin.ok)throw new Response("A valid 6-digit service PIN code is required",{status:400});
     if(suppliedAddress.length<8)throw new Response("A complete service address is required",{status:400});
-    row={id:addressId(input.customerId,pin.pincode,suppliedAddress),line1:suppliedAddress,line2:null,area:null,city:"",postal_code:pin.pincode};
+    row={id:await savedAddressId(input.customerId,{line1:suppliedAddress,postalCode:pin.pincode}),line1:suppliedAddress,line2:null,area:null,city:"",postal_code:pin.pincode};
   }else{
     row=await db.prepare("SELECT id,line1,line2,area,city,postal_code FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,updated_at DESC,created_at DESC LIMIT 1").bind(input.customerId).first<Row>();
-    if(!row&&fixture){const address="PawSpace sandbox service-discovery fixture, Indiranagar",pincode="560038";row={id:addressId(input.customerId,pincode,address),line1:address,line2:null,area:"Indiranagar",city:"Bengaluru",postal_code:pincode};}
+    if(!row&&fixture){const address="PawSpace sandbox service-discovery fixture, Indiranagar",pincode="560038";row={id:await savedAddressId(input.customerId,{line1:address,area:"Indiranagar",city:"Bengaluru",postalCode:pincode}),line1:address,line2:null,area:"Indiranagar",city:"Bengaluru",postal_code:pincode};}
     if(!row)throw new Response("Save a service address before booking",{status:409});
   }
   const validated=validateIndianPincode(String(row.postal_code||""));if(!validated.ok)throw new Response("The saved service address has an invalid PIN code",{status:409});
@@ -75,19 +74,24 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   if(suppliedAddress&&savedRead){
     suppliedAddress=serviceAddressText({line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode});
     const saved=await savedRead;
-    const existing=saved.results.find(item=>comparableAddress(completeAddress(item,validated.pincode))===comparableAddress(suppliedAddress));
-    row=existing??{...row,id:addressId(input.customerId,validated.pincode,suppliedAddress),line1:suppliedAddress};
+    const existing=saved.results.find(item=>sameSavedAddress(item,{line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}));
+    row=existing??{...row,id:await savedAddressId(input.customerId,{line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}),line1:suppliedAddress};
   }
+  const held=await db.prepare("SELECT * FROM customer_addresses WHERE id=?").bind(String(row.id)).first<Row>();
+  if(held&&(String(held.customer_id)!==input.customerId||!sameSavedAddress(held,{...row,postalCode:validated.pincode,area:row.area||resolved.assignment.area,city:row.city||resolved.assignment.city})))throw new Response("Address identity conflict; select your saved address",{status:409});
   const address=completeAddress(row,validated.pincode);
   let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
+  if(geo&&!sameSavedAddress({line1:geo.address_text,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode},{line1:address,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
     const fallbackLatitude=Number(input.latitude),fallbackLongitude=Number(input.longitude),gpsFallback=Number.isFinite(fallbackLatitude)&&Number.isFinite(fallbackLongitude)&&fallbackLatitude>=-90&&fallbackLatitude<=90&&fallbackLongitude>=-180&&fallbackLongitude<=180;
     const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     const now=Date.now(),id=String(row.id);
-    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,pincode=excluded.pincode,city_id=excluded.city_id,zone_id=excluded.zone_id,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,resolved_at=excluded.resolved_at,updated_at=excluded.updated_at").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
-    geo={latitude:Number(resolvedGeo.latitude),longitude:Number(resolvedGeo.longitude),address_text:resolvedGeo.address||address};
+    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO NOTHING").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
+    const stored=await db.prepare("SELECT customer_id,pincode,city_id,zone_id,latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=?").bind(id).first<Row>();
+    if(!stored||String(stored.customer_id)!==input.customerId||String(stored.pincode)!==validated.pincode||String(stored.city_id)!==cityId||String(stored.zone_id)!==resolved.assignment.zoneId||!sameSavedAddress({line1:stored.address_text,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode},{line1:address,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+    geo=stored;
   }
   // Saving follows the customer's choice on every call, not only the first one that geocodes the doorstep.
   {const id=String(row.id),now=Date.now();
@@ -95,6 +99,10 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
       // A service search is not permission to replace the customer's preferred address.
       await db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id=?) THEN 0 ELSE 1 END,?,? ON CONFLICT(id) DO NOTHING").bind(id,input.customerId,"Service address",suppliedAddress,null,resolved.assignment.area,resolved.assignment.city,validated.pincode,input.customerId,now,now).run();
     }
+  }
+  if(suppliedAddress&&input.saveToAccount!==false){
+    const persisted=await db.prepare("SELECT * FROM customer_addresses WHERE id=?").bind(String(row.id)).first<Row>();
+    if(!persisted||String(persisted.customer_id)!==input.customerId||!sameSavedAddress(persisted,{line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address identity conflict; refresh and try again",{status:409});
   }
   const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?(await uatSchedulingRuntime()?UAT_SERVICE_DISCOVERY_RADIUS_KM:SERVICE_DISCOVERY_RADIUS_KM):undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};

@@ -7,7 +7,7 @@ async function fixture(page: Page, signedIn = false) {
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     const data = (value: unknown) => route.fulfill({json:{data:value}});
-    if(path === '/api/identity-session') return signedIn ? data({authenticated:true,customerId:account.customerId}) : route.fulfill({status:401,json:{error:'Signed out'}});
+    if(path === '/api/identity-session') return signedIn ? data({subjectType:'customer',subjectId:account.customerId}) : route.fulfill({status:401,json:{error:'Signed out'}});
     if(path === '/api/customer-account') return signedIn ? data(account) : route.fulfill({status:401,json:{error:'Signed out'}});
     if(path === '/api/service-availability') return data(['grooming','boarding','pet_sitting'].map(code=>({code,enabled:true})));
     if(path === '/api/service-zone') return data({assignment:{pincode:'560068',cityId:'blr',city:'Bengaluru',zoneId:'blr-south',area:'BTM'},zone:{zoneId:'blr-south',zoneName:'South Bengaluru',serviceAvailable:true}});
@@ -35,7 +35,9 @@ for(const width of [390,1440]) {
     await expect(phone).toBeFocused();
     await page.screenshot({path:info.outputPath('sign-in-dialog.png'),animations:'disabled'});
     await phone.press('Tab'); await expect(dialog.getByRole('button',{name:/Continue securely/})).toBeFocused();
+    await page.keyboard.press('Tab'); await expect(dialog.getByRole('button',{name:'Continue as guest',exact:true})).toBeFocused();
     await page.keyboard.press('Tab'); await expect(dialog.getByRole('button',{name:'Close',exact:true})).toBeFocused();
+    await page.keyboard.press('Shift+Tab'); await expect(dialog.getByRole('button',{name:'Continue as guest',exact:true})).toBeFocused();
     await page.keyboard.press('Shift+Tab'); await expect(dialog.getByRole('button',{name:/Continue securely/})).toBeFocused();
     await page.keyboard.press('Escape'); await expect(dialog).toBeHidden(); await expect(opener).toBeFocused();
     await opener.click(); await expect(phone).toBeFocused();

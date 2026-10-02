@@ -51,3 +51,33 @@ test("normalization neither merges customers nor erases distinct units",async t=
  assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses").get().n,3);
  assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses WHERE is_default=1").get().n,2);
 });
+
+
+test("booking address saves reuse reordered locality without replacing distinct unit rows",async t=>{
+ const sqlite=new DatabaseSync(":memory:");t.after(()=>sqlite.close());const db=d1(sqlite);
+ const first=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Unit 1, Indiranagar, Bengaluru",servicePincode:"560038"});
+ const second=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Bengaluru, Unit 1, Indiranagar, Bengaluru, 560038",servicePincode:"560038"});
+ assert.equal(second.addressId,first.addressId);
+ const third=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Unit 2, Indiranagar, Bengaluru",servicePincode:"560038"});
+ assert.notEqual(third.addressId,first.addressId);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses").get().n,2);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_service_address_geocodes").get().n,2);
+});
+
+
+test("forced booking digest collision preserves address and geocode evidence, including unsaved searches",async t=>{
+ const sqlite=new DatabaseSync(":memory:");t.after(()=>sqlite.close());const db=d1(sqlite),original=crypto.subtle.digest;
+ crypto.subtle.digest=async()=>new Uint8Array(32).buffer;t.after(()=>{crypto.subtle.digest=original;});
+ await resolveGovernedServiceAddress(db,{customerId:"FORCED-SERVICE",serviceCode:"boarding",serviceAddress:"12 QA Road, Unit 1",servicePincode:"560038",saveToAccount:false});
+ const before=sqlite.prepare("SELECT * FROM customer_service_address_geocodes").all();
+ await assert.rejects(resolveGovernedServiceAddress(db,{customerId:"FORCED-SERVICE",serviceCode:"boarding",serviceAddress:"12 QA Road, Unit 2",servicePincode:"560038",saveToAccount:false}),error=>error instanceof Response&&error.status===409);
+ assert.deepEqual(sqlite.prepare("SELECT * FROM customer_service_address_geocodes").all(),before);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses").get().n,0);
+ await resolveGovernedServiceAddress(db,{customerId:"FORCED-SERVICE",serviceCode:"boarding",serviceAddress:"12 QA Road, Unit 1",servicePincode:"560038"});
+ const addresses=sqlite.prepare("SELECT * FROM customer_addresses").all();
+ for(const customerId of ["FORCED-SERVICE","OTHER-CUSTOMER"]){
+  await assert.rejects(resolveGovernedServiceAddress(db,{customerId,serviceCode:"boarding",serviceAddress:"12 QA Road, Unit 2",servicePincode:"560038"}),error=>error instanceof Response&&error.status===409);
+ }
+ assert.deepEqual(sqlite.prepare("SELECT * FROM customer_addresses").all(),addresses);
+ assert.deepEqual(sqlite.prepare("SELECT * FROM customer_service_address_geocodes").all(),before);
+});

@@ -219,7 +219,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   const hasActions=Boolean(generated.actionRequests?.length);
   // Never emit speculative model deltas. Commercial/status claims cannot be recalled after TTS.
   // Preserve the SSE transport, but release a benign complete turn only after final validation.
-  const safety=await validateAiProviderReply(db,generated,ctx.customerId);
+  const safety=await validateAiProviderReply(db,generated,ctx.customerId,{threadId:ctx.threadId});
   actionProvider={...provider,async generate(){return generated;}};
   if(!generated.failure&&!generated.unsupported&&text(generated.text)&&!hasActions&&safety.safe){
    await assertVoiceCustomerMayReply(db,ctx);

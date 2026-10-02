@@ -1,6 +1,8 @@
+import {rangeDays} from "../../../../lib/analytics-visuals";
 import { authError } from "../../../../lib/server-auth";
 import { ensurePricingControlRuntime } from "../../../../lib/pricing-control-runtime";
 import { groomingCommercialPackages } from "../../../../lib/grooming-commercial-catalogue";
+import { ensureGroomingSubscriptionPlans } from "../../../../lib/grooming-governance";
 
 type Row = Record<string, unknown>;
 
@@ -77,7 +79,7 @@ function customerDescription(code: string, stored: unknown) {
  * V2 fails closed instead: if Pricing Control has not published an exact package/bundle, the customer
  * cannot select it here. Exact slot pricing is still resolved later by /api/live-price-quote.
  */
-export async function GET() {
+export async function GET(request?:Request) {
   try {
     const { env } = await import("cloudflare:workers");
     const db = env.DB;
@@ -128,8 +130,21 @@ export async function GET() {
       .map(item => ({ ...item, bundles: item.bundles.sort((a, b) => a.petCount - b.petCount) }))
       .filter(item => item.bundles.some(bundle => bundle.petCount === 1));
 
+    let subscriptions:Record<string,unknown>[]|undefined;
+    const params=request?new URL(request.url).searchParams:null;
+    if(params?.get("includeSubscriptions")==="1"){
+      const cityId=params.get("cityId")||"",zoneId=params.get("zoneId")||"",date=params.get("date")||new Date().toISOString().slice(0,10);
+      if(!/^[a-z0-9_-]{1,80}$/i.test(cityId)||(zoneId&&!/^[a-z0-9_-]{1,80}$/i.test(zoneId)))return Response.json({error:"Choose a valid service city and zone."},{status:400});
+      try{rangeDays({from:date,to:date});}catch{return Response.json({error:"Choose a valid service date."},{status:400});}
+      await ensureGroomingSubscriptionPlans(db);
+      const plans=await db.prepare("SELECT plan_code,name,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,max_pets_per_booking,credits_per_pet,family_wallet,effective_from,effective_to,version,zone_id FROM grooming_subscription_plans WHERE city_id=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) AND (zone_id IS NULL OR zone_id=?) ORDER BY plan_code,CASE WHEN zone_id=? THEN 0 ELSE 1 END,version DESC,id DESC").bind(cityId,date,date,zoneId,zoneId).all<Row>();
+      const seen=new Set<string>();subscriptions=[];
+      for(const row of plans.results){const code=String(row.plan_code);if(seen.has(code))continue;seen.add(code);let petTypes:unknown;try{petTypes=JSON.parse(String(row.eligible_pet_types_json));}catch{continue;}if(!Array.isArray(petTypes)||!petTypes.every(p=>p==="dog"||p==="cat")||!['days','months'].includes(String(row.validity_unit)))continue;
+        subscriptions.push({code,name:String(row.name),price:Number(row.price),currency:String(row.currency),sessions:Number(row.session_count),validityValue:Number(row.validity_value),validityUnit:String(row.validity_unit),eligiblePetTypes:petTypes,servicePackageCode:String(row.service_package_code),maxPetsPerBooking:Number(row.max_pets_per_booking),creditsPerPet:Number(row.credits_per_pet),familyWallet:Number(row.family_wallet)===1,effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to?String(row.effective_to):null,version:Number(row.version)});
+      }
+    }
     return Response.json(
-      { data: { serviceCode: "grooming", packages } },
+      { data: { serviceCode: "grooming", packages, ...(subscriptions?{subscriptions}:{}) } },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {

@@ -72,47 +72,49 @@ export async function mutateSittingFinance(db:D1Database,input:SittingFinanceInp
   if(["cancelled","completed"].includes(status))throw new Response("Closed Sitting bookings cannot accept a cancellation request",{status:409});if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});const reason=why(input),id=crypto.randomUUID();await db.prepare("INSERT INTO sitting_cancellation_requests (id,booking_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?, 'policy_review_required',?,?)").bind(id,input.bookingId,input.actorId,reason,now,now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true});
  }
  if(input.action==="approve_cancel"){
-  /* A delivered stay must not be cancellable. request_cancel already refuses a closed booking, but
-   * approve_cancel refused only in_progress - so a request opened while the booking was `assigned`
-   * stayed approvable after the sitter had actually checked out. Approving it then refunded the
-   * customer in full for a service they received AND stranded the sitter, because prepare_settlement
-   * requires status==="completed", which the cancel had just overwritten. Scoped to `completed` only:
-   * a further approval on an already-cancelled booking is the legitimate second half of a split refund,
-   * capped by collected funds - tests/refund-cap-collected-funds.test.mjs:259 exists to catch exactly the
-   * over-broad guard that would break it. [AUDIT-C6] */
-  if(status==="completed")throw new Response("A delivered Sitting booking cannot be cancelled or refunded",{status:409});
-  if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});const request=await db.prepare("SELECT * FROM sitting_cancellation_requests WHERE booking_id=? AND id=? AND status='policy_review_required'").bind(input.bookingId,target!.id).first<Row>();if(!request)throw new Response("No Sitting cancellation request is awaiting policy review",{status:409});if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});// The refund ceiling belongs to the BOOKING, not to one approval. Applied per approval, N open
-  // cancellation requests approved N full refunds: two requests moved 200% of the money collected out of
-  // the company, and the reconciliation row reported the overage as a net of ZERO because the net is
-  // clamped by Math.max(0, captured - refundTotal). The atomic claim below is a different control - it
-  // stops two approvers racing on ONE request, which is not what this was. `collected` is now the
-  // remaining headroom, so the refusal message below still names the right ceiling.
-  const amount=Number(input.approvedRefundAmount),collectedTotal=await collectedForBooking(db,input.bookingId),alreadyApprovedRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled')").bind(input.bookingId).first<Row>().catch(()=>null),alreadyApproved=Number(alreadyApprovedRow?.total||0),collected=Math.round(Math.max(0,collectedTotal-alreadyApproved)*100)/100;if(!Number.isFinite(amount)||amount<0||amount>collected)throw new Response(`Approved refund cannot exceed the amount actually collected for this booking (collected \u20b9${collected}). Sitting refunds are capped by captured funds, never by the booking total.`,{status:409});const reason=why(input),refundId=amount>0?crypto.randomUUID():null;
-  // ATOMIC CLAIM (PAWSPACE-QA-004). This UPDATE used to sit inside the same batch as the refund-ledger
-  // INSERT, and the INSERT was conditional only on `amount > 0`. Two approvers who both read the request
-  // while it was still policy_review_required therefore both reached the batch and both inserted a
-  // refund: QA reproduced 2 ledger rows totalling Rs 8,000 for one approved Rs 4,000 refund, with both
-  // calls returning success. The claim now runs FIRST and alone, and only the approver whose UPDATE
-  // actually changed a row is allowed to write anything further.
-  // Sitting's UPDATE also carried NO status predicate at all - `WHERE id=?` - so a losing approver
-  // additionally overwrote decision_by and approved_refund_amount, destroying the first approval's
-  // audit truth. The predicate is added here as well as the changes check.
-  // The booking ceiling is shared by distinct requests. Reserve it in the same atomic UPDATE
-  // as the row claim, including approved requests whose ledger batch has not committed yet.
-  // A linked obligation is counted only in the active ledger, preserving failed/cancelled exclusions.
-  const claim=await db.prepare(`UPDATE sitting_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=?
+  try{
+   // A delivered/in-progress stay cannot be cancelled. An already-cancelled booking may
+   // still approve another legitimate split refund, within the shared captured ceiling.
+   if(status==="completed")throw new Response("A delivered Sitting booking cannot be cancelled or refunded",{status:409});
+   if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});
+   const request=await db.prepare("SELECT * FROM sitting_cancellation_requests WHERE booking_id=? AND id=? AND status='policy_review_required'").bind(input.bookingId,target!.id).first<Row>();
+   if(!request)throw new Response("No Sitting cancellation request is awaiting policy review",{status:409});
+   if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});
+   const amount=Number(input.approvedRefundAmount),collectedTotal=await collectedForBooking(db,input.bookingId),alreadyApprovedRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled')").bind(input.bookingId).first<Row>().catch(()=>null),alreadyApproved=Number(alreadyApprovedRow?.total||0),collected=Math.round(Math.max(0,collectedTotal-alreadyApproved)*100)/100;
+   if(!Number.isFinite(amount)||amount<0||amount>collected)throw new Response(`Approved refund cannot exceed the amount actually collected for this booking (collected ₹${collected}). Sitting refunds are capped by captured funds, never by the booking total.`,{status:409});
+   const reason=why(input),refundId=amount>0?crypto.randomUUID():null;
+   const result={bookingId:input.bookingId,status:"cancelled",cancellationRequestId:target!.id,approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true};
+   // Claim, replay result and dependent effects commit together. A zero-row claim makes
+   // the existing NOT NULL cache constraint abort the batch. A failed obligation/cache
+   // write cannot leave a stranded approval or cancellation. The claim reserves the
+   // shared captured ceiling and also rejects a booking checked in since the read.
+   const statements=[
+    db.prepare(`UPDATE sitting_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=?
    WHERE id=? AND booking_id=? AND status='policy_review_required'
+   AND EXISTS(SELECT 1 FROM canonical_bookings WHERE id=sitting_cancellation_requests.booking_id AND status NOT IN ('completed','in_progress'))
    AND ?<=ROUND(MAX(0,?-
     (SELECT COALESCE(SUM(amount),0) FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled'))-
     (SELECT COALESCE(SUM(r.approved_refund_amount),0) FROM sitting_cancellation_requests r WHERE r.booking_id=? AND r.status='approved'
-     AND NOT EXISTS(SELECT 1 FROM sitting_refund_ledger l WHERE l.booking_id=r.booking_id AND l.cancellation_request_id=r.id))),2)`)
-   .bind(amount,input.actorId,reason,now,request.id,input.bookingId,amount,collectedTotal,input.bookingId,input.bookingId).run();
-  if(Number(claim?.meta?.changes||0)!==1){
-   const current=await db.prepare("SELECT status FROM sitting_cancellation_requests WHERE id=? AND booking_id=?").bind(request.id,input.bookingId).first<Row>();
-   throw new Response(current?.status==="policy_review_required"?"The Sitting refundable balance changed; refresh before retrying":"This Sitting cancellation has already been decided by another approver",{status:409});
+     AND NOT EXISTS(SELECT 1 FROM sitting_refund_ledger l WHERE l.booking_id=r.booking_id AND l.cancellation_request_id=r.id))),2)`).bind(amount,input.actorId,reason,now,request.id,input.bookingId,amount,collectedTotal,input.bookingId,input.bookingId),
+    db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,CASE WHEN changes()=1 THEN ? ELSE NULL END,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
+    db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status NOT IN ('completed','in_progress')").bind(now,input.bookingId),
+    db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
+    // Resolve the current group inside this transaction: a date change may have committed since context was read.
+    db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status!='cancelled'").bind(input.bookingId),
+   ];
+   if(refundId)statements.push(
+    db.prepare("INSERT INTO sitting_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now),
+    approvedServiceRefundCase(db,{refundId,bookingId:input.bookingId,amount,reason,requestedBy:String(request.requested_by),approvedBy:input.actorId,service:"pet_sitting",cancellationRequestId:String(request.id),policySource:"explicit_staff_approval",now})
+   );
+   await db.batch(statements);return result;
+  }catch(error){
+   // A concurrent same-key request may have read before its winner committed. Replay
+   // only the fully committed result; a different booking/action/row remains denied.
+   const replay=await prior(db,input);if(replay)return{...replay,duplicatePrevented:true};
+   const message=error instanceof Error?error.message:String(error);
+   if(/NOT NULL constraint failed: sitting_finance_action_keys\.booking_id|UNIQUE constraint failed: sitting_finance_action_keys\.idempotency_key/.test(message))throw new Response("This Sitting cancellation or refundable balance changed; refresh before retrying",{status:409});
+   throw error;
   }
-  const statements=[db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status!='completed'").bind(now,input.bookingId),db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id)];// The approved refund is also its canonical case (same id), so BCC, the Finance queues and the refund webhook see it.
-  if(refundId)statements.push(db.prepare("INSERT INTO sitting_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now),approvedServiceRefundCase(db,{refundId,bookingId:input.bookingId,amount,reason,requestedBy:String(request.requested_by),approvedBy:input.actorId,service:"pet_sitting",cancellationRequestId:String(request.id),policySource:"explicit_staff_approval",now}));await db.batch(statements);return remember(db,input,{bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true});
  }
  if(input.action==="record_refund"){
   const reference=String(input.refundReference||"").trim();if(!reference)throw new Response("Sandbox refund reference is required",{status:400});const refund=await db.prepare("SELECT * FROM sitting_refund_ledger WHERE booking_id=? AND id=? AND status='sandbox_pending'").bind(input.bookingId,target!.id).first<Row>();if(!refund)throw new Response("No Sitting sandbox refund is pending",{status:409});const duplicate=await db.prepare("SELECT id FROM sitting_refund_ledger WHERE reference=?").bind(reference).first<Row>();if(duplicate&&String(duplicate.id)!==String(refund.id))throw new Response("Refund reference was already used",{status:409});

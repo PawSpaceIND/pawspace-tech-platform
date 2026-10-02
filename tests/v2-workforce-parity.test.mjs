@@ -1,3 +1,4 @@
+import {assertEmbeddedPayrollBridge} from './helpers/payroll-shell-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -30,7 +31,7 @@ test('V2 team People routes reuse canonical workforce modules instead of copying
   'app/v2/team/people/provider-training/page.tsx':'../../../../team/people/provider-training/page',
   'app/v2/team/performance/page.tsx':'../../../team/performance/page',
  };
- for(const [file,target] of Object.entries(wrappers)){const source=fs.readFileSync(file,'utf8');assert.ok(source.includes(`export { default } from \"${target}\";`)||source.includes(`export { default } from '${target}';`),file);}
+ for(const [file,target] of Object.entries(wrappers)){const source=fs.readFileSync(file,'utf8');if(file==='app/v2/team/people/payroll/page.tsx'){assertEmbeddedPayrollBridge(source);continue;}assert.ok(source.includes(`export { default } from \"${target}\";`)||source.includes(`export { default } from '${target}';`),file);}
 });
 
 test('People workspace links core admin journeys into V2 Team and keeps personal employee entry separate',()=>{
