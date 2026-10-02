@@ -1,0 +1,15 @@
+{
+  "file": "app/team/finance/sitting/sitting-finance-workspace.tsx",
+  "beforeHash": "25f5e9faece070b13f0a657fa9b89927e4bfec0fefb2ee0c2f0cbe93f52046af",
+  "afterHash": "fa7a23a8a7c269a7bb3cafda310fb6e604577f59fd27dd4249d96bf7132f5dbc",
+  "replacements": [
+    [
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";",
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";\nimport styles from \"./sitting-content.module.css\";"
+    ],
+    [
+      "<StaffModule><main style=",
+      "<StaffModule><main className={styles.sitting} style="
+    ]
+  ]
+}

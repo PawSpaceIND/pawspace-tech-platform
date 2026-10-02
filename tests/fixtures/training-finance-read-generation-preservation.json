@@ -1,0 +1,23 @@
+{
+  "file": "app/team/finance/training/page.tsx",
+  "beforeHash": "64cc981f8a781523480a245dc2c60dc865c2c8555261669ff2b313cec994c482",
+  "afterHash": "74981071191664ea53f53cb4ae5594f8e993034f19cefb4bedb9b98473affa7d",
+  "replacements": [
+    [
+      "import{useEffect,useMemo,useState}from\"react\";",
+      "import{useCallback,useEffect,useMemo,useRef,useState}from\"react\";"
+    ],
+    [
+      "[busy,setBusy]=useState(false);const load=async()=>{setBusy(true);const result=await getTrainingReports();setData(result.finance);setRecon(result.reconciliation);setError(result.error);setBusy(false);};useEffect(()=>{let active=true;void getTrainingReports().then(result=>{if(!active)return;setData(result.finance);setRecon(result.reconciliation);setError(result.error);});return()=>{active=false;};},[]);",
+      "[reading,setReading]=useState(true),[acting,setActing]=useState(false);const busy=reading||acting;const readGeneration=useRef(0);const commitReports=useCallback((generation:number,result:Awaited<ReturnType<typeof getTrainingReports>>)=>{if(generation!==readGeneration.current)return;setData(result.finance);setRecon(result.reconciliation);setError(result.error);setReading(false);},[]);const load=useCallback(async()=>{const generation=++readGeneration.current;setReading(true);commitReports(generation,await getTrainingReports());},[commitReports]);useEffect(()=>{const generations=readGeneration;const generation=++generations.current;void getTrainingReports().then(result=>commitReports(generation,result));return()=>{generations.current++;};},[commitReports]);"
+    ],
+    [
+      "async function action(payload:Record<string,unknown>){setBusy(true);setError(\"\");try{const response=await fetch(\"/api/training-finance\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify(payload)}),body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error||\"Training finance action failed\");await load();}catch(problem){setError(problem instanceof Error?problem.message:\"Training finance action failed\");}finally{setBusy(false);}}",
+      "async function action(payload:Record<string,unknown>){setActing(true);setError(\"\");try{const response=await fetch(\"/api/training-finance\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify(payload)}),body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error||\"Training finance action failed\");await load();}catch(problem){setError(problem instanceof Error?problem.message:\"Training finance action failed\");}finally{setActing(false);}}"
+    ],
+    [
+      "async function cancellationAction(payload:Record<string,unknown>){setBusy(true);setError(\"\");try{const response=await fetch(\"/api/training-cancellation\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify(payload)}),body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error||\"Training cancellation finance action failed\");await load();}catch(problem){setError(problem instanceof Error?problem.message:\"Training cancellation finance action failed\");}finally{setBusy(false);}}",
+      "async function cancellationAction(payload:Record<string,unknown>){setActing(true);setError(\"\");try{const response=await fetch(\"/api/training-cancellation\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify(payload)}),body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error||\"Training cancellation finance action failed\");await load();}catch(problem){setError(problem instanceof Error?problem.message:\"Training cancellation finance action failed\");}finally{setActing(false);}}"
+    ]
+  ]
+}

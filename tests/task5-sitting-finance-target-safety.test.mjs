@@ -60,3 +60,10 @@ test('a mismatched finance response does not grant authority to returned booking
 test('repeated same rendered callback cannot submit a second concurrent mutation',async()=>{
  const slow=deferred();let reads=0;const f=fixture(async id=>++reads===2?slow.promise:data(id));const tree=await start(f);const button=f.button(tree,'Prepare canonical settlement');button.props.onClick();button.props.onClick();await flush();assert.equal(f.updates.length,1);slow.resolve(data('SIT-A'));await flush();
 });
+
+for(const [label,field,prefix] of [['Approve explicitly','cancellationRequestId','CANCEL'],['Record sandbox refund','refundId','REFUND'],['Apply with quote + replacement schedule','dateChangeRequestId','DATE']])test(`selected ${field} is explicit in the actual UI mutation`,async()=>{
+ const f=fixture(async id=>{const value=data(id);value.refunds.push({id:'REFUND-NEWER',amount:500,status:'sandbox_pending'});value.cancellations.push({id:'CANCEL-NEWER',status:'policy_review_required'});value.dateChanges.push({id:'DATE-NEWER',status:'commercial_quote_required',old_total:548,new_total:548});return value;});const tree=await start(f);f.button(tree,label).props.onClick();await flush();assert.equal(f.updates.length,1);assert.equal(f.updates[0].bookingId,'SIT-A');assert.equal(f.updates[0][field],`${prefix}-SIT-A`);assert.match(f.updates[0].idempotencyKey,new RegExp(`${prefix}-SIT-A`));
+});
+test('whitespace lookup keeps settlement identity key canonical',async()=>{
+ const f=fixture();const tree=await start(f);f.input(tree).props.onChange({target:{value:' SIT-A '}});f.button(f.render(),'Load booking').props.onClick();await flush();f.button(f.render(),'Prepare canonical settlement').props.onClick();await flush();assert.equal(f.updates[0].bookingId,'SIT-A');assert.equal(f.updates[0].idempotencyKey,'sitting-finance:settlement:SIT-A');
+});

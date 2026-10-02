@@ -204,7 +204,14 @@ test("Task5 refunds: governed 50% post-completion request creates its own approv
 test("Task5 refunds: Sitting full collected refund follows customer request, Finance approval and canonical reversal", async t => {
   const w = await world(t), b = await siblingSitting(w, "TASK5-SITTING-FULL");
   await capture(w, b);
-  const action = (name, extra = {}, cookie = "") => financeCall("/api/sitting-finance", { bookingId: b.bookingId, action: name, idempotencyKey: `task5-sitting-${name}`, reason: "Synthetic customer requested cancellation", ...extra }, cookie);
+  const selected={};
+  const action = async (name, extra = {}, cookie = "") => {
+    const field={approve_cancel:'cancellationRequestId',record_refund:'refundId'}[name];
+    const result=await financeCall("/api/sitting-finance",{bookingId:b.bookingId,action:name,idempotencyKey:`task5-sitting-${name}`,reason:"Synthetic customer requested cancellation",...(field?{[field]:selected[field]}:{}),...extra},cookie);
+    if(result.status===200&&name==='request_cancel')selected.cancellationRequestId=result.body.data.requestId;
+    if(result.status===200&&name==='approve_cancel')selected.refundId=result.body.data.refundId;
+    return result;
+  };
   assert.equal((await action("request_cancel", {}, w.cookie)).status, 200);
   assert.equal((await action("approve_cancel", { approvedRefundAmount: b.quote.totalAmount }, w.cookie)).status, 403);
   assert.equal((await action("approve_cancel", { approvedRefundAmount: b.quote.totalAmount + 1 })).status, 409);

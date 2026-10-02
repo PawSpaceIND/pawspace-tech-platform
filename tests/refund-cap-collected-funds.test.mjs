@@ -120,7 +120,7 @@ async function readyToApprove(service, state) {
   const govern = mod[service.entry];
   assert.equal(typeof govern, "function", `${service.name}: ${service.entry} must be exported — no fallback, because guessing an export picked ensure*Tables and every refusal "passed" against a no-op`);
 
-  await govern(db, { bookingId: "BK-1", action: service.requestAction, actorId: REQUESTER, idempotencyKey: `req-${Math.abs(TOTAL)}-${service.serviceCode}`, reason: "Customer asked to cancel" });
+  const requested=await govern(db, { bookingId: "BK-1", action: service.requestAction, actorId: REQUESTER, idempotencyKey: `req-${Math.abs(TOTAL)}-${service.serviceCode}`, reason: "Customer asked to cancel" });
   if (service.requestTable) {
     const awaiting = sqlite.prepare(`SELECT COUNT(*) n FROM ${service.requestTable} WHERE booking_id='BK-1' AND status='policy_review_required'`).get().n;
     if (!awaiting) {
@@ -131,8 +131,8 @@ async function readyToApprove(service, state) {
     }
   }
 
-  const approve = (approvedRefundAmount, key = "app-1") =>
-    govern(db, { bookingId: "BK-1", action: "approve_cancel", actorId: APPROVER, idempotencyKey: `${key}-${service.serviceCode}`, reason: "Policy reviewed", approvedRefundAmount });
+  const approve = (approvedRefundAmount, key = "app-1", selectedRequestId=requested.requestId) =>
+    govern(db, { bookingId: "BK-1", action: "approve_cancel", actorId: APPROVER, idempotencyKey: `${key}-${service.serviceCode}`, reason: "Policy reviewed", approvedRefundAmount,...(service.serviceCode==="pet_sitting"?{cancellationRequestId:selectedRequestId}:{}) });
   const refundRows = () => sqlite.prepare(`SELECT amount FROM ${service.ledger}`).all();
   const bookingStatus = () => sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-1'").get().status;
   return { approve, refundRows, bookingStatus, sqlite };
@@ -252,12 +252,14 @@ test("the booking total is not the refund ceiling in any service", async () => {
 /** Raises extra cancellation requests, so later approvals have something to approve. */
 async function extraRequests(service, count) {
   const mod = await import(service.module);
+  const requests=[];
   for (let index = 0; index < count; index += 1) {
-    await mod[service.entry](globalThis.__REFUND_DB__, {
+    requests.push(await mod[service.entry](globalThis.__REFUND_DB__, {
       bookingId: "BK-1", action: service.requestAction, actorId: REQUESTER,
       idempotencyKey: `req-extra-${index}-${service.serviceCode}`, reason: `Cancellation request ${index + 2}`,
-    });
+    }));
   }
+  return requests;
 }
 
 const total = (rows) => rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -265,27 +267,27 @@ const total = (rows) => rows.reduce((sum, row) => sum + Number(row.amount || 0),
 for (const service of SERVICES) {
   test(`${service.name}: two cancellation requests cannot approve two full refunds`, async () => {
     const { approve, refundRows } = await readyToApprove(service, { payment: { status: "captured", amount: TOTAL, dueNow: TOTAL } });
-    await extraRequests(service, 1);
+    const [secondRequest]=await extraRequests(service, 1);
 
     await approve(TOTAL, "seed");
     assert.equal(total(refundRows()), TOTAL, "the first full refund is legitimate");
 
     // assertRefused uses the default key, which is deliberately NOT the key above: an idempotent replay
     // would return the first approval's success and hide the defect rather than exercise the cap.
-    await assertRefused(approve, refundRows, TOTAL, "a second full refund on the same collected money");
+    await assertRefused(amount=>approve(amount,"app-1",secondRequest.requestId), refundRows, TOTAL, "a second full refund on the same collected money");
     assert.equal(total(refundRows()), TOTAL, "total approved refunds must never exceed the money collected");
   });
 
   test(`${service.name}: a partial refund and its remainder still work, but not a rupee past collected`, async () => {
     // Non-vacuity. Refusing every second approval would satisfy the case above and break split refunds.
     const { approve, refundRows } = await readyToApprove(service, { payment: { status: "captured", amount: TOTAL, dueNow: TOTAL } });
-    await extraRequests(service, 2);   // three open requests in total, raised before anything is approved
+    const [secondRequest,thirdRequest]=await extraRequests(service, 2);   // three open requests in total, raised before anything is approved
 
     await approve(3000, "seed-a");
-    await approve(TOTAL - 3000, "seed-b");
+    await approve(TOTAL - 3000, "seed-b",secondRequest.requestId);
     assert.equal(total(refundRows()), TOTAL,
       "a partial refund and its remainder together come to exactly what was collected");
 
-    await assertRefused(approve, refundRows, 1, "one rupee past the collected amount");
+    await assertRefused(amount=>approve(amount,"app-1",thirdRequest.requestId), refundRows, 1, "one rupee past the collected amount");
   });
 }
