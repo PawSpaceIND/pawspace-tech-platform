@@ -297,3 +297,17 @@ test('Atlas general care output cannot show unsolicited coupon/discount; coupon 
  });
 });
 test('public coupon request with no approved offers cannot invent a monetary discount',async()=>{const {db}=await world(OPENAI);await withFetch(()=>openAiReply('Get ₹200 off your next visit.'),async net=>{const result=await adapter.runPublicAiWebChat(db,{query:'Any discount for Training?',careContext:{serviceCode:'dog_training'},sessionKey:'atlas-request-no-entitlement'});assert.equal(net.calls.length,1);assert.doesNotMatch(result.ai.turn.output,/200 off/);assert.deepEqual(JSON.parse(JSON.parse(net.calls[0].init.body).input).approvedOffers,[]);});});
+test('Atlas public care question without applying a discount does not request offers',async()=>{
+ const {db}=await world(OPENAI);
+ const query='Can you explain grooming without applying a discount?';
+ await withFetch(()=>openAiReply('Use GROOM200 for a discount.'),async net=>{
+  const result=await adapter.runPublicAiWebChat(db,{query,careContext:{serviceCode:'grooming'},sessionKey:'atlas-negated-discount'});
+  assert.equal(net.calls.length,1);
+  const sent=JSON.parse(net.calls[0].init.body),context=JSON.parse(sent.input);
+  assert.equal(context.question,query);
+  assert.equal(context.couponRequested,false);
+  assert.deepEqual(context.approvedOffers,[]);
+  assert.match(sent.instructions,/did not request a coupon/);
+  assert.doesNotMatch(result.ai.turn.output,/GROOM200|discount|coupon/i);
+ });
+});

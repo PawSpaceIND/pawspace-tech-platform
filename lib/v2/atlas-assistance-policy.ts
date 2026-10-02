@@ -7,7 +7,8 @@ export function atlasCareContext(value:unknown):AtlasCareContext|undefined{
  return Object.keys(context).length?context:undefined;
 }
 export function customerRequestedCoupon(question:string){
- if(/\b(?:no|without|don't(?: want| need)?|do not(?: want| need)?|not interested in)\s+(?:any\s+)?(?:coupons?|discounts?|promos?)\b/i.test(question))return false;
+ // Keep a negated offer/application clause from becoming positive intent through "can" or "?".
+ if(/\b(?:no|without(?:\s+(?:applying|using|adding))?|(?:do not|don't|don’t)(?:\s+(?:want|need|apply|use|add))?|not interested in)\s+(?:(?:a|an|the|any)\s+)?(?:offers?|coupons?|discounts?|promos?|promo(?:tion)? codes?|cashback)\b/i.test(question))return false;
  return /\b(?:coupons?|discounts?|promo(?:tion)? codes?|cashback)\b/i.test(question)&&/(?:\?|^(?:coupons?|discounts?|promo(?:tion)? codes?|cashback)$|\b(?:any|what|which|how|can|could|please|check|find|show|apply|give|need|want|have|available|eligible|offer)\b)/i.test(question.trim());
 }
 export function hasMonetaryPromotion(reply:string){return /\b(?:discount|save|savings?|cashback)\b.{0,24}(?:₹|INR|Rs\.?|\d)|(?:₹|INR|Rs\.?)\s*\d[\d,.]*\s*(?:off|back)|\d+(?:\.\d+)?\s*%\s*(?:off|discount|cashback)/i.test(reply);}
