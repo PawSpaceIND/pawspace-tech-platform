@@ -36,6 +36,10 @@ test('price hesitation alone cannot grant a model coupon proposal',async t=>{
  for(const statement of ['Can you prepare grooming without applying a discount?','Please prepare grooming without using the approved coupon.','Prepare a regular quote.'])assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],statement),false,statement);
  assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'Actually switch to boarding. Prepare a regular quote.'),false);
  assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'What about boarding?'),false);
+ assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount?'}],'Actually switch to boarding.'),false,'an unspecified old request cannot authorize a newly selected service');
+ assert.equal(customerRequestedVoiceDiscount([],'Any approved discount for grooming? Actually switch to boarding. Prepare a regular quote.'),false);
+ assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'Prepare a new quote for a different package.'),false);
+ assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'Actually switch to boarding. Any approved discount for boarding?'),true,'a new explicit request grants only fresh permission');
  for(const statement of ['Can you prepare grooming without applying a discount?','Actually switch to boarding. Prepare a regular quote.']){
   const denied=await provider.generate({threadId,customerId,channel:'voice',inputText:statement,intent:orchestrator.classifyAiIntent(statement),context:{conversationHistory:[{role:'user',content:'Any approved discount for grooming?'}]}});
   assert.equal(denied.actionRequests?.length??0,0,statement);

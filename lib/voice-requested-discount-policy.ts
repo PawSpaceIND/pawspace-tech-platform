@@ -5,12 +5,13 @@ export function customerRequestedVoiceDiscount(history:Message[],currentText:str
  let requested=false,serviceScope="";
  for(const message of [...history,{role:"user",content:currentText}]){
   if(message.role!=="user")continue;
-  const services=[...message.content.toLowerCase().matchAll(/\b(grooming|boarding|sitting|walking|training|taxi)\b/g)].map(match=>match[1]);
-  const nextService=services.at(-1)||"";
-  if(nextService&&serviceScope&&nextService!==serviceScope)requested=false;
-  if(nextService)serviceScope=nextService;
-  if(/\b(?:regular|full[ -]price|undiscounted)\s+(?:price|quote|package|booking)\b|\b(?:switch|change|different|another|instead)\b[^.!?]{0,50}\b(?:package|quote|service)\b/i.test(message.content))requested=false;
   for(const value of message.content.trim().split(/(?<=[.!?])\s+|;\s*/)){
+  const services=[...value.toLowerCase().matchAll(/\b(grooming|boarding|sitting|walking|training|taxi)\b/g)].map(match=>match[1]);
+  const nextService=services.at(-1)||"";
+  if(nextService&&requested&&nextService!==serviceScope)requested=false;
+  if(nextService)serviceScope=nextService;
+  if(/\b(?:regular|full[ -]price|undiscounted)\s+(?:price|quote|package|booking)\b/i.test(value)){requested=false;continue;}
+  if(/\b(?:new|another|different)\s+(?:quote|package)\b|\b(?:switch|change|different|another|instead)\b[^.!?]{0,50}\b(?:package|quote|service)\b/i.test(value))requested=false;
   if(/\b(?:no|without)\s+(?:(?:applying|using|adding|giving|offering)\s+)?(?:(?:a|an|any|the|that|available|approved)\s+){0,3}(?:discounts?|coupons?|offers?)\b|\b(?:do not|don't|don’t)\s+(?:want|need|apply|use|add|give|offer)\s+(?:(?:a|an|any|the|that|available|approved)\s+){0,3}(?:discounts?|coupons?|offers?)\b/i.test(value)){requested=false;continue;}
   const discount=/\b(?:discounts?|coupons?|promo(?:tion)?(?: codes?)?)\b|\b(?:approved|eligible|available|special)\s+offers?\b|\b\d+\s*%\s*off\b/i.test(value);
   const ask=/^any\s+(?:(?:available|eligible|approved)\s+)*(?:discounts?|coupons?|offers?|promos?)\b/i.test(value)
