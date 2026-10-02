@@ -4,3 +4,18 @@ installAiHooks();const handoff=await import('../lib/ai-human-handoff.ts');
 async function world(){const {sqlite,db}=freshAiDb();seedCustomer(sqlite,'CUS-DEADLINE','Deadline Customer','9000009824');await inboundMessage(sqlite,db,{threadId:'THREAD-DEADLINE',customerId:'CUS-DEADLINE',text:'I need a human',idempotencyKey:'deadline-in'});await handoff.requestAiHumanHandoff(db,{actorEmail:'system@test',threadId:'THREAD-DEADLINE',customerId:'CUS-DEADLINE',reason:'customer_requested_human',confidence:null});return {sqlite,db};}
 test('unresolved queue exposes the exact canonical response deadline, including overdue values',async()=>{const {sqlite,db}=await world();for(const due of [Date.now()+900000,Date.now()-60000]){sqlite.prepare("UPDATE communication_threads SET sla_due_at=? WHERE id='THREAD-DEADLINE'").run(due);const q=await handoff.listAiHandoffQueue(db,{actor:staffActor});assert.equal(q.queue[0].slaDueAt,due);assert.equal(q.queue[0].status,'queued');assert.equal(q.waiting,1);}});
 test('queue does not invent a response deadline when the canonical value is absent',async()=>{const {sqlite,db}=await world();sqlite.prepare("UPDATE communication_threads SET sla_due_at=NULL WHERE id='THREAD-DEADLINE'").run();const q=await handoff.listAiHandoffQueue(db,{actor:staffActor});assert.equal(q.queue[0].slaDueAt,null);});
+
+// The repair is a functional exception to historical UI snapshots, not a replacement baseline.
+const {readFileSync}=await import('node:fs');
+const {createHash}=await import('node:crypto');
+const {reverseAtlasHandoffDeadline}=await import('./helpers/atlas-handoff-deadline-review.mjs');
+const preservation=JSON.parse(readFileSync(new URL('./fixtures/atlas-handoff-deadline-preservation.json',import.meta.url),'utf8'));
+for(const [file,entry]of Object.entries(preservation))test('deadline exception restores exact historical bytes and rejects unrelated changes: '+file,()=>{
+ const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
+ const digest=s=>createHash('sha256').update(s).digest('hex');
+ assert.equal(digest(source),entry.afterSha256);
+ assert.equal(digest(reverseAtlasHandoffDeadline(source,file)),entry.beforeSha256);
+ const changed=file.endsWith('page.tsx')?source.replace('/api/conversations?status=open','/api/unsafe-conversations?status=open'):source.replace('waiting:totals.get("queued")||0','waiting:999');
+ assert.notEqual(changed,source);
+ assert.throws(()=>assert.equal(digest(reverseAtlasHandoffDeadline(changed,file)),entry.beforeSha256));
+});

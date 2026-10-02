@@ -1,3 +1,4 @@
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import {reverseGuestContinuity} from './helpers/guest-continuity-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ const c=JSON.parse(read('tests/fixtures/customer-partner-theme-contract.json'));
 const hash=v=>createHash('sha256').update(v).digest('hex');
 for(const [p,x]of Object.entries(c.styles))test('Approved theme append preserves original stylesheet: '+p,()=>assert.equal(hash(preservedBrandStyleBytes(p)),x.hash));
 test('All application logic, route aliases, validation and business engines retain exact bytes',()=>{
- for(const [p,h]of Object.entries(c.protected))assert.equal(hash(read(p)),h,p);
+ for(const [p,h]of Object.entries(c.protected))assert.equal(hash(reverseAtlasHandoffDeadline(read(p),p)),h,p);
 });
 test('Theme consumers compose the same palette; style changes cannot grant permissions',()=>{
  for(const [p,x]of Object.entries(c.styles)){

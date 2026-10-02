@@ -1,10 +1,11 @@
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {createHash} from 'node:crypto';import ts from 'typescript';
 import {installWorkersHooks} from './helpers/module-hooks.mjs';import {staffSemanticContract} from './helpers/staff-presentation-contract.mjs';
 installWorkersHooks('__INBOX_UI_DB__','__INBOX_UI_ENV__');
 const {visibleStaffGroups}=await import('../app/components/staff-workspace/navigation.ts');
 const c=JSON.parse(fs.readFileSync('tests/fixtures/inbox-workspace-contract.json','utf8')),hash=v=>createHash('sha256').update(v).digest('hex');
 const read=p=>fs.readFileSync(p,'utf8');
-test('Inbox changes preserve every other application source',()=>{for(const[p,h]of Object.entries(c.protected))assert.equal(hash(fs.readFileSync(p)),h,p);});
+test('Inbox changes preserve every other application source',()=>{for(const[p,h]of Object.entries(c.protected))assert.equal(hash(reverseAtlasHandoffDeadline(fs.readFileSync(p),p)),h,p);});
 test('Inbox requests, state, polling, selection, idempotency and actions stay unchanged',()=>{
  const path='app/team/customer-experience/page.tsx',s=read(path),sf=ts.createSourceFile(path,s,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),fn=sf.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='CustomerExperiencePage');
  const body=fn.body.statements.slice(0,fn.body.statements.findIndex(ts.isReturnStatement)).map(n=>n.getText(sf)).join('\n'),bindings=[];
@@ -26,6 +27,6 @@ test('Executed Inbox & AI menu matches the existing communications permission',(
 });
 test('Integrated business sources retain upstream bytes and Atlas retains upstream behavior',()=>{
  const m=JSON.parse(read('tests/fixtures/ui-mainline-integration-contract.json'));
- for(const[p,h]of Object.entries(m.protected))assert.equal(hash(fs.readFileSync(p)),h,p);
+ for(const[p,h]of Object.entries(m.protected))assert.equal(hash(reverseAtlasHandoffDeadline(fs.readFileSync(p),p)),h,p);
  for(const[p,x]of Object.entries(m.presentation))assert.equal(staffSemanticContract(read(p),p),x.semantic,p);
 });

@@ -1,3 +1,4 @@
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import postcss from 'postcss';
 import { uiBehaviorSignatures } from '../scripts/ui-audit-event-contract.mjs';
-const read = file => readFileSync(new URL('../'+file,import.meta.url),'utf8');
+const read = file => reverseAtlasHandoffDeadline(readFileSync(new URL('../'+file,import.meta.url),'utf8'),file);
 const contract = JSON.parse(read('tests/fixtures/ui-audit-event-contract.json'));
 for (const [file, expected] of Object.entries(contract.files)) {
   test(`UI audit preserves original events, requests and field contracts: ${file}`,()=>{

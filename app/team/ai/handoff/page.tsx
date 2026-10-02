@@ -91,6 +91,17 @@ export default function AiHandoffPage() {
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [clockNow, setClockNow] = useState(0);
+
+  useEffect(() => {
+    const updateClock = () => setClockNow(Date.now());
+    const initialTick = window.setTimeout(updateClock, 0);
+    const interval = window.setInterval(updateClock, 60_000);
+    return () => {
+      window.clearTimeout(initialTick);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -259,8 +270,8 @@ export default function AiHandoffPage() {
                           * of one as if the customer were nameless. */}
                         {entry.identitySource === "crm_contact" ? " · CRM contact record" : entry.identitySource === "unresolved" ? " · no customer record found" : ""}
                       </div>
-                      <div style={{ fontSize: 14, marginTop: 4, color: entry.slaDueAt && entry.slaDueAt <= Date.now() ? "var(--staff-danger)" : "var(--staff-muted)" }}>
-                        {entry.slaDueAt ? `${entry.slaDueAt <= Date.now() ? "Overdue · " : ""}Response due ${new Date(entry.slaDueAt).toLocaleString()}` : "Response deadline unavailable"}
+                      <div style={{ fontSize: 14, marginTop: 4, color: entry.slaDueAt && entry.slaDueAt <= clockNow ? "var(--staff-danger)" : "var(--staff-muted)" }}>
+                        {entry.slaDueAt ? `${entry.slaDueAt <= clockNow ? "Overdue · " : ""}Response due ${new Date(entry.slaDueAt).toLocaleString()}` : "Response deadline unavailable"}
                       </div>
                     </button>
                   ))}

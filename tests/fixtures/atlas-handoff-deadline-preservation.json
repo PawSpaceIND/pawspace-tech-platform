@@ -1,0 +1,34 @@
+{
+  "app/team/ai/handoff/page.tsx": {
+    "beforeSha256": "2b3ace8c2d1a360028ea208d61d581c1e809da8fe1f9475005fbabe084972581",
+    "afterSha256": "c3c95faa03c84f812c699a78f5d674ce1d8d9ceb58786bd59a2fe18d858d8349",
+    "replacements": [
+      [
+        "  createdAt: number;\n};\n",
+        "  createdAt: number;\n  slaDueAt?: number | null;\n};\n"
+      ],
+      [
+        "  const [busy, setBusy] = useState(false);\n\n",
+        "  const [busy, setBusy] = useState(false);\n  const [clockNow, setClockNow] = useState(0);\n\n  useEffect(() => {\n    const updateClock = () => setClockNow(Date.now());\n    const initialTick = window.setTimeout(updateClock, 0);\n    const interval = window.setInterval(updateClock, 60_000);\n    return () => {\n      window.clearTimeout(initialTick);\n      window.clearInterval(interval);\n    };\n  }, []);\n\n"
+      ],
+      [
+        "                      key={entry.threadId}\n                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined })}\n                      style={{ display: \"block\", width: \"100%\", textAlign: \"left\", padding: \"10px 16px\", border: 0, background: selected?.id === entry.threadId ? \"var(--staff-raised)\" : \"transparent\" }}\n",
+        "                      key={entry.threadId}\n                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined, sla_due_at: entry.slaDueAt ?? undefined })}\n                      style={{ display: \"block\", width: \"100%\", textAlign: \"left\", padding: \"10px 16px\", border: 0, background: selected?.id === entry.threadId ? \"var(--staff-raised)\" : \"transparent\" }}\n"
+      ],
+      [
+        "                        {entry.identitySource === \"crm_contact\" ? \" \u00b7 CRM contact record\" : entry.identitySource === \"unresolved\" ? \" \u00b7 no customer record found\" : \"\"}\n                      </div>\n",
+        "                        {entry.identitySource === \"crm_contact\" ? \" \u00b7 CRM contact record\" : entry.identitySource === \"unresolved\" ? \" \u00b7 no customer record found\" : \"\"}\n                      </div>\n                      <div style={{ fontSize: 14, marginTop: 4, color: entry.slaDueAt && entry.slaDueAt <= clockNow ? \"var(--staff-danger)\" : \"var(--staff-muted)\" }}>\n                        {entry.slaDueAt ? `${entry.slaDueAt <= clockNow ? \"Overdue \u00b7 \" : \"\"}Response due ${new Date(entry.slaDueAt).toLocaleString()}` : \"Response deadline unavailable\"}\n                      </div>\n"
+      ]
+    ]
+  },
+  "lib/ai-human-handoff.ts": {
+    "beforeSha256": "3004b8bc5dedf55401ac50610fa6cd6514f9294385720249b7cabcdb6f0a75b5",
+    "afterSha256": "736f7f42156eaf3a44ce7f60cecb413bd78bda675fb3457f1b6333be47854bca",
+    "replacements": [
+      [
+        "  const canonicalName=text(row.canonical_name),crmName=text(row.crm_name);\n  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||text(row.crm_phone)||null,identitySource:canonicalName?\"canonical_customer\":crmName?\"crm_contact\":\"unresolved\",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};\n }),byStatus:Object.fromEntries(totals),waiting:totals.get(\"queued\")||0,withStaff:totals.get(\"staff_active\")||0};\n",
+        "  const canonicalName=text(row.canonical_name),crmName=text(row.crm_name);\n  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||text(row.crm_phone)||null,identitySource:canonicalName?\"canonical_customer\":crmName?\"crm_contact\":\"unresolved\",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),slaDueAt:row.sla_due_at==null?null:Number(row.sla_due_at),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};\n }),byStatus:Object.fromEntries(totals),waiting:totals.get(\"queued\")||0,withStaff:totals.get(\"staff_active\")||0};\n"
+      ]
+    ]
+  }
+}
