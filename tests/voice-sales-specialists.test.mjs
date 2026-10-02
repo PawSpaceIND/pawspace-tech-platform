@@ -573,3 +573,30 @@ test('owned repeat-call ASR reference to the AI agent does not request a human',
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active')").get(w.threadId).n,0);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+test('availability acknowledgment hook wraps the real preview and stops before final quote',async t=>{
+ const w=await world(t);const events=[];
+ const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'lookup-hook',actions:actions(w),onLookupPending:()=>{events.push('pending');return()=>events.push('finished');}});
+ assert.deepEqual(events,['pending','finished']);assert.match(offer.summary,/One-time grooming/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ const invalid=actions(w);invalid[0].arguments.servicePincode='invalid';events.length=0;
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'lookup-invalid',actions:invalid,onLookupPending:()=>{events.push('pending');return()=>events.push('finished');}}),400);
+ assert.deepEqual(events,[],'no filler when facts fail before availability lookup');
+});
+
+test('slow real scheduling preview emits acknowledgment while blocked, then preserves canonical final quote',async t=>{
+ const w=await world(t),{runWithWorkersDb}=await import('./helpers/module-hooks.mjs');
+ const {pendingLookupAcknowledgment,LOOKUP_ACKNOWLEDGMENT}=await import('../lib/voice-lookup-acknowledgment.ts');
+ let lookupPending=false,release,blocked;const waiting=new Promise(resolve=>{blocked=resolve;});const hold=new Promise(resolve=>{release=resolve;});
+ const delayedDb={...w.db,prepare(sql){
+  const wrap=statement=>new Proxy(statement,{get(target,key){
+   if(key==='bind')return(...args)=>wrap(target.bind(...args));
+   if(['first','all','run'].includes(key))return async(...args)=>{if(lookupPending){lookupPending=false;blocked();await hold;}return target[key](...args);};
+   const value=target[key];return typeof value==='function'?value.bind(target):value;
+  }});return wrap(w.db.prepare(sql));
+ }};
+ const spoken=[];let finalReady=false;
+ const offerPromise=runWithWorkersDb(delayedDb,()=>sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'held-lookup',actions:actions(w),onLookupPending:()=>{lookupPending=true;return pendingLookupAcknowledgment({signal:new AbortController().signal,delayMs:1,claim:async()=>({suppress:async()=>{}}),emit:text=>{spoken.push(text);return true;}});}})).then(result=>{finalReady=true;return result;});
+ await waiting;await new Promise(resolve=>setTimeout(resolve,15));
+ assert.deepEqual(spoken,[LOOKUP_ACKNOWLEDGMENT]);assert.equal(finalReady,false,'lookup and final quote are still unresolved when speech is emitted');assert.equal(bookingCount(w),0);
+ release();const offer=await offerPromise;assert.match(offer.summary,/One-time grooming/);assert.equal(spoken.length,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});

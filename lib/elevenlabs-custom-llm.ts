@@ -1,3 +1,4 @@
+import{pendingLookupAcknowledgment,claimVoiceLookupAcknowledgment}from"./voice-lookup-acknowledgment";
 import{emergencyGuidanceOnly,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
 import { voiceSalesService } from "./voice-sales-specialists";
 import{ensureCommunicationTables}from"./communication-engine";
@@ -167,7 +168,7 @@ export function speechGate(emit:(text:string)=>void){
  };
 }
 
-export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void){
+export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void,lookupSpeech?:{signal:AbortSignal;emit:(delta:string)=>boolean}){
  await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
  const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
@@ -237,7 +238,8 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  }
  // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
  await settleInbound();
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent});clock.mark("orchestrator");
+ const onLookupPending=lookupSpeech&&!/[^\x00-\x7f]/.test(inputText)?()=>pendingLookupAcknowledgment({signal:lookupSpeech.signal,claim:async()=>{await assertVoiceCustomerMayReply(db,ctx);return claimVoiceLookupAcknowledgment(db,{...ctx,messageId});},emit:lookupSpeech.emit}):undefined;
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent,onLookupPending});clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(text(turn.outcome)!=="handoff")await assertVoiceCustomerMayReply(db,ctx);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});

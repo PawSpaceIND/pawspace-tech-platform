@@ -24,20 +24,23 @@ export async function POST(request:Request){
 
  const id=`resp_${crypto.randomUUID().replaceAll("-","").slice(0,24)}`,created=Math.floor(Date.now()/1000);
  const model="pawspace-grounded-openai";
+ const cancellation=new AbortController();
+ const abort=()=>cancellation.abort();
+ request.signal.addEventListener("abort",abort,{once:true});
+ if(request.signal.aborted)abort();
+ let acknowledgment="";
  const stream=new ReadableStream<Uint8Array>({
   async start(controller){
-   const send=(event:unknown)=>{try{controller.enqueue(sse(event));}catch{/* caller hung up */}};
+   const send=(event:unknown)=>{if(cancellation.signal.aborted)return false;try{controller.enqueue(sse(event));return true;}catch{abort();return false;}};
    send({type:"response.created",response:{id,object:"response",created_at:created,status:"in_progress",model,output:[]}});
-   // Speech is released as the model produces it, except for a governed action envelope, which is
-   // withheld so the phone never hears JSON; see speechGate.
+   // The lookup acknowledgment is independent of the validated final reply gate.
    const gate=speechGate(text=>send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta:text}));
    try{
-    const result=await runElevenLabsGroundedTurn(db,body,clock,delta=>gate.push(delta));
-    // Nothing spoken yet means the turn was withheld as an envelope, or served by a path that does
-    // not stream; either way the resolved reply is the first and only thing the caller hears.
+    const result=await runElevenLabsGroundedTurn(db,body,clock,delta=>gate.push(delta),{signal:cancellation.signal,emit:delta=>{const sent=send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta});if(sent)acknowledgment+=delta;return sent;}});
+    // An acknowledgment must never suppress the validated final answer.
     if(gate.unspoken)send({type:"response.output_text.delta",item_id:`${id}_msg`,output_index:0,content_index:0,delta:result.output});
-    send({type:"response.output_text.done",item_id:`${id}_msg`,output_index:0,content_index:0,text:result.output});
-    send({type:"response.completed",response:{id,object:"response",created_at:created,status:"completed",model,output:[{id:`${id}_msg`,type:"message",role:"assistant",content:[{type:"output_text",text:result.output,annotations:[]}]}],
+    send({type:"response.output_text.done",item_id:`${id}_msg`,output_index:0,content_index:0,text:acknowledgment+result.output});
+    send({type:"response.completed",response:{id,object:"response",created_at:created,status:"completed",model,output:[{id:`${id}_msg`,type:"message",role:"assistant",content:[{type:"output_text",text:acknowledgment+result.output,annotations:[]}]}],
      // Durations only, carried here rather than in Server-Timing because response headers are already
      // on the wire by the time the model stages finish. Consumers ignore unknown response fields.
      pawspace_timing:{path:result.path,modelRef:result.modelRef,providerRef:result.providerRef,upstreamMs:result.upstreamMs,spoken:!gate.unspoken,...result.timings}}});
@@ -47,9 +50,11 @@ export async function POST(request:Request){
     const reason=error instanceof Response?await error.text().catch(()=>"refused"):"PawSpace custom LLM failed safely";
     send({type:"response.failed",response:{id,object:"response",created_at:created,status:"failed",model,error:{message:reason}}});
    }
+   request.signal.removeEventListener("abort",abort);
    try{controller.enqueue(encoder.encode("data: [DONE]\n\n"));}catch{/* caller hung up */}
    try{controller.close();}catch{/* already closed */}
   },
+  cancel(){abort();request.signal.removeEventListener("abort",abort);},
  });
 
  return new Response(stream,{status:200,headers:{
