@@ -147,7 +147,7 @@ export async function bookingPaymentLink(bookingId: string, channel: SalesOfferC
  try { const { env } = await import("cloudflare:workers"); const configured = String((env as unknown as Row).PAWSPACE_PUBLIC_ORIGIN || "").trim(); if (/^https:\/\/[a-z0-9.-]+$/i.test(configured)) origin = configured; } catch { /* default origin */ }
  return `${origin}${path}`;
 }
-export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel; nativeTurnKey?: string }): Promise<{id:string;summary:string;expiresAt:number;bookingPath?:string}> {
+export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: AuthenticatedActor; threadId: string; customerId: string; service: VoiceSalesService; turnKey: string; actions: AiActionRequest[]; channel?: SalesOfferChannel; nativeTurnKey?: string; onLookupPending?: () => () => void }): Promise<{id:string;summary:string;expiresAt:number;bookingPath?:string}> {
  await ensureVoiceSalesOffers(db); await assertOwner(db, input.threadId, input.customerId, input.actor);
  if (input.service === "all_services") {
   const requested = text(input.actions[0]?.arguments?.serviceCode);
@@ -212,7 +212,9 @@ export async function prepareVoiceSalesOffer(db: D1Database, input: { actor: Aut
   return { id: offerId, summary, expiresAt, bookingPath };
  }
  const { executeGovernedSchedulingRequest } = await import("../app/api/uat-scheduling/route");
- const response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor);
+ const stopAcknowledgment = input.onLookupPending?.();
+ let response: Response;
+ try { response = await executeGovernedSchedulingRequest(new Request("https://internal.pawspace/api/uat-scheduling", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...schedule, action: "preview", customerId: input.customerId, clientRequestId: `preview:${input.turnKey}` }) }), input.actor); } finally { stopAcknowledgment?.(); }
  const preview = object(await response.json()); if (!response.ok) throw refusal("Current availability could not be verified; review the requested address and time");
  const available = object(preview.data); if (!Array.isArray(available.providers) || !available.providers.length) throw refusal("No eligible provider is available for this proposed schedule");
  quote = { ...quote, cityId: available.cityId, zoneId: available.zoneId };
