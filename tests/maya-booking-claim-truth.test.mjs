@@ -91,3 +91,23 @@ test('punctuation and an earlier negation cannot hide a later affirmative bookin
  const {hasBookingConfirmationClaim}=await import('../lib/ai-evaluation-security.ts');
  for(const reply of ['Your booking, BK-TRUTH-CURRENT, is confirmed.','Your booking was not confirmed earlier, but it is confirmed now.','We confirmed the grooming booking.'])assert.equal(hasBookingConfirmationClaim(reply),true,reply);
 });
+
+
+test('punctuated booking references cannot borrow a different confirmed bound booking',async t=>{
+ const w=await fixture(t);
+ w.insertBooking('BK-CURRENT');w.link('BK-CURRENT');
+ const {verifiedBookingConfirmation}=await import('../lib/ai-booking-claim-truth.ts');
+ w.insertBooking('BK-OTHER');
+ w.insertBooking('BK-PENDING','payment_pending');
+ w.insertBooking('BK-FOREIGN','confirmed','CUS-OTHER');
+ for(const reference of ['BK-OTHER','BK-MISSING','BK-PENDING','BK-FOREIGN']){
+  for(const format of [`Your booking, ${reference}, is confirmed.`,`Your booking (${reference}) is confirmed.`,`Your booking: ${reference} is confirmed.`,`Your booking ID: ${reference} is confirmed.`,`Your booking — ${reference} — is confirmed.`]){
+   assert.equal(await verifiedBookingConfirmation(w.db,{reply:format,customerId:w.customerId,threadId:w.threadId}),false,format);
+   assert.equal((await w.validate(format)).safe,false,format);
+  }
+ }
+ for(const format of ['Your booking, BK-CURRENT, is confirmed.','Your booking (BK-CURRENT) is confirmed.','Your booking ID: BK-CURRENT is confirmed.'])assert.equal((await w.validate(format)).safe,true,format);
+ w.link(null);
+ for(const reference of ['BK-MISSING','BK-PENDING','BK-FOREIGN'])assert.equal((await w.validate(`Your booking, ${reference}, is confirmed.`)).safe,false,reference);
+ assert.equal((await w.validate('Your booking, BK-CURRENT, is confirmed.')).safe,true,'legitimate exact named owned confirmation needs no unrelated binding');
+});

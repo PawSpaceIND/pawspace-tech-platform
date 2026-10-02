@@ -10,9 +10,11 @@ export async function verifiedBookingConfirmation(db:D1Database,input:{reply:str
  try{
   const thread=await db.prepare("SELECT customer_id,booking_id,status FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();
   if(!thread||text(thread.customer_id)!==input.customerId||text(thread.status)==="closed")return false;
+  // Appositive punctuation must not turn an explicit different booking into a generic bound claim.
+  const referenceText=input.reply.replace(/\bbooking\b(\s+id|\s*#)?[\s,;:(\[{"'“‘—–]+/gi,(_match,marker)=>`booking${marker||""} `);
   const references=[
-   ...input.reply.matchAll(/\bbooking\s+(?:id\s*[:#]?\s*|#\s*)([a-z0-9][a-z0-9_-]*)\b/gi),
-   ...[...input.reply.matchAll(/\bbooking\s+([a-z0-9][a-z0-9_-]*)\b/gi)].filter(match=>/[0-9_-]/.test(match[1])),
+   ...referenceText.matchAll(/\bbooking\s+(?:id\s*[:#]?\s*|#\s*)([a-z0-9][a-z0-9_-]*)\b/gi),
+   ...[...referenceText.matchAll(/\bbooking\s+([a-z0-9][a-z0-9_-]*)\b/gi)].filter(match=>/[0-9_-]/.test(match[1])),
   ].map(match=>match[1]);
   const distinctReferences=[...new Set(references)];
   if(distinctReferences.length>1)return false;
