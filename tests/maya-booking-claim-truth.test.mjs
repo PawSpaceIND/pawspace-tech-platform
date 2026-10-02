@@ -111,3 +111,27 @@ test('punctuated booking references cannot borrow a different confirmed bound bo
  for(const reference of ['BK-MISSING','BK-PENDING','BK-FOREIGN'])assert.equal((await w.validate(`Your booking, ${reference}, is confirmed.`)).safe,false,reference);
  assert.equal((await w.validate('Your booking, BK-CURRENT, is confirmed.')).safe,true,'legitimate exact named owned confirmation needs no unrelated binding');
 });
+
+
+test('all explicit reference forms are resolved or refused before bound booking evidence is used',async t=>{
+ const w=await fixture(t),{verifiedBookingConfirmation}=await import('../lib/ai-booking-claim-truth.ts');
+ w.insertBooking('BK-CURRENT');w.link('BK-CURRENT');
+ w.insertBooking('BK-PENDING','payment_pending');w.insertBooking('BK-FOREIGN','confirmed','CUS-OTHER');
+ const variants=id=>[`Your booking reference ${id} is confirmed.`,`Your booking with ID ${id} is confirmed.`,`Your booking referenced as ${id} is confirmed.`,`Your booking under reference number ${id} is confirmed.`,`Your booking (reference: "${id}") is confirmed.`,`Your booking, ref. ${id}, is confirmed.`,`Your booking #${id} is confirmed.`,`Your booking identifier ${id} is confirmed.`,`Your booking associated with ${id} is confirmed.`];
+ for(const id of ['BK-MISSING','BK-PENDING','BK-FOREIGN','MISSING'])for(const reply of variants(id)){
+  assert.equal(await verifiedBookingConfirmation(w.db,{reply,customerId:w.customerId,threadId:w.threadId}),false,reply);
+  assert.equal((await w.validate(reply)).safe,false,reply);
+ }
+ for(const reply of variants('BK-CURRENT')){
+  assert.equal(await verifiedBookingConfirmation(w.db,{reply,customerId:w.customerId,threadId:w.threadId}),true,reply);
+  assert.equal((await w.validate(reply)).safe,true,reply);
+ }
+ for(const reply of ['Your booking reference is confirmed.','Your booking with ID is confirmed.','Your booking linked to MISSING is confirmed.','Your booking reference BK-CURRENT and MISSING is confirmed.']){
+  assert.equal(await verifiedBookingConfirmation(w.db,{reply,customerId:w.customerId,threadId:w.threadId}),false,reply);
+  assert.equal((await w.validate(reply)).safe,false,reply);
+ }
+ for(const reply of ['Your booking is confirmed.','Your confirmed booking is ready.','We have confirmed your booking.'])assert.equal((await w.validate(reply)).safe,true,reply);
+ w.link(null);
+ for(const reply of ['Your booking is confirmed.','Your confirmed booking is ready.'])assert.equal((await w.validate(reply)).safe,false,'generic confirmation needs a canonical binding');
+ assert.equal((await w.validate('Your booking reference BK-CURRENT is confirmed.')).safe,true,'an explicit owned canonical reference is independently resolved');
+});

@@ -4,7 +4,7 @@ export type AiEvaluationResult={id:string;category:AiEvaluationCase["category"];
 const lower=(value:string)=>value.trim().toLowerCase();
 /** Detect affirmative booking confirmation, while preserving questions and future/negative guidance. */
 export function hasBookingConfirmationClaim(reply:string){
- return (reply.match(/[^.!?]+[.!?]?/g)||[]).some(sentence=>{
+ return (reply.replace(/\b(ref|id|no)\.(?=\s*\S)/gi,"$1").match(/[^.!?]+[.!?]?/g)||[]).some(sentence=>{
   if(!/\bbookings?\b/i.test(sentence))return false;
   if(/^\s*(?:is|was|has|have)\b/i.test(sentence)&&/\?\s*$/.test(sentence))return false;
   return [...sentence.matchAll(/\bconfirmed\b/gi)].some(match=>{
