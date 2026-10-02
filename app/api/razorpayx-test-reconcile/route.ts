@@ -1,5 +1,6 @@
 import {authError,authorize,database,securityAudit} from "../../../lib/server-auth";
-import {reconcileRecordedRazorpayXPayout,reconcileRazorpayXProviderStatusFromApi} from "../../../lib/razorpayx-payout-runtime";
+import {reconcileRecordedRazorpayXPayout} from "../../../lib/razorpayx-payout-runtime";
+import {reconcileRazorpayXProviderStatusFromApi} from "../../../lib/razorpayx-provider-status-sync";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 type Body={payoutId?:unknown;action?:unknown};
