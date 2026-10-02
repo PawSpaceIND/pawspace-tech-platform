@@ -44,6 +44,8 @@ jobs:
         run: node --test tests/razorpay-settlement-reconciliation.test.mjs
       - name: Razorpay conflicting settlement identity acceptance
         run: node --test tests/razorpay-settlement-conflict.test.mjs
+      - name: RazorpayX Path B provider-status sync (sandbox)
+        run: node --test tests/razorpayx-provider-status-sync.test.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
