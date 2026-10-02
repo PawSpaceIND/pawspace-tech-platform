@@ -51,7 +51,7 @@ jobs:
 
       - name: Test read-only diagnostic boundaries
         if: ${{ inputs.read_scheduled_slots }}
-        run: node --test tests/atlas-proof-provenance.test.mjs tests/read-atlas-scheduled-slots.test.mjs
+        run: node --test --test-name-pattern='certified normal staging|wrong or missing staging|staging SHA binding|sandbox envelope|wrong Worker|release-preview still|diagnostic includes|query is bounded|raw messages|authentication error' tests/staging-certification.test.mjs
 
       - name: Install dependencies
         if: ${{ !inputs.read_scheduled_slots }}
