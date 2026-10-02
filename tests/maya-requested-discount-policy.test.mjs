@@ -47,6 +47,11 @@ test('price hesitation alone cannot grant a model coupon proposal',async t=>{
   assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers WHERE customer_id=?').get(customerId).n,0,statement);
   assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0,statement);
  }
+ for(const decline of ['Can you prepare grooming without a promotional discount?','Can you prepare grooming without using a promotional discount?','Please prepare grooming without any currently eligible coupon.','Can you prepare grooming without a special seasonal promotional exclusive eligible available discount?','Please prepare grooming excluding a promotional discount.',"I do not want a seasonal promotional discount."]){
+  assert.equal(customerRequestedVoiceDiscount([],decline),false,decline);
+  assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],decline),false,decline);
+ }
+ assert.equal(customerRequestedVoiceDiscount([],'Can you prepare grooming without changing the package and apply the approved coupon?'),true,'negation of an unrelated change cannot erase an explicit coupon request');
  const request='Could you apply the approved coupon?';
  const requested=await provider.generate({threadId,customerId,channel:'voice',inputText:request,intent:orchestrator.classifyAiIntent(request),context:{}});
  assert.equal(requested.actionRequests.length,3,'an explicitly requested eligible coupon still follows unconfirmed quote preparation');

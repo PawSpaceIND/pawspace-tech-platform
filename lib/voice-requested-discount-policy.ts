@@ -1,4 +1,8 @@
 type Message={role:string;content:string};
+// A noun phrase permits descriptive modifiers without carrying negation across another request.
+const discountNoun="(?:discounts?|coupons?|offers?|promos?|promotional codes?)";
+const discountModifiers="(?:(?!(?:but|and|or|then|please|can|could|would|want|need|prepare|book|have|with|changing)\\b)[\\w%₹-]+\\s+)*";
+const discountDeclined=new RegExp("\\b(?:no|without|excluding|exclude|omit|skip|avoid)\\s+"+discountModifiers+discountNoun+"\\b|\\b(?:do not|don't|don’t)\\s+(?:want|need|apply|use|add|give|offer)\\s+"+discountModifiers+discountNoun+"\\b","i");
 
 /** Only customer dialogue can request a discount; eligibility remains server-owned. */
 export function customerRequestedVoiceDiscount(history:Message[],currentText:string){
@@ -12,7 +16,7 @@ export function customerRequestedVoiceDiscount(history:Message[],currentText:str
   if(nextService)serviceScope=nextService;
   if(/\b(?:regular|full[ -]price|undiscounted)\s+(?:price|quote|package|booking)\b/i.test(value)){requested=false;continue;}
   if(/\b(?:new|another|different)\s+(?:quote|package)\b|\b(?:switch|change|different|another|instead)\b[^.!?]{0,50}\b(?:package|quote|service)\b/i.test(value))requested=false;
-  if(/\b(?:no|without)\s+(?:(?:applying|using|adding|giving|offering)\s+)?(?:(?:a|an|any|the|that|available|approved)\s+){0,3}(?:discounts?|coupons?|offers?)\b|\b(?:do not|don't|don’t)\s+(?:want|need|apply|use|add|give|offer)\s+(?:(?:a|an|any|the|that|available|approved)\s+){0,3}(?:discounts?|coupons?|offers?)\b/i.test(value)){requested=false;continue;}
+  if(discountDeclined.test(value)){requested=false;continue;}
   const discount=/\b(?:discounts?|coupons?|promo(?:tion)?(?: codes?)?)\b|\b(?:approved|eligible|available|special)\s+offers?\b|\b\d+\s*%\s*off\b/i.test(value);
   const ask=/^any\s+(?:(?:available|eligible|approved)\s+)*(?:discounts?|coupons?|offers?|promos?)\b/i.test(value)
    ||discount&&(/^(?:can|could|would|may|do|does|is|are|what|which|how)\b/i.test(value)||/\b(?:i|we)\s+(?:want|need|would like)\b/i.test(value)||/(?:^|[,.;])\s*(?:please\s+)?(?:give|offer|apply|use|add)\b/i.test(value)||/^discounts?\b.*\?\s*$|\bdiscounts?\s+please[.! ]*$/i.test(value))

@@ -32,7 +32,7 @@ async function world(t){
  return {...w,customerId,run,calls:()=>modelCalls};
 }
 
-for(const statement of ['Can you prepare grooming without applying a discount?','Actually switch to boarding. Prepare a regular quote.','Please prepare the grooming quote with the approved coupon.'])test(`eligible model coupon proposal respects current authorization: ${statement}`,async t=>{
+for(const statement of ['Can you prepare grooming without a promotional discount?','Can you prepare grooming without using a promotional discount?','Can you prepare grooming without applying a discount?','Actually switch to boarding. Prepare a regular quote.','Please prepare the grooming quote with the approved coupon.'])test(`eligible model coupon proposal respects current authorization: ${statement}`,async t=>{
  const w=await world(t),result=await w.run(statement);
  assert.ok(w.calls()>0,'must exercise the model proposal');
  const offers=w.sqlite.prepare('SELECT quote_json FROM voice_sales_offers WHERE customer_id=?').all(w.customerId);
