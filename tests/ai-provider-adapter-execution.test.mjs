@@ -179,6 +179,22 @@ test("a network failure is classified as network, and is retryable", async () =>
   } finally { stub.restore(); }
 });
 
+test("caller cancellation aborts the upstream provider request instead of becoming a timeout", async () => {
+  withEnv({ PAWSPACE_AI_PROVIDER_TIMEOUT_MS: "30000" });
+  const control = new AbortController(); let upstreamAborted = false, markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const stub = stubFetch((_url, init) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener("abort", () => { upstreamAborted = true; reject(Object.assign(new Error("aborted"), { name: "AbortError" })); });
+    markStarted();
+  }));
+  try {
+    const pending = adapter.requestAiDraft({ systemPrompt: "sys", userPrompt: "hi", signal: control.signal });
+    await started; control.abort();
+    await assert.rejects(pending, error => error instanceof Error && error.name === "AbortError");
+    assert.equal(upstreamAborted, true);
+  } finally { stub.restore(); }
+});
+
 test("a provider that never answers hits the deadline instead of holding the request open", async () => {
   withEnv({ PAWSPACE_AI_PROVIDER_TIMEOUT_MS: "1000" });
   const stub = stubFetch((_url, init) => new Promise((_resolve, reject) => {

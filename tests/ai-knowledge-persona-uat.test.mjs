@@ -11,6 +11,8 @@ test("UAT prompts classify realistic service, booking and refund queries determi
  assert.equal(orchestrator.classifyAiIntent("What is the price for doorstep dog training?").intent,"service_info");
  assert.equal(orchestrator.classifyAiIntent("Can I book a grooming session?").intent,"booking_create");
  assert.equal(orchestrator.classifyAiIntent("I need a refund for yesterday.").intent,"refund_review");
+ assert.equal(orchestrator.classifyAiIntent("I need grooming information.").intent,"service_info");
+ assert.equal(orchestrator.classifyAiIntent("I need boarding pricing.").intent,"service_info");
 });
 
 test("voice persona is TTS-safe while chat and WhatsApp permit structured replies",()=>{

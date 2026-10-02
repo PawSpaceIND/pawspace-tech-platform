@@ -258,7 +258,7 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
 
 // Review closure: read-only enquiries do not destroy the exact quoted offer or authorise changes.
 const {isSalesInformationQuestion}=await import('../lib/ai-sales-information.ts');
-for(const q of ['What equipment does the groomer bring?','Does this include nail clipping?','How long does grooming take?','What should I prepare?','Can I pay by UPI?','What is the difference between these packages?'])test('read-only offer question: '+q,()=>assert.equal(isSalesInformationQuestion(q),true));
+for(const q of ['What equipment does the groomer bring?','Does this include nail clipping?','How long does grooming take?','What should I prepare?','Can I pay by UPI?','What is the difference between these packages?','Which package should I use for my dog?','Can I use the UPI option?'])test('read-only offer question: '+q,()=>assert.equal(isSalesInformationQuestion(q),true));
 for(const q of ['Actually change it to Sunday.','Yes, but use another pet.','Add a second dog.','Can you change the payment mode?','What equipment do you bring? Also change my address.','Is the price correct? Confirm it now.','I want cash after service.','Use a different package.','What about Complete Makeover instead?'])test('changed or mixed terms are not an information exemption: '+q,()=>assert.equal(isSalesInformationQuestion(q),false));
 test('information follow-up preserves exact quoted offer; subsequent yes executes once after normal validation',async t=>{
  const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);let modelCalls=0;
@@ -511,4 +511,153 @@ test('plural package enquiry preserves a pending quote and reaches the read-only
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
  for(const question of ['What are the prices?','Which packages are available?','What do the packs cost?'])assert.equal(isSalesInformationQuestion(question),true);
  for(const question of ['What are the packages? Book one now.','Which packages should I use instead?','What are the prices? Confirm the booking.'])assert.equal(isSalesInformationQuestion(question),false);
+});
+
+test('attended package question uses catalogue context and the read-only package prompt',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ // Convert only this synthetic legacy fixture to the current date-only catalogue contract.
+ w.sqlite.prepare("UPDATE service_packages SET active=1,effective_from='2026-01-01',effective_to=NULL WHERE service_code='grooming' AND package_code IN ('dog-bath','dog-makeover')").run();
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ let requests=0;
+ globalThis.fetch=async(url,init)=>{
+  assert.equal(String(url),'https://api.openai.com/v1/responses');requests++;
+  const body=JSON.parse(init.body);const context=JSON.parse(body.input).canonicalContext;
+  assert.match(body.instructions,/explicitly asks which packages are available/);
+  assert.match(body.instructions,/first understand why the customer wants the service and the desired outcome/);
+  assert.match(body.instructions,/ask one relevant question at a time/);
+  assert.match(body.instructions,/Do not start an ordinary intake with a package or price menu/);
+  assert.match(body.instructions,/read-only sales information question/);
+  assert.match(body.instructions,/separate explicit confirmation of a valid current server quote/);
+  assert.equal(context.informationOnly,true);assert.deepEqual(context.availableActionTools,[]);
+  const rows=context.catalogue.grooming.filter(row=>String(row.package_code).startsWith('dog-'));
+  assert.ok(rows.length>=2);assert.ok(rows.every(row=>row.name&&Number.isFinite(Number(row.base_price))));
+  return Response.json({status:'completed',output_text:rows.map(row=>`${row.name} costs ${row.base_price} rupees`).join('. ')+'. Which package would you prefer?',usage:{total_tokens:20}});
+ };
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ const result=await turn(w,'What are the packages available?','attended-package-prompt',provider);
+ assert.equal(requests,1);assert.notEqual(result.turn.outcome,'handoff');assert.equal(result.turn.handoffReason,null);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ const offerTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='voice_sales_offers'").get();
+ assert.equal(offerTable?w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers').get().n:0,0);
+});
+
+test('reported attended book-grooming phrase reaches intake without premature handoff or booking',async t=>{
+ const w=await world(t);let calls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(input){
+  calls++;assert.equal(input.intent.intent,'booking_create');
+  return{text:'What would you like the grooming to help with for your pet today?',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};
+ }};
+ for(const [index,phrase] of ['I want to book grooming session today, for today.','I want to book grooming today.'].entries()){
+  const result=await turn(w,phrase,'attended-book-grooming-'+index,provider);
+  assert.equal(result.turn.intent.intent,'booking_create');assert.notEqual(result.turn.outcome,'handoff');
+ }
+ assert.equal(calls,2);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ for(const phrase of ['I want a human to book grooming','Refund me and book grooming','My dog is struggling to breathe; book grooming'])assert.notEqual(orchestrator.classifyAiIntent(phrase).intent,'booking_create');
+});
+
+test('owned repeat-call ASR reference to the AI agent does not request a human',async t=>{
+ const input="Booking provider ownership and acceptance password. Yeah, uh, do I have a-- I want to book a, a grooming session today, for today.Maya, be on mute. I'm talking to, uh, I'm talking, uh, to the AI agent.";
+ assert.equal(orchestrator.classifyAiIntent(input).intent,'booking_create');
+ for(const phrase of ['I am talking to the AI agent','I am speaking with an automated agent','I want to book grooming with the virtual agent'])assert.notEqual(orchestrator.classifyAiIntent(phrase).intent,'human_handoff');
+ for(const phrase of ['I want an agent','Please connect me to a human agent','A real agent please, not the AI agent','I am speaking to the AI agent but want a person'])assert.equal(orchestrator.classifyAiIntent(phrase).intent,'human_handoff');
+ const w=await world(t);let calls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){calls++;return{text:'What would you like the grooming to help with for your pet today?',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};}};
+ const first=await turn(w,input,'owned-repeat-ai-agent',provider);
+ assert.notEqual(first.turn.outcome,'handoff');
+ const {assertAiMayReply}=await import('../lib/ai-human-handoff.ts');await assertAiMayReply(w.db,w.threadId);
+ const second=await turn(w,'Staying out and observing for later.','owned-repeat-followup',provider);
+ assert.notEqual(second.turn.outcome,'handoff');assert.equal(calls,2);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active')").get(w.threadId).n,0);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('availability acknowledgment hook wraps the real preview and stops before final quote',async t=>{
+ const w=await world(t);const events=[];
+ const offer=await sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'lookup-hook',actions:actions(w),onLookupPending:()=>{events.push('pending');return()=>events.push('finished');}});
+ assert.deepEqual(events,['pending','finished']);assert.match(offer.summary,/One-time grooming/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ const invalid=actions(w);invalid[0].arguments.servicePincode='invalid';events.length=0;
+ await refuse(sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'lookup-invalid',actions:invalid,onLookupPending:()=>{events.push('pending');return()=>events.push('finished');}}),400);
+ assert.deepEqual(events,[],'no filler when facts fail before availability lookup');
+});
+
+test('slow real scheduling preview emits acknowledgment while blocked, then preserves canonical final quote',async t=>{
+ const w=await world(t),{runWithWorkersDb}=await import('./helpers/module-hooks.mjs');
+ const {pendingLookupAcknowledgment,LOOKUP_ACKNOWLEDGMENT}=await import('../lib/voice-lookup-acknowledgment.ts');
+ let lookupPending=false,release,blocked;const waiting=new Promise(resolve=>{blocked=resolve;});const hold=new Promise(resolve=>{release=resolve;});
+ const delayedDb={...w.db,prepare(sql){
+  const wrap=statement=>new Proxy(statement,{get(target,key){
+   if(key==='bind')return(...args)=>wrap(target.bind(...args));
+   if(['first','all','run'].includes(key))return async(...args)=>{if(lookupPending){lookupPending=false;blocked();await hold;}return target[key](...args);};
+   const value=target[key];return typeof value==='function'?value.bind(target):value;
+  }});return wrap(w.db.prepare(sql));
+ }};
+ const spoken=[];let finalReady=false;
+ const offerPromise=runWithWorkersDb(delayedDb,()=>sales.prepareVoiceSalesOffer(w.db,{actor,threadId:w.threadId,customerId:w.customerId,service:w.service,turnKey:'held-lookup',actions:actions(w),onLookupPending:()=>{lookupPending=true;return pendingLookupAcknowledgment({signal:new AbortController().signal,delayMs:1,claim:async()=>({suppress:async()=>{}}),emit:text=>{spoken.push(text);return true;}});}})).then(result=>{finalReady=true;return result;});
+ await waiting;await new Promise(resolve=>setTimeout(resolve,15));
+ assert.deepEqual(spoken,[LOOKUP_ACKNOWLEDGMENT]);assert.equal(finalReady,false,'lookup and final quote are still unresolved when speech is emitted');assert.equal(bookingCount(w),0);
+ release();const offer=await offerPromise;assert.match(offer.summary,/One-time grooming/);assert.equal(spoken.length,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('recorded Maya correction reaches actual grounded model context through cross-service comparison',async t=>{
+ const w=await world(t),{readFile}=await import('node:fs/promises');
+ const recorded=JSON.parse(await readFile(new URL('./fixtures/maya-service-language-memory.json',import.meta.url),'utf8'));
+ const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ if(!w.sqlite.prepare('PRAGMA table_info(canonical_pets)').all().some(column=>column.name==='breed'))w.sqlite.exec('ALTER TABLE canonical_pets ADD COLUMN breed TEXT');
+ w.sqlite.prepare("UPDATE canonical_pets SET name='Bruno' WHERE id=?").run(w.petId);await seedOwnedPet(w.db,w.customerId,'PET-MAYA-1','Maya');await seedOwnedPet(w.db,w.customerId,'PET-MAYA-2','Maya');
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push({url:String(url),body:JSON.parse(init.body)});
+  return Response.json({status:'completed',output_text:'I remember your correction to Maya. Which of the two saved Maya profiles do you mean?',usage:{total_tokens:20}});
+ };
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'});
+ const history=recorded.turns.slice(0,4).flatMap(t=>[{role:'user',content:t.transcript},{role:'assistant',content:t.reply}]);
+ const wrapped={...provider,generate:input=>provider.generate({...input,context:{...input.context,conversationHistory:history}})};
+ const result=await turn(w,recorded.turns[4].transcript,'recorded-maya-comparison',wrapped);
+ assert.ok(requests.length>=1&&requests.length<=2);
+ for(const {url,body} of requests){assert.equal(url,'https://api.openai.com/v1/responses');const context=JSON.parse(body.input).canonicalContext;
+  assert.equal(context.petPreference?.petName,'[REDACTED]','existing pet-name privacy redaction remains intact');assert.equal(context.conversationHistory[context.petPreference.preferenceHistoryIndex].content,recorded.turns[2].transcript);assert.deepEqual(context.petPreference.matchingSavedPetIds.sort(),['PET-MAYA-1','PET-MAYA-2']);assert.equal(context.petPreference.requiresProfileClarification,true);assert.equal(context.petPreference.mutationAuthority,false);assert.match(body.instructions,/latest customer pet correction replaces the earlier pet/);
+  assert.ok(context.conversationHistory.some(row=>row.content===recorded.turns[2].transcript));
+ }
+ assert.notEqual(result.turn.outcome,'handoff',JSON.stringify(result));assert.match(result.turn.output,/Maya/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+for(const [label,utterance,clarification] of [
+ ['new puppy','I have a new puppy, not Bruno. I want gentle grooming.','For your new puppy, what is her age and vaccination status?'],
+ ['boarding','I need pet boarding for Bruno for three nights.','For Bruno’s boarding, what check-in and check-out dates do you need?'],
+])test(`recorded ${label} first turn reaches grounded intake instead of unknown-intent handoff`,async t=>{
+ const w=await world(t);let calls=0;
+ assert.equal(orchestrator.classifyAiIntent(utterance).intent,'service_info');
+ const provider={salesService:'all_services',status:'connected',provider:'offline',modelRef:'fixture',async generate(input){calls++;assert.equal(input.inputText,utterance);return{text:clarification,provider:'offline',modelRef:'fixture',latencyMs:0,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};}};
+ const result=await turn(w,utterance,'batch-first-'+label,provider);assert.equal(calls,1);assert.notEqual(result.turn.outcome,'handoff');assert.equal(result.turn.output,clarification);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=? AND status='queued'").get(w.threadId).n,0);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('recorded Training price plus recommendation is read-only and preserves pending offer',async t=>{
+ const w=await world(t,'dog_training'),offer=await prepare(w,'training-before-price',actions(w,'trainer-meet-greet'));
+ const utterance='What approved training options and prices are available? Recommend the best fit.';
+ assert.equal(isSalesInformationQuestion(utterance),true);
+ for(const mixed of [utterance+' Book it now.','What training prices are available? Recommend the best fit and reserve tomorrow.','What training prices are available? Change the booking.'])assert.equal(isSalesInformationQuestion(mixed),false);
+ const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push({url:String(url),body:JSON.parse(init.body)});return Response.json({status:'completed',output_text:'The approved training options are in the current catalogue. Which training outcome matters most to you?',usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'dog_training'});
+ const result=await turn(w,utterance,'batch-training-readonly',provider);assert.equal(requests.length,1);const body=requests[0].body,context=JSON.parse(body.input).canonicalContext;
+ assert.equal(context.informationOnly,true);assert.deepEqual(context.availableActionTools,[]);assert.match(body.instructions,/read-only sales information question/);assert.notEqual(result.turn.outcome,'handoff');assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'pending');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('recorded Taxi vet destination is transport intake, while symptom-bearing taxi remains medical',async t=>{
+ const {isPetMedicalQuestion,ensureVeterinaryReferral}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const utterance='I want a pet taxi for Bruno from Indiranagar to a vet clinic in Whitefield.';
+ assert.equal(isPetMedicalQuestion(utterance),false);assert.equal(ensureVeterinaryReferral('What date and time do you need?',isPetMedicalQuestion(utterance)),'What date and time do you need?');
+ for(const clinical of ['My dog is bleeding. I need a pet taxi to a vet clinic.','My dog cannot breathe; get a taxi to the vet.','My dog is vomiting; I need a taxi to a vet.','Should I give medication before taking a pet taxi to the vet?'])assert.equal(isPetMedicalQuestion(clinical),true,clinical);
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push(JSON.parse(init.body));return Response.json({status:'completed',output_text:'For the taxi, what date and time do you need, and is it one-way or return?',usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'});
+ const result=await turn(w,utterance,'batch-taxi-destination',provider);assert.notEqual(result.turn.outcome,'handoff');assert.doesNotMatch(result.turn.output,/medical concern|contact a veterinarian/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ for(const body of requests)assert.doesNotMatch(body.instructions,/This is a medical-information turn/);
 });
