@@ -3,8 +3,11 @@ type Pet={id:string;name:string;breed?:string|null;species?:string};
 const ordinals=["first","second","third","fourth","fifth"];
 const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 const contains=(value:string,term:string)=>Boolean(term)&&new RegExp(`(?:^|[^a-z0-9])${escape(term)}(?:$|[^a-z0-9])`,"i").test(value);
+const explicitPetQuestion=(content:string)=>/\b(?:which|choose|select|pick)\s+(?:(?:saved|your|the)\s+)*(?:pets?|dogs?|cats?)\b/i.test(content);
+const otherChoiceQuestion=(content:string)=>!explicitPetQuestion(content)&&/\b(?:which|choose|select|pick|prefer)\b.*\b(?:appointment|time|date|package|payment|service|address|pickup|drop)\b/i.test(content);
 
 function presentedOptions(content:string,pets:Pet[]):Pet[]|null {
+ if(otherChoiceQuestion(content))return null;
  const markers=[...content.matchAll(/\b(first|second|third|fourth|fifth|[1-5])\s*(?:(?:one|pet|option)\s*)?(?:is\b|[:.)-])/gi)];
  if(markers.length<2)return null;
  // A package/time option list must not become a pet preference.
@@ -21,14 +24,14 @@ function presentedOptions(content:string,pets:Pet[]):Pet[]|null {
  }
  return options;
 }
-function ordinalChoice(content:string,pets:Pet[]):number|null {
+function ordinalChoice(content:string,pets:Pet[]):number|"conflict"|null {
  const names=[...new Set(pets.map(pet=>pet.name).filter(Boolean))].map(escape).join("|");
  const pattern=new RegExp(`^(?:(?:no|actually|sorry),?\\s+)?(?:(?:i mean|i want|choose|select|please)\\s+)?(?:the\\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)(?:\\s+(?:one|pet|option${names?"|"+names:""}))?[.!? ]*$`,"i");
- const parts=content.trim().replace(/^(?:no|actually|sorry),\s*/i,"").split(/,\s*(?=(?:the\s+)?(?:first|second|third|fourth|fifth|[1-5](?:st|nd|rd|th))\b)/i);
+ const parts=content.trim().replace(/^(?:no|actually|sorry),\s*/i,"").split(/\s*(?:,|\band\b|\bor\b)\s*(?=(?:the\s+)?(?:first|second|third|fourth|fifth|[1-5](?:st|nd|rd|th))\b)/i);
  const choices=parts.map(part=>pattern.exec(part.trim()));
  if(choices.some(choice=>!choice))return null;
  const positions=choices.map(choice=>/^\d/.test(choice![1])?Number(choice![1][0])-1:ordinals.indexOf(choice![1].toLowerCase()));
- return positions.every(position=>position===positions[0])?positions[0]:null;
+ return positions.every(position=>position===positions[0])?positions[0]:"conflict";
 }
 const label=(pet:Pet)=>`${pet.name}${pet.breed?`, ${pet.breed}`:""}`;
 
@@ -45,24 +48,25 @@ export function presentedOwnedPetChoice(history:Message[],currentText:string,own
    const presented=presentedOptions(message.content,pets);
    if(presented!==null){options=presented;selected=null;awaitingPetChoice=true;needsPetClarification=false;}
    else{
-    awaitingPetChoice=/\b(?:which|choose|select|pick)\b/i.test(message.content)&&(/\b(?:pets?|dogs?|cats?)\b/i.test(message.content)||pets.some(pet=>contains(message.content,pet.name)));
-    if(/\b(?:first|1)\s*[:.)-]/i.test(message.content)&&/\b(?:second|2)\s*[:.)-]/i.test(message.content))options=null;
+    awaitingPetChoice=!otherChoiceQuestion(message.content)&&/\b(?:which|choose|select|pick)\b/i.test(message.content)&&(/\b(?:pets?|dogs?|cats?)\b/i.test(message.content)||pets.some(pet=>contains(message.content,pet.name)));
+    if(!awaitingPetChoice)options=null;
    }
   }else if(message.role==="user"){
    const ordinal=ordinalChoice(message.content,pets);
    const rejection=/\b(?:not|don't|don’t|do not)\s+(?:(?:want|choose|select|use|the)\s+)*(first|second|third|fourth|fifth)\b/i.exec(message.content);
-   if(rejection&&options!==null){
+   if(ordinal==="conflict"&&awaitingPetChoice){needsPetClarification=true;}
+   else if(rejection&&options!==null){
     const rejected=options[ordinals.indexOf(rejection[1].toLowerCase())];
     if(!selected||selected.id===rejected?.id){selected=null;needsPetClarification=true;}
-   }else if(ordinal!==null&&(awaitingPetChoice||(options!==null&&/^(?:no|actually|sorry),?\s/i.test(message.content))||pets.some(pet=>contains(message.content,pet.name)))){selected=options?.[ordinal]??null;needsPetClarification=!selected;}
+   }else if(typeof ordinal==="number"&&(awaitingPetChoice||pets.some(pet=>contains(message.content,pet.name)))){selected=options?.[ordinal]??null;needsPetClarification=!selected;}
    // A new explicit pet or plural request must not inherit an old single-pet constraint.
    else if(/\b(?:both|all (?:my |the )?pets)\b/i.test(message.content)||pets.some(pet=>pet.id!==selected?.id&&((pet.name!==selected?.name&&contains(message.content,pet.name))||(pet.breed!==selected?.breed&&contains(message.content,pet.breed??""))))){selected=null;needsPetClarification=false;}
   }
  }
  const currentOrdinal=ordinalChoice(currentText,pets);
  const choiceClarification=pets.length?`I couldn't match that choice to a clear saved-pet list. ${pets.slice(0,5).map((pet,index)=>`${ordinals[index]}: your pet ${label(pet)}`).join("; ")}. Which pet do you mean?`:"I couldn't match that choice to a saved pet. What is your pet's saved name?";
- const clarification=!selected&&(needsPetClarification||(currentOrdinal!==null&&(awaitingPetChoice||pets.some(pet=>contains(currentText,pet.name)))))?choiceClarification:null;
- const proposalClarification=!selected&&(needsPetClarification||awaitingPetChoice)?choiceClarification:null;
+ const clarification=needsPetClarification||(!selected&&currentOrdinal!==null&&(awaitingPetChoice||pets.some(pet=>contains(currentText,pet.name))))?choiceClarification:null;
+ const proposalClarification=needsPetClarification||(!selected&&awaitingPetChoice)?choiceClarification:null;
  const canonicalPetIndex=selected&&Array.isArray(ownedPets)?ownedPets.findIndex(pet=>pet&&typeof pet==="object"&&(pet as Record<string,unknown>).id===selected!.id):null;
  return{selectedPet:selected,canonicalPetIndex,clarification,proposalClarification};
 }

@@ -22,6 +22,15 @@ test('ordinal choice comes only from explicit owned options, with corrections an
  assert.equal(packageChoice.proposalClarification,null);
  const timeChoice=presentedOwnedPetChoice([list,{role:'user',content:'First one.'},{role:'assistant',content:'First: 10 AM; second: 2 PM. Which time?'}],'Second one.',pets);
  assert.equal(timeChoice.selectedPet.id,'PET-LAB','a time ordinal cannot change the established pet');
+ const movedChoice=presentedOwnedPetChoice([list,{role:'user',content:'First one.'},{role:'assistant',content:'Which appointment time do you prefer, 10 AM or 2 PM?'}],'No, second one.',pets);
+ assert.equal(movedChoice.selectedPet.id,'PET-LAB','a time correction cannot change the pet');
+ for(const question of ['Which appointment time do you prefer for Maya, 10 AM or 2 PM?','For your pet Maya, first: 10 AM; second: 2 PM. Which time do you prefer?']){
+  const choice=presentedOwnedPetChoice([list,{role:'user',content:'First one.'},{role:'assistant',content:question}],'No, second one.',pets);
+  assert.equal(choice.selectedPet.id,'PET-LAB',question);assert.equal(choice.clarification,null);
+ }
+ const conflicting=presentedOwnedPetChoice([list,{role:'user',content:'First one.'}],'No, first one, second one.',pets);
+ assert.equal(conflicting.selectedPet.id,'PET-LAB','conflicting alternatives do not replace the established preference');
+ assert.match(conflicting.clarification,/Which pet/);assert.match(conflicting.proposalClarification,/Which pet/);
  const rejected=presentedOwnedPetChoice([list,{role:'user',content:'First one.'},{role:'user',content:'Not the first one.'}],'Prepare a quote.',pets);
  assert.equal(rejected.selectedPet,null);assert.match(rejected.clarification,/Which pet/);
  assert.equal(presentedOwnedPetChoice([list,{role:'user',content:'First one.'}],'Not the second one.',pets).selectedPet.id,'PET-LAB');
@@ -64,6 +73,11 @@ test('managed sales provider binds explicit ordinal preference and rejects a dif
  assert.match(rejected.output,/clear saved-pet list/);assert.equal(calls,before,'a rejected pet cannot become a model offer');
  const undecided=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[list,{role:'user',content:'Prepare a quote for grooming.'}],elevenlabs_extra_body:extra});
  assert.match(undecided.output,/clear saved-pet list/,'a model cannot choose one option while the caller has not selected a pet');
+ const timeCorrection=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[...history,{role:'assistant',content:'Which appointment time do you prefer, 10 AM or 2 PM?'},{role:'user',content:'No, second one.'},{role:'user',content:'Prepare a quote for grooming.'}],elevenlabs_extra_body:extra});
+ assert.match(timeCorrection.output,/Maya.*Labrador.*haven't prepared an offer/,'the wrong-pet proposal is rejected after a time correction');
+ const beforeConflict=calls;
+ const conflict=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[...history,{role:'user',content:'No, first one, second one.'},{role:'user',content:'Prepare a quote for grooming.'}],elevenlabs_extra_body:extra});
+ assert.match(conflict.output,/clear saved-pet list/);assert.equal(calls,beforeConflict,'conflicting pet choices are clarified before model selection');
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers WHERE customer_id=?').get(customerId).n,0);
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0);
 });
