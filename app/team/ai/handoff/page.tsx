@@ -38,6 +38,7 @@ type QueueEntry = {
   queueCode: string;
   status: string;
   createdAt: number;
+  slaDueAt?: number | null;
 };
 
 type Handoff = {
@@ -243,7 +244,7 @@ export default function AiHandoffPage() {
                   {queue.map((entry) => (
                     <button
                       key={entry.threadId}
-                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined })}
+                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined, sla_due_at: entry.slaDueAt ?? undefined })}
                       style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", border: 0, background: selected?.id === entry.threadId ? "var(--staff-raised)" : "transparent" }}
                     >
                       <strong>{entry.customerName || entry.customerId || "Customer"}</strong>
@@ -257,6 +258,9 @@ export default function AiHandoffPage() {
                         {/* Never present a CRM contact's name as the canonical identity, or the absence
                           * of one as if the customer were nameless. */}
                         {entry.identitySource === "crm_contact" ? " · CRM contact record" : entry.identitySource === "unresolved" ? " · no customer record found" : ""}
+                      </div>
+                      <div style={{ fontSize: 14, marginTop: 4, color: entry.slaDueAt && entry.slaDueAt <= Date.now() ? "var(--staff-danger)" : "var(--staff-muted)" }}>
+                        {entry.slaDueAt ? `${entry.slaDueAt <= Date.now() ? "Overdue · " : ""}Response due ${new Date(entry.slaDueAt).toLocaleString()}` : "Response deadline unavailable"}
                       </div>
                     </button>
                   ))}
