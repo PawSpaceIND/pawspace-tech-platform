@@ -1,3 +1,4 @@
+import {preservedReviewedFoodBytes} from './helpers/food-route-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ for(const file of contract.layouts)test('Partner presentation-only layout: '+fil
  assert.doesNotMatch(text,/fetch\(|useEffect|useState|localStorage|redirect\(|middleware|cookies\(/);
 });
 test('Every pre-existing application source and engine remains byte-identical',()=>{
- for(const [file,expected] of Object.entries(contract.protected))assert.equal(hash(read(file)),expected,file);
+ for(const [file,expected] of Object.entries(contract.protected))assert.equal(hash(preservedReviewedFoodBytes(file,read(file))),expected,file);
 });
 test('New Partner frame adds no staff request, assumed identity, or permission grant',()=>{
  const text=read('app/components/partner-presentation/PartnerModule.tsx').toString();

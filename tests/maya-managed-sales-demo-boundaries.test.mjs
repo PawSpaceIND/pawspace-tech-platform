@@ -165,13 +165,21 @@ test('a later ASR segment resets accepted first-audio timing and keeps raw histo
  assert.equal(recorder.turns[0].firstAudioAt,null);assert.equal(recorder.turns[0].acceptedAudioBytes,0);assert.equal(recorder.chunks.length,1);
 });
 
-test('fixed session deadline spans successive waits and cannot reset per turn',async()=>{
- const runner=await import(runnerUrl),{setTimeout:sleep}=await import('node:timers/promises');
- // V1 had only a fresh 75s limit per wait. This fallback replays that missing
- // session guard; scaled waits exceed the session cap while each wait succeeds.
- const scope=runner.createManagedDeadline?.({endAt:Date.now()+80,code:'managed_session_deadline'})||{sleep:ms=>sleep(ms),dispose(){}};
- let caught;try{await scope.sleep(45);await scope.sleep(45);}catch(e){caught=e;}finally{scope.dispose();}
- assert.equal(caught?.code,'managed_session_deadline','successive individually bounded waits must abort at the original session deadline');
+test('fixed session deadline spans successive waits and cannot reset per turn',async t=>{
+ const {createManagedDeadline}=await import(runnerUrl);
+ // Advance the actual deadline and promise timers together. Real 80ms timers
+ // can wake a fraction early under CI load; this verifies the original boundary exactly.
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:0});
+ const scope=createManagedDeadline({endAt:80,code:'managed_session_deadline'});
+ try{
+  const first=scope.sleep(45);t.mock.timers.tick(45);await first;
+  assert.equal(scope.deadline,80);assert.equal(scope.remaining(),35);
+  const second=scope.sleep(45);
+  const rejected=assert.rejects(second,e=>e.code==='managed_session_deadline');
+  t.mock.timers.tick(34);assert.equal(scope.signal.aborted,false);
+  t.mock.timers.tick(1);await rejected;
+  assert.equal(Date.now(),80);assert.equal(scope.signal.aborted,true);
+ }finally{scope.dispose();}
 });
 test('long subprocess cannot postpone the timer which terminates a paid socket',async()=>{
  const runner=await import(runnerUrl),{execFileSync}=await import('node:child_process'),{setTimeout:sleep}=await import('node:timers/promises');
