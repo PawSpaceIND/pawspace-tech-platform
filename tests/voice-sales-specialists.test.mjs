@@ -543,3 +543,33 @@ test('attended package question uses catalogue context and the read-only package
  const offerTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='voice_sales_offers'").get();
  assert.equal(offerTable?w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers').get().n:0,0);
 });
+
+test('reported attended book-grooming phrase reaches intake without premature handoff or booking',async t=>{
+ const w=await world(t);let calls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(input){
+  calls++;assert.equal(input.intent.intent,'booking_create');
+  return{text:'What would you like the grooming to help with for your pet today?',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};
+ }};
+ for(const [index,phrase] of ['I want to book grooming session today, for today.','I want to book grooming today.'].entries()){
+  const result=await turn(w,phrase,'attended-book-grooming-'+index,provider);
+  assert.equal(result.turn.intent.intent,'booking_create');assert.notEqual(result.turn.outcome,'handoff');
+ }
+ assert.equal(calls,2);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ for(const phrase of ['I want a human to book grooming','Refund me and book grooming','My dog is struggling to breathe; book grooming'])assert.notEqual(orchestrator.classifyAiIntent(phrase).intent,'booking_create');
+});
+
+test('owned repeat-call ASR reference to the AI agent does not request a human',async t=>{
+ const input="Booking provider ownership and acceptance password. Yeah, uh, do I have a-- I want to book a, a grooming session today, for today.Maya, be on mute. I'm talking to, uh, I'm talking, uh, to the AI agent.";
+ assert.equal(orchestrator.classifyAiIntent(input).intent,'booking_create');
+ for(const phrase of ['I am talking to the AI agent','I am speaking with an automated agent','I want to book grooming with the virtual agent'])assert.notEqual(orchestrator.classifyAiIntent(phrase).intent,'human_handoff');
+ for(const phrase of ['I want an agent','Please connect me to a human agent','A real agent please, not the AI agent','I am speaking to the AI agent but want a person'])assert.equal(orchestrator.classifyAiIntent(phrase).intent,'human_handoff');
+ const w=await world(t);let calls=0;
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(){calls++;return{text:'What would you like the grooming to help with for your pet today?',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};}};
+ const first=await turn(w,input,'owned-repeat-ai-agent',provider);
+ assert.notEqual(first.turn.outcome,'handoff');
+ const {assertAiMayReply}=await import('../lib/ai-human-handoff.ts');await assertAiMayReply(w.db,w.threadId);
+ const second=await turn(w,'Staying out and observing for later.','owned-repeat-followup',provider);
+ assert.notEqual(second.turn.outcome,'handoff');assert.equal(calls,2);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active')").get(w.threadId).n,0);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
