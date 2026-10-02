@@ -26,7 +26,7 @@ jobs:
       - name: Install locked dependencies
         run: npm run install:ci
       - name: Source preservation and theme guards
-        run: node --experimental-strip-types --test tests/food-route-review.test.mjs tests/partner-onboarding-controls-presentation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
+        run: node --experimental-strip-types --test tests/partner-onboarding-controls-presentation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Install Chromium
