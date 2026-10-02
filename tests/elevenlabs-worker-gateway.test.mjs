@@ -296,3 +296,18 @@ test("active staff pause produces a spoken status without invoking the LLM", asy
   assert.equal(mock.calls.length,0);
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1);
 });
+
+test('owned health audit emergency receives static vet direction during staff ownership without AI resumption',async t=>{
+ const w=world(t);seedCustomer(w.sqlite,'CUS-EMERGENCY','Synthetic Tester','9876500092');
+ await inboundMessage(w.sqlite,w.db,{threadId:'THREAD-EMERGENCY',customerId:'CUS-EMERGENCY',text:'Your package sounds expensive. Offer only an actually approved coupon or a suitable lower-priced option.',channel:'voice',idempotencyKey:'health-offer-failure'});
+ const {requestAiHumanHandoff}=await import('../lib/ai-human-handoff.ts');
+ await requestAiHumanHandoff(w.db,{threadId:'THREAD-EMERGENCY',customerId:'CUS-EMERGENCY',reason:'policy_risk',actorEmail:'test@pawspace.test'});
+ const before=w.sqlite.prepare("SELECT status,assigned_to FROM communication_threads WHERE id='THREAD-EMERGENCY'").get();
+ const mock=stubFetch(()=>{throw Error('static guidance must not invoke a model, speech provider, payment, or messaging API');});t.after(()=>mock.restore());
+ const ask=async input=>{const r=await dispatch(w,request('/api/elevenlabs/v1/responses',JSON.stringify({input,elevenlabs_extra_body:{pawspace_customer_id:'CUS-EMERGENCY',pawspace_thread_id:'THREAD-EMERGENCY'}}),{authorization:`Bearer ${credentials.ELEVENLABS_LLM_SECRET}`}));return r.response.text();};
+ const emergency=await ask('Separate question. If a pet is struggling to breathe, what should the owner do immediately?');
+ assert.match(emergency,/nearest emergency vet immediately/);assert.match(emergency,/"path":"emergency_guidance"/);assert.doesNotMatch(emergency,/AI voice cannot continue|response.failed/);
+ assert.equal(mock.calls.length,0);assert.deepEqual(w.sqlite.prepare("SELECT status,assigned_to FROM communication_threads WHERE id='THREAD-EMERGENCY'").get(),before);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id='THREAD-EMERGENCY' AND status='queued'").get().n,1);
+ const normal=await ask('Return to my non-emergency inquiry and summarize it. Do not promise a booking or a discount that was not verified.');
+ assert.match(normal,/AI voice cannot continue/);assert.equal(mock.calls.length,0);
+});

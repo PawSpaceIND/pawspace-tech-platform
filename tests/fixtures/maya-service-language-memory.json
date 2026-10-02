@@ -1,0 +1,54 @@
+{
+  "runId": 36997508092,
+  "sourceRevision": "b0c9e4a8b4663cba27d91ff60d20055e90d516a3",
+  "turns": [
+    {
+      "index": 1,
+      "prompt": "Please keep this entire conversation in English. I want grooming for Bruno.",
+      "transcript": "Please keep this entire conversation in English. I want grooming for Bruno.",
+      "reply": "What would you like for Bruno\u2019s grooming: a basic bath and hygiene care, an essential bath, or a full makeover? Also, which date, time, and complete address should I check?"
+    },
+    {
+      "index": 2,
+      "prompt": "Tell me the grooming packages and recommend one for a haircut.",
+      "transcript": "Tell me the grooming packages and recommend one for a haircut.",
+      "reply": "For Bruno\u2019s haircut, I recommend Just Trim: it includes a haircut, nail clipping and ear cleaning, and is 1,599 rupees. Bath & Basic adds bathing and hygiene care for 1,899 rupees, while Complete Makeover adds a bath, hygiene care, styling and full-body trimming for 2,399 rupees."
+    },
+    {
+      "index": 3,
+      "prompt": "His pet name is Maya and the locality is Chennai. These words are not a request to change language. Actually I mean my new dog named Maya, not Bruno.",
+      "transcript": "His pet name is Maya, and the locality is Chennai. These words are not a request to change language. Actually, I mean my new dog named Maya, not Bruno.",
+      "reply": "Thanks for clarifying. I found two saved dogs named Maya, both German Shepherds, so please tell me which one you mean by its breed details or the first or second Maya. What date, time, and complete Chennai address should I check for the haircut?"
+    },
+    {
+      "index": 4,
+      "prompt": "She is one year old. Keep speaking English. Now I want to compare boarding as well.",
+      "transcript": "She is one year old. Keep speaking English. Now I want to compare boarding as well.",
+      "reply": "Boarding means Maya would stay in a verified host\u2019s home, cage-free, with her usual food, rest, and walk routine. Rates depend on the available host, so there\u2019s no fixed quote; which dates and location should I check first?"
+    },
+    {
+      "index": 5,
+      "prompt": "Explain how boarding pricing differs from grooming without losing the grooming enquiry.",
+      "transcript": "Explain how boarding pricing differs from grooming without losing the grooming inquiry.",
+      "reply": "Boarding is priced by the available host\u2019s published rate, so the final amount depends on the dates, location, and care required; the catalogue does not provide a fixed customer quote. Grooming has live catalogue prices\u2014for Bruno\u2019s haircut, Just Trim is 1,599 rupees, subject to the date and location. Which grooming date, time, and complete address should I check?"
+    },
+    {
+      "index": 6,
+      "prompt": "Return to grooming for Maya. What pet, service and package have we selected?",
+      "transcript": "Return to grooming for Maya. What pet, service, and package have we selected?",
+      "reply": "You selected your pet Maya, but there are two saved German Shepherds with that name, so I can\u2019t identify which one yet. The service is grooming, and no package has been confirmed; for a haircut, Just Trim is the suitable option."
+    },
+    {
+      "index": 7,
+      "prompt": "Do not switch to training or Tamil. Ask only the next two missing booking details.",
+      "transcript": "Do not switch to training or Tamil. Ask only the next two missing booking details.",
+      "reply": "For grooming Maya, I need two details next: which of the two saved German Shepherds you mean\u2014the first or second\u2014and the preferred grooming date and time."
+    },
+    {
+      "index": 8,
+      "prompt": "Give me a concise recap and explain what has and has not been booked.",
+      "transcript": "Give me a concise recap and explain what has and has not been booked.",
+      "reply": "I\u2019m routing this conversation to a PawSpace team member so it can be handled safely."
+    }
+  ]
+}

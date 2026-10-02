@@ -142,3 +142,24 @@ for(const timing of ['before','after'])for(const change of ["assigned_to='human@
  assert.deepEqual(w.sqlite.prepare("SELECT status FROM communication_messages WHERE direction='outbound'").all().map(x=>x.status),timing==='before'?[]:['suppressed']);
  const handoffs=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='ai_handoffs'").get();assert.equal(handoffs?w.sqlite.prepare('SELECT COUNT(*) n FROM ai_handoffs').get().n:0,0);
 });
+
+test('staff-pause status reply is fenced against a close racing its persistence',async t=>{
+ const w=await world(t);const {requestAiHumanHandoff}=await import('../lib/ai-human-handoff.ts');
+ await requestAiHumanHandoff(w.db,{threadId:'THREAD-GUARD',customerId:'CUS-GUARD',reason:'low_confidence',actorEmail:'test@pawspace.invalid'});
+ const db={...w.db,prepare(sql){const original=w.db.prepare(sql);if(!sql.includes("'elevenlabs_custom_llm_reply'"))return original;return{bind(...args){const bound=original.bind(...args);return{...bound,async run(){w.sqlite.exec("UPDATE communication_threads SET status='closed' WHERE id='THREAD-GUARD'");return bound.run();}}}};}};
+ await assert.rejects(()=>voice.runElevenLabsGroundedTurn(db,body()),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n,0);
+});
+
+test('emergency guidance refuses a thread closed after voice context but before the emergency snapshot',async t=>{
+ const w=await world(t);let intercepted=false;
+ const db={...w.db,prepare(sql){const original=w.db.prepare(sql);if(intercepted||sql!=="SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?")return original;intercepted=true;return{bind(...args){const bound=original.bind(...args);return{...bound,async first(){w.sqlite.exec("UPDATE communication_threads SET status='closed' WHERE id='THREAD-GUARD'");return bound.first();}}}};}};
+ await assert.rejects(()=>voice.runElevenLabsGroundedTurn(db,{...body(),input:'My pet is struggling to breathe. Do not contact anyone.'}),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n,0);
+});
+
+test('an already-cancelled voice request performs no reply work',async t=>{
+ const w=await world(t),control=new AbortController();control.abort();
+ await assert.rejects(()=>voice.runElevenLabsGroundedTurn(w.db,body(),undefined,undefined,{signal:control.signal,emit:()=>false}),e=>e instanceof Error&&e.name==='AbortError');
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound'").get().n,0);
+});
