@@ -181,11 +181,15 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run()
   .then(()=>{},(error:unknown)=>{inboundFailure=error;});
  const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
- const persistReply=async(output:string,providerRef:string,modelRef:string|null,governed=false)=>{
+ const persistReply=async(output:string,providerRef:string,modelRef:string|null,governed=false,expectedThreadState?:{status:string;assignedTo:string})=>{
   const replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
   const sql="INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) SELECT ?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'ready',?,?,?,'{}',?,?,?";
   const values=[replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm"}),providerRef,modelRef,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done];
-  const reply=governed?db.prepare(sql+" WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=? AND customer_id=? AND status='open' AND (assigned_to IS NULL OR assigned_to='' OR assigned_to='ai-orchestrator')) AND NOT EXISTS (SELECT 1 FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active'))").bind(...values,ctx.threadId,ctx.customerId,ctx.threadId):db.prepare(sql).bind(...values);
+  const exactGuard=expectedThreadState?" WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=? AND customer_id=? AND status=? AND COALESCE(assigned_to,'')=?)":null;
+  const governedGuard=" WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=? AND customer_id=? AND status='open' AND (assigned_to IS NULL OR assigned_to='' OR assigned_to='ai-orchestrator')) AND NOT EXISTS (SELECT 1 FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active'))";
+  const reply=expectedThreadState
+   ?db.prepare(sql+exactGuard).bind(...values,ctx.threadId,ctx.customerId,expectedThreadState.status,expectedThreadState.assignedTo)
+   :governed?db.prepare(sql+governedGuard).bind(...values,ctx.threadId,ctx.customerId,ctx.threadId):db.prepare(sql).bind(...values);
   const writes=await Promise.all([
    settleInbound(),
    reply.run(),
@@ -193,11 +197,17 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  };
  clock.mark("inboundWriteStarted");
  if(needsImmediateVetGuidance(inputText)){
-  // Public static urgency guidance remains available during staff ownership. It cannot generate,
-  // resume AI, diagnose, enqueue another handoff or execute any commercial action.
-  const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(ctx.threadId).first<Row>();
+  // Public static urgency guidance remains available during pre-existing staff ownership. Snapshot the
+  // thread so a takeover/close racing this specific reply can neither create nor release stale speech.
+  const thread=await db.prepare("SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?").bind(ctx.threadId).first<Row>();
   if(!thread||text(thread.customer_id)!==ctx.customerId){await settleInbound();throw new Response("PawSpace voice thread/customer mismatch",{status:403});}
-  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null);
+  const expectedThreadState={status:text(thread.status),assignedTo:text(thread.assigned_to)};
+  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null,false,expectedThreadState);
+  const current=await db.prepare("SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?").bind(ctx.threadId).first<Row>();
+  if(!current||text(current.customer_id)!==ctx.customerId||text(current.status)!==expectedThreadState.status||text(current.assigned_to)!==expectedThreadState.assignedTo){
+   await db.prepare("UPDATE communication_messages SET status='suppressed',updated_at=? WHERE id=? AND status='ready'").bind(Date.now(),replyId).run();
+   throw new Response("AI replies are paused while conversation ownership changes",{status:409});
+  }
   return{output:IMMEDIATE_VET_GUIDANCE,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"emergency_guidance",timings:clock.marks,modelRef:null,providerRef:"deterministic_emergency_guidance",upstreamMs:null as number|null};
  }
  try{await assertVoiceCustomerMayReply(db,ctx);}catch(error){
