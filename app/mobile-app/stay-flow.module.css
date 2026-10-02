@@ -1,6 +1,51 @@
 .flow {
   padding-bottom: 12px;
 }
+/* V2 uses the shared font and a readable scale inside its full-size care form. */
+:global([data-pawspace-v2="true"]) .flow {
+  font-family: var(--paw-font);
+  font-size: 16px;
+  line-height: 1.5;
+}
+:global([data-pawspace-v2="true"]) .flow .petList {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+:global([data-pawspace-v2="true"]) .flow .petList button {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 64px;
+  padding: 12px;
+}
+:global([data-pawspace-v2="true"]) .flow .petList span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+:global([data-pawspace-v2="true"]) .flow .petList b,
+:global([data-pawspace-v2="true"]) .flow .sectionHead {
+  font-size: 16px;
+}
+:global([data-pawspace-v2="true"]) .flow .petList small,
+:global([data-pawspace-v2="true"]) .flow .sectionHead span,
+:global([data-pawspace-v2="true"]) .flow .chips button {
+  font-size: 14px;
+  line-height: 1.5;
+}
+:global([data-pawspace-v2="true"]) .flow .chips button {
+  min-height: 44px;
+  color: var(--ui-ink);
+}
+:global([data-pawspace-v2="true"]) .flow .field,
+:global([data-pawspace-v2="true"]) .flow .field input,
+:global([data-pawspace-v2="true"]) .flow .field select,
+:global([data-pawspace-v2="true"]) .flow .field textarea {
+  font-size: 16px !important;
+}
+:global([data-pawspace-v2="true"]) .flow .hint {
+  font-size: 14px !important;
+}
+:global([data-pawspace-v2="true"]) .flow .stayIntro > span,
+:global([data-pawspace-v2="true"]) .flow .stayIntro > b {
+  color: var(--ui-gold-soft);
+}
 .steps {
   display: flex;
   justify-content: center;

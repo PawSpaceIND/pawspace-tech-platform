@@ -1,4 +1,36 @@
 /* Pet Taxi customer flow — Emerald #01261F / Gold #E6B34E, mobile-first, system fonts. */
+/* The V2 booking card is always on the approved deep brand surface. */
+:global([data-pawspace-v2="true"]) .wrap {
+  --ui-muted: var(--ui-on-primary);
+  --ui-gold-ink: var(--ui-gold-soft);
+  font-family: var(--paw-font);
+  line-height: 1.5;
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid button {
+  min-width: 0;
+  align-items: flex-start;
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid button > span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid i {
+  flex-shrink: 0;
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid b {
+  font-size: 16px;
+}
+:global([data-pawspace-v2="true"]) .wrap .petGrid small,
+:global([data-pawspace-v2="true"]) .wrap small,
+:global([data-pawspace-v2="true"]) .wrap .label,
+:global([data-pawspace-v2="true"]) .wrap .formGrid label {
+  font-size: 14px;
+  line-height: 1.5;
+}
 .wrap{max-width:520px;margin:0 auto;color:var(--ui-on-primary);font-family:var(--paw-font)}
 .wrap h3{margin:0;font-size:20px}
 .wrap small{color:var(--ui-muted)}
