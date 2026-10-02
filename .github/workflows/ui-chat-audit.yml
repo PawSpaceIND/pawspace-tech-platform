@@ -38,7 +38,7 @@ jobs:
       - name: Verify preserved sources and existing presentation contracts
         run: |
           node --test tests/ui-chat-presentation.test.mjs tests/test-suite-executes-code.test.mjs
-          node --experimental-strip-types --test tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
+          node --experimental-strip-types --test tests/food-route-review.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/ui-display-truth.test.mjs
       - name: Check TypeScript
         run: npm run typecheck
       - name: Render V2 chat matrix and UI states with synthetic responses

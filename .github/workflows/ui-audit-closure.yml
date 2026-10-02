@@ -49,6 +49,7 @@ jobs:
         run: |
           node --test tests/ui-audit-closure.test.mjs
           node --experimental-strip-types --test \
+            tests/food-route-review.test.mjs \
             tests/customer-partner-theme.test.mjs \
             tests/inbox-workspace-presentation.test.mjs \
             tests/partner-services-presentation.test.mjs \
