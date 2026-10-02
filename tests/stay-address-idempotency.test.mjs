@@ -51,3 +51,15 @@ test("normalization neither merges customers nor erases distinct units",async t=
  assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses").get().n,3);
  assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses WHERE is_default=1").get().n,2);
 });
+
+
+test("booking address saves reuse reordered locality without replacing distinct unit rows",async t=>{
+ const sqlite=new DatabaseSync(":memory:");t.after(()=>sqlite.close());const db=d1(sqlite);
+ const first=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Unit 1, Indiranagar, Bengaluru",servicePincode:"560038"});
+ const second=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Bengaluru, Unit 1, Indiranagar, Bengaluru, 560038",servicePincode:"560038"});
+ assert.equal(second.addressId,first.addressId);
+ const third=await resolveGovernedServiceAddress(db,{customerId:"QA-REORDER",serviceCode:"boarding",serviceAddress:"12 Test Road, Unit 2, Indiranagar, Bengaluru",servicePincode:"560038"});
+ assert.notEqual(third.addressId,first.addressId);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_addresses").get().n,2);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM customer_service_address_geocodes").get().n,2);
+});
