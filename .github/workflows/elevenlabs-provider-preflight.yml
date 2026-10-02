@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls, premium-maya-readiness, discover-premium-voices, measure-voice-llm, specialist-call, or direct-grooming-call.'
+        description: 'Type no-calls, premium-maya-readiness, discover-premium-voices, measure-voice-llm, demo-five-sales-conversations, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
       uat_voice_call_id:
@@ -221,25 +221,32 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
         run: node scripts/pause-staging-phone-calls.mjs
   demo-three-voice-conversations:
-    if: ${{ inputs.confirm == 'demo-three-voice-conversations' }}
+    if: ${{ inputs.confirm == 'demo-three-voice-conversations' || inputs.confirm == 'demo-five-sales-conversations' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency:
       group: pawspace-staging-sweep
       cancel-in-progress: false
       queue: max
-    timeout-minutes: 12
+    timeout-minutes: ${{ inputs.confirm == 'demo-five-sales-conversations' && 25 || 12 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Verify offline managed audio boundaries
+        if: ${{ inputs.confirm == 'demo-five-sales-conversations' }}
+        run: node --test tests/maya-managed-sales-demo-boundaries.test.mjs
       - name: Install synthetic microphone tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y espeak-ng ffmpeg
-      - name: Run three actual audio conversations without dialing
+      - name: Run bounded actual audio conversations without dialing
         env:
+          MANAGED_DEMO_SUITE: ${{ inputs.confirm == 'demo-five-sales-conversations' && 'five-sales' || 'legacy-three' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
@@ -257,7 +264,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: maya-three-voice-demos
+          name: ${{ inputs.confirm == 'demo-five-sales-conversations' && 'maya-five-managed-voice-demos' || 'maya-three-voice-demos' }}
           path: voice-demo-results/
           retention-days: 7
   diagnose-native-audio:
