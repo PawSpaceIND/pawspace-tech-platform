@@ -50,6 +50,20 @@ on:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
         default: 'grooming_sales'
+      component_audio_scope:
+        description: 'Component route only: Grooming first, then remaining services/retest within the SAME shared $5 lease; no native agent acceptance'
+        type: choice
+        options:
+          - grooming-first
+          - five-services
+          - resume-other-services
+          - retest-grooming
+        required: false
+        default: grooming-first
+      component_audio_run_id:
+        description: 'Resume the existing component lease UUID from its artifact; counters/budget never reset'
+        required: false
+        default: ''
       demo_started_at:
         description: 'Exact failed synthetic demo interval start in UTC (read-only diagnosis)'
         required: false
@@ -61,6 +75,48 @@ on:
 permissions:
   contents: read
 jobs:
+  component-audio:
+    if: ${{ inputs.confirm == 'component-audio-bounded' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 30
+    concurrency:
+      group: pawspace-managed-audio-shared-usd5
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Prepare existing application dependencies and synthetic microphone tools
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Run unpaid component boundaries first
+        run: node --experimental-strip-types --test tests/component-audio-preparation.test.mjs
+      - name: Capture bounded component conversation with no customer endpoints
+        env:
+          COMPONENT_AUDIO_CONFIRM: ${{ inputs.confirm }}
+          COMPONENT_AUDIO_SCOPE: ${{ inputs.component_audio_scope }}
+          COMPONENT_AUDIO_RUN_ID: ${{ inputs.component_audio_run_id }}
+          PAWSPACE_OPENAI_API_KEY: ${{ secrets.PAWSPACE_OPENAI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_TTS_VOICE_ID: ${{ vars.ELEVENLABS_TTS_VOICE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: node --experimental-strip-types scripts/run-component-audio.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-component-audio-${{ inputs.component_audio_scope }}
+          path: artifacts/component-audio
+          retention-days: 7
+          if-no-files-found: warn
   inspect-agent-deadlines:
     if: ${{ inputs.confirm == 'inspect-agent-deadlines' }}
     runs-on: ubuntu-latest
