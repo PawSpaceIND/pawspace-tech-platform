@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const baseline=JSON.parse(readFileSync(new URL('./fixtures/guest-continuity-baseline.json',import.meta.url),'utf8'));
+const hash=s=>createHash('sha256').update(s).digest('hex');
+import {runInNewContext} from 'node:vm';
+import ts from 'typescript';
+const read=p=>readFileSync(p,'utf8');
+function elements(node,out=[]){if(Array.isArray(node)){node.forEach(n=>elements(n,out));return out;}if(node&&typeof node==='object'){out.push(node);elements(node.props?.children,out);}return out;}
+function fixture(){let values=[],index=0,selected='',verified=0;const jsx=(type,props)=>({type,props:props||{}}),moduleObject={exports:{}};
+ const react={useState(initial){const key=index++;if(!(key in values))values[key]=typeof initial==='function'?initial():initial;return [values[key],v=>{values[key]=v;}];}};
+ const code=ts.transpileModule(read('app/v2/grooming/guest-preview.tsx'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+ runInNewContext(code,{module:moduleObject,exports:moduleObject.exports,Intl,require(name){if(name==='react')return react;if(name==='react/jsx-runtime')return {jsx,jsxs:jsx};if(name==='next/link')return {default:'a'};if(name.includes('customer-login'))return {default:'otp'};if(name.includes('grooming.module'))return {default:new Proxy({},{get:(_,k)=>k})};if(name.includes('grooming-subscription-projection'))return {subscriptionPackage:()=>null,subscriptionSavings:()=>null};if(name.includes('grooming-client'))return {groomingBundleForCount:(p,n)=>p.bundles.find(b=>b.petCount===n)};throw Error(name);}});
+ const catalogue={serviceCode:'grooming',packages:[{code:'real-cat',name:'Canonical cat care',description:'Canonical detail',audience:'cat',bundles:[{petCount:1,price:1723,currency:'INR',slotMinutes:73}]},{code:'real-dog',name:'Canonical dog care',description:'Canonical detail',audience:'dog',bundles:[]}]};
+ return {render(){index=0;return elements(moduleObject.exports.default({catalogue,selectedCode:selected,onSelect:c=>{selected=c;},onVerified:()=>verified++}));},get selected(){return selected;},get verified(){return verified;}};
+}
+test('catalogue selection precedes OTP; current choice survives opening, dismissal and verification',()=>{const f=fixture();let nodes=f.render();assert.equal(nodes.some(n=>n.type==='otp'),false);assert.equal(nodes.find(n=>n.type==='button'&&n.props.className==='continue').props.disabled,true);nodes.find(n=>n.type==='input'&&n.props.name==='guest-care'&&n.props.checked===false).props.onChange();nodes=f.render();const card=nodes.find(n=>n.type==='button'&&n.props['aria-pressed']===false);card.props.onClick();assert.equal(f.selected,'real-cat');nodes=f.render();assert.ok(JSON.stringify(nodes).includes('1,723'));nodes.find(n=>n.props.className==='continue').props.onClick();nodes=f.render();assert.equal(nodes.filter(n=>n.type==='otp').length,1);nodes.find(n=>n.type==='button'&&n.props.children==='Keep browsing').props.onClick();assert.equal(f.render().some(n=>n.type==='otp'),false);assert.equal(f.selected,'real-cat');f.render().find(n=>n.props.className==='continue').props.onClick();f.render().find(n=>n.type==='otp').props.onLoggedIn();assert.equal(f.verified,1);assert.equal(f.selected,'real-cat');});
+test('existing checkout, quote, schedule and reservation handlers remain byte-identical',()=>{const path='app/v2/grooming/page.tsx',now=read(path);const handlers=s=>s.slice(s.indexOf('  const invalidateCare ='),s.indexOf('  if (booking || recoveryBookingId)'));assert.equal(hash(handlers(now).replace("subscription:selectedPackage?.subscription, ","").replace(/  useEffect\(\(\)=>\{if\(!booking&&!recoveryBookingId\)[^\n]+\n/,"")),baseline.sha256.grooming_handlers);assert.ok(now.includes('if (!session) return;'));assert.ok(now.includes('pawspace_v2_grooming_guest_package'));});
+
+test("Home guest action only reuses existing dismissal and leaves routing/authentication unchanged",()=>{const p="app/v2/page.tsx",addition='            <button type="button" className={styles.changeNumber} onClick={closeAuth}>Continue as guest</button>\n';assert.equal(hash(read(p).replace(addition,"")),baseline.sha256[p]);});

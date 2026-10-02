@@ -1,3 +1,4 @@
+import {reverseGuestContinuity} from './helpers/guest-continuity-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -89,7 +90,7 @@ const root = new URL('../', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, root), 'utf8');
 const baseline = JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json'));
 for (const [name, expected] of Object.entries(baseline.files)) {
- test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(read(name), name), expected));
+ test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(reverseGuestContinuity(read(name),name), name), expected));
 }
 test('wiring contract detects changes to handlers and disabled guards', () => {
  const source = read('app/walking/page.tsx');
@@ -133,7 +134,7 @@ test('sandbox and no-auto-charge notices survive customer-copy changes', () => {
 import {uiDataFlowContract} from './helpers/ui-wiring-contract.mjs';
 {
  const compact=JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json')).compactDataFlow;
- for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(read(file).toString(),file),expected));
+ for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(reverseGuestContinuity(read(file).toString(),file),file),expected));
  test('Compact UI keeps the exact official PawSpace logo bytes',()=>assert.equal(hash(read('public/assets/pawspace-official-lockup.png')),compact.logoSha256));
  test('Data-flow guard rejects a changed booking call despite navigation exclusions',()=>{
   const file='app/v2/page.tsx',source=read(file).toString(),changed=source.replace('loadV2CustomerAccount()', 'loadDifferentCustomerAccount()');

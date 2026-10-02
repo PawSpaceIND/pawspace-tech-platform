@@ -25,11 +25,13 @@ test('V2 composes both functional sections inside one shell; legacy remains stan
  const tree=flatten(Layout({children:{type:V2Page,props:{}}}));
  assert.equal(tree.filter(n=>n.type==='workspace').length,1);
  assert.equal(tree.filter(n=>n.type==='h1').length,1);
+ assert.deepEqual(tree.filter(n=>n.type==='a').map(n=>n.props.href),['/v2/team/people','/v2/team/people/finance']);
+ assert.deepEqual(flatten(Payroll()).filter(n=>n.type==='a').map(n=>n.props.href),['/team/people','/team/people/finance']);
  assert.equal(tree.filter(n=>n.type==='main').length,2,'Both content sections survive');
  assert.equal(flatten(Payroll()).filter(n=>n.type==='workspace').length,1);
 });
 test('canonical handlers, requests, permissions and business content retain exact baseline bytes',()=>{
- const reverted=source(canonical).replace('import{Fragment,useEffect,useState}from"react";','import{useEffect,useState}from"react";').replace('export default function PayrollPage({embedded=false}:{embedded?:boolean}={}){const Frame=embedded?Fragment:StaffModule;','export default function PayrollPage(){').replace('return <Frame><main','return <StaffModule><main').replace('</main></Frame>','</main></StaffModule>');
+ const reverted=source(canonical).replace('href={embedded?"/v2/team/people":"/team/people"}','href="/team/people"').replace('href={embedded?"/v2/team/people/finance":"/team/people/finance"}','href="/team/people/finance"').replace('import{Fragment,useEffect,useState}from"react";','import{useEffect,useState}from"react";').replace('export default function PayrollPage({embedded=false}:{embedded?:boolean}={}){const Frame=embedded?Fragment:StaffModule;','export default function PayrollPage(){').replace('return <Frame><main','return <StaffModule><main').replace('</main></Frame>','</main></StaffModule>');
  assert.equal(hash(reverted),baseline.sha256[canonical]);
  const revertedLayout=source(layout).replace('return <StaffModule>{children}<main','return <>{children}<StaffModule><main').replace('</main></StaffModule>;','</main></StaffModule></>;');
  assert.equal(hash(revertedLayout),baseline.sha256[layout]);
