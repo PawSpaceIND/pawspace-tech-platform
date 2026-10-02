@@ -110,7 +110,7 @@ export function createManagedDeadline({endAt,code,parentSignal,now=()=>Date.now(
  const onParent=()=>abort(parentSignal.reason);
  if(parentSignal?.aborted)onParent();else parentSignal?.addEventListener('abort',onParent,{once:true});
  const timer=setTimeout(()=>abort(gate(code)),Math.max(1,endAt-now()));
- const scope={deadline:endAt,code,signal:controller.signal,remaining:()=>Math.max(0,endAt-now()),check(){if(now()>=endAt)abort(gate(code));if(controller.signal.aborted)throw controller.signal.reason;},dispose(){clearTimeout(timer);parentSignal?.removeEventListener('abort',onParent);},async sleep(ms){scope.check();try{await delay(Math.min(ms,scope.remaining()),undefined,{signal:scope.signal});}catch(e){throw scope.signal.reason||e;}scope.check();}};
+ const scope={deadline:endAt,code,signal:controller.signal,remaining:()=>Math.max(0,endAt-now()),check(){if(now()>=endAt)abort(gate(code));if(controller.signal.aborted)throw controller.signal.reason;},dispose(){clearTimeout(timer);parentSignal?.removeEventListener('abort',onParent);},async sleep(ms){scope.check();const wakeAt=now()+ms;while(now()<wakeAt){try{await delay(Math.min(wakeAt-now(),scope.remaining()),undefined,{signal:scope.signal});}catch(e){throw scope.signal.reason||e;}scope.check();}scope.check();}};
  return scope;
 }
 
