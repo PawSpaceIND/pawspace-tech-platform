@@ -7,6 +7,7 @@ import {currentGroomingCatalogue} from "./ai-current-catalogue";
 import{policyEnquiryTopic,POLICY_INFORMATION_DIRECTIVE}from"./ai-policy-enquiry";
 import {voiceCalendarContext} from "./voice-calendar-context";
 import {stayDurationClarification} from "./voice-stay-duration-consistency";
+import {presentedOwnedPetChoice,proposalMatchesSelectedPet} from "./voice-presented-pet-choice";
 import { specialistSalesPrompt, isVoiceSalesQuoteRequest, type VoiceSalesService } from "./voice-sales-specialists";
 import{aiProviderConnection,requestAiDraftWithVoiceRecovery}from"./ai-provider-adapter";
 import{prepareAiToolExecution,type AiToolChannel,type AiToolIntent}from"./ai-tool-registry";
@@ -174,6 +175,9 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
  // Both sources are untrusted dialogue, never canonical action or price authority.
  const conversationHistory=mergeVoiceConversationHistory(history,input.context?.conversationHistory);
+ const petChoice=channel==="voice"&&options.salesService?presentedOwnedPetChoice(conversationHistory,input.inputText,input.context?.pets):null;
+ if(petChoice?.clarification&&!medicalQuestion)return{text:petChoice.clarification,provider:"conversation_consistency",modelRef:"server_owned_pet_options",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
+ if(petChoice?.selectedPet){Object.assign(grounded.context,{voicePetSelection:{canonicalPetIndex:petChoice.canonicalPetIndex,source:"explicit_presented_owned_options",bookingConsent:false}});systemPrompt+="\nThe caller selected a pet from an explicitly presented owned-pet list. voicePetSelection.canonicalPetIndex is the zero-based index of that already-supplied canonicalContext.pets entry, not the spoken option number. Retain that preference and ask only for other missing details. This preference is not permission to book or pay.";}
  if(options.salesService)Object.assign(grounded.context,{salesService:options.salesService,conversationHistory});
  systemPrompt+=`\n\n${MAYA_STAY_POLICY}`;
  if(options.salesService&&!informationOnly){systemPrompt+=`\n\n${specialistSalesPrompt(options.salesService,{coupons:options.salesService==="grooming"||options.salesService==="all_services"})}`;Object.assign(grounded.context,{salesService:options.salesService,conversationHistory});if(options.salesService==="dog_training")grounded.context.catalogueTool=null;}
@@ -197,6 +201,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  }
  const envelope=parseGroundedActionEnvelope(result.text);
  if(!envelope&&/^\s*(?:\{|```)/.test(result.text))return{text:"",provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,failure:"malformed_output"};
+ if(petChoice?.proposalClarification&&envelope?.actions.length)return{text:petChoice.proposalClarification,provider:"conversation_consistency",modelRef:"server_owned_pet_options",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
+ if(petChoice?.selectedPet&&envelope?.actions.length&&!proposalMatchesSelectedPet(envelope.actions,petChoice.selectedPet))return{text:`You selected your pet ${petChoice.selectedPet.name}${petChoice.selectedPet.breed?`, ${petChoice.selectedPet.breed}`:""}. The proposed pet details did not match that choice, so I haven't prepared an offer. I need to correct those details first.`,provider:"conversation_consistency",modelRef:"server_owned_pet_choice",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const durationClarification=channel==="voice"&&options.salesService&&envelope?.actions.length?stayDurationClarification(conversationHistory,input.inputText,envelope.actions):null;
  if(durationClarification)return{text:durationClarification,provider:"conversation_consistency",modelRef:"server_owned_stay_duration",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const customerText=envelope?(envelope.reply||(envelope.actions.length?"Let me check those booking details.":"")):result.text;
