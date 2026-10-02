@@ -15,3 +15,4 @@
 .page .dock .active { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; }
 
 .page.page { background:var(--brand-bg) !important; color:var(--brand-text) !important; font-family:var(--paw-font) !important; --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong); --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line); }
+.page .art{overflow:hidden;background:#f7eee4;min-height:0;aspect-ratio:1;max-height:360px}.art img{display:block;width:100%;height:100%;object-fit:cover}.hero>div{min-width:0}@media(max-width:760px){.page .art{aspect-ratio:16/9;max-height:250px}.art img{object-position:center 38%}}

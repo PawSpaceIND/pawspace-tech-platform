@@ -12,3 +12,4 @@
 .introduction h3 { margin:0 0 12px; }
 .introduction .options { padding:0; }
 @media(max-width:640px) { .families { grid-template-columns:minmax(0,1fr); }.family summary { padding:14px; } }
+.plan{display:grid;gap:6px;min-width:0}.plan>button{width:100%;min-height:64px;text-align:left;overflow-wrap:anywhere}.inclusions{margin:0 4px 8px;color:var(--brand-muted);font-size:13px;line-height:1.5}.selectedDetail{display:block;font-size:14px;margin-top:4px;color:var(--brand-muted)}.guide{margin:0;line-height:1.6;color:var(--brand-muted)}.family:nth-child(1){border-top:4px solid #a78bfa}.family:nth-child(2){border-top:4px solid #e9b95f}.family:nth-child(3){border-top:4px solid #e8a6bb}.family:nth-child(4){border-top:4px solid #64b6b0}
