@@ -38,6 +38,7 @@ type QueueEntry = {
   queueCode: string;
   status: string;
   createdAt: number;
+  slaDueAt?: number | null;
 };
 
 type Handoff = {
@@ -53,10 +54,10 @@ const box = {
   borderRadius: "calc(14px * var(--paw-radius-scale))",
 };
 
-const label = (value: unknown) => String(value || "—").replaceAll("_", " ");
+const label = (value: unknown) => String(value || "\u2014").replaceAll("_", " ");
 
-/** The live escalation queue. Without it this page opened on whichever conversation sorted first —
- *  almost never one with a handoff — and reported "no handoff is active or recorded for this
+/** The live escalation queue. Without it this page opened on whichever conversation sorted first \u2014
+ *  almost never one with a handoff \u2014 and reported "no handoff is active or recorded for this
  *  thread" while real escalations sat waiting. */
 async function fetchQueue(): Promise<QueueEntry[]> {
   const response = await fetch("/api/ai-human-handoff?mode=queue", { cache: "no-store" });
@@ -90,6 +91,17 @@ export default function AiHandoffPage() {
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [clockNow, setClockNow] = useState(0);
+
+  useEffect(() => {
+    const updateClock = () => setClockNow(Date.now());
+    const initialTick = window.setTimeout(updateClock, 0);
+    const interval = window.setInterval(updateClock, 60_000);
+    return () => {
+      window.clearTimeout(initialTick);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,7 +200,7 @@ export default function AiHandoffPage() {
           }}
         >
           <div>
-            <small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM · AI GATE 4</small>
+            <small style={{ fontWeight: 800, color: "var(--paw-link)" }}>PAWSPACE TEAM \u00b7 AI GATE 4</small>
             <h1 style={{ margin: "6px 0" }}>Human handoff & staff takeover</h1>
             <p style={{ margin: 0, color: "var(--staff-muted)" }}>
               AI pauses during staff ownership. Return to AI requires an explicit governed staff action.
@@ -226,7 +238,7 @@ export default function AiHandoffPage() {
               <div style={{ fontSize: 14, color: "var(--staff-muted)", marginTop: 4 }}>
                 {queue.length === 0
                   ? "No conversation is currently escalated to a human."
-                  : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
+                  : `${queue.filter((entry) => entry.status === "queued").length} waiting \u00b7 ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
               </div>
             </div>
             {
@@ -243,20 +255,23 @@ export default function AiHandoffPage() {
                   {queue.map((entry) => (
                     <button
                       key={entry.threadId}
-                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined })}
+                      onClick={() => setSelected({ id: entry.threadId, customer_id: entry.customerId, customer_name: entry.customerName || undefined, sla_due_at: entry.slaDueAt ?? undefined })}
                       style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", border: 0, background: selected?.id === entry.threadId ? "var(--staff-raised)" : "transparent" }}
                     >
                       <strong>{entry.customerName || entry.customerId || "Customer"}</strong>
                       <div style={{ fontSize: 14, color: "var(--staff-muted)", marginTop: 2 }}>
                         {/* The id stays visible beside the name: staff match it against CRM and Customer 360. */}
                         {entry.customerId}
-                        {entry.customerPhone ? ` · ${entry.customerPhone}` : ""}
+                        {entry.customerPhone ? ` \u00b7 ${entry.customerPhone}` : ""}
                       </div>
                       <div style={{ fontSize: 14, marginTop: 2 }}>
-                        {entry.status === "queued" ? "Waiting for staff" : "With staff"} · {label(entry.reason)}
+                        {entry.status === "queued" ? "Waiting for staff" : "With staff"} \u00b7 {label(entry.reason)}
                         {/* Never present a CRM contact's name as the canonical identity, or the absence
                           * of one as if the customer were nameless. */}
-                        {entry.identitySource === "crm_contact" ? " · CRM contact record" : entry.identitySource === "unresolved" ? " · no customer record found" : ""}
+                        {entry.identitySource === "crm_contact" ? " \u00b7 CRM contact record" : entry.identitySource === "unresolved" ? " \u00b7 no customer record found" : ""}
+                      </div>
+                      <div style={{ fontSize: 14, marginTop: 4, color: entry.slaDueAt && entry.slaDueAt <= clockNow ? "var(--staff-danger)" : "var(--staff-muted)" }}>
+                        {entry.slaDueAt ? `${entry.slaDueAt <= clockNow ? "Overdue \u00b7 " : ""}Response due ${new Date(entry.slaDueAt).toLocaleString()}` : "Response deadline unavailable"}
                       </div>
                     </button>
                   ))}
@@ -280,7 +295,7 @@ export default function AiHandoffPage() {
               >
                 <strong>{thread.customer_name || thread.customer_id || "Customer"}</strong>
                 <div style={{ fontSize: 14, marginTop: 4 }}>
-                  {label(thread.assigned_to)} · {label(thread.status)}
+                  {label(thread.assigned_to)} \u00b7 {label(thread.status)}
                 </div>
                 {(() => {
                   // Show at a glance which conversations the AI has escalated, so staff do not have
@@ -288,7 +303,7 @@ export default function AiHandoffPage() {
                   const entry = queue.find((item) => item.threadId === thread.id);
                   if (!entry) return null;
                   const waiting = entry.status === "queued";
-                  return <span style={{ display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 14, fontWeight: 700, background: waiting ? "var(--staff-warning-bg)" : "var(--staff-success-bg)", color: waiting ? "var(--staff-warning)" : "var(--staff-success)" }}>{waiting ? "Waiting for staff" : "With staff"} · {label(entry.reason)}</span>;
+                  return <span style={{ display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 14, fontWeight: 700, background: waiting ? "var(--staff-warning-bg)" : "var(--staff-success-bg)", color: waiting ? "var(--staff-warning)" : "var(--staff-success)" }}>{waiting ? "Waiting for staff" : "With staff"} \u00b7 {label(entry.reason)}</span>;
                 })()}
               </button>
             ))}
@@ -319,11 +334,11 @@ export default function AiHandoffPage() {
                 ) : (
                   <>
                     <p>
-                      <b>Status:</b> {label(current.status)} · <b>Reason:</b> {label(current.reason)} ·{" "}
+                      <b>Status:</b> {label(current.status)} \u00b7 <b>Reason:</b> {label(current.reason)} \u00b7{" "}
                       <b>Queue:</b> {label(current.queue_code)}
                     </p>
                     <p>
-                      <b>Confidence:</b> {current.confidence == null ? "—" : String(current.confidence)}
+                      <b>Confidence:</b> {current.confidence == null ? "\u2014" : String(current.confidence)}
                     </p>
                     <div style={{ display: "flex", gap: 8, margin: "14px 0" }}>
                       <button
@@ -349,7 +364,7 @@ export default function AiHandoffPage() {
                           style={{ padding: 10, marginBottom: 8, background: "var(--staff-raised)", borderRadius: "calc(10px * var(--paw-radius-scale))" }}
                         >
                           <small>
-                            {label(message.direction)} · {label(message.channel)}
+                            {label(message.direction)} \u00b7 {label(message.channel)}
                           </small>
                           <div>{String(message.text || "")}</div>
                         </div>
