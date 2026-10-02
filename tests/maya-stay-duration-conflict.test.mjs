@@ -28,6 +28,13 @@ test('managed sales provider rejects a seven-day proposal that conflicts with th
  const {runElevenLabsGroundedTurn}=await import('../lib/elevenlabs-custom-llm.ts');
  const replay=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[{role:'user',content:'I need boarding on October 3 for a 24-hour stay.'},{role:'assistant',content:'When should care end?'},{role:'user',content:'October 10 at noon.'},{role:'user',content:'Prepare a quote for boarding.'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
  assert.match(replay.output,/keep.*24.hour.*new dates/i,JSON.stringify({calls,turns:w.sqlite.prepare('SELECT handoff_reason,output_text FROM ai_conversation_turns').all(),thread:w.sqlite.prepare('SELECT assigned_to FROM communication_threads WHERE id=?').get(threadId)}));assert.equal(calls,2);
+ for(const correction of ['Not a 48-hour stay.','I do not want a 24-hour stay.','Not a 24-hour stay.']){
+  const before=calls;
+  const revised=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[{role:'user',content:'I need a 24-hour stay.'},{role:'assistant',content:'When should care end?'},{role:'user',content:correction},{role:'user',content:'Prepare a quote for boarding.'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+  assert.equal(calls,before+1);assert.match(revised.output,correction.includes('48')?/keep.*24.hour.*new dates/i:/duration is unclear.*How many hours/i,correction);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers WHERE customer_id=?').get(customerId).n,0,correction);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0,correction);
+ }
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers WHERE customer_id=?').get(customerId).n,0,'gateway must ask for clarification before storing an offer');
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0);
 });
@@ -39,7 +46,9 @@ test('duration consistency preserves explicit revisions and leaves unrelated fie
  assert.equal(stayDurationClarification(prior,'Prepare a quote for boarding.',proposal(24)),null);
  assert.equal(stayDurationClarification(prior,'Actually I need a 48-hour stay.',proposal(48)),null);
  assert.equal(stayDurationClarification(prior,'Use the new dates.',proposal(168)),null);
- assert.equal(stayDurationClarification(prior,'Not a 24-hour stay.',proposal(168)),null);
+ assert.match(stayDurationClarification(prior,'Not a 48-hour stay.',proposal(168)),/24.hour stay.*168 hours/);
+ assert.match(stayDurationClarification(prior,'Not a 24-hour stay.',proposal(168)),/duration is unclear/);
+ assert.match(stayDurationClarification(prior,'I do not want a 24-hour stay.',proposal(24)),/duration is unclear/);
  assert.equal(stayDurationClarification(prior,'About a 24-hour stay.',proposal(26)),null);
  assert.equal(stayDurationClarification([{role:'assistant',content:'Choose a 24-hour stay.'}],'Quote please.',proposal(168)),null);
  assert.equal(stayDurationClarification([{role:'user',content:'The puppy is 24 hours old.'}],'Quote please.',proposal(168)),null);
