@@ -1,0 +1,18 @@
+.utility {
+ display:flex;
+ justify-content:flex-end;
+ align-items:center;
+ min-height:56px;
+ padding:6px 16px;
+ border-bottom:1px solid var(--paw-line);
+ background:var(--paw-surface);
+}
+.scope .utility :global(.paw-appearance-trigger) {
+ position:static !important;
+ inset:auto !important;
+ transform:none !important;
+ margin:0;
+ min-width:44px;
+ min-height:44px;
+ box-shadow:none;
+}
