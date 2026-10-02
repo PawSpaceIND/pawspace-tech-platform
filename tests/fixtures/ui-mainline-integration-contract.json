@@ -339,7 +339,7 @@
     "app/api/v1/auth/mfa/verify/route.ts": "52ea0c1fdffc832f20e57e4183250b8affbb53b75c460f1cb9045bc33f86c182",
     "app/api/v1/auth/revoke-all-sessions/route.ts": "f6f43f32d749d29e87e53c334204013c5c856aefacabae5d550bc4e462b6067a",
     "app/api/v1/privacy/erasure-request/route.ts": "7ccc0b73f331e97c2b05986bf2dafee0bb1bad3c2acf03d4a75b56ac06606940",
-    "app/api/v2/grooming-catalogue/route.ts": "a4932970804f3f98d778a96332a1cd218715849682b7364ba33eee50d8b833d1",
+    "app/api/v2/grooming-catalogue/route.ts": "08332ed93c83457652a8d1be3302c8bdd62f8a31ccfd1799b688ac5c227569fc",
     "app/api/v2/grooming-checkout-return/route.ts": "b277dd393c93f78c12f4f0e8dcd18bbb9852feffb5a52e9ffe09296144591757",
     "app/api/v2/grooming-checkout/route.ts": "055caffa29b05fac287e85d254b35ae5e40c1e12bf281ad2fe6369157659db63",
     "app/api/voice-provider-webhook/route.ts": "b5c799af633da1a456c0498f745194666c74305af644c5a3eb0198559e72c230",

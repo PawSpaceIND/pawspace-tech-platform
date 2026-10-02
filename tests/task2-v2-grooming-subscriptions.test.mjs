@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {installWorkersHooks} from './helpers/module-hooks.mjs';
+import {installWorkersHooks,runWithWorkersDb} from './helpers/module-hooks.mjs';
 import {d1} from './helpers/execution-harness.mjs';
 installWorkersHooks('__TASK2_SUB_DB__','__TASK2_SUB_ENV__');
 const sqlite=new DatabaseSync(':memory:'),db=d1(sqlite);globalThis.__TASK2_SUB_DB__=db;globalThis.__TASK2_SUB_ENV__={};
@@ -16,6 +16,15 @@ sqlite.prepare("INSERT OR REPLACE INTO service_packages(id,service_code,package_
 sqlite.prepare("UPDATE grooming_subscription_plans SET price=4300,session_count=3,validity_value=4,version=7 WHERE plan_code='sub-3-dog'").run();
 async function read(query=''){const response=await route.GET(new Request('https://test.local/api/v2/grooming-catalogue'+query));return {response,body:await response.json()};}
 const query=`?includeSubscriptions=1&cityId=blr&date=${future}`;
+test('cold public subscription catalogue provisions its read schema without publishing plans',async()=>{
+ const freshSqlite=new DatabaseSync(':memory:');
+ try{
+  const response=await runWithWorkersDb(d1(freshSqlite),()=>route.GET(new Request('https://test.local/api/v2/grooming-catalogue'+query)));
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).data.subscriptions,[]);
+  assert.equal(freshSqlite.prepare("SELECT count(*) n FROM grooming_subscription_plans").get().n,0);
+ }finally{freshSqlite.close();}
+});
 test('public catalogue projects runtime values without staff audit/recipient data; old clients unchanged',async()=>{const legacy=await read();assert.equal('subscriptions' in legacy.body.data,false);const {response,body}=await read(query);assert.equal(response.status,200);const plan=body.data.subscriptions.find(p=>p.code==='sub-3-dog');assert.equal(plan.price,4300);assert.equal(plan.sessions,3);assert.equal(plan.validityValue,4);assert.equal(plan.version,7);assert.equal('audit' in body.data,false);assert.equal('updated_by' in plan,false);assert.equal('cityId' in plan,false);});
 test('city/date validation and effective versions fail closed without writes',async()=>{assert.equal((await read('?includeSubscriptions=1&cityId=bad%27')).response.status,400);assert.equal((await read('?includeSubscriptions=1&cityId=blr&date=2026-02-30')).response.status,400);assert.deepEqual((await read('?includeSubscriptions=1&cityId=maa')).body.data.subscriptions,[]);});
 test('plan projection preserves total price/validity and counts per-pet credits; savings use equivalent care',async()=>{const {body}=await read(query),plan=body.data.subscriptions.find(p=>p.code==='sub-3-dog'),care=body.data.packages.find(p=>p.code==='dog-basic'),pkg=projection.subscriptionPackage(plan,care);assert.equal(pkg.code,plan.code);assert.equal(pkg.bundles[0].price,4300);assert.equal(pkg.subscription.validityValue,4);assert.equal(projection.subscriptionSavings(pkg,care),1700);assert.equal(projection.subscriptionPackage({...plan,creditsPerPet:4},care),null);assert.equal(projection.subscriptionPackage({...plan,eligiblePetTypes:['cat']},care),null);});

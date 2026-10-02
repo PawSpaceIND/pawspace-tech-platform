@@ -2,6 +2,7 @@ import {rangeDays} from "../../../../lib/analytics-visuals";
 import { authError } from "../../../../lib/server-auth";
 import { ensurePricingControlRuntime } from "../../../../lib/pricing-control-runtime";
 import { groomingCommercialPackages } from "../../../../lib/grooming-commercial-catalogue";
+import { ensureGroomingSubscriptionPlans } from "../../../../lib/grooming-governance";
 
 type Row = Record<string, unknown>;
 
@@ -135,6 +136,7 @@ export async function GET(request?:Request) {
       const cityId=params.get("cityId")||"",zoneId=params.get("zoneId")||"",date=params.get("date")||new Date().toISOString().slice(0,10);
       if(!/^[a-z0-9_-]{1,80}$/i.test(cityId)||(zoneId&&!/^[a-z0-9_-]{1,80}$/i.test(zoneId)))return Response.json({error:"Choose a valid service city and zone."},{status:400});
       try{rangeDays({from:date,to:date});}catch{return Response.json({error:"Choose a valid service date."},{status:400});}
+      await ensureGroomingSubscriptionPlans(db);
       const plans=await db.prepare("SELECT plan_code,name,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,max_pets_per_booking,credits_per_pet,family_wallet,effective_from,effective_to,version,zone_id FROM grooming_subscription_plans WHERE city_id=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) AND (zone_id IS NULL OR zone_id=?) ORDER BY plan_code,CASE WHEN zone_id=? THEN 0 ELSE 1 END,version DESC,id DESC").bind(cityId,date,date,zoneId,zoneId).all<Row>();
       const seen=new Set<string>();subscriptions=[];
       for(const row of plans.results){const code=String(row.plan_code);if(seen.has(code))continue;seen.add(code);let petTypes:unknown;try{petTypes=JSON.parse(String(row.eligible_pet_types_json));}catch{continue;}if(!Array.isArray(petTypes)||!petTypes.every(p=>p==="dog"||p==="cat")||!['days','months'].includes(String(row.validity_unit)))continue;
