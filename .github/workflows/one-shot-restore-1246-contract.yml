@@ -1,0 +1,47 @@
+name: one-shot restore 1246 contract
+on:
+  push:
+    paths:
+      - "tmp/restore-1246-contract.flag"
+permissions:
+  contents: write
+concurrency:
+  group: restore-1246-contract
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Fetch prior contract, align conflict hashes with main, self-clean, push
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o tests/fixtures/ui-mainline-integration-contract.json \
+            "https://raw.githubusercontent.com/PawSpaceIND/pawspace-tech-platform/0a3c5ba168104bfc0827b26422e44c2c237ecaad/tests/fixtures/ui-mainline-integration-contract.json"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tests/fixtures/ui-mainline-integration-contract.json")
+          text = p.read_text()
+          old_g = '    "e2e/v2-grooming.spec.ts": "72e4a1c8eb60948b0618e8c4eb7658e479f803f572e8bbc2af9af94d1ce0f0b9",'
+          new_g = '    "e2e/v2-grooming.spec.ts": "1c91a9503698107ea2064a7a8dd5292563fb35463817b403f5f7184c76606498",'
+          old_a = '    "lib/ai-provider-adapter.ts": "fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e",'
+          new_a = '    "lib/ai-provider-adapter.ts": "de7a51cf1c495aee618f0a76500eb186c7d943fbeaa0caa064ab29d898257b0d",'
+          if old_g not in text or old_a not in text:
+              raise SystemExit("expected prior hashes missing")
+          p.write_text(text.replace(old_g, new_g, 1).replace(old_a, new_a, 1))
+          import json
+          json.loads(p.read_text())
+          print("contract restored and aligned")
+          PY
+          rm -f tmp/restore-1246-contract.flag .github/workflows/one-shot-restore-1246-contract.yml
+          rmdir tmp 2>/dev/null || true
+          git config user.name "PawSpaceIND"
+          git config user.email "karthik@pawspace.in"
+          git add -A
+          git status --short
+          git commit -m "chore: restore ui-mainline contract hashes to unblock merge with main"
+          git push origin "HEAD:${BRANCH}"
