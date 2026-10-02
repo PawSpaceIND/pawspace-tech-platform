@@ -258,7 +258,7 @@ test('voice quote repairs an incomplete model checkout proposal before preparing
 
 // Review closure: read-only enquiries do not destroy the exact quoted offer or authorise changes.
 const {isSalesInformationQuestion}=await import('../lib/ai-sales-information.ts');
-for(const q of ['What equipment does the groomer bring?','Does this include nail clipping?','How long does grooming take?','What should I prepare?','Can I pay by UPI?','What is the difference between these packages?'])test('read-only offer question: '+q,()=>assert.equal(isSalesInformationQuestion(q),true));
+for(const q of ['What equipment does the groomer bring?','Does this include nail clipping?','How long does grooming take?','What should I prepare?','Can I pay by UPI?','What is the difference between these packages?','Which package should I use for my dog?','Can I use the UPI option?'])test('read-only offer question: '+q,()=>assert.equal(isSalesInformationQuestion(q),true));
 for(const q of ['Actually change it to Sunday.','Yes, but use another pet.','Add a second dog.','Can you change the payment mode?','What equipment do you bring? Also change my address.','Is the price correct? Confirm it now.','I want cash after service.','Use a different package.','What about Complete Makeover instead?'])test('changed or mixed terms are not an information exemption: '+q,()=>assert.equal(isSalesInformationQuestion(q),false));
 test('information follow-up preserves exact quoted offer; subsequent yes executes once after normal validation',async t=>{
  const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);let modelCalls=0;

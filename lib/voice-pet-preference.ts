@@ -14,7 +14,7 @@ export function voicePetPreference(history:unknown,pets:unknown){
   const positive=mentioned.filter(name=>!negative.includes(name));
   // A comparison between named pets cannot silently choose either one. A clear single-pet
   // reference can carry forward through subsequent unnamed service comparisons.
-  const namedPreference=positive.filter(name=>new RegExp(`\\b(?:for|named|name is|mean|pet is)\\s+(?:my (?:dog|cat|pet)\\s+)?${escape(name)}\\b|\\b${escape(name)}(?:[’'s]{1,2}|\\s+(?:needs|is my|is a|weighs|prefers|pulls))` ,'i').test(content));
+  const namedPreference=positive.filter(name=>new RegExp(`\\b(?:for|named|name is|mean|pet is)\\s+(?:my (?:dog|cat|pet)\\s+)?${escape(name)}\\b|\\b${escape(name)}(?:[’'s]{1,2}|\\s+(?:needs|is my|is a|weighs|prefers|pulls)|\\s+(?:is|was)\\s+the\\s+one\\s+(?:we|i)\\s+(?:discussed|meant|mentioned|talked about))` ,'i').test(content));
   if(positive.length===1&&namedPreference.length===1){selected=positive[0];preferenceHistoryIndex=historyIndex;}
   else if(positive.length>1||selected&&negative.includes(selected))selected=null;
  }

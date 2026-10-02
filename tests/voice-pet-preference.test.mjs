@@ -24,3 +24,12 @@ test('assistant errors do not override customer correction; named multi-pet comp
 test('addressing the agent by a saved pet name does not change the current pet',()=>{
  assert.equal(voicePetPreference([...history.slice(0,4),{role:'user',content:'Maya, keep speaking English and explain boarding pricing.'}],pets).petName,'Bruno');
 });
+
+test('natural correction phrase replaces the earlier pet without granting profile authority',()=>{
+ const corrected=voicePetPreference([
+  {role:'user',content:'I want grooming for Bruno.'},
+  {role:'assistant',content:'Okay, Bruno.'},
+  {role:'user',content:'Maya is the one we discussed. Compare boarding too.'},
+ ],pets);
+ assert.equal(corrected.petName,'Maya');assert.equal(corrected.requiresProfileClarification,true);assert.equal(corrected.mutationAuthority,false);
+});
