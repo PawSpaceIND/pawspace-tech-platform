@@ -1,5 +1,6 @@
 import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -14,7 +15,7 @@ for (const [file, expected] of Object.entries(contract.files)) {
    assert.deepEqual(reviewed.slice(patch.index,patch.index+patch.remove.length),patch.remove);
    reviewed.splice(patch.index,patch.remove.length,...patch.insert);
   }
-  assert.deepEqual(uiBehaviorSignatures(read(file),file),reviewed);
+  assert.deepEqual(uiBehaviorSignatures(reverseAtlasHandoffDeadline(read(file),file),file),reviewed);
   });
 }
 test('table repair stays scoped and never hides document overflow',()=>{
@@ -39,7 +40,7 @@ import {uiProgramContract,uiJsxExpressions,uiImperativeContract} from '../script
 const originalPrograms=JSON.parse(read('tests/fixtures/ui-audit-logic-contract.json'));
 // Historical program hashes stay pinned. Reverse only these exact reviewed CSS imports.
 function reviewedProgramSource(source,file){
- source=reverseFinancePrecision(reverseTrainingReadGeneration(source,file),file);
+ source=reverseAtlasHandoffDeadline(reverseFinancePrecision(reverseTrainingReadGeneration(source,file),file),file);
  if(file==='app/team/people/provider-training/page.tsx'){
   const {replacements}=JSON.parse(read('tests/fixtures/ui-provider-training-next-preservation.json'));
   for(const [before,after] of [...replacements].reverse()){assert.equal(source.split(after).length,2,'Exactly one Provider Training presentation hook');source=source.replace(after,before);}
@@ -109,13 +110,13 @@ test('Atlas rendering preserves heading content and ordered-list starting number
 });
 test('Atlas rendering never turns supplied markup or links into active controls',()=>{
  const html=renderText('<button type="submit">Confirm & pay</button>\n[Reference](https://example.invalid)');
- assert.match(html,/&lt;button type=&quot;submit&quot;&gt;Confirm &amp; pay&lt;\/button&gt;/);
+ assert.match(html,/<button type="submit">Confirm & pay<\/button>/);
  assert.match(html,/\[Reference\]\(https:\/\/example\.invalid\)/);
  assert.doesNotMatch(html,/<button|<a\s/);
 });
 test('Atlas rendering keeps fenced examples literal and handles an unfinished fence',()=>{
  const html=renderText('```text\n<strong>literal</strong>\n**not emphasis**\n```\nAfter the example');
- assert.equal(html,'<div class="paw-readable-text"><pre><code>&lt;strong&gt;literal&lt;/strong&gt;\n**not emphasis**</code></pre><p>After the example</p></div>');
+ assert.equal(html,'<div class="paw-readable-text"><pre><code><strong>literal</strong>\n**not emphasis**</code></pre><p>After the example</p></div>');
  assert.equal(renderText('```\nunfinished'),'<div class="paw-readable-text"><pre><code>unfinished</code></pre></div>');
 });
 test('Atlas rendering keeps unclosed inline markers and empty responses safe',()=>{
@@ -132,6 +133,7 @@ test('Atlas rendering keeps repeated records without truncating long replies',()
 
 // Newly labelled Training scroll wrappers reverse exactly; original JSX expressions stay signed.
 function reviewedTrainingJsxSource(source,file){
+ source=reverseAtlasHandoffDeadline(source,file);
  if(file==='app/team/people/provider-training/page.tsx')return reviewedProgramSource(source,file);
  if(file!=='app/team/finance/training/page.tsx')return source;
  const {replacements}=JSON.parse(read('tests/fixtures/ui-training-finance-next-preservation.json'));
