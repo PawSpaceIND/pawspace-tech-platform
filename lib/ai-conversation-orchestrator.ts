@@ -1,1 +1,1 @@
-PLACEHOLDER
+@file:///workspace/pawspace-fix/ai-conversation-orchestrator.ts
