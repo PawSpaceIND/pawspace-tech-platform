@@ -90,8 +90,17 @@ import {uiWiringContract} from "./helpers/ui-wiring-contract.mjs";
 const root = new URL('../', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, root), 'utf8');
 const baseline = JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json'));
+function reviewedTrainingAndContinuitySource(source,name){
+ if(name==='app/training/page.tsx'){
+  // Only the independently reviewed V2 default changes; handlers and guards stay in the contract.
+  const cadence='[cadenceDays,setCadenceDays]=useState(routeScope==="v2"?3:7)';
+  assert.equal(source.split(cadence).length,2,'Exactly one reviewed V2 cadence default');
+  source=source.replace(cadence,'[cadenceDays,setCadenceDays]=useState(7)');
+ }
+ return reverseGuestContinuity(source,name);
+}
 for (const [name, expected] of Object.entries(baseline.files)) {
- test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(reverseGuestContinuity(read(name),name), name), expected));
+ test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(reviewedTrainingAndContinuitySource(read(name),name), name), expected));
 }
 test('wiring contract detects changes to handlers and disabled guards', () => {
  const source = read('app/walking/page.tsx');

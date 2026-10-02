@@ -109,7 +109,11 @@ for (const theme of ["emerald", "signature"] as const) for (const mode of ["ligh
           hero: getComputedStyle(e.closest('section')!).backgroundColor }));
         expect(contrast(pair.color, pair.bg === "rgba(0, 0, 0, 0)" ? pair.hero : pair.bg)).toBeGreaterThanOrEqual(4.5);
       }
-      await expect(links.filter({ hasText: route.endsWith("boarding") ? "Boarding" : "Pet Sitting" })).toHaveAttribute("aria-current", "page");
+      const activeLink = page.locator(`[class*="modeSwitch"] a[href="${route}"]`);
+      await expect(activeLink).toHaveCount(1);
+      await expect(activeLink).toHaveAttribute("aria-current", "page");
+      await expect(links.nth(0)).toHaveText("Boarding · host’s home");
+      await expect(links.nth(1)).toHaveText("Sitting · your home");
       await expect(links.nth(0)).toHaveAttribute("href", "/v2/boarding"); await expect(links.nth(1)).toHaveAttribute("href", "/v2/sitting");
     }
   });
