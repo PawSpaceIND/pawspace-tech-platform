@@ -118,7 +118,7 @@ jobs:
             echo "Historical diagnostic is pinned to staging b0c9e4" >&2
             exit 1
           fi
-          node scripts/read-atlas-scheduled-slots.mjs
+          node scripts/read-atlas-scheduled-slots.mjs > atlas-scheduled-observability-proof.json
 
       - name: Upload sanitized Atlas proof
         if: always()

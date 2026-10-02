@@ -86,7 +86,7 @@
     "tests/ptja-p1-04-governed-grooming-entry.test.mjs": "94c7543cc8d5d1a69018e309f3adf116401e759184c1145543b90ab50068927b",
     "tests/rendered-html.test.mjs": "29a0e7fe7c242c877282c2c8d3210e4314471e89959c6c1f9b6aaf1a88f6d3f0",
     "tests/service-discovery-capacity.test.mjs": "fd5d574bbcb7bd4847c592ec620144a61fcde5a026a341ecbcafce899e0f84dd",
-    "tests/staging-certification.test.mjs": "614b8c3d6abc5b0c3c7fe2a4fc3a5b18b6a3a0e6476f915349c967473e743d44",
+    "tests/staging-certification.test.mjs": "c984198cf5742dcbc01ff02ebc7521b793e391f2c413977d991cd5ba1b29ff14",
     "tests/training-availability-preview.test.mjs": "bf457aa408b7b2659b578177309d6d40c2e9088c6f205de0e282af8938054555",
     "tests/training-calendar-performance.test.mjs": "e35fedf727911c8e6f04c594a29844e9e6d4654a06a1324ebec8a8a78349a602",
     "tests/v2-food-action-error.test.mjs": "e9be37b5748f0052a636d996130efbe7393f1bdec61ee42be9c6e1036253a14d",
