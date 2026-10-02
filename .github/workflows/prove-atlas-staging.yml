@@ -51,6 +51,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           WORKER_NAME: ${{ inputs.worker_name }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
         run: |
           set -euo pipefail
           npx --yes wrangler@4 deployments status --json --name "$WORKER_NAME" > atlas-deployment-provenance.json
@@ -65,13 +66,12 @@ jobs:
           npx --yes wrangler@4 versions view "$ACTIVE_VERSION" --json --name "$WORKER_NAME" > atlas-active-version.json
           node --input-type=module <<'NODE'
           import fs from "node:fs";
+          import {atlasProofProvenanceFields,verifyAtlasProofProvenance} from "./scripts/atlas-proof-provenance.mjs";
           const expected=String(process.env.EXPECTED_SHA||"").trim();
           const version=JSON.parse(fs.readFileSync("atlas-active-version.json","utf8"));
-          const bindings=Array.isArray(version?.resources?.bindings)?version.resources.bindings:[];
-          const release=bindings.find(x=>x?.name==="PAWSPACE_RELEASE_SHA");
-          const env=bindings.find(x=>x?.name==="PAWSPACE_ENVIRONMENT");
-          if(String(release?.text||"")!==expected) throw new Error(`Active Worker product SHA mismatch: expected ${expected}, got ${String(release?.text||"missing")}`);
-          console.log(`active_product_sha=${expected}; environment=${String(env?.text||"unknown")}; percentage=100`);
+          fs.writeFileSync("atlas-provenance-check.json",JSON.stringify({expectedSha:expected,targetEnvironment:process.env.TARGET_ENVIRONMENT,workerName:process.env.WORKER_NAME,...atlasProofProvenanceFields(version)},null,2));
+          const proof=verifyAtlasProofProvenance({version,expectedSha:expected,targetEnvironment:process.env.TARGET_ENVIRONMENT,workerName:process.env.WORKER_NAME});
+          console.log(`active_product_sha=${proof.sha}; environment=${proof.environment}; provenance=${proof.provenance}; percentage=100`);
           NODE
 
       - name: Install Chromium
@@ -92,12 +92,12 @@ jobs:
           node scripts/prove-atlas-staging.mjs
 
       - name: Upload sanitized Atlas proof
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: atlas-business-proof-${{ inputs.expected_sha }}
           path: |
             atlas-staging-proof.json
             atlas-team-ai.png
-            atlas-deployment-provenance.json
-            atlas-active-version.json
+            atlas-provenance-check.json
           if-no-files-found: error
