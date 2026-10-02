@@ -260,6 +260,46 @@ jobs:
           name: maya-three-voice-demos
           path: voice-demo-results/
           retention-days: 7
+  maya-ten-audio-audit:
+    if: ${{ inputs.confirm == 'maya-ten-audio-audit' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Install synthetic microphone tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Run ten multi-turn actual audio conversations without dialing
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node --experimental-strip-types scripts/maya-ten-audio-audit.mjs
+      - name: Save actual demo transcripts and response audio
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maya-ten-audio-audit
+          path: voice-audit-results/
+          retention-days: 7
   diagnose-native-audio:
     if: ${{ inputs.confirm == 'diagnose-native-audio' }}
     runs-on: ubuntu-latest
