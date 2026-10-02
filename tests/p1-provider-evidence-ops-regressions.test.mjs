@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 const root=new URL('../',import.meta.url);
 const text=node=>node==null||typeof node==='boolean'?'':Array.isArray(node)?node.map(text).join(''):typeof node==='object'?text(node.props?.children):String(node);
 function nodes(tree){if(Array.isArray(tree))return tree.flatMap(nodes);if(!tree||typeof tree!=='object')return [];return [tree,...nodes(tree.props?.children)];}
@@ -101,7 +102,8 @@ for(const kind of ['host','sitter'])test(kind+' late B success cannot replace fr
 // Keep the exact presentation preservation checks beside the executed P1 component regressions.
 {
 const readFileSync=fs.readFileSync;
-const base='267db2d279d59094513f4d92fb7214cb5c0efca3';
+const baseline=JSON.parse(readFileSync(new URL('./fixtures/p1-presentation-baseline-pins.json',import.meta.url),'utf8'));
+const baselineHash=source=>createHash('sha256').update(source).digest('hex');
 const changes=[
  ['app/host/proof/page.tsx','<button disabled={!!busy} onClick={()=>void refreshApproval()}>Refresh photo approval','<button style={{minHeight:44}} disabled={!!busy} onClick={()=>void refreshApproval()}>Refresh photo approval'],
  ['app/sitter/proof/page.tsx','<button disabled={!!busy} onClick={()=>void refreshApproval()}>Refresh photo approval','<button style={{minHeight:44}} disabled={!!busy} onClick={()=>void refreshApproval()}>Refresh photo approval'],
@@ -109,16 +111,16 @@ const changes=[
 ];
 for(const [file,old,next] of changes)test(`${file}: scoped 44px control and all other source preserved`,()=>{
  const source=readFileSync(file,'utf8');assert.equal(source.split(next).length,2);
- assert.equal(source.replace(next,old),execFileSync('git',['show',`${base}:${file}`],{encoding:'utf8'}));
+ assert.equal(baselineHash(source.replace(next,old)),baseline.files[file]);
 });
 const file='app/trainer/trainer.module.css';
 const appended='\n/* Keep the session columns within the available workspace width. */\n.actions button{min-height:44px}\n@media(max-width:1100px){.layout{grid-template-columns:minmax(0,1fr)}.schedule,.session{min-width:0}}\n';
 test('Trainer: bounded grid breakpoint and 44px actions, prior CSS preserved',()=>{
  const source=readFileSync(file,'utf8');assert.ok(source.endsWith(appended));
- assert.equal(source.slice(0,-appended.length),execFileSync('git',['show',`${base}:${file}`],{encoding:'utf8'}));
+ assert.equal(baselineHash(source.slice(0,-appended.length)),baseline.files[file]);
  assert.ok(1100>=225+56+320+480+13);
 });
 test('Trainer handlers and shared CSS remain byte-identical',()=>{
- for(const file of ['app/trainer/page.tsx','app/trainer/trainer-extra.module.css'])assert.equal(readFileSync(file,'utf8'),execFileSync('git',['show',`${base}:${file}`],{encoding:'utf8'}));
+ for(const file of ['app/trainer/page.tsx','app/trainer/trainer-extra.module.css'])assert.equal(baselineHash(readFileSync(file,'utf8')),baseline.files[file]);
 });
 }

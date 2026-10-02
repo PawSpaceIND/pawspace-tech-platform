@@ -20,6 +20,10 @@ const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.Comm
 const FINANCE='row.checker@example.test',MAKER='row.maker@example.test',CUSTOMER='row.customer@example.test';
 const BOOKING='TEST-SIT-ROW-A',REFERENCE='TEST-REF-INTENDED-100';
 const flush=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
+async function completedDispatch(completion){
+ let timer;try{await Promise.race([completion,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Actual Finance dispatch did not complete within 15 seconds')),15000);})]);}
+ finally{clearTimeout(timer);}
+}
 function workspace(initialBookingId,prompts){
  let slot=0;const state=[],refs=[],effects=[],pending=[];
  const hooks={createElement:(type,props,...children)=>({type,props:{...props,children}}),Fragment:'fragment',
@@ -51,19 +55,23 @@ test('actual row click records its explicit row or fails closed, never the newer
  assert.notEqual(older.refundId,newer.refundId);
  const rows=()=>f.sqlite.prepare('SELECT id,booking_id,amount,status,reference,created_at FROM sitting_refund_ledger ORDER BY created_at').all().map(row=>({...row}));
  const before=rows();assert.deepEqual(before.map(row=>[row.amount,row.status]),[[100,'sandbox_pending'],[500,'sandbox_pending']]);
- let actor=FINANCE;const calls=[],original=globalThis.fetch;let forbidden=0;t.after(()=>{globalThis.fetch=original;});
+ let actor=FINANCE;const calls=[],original=globalThis.fetch;let forbidden=0;
+ let finishFinanceRead,finishFinancePost;const financeReadCompleted=new Promise(resolve=>{finishFinanceRead=resolve;}),financePostCompleted=new Promise(resolve=>{finishFinancePost=resolve;});
+ t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(path,init={})=>{
   const url=new URL(String(path),'https://app.pawspace.in');
   if(url.origin!=='https://app.pawspace.in'||url.pathname!=='/api/sitting-finance'||!['GET','POST'].includes(init.method||'GET')){forbidden++;throw new Error('Forbidden test transport');}
   const request=asActor(actor,url.pathname+url.search,init),response=await route[init.method||'GET'](request);
-  calls.push({method:init.method||'GET',actor,body:init.body?JSON.parse(String(init.body)):null,status:response.status,response:await response.clone().json()});return response;
+  calls.push({method:init.method||'GET',actor,body:init.body?JSON.parse(String(init.body)):null,status:response.status,response:await response.clone().json()});
+  if(actor===FINANCE){if((init.method||'GET')==='GET')finishFinanceRead();else finishFinancePost();}
+  return response;
  };
  // Customer role cannot mutate either pending row through the same actual client/route.
  actor=CUSTOMER;await assert.rejects(client.updateSittingFinance({bookingId:BOOKING,action:'record_refund',idempotencyKey:'TEST-ROW-CUSTOMER-DENIAL',refundReference:'TEST-ROW-DENIED'}));
  assert.equal(calls.at(-1).status,403);assert.deepEqual(rows(),before);actor=FINANCE;
- const prompts=[],ui=workspace(BOOKING,prompts);ui.render();await flush();let tree=ui.render();
+ const prompts=[],ui=workspace(BOOKING,prompts);ui.render();await completedDispatch(financeReadCompleted);await flush();let tree=ui.render();
  const button=ui.refundButton(tree,100);assert.ok(button,'The genuine UI renders the older INR100 pending refund action');assert.equal(Boolean(button.props.disabled),false);
- button.props.onClick();await flush();tree=ui.render();
+ button.props.onClick();await completedDispatch(financePostCompleted);await flush();tree=ui.render();
  const posted=calls.find(call=>call.method==='POST'&&call.actor===FINANCE&&call.body?.action==='record_refund');assert.ok(posted,'Actual client reached the actual Finance route');
  const after=rows();
  const evidence={source_base:'5e900065ffbd2100f5cd753a9a17fb279b23abc1',component_sha256:createHash('sha256').update(source).digest('hex'),intended_refund:{id:older.refundId,amount:100},newer_refund:{id:newer.refundId,amount:500},before,prompts,posted,after,canonical_cases:f.sqlite.prepare('SELECT id,amount,status,gateway_reference FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at').all().map(row=>({...row})),reconciliation:f.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payment_reconciliation_records'").get()?f.sqlite.prepare('SELECT * FROM payment_reconciliation_records WHERE payment_id=?').get('PAY-'+BOOKING):null,customer_denial_status:403,forbidden_transport_attempts:forbidden,limitations:'Deterministic React hook adapter and in-process HTTP; real client/route/SQLite governance. Seeded collected payment; no hosted UI, gateway transport, live money, GST acceptance or customer contact.'};
