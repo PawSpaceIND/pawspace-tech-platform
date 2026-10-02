@@ -75,6 +75,31 @@ on:
 permissions:
   contents: read
 jobs:
+  component-credential-diagnostic:
+    if: ${{ inputs.confirm == 'component-audio-diagnose' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Classify existing provider metadata authentication (GET only, no generation)
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+        run: node scripts/component-audio-credential-diagnostic.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maya-component-credential-diagnostic
+          path: artifacts/component-credential-diagnostic/report.json
+          retention-days: 7
   component-audio:
     if: ${{ inputs.confirm == 'component-audio-bounded' }}
     runs-on: ubuntu-latest

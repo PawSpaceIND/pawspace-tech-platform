@@ -22,19 +22,29 @@ export async function componentSourceFingerprint(directory){
  await walk('lib');await walk('tests/helpers');files.sort();const digest=createHash('sha256');for(const p of files)digest.update(p+'\0'+hash(await readFile(resolve(directory,p)))+'\n');return {files:files.length,sha256:digest.digest('hex')};
 }
 export async function remoteComponentLedger(env,fetcher=fetch){
- for(const k of ['CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_API_TOKEN','STAGING_D1_ID','PRODUCTION_D1_ID'])if(!env[k])throw Error('component_missing_existing_binding:'+k);
- if(env.STAGING_D1_ID===env.PRODUCTION_D1_ID||!/^[a-zA-Z0-9-]{20,64}$/.test(env.STAGING_D1_ID)||!/^[a-zA-Z0-9]{20,64}$/.test(env.CLOUDFLARE_ACCOUNT_ID))throw Error('component_database_identity_invalid');
+ for(const k of ['CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_API_TOKEN','STAGING_D1_ID'])if(!env[k])throw Error('component_missing_existing_binding:'+k);
+ if(env.PRODUCTION_D1_ID&&env.STAGING_D1_ID===env.PRODUCTION_D1_ID||!/^[a-zA-Z0-9-]{20,64}$/.test(env.STAGING_D1_ID)||!/^[a-zA-Z0-9]{20,64}$/.test(env.CLOUDFLARE_ACCOUNT_ID))throw Error('component_database_identity_invalid');
  const origin='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)+'/d1/database/'+encodeURIComponent(env.STAGING_D1_ID);
  async function api(payload){
   const r=await fetcher(origin+(payload?'/query':''),{method:payload?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(payload?{body:JSON.stringify(payload)}:{}),redirect:'error',signal:AbortSignal.timeout(15000)});
   const x=JSON.parse((await readComponentBytes(r,512*1024)).toString());if(x.success!==true||payload&&(!Array.isArray(x.result)||x.result.some(y=>y.success===false)))throw Error('component_ledger_refused');return x.result;
  }
  const metadata=await api();if(metadata.name!=='pawspace-staging'||metadata.uuid!==env.STAGING_D1_ID)throw Error('component_staging_ledger_not_verified');
+ let productionId=env.PRODUCTION_D1_ID;
+ if(!productionId){
+  // Missing nonsecret ID is resolved from canonical database metadata, never guessed or granted.
+  const listUrl='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)+'/d1/database?name=pawspace-prod-bengaluru';
+  const r=await fetcher(listUrl,{method:'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN},redirect:'error',signal:AbortSignal.timeout(15000)});
+  const x=JSON.parse((await readComponentBytes(r,512*1024)).toString());
+  const matches=x.success===true&&Array.isArray(x.result)?x.result.filter(d=>d.name==='pawspace-prod-bengaluru'&&typeof d.uuid==='string'):[];
+  if(matches.length!==1)throw Error('component_production_identity_metadata_unresolved');productionId=matches[0].uuid;
+ }
+ if(productionId===env.STAGING_D1_ID||!/^[a-zA-Z0-9-]{20,64}$/.test(productionId))throw Error('component_database_identity_invalid');
  const statement=(sql,params=[])=>{
   if(!/\bmanaged_audio_(?:test_budget|component_runs)\b/.test(sql)||/\b(?:canonical_|communication_|ai_voice_|DROP|DELETE|ALTER|TRUNCATE|ATTACH)\b/i.test(sql))throw Error('component_ledger_sql_scope_refused');
   return {sql,params,bind:(...p)=>statement(sql,p),run:async()=>(await api({sql,params}))[0],first:async()=>(await api({sql,params}))[0]?.results?.[0]??null};
  };
- return {prepare:statement,batch:async items=>api({batch:items.map(({sql,params})=>({sql,params}))})};
+ return {identityReceipt:{stagingName:'pawspace-staging',productionName:'pawspace-prod-bengaluru',differentDatabasesVerified:true,productionIdSource:env.PRODUCTION_D1_ID?'existing_binding':'existing_authenticated_canonical_metadata'},prepare:statement,batch:async items=>api({batch:items.map(({sql,params})=>({sql,params}))})};
 }
 export async function readComponentVoice(env,fetcher=fetch){
  const region=String(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
@@ -70,7 +80,7 @@ export async function mainComponentAudio(env=process.env){
  try{
   if(env.COMPONENT_AUDIO_CONFIRM!=='component-audio-bounded')throw Error('component_exact_execution_mode_required');if(!env.PAWSPACE_OPENAI_API_KEY||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||''))throw Error('component_existing_key_or_pinned_source_missing');
   const expected=JSON.parse(await readFile(new URL('./component-audio-source.json',import.meta.url),'utf8')),actual=await componentSourceFingerprint(resolve(fileURLToPath(new URL('..',import.meta.url))));if(actual.sha256!==expected.sha256||actual.files!==expected.files)throw Error('component_reviewed_brain_source_changed');report.applicationSource=expected;
-  const voice=await readComponentVoice(env,originalFetch);report.speech=voice.receipt;const db=await remoteComponentLedger(env,originalFetch),scope=env.COMPONENT_AUDIO_SCOPE||'grooming-first';if(!['grooming-first','five-services','resume-other-services','retest-grooming'].includes(scope))throw Error('component_scope_invalid');
+  const voice=await readComponentVoice(env,originalFetch);report.speech=voice.receipt;const db=await remoteComponentLedger(env,originalFetch);report.ledgerIdentity=db.identityReceipt;const scope=env.COMPONENT_AUDIO_SCOPE||'grooming-first';if(!['grooming-first','five-services','resume-other-services','retest-grooming'].includes(scope))throw Error('component_scope_invalid');
   // No provider generation occurs before the durable shared $5 reservation. Resume never resets.
   const lease=env.COMPONENT_AUDIO_RUN_ID?await resumeComponentLease(db,env.COMPONENT_AUDIO_RUN_ID,env.GITHUB_SHA):await startComponentLease(db,env.GITHUB_SHA);report.lease=lease;
   const guard=componentNetworkGuard({fetcher:originalFetch,region:voice.region,voiceId:voice.voiceId,claim:kind=>claimComponentRequest(db,lease,kind),onRequest:kind=>report.paidRequests[kind]++});globalThis.fetch=guard.fetch;

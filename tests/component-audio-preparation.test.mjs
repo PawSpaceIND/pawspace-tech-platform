@@ -62,3 +62,9 @@ test('standard premade voice metadata refuses reward/unknown paid library voices
  await assert.rejects(()=>readComponentVoice(env,async()=>Response.json({voices:[{voice_id:'private',category:'professional',sharing:{financial_rewards_enabled:true}}]})),/no_fee_bound/);
  const v=await readComponentVoice(env,async()=>Response.json({voices:[{voice_id:'standard',category:'premade',sharing:null,labels:{gender:'female'}}]}));assert.equal(v.voiceId,'standard');assert.equal(v.receipt.nativeAgentVoiceTested,false);
 });
+test('missing production ID resolves only canonical authenticated metadata before any budget SQL',async()=>{
+ const {remoteComponentLedger}=await import('../scripts/run-component-audio.mjs');const env={CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),CLOUDFLARE_API_TOKEN:'offline',STAGING_D1_ID:'11111111-1111-1111-1111-111111111111'};const calls=[];
+ const db=await remoteComponentLedger(env,async(url,init)=>{calls.push({url,init});assert.equal(init.method,'GET');return Response.json({success:true,result:url.includes('?name=')?[{name:'pawspace-prod-bengaluru',uuid:'22222222-2222-2222-2222-222222222222'}]:{name:'pawspace-staging',uuid:env.STAGING_D1_ID}});});
+ assert.equal(calls.length,2);assert.equal(db.identityReceipt.productionIdSource,'existing_authenticated_canonical_metadata');assert.equal(db.identityReceipt.differentDatabasesVerified,true);
+ await assert.rejects(()=>remoteComponentLedger(env,async(url)=>Response.json({success:true,result:url.includes('?name=')?[{name:'pawspace-prod-bengaluru',uuid:env.STAGING_D1_ID}]:{name:'pawspace-staging',uuid:env.STAGING_D1_ID}})),/identity_invalid/);
+});
