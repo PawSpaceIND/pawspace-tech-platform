@@ -18,6 +18,10 @@ test('price hesitation alone cannot grant a model coupon proposal',async t=>{
  globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');sent=JSON.parse(init.body);return Response.json({status:'completed',output_text:overrideOutput??JSON.stringify({reply:'Let me prepare the package details.',actions}),usage:{total_tokens:20}});};
  const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
  const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ globalThis.__AI_DB__=w.db;globalThis.__PAWSPACE_TEST_ENV__=globalThis.__GROOM_GOLDEN_ENV__;
+ await(await import('../lib/ai-audience-rollout.ts')).setAiRolloutStage(w.db,{stage:'customers',reason:'Synthetic requested discount replay',actorEmail:actor.email});
+ await(await import('../lib/voice-sales-specialists.ts')).ensureVoiceSalesOffers(w.db);
+ const runDeniedReplay=async statement=>(await import('../lib/elevenlabs-custom-llm.ts')).runElevenLabsGroundedTurn(w.db,{model:'pawspace-grooming-sales',input:[{role:'user',content:'Any approved discount for grooming?'},{role:'assistant',content:'I can check eligible offers.'},{role:'user',content:statement}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
  const message='The price is too high for my budget.';
  const result=await provider.generate({threadId,customerId,channel:'voice',inputText:message,intent:orchestrator.classifyAiIntent(message),context:{}});
  assert.equal(result.actionRequests?.length??0,0,'unrequested coupon must not reach quote preparation');
@@ -29,6 +33,16 @@ test('price hesitation alone cannot grant a model coupon proposal',async t=>{
  assert.equal(customerRequestedVoiceDiscount([{role:'assistant',content:'Would you like an approved coupon?'}],'Yes.'),false,'an unsolicited assistant offer cannot grant discount permission');
  assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount?'}],'No discounts please.'),false);
  assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount?'}],'Please prepare a quote for the same package.'),true);
+ for(const statement of ['Can you prepare grooming without applying a discount?','Please prepare grooming without using the approved coupon.','Prepare a regular quote.'])assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],statement),false,statement);
+ assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'Actually switch to boarding. Prepare a regular quote.'),false);
+ assert.equal(customerRequestedVoiceDiscount([{role:'user',content:'Any approved discount for grooming?'}],'What about boarding?'),false);
+ for(const statement of ['Can you prepare grooming without applying a discount?','Actually switch to boarding. Prepare a regular quote.']){
+  const denied=await provider.generate({threadId,customerId,channel:'voice',inputText:statement,intent:orchestrator.classifyAiIntent(statement),context:{conversationHistory:[{role:'user',content:'Any approved discount for grooming?'}]}});
+  assert.equal(denied.actionRequests?.length??0,0,statement);
+  await runDeniedReplay(statement);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers WHERE customer_id=?').get(customerId).n,0,statement);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?').get(customerId).n,0,statement);
+ }
  const request='Could you apply the approved coupon?';
  const requested=await provider.generate({threadId,customerId,channel:'voice',inputText:request,intent:orchestrator.classifyAiIntent(request),context:{}});
  assert.equal(requested.actionRequests.length,3,'an explicitly requested eligible coupon still follows unconfirmed quote preparation');
