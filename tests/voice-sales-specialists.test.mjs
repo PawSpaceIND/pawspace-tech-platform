@@ -495,3 +495,20 @@ for(const serviceCode of [undefined,'grooming'])test(`nested stay reservation ca
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled'").get(w.customerId).n,0);
  assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+// The attended demo asked this exact plural question after choosing Bruno.
+test('plural package enquiry preserves a pending quote and reaches the read-only provider',async t=>{
+ const w=await world(t),offer=await prepare(w),before=w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id);let modelCalls=0;
+ assert.equal(isSalesInformationQuestion('What are the packages available?'),true);
+ const provider={salesService:'grooming',status:'connected',provider:'test',modelRef:'test',async generate(input){
+  modelCalls++;assert.equal(input.intent.intent,'service_info');
+  assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'pending');
+  return{text:'Essential Bath and Complete Makeover are the grooming packages.',provider:'test',modelRef:'test',latencyMs:1,catalogueVerifiedPrices:true,offerClaimsVerified:true};
+ }};
+ const result=await turn(w,'What are the packages available?','attended-packages',provider);
+ assert.equal(modelCalls,1);assert.notEqual(result.turn.outcome,'handoff');
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM voice_sales_offers WHERE id=?').get(offer.id),before);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ for(const question of ['What are the prices?','Which packages are available?','What do the packs cost?'])assert.equal(isSalesInformationQuestion(question),true);
+ for(const question of ['What are the packages? Book one now.','Which packages should I use instead?','What are the prices? Confirm the booking.'])assert.equal(isSalesInformationQuestion(question),false);
+});
