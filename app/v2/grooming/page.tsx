@@ -3,6 +3,8 @@ import {subscriptionPackage,subscriptionSavings} from "../../../lib/v2/grooming-
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
+import GroomingVerifiedAddressPicker from "./verified-address-picker";
+import GroomingCustomerIntake from "./customer-intake";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { couponNeedsReapply } from "../../../lib/coupon-reapply-guard";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
@@ -399,7 +401,17 @@ export default function V2GroomingPage() {
 
           <section id="v2-grooming-address" tabIndex={-1} aria-labelledby="v2-grooming-address-title" className={styles.step} onFocusCapture={() => setActiveStep(3)}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2 id="v2-grooming-address-title">Where should we come?</h2></div></div>
+            <GroomingCustomerIntake account={account} disabled={checkoutBusy} onProfileSaved={setAccount} />
+            <p className={styles.helper}>Save your contact details and address once, then reuse them for future visits. Pet photos are optional in your pet profile.</p>
             {account.addresses.length>0&&<label>Saved service address<select style={{display:"block",width:"100%",maxWidth:"100%"}} value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
+            <GroomingVerifiedAddressPicker disabled={checkoutBusy} onInvalidated={() => {
+              if(checkoutLock.current)return;
+              invalidateDoorstep();setCoverageError("");setAddress("");setPincode("");setSavedAddressId("");setSaveAddress(false);
+            }} onSelect={draft => {
+              if(checkoutLock.current)return;
+              invalidateDoorstep();setCoverageError("");setAddress(draft.address);setPincode(draft.pincode);setSavedAddressId("");setSaveAddress(false);setCoverage(draft.coverage);
+            }}/>
+            <details><summary>Use device location instead</summary>
             <GroomingLocationAssist key={JSON.stringify([account.customerId, address, pincode, savedAddressId, locationRevision])}
               disabled={checkoutBusy} onPendingChange={onLocationPendingChange} onManualEntry={editServiceAddress}
               onConfirm={draft => {
@@ -408,6 +420,7 @@ export default function V2GroomingPage() {
                 setSavedAddressId(""); setSaveAddress(false); setLocationRevision(value => value + 1);
                 addressInputRef.current?.focus();
               }} />
+            </details>
             {address && <button type="button" className={styles.liveButton} onClick={editServiceAddress}>Change address</button>}
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input ref={addressInputRef} value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
@@ -422,14 +435,14 @@ export default function V2GroomingPage() {
 
           <section id="v2-grooming-time" tabIndex={-1} aria-labelledby="v2-grooming-time-title" className={styles.step} onFocusCapture={() => setActiveStep(4)}>
             <div className={styles.stepHead}><span>04</span><div><small>LIVE AVAILABILITY</small><h2 id="v2-grooming-time-title">Pick a beautiful time</h2></div></div>
-            <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
+            <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} aria-pressed={date === item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
             <div className={styles.slotGrid}>{SLOT_LABELS.map((label, index) => {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
             <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy || locationPending} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
-            {providerError && <p className={styles.inlineError}>{providerError}</p>}
+            {providerError && <p role="alert" className={styles.inlineError}>{providerError}</p>}
           </section>
 
           {providers && providers.providers.length > 0 && <section className={styles.step}>
