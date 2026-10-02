@@ -7,6 +7,7 @@ import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-b
 import { sanitizeAiProviderText } from "./ai-provider-safety";
 import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
 import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
+import { isNextAudioThread, reserveNextAudioAttempt } from "./next-audio-budget";
 
 export type AiProviderRef = "openai" | "anthropic";
 export const AI_PROVIDER_REF: AiProviderRef = "anthropic";
@@ -221,7 +222,7 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
   const abortError=()=>Object.assign(new Error("AI provider request cancelled"),{name:"AbortError"});
   const assertActive=()=>{if(input.signal?.aborted)throw abortError();};
   assertActive();
@@ -244,6 +245,15 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
 
   let reservation: AiRuntimeReservation = null;
+  // The additional pool covers every actual request, including voice recovery and proposal repair.
+  // Missing D1, pinned inclusive rates, expired lease or exhausted balance denies external fetch.
+  if (input.nextAudioConversation && isNextAudioThread(input.nextAudioConversation.threadId)) {
+    if (!db || input.channel !== "voice" || str(env,"PAWSPACE_DEPLOYMENT_ENV")!=="staging" || str(env,"FORBID_PRODUCTION")!=="true" || str(env,"PAWSPACE_VOICE_PHONE_TESTS_PAUSED")!=="true" || str(env,"PAWSPACE_PAYMENT_ENV")!=="sandbox" || str(env,"PAWSPACE_PAYMENT_LIVE_APPROVED")!=="false") return fail("runtime_control_unavailable");
+    try {
+      await reserveNextAudioAttempt(db,{...input.nextAudioConversation,provider:providerRef,model:modelRef,sourceSha:str(env,"PAWSPACE_STAGING_BUILD_SHA"),systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,outputTokens:maxTokens,now:Date.now()});
+    } catch { return fail("runtime_control_unavailable"); }
+    assertActive();
+  }
   if (db) {
     mark("reservationStarted");
     const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
