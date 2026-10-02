@@ -1,4 +1,5 @@
 "use client";
+import type {StayGuestDraft} from "../../lib/v2/stay-guest-draft";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./stay-flow.module.css";
 import Link from "next/link";
@@ -131,7 +132,7 @@ async function previewSittersPatiently(request: UatScheduleRequest, signal: Abor
     return previewSitters(request, { signal });
   }
 }
-export default function StayFlow({ mode: initialMode, customer, onModeChange, routeScope="legacy" }: { routeScope?:"legacy"|"v2"; mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
+export default function StayFlow({ mode: initialMode, customer, onModeChange, routeScope="legacy", initialGuestDraft, onGuestDraftConsumed }: { initialGuestDraft?:StayGuestDraft;onGuestDraftConsumed?:()=>void; routeScope?:"legacy"|"v2"; mode: Mode; customer: LoggedInCustomer; onModeChange?:(mode:Mode)=>void }) {
   const actionLock=useRef(false);
   const careFieldsRef = useRef<HTMLDivElement>(null);
   const [careValidationShown, setCareValidationShown] = useState(false);
@@ -150,8 +151,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [showPetManager, setShowPetManager] = useState(false),
     [selectedNeeds, setSelectedNeeds] = useState<string[]>([]),
     [selectedBenefits, setSelectedBenefits] = useState<string[]>([]),
-    [startTime, setStartTime] = useState("09:00"),
-    [endTimeInput, setEndTime] = useState("09:00"),
+    [startTime, setStartTime] = useState(initialGuestDraft?.startTime??"09:00"),
+    [endTimeInput, setEndTime] = useState(initialGuestDraft?.endTime??"09:00"),
     [foodType, setFoodType] = useState(""),
     [sitters,setSitters] = useState<Caregiver[]>([]),
     [sitterWindowKey,setSitterWindowKey] = useState(""),
@@ -166,8 +167,8 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [taxi, setTaxi] = useState(false),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(false),
-    [start, setStart] = useState(() => dateOffset(3)),
-    [endInput, setEnd] = useState(() => dateOffset(10)),
+    [start, setStart] = useState(() => initialGuestDraft?.start??dateOffset(3)),
+    [endInput, setEnd] = useState(() => initialGuestDraft?.end??dateOffset(10)),
     [bookingId, setBookingId] = useState(""),
     [confirmedTotal, setConfirmedTotal] = useState<number | null>(null),
     [scheduling, setScheduling] = useState(false),
@@ -185,7 +186,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     [toast, setToast] = useState(""),
     [pendingPayment,setPendingPayment]=useState<{bookingId:string;serviceName:string;total:number;dueNow:number;mode:"prepaid"|"split_50_50"}|null>(null);
   // SIT-04 (owner decision): a Pet Sitting Home Visit is one 60-minute visit from the chosen start; only Overnight has a check-out.
-  const [sittingCare, setSittingCare] = useState<"visit" | "overnight">("overnight");
+  const [sittingCare, setSittingCare] = useState<"visit" | "overnight">(initialGuestDraft?.sittingCare??"overnight");
   const visitMode = mode === "sitting" && sittingCare === "visit", visitEnd = visitMode ? homeVisitEnd(start, startTime) : null;
   const end = visitMode ? visitEnd?.date ?? start : endInput, endTime = visitMode ? visitEnd?.time ?? startTime : endTimeInput;
   // The Plan step's notice and horizon check reads this clock, refreshed each minute while the page is open.
@@ -373,6 +374,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
     } catch(error){setScheduleError(plainErrorMessage(error,"No host or sitter is available for the full care window"));} finally {actionLock.current=false;setScheduling(false);}
 
   };
+  useEffect(()=>{if(bookingId)onGuestDraftConsumed?.();},[bookingId,onGuestDraftConsumed]);
   if(pendingPayment)return <StayCarePaymentGate key={pendingPayment.bookingId} routeScope={routeScope} mode={mode} carePlan={confirmedCarePlan??careDraft} payment={pendingPayment} hostRequests={mode==="boarding"?selectedBenefits:[]} onVerified={()=>{setCareSaveError("");setPendingPayment(null);setConfirmed(true);}}/>;
   if(recoveryBookingId)return <BookingReferenceRecovery bookingId={recoveryBookingId} service={mode} routeScope={routeScope} className={styles.flow}/>;
   if (confirmed)
