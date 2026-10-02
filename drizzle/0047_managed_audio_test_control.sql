@@ -1,0 +1,5 @@
+-- Inactive managed synthetic audio controls; pricing evidence remains empty.
+CREATE TABLE IF NOT EXISTS managed_audio_test_budget (id TEXT PRIMARY KEY,cap_micros INTEGER NOT NULL CHECK(cap_micros=5000000),reserved_micros INTEGER NOT NULL DEFAULT 0 CHECK(reserved_micros BETWEEN 0 AND 5000000));
+CREATE TABLE IF NOT EXISTS managed_audio_fee_evidence (id TEXT PRIMARY KEY,agent_config_sha256 TEXT NOT NULL,provider_region TEXT NOT NULL,optional_upper_micros INTEGER,valid_until INTEGER NOT NULL,evidence_reference TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS managed_audio_test_conversations (thread_id TEXT PRIMARY KEY,call_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,budget_id TEXT NOT NULL,profile TEXT NOT NULL,max_attempts INTEGER NOT NULL CHECK(max_attempts=6),max_output_tokens INTEGER NOT NULL CHECK(max_output_tokens=700),attempts_used INTEGER NOT NULL DEFAULT 0 CHECK(attempts_used BETWEEN 0 AND 6),reservation_id TEXT NOT NULL UNIQUE,reserved_micros INTEGER NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO managed_audio_test_budget (id,cap_micros,reserved_micros) VALUES ('managed-audio-approved-usd5-20261002',5000000,0);

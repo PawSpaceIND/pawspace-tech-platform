@@ -1,3 +1,4 @@
+import { assertManagedAudioSendAllowed } from "./managed-audio-test-control";
 import{ensureWhatsAppUatTables}from"./whatsapp-uat-adapter";
 import{failOutboxAttempt,recordDeliveryEvent}from"./communication-engine";
 
@@ -52,6 +53,7 @@ export function buildMetaWhatsAppRequest(input:{recipient:string;templateKey?:st
 }
 
 export async function dispatchMetaWhatsAppUat(db:D1Database,env:Env,input:{messageId:string;recipient:string;fetcher?:Fetcher}){
+ assertManagedAudioSendAllowed(env);
  await ensureWhatsAppUatTables(db);const message=await db.prepare("SELECT m.*,o.status outbox_status,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.id=?").bind(input.messageId).first<Row>();
  if(!message||text(message.channel)!=="whatsapp")throw new Error("Queued WhatsApp communication message not found");
  if(!["queued","retry_pending","scheduled"].includes(text(message.outbox_status)))return{status:"already_dispatched",outboxStatus:text(message.outbox_status),externalDelivery:false,productionDelivery:false};

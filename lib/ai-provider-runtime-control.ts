@@ -1,3 +1,4 @@
+import { claimManagedAudioAttempt, isManagedAudioThread, managedAudioNoSend } from "./managed-audio-test-control";
 type Env=Record<string,unknown>;
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -57,9 +58,12 @@ function sweepExpiredReservations(db:D1Database,env:Env,now:number){
   .bind(now,now-ttl).run().catch(()=>{/* housekeeping only; the next turn past the TTL retries */});
 }
 
-export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{provider:string;modelRef:string;channel?:string;intent?:string;systemPrompt:string;userPrompt:string;maxOutputTokens:number;asOf?:number}):Promise<AiRuntimePreflight>{
+export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{provider:string;modelRef:string;channel?:string;intent?:string;systemPrompt:string;userPrompt:string;maxOutputTokens:number;managedConversation?:{threadId:string;customerId:string};asOf?:number}):Promise<AiRuntimePreflight>{
  const now=input.asOf??Date.now();
  try{
+  const managed=input.managedConversation;
+  if(managedAudioNoSend(env)&&(!managed||!isManagedAudioThread(managed.threadId)))return{allowed:false,reason:"runtime_control_unavailable"};
+  if(managed&&isManagedAudioThread(managed.threadId))await claimManagedAudioAttempt(db,env,{...managed,provider:input.provider,modelRef:input.modelRef,maxOutputTokens:input.maxOutputTokens,now});
   await ensureAiProviderRuntimeControl(db);
   sweepExpiredReservations(db,env,now);
 

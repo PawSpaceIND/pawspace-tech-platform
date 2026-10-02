@@ -1,3 +1,4 @@
+import { isManagedAudioThread } from "./managed-audio-test-control";
 import { voiceAllowlist, normalisedDialKey, telephonyCredentialsConfigured, statusCallbackUrl } from "./voice-call-gate";
 type Env = Record<string, unknown>;
 type Row = Record<string, unknown>;
@@ -9,7 +10,7 @@ export const isNativeDemoThread = (threadId: string) => threadId.startsWith("THR
 export async function assertNativeDemoBusinessAllowed(_db: D1Database, threadId: string) {
  // The immutable call/thread namespace is the durable deny marker. Deleting, expiring or revoking
  // a grant must never restore authority to execute a previously informational demo conversation.
- if (isNativeDemoThread(threadId)) throw new Response("This attended demo cannot create or change bookings, reservations or payments", { status: 403 });
+ if (isNativeDemoThread(threadId) || isManagedAudioThread(threadId)) throw new Response("This attended demo cannot create or change bookings, reservations or payments", { status: 403 });
 }
 async function hash(value: string) {
  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), b => b.toString(16).padStart(2, "0")).join("");

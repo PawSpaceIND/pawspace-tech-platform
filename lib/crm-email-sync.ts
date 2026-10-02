@@ -1,3 +1,4 @@
+import { assertManagedAudioSendAllowed } from "./managed-audio-test-control";
 import { centralConsentAllows, reserveCommunicationFrequency } from "./communication-governance";
 import { ensureCommunicationTables } from "./communication-engine";
 
@@ -83,6 +84,7 @@ export async function syncCalendarEvents(db: Db, input: { provider: string; even
 }
 
 export async function dispatchEmailOutbox(db: Db, env: Record<string, unknown>, input: { limit?: number; asOf?: number } = {}) {
+ assertManagedAudioSendAllowed(env);
   await ensureCrmEmailTables(db);
   const apiUrl = text(env.PAWSPACE_EMAIL_PROVIDER_URL), apiKey = text(env.PAWSPACE_EMAIL_PROVIDER_API_KEY), from = text(env.PAWSPACE_EMAIL_FROM);
   if (!apiUrl || !apiKey || !from) return { processed: 0, sent: 0, configurationRequired: true };

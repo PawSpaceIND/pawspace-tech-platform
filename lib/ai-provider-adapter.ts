@@ -1,3 +1,4 @@
+import { isManagedAudioThread, managedAudioNoSend, MANAGED_AUDIO_OUTPUT_TOKENS } from "./managed-audio-test-control";
 /**
  * The single boundary between PawSpace and an external language-model provider.
  * Every external request is privacy-sanitized, governance-checked, budgeted and circuit-broken here.
@@ -219,7 +220,7 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; managedConversation?: { threadId: string; customerId: string }; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
@@ -233,14 +234,17 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
-  const maxTokens = Math.min(8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000)));
+  const managed = Boolean(input.managedConversation && isManagedAudioThread(input.managedConversation.threadId));
+  if (managedAudioNoSend(env) && !managed) return fail("runtime_control_unavailable");
+  const maxTokens = Math.min(managed ? MANAGED_AUDIO_OUTPUT_TOKENS : 8_000, Math.max(1, Math.floor(Number(input.maxTokens) || 2_000)));
   const db = env.DB as D1Database | undefined;
+  if (!db && managed) return fail("runtime_control_unavailable");
   if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
 
   let reservation: AiRuntimeReservation = null;
   if (db) {
     mark("reservationStarted");
-    const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
+    const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens, managedConversation: input.managedConversation });
     mark("reservationCompleted");
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;

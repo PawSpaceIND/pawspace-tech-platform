@@ -1,3 +1,4 @@
+import { assertManagedAudioSendAllowed } from "./managed-audio-test-control";
 import { centralConsentAllows, recordGlobalOptOut, reserveCommunicationFrequency } from "./communication-governance";
 import { resolveCanonicalRecipientOwnership } from "./canonical-recipient-ownership";
 import { ensureCommunicationTables, failOutboxAttempt, recordDeliveryEvent } from "./communication-engine";
@@ -65,6 +66,7 @@ function countryAndPhone(dialNumber: string) {
 }
 
 export async function dispatchInteraktWhatsApp(db: Db, env: Env, input: { messageId: string; recipient?: string | null; timeoutMs?: number; fetcher?: Fetcher }) {
+ assertManagedAudioSendAllowed(env);
   await ensureCommunicationTables(db);
   const message = await db.prepare("SELECT m.*,o.status outbox_status,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.id=?").bind(input.messageId).first<Row>();
   if (!message) throw new Error("Queued communication message not found");

@@ -1,3 +1,5 @@
+import { managedAudioNoSend } from "../lib/managed-audio-test-control";
+import { managedAudioRequestBlock } from "../lib/managed-audio-isolation";
 import{handleStagingFixtureIsolation}from"../lib/staging-fixture-isolation";
 import{d1ServerTiming,installD1RequestTiming,withD1RequestTiming}from"../lib/d1-request-timing";
 import {sweepPartnerHeartbeats} from "../lib/partner-job-heartbeat";
@@ -112,6 +114,7 @@ const worker = {
   },
   async handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const managedBlock=await managedAudioRequestBlock(request,env);if(managedBlock)return managedBlock;
     try{
 
     // Lightweight edge liveness probe: no auth, D1, secrets, or external integrations.
@@ -206,6 +209,7 @@ const worker = {
     }
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
+    if(managedAudioNoSend(env))return;
     ctx.waitUntil((async()=>{
       // Scheduled money work can be the first invocation after deploy, so establish the finance schema
       // before any concurrent money/reconciliation sweep begins.
