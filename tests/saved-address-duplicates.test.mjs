@@ -42,3 +42,40 @@ test('conservative projection preserves coordinate differences, unknown evidence
  assert.equal(sameSavedAddress(base,{...base,postalCode:'560068'}),false);
  assert.equal(sameSavedAddress(base,{...base,area:'Different area'}),false);
 });
+
+async function collisionWorld(t){
+ const sqlite=new DatabaseSync(':memory:');t.after(()=>sqlite.close());const db=d1(sqlite);await ensureCustomerAccountTables(db);
+ for(const owner of ['A','C-A','CA'])sqlite.prepare("INSERT INTO canonical_customers(id,city_id,name,primary_phone,created_at,updated_at) VALUES(?,'blr','Synthetic','9876500000',1,1)").run(owner);
+ return {sqlite,db,save:(owner,key,address)=>mutateCustomerAccount(db,{customerId:owner,action:'upsert_address',idempotencyKey:key,address})};
+}
+const colliders=[{...base,line1:'27312 Test Road',line2:'Unit 3196515248'},{...base,line1:'28995 Test Road',line2:'Unit 3845913171'}];
+test('actual historical 32-bit collision and lossy customer tokens retain distinct canonical records',async t=>{
+ const w=await collisionWorld(t);
+ const results=[];
+ for(const [index,address] of colliders.entries())results.push(await w.save('A',`collision-${index}`,address));
+ results.push(await w.save('C-A','owner-hyphen',colliders[0]),await w.save('CA','owner-plain',colliders[0]));
+ assert.equal(new Set(results.map(row=>row.entityId)).size,4);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM customer_addresses').get().n,4);
+ for(const result of results)assert.equal(w.sqlite.prepare('SELECT customer_id FROM customer_addresses WHERE id=?').get(result.entityId).customer_id,result.customerId);
+});
+test('actual concurrent D1 saves reuse equivalent records and preserve different unit records',async t=>{
+ const w=await collisionWorld(t);
+ const equivalent=await Promise.all([w.save('A','race-1',base),w.save('A','race-2',{...base,line1:'12, Bengaluru, 100 Feet Road, Indiranagar, 560038'})]);
+ assert.equal(equivalent[0].entityId,equivalent[1].entityId);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM customer_addresses').get().n,1);
+ const different=await Promise.all([w.save('A','unit-1',{...base,line2:'Unit 1'}),w.save('A','unit-2',{...base,line2:'Unit 2'})]);
+ assert.notEqual(different[0].entityId,different[1].entityId);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM customer_addresses').get().n,3);
+});
+test('forced digest collisions reject different identities and foreign owners without overwrites or false receipts',async t=>{
+ const w=await collisionWorld(t),original=crypto.subtle.digest;
+ crypto.subtle.digest=async()=>new Uint8Array(32).buffer;t.after(()=>{crypto.subtle.digest=original;});
+ const first=await w.save('C-A','forced-first',colliders[0]);
+ const before=w.sqlite.prepare('SELECT * FROM customer_addresses').all();
+ for(const [owner,key,address] of [['C-A','forced-distinct',colliders[1]],['CA','forced-foreign',colliders[0]]]){
+  await assert.rejects(w.save(owner,key,address),error=>error instanceof Response&&error.status===409);
+  assert.deepEqual(w.sqlite.prepare('SELECT * FROM customer_addresses').all(),before);
+  assert.equal(w.sqlite.prepare('SELECT count(*) n FROM customer_account_mutations WHERE idempotency_key=?').get(key).n,0);
+ }
+ assert.equal(w.sqlite.prepare('SELECT customer_id FROM customer_addresses WHERE id=?').get(first.entityId).customer_id,'C-A');
+});

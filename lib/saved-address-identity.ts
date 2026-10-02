@@ -21,3 +21,10 @@ export function distinctSavedAddresses<T extends Address>(addresses:T[]):T[]{
  }
  return visible;
 }
+
+/** Full digest includes the exact owner, rather than a lossy display token or a 32-bit suffix. */
+export async function savedAddressId(customerId:string,address:Address){
+ const bytes=new TextEncoder().encode(JSON.stringify([customerId,savedAddressIdentity(address)]));
+ const digest=await crypto.subtle.digest("SHA-256",bytes);
+ return `ADDR-${Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,"0")).join("")}`;
+}
