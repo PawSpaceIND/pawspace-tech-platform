@@ -9,7 +9,7 @@ const money=(value:number,currency:string)=>new Intl.NumberFormat('en-IN',{style
 export default function GroomingGuestPreview({catalogue,selectedCode,onSelect,onVerified}:{catalogue:V2GroomingCatalogue;selectedCode:string;onSelect:(code:string)=>void;onVerified:()=>void}){
  const [audience,setAudience]=useState<V2GroomingPackage['audience']>(()=>catalogue.packages.find(p=>p.code===selectedCode)?.audience||catalogue.packages.find(p=>p.code===catalogue.subscriptions?.find(plan=>plan.code===selectedCode)?.servicePackageCode)?.audience||'dog');
  const [verify,setVerify]=useState(false);
- const allPackages=[...catalogue.packages,...(catalogue.subscriptions||[]).flatMap(plan=>{const care=catalogue.packages.find(p=>p.code===plan.servicePackageCode),pkg=care?subscriptionPackage(plan,care):null;return pkg?[pkg]:[];})];
+ const allPackages=[...catalogue.packages,...(catalogue.subscriptions||[]).flatMap(plan=>{const care=catalogue.packages.find(p=>p.code===plan.servicePackageCode);return care?plan.eligiblePetTypes.flatMap(species=>{const audience=species==="cat"?"cat":species==="dog"?"dog":null,pkg=audience?subscriptionPackage(plan,care,audience):null;return pkg?[pkg]:[];}):[];})];
  const chosen=allPackages.find(p=>p.code===selectedCode);
  return <main className={styles.page}><Link href="/v2" style={{display:"inline-flex",alignItems:"center",minHeight:44}}>← PawSpace home</Link><section className={styles.step}>
  <h1>Explore doorstep grooming</h1><p>Browse and choose a package as a guest. Verify your mobile to continue with your pets, address and live availability. Nothing is reserved while browsing.</p>

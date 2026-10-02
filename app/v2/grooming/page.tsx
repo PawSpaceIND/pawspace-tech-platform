@@ -142,7 +142,7 @@ export default function V2GroomingPage() {
   const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0], date || undefined) : null;
   const selectionIssue = v2GroomingSelectionIssue(selectedPets, undefined, date || undefined);
   const mixedAudience = Boolean(selectionIssue);
-  const subscriptionPackages = useMemo(() => (catalogue?.subscriptions||[]).flatMap(plan=>{const care=catalogue?.packages.find(pkg=>pkg.code===plan.servicePackageCode);const pkg=care?subscriptionPackage(plan,care):null;return pkg?[pkg]:[];}),[catalogue]);
+  const subscriptionPackages = useMemo(() => (catalogue?.subscriptions||[]).flatMap(plan=>{const care=catalogue?.packages.find(pkg=>pkg.code===plan.servicePackageCode);return care?plan.eligiblePetTypes.flatMap(species=>{const audience=species==="cat"?"cat":species==="dog"?"dog":null;const pkg=audience?subscriptionPackage(plan,care,audience):null;return pkg?[pkg]:[];}):[];}),[catalogue]);
   const packages = useMemo(
     () => [...(catalogue?.packages || []),...subscriptionPackages].filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
     [catalogue, subscriptionPackages, audience, selectedPets.length],
