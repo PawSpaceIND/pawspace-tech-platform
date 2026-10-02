@@ -1,3 +1,4 @@
+import {reversePayrollShell} from './helpers/payroll-shell-review.mjs';
 import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseSittingTargetSafety} from './helpers/ui-sitting-target-safety-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
@@ -69,7 +70,7 @@ function reverseProviderTrainingContent(source,path){
 
 for(const [path,expected] of Object.entries(contract.files)) {
   test('Finance/People presentation preserves every non-style AST node: '+path,()=>{
-    const source=read(path);
+    const source=reversePayrollShell(read(path),path);
     assert.equal(staffSemanticContract(reverseProviderTrainingContent(reverseReviewedTrainingContent(reverseReviewedBoardingContent(reverseReviewedFinanceContent(reverseReviewedSittingDisclosure(reverseFinancePrecision(reverseSittingTargetSafety(reverseTrainingReadGeneration(source,path),path),path),path),path),path),path),path),path),expected.semantic);
     const file=parseStaffPage(source,path);let roots=0;
     function walk(node){if(ts.isJsxElement(node)&&node.openingElement.tagName.getText(file)==='StaffModule')roots++;ts.forEachChild(node,walk);}

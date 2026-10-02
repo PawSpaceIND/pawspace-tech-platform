@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
-const base='51644f056a521cdaa3656cf49950d60f59025456';
+const baseline=JSON.parse(readFileSync(new URL('./fixtures/payroll-shell-baseline.json',import.meta.url),'utf8'));
+const hash=s=>createHash('sha256').update(s).digest('hex');
 const canonical='app/team/people/payroll/page.tsx',layout='app/v2/team/people/payroll/layout.tsx';
 const source=p=>readFileSync(p,'utf8');
 function moduleAt(path,deps,effects){
@@ -29,7 +30,7 @@ test('V2 composes both functional sections inside one shell; legacy remains stan
 });
 test('canonical handlers, requests, permissions and business content retain exact baseline bytes',()=>{
  const reverted=source(canonical).replace('import{Fragment,useEffect,useState}from"react";','import{useEffect,useState}from"react";').replace('export default function PayrollPage({embedded=false}:{embedded?:boolean}={}){const Frame=embedded?Fragment:StaffModule;','export default function PayrollPage(){').replace('return <Frame><main','return <StaffModule><main').replace('</main></Frame>','</main></StaffModule>');
- assert.equal(reverted,execFileSync('git',['show',`${base}:${canonical}`],{encoding:'utf8'}));
+ assert.equal(hash(reverted),baseline.sha256[canonical]);
  const revertedLayout=source(layout).replace('return <StaffModule>{children}<main','return <>{children}<StaffModule><main').replace('</main></StaffModule>;','</main></StaffModule></>;');
- assert.equal(revertedLayout,execFileSync('git',['show',`${base}:${layout}`],{encoding:'utf8'}));
+ assert.equal(hash(revertedLayout),baseline.sha256[layout]);
 });

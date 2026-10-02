@@ -27,7 +27,12 @@ const body=()=>({input:'What grooming services do you offer?',metadata:{pawspace
 for(const output of ['Grooming price is ₹1.','Your refund completed.','Try coupon FREEALL for 99% off.'])test('generic voice withholds unsafe full output: '+output,async t=>{
  const w=await world(t),emitted=[];const mock=stubFetch(()=>jsonResponse({output_text:output}));t.after(()=>mock.restore());
  const result=await voice.runElevenLabsGroundedTurn(w.db,body(),undefined,x=>emitted.push(x));
- assert.equal(mock.calls.length,1);assert.deepEqual(emitted,[]);assert.notEqual(result.output,output);
+ assert.equal(mock.calls.length,1);
+ // Reviewed discount policy may replace an unsolicited discount with this exact safe reply.
+ const safeDiscountReply="Let's review the regular approved price and package inclusions before preparing your quote.";
+ assert.deepEqual(emitted,output==='Try coupon FREEALL for 99% off.'?[safeDiscountReply]:[]);
+ assert.notEqual(result.output,output);
+ assert.ok(emitted.every(chunk=>!chunk.includes(output)), 'Unsafe provider text must never be spoken');
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM communication_messages WHERE direction='outbound' AND payload_json LIKE ?").get('%'+output+'%').n,0);
  const bookings=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='canonical_bookings'").get();assert.equal(bookings?w.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id='CUS-GUARD'").get().n:0,0);
 });

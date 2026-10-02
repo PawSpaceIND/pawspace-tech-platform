@@ -1,3 +1,4 @@
+import {assertEmbeddedPayrollBridge} from './helpers/payroll-shell-review.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -46,7 +47,8 @@ test("V2 workspace hub exposes the restored primary staff workspaces", () => {
 test("People, payroll and scheduling reuse canonical V1 surfaces through V2 bridges", () => {
   for (const rel of ["app/v2/team/people/page.tsx", "app/v2/team/scheduling/page.tsx", "app/v2/team/people/payroll/page.tsx"]) {
     assert.equal(fs.existsSync(new URL(`../${rel}`, import.meta.url)), true, rel);
-    assert.match(read(rel), /export \{ default \} from/);
+    if(rel==='app/v2/team/people/payroll/page.tsx')assertEmbeddedPayrollBridge(read(rel));
+    else assert.match(read(rel), /export \{ default \} from/);
   }
 });
 test("V2 routing module executes for parity coverage",()=>{assert.equal(isV2CustomerPath("/v2/team/people"),true);assert.equal(customerScopedHref("/v2/training","/training"),"/v2/training");});

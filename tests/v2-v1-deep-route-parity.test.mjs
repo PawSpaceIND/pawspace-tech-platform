@@ -1,3 +1,4 @@
+import {assertEmbeddedPayrollBridge} from './helpers/payroll-shell-review.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -18,6 +19,7 @@ test("every canonical Team page has a V2 route bridge",()=>{
     const target=`app/v2/team/${rel}`;
     assert.equal(fs.existsSync(appPath(target)),true,target);
     const source=fs.readFileSync(appPath(target),"utf8");
+    if(rel==='people/payroll/page.tsx'){assertEmbeddedPayrollBridge(source);continue;}
     assert.match(source,/V2 route bridge/);
     assert.match(source,/export \{ default \} from/);
   }
