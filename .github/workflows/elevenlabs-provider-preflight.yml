@@ -154,6 +154,31 @@ jobs:
           path: artifacts/maya-dialogue/report.json
           retention-days: 3
           if-no-files-found: ignore
+  inspect-maya-audio-progress:
+    if: ${{ inputs.confirm == 'inspect-maya-audio-progress' }}
+    runs-on: ubuntu-22.04
+    environment: pawspace-staging
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Inspect exact attended request without dialing or modifying records
+        env:
+          DEMO_STARTED_AT: ${{ inputs.demo_started_at }}
+          DEMO_ENDED_AT: ${{ inputs.demo_ended_at }}
+          SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+          EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node --experimental-strip-types scripts/inspect-maya-audio-progress.mjs
   inspect-attended-request:
     if: ${{ inputs.confirm == 'inspect-attended-request' }}
     runs-on: ubuntu-latest
