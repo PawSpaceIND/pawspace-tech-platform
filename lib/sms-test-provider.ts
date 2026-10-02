@@ -1,4 +1,3 @@
-import { assertManagedAudioSendAllowed, managedAudioEnvironment } from "./managed-audio-test-control";
 export const PAWSPACE_SMS_TEST_MESSAGE="PawSpace SMS API test successful. No action is required.";
 const FAST2SMS_TIMEOUT_MS=4000;
 
@@ -28,7 +27,11 @@ export function parseSmsTestAllowlist(value:string){
 }
 
 export async function sendFast2SmsMessage({apiKey,phone,message,udf1="pawspace-live-message",fetcher=fetch}:{apiKey:string;phone:string;message:string;udf1?:string;fetcher?:Fetcher}){
-  assertManagedAudioSendAllowed(await managedAudioEnvironment());
+  // Keep this standalone provider loadable without the application module resolver.
+  let isolationEnv:Record<string,unknown>;
+  try{isolationEnv=(await import("cloudflare:workers")).env as unknown as Record<string,unknown>;}
+  catch{isolationEnv=(globalThis as typeof globalThis & {__PAWSPACE_TEST_ENV__?:Record<string,unknown>}).__PAWSPACE_TEST_ENV__??{};}
+  if(String(isolationEnv.PAWSPACE_MANAGED_AUDIO_ISOLATION??"").trim())throw new Response("managed_audio_external_send_suppressed",{status:403});
   const normalized=normalizeIndianMobile(phone);
   if(!normalized)throw new Error("Invalid Indian mobile number");
   if(!apiKey.trim())throw new Error("Fast2SMS API key is not configured");

@@ -1,3 +1,4 @@
+import { admitManagedAudioCallback, managedAudioEnvironment, MANAGED_AUDIO_ACTIVE_PREDICATE } from "./managed-audio-test-control";
 import{emergencyGuidanceOnly,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
 import { voiceSalesService } from "./voice-sales-specialists";
 import{ensureCommunicationTables}from"./communication-engine";
@@ -115,6 +116,7 @@ async function voiceContext(db:D1Database,body:Row){
 
 /** The service credential is transport authority, never permission to bypass customer rollout. */
 async function assertVoiceCustomerMayReply(db:D1Database,ctx:{threadId:string;customerId:string}){
+ await admitManagedAudioCallback(db,await managedAudioEnvironment(),{pawspace_thread_id:ctx.threadId,pawspace_customer_id:ctx.customerId});
  const thread=await db.prepare("SELECT customer_id,status,assigned_to FROM communication_threads WHERE id=?").bind(ctx.threadId).first<Row>();
  if(!thread||text(thread.customer_id)!==ctx.customerId)throw new Response("PawSpace voice thread/customer mismatch",{status:403});
  if(text(thread.status)!=="open"||(text(thread.assigned_to)&&text(thread.assigned_to)!=="ai-orchestrator"))throw new Response("PawSpace voice conversation is not AI-owned",{status:409});
@@ -168,23 +170,27 @@ export function speechGate(emit:(text:string)=>void){
 }
 
 export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:TurnStopwatch=turnStopwatch(),onDelta?:(delta:string)=>void){
+ const managedContext=await admitManagedAudioCallback(db,await managedAudioEnvironment(),extra(body));
  await ensureCommunicationTables(db);clock.mark("schema");
  const inputText=extractElevenLabsResponsesInput(body);if(!inputText)throw new Response("ElevenLabs custom LLM request has no user message",{status:400});
- const ctx=await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
+ const ctx=managedContext??await voiceContext(db,body),messageId=`MSG-ELLM-${crypto.randomUUID().slice(0,14).toUpperCase()}`,now=Date.now();clock.mark("context");
  // Started, not awaited: the inbound transcript has to be recorded, but nothing about the reply
  // depends on it having landed, so it overlaps the model call instead of preceding it. Both writes
  // are settled before this function resolves, so the turn still cannot report success on a lost row.
  // The rejection is captured rather than left floating, so a failed write surfaces at the await.
+ const activeClause=managedContext?" WHERE "+MANAGED_AUDIO_ACTIVE_PREDICATE:"";
+ const activeValues=managedContext?[ctx.threadId,ctx.customerId,Date.now()]:[];
  let inboundFailure:unknown=null;
- const inboundWrite=db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?)")
-  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now).run()
-  .then(()=>{},(error:unknown)=>{inboundFailure=error;});
+ const inboundWrite=db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) SELECT ?,?,?,NULL,NULL,NULL,'inbound','voice','transactional','elevenlabs_custom_llm',?,'received','elevenlabs',NULL,?,'{}',?,?,?"+activeClause)
+  .bind(messageId,ctx.threadId,ctx.customerId,JSON.stringify({text:inputText,source:"elevenlabs_custom_llm"}),`elevenlabs-llm:${ctx.threadId}:${messageId}`,serviceActor.email,now,now,...activeValues).run()
+  .then((result)=>{if(Number(result.meta?.changes)!==1)inboundFailure=new Response("managed_audio_callback_no_longer_active",{status:409});},(error:unknown)=>{inboundFailure=error;});
  const settleInbound=async()=>{await inboundWrite;if(inboundFailure)throw inboundFailure;};
  const persistReply=async(output:string,providerRef:string,modelRef:string|null,governed=false)=>{
+  if(managedContext)await admitManagedAudioCallback(db,await managedAudioEnvironment(),extra(body));
   const replyId=`MSG-ELLM-AI-${crypto.randomUUID().slice(0,12).toUpperCase()}`,done=Date.now();
   const sql="INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) SELECT ?,?,?,NULL,NULL,NULL,'outbound','voice','transactional','elevenlabs_custom_llm_reply',?,'ready',?,?,?,'{}',?,?,?";
   const values=[replyId,ctx.threadId,ctx.customerId,JSON.stringify({text:output,source:"elevenlabs_custom_llm"}),providerRef,modelRef,`elevenlabs-llm-reply:${replyId}`,serviceActor.email,done,done];
-  const reply=governed?db.prepare(sql+" WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=? AND customer_id=? AND status='open' AND (assigned_to IS NULL OR assigned_to='' OR assigned_to='ai-orchestrator')) AND NOT EXISTS (SELECT 1 FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active'))").bind(...values,ctx.threadId,ctx.customerId,ctx.threadId):db.prepare(sql).bind(...values);
+  const reply=governed?db.prepare(sql+" WHERE EXISTS (SELECT 1 FROM communication_threads WHERE id=? AND customer_id=? AND status='open' AND (assigned_to IS NULL OR assigned_to='' OR assigned_to='ai-orchestrator')) AND NOT EXISTS (SELECT 1 FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active'))"+(managedContext?" AND "+MANAGED_AUDIO_ACTIVE_PREDICATE:"")).bind(...values,ctx.threadId,ctx.customerId,ctx.threadId,...(managedContext?[ctx.threadId,ctx.customerId,Date.now()]:[])):db.prepare(sql+activeClause).bind(...values,...(managedContext?[ctx.threadId,ctx.customerId,Date.now()]:[]));
   const writes=await Promise.all([
    settleInbound(),
    reply.run(),

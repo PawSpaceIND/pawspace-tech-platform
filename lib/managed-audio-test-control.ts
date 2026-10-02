@@ -1,3 +1,4 @@
+import { isVoiceAllowlisted } from "./voice-call-gate";
 import { readBoundedText } from "./provider-response-bounds";
 /** Inactive-by-default controls for the one approved $5 synthetic audio test budget. */
 type Env = Record<string, unknown>;
@@ -95,4 +96,19 @@ export async function claimManagedAudioAttempt(db: D1Database, env: Env, input: 
  if (managedAudioIsolationGates(env).length || input.provider !== "openai" || input.modelRef !== MANAGED_AUDIO_MODEL || !Number.isInteger(input.maxOutputTokens) || input.maxOutputTokens < 1 || input.maxOutputTokens > MANAGED_AUDIO_OUTPUT_TOKENS || !Number.isFinite(now) || now < Date.parse("2026-10-02T00:00:00Z") || now >= MANAGED_AUDIO_RATES_EXPIRE_AT) throw new Error("managed_audio_attempt_policy_refused");
  const result = await db.prepare("UPDATE managed_audio_test_conversations SET attempts_used=attempts_used+1 WHERE thread_id=? AND customer_id=? AND profile=? AND budget_id=? AND max_attempts=6 AND max_output_tokens=700 AND attempts_used<6 AND expires_at>? AND EXISTS (SELECT 1 FROM ai_voice_calls c WHERE c.id=managed_audio_test_conversations.call_id AND c.thread_id=managed_audio_test_conversations.thread_id AND c.customer_id=managed_audio_test_conversations.customer_id AND c.status='active')").bind(input.threadId,input.customerId,MANAGED_AUDIO_PROFILE,MANAGED_AUDIO_BUDGET_ID,now).run();
  if (Number(result.meta?.changes) !== 1) throw new Error("managed_audio_attempt_budget_exhausted_or_inactive");
+}
+
+/** Admission is independent of model use: deterministic replies must use the same reservation. */
+export const MANAGED_AUDIO_ACTIVE_PREDICATE = "EXISTS (SELECT 1 FROM managed_audio_test_conversations m JOIN ai_voice_calls c ON c.id=m.call_id AND c.thread_id=m.thread_id AND c.customer_id=m.customer_id JOIN managed_audio_test_budget b ON b.id=m.budget_id WHERE m.thread_id=? AND m.customer_id=? AND m.profile='managed-audio-usd5-v1' AND m.budget_id='managed-audio-approved-usd5-20261002' AND m.max_attempts=6 AND m.max_output_tokens=700 AND m.reservation_id<>'' AND m.reserved_micros>0 AND m.reserved_micros<=5000000 AND b.cap_micros=5000000 AND b.reserved_micros>=m.reserved_micros AND m.expires_at>? AND c.status='active')";
+export async function admitManagedAudioCallback(db: D1Database, env: Env, hints: Row, now = Date.now()) {
+ const threadId=text(hints.pawspace_thread_id), customerHint=text(hints.pawspace_customer_id);
+ if (!managedAudioNoSend(env) && !isManagedAudioThread(threadId)) return null;
+ const refuse=()=>new Response("managed_audio_callback_identity_refused",{status:403});
+ if (managedAudioIsolationGates(env).length || !isManagedAudioThread(threadId) || !customerHint || text(hints.pawspace_voice_session_id) || text(hints.pawspace_voice_call_id)) throw refuse();
+ let row: Row | null;
+ try {
+  row=await db.prepare("SELECT t.id AS thread_id,t.customer_id,k.primary_phone FROM communication_threads t JOIN canonical_customers k ON k.id=t.customer_id WHERE t.id=? AND t.customer_id=? AND t.status='open' AND (t.assigned_to IS NULL OR t.assigned_to='' OR t.assigned_to='ai-orchestrator') AND "+MANAGED_AUDIO_ACTIVE_PREDICATE).bind(threadId,customerHint,threadId,customerHint,now).first<Row>();
+ } catch { throw refuse(); }
+ if (!row || !isVoiceAllowlisted(env,row.primary_phone)) throw refuse();
+ return {sessionId:null,threadId:text(row.thread_id),customerId:text(row.customer_id),managedAudio:true};
 }

@@ -28,5 +28,5 @@ export async function managedAudioRequestBlock(request: Request, env: Env): Prom
   return ["segment", "transfer", "transport_failure", "complete"].includes(text(action)) && text(body.callId).startsWith(MANAGED_AUDIO_CALL_PREFIX) ? null : refuse();
  }
  const extra = (body.elevenlabs_extra_body || body.metadata || {}) as Row;
- return isManagedAudioThread(text(extra.pawspace_thread_id)) && Boolean(text(extra.pawspace_customer_id)) ? null : refuse();
+ return isManagedAudioThread(text(extra.pawspace_thread_id)) && Boolean(text(extra.pawspace_customer_id)) && !text(extra.pawspace_voice_session_id) && !text(extra.pawspace_voice_call_id) ? null : refuse();
 }
