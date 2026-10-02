@@ -1,1 +1,1 @@
-$file:/tmp/cpt_content.txt
+$file:/workspace/pawspace-fix/cpt_main_content.txt
