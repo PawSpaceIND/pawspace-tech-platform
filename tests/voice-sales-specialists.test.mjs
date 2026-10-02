@@ -512,3 +512,34 @@ test('plural package enquiry preserves a pending quote and reaches the read-only
  for(const question of ['What are the prices?','Which packages are available?','What do the packs cost?'])assert.equal(isSalesInformationQuestion(question),true);
  for(const question of ['What are the packages? Book one now.','Which packages should I use instead?','What are the prices? Confirm the booking.'])assert.equal(isSalesInformationQuestion(question),false);
 });
+
+test('attended package question uses catalogue context and the read-only package prompt',async t=>{
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');
+ const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ // Convert only this synthetic legacy fixture to the current date-only catalogue contract.
+ w.sqlite.prepare("UPDATE service_packages SET active=1,effective_from='2026-01-01',effective_to=NULL WHERE service_code='grooming' AND package_code IN ('dog-bath','dog-makeover')").run();
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ let requests=0;
+ globalThis.fetch=async(url,init)=>{
+  assert.equal(String(url),'https://api.openai.com/v1/responses');requests++;
+  const body=JSON.parse(init.body);const context=JSON.parse(body.input).canonicalContext;
+  assert.match(body.instructions,/explicitly asks which packages are available/);
+  assert.match(body.instructions,/first understand why the customer wants the service and the desired outcome/);
+  assert.match(body.instructions,/ask one relevant question at a time/);
+  assert.match(body.instructions,/Do not start an ordinary intake with a package or price menu/);
+  assert.match(body.instructions,/read-only sales information question/);
+  assert.match(body.instructions,/separate explicit confirmation of a valid current server quote/);
+  assert.equal(context.informationOnly,true);assert.deepEqual(context.availableActionTools,[]);
+  const rows=context.catalogue.grooming.filter(row=>String(row.package_code).startsWith('dog-'));
+  assert.ok(rows.length>=2);assert.ok(rows.every(row=>row.name&&Number.isFinite(Number(row.base_price))));
+  return Response.json({status:'completed',output_text:rows.map(row=>`${row.name} costs ${row.base_price} rupees`).join('. ')+'. Which package would you prefer?',usage:{total_tokens:20}});
+ };
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'grooming'});
+ const result=await turn(w,'What are the packages available?','attended-package-prompt',provider);
+ assert.equal(requests,1);assert.notEqual(result.turn.outcome,'handoff');assert.equal(result.turn.handoffReason,null);
+ assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ const offerTable=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='voice_sales_offers'").get();
+ assert.equal(offerTable?w.sqlite.prepare('SELECT COUNT(*) n FROM voice_sales_offers').get().n:0,0);
+});
