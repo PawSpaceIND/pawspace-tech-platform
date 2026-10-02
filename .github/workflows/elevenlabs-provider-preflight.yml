@@ -262,7 +262,7 @@ jobs:
           retention-days: 7
   maya-ten-audio-audit:
     if: ${{ inputs.confirm == 'maya-ten-audio-audit' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     environment: pawspace-staging
     concurrency:
       group: pawspace-staging-sweep
