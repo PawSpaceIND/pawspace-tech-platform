@@ -48,7 +48,7 @@ const intentRules:Array<{intent:AiConversationIntent;signals:string[];risk?:bool
  {intent:"subscription_wallet",signals:["subscription","wallet","credits","balance","renewal"]},
  {intent:"coupon",signals:["coupon","promo","discount","offer code"]},
  {intent:"support",signals:["complaint","issue","problem","support","help","not happy"]},
- {intent:"service_info",signals:["price","pricing","service","package","what do you offer","availability"]},
+ {intent:"service_info",signals:["price","pricing","service","package","what do you offer","availability","grooming","boarding","pet sitting","pet taxi","dog training"]},
 ];
 
 /* Signals match whole words, plural included ("services", "packages"). Substring matching read "personal"

@@ -623,3 +623,41 @@ test('recorded Maya correction reaches actual grounded model context through cro
  }
  assert.notEqual(result.turn.outcome,'handoff',JSON.stringify(result));assert.match(result.turn.output,/Maya/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+for(const [label,utterance,clarification] of [
+ ['new puppy','I have a new puppy, not Bruno. I want gentle grooming.','For your new puppy, what is her age and vaccination status?'],
+ ['boarding','I need pet boarding for Bruno for three nights.','For Bruno’s boarding, what check-in and check-out dates do you need?'],
+])test(`recorded ${label} first turn reaches grounded intake instead of unknown-intent handoff`,async t=>{
+ const w=await world(t);let calls=0;
+ assert.equal(orchestrator.classifyAiIntent(utterance).intent,'service_info');
+ const provider={salesService:'all_services',status:'connected',provider:'offline',modelRef:'fixture',async generate(input){calls++;assert.equal(input.inputText,utterance);return{text:clarification,provider:'offline',modelRef:'fixture',latencyMs:0,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};}};
+ const result=await turn(w,utterance,'batch-first-'+label,provider);assert.equal(calls,1);assert.notEqual(result.turn.outcome,'handoff');assert.equal(result.turn.output,clarification);assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=? AND status='queued'").get(w.threadId).n,0);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('recorded Training price plus recommendation is read-only and preserves pending offer',async t=>{
+ const w=await world(t,'dog_training'),offer=await prepare(w,'training-before-price',actions(w,'trainer-meet-greet'));
+ const utterance='What approved training options and prices are available? Recommend the best fit.';
+ assert.equal(isSalesInformationQuestion(utterance),true);
+ for(const mixed of [utterance+' Book it now.','What training prices are available? Recommend the best fit and reserve tomorrow.','What training prices are available? Change the booking.'])assert.equal(isSalesInformationQuestion(mixed),false);
+ const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push({url:String(url),body:JSON.parse(init.body)});return Response.json({status:'completed',output_text:'The approved training options are in the current catalogue. Which training outcome matters most to you?',usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'dog_training'});
+ const result=await turn(w,utterance,'batch-training-readonly',provider);assert.equal(requests.length,1);const body=requests[0].body,context=JSON.parse(body.input).canonicalContext;
+ assert.equal(context.informationOnly,true);assert.deepEqual(context.availableActionTools,[]);assert.match(body.instructions,/read-only sales information question/);assert.notEqual(result.turn.outcome,'handoff');assert.equal(w.sqlite.prepare('SELECT status FROM voice_sales_offers WHERE id=?').get(offer.id).status,'pending');assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
+
+test('recorded Taxi vet destination is transport intake, while symptom-bearing taxi remains medical',async t=>{
+ const {isPetMedicalQuestion,ensureVeterinaryReferral}=await import('../lib/ai-grounded-runtime-provider.ts');
+ const utterance='I want a pet taxi for Bruno from Indiranagar to a vet clinic in Whitefield.';
+ assert.equal(isPetMedicalQuestion(utterance),false);assert.equal(ensureVeterinaryReferral('What date and time do you need?',isPetMedicalQuestion(utterance)),'What date and time do you need?');
+ for(const clinical of ['My dog is bleeding. I need a pet taxi to a vet clinic.','My dog cannot breathe; get a taxi to the vet.','My dog is vomiting; I need a taxi to a vet.','Should I give medication before taking a pet taxi to the vet?'])assert.equal(isPetMedicalQuestion(clinical),true,clinical);
+ const w=await world(t);const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push(JSON.parse(init.body));return Response.json({status:'completed',output_text:'For the taxi, what date and time do you need, and is it one-way or return?',usage:{total_tokens:20}});};
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'});
+ const result=await turn(w,utterance,'batch-taxi-destination',provider);assert.notEqual(result.turn.outcome,'handoff');assert.doesNotMatch(result.turn.output,/medical concern|contact a veterinarian/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+ for(const body of requests)assert.doesNotMatch(body.instructions,/This is a medical-information turn/);
+});
