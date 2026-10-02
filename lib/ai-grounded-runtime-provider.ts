@@ -6,6 +6,7 @@ import{isSalesInformationQuestion,SALES_INFORMATION_DIRECTIVE}from"./ai-sales-in
 import {currentGroomingCatalogue} from "./ai-current-catalogue";
 import{policyEnquiryTopic,POLICY_INFORMATION_DIRECTIVE}from"./ai-policy-enquiry";
 import {voiceCalendarContext} from "./voice-calendar-context";
+import {stayDurationClarification} from "./voice-stay-duration-consistency";
 import { specialistSalesPrompt, isVoiceSalesQuoteRequest, type VoiceSalesService } from "./voice-sales-specialists";
 import{aiProviderConnection,requestAiDraftWithVoiceRecovery}from"./ai-provider-adapter";
 import{prepareAiToolExecution,type AiToolChannel,type AiToolIntent}from"./ai-tool-registry";
@@ -196,6 +197,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  }
  const envelope=parseGroundedActionEnvelope(result.text);
  if(!envelope&&/^\s*(?:\{|```)/.test(result.text))return{text:"",provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,failure:"malformed_output"};
+ const durationClarification=channel==="voice"&&options.salesService&&envelope?.actions.length?stayDurationClarification(conversationHistory,input.inputText,envelope.actions):null;
+ if(durationClarification)return{text:durationClarification,provider:"conversation_consistency",modelRef:"server_owned_stay_duration",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const customerText=envelope?(envelope.reply||(envelope.actions.length?"Let me check those booking details.":"")):result.text;
  const reply=safePetMedicalReply(customerText,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
  const catalogueVerifiedPrices=pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified=offerClaimsApproved(reply,eligibleOffers);
