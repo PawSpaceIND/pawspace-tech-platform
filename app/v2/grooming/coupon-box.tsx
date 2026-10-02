@@ -7,15 +7,15 @@ import styles from "./grooming.module.css";
 import offersStyle from "./offers.module.css";
 
 export type V2CouponIntent = {customerId:string;mode:"automatic"|"manual"|"editing"|"removed";code:string};
-type Props = {customerId:string;cityId:string;packageCode:string;orderValue:number;contextKey:string;paymentMode:"prepaid"|"pay_after_service";
+type Props = {isSubscription?:boolean;customerId:string;cityId:string;packageCode:string;orderValue:number;contextKey:string;paymentMode:"prepaid"|"pay_after_service";
   intentRef:{current:V2CouponIntent};onChecked:(contextKey:string)=>void;
   onChange:(discount:number,code:string,quoteId?:string)=>void};
 const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:0,maximumFractionDigits:2}).format(value);
 
 /** Only the server can approve a discount. Offer browsing is read-only and private codes stay unlisted. */
-export default function V2GroomingCouponBox({customerId,cityId,packageCode,orderValue,contextKey,paymentMode,intentRef,onChecked,onChange}:Props){
+export default function V2GroomingCouponBox({customerId,cityId,packageCode,orderValue,contextKey,paymentMode,isSubscription=false,intentRef,onChecked,onChange}:Props){
   const [code,setCode]=useState(""),[applied,setApplied]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
-  const offerKey=JSON.stringify([customerId,cityId,packageCode,orderValue]);
+  const offerKey=JSON.stringify([customerId,cityId,packageCode,orderValue,isSubscription]);
   const [offersResult,setOffersResult]=useState<{key:string;data:V2GroomingOffers}|null>(null);
   const [offersFailure,setOffersFailure]=useState<{key:string;text:string}|null>(null),[retry,setRetry]=useState(0);
   const offers=offersResult?.key===offerKey?offersResult.data:null;
@@ -28,17 +28,17 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
     intentRef.current={customerId,mode,code:normalized};
     setCode(normalized);setBusy(true);setApplied("");setMessage("");onChange(0,normalized);
     try{
-      const result=await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode:paymentMode==="prepaid"?"full":"after_service",isSubscription:false });
+      const result=await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode:paymentMode==="prepaid"?"full":"after_service",isSubscription });
       if(current!==version.current)return;
       if(!result.valid||result.code!==normalized||!result.quoteId){onChange(0,normalized);setMessage(result.error||"This coupon is not eligible for this booking. Remove it or choose another offer.");return;}
       groomingCouponPayable(orderValue,result);
       setApplied(result.code);setMessage(`${result.code} ${mode==="automatic"?"automatically applied":"applied"}. You save ${money(result.discount)}.`);onChange(result.discount,result.code,result.quoteId);
     }catch(error){if(current!==version.current)return;onChange(0,normalized);setMessage(error instanceof Error?error.message:"We could not check this coupon.");}
     finally{if(current===version.current){setBusy(false);onChecked(contextKey);}}
-  },[customerId,cityId,packageCode,orderValue,contextKey,paymentMode,intentRef,onChange,onChecked]);
+  },[customerId,cityId,packageCode,orderValue,contextKey,paymentMode,isSubscription,intentRef,onChange,onChecked]);
   useEffect(()=>{
     const controller=new AbortController();let current=true;const initialVersion=version.current;
-    loadV2GroomingOffers({customerId,cityId,packageCode,orderValue},controller.signal)
+    loadV2GroomingOffers({customerId,cityId,packageCode,orderValue,isSubscription},controller.signal)
       .then(value=>{
         if(!current)return;
         setOffersResult({key:offerKey,data:value});setOffersFailure(null);
@@ -64,7 +64,7 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
         onChecked(contextKey);
       });
     return()=>{current=false;controller.abort();invalidateRequest();};
-  },[customerId,cityId,packageCode,orderValue,offerKey,retry,contextKey,intentRef,apply,onChange,onChecked,invalidateRequest]);
+  },[customerId,cityId,packageCode,orderValue,isSubscription,offerKey,retry,contextKey,intentRef,apply,onChange,onChecked,invalidateRequest]);
   const remove=()=>{version.current++;intentRef.current={customerId,mode:"removed",code:""};setBusy(false);setCode("");setApplied("");setMessage("Coupon removed. Choose an offer to apply a discount again.");onChange(0,"");onChecked(contextKey);};
   const editCode=(value:string)=>{version.current++;intentRef.current={customerId,mode:"editing",code:value.trim().toUpperCase()};setBusy(false);setCode(value);setApplied("");setMessage("");onChange(0,value.trim().toUpperCase());onChecked(contextKey);};
   return <div className={`${styles.addressBox} ${offersStyle.offers}`} role="group" aria-label="Coupon code">

@@ -2,8 +2,8 @@ import { apiSend } from "../api-fetch";
 import { groomingCouponPayable } from "./grooming-money";
 import type { CustomerOffer } from "../customer-offers";
 export type V2GroomingOffers = { coupons: CustomerOffer[]; normalCouponsAllowed: boolean; bookingCount: number; message?: string };
-export async function loadV2GroomingOffers(input: {customerId:string;cityId:string;packageCode:string;orderValue:number}, signal?:AbortSignal):Promise<V2GroomingOffers>{
-  const query=new URLSearchParams({customerId:input.customerId,cityId:input.cityId,packageCode:input.packageCode,orderValue:String(input.orderValue),serviceCode:"grooming",channel:"website",paymentMode:"full",isSubscription:"false"});
+export async function loadV2GroomingOffers(input: {customerId:string;cityId:string;packageCode:string;orderValue:number;isSubscription?:boolean}, signal?:AbortSignal):Promise<V2GroomingOffers>{
+  const query=new URLSearchParams({customerId:input.customerId,cityId:input.cityId,packageCode:input.packageCode,orderValue:String(input.orderValue),serviceCode:"grooming",channel:"website",paymentMode:"full",isSubscription:String(Boolean(input.isSubscription))});
   // Reuse the platform's bounded request, safe JSON parsing and caller-abort handling.
   const data=await apiSend<V2GroomingOffers>(`/api/customer-offers?${query}`,{cache:"no-store",signal},"Available offers could not be checked. Try again.");
   const body={data};

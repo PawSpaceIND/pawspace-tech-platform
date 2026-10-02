@@ -75,6 +75,7 @@ export async function v2GroomingIdempotencyKey(input: V2GroomingCheckoutInput) {
     ...input.selectedPets.map(pet => pet.id).sort(),
     // The code, not its quote: a retry re-quotes the coupon but must keep the same booking.
     ...(input.coupon ? [`coupon:${input.coupon.code}`] : []),
+    ...(input.pkg.subscription ? [`subscription:${input.pkg.subscription.code}:v${input.pkg.subscription.version}`] : []),
   ];
   // Retain the existing deterministic fingerprint, with SHA-256 to avoid 32-bit collisions.
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(values)));
@@ -97,7 +98,7 @@ export async function createV2GroomingBooking(
   if (!input.address.trim() || !/^\d{6}$/.test(input.pincode)) throw new Error("Verify a complete service address before booking.");
   if (!Number.isFinite(input.quote.price) || input.quote.price <= 0) throw new Error("A valid live price is required before booking.");
 
-  if (input.quote.source !== "pricing_control") throw new Error("Only a published live price can enter checkout.");
+  if (input.quote.source !== "pricing_control" && !(input.pkg.subscription && input.quote.source === "subscription_control" && input.quote.price === input.pkg.subscription.price && input.quote.subscriptionVersion === input.pkg.subscription.version)) throw new Error("Only a published live price can enter checkout.");
   const allowedAddOns = groomingAddOnsForSpecies(String(input.selectedPets[0]?.species || "").toLowerCase()).map(item => item.label);
   if ((input.addOns ?? []).some(label => !allowedAddOns.includes(label)) || new Set(input.addOns ?? []).size !== (input.addOns ?? []).length) throw new Error("Choose add-ons available for this pet.");
   if ((input.specialInstructions ?? "").length > 300) throw new Error("Keep groomer notes under 300 characters.");
@@ -122,9 +123,10 @@ export async function createV2GroomingBooking(
   const basketTotal = v2GroomingTotal(input);
   const paymentMode = input.paymentMode ?? "prepaid";
   if (paymentMode !== "prepaid" && paymentMode !== "pay_after_service") throw new Error("Choose Pay now or Pay after service for Grooming.");
+  if(input.pkg.subscription && paymentMode!=="prepaid") throw new Error("Subscriptions require the existing prepaid purchase flow.");
   const couponPaymentMode = paymentMode === "prepaid" ? "full" : "after_service";
   const idempotencyKey = await v2GroomingIdempotencyKey(input);
-  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: couponPaymentMode, isSubscription: false, bookingKey: idempotencyKey }) : null;
+  const coupon = input.coupon ? await quoteGovernedCoupon({ code: input.coupon.code, customerId: input.account.customerId, serviceCode: "grooming", cityId: input.cityId, channel: "website", packageCode: input.bundle.packageCode, orderValue: basketTotal, paymentMode: couponPaymentMode, isSubscription: Boolean(input.pkg.subscription), bookingKey: idempotencyKey }) : null;
   if (coupon && (!coupon.valid || !coupon.quoteId || !coupon.code)) throw new Error(`${(coupon.error || "This coupon no longer applies to this booking").replace(/\.?$/, ".")} Remove or reapply the coupon.`);
   const payable = coupon ? groomingCouponPayable(basketTotal, coupon) : basketTotal;
   const discount = coupon ? coupon.discount : 0;
