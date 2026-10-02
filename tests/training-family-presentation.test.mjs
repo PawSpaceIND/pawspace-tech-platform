@@ -33,6 +33,11 @@ test('actual rendered groups retain every dynamic choice and expose selected/ass
 });
 function preserveTrainingSource(input){
  let source=input;
+ // Approved V2 default and presentation inputs only. No handler/guard is excluded.
+ const cadence='[cadenceDays,setCadenceDays]=useState(routeScope==="v2"?3:7)';
+ assert.equal(source.split(cadence).length,2);source=source.replace(cadence,'[cadenceDays,setCadenceDays]=useState(7)');
+ const props='selectedCode={packageCode} recommendation={recommendation} petCount={petCount}';
+ assert.equal(source.split(props).length,2);source=source.replace(props,'selectedCode={packageCode}');
  const readiness=JSON.parse(readFileSync(new URL('./helpers/schedule-readiness-edits.json',import.meta.url),'utf8'))['app/training/page.tsx'];
  for(const [before,after] of readiness){assert.equal(source.split(after).length,2);source=source.replace(after,before);}
  source=source.replace('\nimport TrainingFamilyChoices from "./training-family-choices";','');
@@ -62,6 +67,9 @@ test('preservation rejects changed selection, guard, request, commercial express
  const source=pageSource();
  const changes=[
  ['setPackageCode(item.package_code)','setPackageCode("different-plan")'],
+ ['useState(routeScope==="v2"?3:7)','useState(routeScope==="v2"?5:7)'],
+ ['recommendation={recommendation}','recommendation={null}'],
+ ['petCount={petCount}','petCount={1}'],
  ['disabled={busy}','disabled={false}'],
  ['selectedCode={packageCode}','selectedCode={"different-plan"}'],
  ['plans={packages}','plans={packages.slice(1)}'],
