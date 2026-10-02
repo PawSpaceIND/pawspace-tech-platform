@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {reverseSittingTargetSafety} from './helpers/ui-sitting-target-safety-review.mjs';
+import {reverseSittingRowSelection} from './helpers/sitting-finance-row-selection-review.mjs';
 const receipt=JSON.parse(readFileSync(new URL('./fixtures/ui-sitting-target-safety-preservation.json',import.meta.url),'utf8'));
 const source=readFileSync(new URL('../'+receipt.file,import.meta.url),'utf8');
 const hash=text=>createHash('sha256').update(text).digest('hex');
 test('frozen Sitting repair reverses exactly to the UI head and retains its two-decimal formatter',()=>{
- assert.equal(hash(source),receipt.afterHash);
+ // Strip only the independently pinned row-selection and touch additions before this historical hash.
+ assert.equal(hash(reverseSittingRowSelection(source,receipt.file)),receipt.afterHash);
  const original=reverseSittingTargetSafety(source,receipt.file);
  assert.equal(hash(original),receipt.beforeHash);
  assert.ok(original.includes('minimumFractionDigits:2,maximumFractionDigits:2'));
