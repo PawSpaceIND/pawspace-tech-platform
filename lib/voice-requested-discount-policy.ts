@@ -1,0 +1,40 @@
+type Message={role:string;content:string};
+
+/** Only customer dialogue can request a discount; eligibility remains server-owned. */
+export function customerRequestedVoiceDiscount(history:Message[],currentText:string){
+ let requested=false;
+ for(const message of [...history,{role:"user",content:currentText}]){
+  if(message.role!=="user")continue;
+  for(const value of message.content.trim().split(/(?<=[.!?])\s+|;\s*/)){
+  if(/\b(?:no|without)\s+(?:discounts?|coupons?|offers?)\b|\b(?:do not|don't|don’t)\s+(?:want|need|apply|use|add|give|offer)\s+(?:(?:a|an|any|the|that|available|approved)\s+){0,3}(?:discounts?|coupons?|offers?)\b/i.test(value)){requested=false;continue;}
+  const discount=/\b(?:discounts?|coupons?|promo(?:tion)?(?: codes?)?)\b|\b(?:approved|eligible|available|special)\s+offers?\b|\b\d+\s*%\s*off\b/i.test(value);
+  const ask=/^any\s+(?:(?:available|eligible|approved)\s+)*(?:discounts?|coupons?|offers?|promos?)\b/i.test(value)
+   ||discount&&(/^(?:can|could|would|may|do|does|is|are|what|which|how)\b/i.test(value)||/\b(?:i|we)\s+(?:want|need|would like)\b/i.test(value)||/(?:^|[,.;])\s*(?:please\s+)?(?:give|offer|apply|use|add)\b/i.test(value)||/^discounts?\b.*\?\s*$|\bdiscounts?\s+please[.! ]*$/i.test(value))
+   ||/\b(?:do|can|could|would)\s+(?:you|i|we)\b[^.!?]{0,50}\b(?:special|available|approved)\s+offers?\b/i.test(value)
+   ||/\b(?:can|could|would)\s+you\s+(?:lower|reduce)\s+(?:the\s+)?price\b|\b(?:can|could|would)\s+you\s+make\s+(?:it|this)\s+cheaper\b/i.test(value);
+  if(ask)requested=true;
+  }
+ }
+ return requested;
+}
+
+export function voiceDiscountClaim(reply:string,approvedCodes:string[]=[]){
+ return /(?:₹|\brs\.?|\binr)\s*[\d,]+\s*off\b|\b\d+(?:\.\d+)?\s*(?:%|percent|per cent)\s*(?:off|discount)\b|\b(?:offer|give|apply|provide|get|available|eligible)\b[^.!?]{0,60}\b(?:discounts?|coupons?|promos?)\b/i.test(reply)
+  ||approvedCodes.some(code=>new RegExp(`\\b${code.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`,"i").test(reply));
+}
+
+/** A spoken percentage must name the package and match its current canonical saving. */
+export function voicePercentageDiscountsApproved(reply:string,offers:{package_name:string;regular_price:number;discount_amount:number}[]){
+ for(const sentence of reply.split(/(?<=[.!?])\s+|\n+/)){
+  for(const match of sentence.matchAll(/\b(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)\s*(?:off|discount)\b/gi)){
+   const prefix=sentence.slice(0,match.index);
+   if(/\b(?:no|not|cannot|can't|don't|do not)(?:\s+(?:give|offer|apply|provide|a|an|the|any)){0,5}\s*$/i.test(prefix))continue;
+   const rate=Number(match[1]);
+   if(!offers.some(offer=>{
+    const packageName=offer.package_name.split("(")[0].trim();
+    return packageName&&sentence.toLowerCase().includes(packageName.toLowerCase())&&Number.isFinite(offer.regular_price)&&offer.regular_price>0&&Number((offer.discount_amount/offer.regular_price*100).toFixed(2))===rate;
+   }))return false;
+  }
+ }
+ return true;
+}
