@@ -374,6 +374,7 @@ export default function PawSpaceV2() {
                 <button className={styles.changeNumber} onClick={resetAuth}>← Use a different number</button>
               </>
             )}
+            <button type="button" className={styles.changeNumber} onClick={closeAuth}>Continue as guest</button>
             {authError && <div className={styles.authError} role="alert">{authError}</div>}
             <div className={styles.authFoot}><span>◆</span> Secure identity · one canonical PawSpace account</div>
           </div>

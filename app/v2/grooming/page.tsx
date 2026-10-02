@@ -29,6 +29,7 @@ import {
   type V2GroomingPaymentChoice,
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
+import GroomingGuestPreview from "./guest-preview";
 import V2GroomingPaymentPanel from "./payment-panel";
 import V2GroomingCouponBox, { type V2CouponIntent } from "./coupon-box";
 import ContactForm from "../../contact/contact-form";
@@ -49,6 +50,7 @@ const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "curren
 
 export default function V2GroomingPage() {
   const recoveryBookingId = useQueryParameter("bookingId");
+  const [guest, setGuest] = useState(false);
   const [account, setAccount] = useState<CustomerAccountRecord | null>(null);
   const [catalogue, setCatalogue] = useState<V2GroomingCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +64,8 @@ export default function V2GroomingPage() {
   const [comfort, setComfort] = useState<"friendly" | "anxious" | "aggressive">("friendly");
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
-  const [selectedPackageCode, setSelectedPackageCode] = useState("");
+  const [guestPackageCode, setGuestPackageCode] = useState(() => {try{return recoveryBookingId?"":window.sessionStorage.getItem("pawspace_v2_grooming_guest_package")||"";}catch{return "";}});
+  const [selectedPackageCode, setSelectedPackageCode] = useState(guestPackageCode);
   const [address, setAddress] = useState("");
   const [savedAddressId, setSavedAddressId] = useState("");
   // A typed doorstep is kept in the account only when the customer asks; availability checks never save it.
@@ -109,9 +112,11 @@ export default function V2GroomingPage() {
         loadV2ServiceAvailability(),
         loadV2GroomingCatalogue(),
       ]);
-      if (!session) throw new Error("Sign in from PawSpace V2 before booking grooming.");
       const grooming = availability.find(service => service.code === "grooming");
       if (!grooming?.enabled) throw new Error("Grooming is not accepting bookings in your area right now.");
+      setCatalogue(nextCatalogue);
+      setGuest(!session);
+      if (!session) return;
       const nextAccount = await loadV2CustomerAccount();
       setAccount(nextAccount);
       const saved=nextAccount.addresses.find(item=>item.isDefault)||nextAccount.addresses[0];
@@ -295,6 +300,8 @@ export default function V2GroomingPage() {
 
   if (loading) return <main className={styles.loading}><span className={styles.loader}>✦</span><b>Preparing a beautiful grooming experience…</b></main>;
 
+  if (guest && catalogue && !fatal) return <GroomingGuestPreview catalogue={catalogue} selectedCode={selectedPackageCode} onSelect={code => {setGuestPackageCode(code);setSelectedPackageCode(code);try{window.sessionStorage.setItem("pawspace_v2_grooming_guest_package",code);}catch{/* Keep the current visit usable without storage. */}}} onVerified={() => void bootstrap()}/>;
+
   if (fatal || !account || !catalogue) return (
     <main className={styles.errorPage}>
       <img src="/assets/pawspace-grooming-cartoon.webp" alt="" />
@@ -332,6 +339,7 @@ export default function V2GroomingPage() {
         </div>
       </section>
 
+      {guestPackageCode && <p role="status" className={styles.helper}>Your guest choice: {catalogue.packages.find(pkg => pkg.code === guestPackageCode)?.name || "a previously selected package"}. {packages.some(pkg => pkg.code === guestPackageCode) ? "Choose your saved pets to check the final price and availability." : "This choice does not match your current pet selection. Choose the matching pets or a compatible package below before booking."}</p>}
       {largeHousehold && <section id="v2-large-family-enquiry" tabIndex={-1} role="dialog" aria-modal="false" aria-label="Large pet family enquiry" className={styles.step}>
         <h2>Plan care for more than four pets</h2><p>Your four-pet booking is unchanged. Send a separate enquiry for the full family; this does not confirm a booking.</p>
         <ContactForm initial={{name:account.name,phone:account.primaryPhone,service:"Grooming",petNames:largeHousehold.join(", "),message:`Please plan grooming for ${largeHousehold.length} pets: ${largeHousehold.join(", ")}. Requested date: ${date}.`}}/>
