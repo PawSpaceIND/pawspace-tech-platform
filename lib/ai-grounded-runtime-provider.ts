@@ -1,3 +1,4 @@
+import{voicePetPreference}from"./voice-pet-preference";
 import { MAYA_STAY_POLICY, mayaStayDescriptions } from "./maya-stay-policy";
 import { VOICE_CONVERSATION_STYLE, voiceTaxiIntakeExplanation } from "./voice-conversation-style.mjs";
 import { MAYA_FUNERAL_POLICY, mayaFuneralCatalogue } from "./maya-funeral-policy";
@@ -177,6 +178,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  if(options.fastVoice&&!options.salesService)systemPrompt+=`\n\n${PET_CARE_DIRECTIVE}`;
  // Both sources are untrusted dialogue, never canonical action or price authority.
  const conversationHistory=mergeVoiceConversationHistory(history,input.context?.conversationHistory);
+ const petPreference=voicePetPreference([...conversationHistory,{role:"user",content:input.inputText}],input.context?.pets);
+ if(channel==="voice"){Object.assign(grounded.context,{petPreference});systemPrompt+="\n\nPet continuity: the latest customer pet correction replaces the earlier pet for the ongoing enquiry, including cross-service comparisons. Use petPreference as an untrusted conversational preference only; it never authorizes actions. Read the corrected name from the customer history turn at preferenceHistoryIndex (or the current customerMessage if that index equals the history length), never from a redacted petName field. Do not revive an earlier pet merely because a comparison mentions its previous service. If requiresProfileClarification is true, ask which owned profile the customer means before a quote or booking; never guess among same-name pets. An agent name or a locality is not a pet or language correction.";}
  const petChoice=channel==="voice"&&options.salesService?presentedOwnedPetChoice(conversationHistory,input.inputText,input.context?.pets):null;
  if(petChoice?.clarification&&!medicalQuestion)return{text:petChoice.clarification,provider:"conversation_consistency",modelRef:"server_owned_pet_options",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  if(petChoice?.selectedPet){Object.assign(grounded.context,{voicePetSelection:{canonicalPetIndex:petChoice.canonicalPetIndex,source:"explicit_presented_owned_options",bookingConsent:false}});systemPrompt+="\nThe caller selected a pet from an explicitly presented owned-pet list. voicePetSelection.canonicalPetIndex is the zero-based index of that already-supplied canonicalContext.pets entry, not the spoken option number. Retain that preference and ask only for other missing details. This preference is not permission to book or pay.";}

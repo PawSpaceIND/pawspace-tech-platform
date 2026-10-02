@@ -1,5 +1,5 @@
 import{pendingLookupAcknowledgment,claimVoiceLookupAcknowledgment}from"./voice-lookup-acknowledgment";
-import{emergencyGuidanceOnly,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
+import{needsImmediateVetGuidance,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
 import { voiceSalesService } from "./voice-sales-specialists";
 import{ensureCommunicationTables}from"./communication-engine";
 import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn,minimumContext,validateAiProviderReply}from"./ai-conversation-orchestrator";
@@ -192,11 +192,12 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   ]);if(Number(writes[1].meta?.changes||0)!==1)throw new Response("AI replies are paused while the conversation is owned by staff",{status:409});clock.mark("replyWrite");return replyId;
  };
  clock.mark("inboundWriteStarted");
- if(emergencyGuidanceOnly(inputText)){
-  // Public safety direction is not permission to enqueue a staff request or resume AI actions.
-  await assertVoiceCustomerMayReply(db,ctx);
-  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null,true);
-  try{await assertVoiceCustomerMayReply(db,ctx);}catch(error){await db.prepare("UPDATE communication_messages SET status='suppressed',updated_at=? WHERE id=? AND status='ready'").bind(Date.now(),replyId).run();throw error;}
+ if(needsImmediateVetGuidance(inputText)){
+  // Public static urgency guidance remains available during staff ownership. It cannot generate,
+  // resume AI, diagnose, enqueue another handoff or execute any commercial action.
+  const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(ctx.threadId).first<Row>();
+  if(!thread||text(thread.customer_id)!==ctx.customerId){await settleInbound();throw new Response("PawSpace voice thread/customer mismatch",{status:403});}
+  const replyId=await persistReply(IMMEDIATE_VET_GUIDANCE,"deterministic_emergency_guidance",null);
   return{output:IMMEDIATE_VET_GUIDANCE,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"emergency_guidance",timings:clock.marks,modelRef:null,providerRef:"deterministic_emergency_guidance",upstreamMs:null as number|null};
  }
  try{await assertVoiceCustomerMayReply(db,ctx);}catch(error){

@@ -600,3 +600,26 @@ test('slow real scheduling preview emits acknowledgment while blocked, then pres
  assert.deepEqual(spoken,[LOOKUP_ACKNOWLEDGMENT]);assert.equal(finalReady,false,'lookup and final quote are still unresolved when speech is emitted');assert.equal(bookingCount(w),0);
  release();const offer=await offerPromise;assert.match(offer.summary,/One-time grooming/);assert.equal(spoken.length,1);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
 });
+
+test('recorded Maya correction reaches actual grounded model context through cross-service comparison',async t=>{
+ const w=await world(t),{readFile}=await import('node:fs/promises');
+ const recorded=JSON.parse(await readFile(new URL('./fixtures/maya-service-language-memory.json',import.meta.url),'utf8'));
+ const {applyOwnedDdl}=await import('./helpers/ai-harness.mjs');const {ensurePricingControlRuntime}=await import('../lib/pricing-control-runtime.ts');await ensurePricingControlRuntime(w.db);
+ for(const owner of ['lib/training-commercial-governance.ts','lib/boarding-governance.ts','lib/sitting-governance.ts','lib/walking-governance.ts','lib/taxi-governance.ts'])applyOwnedDdl(w.sqlite,owner);
+ if(!w.sqlite.prepare('PRAGMA table_info(canonical_pets)').all().some(column=>column.name==='breed'))w.sqlite.exec('ALTER TABLE canonical_pets ADD COLUMN breed TEXT');
+ w.sqlite.prepare("UPDATE canonical_pets SET name='Bruno' WHERE id=?").run(w.petId);await seedOwnedPet(w.db,w.customerId,'PET-MAYA-1','Maya');await seedOwnedPet(w.db,w.customerId,'PET-MAYA-2','Maya');
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'offline-test-only'};
+ const requests=[];globalThis.fetch=async(url,init)=>{requests.push({url:String(url),body:JSON.parse(init.body)});
+  return Response.json({status:'completed',output_text:'I remember your correction to Maya. Which of the two saved Maya profiles do you mean?',usage:{total_tokens:20}});
+ };
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');const provider=await createGroundedAiRuntimeProvider(w.db,actor,'voice',{salesService:'all_services'});
+ const history=recorded.turns.slice(0,4).flatMap(t=>[{role:'user',content:t.transcript},{role:'assistant',content:t.reply}]);
+ const wrapped={...provider,generate:input=>provider.generate({...input,context:{...input.context,conversationHistory:history}})};
+ const result=await turn(w,recorded.turns[4].transcript,'recorded-maya-comparison',wrapped);
+ assert.ok(requests.length>=1&&requests.length<=2);
+ for(const {url,body} of requests){assert.equal(url,'https://api.openai.com/v1/responses');const context=JSON.parse(body.input).canonicalContext;
+  assert.equal(context.petPreference?.petName,'[REDACTED]','existing pet-name privacy redaction remains intact');assert.equal(context.conversationHistory[context.petPreference.preferenceHistoryIndex].content,recorded.turns[2].transcript);assert.deepEqual(context.petPreference.matchingSavedPetIds.sort(),['PET-MAYA-1','PET-MAYA-2']);assert.equal(context.petPreference.requiresProfileClarification,true);assert.equal(context.petPreference.mutationAuthority,false);assert.match(body.instructions,/latest customer pet correction replaces the earlier pet/);
+  assert.ok(context.conversationHistory.some(row=>row.content===recorded.turns[2].transcript));
+ }
+ assert.notEqual(result.turn.outcome,'handoff',JSON.stringify(result));assert.match(result.turn.output,/Maya/);assert.equal(bookingCount(w),0);assert.equal(w.calls.length,0);
+});
