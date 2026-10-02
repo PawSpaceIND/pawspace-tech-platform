@@ -103,24 +103,78 @@ const digest=value=>createHash('sha256').update(typeof value==='string'||Buffer.
 const normalized=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
 const gate=(code,receipt)=>Object.assign(Error(code),{code,receipt});
 
-export function createManagedDeadline({endAt,code,parentSignal,now=()=>Date.now()}){
+// User-approved total for this run. No env/input can raise it, and no post-hoc usage,
+// terminal transcript or local close refunds a conservative pre-execution reservation.
+export const MANAGED_RUN_CAP_MICROS=5_000_000;
+export function createManagedRunBudget(){
+ const reservations=[];let reservedMicros=0;
+ const receipt=()=>({capMicros:MANAGED_RUN_CAP_MICROS,reservedMicros,remainingMicros:MANAGED_RUN_CAP_MICROS-reservedMicros,reservations:reservations.map(r=>({...r}))});
+ const check=bound=>{
+  if(!Array.isArray(bound?.gates)||bound.gates.length||!Number.isSafeInteger(bound.upperBoundMicros)||bound.upperBoundMicros<=0)throw gate('managed_run_cost_upper_bound_unknown',{...receipt(),costBound:bound});
+  if(bound.upperBoundMicros>MANAGED_RUN_CAP_MICROS-reservedMicros)throw gate('managed_run_budget_insufficient',{...receipt(),nextSessionUpperBoundMicros:bound.upperBoundMicros});
+  return bound.upperBoundMicros;
+ };
+ return {receipt,check,reserve(bound,scenario='session'){
+  const amount=check(bound);
+  if(!/^[a-z0-9_-]{1,80}$/.test(scenario)||reservations.some(r=>r.scenario===scenario))throw gate('managed_run_budget_duplicate_or_invalid_reservation');
+  reservedMicros+=amount;reservations.push(Object.freeze({scenario,upperBoundMicros:amount}));return receipt();
+ }};
+}
+
+export function managedSessionCostBound({config,budget,now=Date.now()}){
+ // Primary rates verified 2026-10-02. Charge every minute as additional/burst;
+ // neither unknown included minutes nor silence discounts reduce this reservation.
+ // https://elevenlabs.io/pricing/agents
+ // https://developers.openai.com/api/docs/models/gpt-5.6-luna
+ const seconds=config?.conversation_config?.conversation?.max_duration_seconds,tts=config?.conversation_config?.tts?.model_id,runtime=budget?.runtime;
+ const gates=[];const durationKnown=Number.isSafeInteger(seconds)&&seconds>=60&&seconds<=7200;
+ if(!Number.isFinite(now)||now<Date.parse('2026-10-02T00:00:00Z')||now>=Date.parse('2026-10-03T00:00:00Z'))gates.push('managed_rate_evidence_expired_or_invalid');
+ if(!durationKnown)gates.push('managed_server_duration_unknown');
+ if(tts!=='eleven_v3_conversational')gates.push('managed_speech_rate_unknown');
+ if(runtime?.provider!=='openai'||runtime.model!=='gpt-5.6-luna')gates.push('managed_model_rate_unknown');
+ const speech={maximumBilledSeconds:durationKnown?seconds:null,burstMicrosPerMinute:160000,reservedMicros:durationKnown?Math.ceil(seconds/60)*160000:null,localDisconnectDiscountApplied:false,includedMinuteDiscountApplied:false};
+ // Per-attempt ceilings are conservative: full documented context, runtime adapter's
+ // 8000 output clamp, long-context output rate, and long-context cache-write input rate.
+ // A 6-turn script is NOT a bound on ASR callbacks, ElevenLabs custom-LLM retries,
+ // PawSpace recovery/repair or soft-timeout requests. Native retries are documented at
+ // https://elevenlabs.io/docs/eleven-agents/customization/llm/llm-cascading
+ // Shared daily reservations estimate chars/4, may expire, and reset at UTC midnight;
+ // they are not an enforceable per-conversation token/attempt or billed-dollar cap.
+ const model={provider:runtime?.provider||null,model:runtime?.model||null,maximumInputTokensPerAttempt:1050000,maximumOutputTokensPerAttempt:8000,inputMicrosPerMillion:500000,outputMicrosPerMillion:1800000,maximumPerAttemptMicros:539400,maximumAttempts:null,allAttemptClassesBounded:false,sharedQuotaIsPerRunBillingCap:false};
+ gates.push('managed_model_attempt_upper_bound_not_enforced');
+ // Public Agents speech rates exclude optional LLM-enabled feature fees; current
+ // agent GET/user GET do not attest a maximum for every such charge. Never assume zero.
+ gates.push('managed_optional_speech_llm_cost_upper_bound_not_attested');
+ return {ratesVerifiedAt:'2026-10-02',ratesEvidenceExpiresAt:'2026-10-03T00:00:00Z',ratesSources:['https://elevenlabs.io/pricing/agents','https://developers.openai.com/api/docs/models/gpt-5.6-luna'],speech,model,upperBoundMicros:null,gates};
+}
+
+export function selectManagedCases(cases,scope='grooming-first'){
+ if(scope==='readiness-only')return[];
+ if(scope==='grooming-first'){if(cases[0]?.id!=='grooming_price_value')throw gate('managed_grooming_first_case_missing');return[cases[0]];}
+ if(scope==='five-enquiries')return cases;
+ throw gate('managed_scope_unknown');
+}
+
+export function createManagedDeadline({endAt,code,parentSignal,parentScope,now=()=>Date.now()}){
  if(!Number.isFinite(endAt)||typeof code!=='string')throw gate('managed_deadline_boundary');
  const controller=new AbortController();
  const abort=reason=>{if(!controller.signal.aborted)controller.abort(reason||gate(code));};
  const onParent=()=>abort(parentSignal.reason);
  if(parentSignal?.aborted)onParent();else parentSignal?.addEventListener('abort',onParent,{once:true});
- const timer=setTimeout(()=>abort(gate(code)),Math.max(1,endAt-now()));
- const scope={deadline:endAt,code,signal:controller.signal,remaining:()=>Math.max(0,endAt-now()),check(){if(now()>=endAt)abort(gate(code));if(controller.signal.aborted)throw controller.signal.reason;},dispose(){clearTimeout(timer);parentSignal?.removeEventListener('abort',onParent);},async sleep(ms){scope.check();try{await delay(Math.min(ms,scope.remaining()),undefined,{signal:scope.signal});}catch(e){throw scope.signal.reason||e;}scope.check();}};
+ // Equal-deadline children inherit the parent's timer. Independent timers can fire
+ // a millisecond apart and reject a child before the parent's socket-close callback.
+ const timer=parentScope?.deadline===endAt?null:setTimeout(()=>abort(gate(code)),Math.max(1,endAt-now()));
+ const scope={deadline:endAt,code,signal:controller.signal,remaining:()=>Math.max(0,endAt-now()),check(){parentScope?.check();if(now()>=endAt)abort(gate(code));if(controller.signal.aborted)throw controller.signal.reason;},dispose(){clearTimeout(timer);parentSignal?.removeEventListener('abort',onParent);},async sleep(ms){scope.check();try{await delay(ms,undefined,{signal:scope.signal});}catch(e){throw scope.signal.reason||e;}scope.check();}};
  return scope;
 }
 
 export function createManagedSessionDeadline(runScope,{startedAt=Date.now(),sessionMs=MANAGED_DEMO_LIMITS.sessionMs,onExpire=()=>{}}={}){
- runScope.check();const endAt=Math.min(runScope.deadline,startedAt+sessionMs),scope=createManagedDeadline({endAt,code:endAt===runScope.deadline?runScope.code:'managed_session_deadline',parentSignal:runScope.signal});
+ runScope.check();const endAt=Math.min(runScope.deadline,startedAt+sessionMs),scope=createManagedDeadline({endAt,code:endAt===runScope.deadline?runScope.code:'managed_session_deadline',parentSignal:runScope.signal,parentScope:runScope});
  scope.signal.addEventListener('abort',()=>onExpire(scope.signal.reason),{once:true});return scope;
 }
 
 export async function runManagedSubprocess(file,args,{scope,input,maxMs=10_000,maxOutputBytes=2*1024*1024}={}){
- scope.check();const endAt=Math.min(scope.deadline,Date.now()+maxMs),childScope=createManagedDeadline({endAt,code:endAt===scope.deadline?scope.code:'managed_subprocess_deadline',parentSignal:scope.signal});
+ scope.check();const endAt=Math.min(scope.deadline,Date.now()+maxMs),childScope=createManagedDeadline({endAt,code:endAt===scope.deadline?scope.code:'managed_subprocess_deadline',parentSignal:scope.signal,parentScope:scope});
  return new Promise((resolve,reject)=>{
   let child,settled=false,bytes=0;const chunks=[];
   const finish=(error,value)=>{if(settled)return;settled=true;childScope.dispose();childScope.signal.removeEventListener('abort',onAbort);error?reject(error):resolve(value);};
@@ -328,20 +382,21 @@ export async function writeManagedAudio(directory,recorder,scope){
 
 async function runManagedDemo(){
  const env=process.env,started=Date.now(),deadline=started+MANAGED_DEMO_LIMITS.aggregateMs,activeSockets=new Set();
+ const scope=env.MANAGED_DEMO_SCOPE||'grooming-first',runBudget=createManagedRunBudget();
  const runScope=createManagedDeadline({endAt:deadline,code:'managed_aggregate_deadline'});let currentSession=null;
  runScope.signal.addEventListener('abort',()=>{for(const socket of activeSockets)try{socket.close();}catch{}},{once:true});
  const check=()=>runScope.check();
  const root='voice-demo-results/managed-five';await mkdir(root,{recursive:true});let budget;
- const report={suite:'managed-five-sales',startedAt:new Date(started).toISOString(),limits:MANAGED_DEMO_LIMITS,dialed:false,sessionRetries:0,runtimeProviderRetriesVerified:false,transactionCompletionTested: false,handsetPlaybackVerified:false,listened: false,scenarios:[]};
+ const report={suite:'managed-five-sales',scope,startedAt:new Date(started).toISOString(),limits:MANAGED_DEMO_LIMITS,dialed:false,sessionRetries:0,runtimeProviderRetriesVerified:false,transactionCompletionTested: false,handsetPlaybackVerified:false,listened: false,scenarios:[]};
  try{
   authorizedLaunchTester(env);
-  for(const k of ['SPECIALIST_CUSTOMER_ID','ELEVENLABS_API_KEY','GROOMING_AGENT_ID','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_API_TOKEN','STAGING_D1_ID','PRODUCTION_D1_ID','PAWSPACE_UAT_ACCESS_CODE'])if(!env[k])throw gate('managed_missing_prerequisite:'+k);
+  for(const k of ['SPECIALIST_CUSTOMER_ID','ELEVENLABS_API_KEY','GROOMING_AGENT_ID','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_API_TOKEN','STAGING_D1_ID','PRODUCTION_D1_ID',...(scope==='readiness-only'?[]:['PAWSPACE_UAT_ACCESS_CODE'])])if(!env[k])throw gate('managed_missing_prerequisite:'+k);
   if(!/^[a-f0-9]{40}$/.test(env.EXPECTED_SHA||''))throw gate('managed_source_pin_required');
   const head=(await runManagedSubprocess('git',['rev-parse','HEAD'],{scope:runScope})).toString('utf8').trim();
   const changed=head===env.EXPECTED_SHA?[]:(await runManagedSubprocess('git',['diff','--name-only',env.EXPECTED_SHA,head],{scope:runScope})).toString('utf8').trim().split('\n');
   report.source=assertManagedSource(env.EXPECTED_SHA,head,changed,env.GITHUB_RUN_ATTEMPT);
   if((await runManagedSubprocess('git',['status','--porcelain','--untracked-files=no'],{scope:runScope})).toString('utf8').trim())throw gate('managed_dirty_source');
-  const scenarios=assertManagedCases(JSON.parse(await readFile(new URL('./fixtures/maya-managed-sales-scenarios.json',import.meta.url),'utf8')));
+  const scenarios=selectManagedCases(assertManagedCases(JSON.parse(await readFile(new URL('./fixtures/maya-managed-sales-scenarios.json',import.meta.url),'utf8'))),scope);
   report.scenarios=scenarios.map(s=>({scenario:s.id,service:s.service,language:s.language,status:'not_run',artifacts:[],listened:false,transactionCompletionTested:false}));
   const eleven=(env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io').replace(/\/$/,'');
   if(!['https://api.elevenlabs.io','https://api.in.residency.elevenlabs.io'].includes(eleven))throw gate('managed_provider_region');
@@ -364,11 +419,19 @@ async function runManagedDemo(){
   if(config.conversation_config?.agent?.prompt?.custom_llm?.url!==MANAGED_ORIGIN+'/api/elevenlabs/v1')throw gate('managed_actual_staging_brain_required');
   report.provider={region:eleven,customLlmOrigin:MANAGED_ORIGIN,agentConfigurationSha256:digest(config.conversation_config),input:'synthetic_microphone',output:'actual_provider_audio'};
   budget=await readManagedDemoBudget({settings,query,readEleven});await writeFile(root+'/budget.json',JSON.stringify(budget,null,2));
+  report.runBudgetBound=managedSessionCostBound({config,budget});
+  const identity=await query('SELECT primary_phone FROM canonical_customers WHERE id=?',[env.SPECIALIST_CUSTOMER_ID]),phone=String(identity[0]?.primary_phone||'').replace(/\D/g,''),tester=authorizedLaunchTester(env).replace(/\D/g,'');if(![tester,tester.slice(2)].includes(phone))throw gate('managed_owned_test_recipient_required');
+  // Existing Cloudflare D1 query route, SELECT-only. Read these component receipts
+  // even when budget refuses; never use GET /api/communications (it seeds rows).
+  report.noOutbound=await readManagedNoOutboundGate({query,settings:await isolation(),customerId:env.SPECIALIST_CUSTOMER_ID});
+  await writeFile(root+'/no-outbound.json',JSON.stringify(report.noOutbound,null,2));
+  report.preExecutionGates=[...budget.gates,...report.runBudgetBound.gates,...report.noOutbound.gates];
+  if(scope==='readiness-only'){report.readinessOnly=true;report.paidExecutionAllowed=false;return;}
+  runBudget.check(report.runBudgetBound);
   if(!budget.allowed)throw gate('managed_budget_gate',budget);
   const login=await fetch(MANAGED_ORIGIN+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin:MANAGED_ORIGIN},body:JSON.stringify({email:'founder@pawspace.in',code:env.PAWSPACE_UAT_ACCESS_CODE}),redirect:'manual',signal:AbortSignal.any([runScope.signal,AbortSignal.timeout(Math.max(1,Math.min(20000,runScope.remaining())))])});
   cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];if(login.status!==200||!cookie.startsWith('pawspace_uat='))throw gate('managed_authenticated_context_denied');
   await isolation();
-  const identity=await query('SELECT primary_phone FROM canonical_customers WHERE id=?',[env.SPECIALIST_CUSTOMER_ID]),phone=String(identity[0]?.primary_phone||'').replace(/\D/g,''),tester=authorizedLaunchTester(env).replace(/\D/g,'');if(![tester,tester.slice(2)].includes(phone))throw gate('managed_owned_test_recipient_required');
   report.noOutbound=await readManagedNoOutboundGate({query,settings:await isolation(),customerId:env.SPECIALIST_CUSTOMER_ID});
   if(!report.noOutbound.allowed)throw gate('managed_pre_execution_no_outbound_unproven',report.noOutbound);
   report.recipient={ownedTester:true,existingNoSendVerified:true,confirmationsAllowed: false};
@@ -390,6 +453,10 @@ async function runManagedDemo(){
    try{
     result.noOutbound=await readManagedNoOutboundGate({query,settings:await isolation(),customerId:env.SPECIALIST_CUSTOMER_ID});
     if(!result.noOutbound.allowed)throw gate('managed_pre_execution_no_outbound_unproven',result.noOutbound);
+    const currentConfig=await readEleven('/v1/convai/agents/'+encodeURIComponent(env.GROOMING_AGENT_ID));
+    if(digest(currentConfig.conversation_config)!==report.provider.agentConfigurationSha256)throw gate('managed_agent_configuration_changed');
+    result.preExecutionCostBound=managedSessionCostBound({config:currentConfig,budget:currentBudget});
+    result.runBudgetReservation=runBudget.reserve(result.preExecutionCostBound,scenario.id);
     const prepared=await prepareManagedCallerAudio(scenario,{scope:runScope});
     result.callerAudioPreparedBeforeConnection=true;
     context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:scenario.language}));
@@ -443,7 +510,7 @@ async function runManagedDemo(){
   }
   await isolation();report.after=await managedState(query,env.SPECIALIST_CUSTOMER_ID);report.state=assertManagedState(report.before,report.after);
  }catch(e){report.gate=e.code||'managed_preflight_or_session_failed';for(const result of report.scenarios)if(result.status==='not_run')result.gate=report.gate;if(e.receipt)report.gateReceipt=e.receipt;process.exitCode=1;
- }finally{for(const socket of activeSockets)try{socket.close();}catch{};runScope.dispose();report.finishedAt=new Date().toISOString();report.aggregateMs=Date.now()-started;if(budget)report.budget=budget;await writeFile(root+'/summary.json',JSON.stringify(report,null,2));console.log('MANAGED_AUDIO_SUITE='+JSON.stringify({gate:report.gate||null,scenarios:report.scenarios.map(s=>({id:s.scenario,status:s.status})),dialed:false,listened:false,transactionCompletionTested:false}));}
+ }finally{for(const socket of activeSockets)try{socket.close();}catch{};runScope.dispose();report.finishedAt=new Date().toISOString();report.aggregateMs=Date.now()-started;report.runBudget=runBudget.receipt();if(budget)report.budget=budget;await writeFile(root+'/summary.json',JSON.stringify(report,null,2));console.log('MANAGED_AUDIO_SUITE='+JSON.stringify({scope,gate:report.gate||null,preExecutionGates:report.preExecutionGates||[],runBudget:report.runBudget,scenarios:report.scenarios.map(s=>({id:s.scenario,status:s.status})),dialed:false,listened:false,transactionCompletionTested:false}));}
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){

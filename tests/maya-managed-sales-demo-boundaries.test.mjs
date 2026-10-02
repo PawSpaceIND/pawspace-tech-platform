@@ -255,3 +255,56 @@ test('managed job leaves setup and artifact-upload allowance outside unchanged r
  assert.match(job,/if: \$\{\{ always\(\) \}\}/);
  assert.match(job,/uses: actions\/upload-artifact@v4/);
 });
+
+test('dollar guard reserves the full server duration at burst rate, not the local socket deadline',async()=>{
+ const runner=await import(runnerUrl);assert.equal(typeof runner.managedSessionCostBound,'function');
+ const b=runner.managedSessionCostBound({config:{conversation_config:{conversation:{max_duration_seconds:600},tts:{model_id:'eleven_v3_conversational'}}},budget:{runtime:{provider:'openai',model:'gpt-5.6-luna'}}});
+ assert.equal(b.speech.maximumBilledSeconds,600);assert.equal(b.speech.reservedMicros,1600000);
+ assert.equal(b.speech.localDisconnectDiscountApplied,false);assert.equal(b.upperBoundMicros,null);
+ assert.ok(b.gates.includes('managed_model_attempt_upper_bound_not_enforced'));
+ assert.equal(b.model.maximumInputTokensPerAttempt,1050000);assert.equal(b.model.maximumOutputTokensPerAttempt,8000);
+});
+test('unknown model attempt costs block before any reservation can authorize execution',async()=>{
+ const runner=await import(runnerUrl);assert.equal(typeof runner.createManagedRunBudget,'function');
+ const ledger=runner.createManagedRunBudget();let started=0;
+ assert.throws(()=>{ledger.reserve({upperBoundMicros:null,gates:['managed_model_attempt_upper_bound_not_enforced']});started++;},/managed_run_cost_upper_bound_unknown/);
+ assert.equal(started,0);assert.deepEqual(ledger.receipt(),{capMicros:5000000,reservedMicros:0,remainingMicros:5000000,reservations:[]});
+});
+test('aggregate pre-execution reservations refuse the next session and never refund from local close or actual usage',async()=>{
+ const runner=await import(runnerUrl);assert.equal(typeof runner.createManagedRunBudget,'function');const ledger=runner.createManagedRunBudget();
+ // Offline verified-bound fixtures exercise arithmetic only; they do not attest the hosted runtime.
+ ledger.reserve({upperBoundMicros:2400000,gates:[]},'first');ledger.reserve({upperBoundMicros:2400000,gates:[]},'second');
+ assert.throws(()=>ledger.reserve({upperBoundMicros:2400000,gates:[]},'third'),/managed_run_budget_insufficient/);
+ assert.equal(ledger.receipt().remainingMicros,200000);assert.equal(ledger.refund,undefined);
+ assert.throws(()=>ledger.reserve({upperBoundMicros:-1,gates:[]}),/managed_run_cost_upper_bound_unknown/);
+ assert.throws(()=>ledger.reserve({upperBoundMicros:1.5,gates:[]}),/managed_run_cost_upper_bound_unknown/);
+});
+test('unknown duration, voice model, runtime model and enabled cost uncertainty remain gated',async()=>{
+ const runner=await import(runnerUrl);assert.equal(typeof runner.managedSessionCostBound,'function');
+ const config={conversation_config:{conversation:{max_duration_seconds:600},tts:{model_id:'eleven_v3_conversational'}}},budget={runtime:{provider:'openai',model:'gpt-5.6-luna'}};
+ for(const seconds of [undefined,NaN,0,7201]){const c=clone(config);c.conversation_config.conversation.max_duration_seconds=seconds;assert.ok(runner.managedSessionCostBound({config:c,budget}).gates.includes('managed_server_duration_unknown'));}
+ const c=clone(config);c.conversation_config.tts.model_id='unknown';assert.ok(runner.managedSessionCostBound({config:c,budget}).gates.includes('managed_speech_rate_unknown'));
+ const b=clone(budget);b.runtime.model='unknown';assert.ok(runner.managedSessionCostBound({config,budget:b}).gates.includes('managed_model_rate_unknown'));
+ assert.equal(runner.managedSessionCostBound({config,budget}).model.inputMicrosPerMillion,500000);
+ assert.equal(runner.managedSessionCostBound({config,budget}).model.outputMicrosPerMillion,1800000);
+});
+test('Grooming-first selection retains the reviewed conversation and does not require Taxi',async()=>{
+ const runner=await import(runnerUrl);assert.equal(typeof runner.selectManagedCases,'function');
+ const cases=assertManagedCases(fixture);assert.deepEqual(runner.selectManagedCases(cases),[cases[0]]);
+ assert.equal(runner.selectManagedCases(cases,'five-enquiries').length,5);
+ assert.deepEqual(runner.selectManagedCases(cases,'readiness-only'),[]);
+ assert.throws(()=>runner.selectManagedCases(cases,'unknown'),/managed_scope_unknown/);
+});
+test('readiness-only collects existing SELECT-only isolation and dollar receipts before paid-session gates',()=>{
+ const managed=source.slice(source.indexOf('async function runManagedDemo'));
+ assert.match(managed,/report\.runBudgetBound=managedSessionCostBound/);
+ assert.match(managed,/scope==='readiness-only'/);
+ assert.ok(managed.indexOf('report.noOutbound=await readManagedNoOutboundGate')<managed.indexOf("if(!budget.allowed)"));
+ assert.ok(managed.indexOf('runBudget.reserve(')<managed.indexOf("app({action:'start'"));
+ assert.match(workflow,/managed_audio_scope:/);assert.match(workflow,/MANAGED_DEMO_SCOPE:/);
+});
+test('cost evidence expires and billed-duration rounding remains conservative',async()=>{
+ const {managedSessionCostBound}=await import(runnerUrl),config={conversation_config:{conversation:{max_duration_seconds:601},tts:{model_id:'eleven_v3_conversational'}}},budget={runtime:{provider:'openai',model:'gpt-5.6-luna'}};
+ const b=managedSessionCostBound({config,budget,now:Date.parse('2026-10-02T12:00:00Z')});assert.equal(b.speech.reservedMicros,1760000);assert.equal(b.model.maximumPerAttemptMicros,539400);
+ for(const now of [NaN,Date.parse('2026-10-01T12:00:00Z'),Date.parse('2026-10-03T00:00:00Z')])assert.ok(managedSessionCostBound({config,budget,now}).gates.includes('managed_rate_evidence_expired_or_invalid'));
+});

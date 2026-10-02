@@ -50,6 +50,15 @@ on:
         description: 'grooming_sales or training_sales when confirm=specialist-call'
         required: false
         default: 'grooming_sales'
+      managed_audio_scope:
+        description: 'Managed mode only: read metadata without execution, run Grooming first, or request five enquiries; all execution remains budget/isolation gated'
+        type: choice
+        options:
+          - grooming-first
+          - readiness-only
+          - five-enquiries
+        required: false
+        default: grooming-first
       demo_started_at:
         description: 'Exact failed synthetic demo interval start in UTC (read-only diagnosis)'
         required: false
@@ -240,12 +249,14 @@ jobs:
         if: ${{ inputs.confirm == 'demo-five-sales-conversations' }}
         run: node --test tests/maya-managed-sales-demo-boundaries.test.mjs
       - name: Install synthetic microphone tools
+        if: ${{ inputs.confirm != 'demo-five-sales-conversations' || inputs.managed_audio_scope != 'readiness-only' }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y espeak-ng ffmpeg
       - name: Run bounded actual audio conversations without dialing
         env:
           MANAGED_DEMO_SUITE: ${{ inputs.confirm == 'demo-five-sales-conversations' && 'five-sales' || 'legacy-three' }}
+          MANAGED_DEMO_SCOPE: ${{ inputs.managed_audio_scope || 'grooming-first' }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
