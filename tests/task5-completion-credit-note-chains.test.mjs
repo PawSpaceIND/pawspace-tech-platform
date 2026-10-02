@@ -89,6 +89,9 @@ async function refundWorld(t, { invoiceSeries = true } = {}) {
   `);
   await gstAccounting.ensureGstAccountingTables(db);
   await returns.ensureGstReturnTables(db);
+  // Owner-approved inclusive allocation applies only to this disposable local world.
+  const {saveGstSetting}=await import("../lib/gst-setting.ts");
+  await saveGstSetting(db,{cityId:"*",ratePercent:18,method:"extract_inclusive",effectiveFrom:"2024-01-01",reason:"Owner-approved inclusive completion-to-note fixture",actorId:FINANCE});
   // The seller of record (owner decision B): TK PETCARE, from the entity's active tax policy.
   sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'IN','active','founder',1,1,1)").run(ENTITY, SELLER.legalName);
   sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'Karnataka','gstin',?,'active','2020-01-01',NULL,'founder',1,1,1)").run(REG, ENTITY, SELLER_GSTIN);
@@ -198,8 +201,15 @@ async function assertRefundChain(f,id,percent) {
   assert.ok(cn, "real credit note must be issued");
   assert.equal(cn.original_invoice_id,original.id);
   assert.equal(cn.refund_amount,refunded);
-  assert.equal(cn.taxable_value,r2(refunded*0.3));
-  assert.equal(cn.tax_total,r2(refunded*0.3*0.18));
+  const originalFee=r2(amount*0.3), originalGst=r2(originalFee*18/118);
+  assert.equal(original.subtotal,r2(originalFee-originalGst));
+  assert.equal(original.tax_total,originalGst);
+  assert.equal(r2(original.subtotal+original.tax_total+amount*0.7),amount,"original invoice reconciles to the approved total including provider collection");
+  assert.equal(cn.taxable_value,r2(original.subtotal*percent/100));
+  assert.equal(cn.tax_total,r2(original.tax_total*percent/100));
+  assert.equal(r2(cn.cgst+cn.sgst+cn.igst),cn.tax_total,"credit-note tax components preserve paise reconciliation");
+  assert.equal(r2(cn.taxable_value+cn.tax_total+refunded*0.7),refunded,"refund allocations reconcile to the customer refund");
+  assert.deepEqual(f.row("SELECT * FROM finance_invoices WHERE id=?",original.id),original,"refund preserves the issued original invoice");
   const settledPosition=await escalation.escalationRefundPosition(f.db,{bookingId:id,percent:20});
   assert.equal(settledPosition.payment.refundedSoFar,refunded);
   assert.equal(settledPosition.payment.refundable,r2(amount-refunded));
