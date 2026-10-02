@@ -628,6 +628,15 @@ function noLocationMutations(state: Fixture) {
   expect(state.locationWrites).toBe(0); expect(state.reservation).toBeNull();
 }
 
+async function deviceLocationReview(page: Page) {
+  const review = page.getByRole("group", { name: "Current location", exact: true });
+  // The Google-capable picker has its own location action. Exercise the retained
+  // review/cancel path through its actual disclosure rather than that other button.
+  if (!await review.isVisible()) await page.getByText("Use device location instead", { exact: true }).click();
+  await expect(review).toBeVisible();
+  return review;
+}
+
 test("G02/G05: location needs a user action and review; confirmed changes recheck the booking", async ({ page }) => {
   const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
   await previewCare(page);
@@ -635,7 +644,7 @@ test("G02/G05: location needs a user action and review; confirmed changes rechec
   expect(state.reverseCalls).toBe(0);
   const reserve = page.getByRole("button", { name: /Reserve & review payment/ });
   await expect(reserve).toBeEnabled();
-  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
   const suggested = page.getByRole("region", { name: "Suggested service address" });
   await expect(suggested).toBeVisible();
   await expect(suggested).toContainText(locatedAddress);
@@ -672,7 +681,7 @@ for (const code of [1, 3]) test(`G02: device refusal ${code} preserves entered a
     } });
   }, code);
   await previewCare(page);
-  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
   await expect(page.getByRole("group", { name: "Current location", exact: true }).getByRole("alert")).toContainText("manually");
   await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
@@ -685,7 +694,7 @@ test("G02: cancelling a delayed reverse lookup cannot overwrite a later typed ad
   const state = await fixture(page); await enableDeviceLocation(page);
   let release!: () => void; state.reverseGate = new Promise(resolve => { release = resolve; });
   await previewCare(page);
-  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
   await expect.poll(() => state.reverseCalls).toBe(1);
   await page.getByRole("button", { name: "Cancel location lookup", exact: true }).click();
   await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
@@ -706,7 +715,7 @@ test("G02: late device permission completion after manual entry never calls the 
     } });
   });
   await openCare(page);
-  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
   await page.getByRole("button", { name: "Enter address manually", exact: true }).click();
   await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
   await page.evaluate(() => (window as unknown as { finishLocation: () => void }).finishLocation());
@@ -717,7 +726,7 @@ test("G02: late device permission completion after manual entry never calls the 
 test("G02: rejecting a suggested location keeps the existing quote and coupon intact", async ({ page }) => {
   const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
   await previewCare(page); await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
-  await page.getByRole("button", { name: "Use current location", exact: true }).click();
+  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
   await page.getByRole("button", { name: "Keep entered address", exact: true }).click();
   await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();

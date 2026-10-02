@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import ts from 'typescript';
+const source=fs.readFileSync(new URL('../app/v2/grooming/verified-address-picker.tsx',import.meta.url),'utf8');
+const fn=source.slice(source.indexOf('export function groomingAddressSelection'),source.indexOf('export default')).replace('export ','');
+const compiled=ts.transpileModule(fn,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+const draft=new Function(`${compiled};return groomingAddressSelection;`)();
+const zone={address:'42 Double Road, Sudhama Nagar, Bengaluru 560027',assignment:{pincode:'560027',cityId:'blr',city:'Bengaluru',zoneId:'blr-central',area:'Sudhama Nagar'},zone:{zoneId:'blr-central',zoneName:'Central',description:'Covered',color:'#080',serviceAvailable:true},latitude:99,longitude:999,placeId:'not-authority',verification:'map'};
+test('existing Google selector projection carries exact address/PIN/area while dropping client GPS/place authority',()=>{const d=draft(zone);assert.equal(d.address,zone.address);assert.equal(d.pincode,'560027');assert.equal(d.selection,'map');assert.equal(d.coverage.cityId,'blr');assert.equal('latitude' in d,false);assert.equal('longitude' in d,false);assert.equal('placeId' in d,false);assert.equal('verification' in d,false);assert.equal(draft({...zone,verification:'typed'}).selection,'typed');});
+test('incomplete or uncovered selection cannot be applied as a valid doorstep draft',()=>{for(const changed of [{address:''},{assignment:{...zone.assignment,pincode:'bad'}},{zone:{...zone.zone,serviceAvailable:false}},{verification:'fabricated'}])assert.equal(draft({...zone,...changed}),null);});
+test('UI reuses existing Places-capable picker without global restore, automatic location, payment or backend authority edits',()=>{assert.match(source,/import AddressPicker/);assert.match(source,/restoreSaved=\{false\}/);assert.match(source,/autoLocate=\{false\}/);assert.match(source,/Only the service area is matched/);assert.match(source,/onInvalidated\(\)/);assert.doesNotMatch(source,/reserveUatSchedule|razorpay|fetch\(|subscriptionExpiry/);const page=fs.readFileSync(new URL('../app/v2/grooming/page.tsx',import.meta.url),'utf8');assert.match(page,/setCoverage\(draft.coverage\)/);assert.match(page,/invalidateDoorstep\(\);setCoverageError\(""\);setAddress\(""\);setPincode\(""\)/);assert.match(page,/complete doorstep must still be map-verified before payment/);assert.match(page,/beginSecureCheckout/);});
