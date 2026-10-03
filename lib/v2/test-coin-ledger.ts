@@ -1,7 +1,7 @@
 import { ensureTestCoinGrantTables, testCoinEffectiveBalanceSql, testCoinGrantRowsSql, testCoinSqlNow } from "./test-coin-grants";
 import { governedJsonError } from "../governed-http-error";
 import { coinSourceQuery, coinSources, type CoinSource } from "./test-coin-sources";
-import { requireTestCoinPolicy, type TestCoinPolicy } from "./test-coin-policy";
+import { representableTestCoinAmount, requireTestCoinPolicy, TEST_COIN_MAX_PAISE, type TestCoinPolicy } from "./test-coin-policy";
 import { paymentStageAmount } from "../payment-stage-amount";
 import { testCoinWalletSummary } from "./test-coin-wallet-summary";
 import { testCoinHistoryPage } from "./test-coin-history-page";
@@ -21,13 +21,20 @@ export async function ensureTestCoinTables(db: D1Database) {
   await ensureTestCoinGrantTables(db);
 }
 /** V1's append-only SUM and unique booking keys, kept entirely outside the real ledger. */
+/** A driver that refuses an INTEGER beyond 2^53 (node:sqlite ERR_OUT_OF_RANGE) is the same condition as a lossy
+ * D1 double: the ledger holds a sum the wallet cannot show truthfully. Any other error is not ours to hide. */
+function unrepresentableLedgerRead(error: unknown): never {
+  const text = String((error as { code?: string })?.code || "") + " " + String((error as { message?: string })?.message || "");
+  if (/ERR_OUT_OF_RANGE|too large to be represented/.test(text)) throw governedJsonError({ error: "TEST wallet balance exceeds representable precision" }, 409);
+  throw error;
+}
 export async function testCoinHistory(db: D1Database, customerId: string, policy: TestCoinPolicy, historyCursor?: string) {
   requireTestCoinPolicy(policy);
   await ensureTestCoinTables(db);
   const balance = await db.prepare(`SELECT ${testCoinEffectiveBalanceSql("?")} balance,
     (SELECT COALESCE(SUM(coins),0) FROM v2_test_coin_ledger WHERE customer_id=?)
       -(SELECT COALESCE(SUM(remaining),0) FROM (${testCoinGrantRowsSql}) WHERE customer_id=?) grantBalanceAdjustment`)
-    .bind(customerId, customerId, customerId, customerId).first<Row>();
+    .bind(customerId, customerId, customerId, customerId).first<Row>().catch(unrepresentableLedgerRead);
   const history = await testCoinHistoryPage(db, customerId, historyCursor);
   // Recover service labels from owner-scoped canonical sources; do not infer a service from an ID.
   for (const source of coinSources) {
@@ -41,11 +48,15 @@ export async function testCoinHistory(db: D1Database, customerId: string, policy
       if (match) entry.serviceCode = match.service_code;
     }
   }
-  const grants = await db.prepare(`SELECT * FROM (${testCoinGrantRowsSql}) WHERE customer_id=? ORDER BY expires_at,created_at,grant_id`).bind(customerId).all<Row>();
+  const grants = await db.prepare(`SELECT * FROM (${testCoinGrantRowsSql}) WHERE customer_id=? ORDER BY expires_at,created_at,grant_id`).bind(customerId).all<Row>().catch(unrepresentableLedgerRead);
   const now = Date.now();
   const expiredCoins = grants.results.filter(g => g.expires_at != null && Number(g.expires_at) <= now).reduce((n, g) => n + Number(g.remaining), 0);
   const expiryPendingCoins = grants.results.filter(g => g.expires_at == null).reduce((n, g) => n + Number(g.remaining), 0);
   const value = Number(balance?.balance || 0);
+  // Ledger sums are INTEGER in SQLite; past 2^53 D1 returns a lossy double and node:sqlite refuses the read.
+  // Either way the wallet must not show a number that is not the ledger, so the read fails closed.
+  if (!Number.isSafeInteger(value) || !Number.isSafeInteger(Number(balance?.grantBalanceAdjustment || 0)) || grants.results.some(g => !Number.isSafeInteger(Number(g.remaining))))
+    throw governedJsonError({ error: "TEST wallet balance exceeds representable precision" }, 409);
   return { label, customerId, balance: value, grantBalanceAdjustment: Number(balance?.grantBalanceAdjustment || 0), spendableCoins: Math.max(0, value), reversalDebt: Math.max(0, -value),
     realMoneyValue: 0, policy, expiredCoins, expiryPendingCoins, grants: grants.results, expiryConfigurationRequired: policy.expirySeconds === null, ...history,
     walletSummary: await testCoinWalletSummary(db, customerId) };
@@ -68,8 +79,9 @@ export async function syncTestCoins(db: D1Database, customerId: string, policy: 
       db.prepare(`WITH s AS (${query.sql}) INSERT OR IGNORE INTO v2_test_coin_ledger
         (id,customer_id,source_kind,source_id,entry_type,coins,policy_json,actor_id,created_at,idempotency_key)
         SELECT ?||'earn:'||id,customer_id,?,id,'earned',CAST(eligible_amount*?/100 AS INTEGER),?,?,?,?||'earn:'||id FROM s
-        WHERE customer_id=? AND completed=1 AND paid=1 AND refunded=0 AND currency='INR' AND eligible_amount>0 AND CAST(eligible_amount*?/100 AS INTEGER)>0 AND ? IS NOT NULL`)
-        .bind(prefix, source, policy.earnPercent, settings, actorId, now, prefix, customerId, policy.earnPercent, policy.expirySeconds),
+        WHERE customer_id=? AND completed=1 AND paid=1 AND refunded=0 AND currency='INR' AND eligible_amount>0 AND CAST(eligible_amount*?/100 AS INTEGER)>0 AND ? IS NOT NULL
+        AND ROUND(eligible_amount*100)<=?`)
+        .bind(prefix, source, policy.earnPercent, settings, actorId, now, prefix, customerId, policy.earnPercent, policy.expirySeconds, TEST_COIN_MAX_PAISE),
       db.prepare(`WITH s AS (${query.sql}) INSERT OR IGNORE INTO v2_test_coin_grants (grant_id,expires_at,eligible_amount,earn_percent)
         SELECT l.id,l.created_at+CAST(json_extract(l.policy_json,'$.expirySeconds') AS INTEGER)*1000,s.eligible_amount,json_extract(l.policy_json,'$.earnPercent')
         FROM s JOIN v2_test_coin_ledger l ON l.source_kind=? AND l.source_id=s.id AND l.customer_id=s.customer_id AND l.entry_type='earned'
@@ -127,7 +139,7 @@ export async function redeemTestCoins(db: D1Database, input: { customerId: strin
   }
   const preview = await testCoinBookingPreview(db, input.customerId, input.source, input.id, policy);
   const value = Math.round(input.coins * policy.previewRupeesPerCoin * 100) / 100;
-  if (preview.currency !== "INR" || preview.refunded || !Number.isFinite(value) || value <= 0 || value > preview.actualPayable)
+  if (preview.currency !== "INR" || preview.refunded || !representableTestCoinAmount(preview.actualPayable) || !Number.isFinite(value) || value <= 0 || value > preview.actualPayable)
     throw governedJsonError({ error: "TEST redemption exceeds the current payable or the service is closed" }, 409);
   const query = await coinSourceQuery(db, input.source);
   // V1 guarded debit pattern: live payable (including staged payments and real credits),

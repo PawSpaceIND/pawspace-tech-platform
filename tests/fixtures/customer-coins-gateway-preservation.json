@@ -1,0 +1,11 @@
+{
+  "file": "lib/api-gateway.ts",
+  "beforeSha256": "4e9ca6caa93cda3abb050bf57dc2498ba0d0541451add3a1bc7f1353c5141f75",
+  "afterSha256": "ba3af74e0d137a1388e7bb36095f0ad3bc5fd3e0d721f24be9626e9990056122",
+  "replacements": [
+    [
+      "  const email=(request.headers.get(\"oai-authenticated-user-email\")||\"\").trim().toLowerCase();if(!email&&url.pathname===\"/api/ai-web-chat\"&&((request.method===\"GET\"&&url.searchParams.get(\"mode\")===\"thread\")||(request.method===\"POST\"&&permission===\"scheduling.book\")))return Response.json({error:request.method===\"GET\"?\"Sign in to your PawSpace account to see your conversation.\":\"Sign in to your PawSpace account to chat about your bookings.\",code:\"customer_sign_in_required\",signInUrl:\"/mobile-app\"},{status:401,headers:{\"cache-control\":\"no-store\"}});if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:\"Authentication required\"},{status:401});await ensureGatewayTables(env);\n",
+      "  const email=(request.headers.get(\"oai-authenticated-user-email\")||\"\").trim().toLowerCase();if(!email&&url.pathname===\"/api/v2/test-coins\"&&[\"GET\",\"POST\"].includes(request.method)&&permission===\"scheduling.book\")return Response.json({error:\"Sign in to your PawSpace account to view or use TEST coins.\",code:\"customer_sign_in_required\",signInUrl:\"/mobile-app\"},{status:401,headers:{\"cache-control\":\"no-store\"}});if(!email&&url.pathname===\"/api/ai-web-chat\"&&((request.method===\"GET\"&&url.searchParams.get(\"mode\")===\"thread\")||(request.method===\"POST\"&&permission===\"scheduling.book\")))return Response.json({error:request.method===\"GET\"?\"Sign in to your PawSpace account to see your conversation.\":\"Sign in to your PawSpace account to chat about your bookings.\",code:\"customer_sign_in_required\",signInUrl:\"/mobile-app\"},{status:401,headers:{\"cache-control\":\"no-store\"}});if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:\"Authentication required\"},{status:401});await ensureGatewayTables(env);\n"
+    ]
+  ]
+}

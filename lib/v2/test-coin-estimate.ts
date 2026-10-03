@@ -1,4 +1,4 @@
-import type { TestCoinPolicy } from "./test-coin-policy";
+import { representableTestCoinAmount, type TestCoinPolicy } from "./test-coin-policy";
 
 export type TestCoinEstimateInput = {
   policy: TestCoinPolicy; eligibleAmount: number | null; actualPayable: number | null;
@@ -10,8 +10,9 @@ export type TestCoinEstimateInput = {
  * No grant, reservation, financial discount or payment mutation is performed here. */
 export function testCoinEstimate(input: TestCoinEstimateInput, now = Date.now()) {
   const { policy } = input;
-  const amountKnown = input.currency === "INR" && input.eligibleAmount !== null && Number.isFinite(input.eligibleAmount) && input.eligibleAmount >= 0;
-  const payableKnown = input.currency === "INR" && input.actualPayable !== null && Number.isFinite(input.actualPayable) && input.actualPayable >= 0;
+  // An amount outside safe paise precision is treated as unknown: no estimate is shown and nothing is redeemable.
+  const amountKnown = input.currency === "INR" && representableTestCoinAmount(input.eligibleAmount);
+  const payableKnown = input.currency === "INR" && representableTestCoinAmount(input.actualPayable);
   const estimatedCoins = policy.enabled && amountKnown ? Math.floor(input.eligibleAmount! * policy.earnPercent / 100) : null;
   const activeGrants = input.grants.filter(g => g.remaining > 0 && g.expires_at !== null && g.expires_at > now);
   const activeOtherGrants = activeGrants.filter(g =>
