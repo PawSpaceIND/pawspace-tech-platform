@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - fix/financial-lifecycle-p0-p1
+      - fix/rpx-provider-status-sync-sandbox
+  pull_request:
+    paths:
+      - lib/razorpayx-*.ts
+      - app/api/razorpayx-test-reconcile/**
+      - tests/razorpayx-*.test.mjs
+      - .github/workflows/finance-p0-p1-targeted.yml
   workflow_dispatch:
 
 permissions:
@@ -37,6 +44,8 @@ jobs:
       - name: Payment environment + live gate + outbox hardening
         run: node --experimental-strip-types --test tests/payments-production-hardening.test.mjs
       - name: Finance P0/P1 source contracts
+        # This source contract exists only on the original finance branch.
+        if: github.ref == 'refs/heads/fix/financial-lifecycle-p0-p1' || github.head_ref == 'fix/financial-lifecycle-p0-p1'
         run: node --test tests/financial-lifecycle-concurrency.test.mjs
       - name: Finance P0/P1 executable concurrency and duplicate acceptance
         run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
@@ -44,6 +53,8 @@ jobs:
         run: node --test tests/razorpay-settlement-reconciliation.test.mjs
       - name: Razorpay conflicting settlement identity acceptance
         run: node --test tests/razorpay-settlement-conflict.test.mjs
+      - name: RazorpayX Path B provider-status sync (sandbox)
+        run: node --test tests/razorpayx-provider-status-sync.test.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
