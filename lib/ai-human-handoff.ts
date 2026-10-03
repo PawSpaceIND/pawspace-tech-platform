@@ -173,7 +173,7 @@ export async function listAiHandoffQueue(db:D1Database,input:{limit?:number;acto
  const totals=new Map<string,number>();for(const row of totalRows.results||[])totals.set(text(row.status),Number(row.count||0));
  return{queue:(visibleRows.results||[]).map(row=>{
   const canonicalName=text(row.canonical_name),crmName=text(row.crm_name);
-  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||text(row.crm_phone)||null,identitySource:canonicalName?"canonical_customer":crmName?"crm_contact":"unresolved",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};
+  return{id:text(row.id),threadId:text(row.thread_id),customerId:text(row.customer_id),customerName:canonicalName||crmName||null,customerPhone:text(row.canonical_phone)||text(row.crm_phone)||null,identitySource:canonicalName?"canonical_customer":crmName?"crm_contact":"unresolved",reason:text(row.reason),queueCode:text(row.queue_code),status:text(row.status),confidence:row.confidence==null?null:Number(row.confidence),bookingId:row.booking_id?text(row.booking_id):null,createdAt:Number(row.created_at||0),slaDueAt:row.sla_due_at==null?null:Number(row.sla_due_at),takenOverBy:row.taken_over_by?text(row.taken_over_by):null,takenOverAt:row.taken_over_at?Number(row.taken_over_at):null};
  }),byStatus:Object.fromEntries(totals),waiting:totals.get("queued")||0,withStaff:totals.get("staff_active")||0};
 }
 
