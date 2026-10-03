@@ -1,3 +1,4 @@
+import {NEXT_AUDIO_INSERT_THREAD_SQL,NEXT_AUDIO_ATTACH_CALL_SQL,NEXT_AUDIO_ADMISSION_READBACK_SQL,assertNextAudioAdmission} from "../../../../lib/next-audio-admission";
 import {resolveWorkersAiStt} from "../../../../lib/voice-workers-ai";
 import {synthesizeNativeCarrierTts} from "../../../../lib/voice-native-tts";
 import {runElevenLabsGroundedTurn} from "../../../../lib/elevenlabs-custom-llm";
@@ -93,9 +94,11 @@ export async function POST(request:Request){try{
  // Closing/completing a synthetic call also prevents further paid model attempts on its lease.
  await c.db.prepare("CREATE TRIGGER IF NOT EXISTS next_audio_call_stop AFTER UPDATE OF status ON ai_voice_calls WHEN NEW.status<>'active' BEGIN UPDATE next_audio_leases SET expires_at=MIN(expires_at,CAST(strftime('%s','now') AS INTEGER)*1000) WHERE thread_id=OLD.thread_id; END").run();
  const updates=await c.db.batch([
-  c.db.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").bind(threadId,customerId,now,now),
-  c.db.prepare("UPDATE ai_voice_calls SET thread_id=? WHERE id=? AND customer_id=? AND status='active' AND transport_provider='sandbox_simulator' AND thread_id=?").bind(threadId,callId,customerId,call!.thread_id),
+  c.db.prepare(NEXT_AUDIO_INSERT_THREAD_SQL).bind(threadId,customerId,now,now),
+  c.db.prepare(NEXT_AUDIO_ATTACH_CALL_SQL).bind(threadId,callId,customerId,call!.thread_id),
+  c.db.prepare(NEXT_AUDIO_ADMISSION_READBACK_SQL).bind(callId,customerId,threadId,NEXT_AUDIO_BUDGET_ID,now),
  ]);
- if(updates.some(r=>Number(r.meta?.changes)!==1))refuse("next_audio_call_changed_during_admission");
+ // Trigger writes contribute to D1 meta.changes; returned identities and owned live state prove admission.
+ try{assertNextAudioAdmission(updates,{callId,threadId,customerId,now:Date.now()});}catch{refuse("next_audio_call_changed_during_admission");}
  return json({data:{threadId,customerId,callId,...lease,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,phoneDialed:false}},201);
 }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);if(error instanceof Error&&/^next_audio_batch_/.test(error.message))return json({error:error.message},403);return authError(error,"Next audio lease refused");}}
