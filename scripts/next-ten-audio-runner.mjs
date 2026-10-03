@@ -1,6 +1,6 @@
 import {NEXT_FIVE_AUDIO_SCENARIOS} from './next-ten-audio-scenarios.mjs';
 import {createAudioEventReceipt,finalizeAudioScenario} from './next-audio-evidence.mjs';
-// Five bounded genuine ASR -> canonical PawSpace brain -> TTS sessions. No telephony dial API.
+// One bounded genuine ASR -> canonical PawSpace brain -> TTS sessions. No telephony dial API.
 import {execFileSync} from 'node:child_process';
 import {writeFile,mkdir} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -158,9 +158,9 @@ async function runWorkersScenario(scenario){
  reports.push(result);
 }
 if(env.NEXT_AUDIO_ENGINE==='workers_ai'&&batchReadiness.workersSpeechReady!==true)throw Error('Configured bounded Workers AI models not ready');
-for(const scenario of NEXT_FIVE_AUDIO_SCENARIOS)await (env.NEXT_AUDIO_ENGINE==='workers_ai'?runWorkersScenario(scenario):runScenario(scenario));
+for(const scenario of NEXT_FIVE_AUDIO_SCENARIOS.slice(0,1))await (env.NEXT_AUDIO_ENGINE==='workers_ai'?runWorkersScenario(scenario):runScenario(scenario));
 
 await isolation();const after=await bookingIds();
-const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,initialBatchSize:5,aggregateBrainReservationCapUsd:1,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:env.NEXT_AUDIO_ENGINE==='workers_ai'?'workers_ai_whisper_aura2_with_actual_pawspace_staging_brain':'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
-await writeFile('voice-audit-results/five-conversations.json',JSON.stringify(summary,null,2));
-console.log('MAYA_FIVE_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));
+const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,initialBatchSize:1,aggregateBrainReservationCapUsd:1,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:env.NEXT_AUDIO_ENGINE==='workers_ai'?'workers_ai_whisper_aura2_with_actual_pawspace_staging_brain':'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
+await writeFile('voice-audit-results/one-conversation.json',JSON.stringify(summary,null,2));
+console.log('MAYA_ONE_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));
