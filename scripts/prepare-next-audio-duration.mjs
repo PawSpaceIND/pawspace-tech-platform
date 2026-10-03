@@ -16,10 +16,27 @@ export async function prepareNextAudioDuration(env=process.env,request=fetch){
  if(after.conversation_config?.conversation?.max_duration_seconds!==120||after.conversation_config?.agent?.prompt?.custom_llm?.url!=='https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1')throw Error('Native hard duration readback failed');
  return {sourceSha:env.EXPECTED_SHA,region,previousDuration,providerHardDurationSeconds:120,configurationChanged:previousDuration!==120,agentConfigSha256:createHash('sha256').update(JSON.stringify(after)).digest('hex'),paidGenerationRequests:0,phoneDialed:false,paidExecutionAllowed:false,remainingGate:'Account charge-ceiling receipt and exact guarded lease readiness are still required'};
 }
+
+export async function inspectNextAudioStoredState(env=process.env,request=fetch){
+ if(env.GITHUB_SHA!==env.EXPECTED_SHA||env.GITHUB_RUN_ATTEMPT!=='1'||!env.CLOUDFLARE_API_TOKEN||!env.CLOUDFLARE_ACCOUNT_ID||!env.STAGING_D1_ID||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Pinned isolated read-only diagnostic required');
+ const base='https://api.cloudflare.com/client/v4/accounts/'+encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
+ async function cf(path,body){const r=await request(base+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok||b.success!==true)throw Error('Read-only diagnostic refused');return b.result;}
+ if((await cf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID))).name!=='pawspace-staging')throw Error('Staging database required');
+ const query=async(sql,params=[])=>{if(!sql.startsWith('SELECT '))throw Error('SELECT only');const r=await cf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql,params});if(r.some(x=>x.success===false))throw Error('Read-only SELECT failed');return r[0]?.results||[];};
+ const id='next-ten-audio-additional-usd5-20261002',tables=new Set((await query("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('next_audio_budget','next_audio_rate_evidence','next_audio_leases','next_audio_attempts','next_audio_speech_attempts','next_audio_batch_claims')")).map(x=>x.name));
+ const budget=tables.has('next_audio_budget')?(await query('SELECT cap_micros,reserved_micros,conversations,expires_at,receipt_json FROM next_audio_budget WHERE id=?',[id]))[0]:null;
+ const evidence=tables.has('next_audio_rate_evidence')?(await query('SELECT receipt_json FROM next_audio_rate_evidence WHERE id=?',[id]))[0]:null;
+ const parsed=x=>{try{return JSON.parse(x?.receipt_json||'null')}catch{return null}},br=parsed(budget),er=parsed(evidence),hash=x=>x?.receipt_json?createHash('sha256').update(x.receipt_json).digest('hex'):null;
+ const differentKeys=[...new Set([...Object.keys(br||{}),...Object.keys(er||{})])].filter(k=>JSON.stringify(br?.[k])!==JSON.stringify(er?.[k]));
+ const counts={};for(const table of ['next_audio_leases','next_audio_attempts','next_audio_speech_attempts','next_audio_batch_claims'])counts[table]=tables.has(table)?Number((await query('SELECT COUNT(*) AS n FROM '+table))[0]?.n||0):null;
+ const telemetry=await cf('/workers/observability/telemetry/query',{queryId:'next-audio-readiness-runtime-error',dry:true,view:'events',limit:50,timeframe:{from:Date.parse('2026-10-03T05:19:30Z'),to:Date.parse('2026-10-03T05:20:00Z')},parameters:{filterCombination:'and',filters:[{key:'$workers.scriptName',operation:'eq',type:'string',value:'pawspace-staging'}]}}).catch(()=>null);
+ const raw=JSON.stringify(telemetry||{}),signatures=['D1_ERROR','SQLITE_ERROR','Cannot perform I/O on behalf of a different request','TypeError','ReferenceError','next_audio_budget_receipt_already_pinned','next_audio_inclusive_rate_evidence_unproven'].filter(x=>raw.includes(x));
+ return {readOnly:true,budgetId:id,tableNames:[...tables],budgetPresent:Boolean(budget),evidencePresent:Boolean(evidence),budgetReceiptHash:hash(budget),evidenceReceiptHash:hash(evidence),exactEqual:Boolean(budget&&evidence&&budget.receipt_json===evidence.receipt_json),canonicalEqual:Boolean(br&&er&&differentKeys.length===0),differentKeys,budget:budget?{capMicros:budget.cap_micros,reservedMicros:budget.reserved_micros,conversations:budget.conversations,expiresAt:budget.expires_at}:null,counts,telemetry:{available:telemetry!==null,signatures,schemaErrors:[...new Set([...raw.matchAll(/no such (?:column|table):\s*([A-Za-z_][A-Za-z0-9_.]*)/g)].map(x=>x[0]))]},paidGenerationRequests:0,phoneDialed:false};
+}
 export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  const {validateAudioRateReceipt,NEXT_AUDIO_BUDGET_ID}=await import('../lib/next-audio-budget.ts');
  if(env.GITHUB_SHA!==env.EXPECTED_SHA||env.GITHUB_RUN_ATTEMPT!=='1'||!env.NEXT_AUDIO_RATE_RECEIPT_JSON||!env.CLOUDFLARE_API_TOKEN||!env.CLOUDFLARE_ACCOUNT_ID||!env.STAGING_D1_ID||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Pinned trusted ceiling prerequisites missing');
- const receipt=JSON.parse(env.NEXT_AUDIO_RATE_RECEIPT_JSON);validateAudioRateReceipt(receipt,Date.now());
+ const receipt=JSON.parse(env.NEXT_AUDIO_RATE_RECEIPT_JSON);if(receipt?.readOnlyDiagnostic===true)return inspectNextAudioStoredState(env,request);validateAudioRateReceipt(receipt,Date.now());
  if(/UNIT TEST|invented/i.test(receipt.evidenceReference))throw Error('Reviewed live ceiling evidence required');
  const region=env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io';
  if(region!=='https://api.elevenlabs.io'&&region!=='https://api.in.residency.elevenlabs.io')throw Error('Exact provider region required');
