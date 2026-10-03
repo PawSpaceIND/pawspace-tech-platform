@@ -3,6 +3,9 @@
  * Does not change tests/ai-web-chat-callback-handoff.test.mjs.
  */
 import test from "node:test";
+
+// Freeze callback fixtures at 11:30 IST; runtime quiet-hours guards remain active.
+test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-03T06:00:00Z") }));
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";

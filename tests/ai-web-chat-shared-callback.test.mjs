@@ -3,6 +3,9 @@
  * Does not change tests/ai-web-chat-callback-handoff.test.mjs.
  */
 import test from "node:test";
+
+// Freeze callback fixtures at 11:30 IST; runtime quiet-hours guards remain active.
+test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-03T06:00:00Z") }));
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
@@ -394,7 +397,12 @@ test("fresh chat ensure path has no ai_callback_request_context until the callba
   assert.equal(n(fresh.sqlite, "ai_callback_request_context"), 1);
 });
 
-test("future requestedStart is rejected before consent; immediate callbacks keep quiet-hours policy", async () => {
+for (const window of [
+  { name: "daytime", now: "2026-10-03T06:00:00Z" },
+  { name: "quiet hours", now: "2026-10-03T16:01:00Z" },
+]) {
+test(`future requestedStart is rejected before consent; immediate callbacks keep quiet-hours policy (${window.name})`, async t => {
+  t.mock.timers.setTime(Date.parse(window.now));
   const env = uatVoiceEnv();
   const ctx = await world(env);
   seedCustomer(ctx.sqlite, "CUS-SCHED", PHONE);
@@ -451,6 +459,7 @@ test("future requestedStart is rejected before consent; immediate callbacks keep
   assert.equal(ctx.sqlite.prepare("SELECT requested_start FROM ai_callback_request_context").get().requested_start, null);
   assert.deepEqual(liveFetches(), []);
 });
+}
 
 test("foreign or missing pet and unconfigured service write nothing; leadId is still refused before dial", async () => {
   const env = uatVoiceEnv();
