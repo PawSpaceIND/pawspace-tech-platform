@@ -10,7 +10,7 @@ const API="https://api.razorpay.com";
 const MAX_BYTES=64*1024;
 const value=(env:Env,name:string)=>String(env?.[name]??"").trim();
 
-export function razorpayXSandboxReadiness(env:Env){
+export function razorpayXSandboxReadiness(env:Env,options:{requireWebhook?:boolean}={}){
  const payment=value(env,"PAWSPACE_PAYMENT_ENV").toLowerCase();
  const payout=value(env,"PAWSPACE_RAZORPAYX_ENV").toLowerCase();
  const keyId=value(env,"RAZORPAYX_KEY_ID_SANDBOX");
@@ -24,7 +24,7 @@ export function razorpayXSandboxReadiness(env:Env){
  if(!keyId.startsWith("rzp_test_"))problems.push("RazorpayX TEST key is required");
  if(!keySecret)problems.push("RAZORPAYX_KEY_SECRET_SANDBOX is required");
  if(!accountNumber)problems.push("RAZORPAYX_ACCOUNT_NUMBER_SANDBOX is required");
- if(!webhookSecret)problems.push("RAZORPAYX_WEBHOOK_SECRET_SANDBOX is required before any TEST payout dispatch");
+ if(options.requireWebhook!==false&&!webhookSecret)problems.push("RAZORPAYX_WEBHOOK_SECRET_SANDBOX is required before any TEST payout dispatch");
  return{ready:problems.length===0,problems,keyIdConfigured:Boolean(keyId),accountNumberConfigured:Boolean(accountNumber),webhookSecretConfigured:Boolean(webhookSecret),environment:problems.length?"unconfigured":"sandbox" as const};
 }
 
@@ -57,8 +57,8 @@ async function request(env:Env,path:string,init:RequestInit){
  }catch(error){if(error instanceof Error&&error.name==="AbortError")throw new Error(`RazorpayX request timed out after ${timeout}ms`);throw error;}finally{clearTimeout(timer);}
 }
 
-function credentials(env:Env){
- const readiness=razorpayXSandboxReadiness(env);if(!readiness.ready)return{ok:false as const,reason:readiness.problems.join("; ")};
+function credentials(env:Env,options:{requireWebhook?:boolean}={}){
+ const readiness=razorpayXSandboxReadiness(env,options);if(!readiness.ready)return{ok:false as const,reason:readiness.problems.join("; ")};
  return{ok:true as const,keyId:value(env,"RAZORPAYX_KEY_ID_SANDBOX"),keySecret:value(env,"RAZORPAYX_KEY_SECRET_SANDBOX"),accountNumber:value(env,"RAZORPAYX_ACCOUNT_NUMBER_SANDBOX")};
 }
 const auth=(keyId:string,keySecret:string)=>`Basic ${btoa(`${keyId}:${keySecret}`)}`;
@@ -90,7 +90,7 @@ export async function createRazorpayXSandboxPayout(env:Env,input:{localPayoutId:
 }
 
 export async function fetchRazorpayXSandboxPayout(env:Env,payoutId:string):Promise<RazorpayXResult>{
- const c=credentials(env);if(!c.ok)return{connected:false,environment:"unconfigured",reason:c.reason};
+ const c=credentials(env,{requireWebhook:false});if(!c.ok)return{connected:false,environment:"unconfigured",reason:c.reason};
  if(!/^pout_[A-Za-z0-9]+$/.test(payoutId))return{connected:false,environment:"sandbox",reason:"A RazorpayX payout id is required"};
  try{const{response,body}=await request(env,`/v1/payouts/${encodeURIComponent(payoutId)}`,{headers:{authorization:auth(c.keyId,c.keySecret)}});if(!response.ok)return{connected:false,environment:"sandbox",reason:`RazorpayX TEST payout fetch failed (${response.status})`};return{connected:true,environment:"sandbox",payout:body};}
  catch(error){return{connected:false,environment:"sandbox",reason:`RazorpayX TEST fetch failed: ${error instanceof Error?error.message:String(error)}`};}
