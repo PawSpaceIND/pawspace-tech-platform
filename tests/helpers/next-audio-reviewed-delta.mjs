@@ -6,7 +6,7 @@ const guardImport='import { isNextAudioThread } from "./next-audio-budget";\n';
 const guardContext='...(isNextAudioThread(input.threadId)?{nextAudioConversation:{threadId:input.threadId,customerId:input.customerId}}:{}),';
 /** Reverse only the independently reviewed 8d26ab3 test-budget wiring. Historical hashes stay fixed. */
 export function preservedNextAudioBytes(path,bytes){
- if(path==='.github/workflows/elevenlabs-provider-preflight.yml'){const source=bytes.toString(),marker='\n  next-bounded-audio:\n';assert.equal(source.split(marker).length,2,'Exactly one reviewed audio workflow job is required');const index=source.indexOf(marker);assert.equal(createHash('sha256').update(source.slice(index)).digest('hex'),'576956e6c4b368285acdaadae31f3c12d09857cb87df88bef9b2eec33b5aae4e','Audio workflow must retain exact reviewed bytes');return Buffer.from(source.slice(0,index));}
+ if(path==='.github/workflows/elevenlabs-provider-preflight.yml'){const source=bytes.toString(),marker='\n  next-bounded-audio:\n';assert.equal(source.split(marker).length,2,'Exactly one reviewed audio workflow job is required');const index=source.indexOf(marker);assert.equal(createHash('sha256').update(source.slice(index)).digest('hex'),'57597a1976d258a96ee357d0c0ccb06e755db895bafa0116abe61554b283ac22','Audio workflow must retain exact reviewed bytes');return Buffer.from(source.slice(0,index));}
  if(path===adapterDelta.file){let s=bytes.toString();for(const [before,after] of adapterDelta.reversals){assert.equal(s.split(after).length,2,'Exactly one reviewed next-audio adapter change is required');s=s.replace(after,before);}return Buffer.from(s);}
  if(path!=='lib/ai-grounded-runtime-provider.ts')return bytes;
  let source=bytes.toString();

@@ -239,6 +239,11 @@ jobs:
       - name: Verify offline managed audio boundaries
         if: ${{ inputs.confirm == 'demo-five-sales-conversations' }}
         run: node --test tests/maya-managed-sales-demo-boundaries.test.mjs
+      - name: Store independently reviewed ceiling through existing staging administration
+        if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' }}
+        env:
+          NEXT_AUDIO_RATE_RECEIPT_JSON: ${{ inputs.probe_input }}
+        run: node --experimental-strip-types scripts/prepare-next-audio-duration.mjs
       - name: Install synthetic microphone tools
         run: |
           sudo apt-get update -qq
@@ -1415,7 +1420,7 @@ jobs:
         run: node --experimental-strip-types scripts/voice-sales-launch-preflight.mjs
 
   next-bounded-audio:
-    if: ${{ inputs.confirm == 'next-audio-inspect' || inputs.confirm == 'next-audio-prepare-duration' || inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
+    if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' || inputs.confirm == 'next-audio-inspect' || inputs.confirm == 'next-audio-prepare-duration' || inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
     concurrency:
       group: pawspace-staging-sweep
       cancel-in-progress: false
@@ -1450,6 +1455,11 @@ jobs:
       - name: Set and verify staging provider hard duration without generating audio
         if: ${{ inputs.confirm == 'next-audio-prepare-duration' }}
         run: node scripts/prepare-next-audio-duration.mjs
+      - name: Store independently reviewed ceiling through existing staging administration
+        if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' }}
+        env:
+          NEXT_AUDIO_RATE_RECEIPT_JSON: ${{ inputs.probe_input }}
+        run: node --experimental-strip-types scripts/prepare-next-audio-duration.mjs
       - name: Install synthetic microphone tools
         if: ${{ inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
         run: |

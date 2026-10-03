@@ -97,3 +97,20 @@ import {inspectManagedAudioFees} from '../scripts/inspect-next-audio-fees.mjs';
 test('metadata inspector rejects embedded provider host without any HTTP',async()=>{
  for(const base of ['https://api.elevenlabs.io.evil.invalid','https://evil.invalid/https://api.in.residency.elevenlabs.io','https://user@api.elevenlabs.io'])await assert.rejects(()=>inspectManagedAudioFees({ELEVENLABS_API_KEY:'synthetic',GROOMING_AGENT_ID:'synthetic',ELEVENLABS_API_BASE:base},()=>assert.fail('no network')));
 });
+import {provisionNextAudioCeiling} from '../scripts/prepare-next-audio-duration.mjs';
+test('trusted hosted provisioning pins runtime/config and cannot overwrite evidence or reset ledger',async()=>{
+ const agent=config(120),receipt={currency:'USD',inclusiveOfFeesAndTaxes:true,sourceSha:'a'.repeat(40),agentConfigSha256:createHash('sha256').update(JSON.stringify(agent)).digest('hex'),provider:'openai',model:'gpt-5.6-luna',validUntil:Date.now()+600000,nativeMicrosPerMinute:320000,optionalBatchMicros:1000000,inputMicrosPerToken:1,outputMicrosPerToken:2,framingTokenUpper:4096,evidenceReference:'synthetic test reference'};
+ const e={...durationEnv,CLOUDFLARE_API_TOKEN:'synthetic',CLOUDFLARE_ACCOUNT_ID:'synthetic',STAGING_D1_ID:'staging-only',PRODUCTION_D1_ID:'production-only',NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify(receipt)};
+ let stored;const sql=[];
+ const vars={PAWSPACE_STAGING_BUILD_SHA:'a'.repeat(40),PAWSPACE_DEPLOYMENT_ENV:'staging',FORBID_PRODUCTION:'true',PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_AI_VOICE_MODEL:'gpt-5.6-luna'};
+ const fetcher=async(url,init)=>{
+ if(url.startsWith('https://api.elevenlabs.io/')){assert.equal(init.method,'GET');return Response.json(agent);}
+ if(url.endsWith('/settings'))return Response.json({success:true,result:{annotations:{'workers/message':'staging '+'a'.repeat(40)},bindings:[...Object.entries(vars).map(([name,text])=>({type:'plain_text',name,text})),{type:'d1',name:'DB',id:'staging-only'}]}});
+ if(url.endsWith('/query')){const body=JSON.parse(init.body);sql.push(body.sql);if(body.sql.startsWith('INSERT')&&!stored)stored={region:body.params[1],receipt_json:body.params[2]};return Response.json({success:true,result:[{results:body.sql.startsWith('SELECT')?[stored]:[]}]});}
+ return Response.json({success:true,result:{name:'pawspace-staging'}});
+ };
+ const r=await provisionNextAudioCeiling(e,fetcher);assert.equal(r.paidGenerationRequests,0);assert.equal(r.trustedCeilingStored,true);assert.ok(sql.every(x=>!x.includes('next_audio_budget')&&!x.includes('UPDATE')&&!x.includes('DELETE')));
+ await assert.rejects(()=>provisionNextAudioCeiling({...e,NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify({...receipt,optionalBatchMicros:0})},fetcher),/already pinned/);
+ const writes=sql.length;vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED='false';await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/isolation/);assert.equal(sql.length,writes);
+ await assert.rejects(()=>provisionNextAudioCeiling({...e,STAGING_D1_ID:'production-only'},()=>assert.fail('no HTTP')));
+});
