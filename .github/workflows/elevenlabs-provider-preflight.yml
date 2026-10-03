@@ -619,7 +619,7 @@ jobs:
       group: pawspace-staging-sweep
       cancel-in-progress: false
       queue: max
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -651,6 +651,11 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
         run: |
           node --experimental-strip-types scripts/attended-voice-window.mjs
+      - name: Set the explicitly authorized seven-minute staging test limit
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node scripts/attended-seven-minute-limit.mjs open
       - name: Place one controlled PawSpace specialist UAT call and inspect ElevenLabs
         env:
           ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
@@ -700,6 +705,20 @@ jobs:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
         run: node scripts/pause-staging-phone-calls.mjs
+
+      - name: Restore the original staging agent duration
+        if: ${{ always() }}
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+        run: node scripts/attended-seven-minute-limit.mjs restore
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: maya-attended-seven-minute-evidence
+          path: artifacts/attended-seven-minute/
+          retention-days: 14
+          if-no-files-found: ignore
 
   direct-grooming-call:
     if: ${{ inputs.confirm == 'direct-grooming-call' || inputs.confirm == 'inspect-app-voice' }}

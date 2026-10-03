@@ -1,3 +1,4 @@
+import {mkdir,writeFile} from 'node:fs/promises';
 // Read-only verification after an explicit app-governed call. This module never dials or repairs data.
 import { inspectHandsetEvidence, inspectAttendedHandsetEvidence, partialHandsetCarrier } from '../lib/voice-handset-evidence.ts';
 import { readBoundedText } from '../lib/provider-response-bounds.ts';
@@ -12,7 +13,7 @@ export async function verifyHandsetAttempt(context, env, options = {}) {
   if (!id(appCallId) || !id(agentId) || !/^\+91[6-9]\d{9}$/.test(phone || '') || !/^pawspace_uat=[^\r\n;]+$/.test(cookie || '')) throw Error('Exact authenticated handset context required');
   const request = options.fetchImpl || fetch;
   const delay = options.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
-  const maxAttempts = Math.max(1, Math.min(Number(options.maxAttempts) || 30, 30));
+  const maxAttempts = Math.max(1, Math.min(Number(options.maxAttempts) || 120, 120));
   async function read(url, headers) {
     const response = await request(url, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(12000) });
     if (!response.ok) throw Error(`Handset evidence read refused (${response.status}); no retry or alternate region`);
@@ -24,9 +25,11 @@ export async function verifyHandsetAttempt(context, env, options = {}) {
   const correlation = appAudit?.providerCorrelation;
   const partial = correlation?.carrierCallId === null && id(correlation?.conversationId) && appAudit?.call?.providerCallId === correlation.conversationId;
   if (appAudit?.call?.callId !== appCallId || appAudit?.call?.provider !== 'elevenlabs_exotel' || appAudit?.call?.dialed !== true || !id(correlation?.conversationId) || correlation?.agentId !== agentId || (!partial && (!id(correlation?.carrierCallId) || appAudit?.call?.providerCallId !== correlation.carrierCallId))) throw Error('Exact provider correlation unavailable; do not guess a latest call');
+  await mkdir('artifacts/attended-seven-minute',{recursive:true});
+  await writeFile('artifacts/attended-seven-minute/app-audit.json',JSON.stringify(appAudit,null,2));
   const elevenUrl = config.elevenOrigin + '/v1/convai/conversations/' + encodeURIComponent(correlation.conversationId);
   const carrierHeaders = { authorization: 'Basic ' + Buffer.from(env.EXOTEL_API_KEY + ':' + env.EXOTEL_API_TOKEN).toString('base64') };
-  const deadline = Date.now() + 180000;
+  const deadline = Date.now() + 510000;
   let last;
   for (let attempt = 0; attempt < maxAttempts && Date.now() < deadline; attempt++) {
     let conversation = null, carrierId = correlation.carrierCallId;
@@ -47,6 +50,8 @@ export async function verifyHandsetAttempt(context, env, options = {}) {
     last = inspectHandsetEvidence({ appCallId, agentId, phone, appAudit, carrier, conversation });
     if (terminalCarrier.has(carrierStatus) && carrierStatus !== 'completed') throw Error('Handset conversation not verified: ' + last.reason);
     conversation ??= await read(elevenUrl, { 'xi-api-key': env.ELEVENLABS_API_KEY });
+    await writeFile('artifacts/attended-seven-minute/conversation.json',JSON.stringify(conversation,null,2));
+    await writeFile('artifacts/attended-seven-minute/carrier.json',JSON.stringify(carrier,null,2));
     last = inspectHandsetEvidence({ appCallId, agentId, phone, appAudit, carrier, conversation });
     if (typeof options.log === 'function') options.log(last);
     if (options.attendedReport && terminalCarrier.has(carrierStatus) && ['done', 'failed'].includes(conversation?.status)) {
