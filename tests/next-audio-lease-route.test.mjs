@@ -114,3 +114,16 @@ test('trusted hosted provisioning pins runtime/config and cannot overwrite evide
  const writes=sql.length;vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED='false';await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/isolation/);assert.equal(sql.length,writes);
  await assert.rejects(()=>provisionNextAudioCeiling({...e,STAGING_D1_ID:'production-only'},()=>assert.fail('no HTTP')));
 });
+test('Workers speech uses only configured models; failed synthesis and repeats consume four slots',async t=>{
+ let paid=0;const ai={async run(model,input,options){paid++;if(model==='@cf/openai/whisper-large-v3-turbo'){assert.equal(options,undefined);return {text:'What is the grooming quote?'}}assert.equal(model,'@cf/deepgram/aura-2-en');assert.equal(input.text,'Quote only.');assert.equal(input.encoding,'linear16');assert.equal(options.returnRawResponse,true);return new Response(new Uint8Array(6400).fill(1),{headers:{'content-type':'application/octet-stream'}});}};
+ const w=await world(t,{AI:ai,VOICE_STT_MODEL:'@cf/openai/whisper-large-v3-turbo',VOICE_CARRIER_TTS_MODEL:'@cf/deepgram/aura-2-en'});w.seedEvidence();
+ const claim=(await (await route.POST(w.request({action:'claim_batch',runId:'123'}))).json()).data;
+ const common={customerId:'SYNTHETIC',callId:'CALL',batchToken:claim.batchToken};assert.equal((await route.POST(w.request(common))).status,201);
+ assert.equal((await route.GET(w.request())).status,200);
+ const wav=Buffer.alloc(364);wav.write('RIFF');wav.writeUInt32LE(356,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(320,40);
+ const sr=await route.POST(w.request({...common,action:'workers_stt',audioRef:'data:audio/wav;base64,'+wav.toString('base64')}));assert.equal(sr.status,200,await sr.clone().text());assert.equal((await sr.json()).data.confidenceReportedByProvider,false);
+ for(let n=0;n<4;n++){const r=await route.POST(w.request({...common,action:'workers_tts',text:'Quote only.'}));assert.equal(r.status,200,await r.clone().text());assert.equal(r.headers.get('x-pawspace-model'),'@cf/deepgram/aura-2-en');assert.equal((await r.arrayBuffer()).byteLength,6400);}
+ const before=paid;assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'Quote only.'}))).status,403);assert.equal(paid,before);
+ assert.equal((await route.POST(w.request({...common,action:'workers_stt',audioRef:'data:audio/wav;base64,'+Buffer.from('invalid').toString('base64')}))).status,403);assert.equal(paid,before);
+ globalThis.__PAWSPACE_TEST_ENV__.VOICE_CARRIER_TTS_MODEL='other';assert.equal((await route.POST(w.request({...common,action:'workers_stt',audioRef:'data:audio/wav;base64,'+wav.toString('base64')}))).status,403);assert.equal(paid,before);
+});

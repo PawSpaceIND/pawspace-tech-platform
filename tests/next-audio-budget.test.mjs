@@ -116,3 +116,10 @@ test('aggregate brain reservations have an independent one-dollar hard ceiling a
  const row=await db.prepare('SELECT SUM(reserved_micros) n FROM next_audio_attempts').first();assert.ok(row.n<=budget.NEXT_AUDIO_MODEL_BATCH_CAP_MICROS);assert.ok(row.n>900000);
  await budget.provisionNextAudioBudget(db,receipt(),now);assert.equal((await db.prepare('SELECT SUM(reserved_micros) n FROM next_audio_attempts').first()).n,row.n);
 });
+test('speech attempt slots are atomic, never refunded and bound all failed/duplicate requests',{timeout:60000},async t=>{
+ const db=await world(t);await budget.reserveNextAudioLease(db,lease(1));
+ const base={threadId:lease(1).threadId,customerId:'SYNTHETIC',kind:'tts',units:2500,now};
+ const attempts=await Promise.allSettled(Array.from({length:20},()=>budget.reserveNextAudioSpeech(db,base)));assert.equal(attempts.filter(x=>x.status==='fulfilled').length,4);
+ await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960001}));await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960000,now:now+120000}));await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960000,customerId:'other'}));
+ await budget.provisionNextAudioBudget(db,receipt(),now);await assert.rejects(()=>budget.reserveNextAudioSpeech(db,base));assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_speech_attempts').first()).n,4);
+});

@@ -44,6 +44,7 @@ await mkdir('voice-audit-results',{recursive:true});
 const before=await bookingIds(),reports=[];
 async function leaseRequest(body){const r=await fetch(origin+'/api/ai-voice-uat/audio-lease',{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Audio budget lease refused ('+r.status+'): '+String(b.error||'unproven'));return b.data;}
 const batchReadiness=await leaseRequest();if(batchReadiness.sourceSha!==env.EXPECTED_SHA||batchReadiness.paidExecutionAllowed!==true)throw Error('Exact guarded batch is not ready');
+if(env.NEXT_AUDIO_ENGINE==='workers_ai'&&batchReadiness.workersSpeechReady!==true)throw Error('Configured bounded Workers AI models not ready');
 const batchClaim=await leaseRequest({action:'claim_batch',runId:env.GITHUB_RUN_ID});
 if(batchClaim.budgetId!=='next-ten-audio-additional-usd5-20261002'||batchClaim.sourceSha!==env.EXPECTED_SHA||!batchClaim.batchToken)throw Error('Durable batch admission refused');
 const scrub=t=>String(t||'').replace(/\+?\d{10,15}/g,'[number]').replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,'[email]');
@@ -114,8 +115,52 @@ async function runScenario(scenario){
  }
  reports.push(result);console.log('MAYA_AUDIO_AUDIT_SCENARIO='+JSON.stringify({id:result.id,completedTurns:result.turns.length,plannedTurns:result.plannedTurns,errors:result.errors,handoffs:result.turns.filter(t=>t.handoff).length,providerStatus:result.providerStatus}));
 }
-for(const scenario of NEXT_FIVE_AUDIO_SCENARIOS)await runScenario(scenario);
+async function runWorkersScenario(scenario){
+ const result={id:scenario.id,service:scenario.service,engine:'workers_ai_whisper_aura2_with_actual_pawspace_brain',turns:[],errors:[],listened:false,phoneDialed:false,carrierCertified:false,liveInterruptionCertified:false,plannedTurns:scenario.prompts.length};let context,lease;
+ try{
+  await isolation();context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
+  lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken});
+  const common={customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken};
+  const request=async body=>{
+   if(Date.now()>=lease.deadline)throw Error('Bounded lease expired');
+   const r=await fetch(origin+'/api/ai-voice-uat/audio-lease',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify({...common,...body}),signal:AbortSignal.timeout(Math.max(1,Math.min(30000,lease.deadline-Date.now())))});
+   if(!r.ok)throw Error('Bounded speech/brain refused ('+r.status+')');return r;
+  };
+  for(let index=0;index<scenario.prompts.length;index++){
+   const turn={index:index+1,prompt:scenario.prompts[index],listened:false,engine:'workers_ai',callerAudioPath:`voice-audit-results/${scenario.id}-${index+1}-caller.wav`,agentAudioPath:`voice-audit-results/${scenario.id}-${index+1}.wav`};
+   result.turns.push(turn);
+   try{
+    const rendered=execFileSync('espeak-ng',['--stdout','-s','165',turn.prompt],{maxBuffer:2097152,timeout:10000}),pcm=execFileSync('ffmpeg',['-loglevel','error','-i','pipe:0','-ar','16000','-ac','1','-f','s16le','pipe:1'],{input:rendered,maxBuffer:960000,timeout:10000});
+    if(pcm.length===0||pcm.length>960000||pcm.length%2)throw Error('Fixed caller audio limit');
+    const wav=Buffer.alloc(44+pcm.length);wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(pcm.length,40);pcm.copy(wav,44);await writeFile(turn.callerAudioPath,wav);
+    const submittedAt=Date.now();turn.callerDurationSeconds=pcm.length/32000;
+    const stt=(await readDemoJson(await request({action:'workers_stt',audioRef:'data:audio/wav;base64,'+wav.toString('base64')}))).data;
+    turn.transcript=scrub(stt.text);turn.sttMs=Date.now()-submittedAt;turn.recognitionConfidence=null;
+    const brainAt=Date.now(),brain=(await readDemoJson(await request({action:'workers_brain',text:stt.text}))).data;
+    turn.reply=scrub(brain.output);turn.brainMs=Date.now()-brainAt;turn.brainPath=brain.path;turn.turnId=brain.turnId;turn.modelRef=brain.modelRef;
+    const spoken=String(brain.output??'');if(!spoken||Buffer.byteLength(spoken,'utf8')>2500)throw Error('TTS reply exceeds deterministic character allowance; no synthesis requested');
+    const ttsAt=Date.now(),response=await request({action:'workers_tts',text:spoken});
+    if(response.headers.get('x-pawspace-engine')!=='workers_ai'||response.headers.get('x-pawspace-model')!=='@cf/deepgram/aura-2-en')throw Error('Actual TTS model mismatch');
+    const reader=response.body.getReader(),chunks=[];let bytes=0,firstAudioAt=null;
+    for(;;){const next=await reader.read();if(next.done)break;firstAudioAt??=Date.now();bytes+=next.value.length;if(bytes>8*1024*1024){await reader.cancel();throw Error('Actual recording exceeds output bound');}chunks.push(Buffer.from(next.value));}
+    const audio=Buffer.concat(chunks);turn.audioBytes=audio.length;turn.ttsFirstPacketMs=firstAudioAt===null?null:firstAudioAt-ttsAt;turn.batchFirstAudioAfterSubmissionMs=firstAudioAt===null?null:firstAudioAt-submittedAt;turn.latencyMeasurement='Batch processing from prerecorded WAV submission, not live microphone endpoint latency';turn.nonSilentBytes=audio.reduce((n,b)=>n+(b!==0),0);
+    if(audio.length<1600||audio.length%2||turn.nonSilentBytes<100)throw Error('Actual non-silent PCM reply not proven');
+    const raw=`voice-audit-results/${scenario.id}-${index+1}.raw`;await writeFile(raw,audio);execFileSync('ffmpeg',['-loglevel','error','-y','-f','s16le','-ar','16000','-ac','1','-i',raw,turn.agentAudioPath],{timeout:10000});
+    turn.actualAudioCaptured=true;turn.ttsChargedCharacterUpper=Buffer.byteLength(spoken,'utf8');console.log('ACTUAL_WORKERS_AUDIO_READY='+JSON.stringify({scenario:scenario.id,turn:index+1,path:turn.agentAudioPath,bytes:audio.length}));
+   }catch(e){turn.error=scrub(e.message);result.errors.push(turn.error);break;}
+   await writeFile(`voice-audit-results/${scenario.id}.json`,JSON.stringify(result,null,2));
+  }
+ }catch(e){result.errors.push(scrub(e.message));}
+ finally{
+  result.completedAllPlannedTurns=result.turns.length===result.plannedTurns&&result.turns.every(t=>!t.error);result.acceptancePassed=false;result.qualityReview='Pending semantic and listening review; Workers AI recording is not ElevenLabs native quality proof';
+  await finalizeAudioScenario({result,recordings:[],scrub,exportRecording:async()=>{},completeCall:async()=>{if(context){await app({action:'complete',callId:context.callId,outcome:'synthetic_workers_audio_audit',disposition:'info_shared'});result.syntheticCallCompleted=true;}},persist:()=>writeFile(`voice-audit-results/${scenario.id}.json`,JSON.stringify(result,null,2))});
+ }
+ reports.push(result);
+}
+if(env.NEXT_AUDIO_ENGINE==='workers_ai'&&batchReadiness.workersSpeechReady!==true)throw Error('Configured bounded Workers AI models not ready');
+for(const scenario of NEXT_FIVE_AUDIO_SCENARIOS)await (env.NEXT_AUDIO_ENGINE==='workers_ai'?runWorkersScenario(scenario):runScenario(scenario));
+
 await isolation();const after=await bookingIds();
-const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,initialBatchSize:5,aggregateBrainReservationCapUsd:1,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
+const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,initialBatchSize:5,aggregateBrainReservationCapUsd:1,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:env.NEXT_AUDIO_ENGINE==='workers_ai'?'workers_ai_whisper_aura2_with_actual_pawspace_staging_brain':'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
 await writeFile('voice-audit-results/five-conversations.json',JSON.stringify(summary,null,2));
 console.log('MAYA_FIVE_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));

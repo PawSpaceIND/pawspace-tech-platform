@@ -35,6 +35,7 @@ export async function ensureNextAudioBudget(db: D1Database) {
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_budget (id TEXT PRIMARY KEY, cap_micros INTEGER NOT NULL, reserved_micros INTEGER NOT NULL, conversations INTEGER NOT NULL, receipt_json TEXT NOT NULL, expires_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_leases (thread_id TEXT PRIMARY KEY, budget_id TEXT NOT NULL, customer_id TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_batch_claims (budget_id TEXT PRIMARY KEY, token TEXT NOT NULL, run_id TEXT NOT NULL, source_sha TEXT NOT NULL, claimed_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS next_audio_speech_attempts (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,kind TEXT NOT NULL,units INTEGER NOT NULL,created_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_attempts (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, reserved_micros INTEGER NOT NULL, created_at INTEGER NOT NULL)"),
  ]);
 }
@@ -96,4 +97,11 @@ export async function claimNextAudioBatch(db:D1Database, runId:string, sourceSha
 export async function requireNextAudioBatch(db:D1Database, token:string, sourceSha:string) {
  const row=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
  if(!row)throw new Error("next_audio_batch_claim_required");
+}
+
+/** Speech envelope: <=4 x30s ASR and <=4 x2500 UTF-8 bytes TTS per lease; charge on failed attempts too. */
+export async function reserveNextAudioSpeech(db:D1Database,input:{threadId:string;customerId:string;kind:"stt"|"tts"|"brain";units:number;now:number}) {
+ if(!isNextAudioThread(input.threadId)||!Number.isSafeInteger(input.units)||input.units<=0||(input.kind==="stt"&&input.units>960000)||(input.kind==="tts"&&input.units>2500)||(input.kind==="brain"&&input.units>1000))throw new Error("next_audio_speech_unit_limit");
+ const r=await db.prepare("INSERT INTO next_audio_speech_attempts (id,thread_id,kind,units,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_leases WHERE thread_id=? AND customer_id=? AND expires_at>?) AND (SELECT COUNT(*) FROM next_audio_speech_attempts WHERE thread_id=? AND kind=?)<4").bind(crypto.randomUUID(),input.threadId,input.kind,input.units,input.now,input.threadId,input.customerId,input.now,input.threadId,input.kind).run();
+ if(Number(r.meta?.changes)!==1)throw new Error("next_audio_speech_budget_or_lease_refused");
 }
