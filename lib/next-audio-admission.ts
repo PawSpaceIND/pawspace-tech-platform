@@ -1,0 +1,9 @@
+type Row = Record<string, unknown>;
+type Result = { success?: boolean; results?: Row[] };
+export const NEXT_AUDIO_INSERT_THREAD_SQL = "INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?) RETURNING id,customer_id";
+export const NEXT_AUDIO_ATTACH_CALL_SQL = "UPDATE ai_voice_calls SET thread_id=? WHERE id=? AND customer_id=? AND status='active' AND transport_provider='sandbox_simulator' AND consent_status='verified' AND thread_id=? RETURNING id,thread_id,customer_id";
+export const NEXT_AUDIO_ADMISSION_READBACK_SQL = "SELECT c.id AS call_id,c.thread_id,c.customer_id,c.status,c.transport_provider,c.consent_status,l.expires_at FROM ai_voice_calls c JOIN communication_threads t ON t.id=c.thread_id AND t.customer_id=c.customer_id JOIN next_audio_leases l ON l.thread_id=c.thread_id AND l.customer_id=c.customer_id WHERE c.id=? AND c.customer_id=? AND c.thread_id=? AND c.status='active' AND c.transport_provider='sandbox_simulator' AND c.consent_status='verified' AND l.budget_id=? AND l.expires_at>?";
+export function assertNextAudioAdmission(results: Result[], expected: {callId:string;threadId:string;customerId:string;now:number}) {
+ const [thread,call,state]=results.map(r=>r.results?.[0]);
+ if(results.length!==3||results.some(r=>r.success!==true||r.results?.length!==1)||thread?.id!==expected.threadId||thread?.customer_id!==expected.customerId||call?.id!==expected.callId||call?.thread_id!==expected.threadId||call?.customer_id!==expected.customerId||state?.call_id!==expected.callId||state?.thread_id!==expected.threadId||state?.customer_id!==expected.customerId||state?.status!=='active'||state?.transport_provider!=='sandbox_simulator'||state?.consent_status!=='verified'||typeof state?.expires_at!=='number'||state.expires_at<=expected.now)throw Error('next_audio_call_changed_during_admission');
+}
