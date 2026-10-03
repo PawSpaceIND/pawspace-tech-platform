@@ -89,7 +89,7 @@ test('exact reviewed workflow suffix can be reversed but any guard mutation fail
 test('provider lookalike, credential and embedded-host URLs are refused before metadata HTTP',async t=>{
  const w=await world(t);w.seedEvidence();
  for(const base of ['https://api.elevenlabs.io.evil.invalid','https://evil.invalid/https://api.elevenlabs.io','https://user@api.elevenlabs.io','https://api.elevenlabs.io?host=evil.invalid']){
- w.env.ELEVENLABS_API_BASE=base;assert.equal((await route.GET(w.request())).status,403);
+ globalThis.__PAWSPACE_TEST_ENV__.ELEVENLABS_API_BASE=base;assert.equal((await route.GET(w.request())).status,403);
  }
  assert.equal(w.reads(),0);
 });
