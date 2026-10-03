@@ -1,0 +1,19 @@
+{
+  "file": "lib/ai-first-control-plane.ts",
+  "beforeSha256": "a9e303d4f77512dd3d07deb9b162a6947878c3432a91c06b2f0a0bfeda0017e7",
+  "afterSha256": "c82ac683aca5483b9225b705b71575222a776109da862b028ca77bb5e524cfb2",
+  "replacements": [
+    [
+      "import{requireCustomerOwnership,type AuthenticatedActor}from\"./server-auth\";\n",
+      "import{requireCustomerOwnership,type AuthenticatedActor}from\"./server-auth\";\nimport{canVoiceCallTransition,isVoiceCallState}from\"./voice-call-state\";\n"
+    ],
+    [
+      " const row=await db.prepare(\"SELECT id,customer_id FROM voice_call_orders WHERE id=?\").bind(callId).first<{id?:string;customer_id?:string|null}>();\n",
+      " const row=await db.prepare(\"SELECT id,customer_id,state FROM voice_call_orders WHERE id=?\").bind(callId).first<{id?:string;customer_id?:string|null;state?:string}>();\n"
+    ],
+    [
+      " if(text(row.customer_id)!==input.customerId)throw new Response(\"Customer ownership denied\",{status:403});\n",
+      " if(text(row.customer_id)!==input.customerId)throw new Response(\"Customer ownership denied\",{status:403});\n const state=text(row.state);\n if(state===\"cancelled\")return{from:\"cancelled\" as const,to:\"cancelled\" as const};\n if((!isVoiceCallState(state)||!canVoiceCallTransition(state,\"cancelled\")))throw new Response(\"Voice call cannot be cancelled in its current state\",{status:409});\n"
+    ]
+  ]
+}

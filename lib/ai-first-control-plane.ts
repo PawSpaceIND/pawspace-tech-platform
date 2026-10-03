@@ -4,6 +4,7 @@ import{requestAiHumanHandoff,type AiHandoffReason}from"./ai-human-handoff";
 import{cancelVoiceCall,ensureVoiceCallTables,recordVoiceConsent,requestOutboundVoiceCall,VOICE_USE_CASES,type VoiceUseCaseDefinition}from"./voice-outbound-canonical";
 import{resolveCanonicalRecipientOwnership}from"./canonical-recipient-ownership";
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
+import{canVoiceCallTransition,isVoiceCallState}from"./voice-call-state";
 import{cityBookingVerdict}from"./city-status-authority";
 import{ensureCallbackContextSchema,reserveCallbackContext}from"./customer-callback-context";
 
@@ -258,9 +259,12 @@ export async function cancelGovernedCustomerCallback(db:D1Database,input:{actor:
  await requireCustomerOwnership(db,input.actor,input.customerId);
  const callId=text(input.callId);if(!callId)throw new Response("callId is required",{status:400});
  await ensureVoiceCallTables(db);
- const row=await db.prepare("SELECT id,customer_id FROM voice_call_orders WHERE id=?").bind(callId).first<{id?:string;customer_id?:string|null}>();
+ const row=await db.prepare("SELECT id,customer_id,state FROM voice_call_orders WHERE id=?").bind(callId).first<{id?:string;customer_id?:string|null;state?:string}>();
  if(!row)throw new Response("Voice call not found",{status:404});
  if(text(row.customer_id)!==input.customerId)throw new Response("Customer ownership denied",{status:403});
+ const state=text(row.state);
+ if(state==="cancelled")return{from:"cancelled" as const,to:"cancelled" as const};
+ if((!isVoiceCallState(state)||!canVoiceCallTransition(state,"cancelled")))throw new Response("Voice call cannot be cancelled in its current state",{status:409});
  return cancelVoiceCall(db,{callId,reason:text(input.reason)||"customer_cancelled_in_chat",actorId:input.actor.email,asOf:input.asOf});
 }
 
