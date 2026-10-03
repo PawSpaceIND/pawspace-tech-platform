@@ -1,6 +1,6 @@
-import {NEXT_TEN_AUDIO_SCENARIOS} from './next-ten-audio-scenarios.mjs';
+import {NEXT_FIVE_AUDIO_SCENARIOS} from './next-ten-audio-scenarios.mjs';
 import {createAudioEventReceipt,finalizeAudioScenario} from './next-audio-evidence.mjs';
-// Ten bounded genuine ASR -> canonical PawSpace brain -> TTS sessions. No telephony dial API.
+// Five bounded genuine ASR -> canonical PawSpace brain -> TTS sessions. No telephony dial API.
 import {execFileSync} from 'node:child_process';
 import {writeFile,mkdir} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -114,8 +114,8 @@ async function runScenario(scenario){
  }
  reports.push(result);console.log('MAYA_AUDIO_AUDIT_SCENARIO='+JSON.stringify({id:result.id,completedTurns:result.turns.length,plannedTurns:result.plannedTurns,errors:result.errors,handoffs:result.turns.filter(t=>t.handoff).length,providerStatus:result.providerStatus}));
 }
-for(const scenario of NEXT_TEN_AUDIO_SCENARIOS)await runScenario(scenario);
+for(const scenario of NEXT_FIVE_AUDIO_SCENARIOS)await runScenario(scenario);
 await isolation();const after=await bookingIds();
-const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
-await writeFile('voice-audit-results/ten-conversations.json',JSON.stringify(summary,null,2));
-console.log('MAYA_TEN_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));
+const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,initialBatchSize:5,aggregateBrainReservationCapUsd:1,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
+await writeFile('voice-audit-results/five-conversations.json',JSON.stringify(summary,null,2));
+console.log('MAYA_FIVE_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));

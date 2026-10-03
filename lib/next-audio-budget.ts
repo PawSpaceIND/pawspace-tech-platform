@@ -1,6 +1,7 @@
 /** Same next-ten allocation, increased to $10 total on 2026-10-03. Reservations and claims never reset. */
 export const NEXT_AUDIO_BUDGET_ID = "next-ten-audio-additional-usd5-20261002";
 export const NEXT_AUDIO_CAP_MICROS = 10_000_000;
+export const NEXT_AUDIO_MODEL_BATCH_CAP_MICROS = 1_000_000;
 export const NEXT_AUDIO_THREAD_PREFIX = "THREAD-VOICE-NDEMO-NEXT-AUDIO-";
 export const isNextAudioThread = (id: string) => id.startsWith(NEXT_AUDIO_THREAD_PREFIX);
 type Row = Record<string, unknown>;
@@ -75,8 +76,8 @@ export async function reserveNextAudioAttempt(db: D1Database, input: {threadId:s
  if (input.sourceSha !== receipt.sourceSha || input.provider !== receipt.provider || input.model !== receipt.model) throw new Error("next_audio_runtime_provider_mismatch");
  const bound = modelAttemptBound(receipt,input.systemPrompt,input.userPrompt,input.outputTokens,input.now), id=crypto.randomUUID();
  const result = await db.batch([
-  db.prepare("INSERT INTO next_audio_attempts (id,thread_id,reserved_micros,created_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_budget b JOIN next_audio_leases l ON l.budget_id=b.id WHERE b.id=? AND b.cap_micros=10000000 AND b.reserved_micros+?<=b.cap_micros AND b.expires_at>? AND l.thread_id=? AND l.customer_id=? AND l.expires_at>? AND l.attempts<6)")
-   .bind(id,input.threadId,bound,input.now,NEXT_AUDIO_BUDGET_ID,bound,input.now,input.threadId,input.customerId,input.now),
+  db.prepare("INSERT INTO next_audio_attempts (id,thread_id,reserved_micros,created_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_budget b JOIN next_audio_leases l ON l.budget_id=b.id WHERE b.id=? AND b.cap_micros=10000000 AND b.reserved_micros+?<=b.cap_micros AND b.expires_at>? AND l.thread_id=? AND l.customer_id=? AND l.expires_at>? AND l.attempts<6 AND (SELECT COALESCE(SUM(reserved_micros),0) FROM next_audio_attempts)+?<=1000000)")
+   .bind(id,input.threadId,bound,input.now,NEXT_AUDIO_BUDGET_ID,bound,input.now,input.threadId,input.customerId,input.now,bound),
   db.prepare("UPDATE next_audio_budget SET reserved_micros=reserved_micros+? WHERE id=? AND EXISTS (SELECT 1 FROM next_audio_attempts WHERE id=?)").bind(bound,NEXT_AUDIO_BUDGET_ID,id),
   db.prepare("UPDATE next_audio_leases SET attempts=attempts+1 WHERE thread_id=? AND EXISTS (SELECT 1 FROM next_audio_attempts WHERE id=?)").bind(input.threadId,id),
  ]);

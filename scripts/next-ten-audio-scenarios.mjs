@@ -14,3 +14,6 @@ export const NEXT_TEN_AUDIO_SCENARIOS = [
  plannedBargeIn:id==='taxi_correction'?{turn:2,trigger:'first_non_silent_agent_audio',delayMs:300}:null,
  authority:'informational test; synthetic outbound means audio dialogue only, never a dial',
  maxProviderDurationSeconds:120,maxProviderAttempts:6}));
+
+/** Initial five-service pass. Later groups require explicit durable continuation, never a claim reset. */
+export const NEXT_FIVE_AUDIO_SCENARIOS = ['grooming_multipet','training_goals','boarding_app_only','sitting_app_only','taxi_correction'].map(id=>({...NEXT_TEN_AUDIO_SCENARIOS.find(s=>s.id===id),service:({grooming_multipet:'grooming',training_goals:'dog_training',boarding_app_only:'pet_boarding',sitting_app_only:'pet_sitting',taxi_correction:'pet_taxi'})[id]}));

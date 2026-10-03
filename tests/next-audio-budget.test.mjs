@@ -103,3 +103,16 @@ test('cap increase preserves incurred reservations and consumed batch claim',{ti
  assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_attempts').first()).n,1);
  await assert.rejects(()=>budget.provisionNextAudioBudget(db,{...receipt(),optionalBatchMicros:0},now));
 });
+
+import {NEXT_FIVE_AUDIO_SCENARIOS} from '../scripts/next-ten-audio-scenarios.mjs';
+test('first five cover each requested service with complex prompts and actual taxi interruption',()=>{
+ assert.equal(NEXT_FIVE_AUDIO_SCENARIOS.length,5);assert.deepEqual(NEXT_FIVE_AUDIO_SCENARIOS.map(s=>s.service),['grooming','dog_training','pet_boarding','pet_sitting','pet_taxi']);
+ assert.ok(NEXT_FIVE_AUDIO_SCENARIOS.every(s=>s.prompts.length===4&&s.maxProviderDurationSeconds===120));assert.ok(NEXT_FIVE_AUDIO_SCENARIOS[4].plannedBargeIn);
+});
+test('aggregate brain reservations have an independent one-dollar hard ceiling across five conversations',{timeout:60000},async t=>{
+ const db=await world(t);for(let i=1;i<=5;i++)await budget.reserveNextAudioLease(db,lease(i));
+ const outcomes=await Promise.allSettled(Array.from({length:30},(_,i)=>budget.reserveNextAudioAttempt(db,{...attempt(i%5+1),systemPrompt:'x'.repeat(50000)})));
+ assert.ok(outcomes.some(x=>x.status==='rejected'));assert.ok(outcomes.some(x=>x.status==='fulfilled'));
+ const row=await db.prepare('SELECT SUM(reserved_micros) n FROM next_audio_attempts').first();assert.ok(row.n<=budget.NEXT_AUDIO_MODEL_BATCH_CAP_MICROS);assert.ok(row.n>900000);
+ await budget.provisionNextAudioBudget(db,receipt(),now);assert.equal((await db.prepare('SELECT SUM(reserved_micros) n FROM next_audio_attempts').first()).n,row.n);
+});
