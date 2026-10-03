@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -93,6 +95,22 @@ export function auditRuntimeSchemaCoverage(root = ".") {
     }
   }
 
+  // This single capability is declared outside runtime auto-schema and must be explicitly provisioned.
+  const isolatedTable="atlas_text_test_requests",isolatedMigration="migrations/atlas-text-test-isolated.sql";
+  let isolatedCertified=false;
+  if(consumers.has(isolatedTable)){
+    assert.equal(runtimeCreators.has(isolatedTable),false,"Atlas isolated schema must not acquire a runtime creator");
+    assert.deepEqual([...consumers.get(isolatedTable)].sort(),["lib/atlas-text-test-admission.ts"],"Atlas isolated schema must have only its reviewed admission consumer/writer");
+    const schema=new DatabaseSync(":memory:");
+    try{
+      schema.exec(fs.readFileSync(path.join(root,isolatedMigration),"utf8"));
+      assert.equal(schema.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name=?").get(isolatedTable).n,1,"Atlas isolated migration must create its request table");
+      assert.deepEqual(schema.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row=>row.name),[isolatedTable],"Atlas migration must not create other authority tables");
+      assert.equal(schema.prepare("SELECT COUNT(*) n FROM atlas_text_test_requests").get().n,0,"Atlas isolated migration must seed no requests or authority");
+      isolatedCertified=true;
+    }finally{schema.close();}
+  }
+
   const rows = [...consumers.keys()].sort().map((table) => {
     const runtime = [...(runtimeCreators.get(table) || [])].sort();
     const migrations = [...(migrationCreators.get(table) || [])].sort();
@@ -101,7 +119,8 @@ export function auditRuntimeSchemaCoverage(root = ".") {
       consumers: [...consumers.get(table)].sort(),
       runtimeCreators: runtime,
       migrationCreators: migrations,
-      classification: runtime.length ? "runtime_created" : migrations.length ? "migration_only" : "missing_schema_source",
+      classification: runtime.length ? "runtime_created" : table===isolatedTable&&isolatedCertified ? "explicitly_provisioned_isolated" : migrations.length ? "migration_only" : "missing_schema_source",
+      ...(table===isolatedTable&&isolatedCertified?{provisionedSchemaSource:isolatedMigration}:{}),
     };
   });
 

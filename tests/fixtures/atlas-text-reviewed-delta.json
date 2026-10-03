@@ -5,7 +5,7 @@
     "lib/ai-provider-adapter.ts": [
       [
         "",
-        "import { reserveTextTest, countTextTestInput, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from \"./atlas-text-test-admission\";\n"
+        "import { reserveTextTest, directPayload, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from \"./atlas-text-test-admission\";\n"
       ],
       [
         "export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {\n",
@@ -17,7 +17,7 @@
       ],
       [
         "",
-        "  try { const exactInput=await countTextTestInput(env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,streaming:Boolean(input.onDelta),systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt},apiKey,fetch,Date.now(),undefined,db); textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta),exactInput}); } catch { return await finishFailure(\"runtime_control_unavailable\"); }\n\n"
+        "  try { textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta)}); } catch { return await finishFailure(\"runtime_control_unavailable\"); }\n\n"
       ],
       [
         "",
@@ -25,11 +25,11 @@
       ],
       [
         "            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(streaming ? { stream: true } : {}), ...(input.channel === \"voice\" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: \"none\" } } : {}) }),\n",
-        "            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(textTestClaim?{service_tier:\"default\"}:{}), ...(streaming ? { stream: true } : {}), ...(input.channel === \"voice\" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: \"none\" } } : {}) }),\n"
+        "            body: JSON.stringify(textTestClaim?directPayload(modelRef,safeSystemPrompt,safeUserPrompt,maxTokens):{ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(textTestClaim?{service_tier:\"default\"}:{}), ...(streaming ? { stream: true } : {}), ...(input.channel === \"voice\" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: \"none\" } } : {}) }),\n"
       ],
       [
         "",
-        "    if(textTestClaim&&db){try{await settleTextTest(db,textTestClaim,(parsed as {usage?:unknown}).usage);textTestSettled=true;}catch{return await finishFailure(\"runtime_control_unavailable\");}}\n"
+        "    if(textTestClaim&&db){try{await settleTextTest(db,textTestClaim,parsed);textTestSettled=true;}catch{return await finishFailure(\"runtime_control_unavailable\");}}\n"
       ],
       [
         "",
@@ -44,6 +44,7 @@
     ]
   },
   "approvedSources": {
-    "lib/atlas-text-test-admission.ts": "2721d5da4b39c657ac6578a99acc75bb80321ab2d7df2f935652473703f0591e"
-  }
+    "lib/atlas-text-test-admission.ts": "b19066e0fd2e208aa0a22fd559cb0a2d74da97066283f0c7663eccf6c6829ca8"
+  },
+  "replacementApproval": "Sentinel_a52fd374e18081919932a9355544e680"
 }
