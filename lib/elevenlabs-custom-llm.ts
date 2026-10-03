@@ -1,9 +1,10 @@
+import {voiceStaffPauseMessage} from "./voice-staff-pause";
 import{emergencyGuidanceOnly,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
 import { voiceSalesService } from "./voice-sales-specialists";
 import{ensureCommunicationTables}from"./communication-engine";
 import{classifyAiIntent,isExplicitCustomerActionConfirmation,orchestrateAiTurn,minimumContext,validateAiProviderReply}from"./ai-conversation-orchestrator";
 import{createGroundedAiRuntimeProvider,requiresImmediateHumanHandoff}from"./ai-grounded-runtime-provider";
-import{assertAiMayReply}from"./ai-human-handoff";
+import{assertAiMayReply,ensureAiHumanHandoff}from"./ai-human-handoff";
 import{resolveAiAudienceGate}from"./ai-audience-rollout";
 import{detectPromptInjection}from"./ai-evaluation-security";
 import type{AuthenticatedActor}from"./server-auth";
@@ -202,7 +203,9 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
   if(!(error instanceof Response)||error.status!==409){await settleInbound();throw error;}
   // A governed staff pause is a conversation state, not an LLM transport failure. Explain it
   // without generating, resuming AI, or claiming that a live telephone transfer has occurred.
-  const output="AI voice cannot continue this conversation right now. Please contact the PawSpace team for help.";
+  await ensureAiHumanHandoff(db);
+  const handoff=await db.prepare("SELECT status,reason FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(ctx.threadId,ctx.customerId).first<Row>();
+  const output=voiceStaffPauseMessage(inputText,handoff?text(handoff.status):null,handoff?text(handoff.reason):null);
   const replyId=await persistReply(output,"human_handoff",null);
   return{output,turnId:replyId,sessionId:ctx.sessionId,customerId:ctx.customerId,threadId:ctx.threadId,path:"human_handoff",timings:clock.marks,modelRef:null,providerRef:"human_handoff",upstreamMs:null as number|null};
  }

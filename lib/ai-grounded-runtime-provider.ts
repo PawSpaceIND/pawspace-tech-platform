@@ -1,3 +1,4 @@
+import {VOICE_PET_MEMORY_DIRECTIVE,voicePetMemory} from "./voice-pet-memory";
 import { MAYA_STAY_POLICY, mayaStayDescriptions } from "./maya-stay-policy";
 import { VOICE_CONVERSATION_STYLE, voiceTaxiIntakeExplanation } from "./voice-conversation-style.mjs";
 import { MAYA_FUNERAL_POLICY, mayaFuneralCatalogue } from "./maya-funeral-policy";
@@ -162,6 +163,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  ]);options.onTiming?.("groundingCompleted");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(policyEnquiry)||salesInformation||medicalQuestion;
  const taxiGuidance=channel==="voice"&&!input.onDelta&&!medicalQuestion&&!policyEnquiry&&"serviceDirectory" in grounded.context&&grounded.context.serviceDirectory.some(service=>service.code==="pet_taxi"&&service.enabled)?voiceTaxiIntakeExplanation(input.inputText):null;
  if(taxiGuidance)return{text:taxiGuidance,provider:"conversation_guidance",modelRef:"server_owned_taxi_intake",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
+ const memory=channel==="voice"?voicePetMemory(input.inputText,(options.salesService?history:(input.context.conversationHistory||[])) as Array<{role:string;content?:unknown;text?:unknown}>,((grounded.context as Row).pets||[]) as Array<{id?:unknown;name?:unknown}>):null;
+ if(memory){systemPrompt+=`\n\n${VOICE_PET_MEMORY_DIRECTIVE}`;Object.assign(grounded.context,{voicePetMemory:memory});}
  const eligibleOffers=options.salesService==="dog_training"?[]:offers;
  const preferenceReply=channel==="voice"&&!input.onDelta&&!medicalQuestion?voiceExtrasPreferenceReply(input.inputText):null;
  if(preferenceReply)return{text:preferenceReply,provider:"conversation_preference",modelRef:"server_owned_preference_acknowledgement",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
@@ -191,6 +194,8 @@ export async function createGroundedAiRuntimeProvider(db:D1Database,actor:Authen
  }
  const envelope=parseGroundedActionEnvelope(result.text);
  if(!envelope&&/^\s*(?:\{|```)/.test(result.text))return{text:"",provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,failure:"malformed_output"};
+ if(memory?.newPetBookingNeedsProfile&&envelope?.actions.some(action=>action.toolCode==="schedule.reserve"||action.toolCode==="booking.create"))return{text:`${memory.unlinkedNewPetNames.join(" and ")} is a new pet without a saved profile. Please add the new pet profile before booking; I won’t substitute another saved pet.`,provider:"pet_identity_guard",modelRef:"server_owned_pet_identity",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
+ if(memory?.intendedNewSavedPetIds.length&&envelope?.actions.some(action=>(action.toolCode==="schedule.reserve"||action.toolCode==="booking.create")&&Array.isArray(action.arguments.petIds)&&action.arguments.petIds.some(id=>!memory.allowedSavedPetIds.includes(String(id)))))return{text:`${memory.newPetNames.join(" and ")} has a separate saved profile. Please confirm that this is the pet to book; I won’t substitute another saved pet.`,provider:"pet_identity_guard",modelRef:"server_owned_pet_identity",latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};
  const customerText=envelope?(envelope.reply||(envelope.actions.length?"Let me check those booking details.":"")):result.text;
  const reply=safePetMedicalReply(customerText,medicalQuestion,Boolean(envelope?.actions.length)||grounded.groundingRefs.length===0);
  const catalogueVerifiedPrices=pricesMatchCatalogue(channel==="voice"?withoutApprovedVoiceDiscounts(reply,eligibleOffers):withoutApprovedDiscounts(reply,eligibleOffers),{...grounded.context.catalogue,approvedOffers:offerGroundingRows(eligibleOffers)}),offerClaimsVerified=offerClaimsApproved(reply,eligibleOffers);

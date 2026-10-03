@@ -257,6 +257,8 @@ test("provider money output needs a real active public knowledge row, not a self
   assert.equal(blocked.turn.outcome, "handoff");
   assert.equal(blocked.turn.handoffReason, "policy_risk");
   assert.doesNotMatch(blocked.turn.output, /899/);
+  const rejectedSuggestion=JSON.parse(blockedWorld.sqlite.prepare("SELECT content_json FROM ai_suggestions WHERE id=?").get(blocked.turn.suggestionId).content_json);
+  assert.ok(rejectedSuggestion.validationFailures.includes("ungrounded_business_claim"),"the exact failure code must be retained without speaking the rejected draft");
 
   const groundedWorld = await world();
   groundedWorld.sqlite.exec("CREATE TABLE IF NOT EXISTS ai_knowledge_source_versions (id TEXT PRIMARY KEY,source_key TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,title TEXT NOT NULL,source_type TEXT NOT NULL,content_text TEXT NOT NULL,visibility_scope_json TEXT NOT NULL,effective_from INTEGER,effective_to INTEGER,immutable_hash TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");

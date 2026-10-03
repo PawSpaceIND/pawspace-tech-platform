@@ -264,7 +264,7 @@ test("Grooming demo question completes specialist speech despite a draft-review 
     elevenlabs_extra_body: { pawspace_customer_id: "CUS-EL-TURN", pawspace_thread_id: "THREAD-EL-TURN" },
   }), { authorization: `Bearer ${credentials.ELEVENLABS_LLM_SECRET}` }));
   const pausedBody = await paused.response.text();
-  assert.match(pausedBody, /AI voice cannot continue this conversation right now/);
+  assert.match(pausedBody, /team needs to help with this request/);
   assert.equal(mock.calls.length, 1, "staff-only rollout must not make another model call");
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns").get().n, 1);
 });
@@ -291,7 +291,7 @@ test("active staff pause produces a spoken status without invoking the LLM", asy
   const sse=await r.response.text();
   assert.match(sse,/response\.completed/);
   assert.doesNotMatch(sse,/response\.failed/);
-  assert.match(sse,/AI voice cannot continue this conversation/);
+  assert.match(sse,/queued for a PawSpace teammate; nobody has joined this call yet/);
   assert.match(sse,/"path":"human_handoff"/);
   assert.equal(mock.calls.length,0);
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE status='queued'").get().n,1);
