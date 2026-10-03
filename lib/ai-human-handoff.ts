@@ -1,3 +1,4 @@
+import{ensureConversationHandoffTicket}from"./conversation-handoff-ticket";
 import{ensureConversationGovernance}from"./conversation-governance";
 import{ensureD1Once}from"./d1-ensure-once.js";
 import{actorCanAccessConversation,conversationAccessPredicate,ensureConversationAccessTables}from"./conversation-access";
@@ -54,7 +55,7 @@ export async function requestAiHumanHandoff(db:D1Database,input:{actorEmail:stri
  await ensureAiHumanHandoff(db);
  const current=await db.prepare("SELECT h.*,t.customer_id thread_customer_id,t.lead_id thread_lead_id FROM communication_threads t LEFT JOIN ai_handoffs h ON h.thread_id=t.id AND h.status IN ('queued','staff_active') WHERE t.id=? ORDER BY h.created_at DESC LIMIT 1").bind(input.threadId).first<Row>();
  if(!current||text(current.thread_customer_id)!==input.customerId)throw new Response("Conversation thread/customer mismatch",{status:403});
- if(text(current.id))return{handoff:current,duplicatePrevented:true,aiPaused:true};
+ if(text(current.id))return{handoff:current,duplicatePrevented:true,aiPaused:true,ticketReceipt:await ensureConversationHandoffTicket(db,{handoffId:text(current.id),threadId:input.threadId,customerId:input.customerId,actorId:input.actorEmail})};
  const routing=queueFor(input.reason),now=Date.now(),id=`AIHO-${crypto.randomUUID()}`,eventId=`AIHEVT-${crypto.randomUUID()}`;
  const[snapshot,sessionStatements]=await Promise.all([summary(db,input.threadId,input.customerId,input.reason,input.confidence),sessionUpdate(db,input.threadId,"human_handoff",now,eventId)]);
  const statements=[
@@ -64,12 +65,12 @@ export async function requestAiHumanHandoff(db:D1Database,input:{actorEmail:stri
   ...sessionStatements,
  ];
  try{await db.batch(statements);}catch(error){
-  if(/unique constraint/i.test(error instanceof Error?error.message:String(error))){const raced=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active')").bind(input.threadId,input.customerId).first<Row>();if(raced)return{handoff:raced,duplicatePrevented:true,aiPaused:true};}
+  if(/unique constraint/i.test(error instanceof Error?error.message:String(error))){const raced=await db.prepare("SELECT * FROM ai_handoffs WHERE thread_id=? AND customer_id=? AND status IN ('queued','staff_active')").bind(input.threadId,input.customerId).first<Row>();if(raced)return{handoff:raced,duplicatePrevented:true,aiPaused:true,ticketReceipt:await ensureConversationHandoffTicket(db,{handoffId:text(raced.id),threadId:input.threadId,customerId:input.customerId,actorId:input.actorEmail})};}
   throw error;
  }
  await markAttachedLeadHumanOwned(db,{leadId:text(current.thread_lead_id)||null,reason:input.reason,queue:routing.queue,now});
  const handoff={id,thread_id:input.threadId,customer_id:input.customerId,session_id:input.sessionId||null,reason:input.reason,confidence:input.confidence??null,queue_code:routing.queue,status:"queued",summary_json:JSON.stringify(snapshot),requested_by:input.actorEmail,created_at:now,taken_over_by:null,resumed_by:null,taken_over_at:null,resumed_at:null};
- return{handoff,duplicatePrevented:false,aiPaused:true};
+ return{handoff,duplicatePrevented:false,aiPaused:true,ticketReceipt:await ensureConversationHandoffTicket(db,{handoffId:id,threadId:input.threadId,customerId:input.customerId,actorId:input.actorEmail})};
 }
 
 export async function manageAiHumanHandoff(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;action:AiHandoffAction;reason?:string}){

@@ -1,3 +1,4 @@
+import{isExplicitConversationFollowup}from"../../../lib/conversation-followup-action";
 import{reserveWebChatCallbackRequest}from"../../../lib/customer-callback-context";
 import{requestReplayableWebChatHandoff}from"../../../lib/web-chat-handoff-replay";
 import {ensureCommunicationTables} from "../../../lib/communication-engine";
@@ -117,7 +118,7 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  if(!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay
  // capture-only so an internet user cannot type somebody else's number and cause PawSpace to dial it.
- if(isCustomerCallbackRequest(body.message)){
+ if(isCustomerCallbackRequest(body.message)&&!isExplicitConversationFollowup(body.message)){
   const original=await reserveWebChatCallbackRequest(db,customerId,body.idempotencyKey,{message:body.message,...callbackRequestFields(body)});
   const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,idempotencyKey:body.idempotencyKey,...original});
   const followUp=await handoffUndialledCallback(db,actor,customerId,null,callback,`callback:${body.idempotencyKey}`);

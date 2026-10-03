@@ -93,18 +93,23 @@ export async function scheduleLeadCallback(db:Db,input:{leadId:string;requestedA
  if(priorEvent){
    const prior=await db.prepare("SELECT * FROM lead_callbacks WHERE id=?").bind(priorEvent.callback_id).first<Row>();
    if(!prior)throw refuse("Callback replay record is missing its callback");
+   if(text(prior.lead_id)!==leadId||Number(prior.requested_at)!==input.requestedAt||text(prior.reason)!==reason||text(prior.scheduled_by)!==actorId)throw refuse("Callback key belongs to another scheduling request");
    return{id:text(prior.id),leadId:text(prior.lead_id),requestedAt:Number(prior.requested_at),reason:text(prior.reason),status:text(prior.status),duplicatePrevented:true};
  }
- // Superseding a still-open callback for the same lead, rather than letting two live promises
- // coexist and confuse whoever picks this lead up next.
- const now=Date.now();
- await db.prepare("UPDATE lead_callbacks SET status='superseded',updated_at=? WHERE lead_id=? AND status='scheduled'").bind(now,leadId).run();
- const id=uid("LCB");
- await db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,phone,name,preferred_at,source,requested_by,created_at,updated_at) VALUES (?,?,?,?,'scheduled',?,?,?,?,'crm_governed',?,?,?)")
-   .bind(id,leadId,input.requestedAt,reason,actorId,phone,contactName,input.requestedAt,actorId,now,now).run();
- await db.prepare("UPDATE lead_work_items SET next_action_at=?,updated_at=? WHERE id=?").bind(input.requestedAt,now,leadId).run();
- const emitted=await emit(db,{callbackId:id,leadId,eventType:"scheduled",actorId,idempotencyKey:requestKey,detail:{requestedAt:input.requestedAt,reason}});
- if(!emitted)throw refuse("Callback schedule idempotency key was already consumed");
+ // A promise, its supersession and audit commit together. A failed replacement cannot erase the old promise.
+ const now=Date.now(),id=uid("LCB");
+ try{await db.batch([
+  db.prepare("UPDATE lead_callbacks SET status='superseded',updated_at=? WHERE lead_id=? AND status='scheduled'").bind(now,leadId),
+  db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,phone,name,preferred_at,source,requested_by,created_at,updated_at) VALUES (?,?,?,?,'scheduled',?,?,?,?,'crm_governed',?,?,?)").bind(id,leadId,input.requestedAt,reason,actorId,phone,contactName,input.requestedAt,actorId,now,now),
+  db.prepare("UPDATE lead_work_items SET next_action_at=?,updated_at=? WHERE id=?").bind(input.requestedAt,now,leadId),
+  db.prepare("INSERT INTO lead_callback_events (id,idempotency_key,callback_id,lead_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,'scheduled',?,?,?)").bind(uid("LCBE"),requestKey,id,leadId,actorId,JSON.stringify({requestedAt:input.requestedAt,reason}),now),
+ ]);}catch(error){
+  if(!/unique constraint/i.test(String(error)))throw error;
+  const winner=await db.prepare("SELECT c.* FROM lead_callback_events e JOIN lead_callbacks c ON c.id=e.callback_id WHERE e.idempotency_key=? AND e.event_type='scheduled'").bind(requestKey).first<Row>();
+  if(!winner||text(winner.lead_id)!==leadId||Number(winner.requested_at)!==input.requestedAt||text(winner.reason)!==reason||text(winner.scheduled_by)!==actorId)throw refuse("Callback key belongs to another scheduling request");
+  return{id:text(winner.id),leadId,requestedAt:Number(winner.requested_at),reason:text(winner.reason),status:text(winner.status),duplicatePrevented:true};
+ }
+
  return{id,leadId,requestedAt:input.requestedAt,reason,status:"scheduled",duplicatePrevented:false};
 }
 
@@ -161,4 +166,22 @@ export async function leadCallbackHistory(db:Db,leadId:string){
  await ensureLeadCallbackTables(db);
  const rows=await db.prepare("SELECT * FROM lead_callbacks WHERE lead_id=? ORDER BY created_at DESC").bind(leadId).all<Row>();
  return rows.results;
+}
+
+/** Customer declines an existing promise; retain the record, clear only its own next-action time. */
+export async function cancelLeadCallback(db:Db,input:{callbackId:string;leadId:string;actorId:string}){
+ await ensureLeadCallbackTables(db);
+ const row=await db.prepare("SELECT * FROM lead_callbacks WHERE id=? AND lead_id=?").bind(input.callbackId,input.leadId).first<Row>();
+ if(!row)throw refuse("Owned callback not found");
+ if(text(row.status)==="cancelled")return{id:input.callbackId,status:"cancelled",duplicatePrevented:true};
+ if(!["scheduled","missed"].includes(text(row.status)))throw refuse("Only an outstanding callback can be cancelled");
+ const now=Date.now();
+ await db.batch([
+  db.prepare("UPDATE lead_callbacks SET status='cancelled',updated_at=? WHERE id=? AND lead_id=? AND status IN ('scheduled','missed')").bind(now,input.callbackId,input.leadId),
+  db.prepare("UPDATE lead_work_items SET next_action_at=NULL,updated_at=? WHERE id=? AND next_action_at=? AND EXISTS (SELECT 1 FROM lead_callbacks WHERE id=? AND status='cancelled')").bind(now,input.leadId,row.requested_at,input.callbackId),
+  db.prepare("INSERT OR IGNORE INTO lead_callback_events (id,idempotency_key,callback_id,lead_id,event_type,actor_id,detail_json,created_at) SELECT ?,?,?,?,'cancelled',?,'{\"reason\":\"customer_declined\"}',? WHERE EXISTS (SELECT 1 FROM lead_callbacks WHERE id=? AND status='cancelled')").bind(uid("LCBE"),`cancel:${input.callbackId}`,input.callbackId,input.leadId,input.actorId,now,input.callbackId)
+ ]);
+ const final=await db.prepare("SELECT status FROM lead_callbacks WHERE id=?").bind(input.callbackId).first<Row>();
+ if(text(final?.status)!=="cancelled")throw refuse("Callback changed concurrently");
+ return{id:input.callbackId,status:"cancelled",duplicatePrevented:false};
 }

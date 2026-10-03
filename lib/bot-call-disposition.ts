@@ -1,3 +1,4 @@
+import{notifyUnifiedCaseOwner}from"./staff-alert-center";
 /**
  * Bot-call disposition capture — what happened on an AI voice/bot call, landed in the real CRM.
  *
@@ -176,7 +177,7 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   const idempotencyKey = text(input.idempotencyKey);
   if (!idempotencyKey) throw new Error("An idempotency key is required");
   const prior = await db.prepare("SELECT * FROM bot_call_dispositions WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-  if (prior) return { duplicatePrevented: true, id: text(prior.id), leadId: text(prior.lead_id), primaryTag: text(prior.primary_tag), tags: JSON.parse(text(prior.tags_json) || "[]") as string[], crmOutcome: text(prior.crm_outcome), callbackId: prior.callback_id ? text(prior.callback_id) : null, caseId: prior.case_id ? text(prior.case_id) : null, reconciliationStatus: text(prior.reconciliation_status) };
+  if (prior) return { duplicatePrevented: true, id: text(prior.id), leadId: text(prior.lead_id), primaryTag: text(prior.primary_tag), tags: JSON.parse(text(prior.tags_json) || "[]") as string[], crmOutcome: text(prior.crm_outcome), callbackId: prior.callback_id ? text(prior.callback_id) : null, caseId: prior.case_id ? text(prior.case_id) : null, notificationReceipt: await notificationReceipt(db,prior.case_id), reconciliationStatus: text(prior.reconciliation_status) };
 
   const ownerToken=crypto.randomUUID(),reservedAt=input.asOf??Date.now();
   await db.prepare("INSERT OR IGNORE INTO bot_call_disposition_operations (idempotency_key,owner_token,status,created_at,updated_at) VALUES (?,?,'processing',?,?)").bind(idempotencyKey,ownerToken,reservedAt,reservedAt).run();
@@ -188,7 +189,7 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   }
   if(!operation||text(operation.owner_token)!==ownerToken){
     const completed=await db.prepare("SELECT * FROM bot_call_dispositions WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-    if(completed)return{duplicatePrevented:true,id:text(completed.id),leadId:text(completed.lead_id),primaryTag:text(completed.primary_tag),tags:JSON.parse(text(completed.tags_json)||"[]")as string[],crmOutcome:text(completed.crm_outcome),callbackId:completed.callback_id?text(completed.callback_id):null,caseId:completed.case_id?text(completed.case_id):null,reconciliationStatus:text(completed.reconciliation_status)};
+    if(completed)return{duplicatePrevented:true,id:text(completed.id),leadId:text(completed.lead_id),primaryTag:text(completed.primary_tag),tags:JSON.parse(text(completed.tags_json)||"[]")as string[],crmOutcome:text(completed.crm_outcome),callbackId:completed.callback_id?text(completed.callback_id):null,caseId:completed.case_id?text(completed.case_id):null,notificationReceipt:await notificationReceipt(db,completed.case_id),reconciliationStatus:text(completed.reconciliation_status)};
     return{duplicatePrevented:true,pending:true,retryable:true,id:"",leadId:"",primaryTag:"",tags:[],crmOutcome:"",callbackId:null,caseId:null,reconciliationStatus:"processing"};
   }
 
@@ -238,12 +239,18 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
       title: `Bot call needs a human: ${escalationTag.label}`,
       description: notes || `${input.botProvider} bot call on ${phone} tagged ${tags.join(", ")} - a human needs to take this conversation.`,
       customerId: contactId,
+      leadId,
       sourceType: "bot_call_disposition",
       sourceId: attemptId,
       ownerTeam: escalationTag.code === "complaint" ? "customer_experience" : "sales",
       actorId: input.actorId,
-    }).catch(() => null) as { case?: Row } | null;
+    }) as { case?: Row };
     caseId = created?.case?.id ? String(created.case.id) : null;
+    if (!caseId) throw new Error("Bot escalation did not create a canonical case");
+    await notifyUnifiedCaseOwner(db,{caseId,actorId:input.actorId});
+    // Durable receipt of what actually happened, not an assertion that staff were notified.
+    await db.prepare("INSERT OR IGNORE INTO unified_case_events (id,idempotency_key,case_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)")
+      .bind(await stableId("CASE-NOTIFY",idempotencyKey),`bot-notification:${idempotencyKey}`,caseId,"notification_not_requested",input.actorId,JSON.stringify({ownerTeam:text(created.case?.owner_team),ownerEmail:text(created.case?.owner_email)||null,deliveryRequested:false,delivered:false,reason:"automatic_external_notification_not_implemented"}),now).run();
   }
 
   // 4. A bot cannot verify money or a confirmed booking, so those tags are recorded as CLAIMS that
@@ -275,7 +282,7 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   }
 
   await db.prepare("UPDATE bot_call_disposition_operations SET status='completed',disposition_id=?,updated_at=? WHERE idempotency_key=? AND owner_token=?").bind(id,Date.now(),idempotencyKey,ownerToken).run();
-  return { duplicatePrevented: false, id, leadId, contactId, primaryTag: primary.code, tags, crmOutcome: primary.crmOutcome, contacted, escalated: escalates, optedOut: optsOut, crossSellServices: services, claimTags, reconciliationStatus, callbackId, caseId, attemptId, autoReassignment, moneyVerified: false };
+  return { duplicatePrevented: false, id, leadId, contactId, primaryTag: primary.code, tags, crmOutcome: primary.crmOutcome, contacted, escalated: escalates, optedOut: optsOut, crossSellServices: services, claimTags, reconciliationStatus, callbackId, caseId, notificationReceipt: await notificationReceipt(db,caseId), attemptId, autoReassignment, moneyVerified: false };
   } catch(error) {
     await db.prepare("UPDATE bot_call_disposition_operations SET status='retryable',updated_at=? WHERE idempotency_key=? AND owner_token=? AND status='processing'").bind(Date.now(),idempotencyKey,ownerToken).run().catch(()=>undefined);
     throw error;
@@ -330,3 +337,5 @@ export async function pendingBotCallClaims(db: Db, limit = 100) {
   const rows = await db.prepare("SELECT id,lead_id,contact_id,phone,primary_tag,claim_tags_json,notes,created_at FROM bot_call_dispositions WHERE reconciliation_status='pending_reconciliation' ORDER BY created_at DESC LIMIT ?").bind(Math.max(1, Math.min(limit, 200))).all<Row>();
   return rows.results.map((row: Row) => ({ dispositionId: text(row.id), leadId: text(row.lead_id), contactId: text(row.contact_id), phone: text(row.phone), primaryTag: text(row.primary_tag), claimTags: JSON.parse(text(row.claim_tags_json) || "[]") as string[], notes: row.notes ? text(row.notes) : null, createdAt: Number(row.created_at) }));
 }
+
+async function notificationReceipt(db:Db,caseId:unknown){if(!caseId)return null;const receipt=await db.prepare("SELECT id,event_type,detail_json FROM unified_case_events WHERE case_id=? AND event_type='notification_not_requested' ORDER BY created_at LIMIT 1").bind(text(caseId)).first<Row>();const alert=await db.prepare("SELECT id,status,recipient_role,recipient_email,team_code FROM staff_alerts WHERE idempotency_key=?").bind(`case:${text(caseId)}:opened`).first<Row>();return receipt?{internalAlert:alert?{alertId:text(alert.id),status:text(alert.status),recipientRole:text(alert.recipient_role),recipientEmail:text(alert.recipient_email)||null,teamCode:text(alert.team_code),transport:"authenticated_staff_inbox",availableInInbox:true,readConfirmed:false,externalDelivery:false}:null,eventId:text(receipt.id),status:text(receipt.event_type),...JSON.parse(text(receipt.detail_json))}:null;}

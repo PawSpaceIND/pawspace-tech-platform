@@ -1,3 +1,5 @@
+import{readConversationFollowupReceipt}from"./conversation-followup-action";
+import{ensureConversationHandoffTicket}from"./conversation-handoff-ticket";
 import {publicGroomingSubscriptionCatalogue} from "./public-grooming-subscription-catalogue";
 import{requestReplayableWebChatHandoff}from"./web-chat-handoff-replay";
 import {atlasCareContext,customerRequestedCoupon,careReplyWithoutUnrequestedOffers,hasMonetaryPromotion,type AtlasCareContext} from './v2/atlas-assistance-policy';
@@ -215,7 +217,7 @@ export const WEB_CHAT_AI_REPLY_TEMPLATE_KEY="web_app_chat_ai_reply";
 /** What the customer is told while a person owns the conversation. */
 export const WEB_CHAT_WITH_TEAM_MESSAGE="Thanks - a member of the PawSpace team has this conversation and will reply to you here.";
 
-async function activeHandoff(db:D1Database,threadId:string){await ensureAiHumanHandoff(db);const row=await db.prepare("SELECT id,status FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();return row?{active:true as const,status:text(row.status) as "queued"|"staff_active"}:{active:false as const,status:null};}
+async function activeHandoff(db:D1Database,threadId:string){await ensureAiHumanHandoff(db);const row=await db.prepare("SELECT id,status FROM ai_handoffs WHERE thread_id=? AND status IN ('queued','staff_active') ORDER BY created_at DESC LIMIT 1").bind(threadId).first<Row>();return row?{id:text(row.id),active:true as const,status:text(row.status) as "queued"|"staff_active"}:{active:false as const,status:null};}
 
 /**
  * The AI's reply, written into the thread the customer and staff both read.
@@ -283,7 +285,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
    * let the orchestrator's own reservation decide whether this retry may run it. */
   threadId=text(prior.thread_id);messageId=text(prior.id);
   const stored=await db.prepare("SELECT * FROM ai_conversation_turns WHERE idempotency_key=?").bind(aiKey).first<Row>().catch(()=>null);
-  if(stored)return{duplicatePrevented:true,messageId,threadId,ai:{duplicatePrevented:true,turn:replayedTurn(stored),autonomousExecution:false},autonomousExecution:false};
+  if(stored)return{duplicatePrevented:true,messageId,threadId,ai:{duplicatePrevented:true,turn:replayedTurn(stored),toolReceipt:await readConversationFollowupReceipt(db,{turnKey:aiKey,customerId:input.customerId,threadId,inputMessageId:messageId}),autonomousExecution:false},autonomousExecution:false};
  }
  /* The AI provider loads while the message is saved (#1093). A path that returns before using it (the
   * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
@@ -297,8 +299,9 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  }
  const withTeam=async()=>{
   const handoff=await activeHandoff(db,threadId);
+  const ticketReceipt=handoff.active?await ensureConversationHandoffTicket(db,{handoffId:handoff.id,threadId,customerId:input.customerId,actorId:input.actor.email}):null;
   await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),threadId,input.customerId,"authenticated_turn",input.actor.email,JSON.stringify({outcome:"with_team",handoffStatus:handoff.status,autonomousExecution:false}),Date.now()).run();
-  return{duplicatePrevented:Boolean(prior),messageId,threadId,ai:{turn:{output:WEB_CHAT_WITH_TEAM_MESSAGE,outcome:"with_team",provider:"human_team",modelRef:null}},handoff,withTeam:true as const,autonomousExecution:false,trustSafetyRedacted:inspectedDetected};
+  return{duplicatePrevented:Boolean(prior),messageId,threadId,ai:{turn:{output:WEB_CHAT_WITH_TEAM_MESSAGE,outcome:"with_team",provider:"human_team",modelRef:null}},handoff,ticketReceipt,withTeam:true as const,autonomousExecution:false,trustSafetyRedacted:inspectedDetected};
  };
  /* While a person owns the conversation the AI stays silent - that is the point of a takeover. What
   * changed is what the customer sees: their message is kept for the team and they are told a person

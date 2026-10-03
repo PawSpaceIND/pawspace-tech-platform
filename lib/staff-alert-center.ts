@@ -158,3 +158,11 @@ export async function updateStaffAlert(db:Db,input:{alertId:string;action:"ackno
  const after=await db.prepare(`SELECT status,resolved_at,resolved_by FROM staff_alerts a WHERE a.id=?${cityGuard}`).bind(input.alertId,...scope.bindings).first<Row>();
  if(scope.predicate&&!firstResolution&&text(after?.status)!=="resolved")throw new StaffAlertAuthorityError("Staff alert is no longer resolved in your organizational scope",decision.authority.owner);
  return{alertId:input.alertId,status:"resolved" as const,resolvedBy:text(after?.resolved_by)||null,resolvedAt:after?.resolved_at==null?null:Number(after.resolved_at),alreadyResolved:!firstResolution};}
+
+/** Immediate authenticated staff inbox alert, separate from overdue SLA sweeps and external delivery. */
+export async function notifyUnifiedCaseOwner(db:Db,input:{caseId:string;actorId:string}){
+ const row=await db.prepare("SELECT id,title,severity,owner_team,owner_email,customer_id,booking_id,lead_id FROM unified_cases WHERE id=?").bind(input.caseId).first<Row>();
+ if(!row)throw new Error("Canonical case is required before owner notification");
+ const receipt=await emit(db,{key:`case:${input.caseId}:opened`,alertType:"case_opened",severity:text(row.severity)==="critical"?"critical":text(row.severity)==="high"?"high":"medium",sourceType:"unified_case",sourceId:input.caseId,title:`New case requires action · ${input.caseId}`,body:text(row.title),teamCode:text(row.owner_team)||"operations",recipientRole:row.owner_email?"owner":"manager",recipientEmail:text(row.owner_email)||null,customerId:text(row.customer_id)||null,bookingId:text(row.booking_id)||null,leadId:text(row.lead_id)||null,caseId:input.caseId,dueAt:Date.now(),actorId:input.actorId});
+ return{...receipt,transport:"authenticated_staff_inbox",availableInInbox:true,readConfirmed:false,externalDelivery:false};
+}

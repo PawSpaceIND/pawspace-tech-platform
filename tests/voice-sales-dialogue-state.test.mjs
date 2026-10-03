@@ -1,0 +1,93 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {setupJourney} from './helpers/grooming-journey-harness.mjs';
+import {seedOwnedPet} from './helpers/saved-pet-fixture.mjs';
+import {applyOwnedDdl} from './helpers/ai-harness.mjs';
+import {voiceSalesDialogueState,isVoiceAddressFactAcknowledgement} from '../lib/voice-sales-dialogue-state.ts';
+const pets=[{id:'PET-BRUNO',name:'Bruno',breed:'Golden Retriever'},{id:'PET-BEAGLE',name:'Maya',breed:'Beagle'},{id:'PET-LAB',name:'Maya',breed:'Labrador'}];
+const addressHistory=[{role:'user',content:'The PIN is 560036.'},{role:'assistant',content:'Please check the address.'},{role:'user',content:'Okay, 560068. The pin code is 560068.'},{role:'assistant',content:'I have 560068 noted. Please confirm the complete service address—whether it is still Salarpuria Greenage, Bomanahalli—and I’ll recheck Bruno’s appointment.'}];
+test('recorded PIN correction and Yes are fact acknowledgement, never booking consent',()=>{
+ const state=voiceSalesDialogueState(addressHistory,'Yes.');
+ assert.equal(state.customerStatedPincode,'560068');assert.equal(state.addressConfirmation,addressHistory.at(-1).content);
+ assert.equal(state.bookingConsent,false);assert.equal(state.identityVerified,false);
+ assert.equal(isVoiceAddressFactAcknowledgement(addressHistory,'Yes.'),true);
+ assert.equal(voiceSalesDialogueState([...addressHistory,{role:'user',content:'Yes.'}],'The corrected PIN is 560036.').addressConfirmation,null);
+ assert.equal(voiceSalesDialogueState(addressHistory,'My OTP is 123456.').customerStatedPincode,'560068');
+ assert.equal(voiceSalesDialogueState(addressHistory,'PIN is 560068, OTP 123456.').customerStatedPincode,'560068');
+ assert.equal(voiceSalesDialogueState([...addressHistory,{role:'user',content:'Yes.'},{role:'assistant',content:'Please confirm the address.'}],'Flat 7, New Street, Bengaluru.').addressConfirmation,null);
+ assert.equal(isVoiceAddressFactAcknowledgement([{role:'assistant',content:'This quote includes your address. Reply Yes to confirm this booking.'}],'Yes.'),false);
+});
+test('customer care intent survives pet changes but not service switches or assistant suggestions',()=>{
+ const history=[{role:'user',content:'Maya, hygiene and haircut.'},{role:'assistant',content:'Which Maya?'},{role:'user',content:'The first Maya.'}];
+ assert.deepEqual(voiceSalesDialogueState(history,'Okay, I would like to go with Bruno.').groomingGoals,['hygiene','haircut']);
+ assert.deepEqual(voiceSalesDialogueState(history,'I want training for puppy skills.').groomingGoals,[]);
+ assert.deepEqual(voiceSalesDialogueState(history,'No training, grooming only.').groomingGoals,['hygiene','haircut']);
+ assert.deepEqual(voiceSalesDialogueState([{role:'assistant',content:'Would you like hygiene and haircut?'}],'Bruno.').groomingGoals,[]);
+ assert.deepEqual(voiceSalesDialogueState(history,'Only bath, no haircut.').groomingGoals,['bath']);
+});
+test('actual voice adapter routes address Yes to grounded dialogue and persists no booking',async t=>{
+ const w=await setupJourney();t.after(()=>w.close());
+ const account=await import('../lib/customer-account.ts'),orchestrator=await import('../lib/ai-conversation-orchestrator.ts');
+ await account.ensureCustomerAccountTables(w.db);await orchestrator.ensureAiConversationOrchestrator(w.db);await(await import('../lib/pricing-control-runtime.ts')).ensurePricingControlRuntime(w.db);
+ for(const owner of ['training-commercial-governance','boarding-governance','sitting-governance','walking-governance','taxi-governance'])applyOwnedDdl(w.sqlite,`lib/${owner}.ts`);
+ const now=Date.now(),customerId='CUS-ORDINAL',threadId='THREAD-ORDINAL';
+ w.sqlite.prepare("INSERT INTO canonical_customers(id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,'blr','Synthetic tester','9876500090','test','{}',?,?)").run(customerId,now,now);
+ w.sqlite.prepare("INSERT INTO communication_threads(id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
+ for(const pet of pets){await seedOwnedPet(w.db,customerId,pet.id,pet.name);w.sqlite.prepare('UPDATE canonical_pets SET breed=? WHERE id=?').run(pet.breed,pet.id);}
+ const actor={email:'elevenlabs-voice@system.pawspace',name:'Ordinal test',roleCode:'service_elevenlabs_voice',permissions:['communications.manage','customers.manage','bookings.manage','scheduling.book'],developmentPreview:false,identitySource:'workspace',principalType:'identity_subject',principalKey:'service:elevenlabs-voice'};
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'synthetic-not-real'};
+
+ const previousFetch=globalThis.fetch;t.after(()=>globalThis.fetch=previousFetch);let sent,calls=0;
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;sent=JSON.parse(init.body);const careGoals=JSON.parse(sent.input).canonicalContext.customerConsultation?.needs??[];const reply=careGoals.includes('haircut')?'For Bruno, you asked for hygiene and a haircut. We can compare the verified inclusions before preparing an unconfirmed quote.':'I have noted the confirmed address and corrected PIN. Please select the matching saved address in the app for verification.';return Response.json({status:'completed',output_text:JSON.stringify({reply,actions:[]}),usage:{total_tokens:20}});};
+ globalThis.__AI_DB__=w.db;globalThis.__PAWSPACE_TEST_ENV__=globalThis.__GROOM_GOLDEN_ENV__;
+ await(await import('../lib/ai-audience-rollout.ts')).setAiRolloutStage(w.db,{stage:'customers',reason:'Synthetic address acknowledgement replay',actorEmail:actor.email});
+ const {runElevenLabsGroundedTurn}=await import('../lib/elevenlabs-custom-llm.ts');
+ await(await import('../lib/canonical-booking-core-schema.ts')).ensureCanonicalBookingCoreTables(w.db);
+ const before=w.sqlite.prepare('SELECT count(*) n FROM canonical_bookings').get().n;
+ const result=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[...addressHistory,{role:'user',content:'Yes.'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ assert.equal(calls,1,'fact confirmation must reach grounded dialogue rather than generic booking branch');
+ const state=JSON.parse(sent.input).canonicalContext.voiceSalesDialogueState;
+ assert.equal(state.customerStatedPincode,'560068');assert.match(state.addressConfirmation,/Salarpuria Greenage/);assert.equal(state.bookingConsent,false);
+ assert.match(result.output,/confirmed address/);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM canonical_bookings').get().n,before);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM voice_sales_offers').get().n,0);
+ const persisted=w.sqlite.prepare('SELECT output_text,policy_decision FROM ai_conversation_turns WHERE id=?').get(result.turnId);
+ assert.match(persisted.output_text,/confirmed address/);assert.notEqual(persisted.policy_decision,'customer_confirmed_action_executed');
+ const modelCallsBefore=calls;
+ const trainingHistory=[{role:'user',content:'I want training for puppy skills.'}];
+ const training=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[...trainingHistory,{role:'user',content:'What would you recommend?'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ assert.equal(calls,modelCallsBefore,'generic puppy recommendation uses real deterministic discovery without inference');
+ assert.match(training.output,/most like to improve/);assert.match(training.output,/How old/);assert.doesNotMatch(training.output,/Starter|lower.commitment/);
+ const {createGroundedAiRuntimeProvider}=await import('../lib/ai-grounded-runtime-provider.ts');
+ w.sqlite.prepare('UPDATE canonical_pets SET age_years=? WHERE id=?').run(8/12,'PET-BRUNO');
+ const canonical=await orchestrator.minimumContext(w.db,{customerId,threadId});
+ assert.equal(canonical.pets.find(pet=>pet.id==='PET-BRUNO').age_years,8/12);
+ const chatProvider=await createGroundedAiRuntimeProvider(w.db,actor,'chat',{salesService:'dog_training'});
+ const chat=await chatProvider.generate({threadId,customerId,channel:'chat',inputText:'What would you recommend?',intent:orchestrator.classifyAiIntent('What would you recommend?'),context:{...canonical,conversationHistory:[...trainingHistory,{role:'user',content:'For Bruno.'}]}});
+ assert.equal(calls,modelCallsBefore);assert.match(chat.text,/most like to improve/);assert.doesNotMatch(chat.text,/How old/);assert.equal(chat.actionRequests.length,0);
+ const care=await runElevenLabsGroundedTurn(w.db,{model:'pawspace-service-sales',input:[{role:'user',content:'Maya, hygiene and haircut.'},{role:'assistant',content:'There are two pets named Maya. Which one?'},{role:'user',content:'The first Maya.'},{role:'assistant',content:'Please select the correct profile.'},{role:'user',content:'Okay, I would like to go with Bruno.'}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ assert.deepEqual(JSON.parse(sent.input).canonicalContext.voiceSalesDialogueState.groomingGoals,['hygiene','haircut']);
+ assert.deepEqual(JSON.parse(sent.input).canonicalContext.customerConsultation.needs,['hygiene','haircut']);
+ assert.equal(w.sqlite.prepare('SELECT count(*) n FROM canonical_bookings').get().n,before);
+ assert.ok(care.turnId);
+ const {evaluateConsultationTurn}=await import('../lib/customer-consultation-evaluation.ts');
+ assert.equal(evaluateConsultationTurn({reply:care.output,expectedFacts:['Bruno','hygiene','haircut'],forbiddenFacts:['Maya'],informationOnly:true,actions:[]}).passed,true);
+ assert.match(w.sqlite.prepare('SELECT output_text FROM ai_conversation_turns WHERE id=?').get(care.turnId).output_text,/Bruno.*hygiene.*haircut/);
+
+});
+test('owned saved-address geocode conflict stays rejected after dialogue confirmation',async t=>{
+ const w=await setupJourney();t.after(()=>w.close());
+ const {resolveGovernedServiceAddress}=await import('../lib/service-discovery-address.ts');
+ const {voiceSalesPreparationFailureReply}=await import('../lib/voice-sales-preparation-recovery.ts');
+ const request={customerId:'CUS-ADDRESS-REPLAY',serviceCode:'grooming',serviceAddress:'Salarpuria Greenage, OP 1504, Bomanahalli',servicePincode:'560068'};
+ const resolved=await resolveGovernedServiceAddress(w.db,request);
+ w.sqlite.prepare('UPDATE customer_service_address_geocodes SET address_text=? WHERE address_id=?').run('Different building, unit 999, Bengaluru, 560068',resolved.addressId);
+ const beforeAddress=w.sqlite.prepare('SELECT * FROM customer_addresses WHERE id=?').get(resolved.addressId);
+ const beforeGeo=w.sqlite.prepare('SELECT * FROM customer_service_address_geocodes WHERE address_id=?').get(resolved.addressId);
+ const state=voiceSalesDialogueState(addressHistory,'Yes.');assert.equal(state.identityVerified,false);
+ let error;try{await resolveGovernedServiceAddress(w.db,request);}catch(caught){error=caught;}
+ assert.ok(error instanceof Response);assert.equal(error.status,409);const detail=await error.text();assert.match(detail,/Address geocode identity conflict/);
+ assert.match(voiceSalesPreparationFailureReply(error.status,detail),/select the correct saved address/);
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM customer_addresses WHERE id=?').get(resolved.addressId),beforeAddress);
+ assert.deepEqual(w.sqlite.prepare('SELECT * FROM customer_service_address_geocodes WHERE address_id=?').get(resolved.addressId),beforeGeo);
+});
