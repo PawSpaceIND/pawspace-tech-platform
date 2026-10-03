@@ -1,4 +1,4 @@
-import { authError, database, resolveActor } from "../../../lib/server-auth";
+import { authError, database, resolveActor, type AuthenticatedActor } from "../../../lib/server-auth";
 import { ServiceStartOtpUnavailableError } from "../../../lib/service-start-otp-policy";
 import { ServiceStartOtpRefusal, issueServiceStartOtp, readServiceStartOtpStatus, verifyServiceStartOtp } from "../../../lib/service-start-otp";
 
@@ -30,6 +30,19 @@ function failure(error: unknown) {
 
 type Body = { action?: string; bookingId?: string; code?: string; idempotencyKey?: string };
 
+type OtpOperationContext={request:Request;runtime:Record<string,unknown>;actor:AuthenticatedActor;bookingId:string;body:Body;db:D1Database};
+async function issueOperation(context:OtpOperationContext){
+ const {request,runtime,actor,bookingId,db}=context;
+ const issued=await issueServiceStartOtp(db,{request,runtime,actor,bookingId});
+ return json({data:issued});
+}
+async function verifyOperation(context:OtpOperationContext){
+ const {request,runtime,actor,bookingId,body,db}=context;
+ const consent=await verifyServiceStartOtp(db,{request,runtime,actor,bookingId,code:String(body.code??""),idempotencyKey:String(body.idempotencyKey??"")});
+ return json({data:consent});
+}
+const otpOperations=new Map<string,(context:OtpOperationContext)=>Promise<Response>>([["issue",issueOperation],["verify",verifyOperation]]);
+
 export async function POST(request: Request) {
   try {
     sameOriginWrite(request);
@@ -40,15 +53,9 @@ export async function POST(request: Request) {
     const runtime = env as unknown as Record<string, unknown>;
     const db = await database();
     const actor = await resolveActor(request);
-    if (body.action === "issue") {
-      const issued = await issueServiceStartOtp(db, { request, runtime, actor, bookingId });
-      return json({ data: issued });
-    }
-    if (body.action === "verify") {
-      const consent = await verifyServiceStartOtp(db, { request, runtime, actor, bookingId, code: String(body.code ?? ""), idempotencyKey: String(body.idempotencyKey ?? "") });
-      return json({ data: consent });
-    }
-    return json({ error: "Unsupported action" }, 400);
+    const operation=otpOperations.get(typeof body.action==="string"?body.action:"");
+    if(!operation)return json({error:"Unsupported action"},400);
+    return await operation({request,runtime,db,actor,bookingId,body});
   } catch (error) {
     return failure(error);
   }

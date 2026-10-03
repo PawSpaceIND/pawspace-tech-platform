@@ -67,7 +67,7 @@ test("customer actions are bound to the verified customer session, never to staf
   assert.doesNotMatch(route, /requireCustomerOwnership/, "the shared helper that lets customers.manage, bookings.manage and preview act for any customer is not used");
   assert.match(route, /const session=await resolvePlatformSession\(db,request\);/, "the principal is the platform session");
   assert.match(route, /if\(!session\|\|session\.subjectType!=="customer"\|\|!text\(session\.subjectId\)\)throw authFailure\(CUSTOMER_SIGN_IN_REQUIRED,401\)/, "no customer session means 401, whoever else is signed in");
-  assert.match(route, /if\(text\(requestedCustomerId\)&&text\(requestedCustomerId\)!==customerId\)throw authFailure\("Customer ownership denied",403\)/, "a supplied customerId must equal the session subject");
+  assert.match(route, /if\(effectiveCustomerId!==customerId\)throw authFailure\("Customer ownership denied",403\)/, "a supplied customerId must equal the session subject");
   const customerContext = route.slice(route.indexOf("async function customerContext"), route.indexOf("// Customer: the optional review destinations"));
   assert.doesNotMatch(customerContext, /resolveActor|resolvePrimaryActor|oai-authenticated-user-email|developmentPreview:true|hasPermission/, "the customer context consults no staff header, permission or preview identity");
   assert.match(customerContext, /developmentPreview:false/);

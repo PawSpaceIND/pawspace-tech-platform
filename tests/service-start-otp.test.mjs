@@ -724,3 +724,13 @@ test("a reserved key is never written for a claim that did not happen", async ()
 });
 
 async function route() { return import("../app/api/service-start-otp/route.ts"); }
+
+test('route action selection cannot grant another role or invoke inherited operation names',async()=>{
+ const w=await world();w.seedBooking('ACTION-BINDING');
+ for(const action of ['__proto__','constructor','toString','unknown'])assert.equal((await w.post(w.customer,{action,bookingId:'ACTION-BINDING'})).status,400);
+ assert.equal((await w.issue(w.provider,'ACTION-BINDING')).status,403);
+ assert.equal((await w.verify(w.customer,'ACTION-BINDING','123456','ACTION-KEY')).status,403);
+ assert.equal((await w.issue('','ACTION-BINDING')).status,401);
+ assert.equal(w.challenges('ACTION-BINDING').length,0);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM service_start_otp_action_keys').get().n,0);
+});

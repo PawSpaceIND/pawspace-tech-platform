@@ -631,3 +631,11 @@ test("route: synthetic dispatch needs a real staff identity with the voice permi
   const audits = auditRows(sqlite).filter(row => row.action === "post_service_feedback.call.dispatch");
   assert.deepEqual(audits.map(row => [row.actor_email, row.outcome]), [[SUPERUSER, "denied"], [SUPERUSER, "denied"], [SUPERUSER, "completed"]]);
 });
+
+test('route dispatch selection and optional customer identity never grant a different principal',async()=>{
+ const {sqlite,owner,provider}=await routeWorld();
+ for(const headers of [{cookie:owner.cookie},{cookie:provider.cookie},staff(FINANCE)])assert.equal((await post({action:'dispatch_due'},headers)).status,403);
+ for(const action of ['__proto__','constructor','unknown'])assert.equal((await post({action,bookingId:'BKG-V1'},{cookie:owner.cookie})).status,400);
+ assert.equal((await post(scheduleBody({customerId:'CON-OTHER',preferredAt:daytimeTomorrowIso()}),{cookie:owner.cookie})).status,403);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM post_service_feedback_calls').get().n,0);
+});

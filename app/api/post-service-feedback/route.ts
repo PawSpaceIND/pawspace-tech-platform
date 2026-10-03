@@ -37,7 +37,8 @@ async function customerContext(request:Request,requestedCustomerId?:string){
   const session=await resolvePlatformSession(db,request);
   if(!session||session.subjectType!=="customer"||!text(session.subjectId))throw authFailure(CUSTOMER_SIGN_IN_REQUIRED,401);
   const customerId=text(session.subjectId);
-  if(text(requestedCustomerId)&&text(requestedCustomerId)!==customerId)throw authFailure("Customer ownership denied",403);
+  const effectiveCustomerId=text(requestedCustomerId)||customerId;
+  if(effectiveCustomerId!==customerId)throw authFailure("Customer ownership denied",403);
   // The audit actor is the session subject itself, so every row and audit event names the customer who acted.
   const actor:AuthenticatedActor={email:session.auditId,name:`Customer ${customerId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:"customer"};
   return{db,actor,customerId};
@@ -55,13 +56,8 @@ export async function GET(request:Request){
   }catch(error){return failure(error,"Unable to load post-service feedback options");}
 }
 
-export async function POST(request:Request){
-  try{
-    sameOrigin(request);
-    const body=await request.json() as {action?:string;customerId?:string;bookingId?:string;preferredAt?:unknown;consentConfirmed?:unknown;limit?:unknown};
-    const action=text(body.action);
-    // Staff, non-production only: run the sweep with the synthetic no-dial placer. Nothing is dialled.
-    if(action==="dispatch_due"){
+type FeedbackBody={action?:string;customerId?:string;bookingId?:string;preferredAt?:unknown;consentConfirmed?:unknown;limit?:unknown};
+async function dispatchDue(request:Request,body:FeedbackBody){
       const db=await database(),actor=await resolveActor(request);requirePermission(actor,"communications.call");requirePermission(actor,"customers.manage");
       // The preview operator is a convenience identity, not a staff member; it may not run even the synthetic sweep.
       if(actor.developmentPreview)throw authFailure("Permission denied",403);
@@ -73,6 +69,16 @@ export async function POST(request:Request){
       const data=await runPostServiceFeedbackCallSweep(db,{placer:syntheticFeedbackCallPlacer("route_synthetic_no_dial"),policy:feedbackCallPolicyFromEnv(env),actorId:actor.email,limit:Number(body.limit)||undefined});
       await securityAudit(db,actor,"post_service_feedback.call.dispatch","post_service_feedback_calls",null,"completed",{placer:data.placer,scanned:data.scanned,simulated:data.simulated,blocked:data.blocked,cancelled:data.cancelled,missed:data.missed,failed:data.failed});
       return json({data});
+}
+
+export async function POST(request:Request){
+  try{
+    sameOrigin(request);
+    const body=await request.json() as FeedbackBody;
+    const action=text(body.action);
+    // Staff, non-production only: run the sweep with the synthetic no-dial placer. Nothing is dialled.
+    if(action==="dispatch_due"){
+      return await dispatchDue(request,body);
     }
     const bookingId=text(body.bookingId);
     if(!bookingId)return json({error:"A booking is required"},400);
