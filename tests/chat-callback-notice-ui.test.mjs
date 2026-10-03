@@ -1,16 +1,29 @@
 /**
  * Chat-owned pages only. Reads app/chat/page.tsx and app/v2/chat/page.tsx as text.
- * Does not import shared libs, the route, or the voice engine.
+ * Executes the actual chat renderer as well as checking page wiring.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {createElement} from "react";
+import {renderToStaticMarkup} from "react-dom/server";
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
+installWorkersHooks("__CALLBACK_NOTICE_UI__");
+const {default:WatiConversation}=await import("../app/components/wati-chat/WatiConversation.tsx");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const chat = readFileSync(join(root, "app/chat/page.tsx"), "utf8");
 const v2 = readFileSync(join(root, "app/v2/chat/page.tsx"), "utf8");
+
+test("actual chat renderer preserves callback refusal notices and escapes untrusted details",()=>{
+  const notice="The callback was not placed (<untrusted>). The PawSpace team has been asked to call you.";
+  const html=renderToStaticMarkup(createElement(WatiConversation,{name:"PawSpace",presence:"PawSpace team",status:"Open",avatarSrc:"/assets/pawspace-icon.jpeg",messages:[{id:"callback-refusal",side:"system",text:notice}],busy:false,draft:"",placeholder:"Type a question",onDraft:()=>{},onSend:()=>{},onChoice:()=>{}}));
+  assert.match(html,/callback was not placed \(&lt;untrusted&gt;\)/);
+  assert.match(html,/PawSpace team has been asked to call you/);
+  assert.doesNotMatch(html,/<untrusted>|call is connected|you are connected/i);
+});
 
 function chatVisible(reply, mode) {
   const match = chat.match(/<p>\{(reply\.callbackNotice\?reply\.callbackNotice:[\s\S]*?)\}<\/p>/);

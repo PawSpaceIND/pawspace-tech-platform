@@ -1,5 +1,6 @@
 import{reserveWebChatCallbackRequest}from"../../../lib/customer-callback-context";
 import{requestReplayableWebChatHandoff}from"../../../lib/web-chat-handoff-replay";
+import {ensureCommunicationTables} from "../../../lib/communication-engine";
 import {atlasCareContext} from '../../../lib/v2/atlas-assistance-policy';
 import{needsImmediateVetGuidance,emergencyChatResponse}from"../../../lib/ai-emergency-guidance";
 import{resolvePlatformSession}from"../../../lib/platform-session";
@@ -38,7 +39,7 @@ async function handoffUndialledCallback(db:D1Database,actor:{email:string},custo
  const followUp=callbackFollowUp(callback);
  if(!followUp.handoff||!followUp.reason)return{...followUp,handedOff:false};
  let thread=threadId;
- if(!thread){try{const row=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<{id?:string}>();thread=row?.id?String(row.id):null;}catch{thread=null;}}
+ if(!thread){await ensureCommunicationTables(db);try{const row=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<{id?:string}>();thread=row?.id?String(row.id):null;}catch{thread=null;}}
  if(!thread)return{...followUp,handedOff:false,notice:followUp.outcome==="unsupported_scheduling"?"Scheduling is not available. Open the customer app to contact the PawSpace team.":"The callback was not placed."};
  await requestReplayableWebChatHandoff(db,{actorEmail:actor.email,threadId:thread,customerId,reason:followUp.reason,requestKey});
  return{...followUp,handedOff:true,notice:followUp.outcome==="unsupported_scheduling"?`${UNSUPPORTED_SCHEDULING_NOTICE} The PawSpace team has been asked to follow up.`:followUp.notice};
