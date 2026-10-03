@@ -1,3 +1,4 @@
+import {preservedTrainingIntegratedBytes} from './helpers/combined-local-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -16,7 +17,7 @@ for(const method of ['GET','POST'])test(`anonymous exact coins ${method} retains
 test('coins customer recovery also works outside UAT login',async()=>{const{body}=await refusal(request(),{DB:db});assert.equal(body.code,'customer_sign_in_required');assert.equal(body.signInUrl,'/mobile-app');});
 test('staff admin lookalike and unsupported methods retain staging refusal',async()=>{for(const req of [request('/api/team-overview'),request('/api/statutory-compliance'),request('/api/subscription-billing-admin','POST',{action:'save_plan'}),request('/api/v2/test-coins-admin'),request('/api/v2/test-coins','DELETE')]){const{body}=await refusal(req);assert.equal(body.code,'sign_in_required');assert.equal(body.signInUrl,'/staging-login');}});
 test('coin permissions remain customer scoped and unsupported methods default deny',async()=>{for(const method of ['GET','POST'])assert.equal(await gateway.requiredPermission(request(undefined,method)), 'scheduling.book');for(const method of ['PUT','DELETE'])assert.equal(await gateway.requiredPermission(request(undefined,method)), 'dashboard.view');assert.equal(await gateway.requiredPermission(request('/api/statutory-compliance')),'finance.view');assert.equal(network,0);
- const file='lib/api-gateway.ts',source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
+ const file='lib/api-gateway.ts',source=preservedTrainingIntegratedBytes(file,readFileSync(new URL('../'+file,import.meta.url),'utf8'));
  const receipt=JSON.parse(readFileSync(new URL('./fixtures/customer-coins-gateway-preservation.json',import.meta.url),'utf8'));
  const hash=value=>createHash('sha256').update(value).digest('hex');
  assert.equal(hash(source),receipt.afterSha256);

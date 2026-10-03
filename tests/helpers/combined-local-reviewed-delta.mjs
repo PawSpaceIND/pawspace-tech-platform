@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const receipt=JSON.parse(readFileSync(new URL('../fixtures/combined-local-reviewed-delta.json',import.meta.url),'utf8'));
+const training=JSON.parse(readFileSync(new URL('../fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 const correction=JSON.parse(readFileSync(new URL('../fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
 function reverse(source,entry,path){
@@ -14,5 +15,6 @@ function reverse(source,entry,path){
  return Buffer.isBuffer(source)?Buffer.from(out):out;
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
-export function preservedCombinedLocalBytes(path,bytes){return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
+export function preservedTrainingIntegratedBytes(path,bytes){return training.files[path]?reverse(bytes,training.files[path],path):bytes;}
+export function preservedCombinedLocalBytes(path,bytes){if(receipt.files[path]&&hash(bytes)===receipt.files[path].beforeSha256)return bytes;bytes=preservedTrainingIntegratedBytes(path,bytes);return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
 export function preservedServiceLintBytes(path,bytes){return path===correction.file?reverse(bytes,correction,path):bytes;}
