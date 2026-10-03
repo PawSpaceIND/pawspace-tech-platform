@@ -131,20 +131,38 @@ test("CHAT-4: a cross-origin write is blocked before any handler work", async ()
   assert.equal(response.status, 403, `a cross-origin chat write returned ${response.status}`);
 });
 
-test("CHAT-5: an authenticated turn for someone else's customer id is refused", async () => {
-  const { route } = await world();
+test("CHAT-5: a verified intruder cannot choose someone else's customer id", async () => {
+  const { route, db } = await world();
+  const {upsertIdentityBinding}=await import("../lib/identity-binding.ts");
+  const {issuePlatformSession,PLATFORM_SESSION_COOKIE}=await import("../lib/platform-session.ts");
+  const binding=await upsertIdentityBinding(db,{identitySource:"customer_app",principalType:"phone",principalKey:"9876500097",subjectType:"customer",subjectId:"CUS-CHAT-INTRUDER",cityId:"blr",verificationState:"verified",expiresAt:null,metadata:{},actorId:"test",reason:"foreign customer chat refusal"});
+  const issued=await issuePlatformSession(db,{bindingId:String(binding.id),identitySource:"customer_app",principalType:"phone",principalKey:String(binding.principal_key),subjectType:"customer",subjectId:"CUS-CHAT-INTRUDER"});
+  const cookie=`${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
   const response = await route.POST(postReq({
     mode: "authenticated", customerId: OWNER_CUSTOMER,
     message: "what is my next booking", idempotencyKey: "IDEM-INTRUDER-1",
-  }, { "oai-authenticated-user-email": INTRUDER }));
-  assert.notEqual(response.status, 200,
-    "an intruder ran an authenticated chat turn against another customer's id");
+  }, { cookie }));
+  assert.equal(response.status,403,"a verified intruder cannot supply another customer id");
+  assert.equal((await response.json()).error,"Client customer identity is not accepted");
 });
 
-test("CHAT-6: an authenticated turn requires a customer id, message and idempotency key", async () => {
-  const { route } = await world();
+test("CHAT-6: a verified customer turn requires a message and idempotency key", async () => {
+  const { route, db } = await world();
+  const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
+  const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
+  const binding = await upsertIdentityBinding(db, {identitySource:"customer_app",principalType:"phone",principalKey:"9876500098",subjectType:"customer",subjectId:OWNER_CUSTOMER,cityId:"blr",verificationState:"verified",expiresAt:null,metadata:{},actorId:"test",reason:"incomplete owned chat turn"});
+  const issued = await issuePlatformSession(db, {bindingId:String(binding.id),identitySource:"customer_app",principalType:"phone",principalKey:String(binding.principal_key),subjectType:"customer",subjectId:OWNER_CUSTOMER});
+  const cookie = `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
   const response = await route.POST(postReq({
     mode: "authenticated", message: "hello",
-  }, { "oai-authenticated-user-email": OWNER }));
+  }, { cookie }));
   assert.equal(response.status, 400, `expected 400 for an incomplete turn, got ${response.status}`);
+});
+
+
+test("CHAT-7: a legacy actor header without a customer session cannot enter owned chat", async () => {
+  const {route}=await world();
+  const response=await route.POST(postReq({mode:"authenticated",message:"hello"},{"oai-authenticated-user-email":OWNER}));
+  assert.equal(response.status,403);
+  assert.equal((await response.json()).error,"Customer session required");
 });
