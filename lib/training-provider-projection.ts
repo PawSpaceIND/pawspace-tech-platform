@@ -114,7 +114,7 @@ export function sanitizeTrainingEventDetail(detail: unknown): Row {
   const out = projectScalars(row, EVENT_FIELDS);
   for (const [key, fields] of Object.entries({
     nextSession: NEXT_SESSION_FIELDS, programme: PROGRAMME_FIELDS, closure: CLOSURE_FIELDS,
-    geofence: { distanceMeters: "number", thresholdMeters: "number", verified: "boolean" } as const,
+    geofence: { distanceMeters: "number", thresholdMeters: "number", accuracyMeters: "number", evidenceMode: "text", simulation: "boolean", physicalVisitVerified: "boolean", verified: "boolean" } as const,
   })) {
     if (!Object.hasOwn(row, key)) continue;
     if (row[key] === null) out[key] = null;
@@ -157,13 +157,15 @@ export function projectTrainerSession(value: unknown) {
     no_show_sessions: Number(row.no_show_sessions || 0),
     cancelled_sessions: Number(row.cancelled_sessions || 0),
     programme_status: String(row.programme_status || ""),
+    providerModel: row.providerModel === "full_time" ? "full_time" : "commission",
+    schedulingMode: row.schedulingMode === "rolling_v1" ? "rolling_v1" : "series_v1",
     petIds: Array.isArray(row.petIds) ? row.petIds.filter((x) => typeof x === "string").map(String) : [],
     requirements: projectRequirements(row.requirements),
     attendance: projectAttendance(row.attendance),
     homework: projectHomework(row.homework),
     progress: projectProgress(row.progress),
     evidenceRefs: evidenceRefs(row.evidenceRefs),
-    ownerHandover: Number(row.owner_handover_minutes)>=15&&Number(row.owner_handover_completed_at)>0?{durationMinutes:Number(row.owner_handover_minutes),completedAt:Number(row.owner_handover_completed_at)}:null,
+    ownerHandover: Number(row.owner_handover_completed_at)>0?{durationMinutes:Number(row.owner_handover_minutes),completedAt:Number(row.owner_handover_completed_at)}:null,
     events,
   };
 }

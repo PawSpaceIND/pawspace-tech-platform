@@ -4,12 +4,13 @@ import{resolvePlatformSession,type PlatformSessionActor}from"./platform-session"
 type SessionAccess={actor:{email:string;roleCode:string;permissions:string[];preview:boolean};permission:Permission};
 type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:string};
 
-async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
+async function sessionScope(request:Request,session?:PlatformSessionActor):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
   if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname)&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/v2/test-coins"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
   // The published V2 grooming catalogue is intentionally outside session scope. Checkout is
   // customer-only; booking ownership remains in the route and never trusts a client customer ID.
   if(method==="GET"&&url.pathname==="/api/v2/grooming-checkout")return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/training-rolling-schedule"&&["GET","POST"].includes(method)){const body=method==='POST'?await request.clone().json().catch(()=>({})) as Record<string,unknown>:null;const kind=String(body?.actorKind||url.searchParams.get('actorKind')||'customer');return kind==='provider'?{permission:'bookings.view',subjectType:'provider'}:{permission:'scheduling.book',subjectType:'customer'};}
   if(url.pathname==="/api/customer-checkout"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/provider-chat"&&method==="GET")return{permission:"communications.message",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
@@ -19,6 +20,12 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/ai-web-chat"&&method==="GET"&&url.searchParams.get("mode")==="thread")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/uat-scheduling"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return !body.action||body.action==="reserve"?{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")}:undefined;}
   if(url.pathname==="/api/canonical-bookings"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as {customer?:{id?:string}};return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customer?.id||"")};}
+  if(url.pathname==="/api/training-homework"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/training-session-context"&&method==="GET")return{permission:"bookings.view",subjectType:"provider"};
+  if(url.pathname==="/api/training-session-media/upload"&&method==="PUT")return{permission:"bookings.view",subjectType:"provider"};
+  if(url.pathname==="/api/training-session-media/content"&&method==="GET"&&session)return{permission:session.subjectType==="customer"?"scheduling.book":"bookings.view",subjectType:session.subjectType};
+  if(url.pathname==="/api/training-assignment-offers"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
+  if(url.pathname==="/api/training-assignment-offers"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["decline","accept"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
   if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/training-cancellation"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?{permission:"scheduling.book",subjectType:"customer"}:undefined;}
   if(url.pathname==="/api/training-customer-session-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
@@ -44,4 +51,4 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
 
 function subjectAllowed(session:PlatformSessionActor,scope:Scope){if(session.subjectType!==scope.subjectType)return false;if(scope.subjectId&&scope.subjectId!==session.subjectId)return false;return true;}
 
-export async function authorizePlatformSessionRequest(request:Request,db:D1Database):Promise<SessionAccess|Response|null>{const session=await resolvePlatformSession(db,request);if(!session)return null;const scope=await sessionScope(request);if(!scope)return null;if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}if(!subjectAllowed(session,scope))return Response.json({error:"Identity session does not own this customer/provider scope"},{status:403});if(!hasPermission(session.permissions,scope.permission))return Response.json({error:"Permission denied"},{status:403});return{actor:{email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false},permission:scope.permission};}
+export async function authorizePlatformSessionRequest(request:Request,db:D1Database):Promise<SessionAccess|Response|null>{const session=await resolvePlatformSession(db,request);if(!session)return null;const scope=await sessionScope(request,session);if(!scope)return null;if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}if(!subjectAllowed(session,scope))return Response.json({error:"Identity session does not own this customer/provider scope"},{status:403});if(!hasPermission(session.permissions,scope.permission))return Response.json({error:"Permission denied"},{status:403});return{actor:{email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false},permission:scope.permission};}

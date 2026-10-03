@@ -1,6 +1,7 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{materializeTrainingBooking,readTrainingProgramme}from"../../../lib/training-programme";
 import{ensureTrainingGroomingBonus}from"../../../lib/training-grooming-bonus";
+import{projectTrainingHomework}from"../../../lib/training-homework-receipt";
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 
@@ -9,6 +10,6 @@ async function authorizeTrainingBooking(request:Request,bookingId:string){const 
 export async function GET(request:Request){try{const bookingId=String(new URL(request.url).searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const{db}=await authorizeTrainingBooking(request,bookingId);const data=await readTrainingProgramme(db,bookingId);if(!data)return json({error:"Training programme has not been materialized"},404);
  // The 8+ session plans' complimentary Bath & Basic grooming: issued once the programme is fully paid. A
  // voucher problem never hides the programme itself.
- const groomingBonus=await ensureTrainingGroomingBonus(db,{bookingId}).catch(()=>null);return json({data:{...data,groomingBonus}});}catch(error){return authError(error,"Unable to load Training programme");}}
+ const groomingBonus=await ensureTrainingGroomingBonus(db,{bookingId}).catch(()=>null);return json({data:{...data,sessions:await Promise.all(data.sessions.map(session=>projectTrainingHomework(db,session,String(data.programme.customer_id)).then(homeworkReceipt=>({...session,homeworkReceipt})))),groomingBonus}});}catch(error){return authError(error,"Unable to load Training programme");}}
 
 export async function POST(request:Request){try{const body=await request.json() as {bookingId?:string;meetBookingId?:string},bookingId=String(body.bookingId||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const{db,actor}=await authorizeTrainingBooking(request,bookingId);const data=await materializeTrainingBooking(db,{bookingId,meetBookingId:body.meetBookingId?String(body.meetBookingId):undefined,actorId:actor.email});await securityAudit(db,actor,"training.programme.materialize","booking",bookingId,"completed",{meetBookingId:body.meetBookingId??null,duplicatePrevented:data.duplicatePrevented});return json({data},data.duplicatePrevented?200:201);}catch(error){return authError(error,"Unable to materialize Training programme");}}

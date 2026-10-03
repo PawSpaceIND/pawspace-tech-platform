@@ -234,6 +234,7 @@ async function stagingWorld(t, { uat, seats = false }) {
       scheduledStart: iso(start), scheduledEnd: iso(start + 60 * MINUTE_MS), occurrences: over.occurrences ?? SESSIONS, cadenceDays: CADENCE,
       // Training is customer_select: the tester reserves the trainer they picked from the preview.
       ...(over.action ? { action: over.action } : { preferredProviderId: over.preferredProviderId ?? "uatcap_train_ft" }),
+      ...(over.trainingQuoteId ? {trainingQuoteId:over.trainingQuoteId,trainingSchedulingMode:"rolling_v1"} : {}),
     }, customers[id]);
   };
   const held = (customerId) => sqlite.prepare("SELECT provider_id,scheduled_start,status FROM scheduling_reservations WHERE customer_id=? AND status!='cancelled' ORDER BY scheduled_start").all(customerId);
@@ -354,4 +355,9 @@ test("route, production-like (no scheduling environment declared): the same prog
   assert.equal(refused.body.error, "SELECTED_PROVIDER_UNAVAILABLE");
   assert.ok(refused.body.evaluations[0].reasons.includes("Existing booking conflicts with travel/service buffer"));
   assert.equal(world.held("CUST-PAR-B").length, 0);
+});
+
+
+test("rolling route reserves exactly the first quoted slot despite a full-series request; quote mismatch creates no hold",async(t)=>{
+ const w=await stagingWorld(t,{uat:true});const com=await import("../lib/training-commercial-governance.ts");const q=await com.createTrainingQuote(w.db,{packageCode:"training-8-basic",petCount:1,scheduledStart:iso(FIRST),paymentMode:"prepaid",schedulingMode:"rolling_v1"});const first=await w.call("B",{trainingQuoteId:q.quoteId,occurrences:8});assert.equal(first.status,200,JSON.stringify(first.body));assert.equal(w.held("CUST-PAR-B").length,1);assert.equal(w.held("CUST-PAR-A").length,8);const bad=await w.call("C",{trainingQuoteId:q.quoteId,shiftMinutes:100,occurrences:8});assert.equal(bad.status,409,JSON.stringify(bad.body));assert.equal(w.held("CUST-PAR-C").length,0);
 });

@@ -47,7 +47,9 @@ type Row=Record<string,unknown>;
 
 /** Every media category the platform knows. A policy may permit a subset, never something outside it. */
 export const MEDIA_CATEGORIES=["before_service","after_service","service_issue","training_homework","stay_update"] as const;
-export type MediaCategory=typeof MEDIA_CATEGORIES[number];
+export type MediaCategory=typeof MEDIA_CATEGORIES[number]|"training_video";
+export const TRAINING_VIDEO_MIME_TYPES=["video/mp4","video/webm"] as const;
+export const TRAINING_VIDEO_MAX_BYTES=10_000_000;
 
 /**
  * The formats the platform will accept under ANY configuration. A raster image that browsers render
@@ -205,7 +207,8 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
 
   const policy=(await mediaUploadPolicy(db,{serviceCode,cityId:input.cityId})),config=policy.config;
   const category=String(input.category||"").trim().toLowerCase();
-  if(!config.permittedCategories.map(String).includes(category))
+  const trainingVideo=category==="training_video"&&serviceCode==="dog_training"&&input.scopeType==="training_session";
+  if(!trainingVideo&&!config.permittedCategories.map(String).includes(category))
     refuse(`This service does not capture ${category||"that"} media`,400,{code:"media_category_not_permitted",permitted:config.permittedCategories,policyVersion:policy.policyVersion});
 
   const mimeType=String(input.mimeType||"").trim().toLowerCase();
@@ -214,9 +217,9 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
   // can reach here listing an executable, so sabotage of this line alone changes no test. It is kept as
   // a local, readable statement of the rule for whoever edits the policy defaults next, not as the
   // control that enforces it - the validator is. [PTJA-W2-B4-M04]
-  if(!(PLATFORM_MEDIA_MIME_FLOOR as readonly string[]).includes(mimeType))
+  if(!(trainingVideo?TRAINING_VIDEO_MIME_TYPES:PLATFORM_MEDIA_MIME_FLOOR as readonly string[]).includes(mimeType as never))
     refuse("Only JPEG, PNG and WebP media is accepted",400,{code:"media_type_not_accepted"});
-  if(!config.allowedMimeTypes.map(String).includes(mimeType))
+  if(!trainingVideo&&!config.allowedMimeTypes.map(String).includes(mimeType))
     refuse("This service does not accept that media format",400,{code:"media_type_not_permitted",permitted:config.allowedMimeTypes,policyVersion:policy.policyVersion});
 
   const fileName=String(input.fileName||"").trim().toLowerCase();
@@ -288,7 +291,7 @@ export async function issueMediaUploadGrant(db:Db,input:MediaUploadRequest):Prom
  * can check the bytes against it BEFORE anything is stored. Nothing is consumed here: consumption is
  * redeemMediaUploadGrant's job, after the object exists and matches.
  */
-export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:string}){
+export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:string;trainingVideoUpload?:boolean}){
   await ensureMediaBoundaryTables(db);
   const token=String(input.token||"").trim(),mediaId=String(input.mediaId||"").trim();
   if(!token||!mediaId)refuse("An upload token and the media asset id are required",400);
@@ -300,6 +303,7 @@ export async function inspectMediaUploadGrant(db:Db,input:{token:string;mediaId:
   if(String(grant!.status)!=="issued")refuse("This media upload token has already been used",409,{code:"upload_token_consumed"});
   if(Number(grant!.expires_at)<Date.now())refuse("This media upload token has expired",409,{code:"upload_token_expired"});
   if(String(grant!.token_hash)!==await digest(token))refuse("Media upload token is not valid for this grant",403,{code:"upload_token_mismatch"});
+  if(String(grant!.category)==="training_video"&&!input.trainingVideoUpload)refuse("Training video requires its dedicated verified upload route",403);
   return{grantId,mediaId,bookingId:String(grant!.booking_id),providerId:String(grant!.provider_id),serviceCode:String(grant!.service_code),objectKey:String(grant!.object_key),
     mimeType:String(grant!.mime_type),sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256).toLowerCase(),expiresAt:Number(grant!.expires_at)};
 }
@@ -343,6 +347,7 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
    * "carry on".
    */
   const storage=await mediaStorageStatus();
+  if(String(grant!.category)==="training_video"&&!storage.connected)refuse("Training video requires private stored bytes",503);
   if(storage.connected){
     const stored=await headStoredObject(objectKey);
     if(!stored)refuse("No object is stored under this upload grant's key",409,{code:"stored_object_missing"});
