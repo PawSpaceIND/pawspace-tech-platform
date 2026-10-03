@@ -119,7 +119,7 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
  const serviceDirectory=await publicServiceDirectory(db,sessionKey);
  const careContext=atlasCareContext(input.careContext),couponRequested=customerRequestedCoupon(query);
  const matchedService=matchPublicService(serviceDirectory,inspected.redacted)||serviceDirectory.find(service=>service.code===careContext?.serviceCode)||null;
- const subscriptionQuestion=/\b(subscriptions?|packs?|credits?)\b/i.test(inspected.redacted)&&(matchedService?.code==="grooming"||careContext?.serviceCode==="grooming");
+ const subscriptionQuestion=/\b(subscriptions?|packs?|credits?)\b/i.test(inspected.redacted)&&matchedService?.code==="grooming";
  const subscriptions=subscriptionQuestion&&matchedService?.enabled?await publicGroomingSubscriptionCatalogue(db,{cityId:input.cityId,zoneId:input.zoneId,species:careContext?.species}):null;
  if(subscriptions&&subscriptions.status!=="published"){
   const output=subscriptions.status==="location_required"?"Choose the service city and zone in Grooming so I can check the published subscription plans and prices.":"I cannot verify a published grooming subscription plan for this location right now. Please check the Grooming section before choosing a plan; I cannot confirm prices, credits or payment terms.";

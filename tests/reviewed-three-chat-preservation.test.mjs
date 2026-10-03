@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {reverseReviewedThreeChat} from './helpers/atlas-handoff-deadline-review.mjs';
+const hash=x=>createHash('sha256').update(x).digest('hex');
+const read=p=>readFileSync(new URL('../'+p,import.meta.url));
+const baseline={"app/api/ai-web-chat/route.ts": "cd40f510f886b39ac00cefc14aebfffae6ec1f232851e3736e9eb8b2bcfedaf4", "lib/ai-web-chat-adapter.ts": "4a0790f38ab9f35a7b6fd436b5bb2ffd2092efe090ef590cea3bac94d8612e29", "lib/api-gateway.ts": "1c188e97eb486766e9e3a7888513eb4ef99153bae45d73eee30e19e48c4f33bb"};
+test('reviewed three-chat preservation receipt remains exact',()=>assert.equal(hash(read('tests/fixtures/reviewed-three-chat-preservation.json')),'a2de2bc255ae14bf0198238660ea9c25184d6f20f79dae7a6d0eeb26f004cf10'));
+for(const[path,expected]of Object.entries(baseline))test('chat reversal preserves unowned bytes and rejects a mutation: '+path,()=>{const source=read(path);assert.equal(hash(reverseReviewedThreeChat(source,path)),expected);const mutated=source.toString()+'\n// unrelated source mutation\n';assert.notEqual(hash(reverseReviewedThreeChat(mutated,path)),expected);});
+const receipt=JSON.parse(read('tests/fixtures/reviewed-three-chat-preservation.json'));
+for(const[path,entry]of Object.entries(receipt))for(const[index,[,after]]of entry.replacements.entries())test('reviewed anchor deletion or duplication is refused: '+path+' #'+index,()=>{const source=read(path).toString();assert.throws(()=>reverseReviewedThreeChat(source.replace(after,after.slice(1)),path));assert.throws(()=>reverseReviewedThreeChat(source+after,path));});
