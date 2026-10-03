@@ -100,18 +100,25 @@ test('metadata inspector rejects embedded provider host without any HTTP',async(
 import {provisionNextAudioCeiling} from '../scripts/prepare-next-audio-duration.mjs';
 test('trusted hosted provisioning pins runtime/config and cannot overwrite evidence or reset ledger',async()=>{
  const agent=config(120),receipt={currency:'USD',inclusiveOfFeesAndTaxes:true,sourceSha:'a'.repeat(40),agentConfigSha256:createHash('sha256').update(JSON.stringify(agent)).digest('hex'),provider:'openai',model:'gpt-5.6-luna',validUntil:Date.now()+600000,nativeMicrosPerMinute:320000,optionalBatchMicros:1000000,inputMicrosPerToken:1,outputMicrosPerToken:2,framingTokenUpper:4096,evidenceReference:'synthetic test reference'};
- const e={...durationEnv,CLOUDFLARE_API_TOKEN:'synthetic',CLOUDFLARE_ACCOUNT_ID:'synthetic',STAGING_D1_ID:'staging-only',PRODUCTION_D1_ID:'production-only',NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify(receipt)};
- let stored;const sql=[];
+ const e={...durationEnv,PAWSPACE_UAT_ACCESS_CODE:'synthetic',CLOUDFLARE_API_TOKEN:'synthetic',CLOUDFLARE_ACCOUNT_ID:'synthetic',STAGING_D1_ID:'staging-only',PRODUCTION_D1_ID:'production-only',NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify(receipt)};
+ let stored;const sql=[];let secretBindings=false,missingBinding=false,runtimeProvider='openai',runtimeStatus=200;
  const vars={PAWSPACE_STAGING_BUILD_SHA:'a'.repeat(40),PAWSPACE_DEPLOYMENT_ENV:'staging',FORBID_PRODUCTION:'true',PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_AI_VOICE_MODEL:'gpt-5.6-luna'};
  const fetcher=async(url,init)=>{
  if(url.startsWith('https://api.elevenlabs.io/')){assert.equal(init.method,'GET');return Response.json(agent);}
- if(url.endsWith('/settings'))return Response.json({success:true,result:{annotations:{'workers/message':'staging '+'a'.repeat(40)},bindings:[...Object.entries(vars).map(([name,text])=>({type:'plain_text',name,text})),{type:'d1',name:'DB',id:'staging-only'}]}});
+ if(url.endsWith('/settings'))return Response.json({success:true,result:{annotations:{'workers/message':'staging '+'a'.repeat(40)},bindings:[...Object.entries(vars).filter(([name])=>!missingBinding||name!=='PAWSPACE_AI_PROVIDER').map(([name,text])=>secretBindings&&['PAWSPACE_AI_PROVIDER','PAWSPACE_AI_VOICE_MODEL'].includes(name)?{type:'secret_text',name}:{type:'plain_text',name,text}),{type:'d1',name:'DB',id:'staging-only'}]}});
+ if(url.endsWith('/api/staging-login'))return new Response('{}',{headers:{'set-cookie':'pawspace_uat=synthetic; Secure'}});
+ if(url.endsWith('/api/ai-voice-uat/audio-lease')){assert.equal(init.method,'GET');return Response.json({data:{paidExecutionAllowed:true,sourceSha:receipt.sourceSha,agentConfigSha256:receipt.agentConfigSha256,provider:runtimeProvider,providerHardDurationSeconds:120}},{status:runtimeStatus});}
  if(url.endsWith('/query')){const body=JSON.parse(init.body);sql.push(body.sql);if(body.sql.startsWith('INSERT')&&!stored)stored={region:body.params[1],receipt_json:body.params[2]};return Response.json({success:true,result:[{results:body.sql.startsWith('SELECT')?[stored]:[]}]});}
  return Response.json({success:true,result:{name:'pawspace-staging'}});
  };
  const r=await provisionNextAudioCeiling({...e,GITHUB_SHA:'b'.repeat(40),EXPECTED_SHA:'b'.repeat(40)},fetcher);assert.equal(r.inspectorCheckoutSha,'b'.repeat(40));assert.equal(r.sourceSha,'a'.repeat(40));assert.equal(r.paidGenerationRequests,0);assert.equal(r.trustedCeilingStored,true);assert.ok(sql.every(x=>!x.includes('next_audio_budget')&&!x.includes('UPDATE')&&!x.includes('DELETE')));
  await assert.rejects(()=>provisionNextAudioCeiling({...e,NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify({...receipt,optionalBatchMicros:0})},fetcher),/already pinned/);
  const writes=sql.length;vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED='false';await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/isolation/);assert.equal(sql.length,writes);
+ vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED='true';secretBindings=true;
+ assert.equal((await provisionNextAudioCeiling(e,fetcher)).runtimeProviderModelVerified,true);
+ runtimeProvider='wrong';await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/runtime provider\/model/);
+ runtimeProvider='openai';runtimeStatus=403;await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/runtime provider\/model/);
+ runtimeStatus=200;missingBinding=true;const beforeMissing=sql.length;await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/isolation/);assert.equal(sql.length,beforeMissing);
  await assert.rejects(()=>provisionNextAudioCeiling({...e,STAGING_D1_ID:'production-only'},()=>assert.fail('no HTTP')));
 });
 test('Workers speech uses only configured models; failed synthesis and repeats consume four slots',async t=>{
