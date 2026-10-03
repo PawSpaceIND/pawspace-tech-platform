@@ -92,3 +92,80 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,1);
 
 });
+
+for(const introduction of ["Lana is my new five-month-old kitten.","Meet our new pet Lana."])for(const profileLinked of [false,true])for(const inputText of ["Yes, book a grooming appointment for Lana.","Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
+test(`new-pet proposal needs verified identity (${profileLinked?"same-name saved profile":"unsaved"}; ${introduction}): ${inputText}`,async t=>{
+ const ctx=await setupJourney();t.after(()=>ctx.close());
+ const customerId="CUS-PET-MEMORY",petId="PET-COCO",threadId="THREAD-PET-MEMORY",now=Date.now();
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
+ await account.ensureCustomerAccountTables(ctx.db);
+ await (await import("../lib/pricing-control-runtime.ts")).ensurePricingControlRuntime(ctx.db);
+ await (await import("../lib/canonical-booking-core-schema.ts")).ensureCanonicalBookingCoreTables(ctx.db);
+ ctx.sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,'test','{}',?,?)").run(customerId,"blr","Synthetic pet-memory customer","9876500099",now,now);
+ await seedOwnedPet(ctx.db,customerId,petId,"Coco");
+ ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id=?").run(petId);
+ await rollout.setAiRolloutStage(ctx.db,{stage:"customers",reason:"isolated pet-memory regression",actorEmail:"founder@pawspace.test"});
+ await orchestrator.ensureAiConversationOrchestrator(ctx.db);
+ ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
+ if(profileLinked){
+  await seedOwnedPet(ctx.db,customerId,"PET-LANA","LANA");
+  ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='PET-LANA'").run();
+ }
+ const before=ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId);
+ const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
+ globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
+ let requests=0;
+ globalThis.fetch=async(url,init)=>{
+  const target=new URL(String(url));
+  assert.equal(target.protocol,"https:","model mock only accepts HTTPS");
+  assert.equal(target.hostname,"api.openai.com","no external message/payment/booking API");
+  requests++;
+  const req=JSON.parse(init.body),input=JSON.parse(req.input);
+  assert.deepEqual(input.canonicalContext.voicePetMemory.unlinkedNewPetNames,["Lana"]);
+  assert.match(req.instructions,/NEW pet|new kitten/);
+  return Response.json({output_text:JSON.stringify({reply:"Ready",actions:[
+   {toolCode:"schedule.reserve",arguments:{serviceCode:"grooming",petIds:[profileLinked?"PET-LANA":petId],serviceAddress:"Synthetic address",servicePincode:"560038",scheduledStart:"2026-10-20T04:30:00Z",scheduledEnd:"2026-10-20T06:30:00Z"}},
+   {toolCode:"booking.create",arguments:{petIds:[profileLinked?"PET-LANA":petId],packageCode:"cat-basic",paymentMode:"prepaid"}},
+   {toolCode:"checkout.payment_order.create",arguments:{}}
+  ]}),status:"completed",usage:{total_tokens:100}});
+ };
+ const {runElevenLabsGroundedTurn}=await import("../lib/elevenlabs-custom-llm.ts");
+ const result=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:introduction},{role:"user",content:`Please book a grooming appointment for Lana. ${inputText}`}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ assert.equal(requests,1,"each isolated case reached the model and pet identity guard");
+ assert.equal(result.providerRef,"pet_identity_guard");
+ assert.match(result.output,/Lana is described as a new pet.*verify.*profile/);
+ assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
+ assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),before);
+ const mutations=ctx.sqlite.prepare("SELECT tool_code FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").all(customerId).filter(x=>x.tool_code!=="approved_knowledge.read");
+ assert.deepEqual(mutations,[]);
+});
+}
+
+test("staff pause explains the recorded handoff without another handoff or paid model call",async t=>{
+ const ctx=await setupJourney();t.after(()=>ctx.close());
+ const customerId="CUS-STAFF-PAUSE",threadId="THREAD-STAFF-PAUSE",now=Date.now();
+ await account.ensureCustomerAccountTables(ctx.db);await (await import("../lib/canonical-booking-core-schema.ts")).ensureCanonicalBookingCoreTables(ctx.db);await orchestrator.ensureAiConversationOrchestrator(ctx.db);await (await import("../lib/ai-human-handoff.ts")).ensureAiHumanHandoff(ctx.db);await (await import("../lib/customer-360.ts")).ensureCustomer360Tables(ctx.db);
+ ctx.sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,'test','{}',?,?)").run(customerId,"blr","Synthetic staff test","9876500098",now,now);
+ ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','cx-ai-handoff',?,?)").run(threadId,customerId,now,now);
+ ctx.sqlite.prepare("INSERT INTO ai_handoffs (id,thread_id,customer_id,reason,queue_code,status,summary_json,requested_by,created_at) VALUES (?,?,?,'refund_review','cx-ai-handoff','queued','{}','test',?)").run("HANDOFF-ONE",threadId,customerId,now);
+ const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});globalThis.fetch=async()=>{throw Error("network forbidden during staff pause");};
+ const {runElevenLabsGroundedTurn}=await import("../lib/elevenlabs-custom-llm.ts");
+ const outputs=[];
+ for(const text of ["Before handing off, what information does the team need for my refund?","Can you book a free visit anyway?","Summarize the status of my refund concern."]){
+  outputs.push((await runElevenLabsGroundedTurn(ctx.db,{input:text,elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}})).output);
+ }
+ assert.match(outputs[0],/booking reference/);assert.match(outputs[1],/can't approve/);assert.match(outputs[2],/queued.*nobody has joined/);
+ assert.equal(new Set(outputs).size,3);
+ // A non-refund handoff must keep its actual service context without invoking the model.
+ ctx.sqlite.prepare("UPDATE ai_handoffs SET reason='service_request' WHERE id='HANDOFF-ONE'").run();
+ for(const service of ["funeral","grooming"]){
+  const reply=await runElevenLabsGroundedTurn(ctx.db,{input:`What details does the team need before the ${service} handoff?`,elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+  assert.equal(reply.path,"human_handoff");
+  assert.doesNotMatch(reply.output,/refund|amount/i);
+  assert.match(reply.output,/service details/);
+ }
+
+ assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=?").get(threadId).n,1);
+ assert.equal(ctx.sqlite.prepare("SELECT assigned_to FROM communication_threads WHERE id=?").get(threadId).assigned_to,"cx-ai-handoff");
+ assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
+});

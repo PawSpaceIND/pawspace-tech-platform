@@ -44,11 +44,11 @@
       "conditions": 34
     },
     "app/v2/chat/page.tsx": {
-      "sha256": "c8515606b6ff3af815b9ca210523aece16c91dc80e1d6f23367ab1c794720b27",
-      "functions": 41,
-      "declarations": 65,
+      "sha256": "16dee1634bc558b8fe0791c2a96edc24456a8c282ea192575828672a8b3e4c9a",
+      "functions": 43,
+      "declarations": 70,
       "interactionProps": 15,
-      "conditions": 31
+      "conditions": 34
     },
     "app/v2/page.tsx": {
       "sha256": "5b91274a2ea6706052fb5e440932bd96e713ad1d65a8efd0267f80a92fa20607",

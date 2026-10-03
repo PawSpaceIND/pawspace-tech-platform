@@ -7,9 +7,9 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const originalCssHash='b5d3692dca2db5b556538d6af13afb54bd2191c17d7e18763ecd4afdb365ce17';
 const marker='\n/* UI-24/25/26: only the V2 chat page;';
-// These are the exact unchanged sources from deployed 428fa899, not re-generated expectations.
+// Exact reviewed sources: callback notice retention updates V2 chat; the other chat sources remain unchanged.
 for(const [path,expected] of Object.entries({
- 'app/v2/chat/page.tsx':'60bf2ccadcfefed68858133c62220721ae50f104a7ba9fb10b7b7bca9ec990b1',
+ 'app/v2/chat/page.tsx':'bbb1e902b59edf8e4ec5f93836a6165e4b73535ec170fcdf531281432e9bd594',
  'app/components/wati-chat/WatiConversation.tsx':'94a2cbcb18b9251502c417935085d8a8b5383555a6ceb69b1fab45814662e2f8',
  'app/components/wati-chat/wati-chat.module.css':'e7dd395378a4c42fac84c170a72358ddcb8968eb93037c3f7465ff5372670e07',
  // Reviewed Grooming-only mobile utility append; chat sources and assertions remain unchanged.

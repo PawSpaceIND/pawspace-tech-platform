@@ -46,7 +46,7 @@ test("controlled-live readiness never mistakes configured credentials for verifi
 
 test("chat callback wiring uses canonical phone, persisted consent, Customer360 and voice policy engine",()=>{
  const source=read("lib/ai-first-control-plane.ts"),route=read("app/api/ai-web-chat/route.ts");
- assert.match(source,/SELECT id,primary_phone FROM canonical_customers/);assert.match(source,/recordVoiceConsent/);assert.match(source,/buildCustomer360/);assert.match(source,/requestOutboundVoiceCall/);assert.match(source,/idempotencyKey:`ai-callback:/);
+ assert.match(source,/SELECT id,primary_phone,city_id FROM canonical_customers/);assert.match(source,/recordVoiceConsent/);assert.match(source,/buildCustomer360/);assert.match(source,/requestOutboundVoiceCall/);assert.match(source,/const scoped=`ai-callback:v2:\$\{JSON\.stringify\(\[customerId,requestKey\]\)\}`/);assert.match(source,/const voiceRequest=\{idempotencyKey,/);assert.match(source,/requestOutboundVoiceCall\(db,env,voiceRequest/);
  assert.match(route,/mode===\"public\"/);assert.match(route,/callbackAutomation:false/);assert.match(route,/isCustomerCallbackRequest/);
 });
 
