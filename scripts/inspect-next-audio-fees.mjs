@@ -52,7 +52,11 @@ export async function inspectManagedAudioFees(env=process.env,fetcher=fetch){
  // Validate the staging brain before any further read. Never follow redirects or fall back regions.
  buildFeeInventory(agent.body,{region});
  const llms=await getJson(region+'/v1/convai/llm/list',key,fetcher);
- return buildFeeInventory(agent.body,{region,regionSource:configured?'existing-staging-variable':'documented-existing-harness-default; runtime-match-unproven',revision:env.GITHUB_SHA,llmList:llms.body,llmReadStatus:llms.status});
+ const subscription=await getJson(region+'/v1/user/subscription',key,fetcher);
+ const report=buildFeeInventory(agent.body,{region,regionSource:configured?'existing-staging-variable':'documented-existing-harness-default; runtime-match-unproven',revision:env.GITHUB_SHA,llmList:llms.body,llmReadStatus:llms.status});
+ const account=object(subscription.body),invoice=object(account.next_invoice);
+ report.accountBilling={readHttpStatus:subscription.status,tier:model(account.tier),currency:model(account.currency),status:model(account.status),creditLimitExtension:account.max_credit_limit_extension==='unlimited'?'unlimited':finite(account.max_credit_limit_extension),usageBasedBillingEnabled:flag(account.allowed_to_extend_character_limit),remainingIncludedCredits:finite(account.character_limit)!==null&&finite(account.character_count)!==null?account.character_limit-account.character_count:null,nextInvoiceSubtotalCents:finite(invoice.subtotal_cents),nextInvoiceTaxCents:finite(invoice.tax_cents),optionalFeeCeilingEstablished:false,taxCeilingEstablished:false,note:'Account observations only: invoice tax is not a future marginal tax ceiling, and credit limits do not establish USD optional-generation charges.'};
+ return report;
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const report=await inspectManagedAudioFees();
