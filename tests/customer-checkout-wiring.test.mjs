@@ -60,7 +60,7 @@ function world(t) {
   sqlite.exec(`CREATE TABLE canonical_bookings(id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,package_code TEXT,service_code TEXT DEFAULT 'grooming',package_name TEXT DEFAULT 'Bath & Basic',provider_id TEXT DEFAULT 'PRV1',scheduled_start TEXT DEFAULT '2026-09-20T03:30:00.000Z',scheduled_end TEXT DEFAULT '2026-09-20T05:30:00.000Z',total_amount REAL DEFAULT 499.50,currency TEXT DEFAULT 'INR',updated_at INTEGER DEFAULT 1);
     CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,amount REAL,amount_due_now REAL,currency TEXT,mode TEXT DEFAULT 'prepaid');
     CREATE TABLE payment_intents(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,payment_id TEXT,gateway_order_id TEXT,provider TEXT,environment TEXT,amount_paise INTEGER,currency TEXT);
-    CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT,detail_json TEXT NOT NULL DEFAULT '{}');
+    CREATE TABLE payment_gateway_events(id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,processing_status TEXT,event_type TEXT,amount_subunits INTEGER,currency TEXT,detail_json TEXT NOT NULL DEFAULT '{}',received_at INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE provider_work_orders(id TEXT PRIMARY KEY,booking_id TEXT,provider_name TEXT,provider_model TEXT,status TEXT);
     INSERT INTO canonical_bookings(id,customer_id,status) VALUES('B1','C1','confirmed'),('B2','C2','confirmed');
     INSERT INTO booking_payments(id,booking_id,customer_id,status,amount,amount_due_now,currency) VALUES('P1','B1','C1','created',499.50,499.50,'INR'),('P2','B2','C2','created',100,100,'INR');
@@ -310,6 +310,25 @@ test('status treats atomic provider-api capture as trusted confirmation evidence
   assert.equal(response.status, 200); const body = await response.json();
   assert.equal(body.data.confirmation.ready, true); assert.equal(body.data.confirmation.transactionId, 'pay_fixture');
 });
+for (const [label, foreign] of Object.entries({
+  provider: { provider: 'manual' },
+  environment: { environment: 'live' },
+  booking: { booking_id: 'B2' },
+  payment: { payment_id: 'P2' },
+  unsigned: { signature_verified: 0, detail_json: '{}' },
+  unprocessed: { processing_status: 'received' },
+})) test(`generic status excludes capture evidence from a foreign ${label}`, async t => {
+  const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
+  event(sqlite, foreign);
+  sqlite.exec("UPDATE booking_payments SET status='captured',amount_due_now=0 WHERE id='P1'");
+  const response = await POST(request({ action: 'status', bookingId: 'B1' }, session));
+  assert.equal(response.status, 200); const body = await response.json();
+  assert.equal(body.data.status, 'nothing_due');
+  assert.equal(body.data.confirmation.ready, false);
+  assert.equal(body.data.confirmation.transactionId, null);
+  assert.equal(body.data.confirmation.gatewayPaymentId, null);
+});
+
 test('status still rejects unsigned capture without provider-api authority', async t => {
   const { db, sqlite } = world(t); const session = await cookie(db); const { POST } = await import('../app/api/customer-checkout/route.ts');
   event(sqlite, { signature_verified: 0, detail_json: '{}' }); sqlite.exec("UPDATE booking_payments SET status='captured',amount_due_now=0 WHERE id='P1'");
@@ -391,13 +410,13 @@ test('captured checkout confirmation is hydrated from canonical booking, pet, pr
     CREATE TABLE provider_work_orders(booking_id TEXT,provider_name TEXT,provider_model TEXT);
     CREATE TABLE booking_payments(id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,status TEXT,currency TEXT);
     CREATE TABLE payment_intents(booking_id TEXT,customer_id TEXT,gateway_order_id TEXT);
-    CREATE TABLE payment_gateway_events(booking_id TEXT,processing_status TEXT,event_type TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,received_at INTEGER);
+    CREATE TABLE payment_gateway_events(booking_id TEXT,processing_status TEXT,event_type TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,received_at INTEGER,payment_id TEXT,provider TEXT,environment TEXT,signature_verified INTEGER,detail_json TEXT);
     INSERT INTO canonical_bookings VALUES('B-CAN','C1','confirmed','PROV-RAHUL','Complete Makeover','2026-09-15T03:30:00.000Z','2026-09-15T05:30:00.000Z',2399,'INR','["PET-BRUNO"]');
     INSERT INTO canonical_pets VALUES('PET-BRUNO','C1','Bruno','dog','Labrador');
     INSERT INTO provider_work_orders VALUES('B-CAN','Rahul M.','commission');
     INSERT INTO booking_payments VALUES('PAY-CAN','B-CAN','C1','captured','INR');
     INSERT INTO payment_intents VALUES('B-CAN','C1','order_Canonical123');
-    INSERT INTO payment_gateway_events VALUES('B-CAN','processed','payment.captured','order_Canonical123','pay_Canonical456',1234);
+    INSERT INTO payment_gateway_events VALUES('B-CAN','processed','payment.captured','order_Canonical123','pay_Canonical456',1234,'PAY-CAN','razorpay','sandbox',1,'{}');
   `);
   const confirmation = await server.readCustomerCheckoutConfirmation(d1(sqlite), 'C1', 'B-CAN');
   assert.equal(confirmation.providerName, 'Rahul M.');
