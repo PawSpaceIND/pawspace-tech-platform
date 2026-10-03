@@ -196,3 +196,25 @@ test("an invoice that differs from the payout record by more than 1 paisa is a v
   assert.equal(pkg.summary.serviceOutputTax, 32.14, "the return files the legal document the customer holds");
   assert.equal(pkg.summary.ledgerCheck.agrees, true, "the completion books still match the unchanged issued invoice");
 });
+
+test("a balanced deliberate ledger drift is reported without rewriting the issued customer invoice", async () => {
+  const { sqlite, db } = await filingWorld({ seller: true });
+  booking(sqlite, "BK-LEDGER-DRIFT", { service: "grooming", provider: "PRV-G" });
+  await completion.resolveServiceCompletionFinance(db, { bookingId: "BK-LEDGER-DRIFT", actorId: FINANCE, completedAt: NOW });
+  const issued = { ...sqlite.prepare("SELECT * FROM finance_invoices WHERE source_event_key='booking-invoice:BK-LEDGER-DRIFT'").get() };
+  assert.equal(issued.tax_total, 45.76);
+  // Synthetic corruption shifts one rupee between revenue and GST; the journal stays balanced.
+  const drift = sqlite.prepare("UPDATE finance_journal_entries SET credit=credit+CASE account_code WHEN '2130-GST Payable' THEN 1 ELSE -1 END WHERE source_type='service_completion' AND source_id='BK-LEDGER-DRIFT' AND account_code IN ('2130-GST Payable','4000-Service Revenue')").run();
+  assert.equal(drift.changes, 2);
+  const totals = sqlite.prepare("SELECT ROUND(SUM(debit),2) debit,ROUND(SUM(credit),2) credit FROM finance_journal_entries WHERE source_type='service_completion' AND source_id='BK-LEDGER-DRIFT'").get();
+  assert.equal(totals.debit, totals.credit, "balanced journals alone cannot prove tax reconciliation");
+  const pkg = await gstAccounting.generateStatutoryPackage(db, scope, MAKER);
+  assert.equal(pkg.summary.ledgerCheck.agrees, false);
+  assert.equal(pkg.summary.serviceOutputTax, 45.76, "the return preserves the invoice's tax");
+  const variance = pkg.variance.find(v => v.type === "service_gst_vs_ledger_2130");
+  assert.ok(variance, JSON.stringify(pkg.variance));
+  assert.equal(variance.filedGst, 45.76);
+  assert.equal(variance.postedGst, 46.76);
+  assert.equal(Math.abs(variance.difference), 1);
+  assert.deepEqual({ ...sqlite.prepare("SELECT * FROM finance_invoices WHERE id=?").get(issued.id) }, issued);
+});
