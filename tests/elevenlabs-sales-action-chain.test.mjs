@@ -134,6 +134,12 @@ test("new kitten cannot be booked against the saved cat; facts and canonical row
  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),before);
  const mutations=ctx.sqlite.prepare("SELECT tool_code FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").all(customerId).filter(x=>x.tool_code!=="approved_knowledge.read");
  assert.deepEqual(mutations,[]);
+ for(const text of ["Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
+  const rejected=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:text}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+  assert.match(rejected.output,/Lana is a new pet without a saved profile/);
+  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
+  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),before);
+ }
  // Once Lana has her own fixture profile, a wrong Coco proposal must still be refused.
  await seedOwnedPet(ctx.db,customerId,"PET-LANA","Lana");
  ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='PET-LANA'").run();
@@ -141,7 +147,12 @@ test("new kitten cannot be booked against the saved cat; facts and canonical row
  const afterLink=ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId);
  const linked=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:"Yes, book a grooming appointment for Lana."}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
  assert.match(linked.output,/Lana has a separate saved profile/);
- assert.equal(requests,2);
+ assert.equal(requests,4);
+ for(const text of ["Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
+  const rejected=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:text}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+  assert.match(rejected.output,/proposed pets do not match your selection/);
+ }
+ assert.equal(requests,6);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),afterLink);
 
