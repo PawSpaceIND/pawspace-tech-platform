@@ -110,7 +110,7 @@ test('Atlas rendering preserves heading content and ordered-list starting number
 });
 test('Atlas rendering never turns supplied markup or links into active controls',()=>{
  const html=renderText('<button type="submit">Confirm & pay</button>\n[Reference](https://example.invalid)');
- assert.match(html,/&lt;button type="submit"&gt;Confirm &amp; pay&lt;\/button&gt;/);
+ assert.match(html,/&lt;button type=&quot;submit&quot;&gt;Confirm &amp; pay&lt;\/button&gt;/);
  assert.match(html,/\[Reference\]\(https:\/\/example\.invalid\)/);
  assert.doesNotMatch(html,/<button|<a\s/);
 });
