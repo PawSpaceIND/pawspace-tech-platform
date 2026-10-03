@@ -1,3 +1,4 @@
+import{requestReplayableWebChatHandoff}from"./web-chat-handoff-replay";
 import {atlasCareContext,customerRequestedCoupon,careReplyWithoutUnrequestedOffers,hasMonetaryPromotion,type AtlasCareContext} from './v2/atlas-assistance-policy';
 import{needsImmediateVetGuidance,emergencyChatResponse}from"./ai-emergency-guidance";
 import{ensureAiBusinessConfiguration}from"./ai-business-configuration";
@@ -5,7 +6,7 @@ import{ensureCommunicationTables}from"./communication-engine";
 import{ensureD1Once}from"./d1-ensure-once.js";
 import{orchestrateAiTurn}from"./ai-conversation-orchestrator";
 import{ensureAiHumanHandoff,requestAiHumanHandoff,routeLeadToTeamQueue,type AiHandoffReason}from"./ai-human-handoff";
-import{BOT_ESCALATE_AFTER_MS,BOT_REMINDER_AFTER_MS,botFollowUp,initialBotState,menuReply,runBotTurn,type BotReply}from"./web-chat-bot";
+import{BOT_ESCALATE_AFTER_MS,BOT_REMINDER_AFTER_MS,botFollowUp,initialBotState,menuReply,runBotTurn,type BotReply,type BotEvent}from"./web-chat-bot";
 import{advanceBotSession,claimBotSession,ensureBotSessionTable,loadBotSession,loadBotSessionVersion,purgeStalePublicBotSessions,saveBotSession}from"./web-chat-bot-store";
 import{startWhatsAppAiLead}from"./whatsapp-ai-lead-orchestration";
 import{createGroundedAiRuntimeProvider}from"./ai-grounded-runtime-provider";
@@ -394,10 +395,10 @@ async function postBotMessage(db:D1Database,input:{threadId:string;customerId:st
  ]);
 }
 
-async function recordCustomerMessage(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string}){
+async function recordCustomerMessage(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string;callbackContext?:Extract<BotEvent,{type:"call"}>&{message:string};pendingHandoff?:{reason:AiHandoffReason;reply:BotReply;path:"human"|"completed"}}){
  const threadId=await openThread(db,input.customerId),messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`,now=Date.now();
  const inspected=await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-bot:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"web_chat_bot"}});
- await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?,?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true,bot:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
+ await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?,?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected,...(input.callbackContext?{callbackContext:input.callbackContext}:{}),...(input.pendingHandoff?{pendingHandoff:input.pendingHandoff}:{})}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true,bot:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
  return{threadId,messageId};
 }
 
@@ -418,13 +419,20 @@ export async function startCustomerWebChatBot(db:D1Database,input:{actor:Authent
  * One signed-in customer message through the bot. Returns what happened so the route can report it;
  * the customer's page then reads the thread back, which already holds every message written here.
  */
-export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string;ownershipVerified?:boolean}){
+export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;choiceId?:string|null;idempotencyKey:string;ownershipVerified?:boolean;callbackFields?:Partial<Omit<Extract<BotEvent,{type:"call"}>,"type">>;callbackMessage?:string}){
  await ensureAiWebChatTables(db);
  const key=text(input.idempotencyKey);if(!key)throw new Response("Idempotency key is required",{status:400});
  // Independent reads share one round trip; a failed ownership check still rejects before any write.
- const[,prior,current]=await Promise.all([input.ownershipVerified?null:requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(key).first<Row>(),currentWebChatThread(db,input.customerId)]);
+ const[,prior,current]=await Promise.all([input.ownershipVerified?null:requireCustomerOwnership(db,input.actor,input.customerId),db.prepare("SELECT thread_id,customer_id,payload_json FROM communication_messages WHERE idempotency_key=?").bind(key).first<Row>(),currentWebChatThread(db,input.customerId)]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
- if(prior)return{duplicatePrevented:true,threadId:text(prior.thread_id),path:"duplicate" as const};
+ if(prior){
+  const threadId=text(prior.thread_id),thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(threadId).first<Row>();
+  if(text(thread?.customer_id)!==input.customerId)throw new Response("Chat thread belongs to another customer",{status:403});
+  const payload=JSON.parse(text(prior.payload_json)||"{}");
+  if(payload.callbackContext?.type==="call")return{duplicatePrevented:true,threadId,path:"call" as const,callbackContext:payload.callbackContext as Extract<BotEvent,{type:"call"}>&{message:string}};
+  if(payload.pendingHandoff){const pending=payload.pendingHandoff as {reason:AiHandoffReason;reply:BotReply;path:"human"|"completed"};await requestReplayableWebChatHandoff(db,{actorEmail:input.actor.email,threadId,customerId:input.customerId,reason:pending.reason,requestKey:`bot:${key}`});await postBotMessage(db,{threadId,customerId:input.customerId,reply:pending.reply,idempotencyKey:`web-chat-bot:${key}`});return{duplicatePrevented:true,threadId,path:pending.path,handedOff:true};}
+  return{duplicatePrevented:true,threadId,path:"duplicate" as const};
+ }
  // What this turn has established, so the AI turn it may run does not read it again.
  const known={threadId:current||undefined,ownershipVerified:true,priorChecked:true,handoffChecked:true,acceptWhileWithTeam:true};
  // A person owns the conversation: no bot and no AI, the message goes to the team.
@@ -446,15 +454,18 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
   const handoff="handoff"in data&&data.handoff?data.handoff:{active:false as const,status:null};
   return{duplicatePrevented:false,threadId:data.threadId,path:"ai" as const,handoff};
  }
- const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key});
+ const callbackContext=turn.event.type==="call"?{...turn.event,message:text(input.callbackMessage)||"Please call me back"}:null;
+ if(callbackContext){for(const field of ["petId","serviceCode","serviceDate","cityId","bookingId","leadId"] as const){const selected=callbackContext[field],supplied=input.callbackFields?.[field];if(selected&&supplied&&selected!==supplied)throw new Response("Callback context conflicts with the selected chat details",{status:409});callbackContext[field]=selected||supplied||null;}const selected=callbackContext.requestedStart,supplied=input.callbackFields?.requestedStart;if(selected&&supplied&&selected!==supplied)throw new Response("Callback timing conflicts with the selected chat details",{status:409});callbackContext.requestedStart=selected??supplied??null;}
+ const teamReason:AiHandoffReason|null=turn.event.type==="completed"&&turn.event.followUp==="team"?turn.event.followUpReason??"bot_lead_qualified":null;
+ const pendingHandoff=turn.event.type==="human"?{reason:turn.event.reason,reply:turn.reply,path:"human" as const}:teamReason?{reason:teamReason,reply:turn.reply,path:"completed" as const}:null;
+ const recorded=await recordCustomerMessage(db,{actor:input.actor,customerId:input.customerId,text:turn.display,idempotencyKey:key,...(callbackContext?{callbackContext}:{}),...(pendingHandoff?{pendingHandoff}:{})});
  /* A person's or a team's enquiry is queued before the customer is told so: a failed handoff surfaces as an
   * error instead of a "the team will reply" message that no queue will ever see. */
- const teamReason=turn.event.type==="completed"&&turn.event.followUp==="team"?turn.event.followUpReason??"bot_lead_qualified":null;
- if(teamReason)await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:teamReason,confidence:null});
+ if(turn.event.type==="human")await requestReplayableWebChatHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.reason,requestKey:`bot:${key}`});
+ if(teamReason)await requestReplayableWebChatHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:teamReason,requestKey:`bot:${key}`});
  await postBotMessage(db,{threadId:recorded.threadId,customerId:input.customerId,reply:turn.reply,idempotencyKey:`web-chat-bot:${key}`});
  if(turn.event.type==="human"){
   // A person asked for: the Inbox queue, with the whole bot conversation above it.
-  await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:recorded.threadId,customerId:input.customerId,reason:turn.event.reason,confidence:null});
   return{duplicatePrevented:false,threadId:recorded.threadId,path:"human" as const};
  }
  /* An existing booking, an active grooming subscription or a relocation: WATI assigns these to the team,
@@ -469,7 +480,7 @@ export async function runCustomerWebChatBotTurn(db:D1Database,input:{actor:Authe
   const booking=await runAuthenticatedAiWebChat(db,{actor:input.actor,customerId:input.customerId,text:`I'd like to book ${turn.event.service}. My details:\n${turn.event.summary}\nPlease recommend the right package with its price and book it for me.`,idempotencyKey:`${key}:book`},{acceptWhileWithTeam:true});
   return{duplicatePrevented:false,threadId:booking.threadId,path:"completed" as const,handedOff:"withTeam"in booking||Boolean("handoff"in booking&&booking.handoff?.active)};
  }
- return{duplicatePrevented:false,threadId:recorded.threadId,path:turn.event.type==="call"?"call" as const:"bot" as const};
+ return{duplicatePrevented:false,threadId:recorded.threadId,path:turn.event.type==="call"?"call" as const:"bot" as const,...(callbackContext?{callbackContext}:{})};
 }
 
 /* ---------------------------------------------------------------------------------------------------
@@ -527,4 +538,12 @@ export async function completeWebChatBotLead(db:D1Database,input:{leadId:string;
  if(input.teamReason){const queue=await routeLeadToTeamQueue(db,{leadId:input.leadId,reason:input.teamReason});return{captured:true,leadId:input.leadId,updated:true,routedTo:queue,whatsappAi:null};}
  const whatsapp=input.whatsappConsent?await startWhatsAppAiLead(db,{leadId:input.leadId,contactId,idempotencyKey:`web-chat-bot-whatsapp:${input.leadId}`,consentGranted:true,consentSource:"web_chat_bot",consentEvidenceRef:"web-chat-bot-whatsapp-consent-v1",actorId:"web-chat-bot",assignedTo:text(lead.owner)||undefined}).catch(()=>({status:"failed"})):null;
  return{captured:true,leadId:input.leadId,updated:true,whatsappAi:whatsapp?{status:(whatsapp as Row).status}:null};
+}
+
+/** Store the governed outcome only after the callback or fallback handoff has completed. */
+export async function recordCustomerCallbackNotice(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;threadId:string;idempotencyKey:string;notice:string}){
+ await requireCustomerOwnership(db,input.actor,input.customerId);
+ const thread=await db.prepare("SELECT customer_id FROM communication_threads WHERE id=?").bind(input.threadId).first<Row>();
+ if(text(thread?.customer_id)!==input.customerId)throw new Response("Chat thread belongs to another customer",{status:403});
+ await postBotMessage(db,{threadId:input.threadId,customerId:input.customerId,reply:{text:input.notice,choices:[],inputHint:null},idempotencyKey:JSON.stringify(["callback-notice",input.customerId,input.idempotencyKey])});
 }

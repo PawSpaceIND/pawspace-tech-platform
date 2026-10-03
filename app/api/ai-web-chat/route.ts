@@ -1,20 +1,49 @@
+import{reserveWebChatCallbackRequest}from"../../../lib/customer-callback-context";
+import{requestReplayableWebChatHandoff}from"../../../lib/web-chat-handoff-replay";
 import {atlasCareContext} from '../../../lib/v2/atlas-assistance-policy';
 import{needsImmediateVetGuidance,emergencyChatResponse}from"../../../lib/ai-emergency-guidance";
 import{resolvePlatformSession}from"../../../lib/platform-session";
 import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{captureAiWebLead,completeWebChatBotLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,runAuthenticatedAiWebChat,runCustomerWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startCustomerWebChatBot}from"../../../lib/ai-web-chat-adapter";
+import{captureAiWebLead,completeWebChatBotLead,customerWebChatTranscript,loadWebChatBotState,publicAiWebKnowledge,recordCustomerCallbackNotice,runAuthenticatedAiWebChat,runCustomerWebChatBotTurn,runPublicAiWebChat,saveWebChatBotState,startCustomerWebChatBot}from"../../../lib/ai-web-chat-adapter";
 import{flowByCode,initialBotState,menuReply,partialSummary,runBotTurn}from"../../../lib/web-chat-bot";
 import{advanceBotSession}from"../../../lib/web-chat-bot-store";
 import{POST as submitPublicContact}from"../public-contact/route";
 import{withinPublicRateLimit}from"../../../lib/public-abuse-gate";
-import{requestAiHumanHandoff,routeLeadToTeamQueue}from"../../../lib/ai-human-handoff";
-import{isCustomerCallbackRequest,requestGovernedCustomerCallback}from"../../../lib/ai-first-control-plane";
+import{routeLeadToTeamQueue}from"../../../lib/ai-human-handoff";
+import{UNSUPPORTED_SCHEDULING_NOTICE,cancelGovernedCustomerCallback,isCustomerCallbackRequest,requestGovernedCustomerCallback}from"../../../lib/ai-first-control-plane";
 import{activeCrossSell}from"../../../lib/ai-sales-offers";
 import{CustomerOtpUnavailableError,CustomerOtpVerificationError,exchangeCustomerOtp,startCustomerOtp}from"../../../lib/customer-otp-exchange";
 import{PLATFORM_SESSION_COOKIE}from"../../../lib/platform-session";
 
-type Body={careContext?:unknown;bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string};
+type Body={careContext?:unknown;bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string;requestedStart?:string|number|null;serviceDate?:string|null;cityId?:string|null;bookingId?:string|null;petId?:string|null;serviceCode?:string|null;leadId?:string|null;cancelCallId?:string};
 const json=(value:unknown,status=200,headers?:Headers)=>{const merged=new Headers(headers);merged.set("cache-control","no-store");return Response.json(value,{status,headers:merged});};
+type CallbackFollowUp={outcome:"accepted"|"not_placed"|"not_matched"|"unsupported_scheduling";handoff:boolean;reason:"customer_requested_human"|"policy_risk"|"provider_unavailable"|"provider_error"|null;notice:string};
+/** Read only fields requestGovernedCustomerCallback already returns. Accepted means the voice engine dialled or left the call queued, scheduled or dialing. A future requestedStart is unsupported scheduling, not a queued call. */
+function callbackFollowUp(callback:{matched:boolean;callback?:unknown;scheduling?:string;reason?:string}):CallbackFollowUp{
+ if(callback.scheduling==="unsupported"||callback.reason==="unsupported_scheduling")return{outcome:"unsupported_scheduling",handoff:true,reason:"customer_requested_human",notice:UNSUPPORTED_SCHEDULING_NOTICE};
+ if(!callback.matched)return{outcome:"not_matched",handoff:true,reason:"customer_requested_human",notice:"No callback was matched. The PawSpace team has been asked to call you."};
+ const detail=callback.callback&&typeof callback.callback==="object"?callback.callback as {dialled?:boolean;dialed?:boolean;state?:string;blockedBy?:string|null}:{};
+ const state=typeof detail.state==="string"?detail.state:"";
+ const dialled=detail.dialled===true||detail.dialed===true;
+ if(dialled||state==="queued"||state==="scheduled"||state==="dialing")return{outcome:"accepted",handoff:false,reason:null,notice:"The callback was accepted."};
+ const blockedBy=detail.blockedBy==null?"":String(detail.blockedBy);
+ const failed=detail.dialled===false||detail.dialed===false||state.startsWith("blocked_")||state==="provider_unavailable"||state==="provider_error"||state==="dial_failed"||blockedBy!=="";
+ if(!failed)return{outcome:"not_placed",handoff:false,reason:null,notice:"The callback was not placed."};
+ const provider=blockedBy==="provider_configured"||blockedBy==="provider_unavailable"||state==="provider_unavailable"||state==="provider_error";
+ const reason=state==="provider_error"?"provider_error":provider?"provider_unavailable":"policy_risk";
+ const why=blockedBy||state||"policy_or_provider";
+ return{outcome:"not_placed",handoff:true,reason,notice:`The callback was not placed (${why}). The PawSpace team has been asked to call you.`};
+}
+async function handoffUndialledCallback(db:D1Database,actor:{email:string},customerId:string,threadId:string|null,callback:{matched:boolean;callback?:unknown;scheduling?:string;reason?:string},requestKey:string){
+ const followUp=callbackFollowUp(callback);
+ if(!followUp.handoff||!followUp.reason)return{...followUp,handedOff:false};
+ let thread=threadId;
+ if(!thread){try{const row=await db.prepare("SELECT id FROM communication_threads WHERE customer_id=? ORDER BY updated_at DESC LIMIT 1").bind(customerId).first<{id?:string}>();thread=row?.id?String(row.id):null;}catch{thread=null;}}
+ if(!thread)return{...followUp,handedOff:false,notice:followUp.outcome==="unsupported_scheduling"?"Scheduling is not available. Open the customer app to contact the PawSpace team.":"The callback was not placed."};
+ await requestReplayableWebChatHandoff(db,{actorEmail:actor.email,threadId:thread,customerId,reason:followUp.reason,requestKey});
+ return{...followUp,handedOff:true,notice:followUp.outcome==="unsupported_scheduling"?`${UNSUPPORTED_SCHEDULING_NOTICE} The PawSpace team has been asked to follow up.`:followUp.notice};
+}
+function callbackRequestFields(body:Body){return{requestedStart:body.requestedStart??null,serviceDate:body.serviceDate??null,cityId:body.cityId??undefined,bookingId:body.bookingId??null,petId:body.petId??null,serviceCode:body.serviceCode??null,leadId:body.leadId??null};}
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI web chat write blocked",{status:403});}
 async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 
@@ -45,9 +74,16 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
   if(error instanceof Response&&error.status===401)return json({error:"Sign in to your PawSpace account to chat about your bookings.",code:"customer_sign_in_required",signInUrl:"/mobile-app"},401);
   throw error;
  }
- const session=await resolvePlatformSession(db,request);body.customerId=body.customerId||(session?.subjectType==="customer"?session.subjectId:undefined);const customerId=body.customerId;if(!customerId)return json({error:"Customer, message and idempotency key are required"},400);
+ const session=await resolvePlatformSession(db,request),customerId=session?.subjectType==="customer"?session.subjectId:undefined;
+ if(!customerId)return json({error:"Customer session required"},403);
+ if(body.customerId&&body.customerId!==customerId)return json({error:"Client customer identity is not accepted"},403);
  // Ownership is settled once, before the request's own fields choose what happens next.
  await requireCustomerOwnership(db,actor,customerId);
+ if(body.cancelCallId){
+  const cancelled=await cancelGovernedCustomerCallback(db,{actor,customerId,callId:String(body.cancelCallId),reason:"customer_cancelled_in_chat"});
+  await securityAudit(db,actor,"ai.web_chat.callback_cancel","voice_call",String(body.cancelCallId),"completed",{customerId});
+  return json({data:{mode:"authenticated",cancelled,callbackOutcome:"cancelled",autonomousExecution:false}});
+ }
  if(needsImmediateVetGuidance(body.message||body.query||""))return json({data:{mode,...emergencyChatResponse(body.sessionKey)}});
  if(body.bot===true){
   /* Every signed-in bot answer carries the conversation back, so the page shows the reply from this one
@@ -57,15 +93,20 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
   const withTranscript=async(known:{threadId?:string|null;handoff?:{active:boolean;status:"queued"|"staff_active"|null}}={})=>customerWebChatTranscript(db,{actor,customerId,ownershipVerified:true,...(known.threadId?{threadId:known.threadId,threadVerified:true}:{}),...(known.handoff?{handoff:known.handoff}:{})}).catch((error:unknown)=>{console.error("ai-web-chat: reply transcript read failed",error instanceof Error?error.message:String(error));return null;});
   if(body.start===true){const bot=await startCustomerWebChatBot(db,{actor,customerId});return json({data:{mode:"authenticated",bot,transcript:await withTranscript()}});}
   if(!(body.message||body.choiceId)||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
-  const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey,ownershipVerified:true});
+  const result=await runCustomerWebChatBotTurn(db,{actor,customerId,text:body.message||"",choiceId:body.choiceId,idempotencyKey:body.idempotencyKey,ownershipVerified:true,callbackFields:callbackRequestFields(body),callbackMessage:body.message&& !/^request a call$/i.test(body.message.trim())?body.message:"Please call me back"});
   if(result.path==="call"){
    await securityAudit(db,actor,"ai.web_chat.bot_turn","communication_thread",result.threadId,"completed",{path:result.path,duplicatePrevented:result.duplicatePrevented,autonomousExecution:false});
    /* The customer tapped "Request a call": PawSpace's governed callback places it (consent, quiet hours
     * and the voice policy engine decide). When it cannot, the team is asked to call instead. */
-   const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:"Please call me back",idempotencyKey:`${body.idempotencyKey}:call`});
-   if(!callback.matched)await requestAiHumanHandoff(db,{actorEmail:actor.email,threadId:result.threadId,customerId,reason:"customer_requested_human",confidence:null});
-   await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,surface:"web_chat_bot"});
-   return json({data:{mode:"authenticated",...result,callback,transcript:await withTranscript()}},callback.matched?201:200);
+   // Includes null slots: the first effective request is authoritative even before an intent exists.
+   const fields=result.callbackContext?{requestedStart:result.callbackContext.requestedStart,serviceDate:result.callbackContext.serviceDate,cityId:result.callbackContext.cityId||undefined,bookingId:result.callbackContext.bookingId,petId:result.callbackContext.petId,serviceCode:result.callbackContext.serviceCode,leadId:result.callbackContext.leadId}:callbackRequestFields(body);
+   const callbackMessage=result.callbackContext?.message||"Please call me back";
+   if(!isCustomerCallbackRequest(callbackMessage))throw new Response("Explicit callback consent is required",{status:400});
+   const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:callbackMessage,idempotencyKey:`${body.idempotencyKey}:call`,...fields});
+   const followUp=await handoffUndialledCallback(db,actor,customerId,result.threadId,callback,`callback:${body.idempotencyKey}:call`);
+   await recordCustomerCallbackNotice(db,{actor,customerId,threadId:result.threadId,idempotencyKey:body.idempotencyKey,notice:followUp.notice});
+   await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,dialled:callback.matched&&"callback"in callback?Boolean((callback.callback as {dialled?:boolean;dialed?:boolean}).dialled||(callback.callback as {dialed?:boolean}).dialed):false,callbackOutcome:followUp.outcome,surface:"web_chat_bot"});
+   return json({data:{mode:"authenticated",...result,callback,callbackOutcome:followUp.outcome,callbackNotice:followUp.notice,transcript:await withTranscript()}},callback.matched?201:200);
   }
   const{handoff,...shown}="handoff"in result?result:{...result,handoff:undefined};
   // The audit write and the transcript read are independent: one round trip.
@@ -76,9 +117,11 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay
  // capture-only so an internet user cannot type somebody else's number and cause PawSpace to dial it.
  if(isCustomerCallbackRequest(body.message)){
-  const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,message:body.message,idempotencyKey:body.idempotencyKey});
-  await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,consentSource:callback.matched?callback.consentSource:null,policyEngine:callback.matched?callback.policyEngine:null});
-  return json({data:{mode:"authenticated",callback,autonomousExecution:callback.matched?"governed_customer_requested_callback":false}},callback.matched?201:200);
+  const original=await reserveWebChatCallbackRequest(db,customerId,body.idempotencyKey,{message:body.message,...callbackRequestFields(body)});
+  const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,idempotencyKey:body.idempotencyKey,...original});
+  const followUp=await handoffUndialledCallback(db,actor,customerId,null,callback,`callback:${body.idempotencyKey}`);
+  await securityAudit(db,actor,"ai.web_chat.callback","voice_call",callback.matched&&"callback"in callback?callback.callback.callId:null,"completed",{customerId,matched:callback.matched,dialled:callback.matched&&"callback"in callback?Boolean((callback.callback as {dialled?:boolean;dialed?:boolean}).dialled||(callback.callback as {dialed?:boolean}).dialed):false,callbackOutcome:followUp.outcome,consentSource:callback.matched?callback.consentSource:null,policyEngine:callback.matched?callback.policyEngine:null});
+  return json({data:{mode:"authenticated",callback,callbackOutcome:followUp.outcome,callbackNotice:followUp.notice,autonomousExecution:callback.matched&&followUp.outcome==="accepted"?"governed_customer_requested_callback":false}},callback.matched?201:200);
  }
  const data=await runAuthenticatedAiWebChat(db,{actor,customerId,text:body.message,idempotencyKey:body.idempotencyKey},{acceptWhileWithTeam:true});await securityAudit(db,actor,"ai.web_chat.turn","communication_thread",data.threadId,"completed",{duplicatePrevented:data.duplicatePrevented,withTeam:"withTeam"in data,autonomousExecution:false});return json({data},200);
  }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to process AI web chat");}}
