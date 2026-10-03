@@ -110,13 +110,13 @@ test('Atlas rendering preserves heading content and ordered-list starting number
 });
 test('Atlas rendering never turns supplied markup or links into active controls',()=>{
  const html=renderText('<button type="submit">Confirm & pay</button>\n[Reference](https://example.invalid)');
- assert.match(html,/<button type="submit">Confirm & pay<\/button>/);
+ assert.match(html,/&lt;button type="submit"&gt;Confirm &amp; pay&lt;\/button&gt;/);
  assert.match(html,/\[Reference\]\(https:\/\/example\.invalid\)/);
  assert.doesNotMatch(html,/<button|<a\s/);
 });
 test('Atlas rendering keeps fenced examples literal and handles an unfinished fence',()=>{
  const html=renderText('```text\n<strong>literal</strong>\n**not emphasis**\n```\nAfter the example');
- assert.equal(html,'<div class="paw-readable-text"><pre><code><strong>literal</strong>\n**not emphasis**</code></pre><p>After the example</p></div>');
+ assert.equal(html,'<div class="paw-readable-text"><pre><code>&lt;strong&gt;literal&lt;/strong&gt;\n**not emphasis**</code></pre><p>After the example</p></div>');
  assert.equal(renderText('```\nunfinished'),'<div class="paw-readable-text"><pre><code>unfinished</code></pre></div>');
 });
 test('Atlas rendering keeps unclosed inline markers and empty responses safe',()=>{
