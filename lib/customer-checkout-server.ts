@@ -44,7 +44,12 @@ export async function readCustomerCheckoutConfirmation(db:D1Database,customerId:
     optionalFirst("booking payment",db.prepare("SELECT id,status,currency FROM booking_payments WHERE booking_id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId)),
     petIds.length?optionalAll("customer pets",db.prepare("SELECT id,name,species,breed FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(customerId,JSON.stringify(petIds))):Promise.resolve({results:[] as Row[]}),
     optionalFirst("payment intent",db.prepare("SELECT gateway_order_id FROM payment_intents WHERE booking_id=? AND customer_id=? LIMIT 1").bind(bookingId,customerId)),
-    optionalFirst("payment capture event",db.prepare("SELECT gateway_order_id,gateway_payment_id FROM payment_gateway_events WHERE booking_id=? AND processing_status='processed' AND event_type IN ('payment.captured','order.paid') ORDER BY received_at DESC LIMIT 1").bind(bookingId)),
+    optionalFirst("payment capture event",db.prepare(`SELECT e.gateway_order_id,e.gateway_payment_id FROM payment_gateway_events e
+      JOIN booking_payments p ON p.id=e.payment_id AND p.booking_id=e.booking_id
+      WHERE e.booking_id=? AND p.customer_id=? AND e.provider='razorpay' AND e.environment='sandbox'
+      AND e.processing_status='processed' AND e.event_type IN ('payment.captured','order.paid','payment_link.paid')
+      AND (e.signature_verified=1 OR (e.signature_verified=0 AND json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api'))
+      ORDER BY e.received_at DESC LIMIT 1`).bind(bookingId,customerId)),
   ]);
   return{bookingId:String(booking.id),status:String(booking.status||""),providerId:booking.provider_id?String(booking.provider_id):null,providerName:work?.provider_name?String(work.provider_name):null,providerModel:work?.provider_model?String(work.provider_model):null,packageName:booking.package_name?String(booking.package_name):null,scheduledStart:String(booking.scheduled_start||""),scheduledEnd:String(booking.scheduled_end||""),totalAmount:Number(booking.total_amount||0),currency:String(payment?.currency||booking.currency||"INR"),paymentStatus:payment?.status?String(payment.status):null,paymentId:payment?.id?String(payment.id):null,gatewayOrderId:event?.gateway_order_id?String(event.gateway_order_id):intent?.gateway_order_id?String(intent.gateway_order_id):null,gatewayPaymentId:event?.gateway_payment_id?String(event.gateway_payment_id):null,pets:pets.results.map(row=>({id:String(row.id),name:String(row.name||"Pet"),species:String(row.species||"other"),breed:row.breed?String(row.breed):null})),degraded:degradation.entries()};
 }
