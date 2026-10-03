@@ -3,6 +3,6 @@
   "sha256": {
     "grooming_handlers": "df4f0ea4cadaec6f599953264ef068d56d60e77a68412cf46de3326d62549999",
     "app/v2/page.tsx": "b54b8cb40859e9406aef67f1717c5db15acc05da175283a4b10644b3e194cf5f",
-    "app/mobile-app/stay-flow.tsx": "0eabf77be93521943847c83c6923a802e322cd83c21e3bc45ba3ac1d1a852fa6"
+    "app/mobile-app/stay-flow.tsx": "2070dea42cb0da99b45efcd3dc2f9d23e1ac3f3ea17d6437abe1c19f0096ebfa"
   }
 }

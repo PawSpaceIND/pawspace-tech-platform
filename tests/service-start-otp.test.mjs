@@ -734,3 +734,11 @@ test('route action selection cannot grant another role or invoke inherited opera
  assert.equal(w.challenges('ACTION-BINDING').length,0);
  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM service_start_otp_action_keys').get().n,0);
 });
+
+test('atomic OTP claim keeps a constant 17 bindings for large configured service/status sets',async()=>{
+ const many=Array.from({length:150},(_,i)=>`synthetic_${i}`).join(',');
+ const w=await world({PAWSPACE_SERVICE_START_OTP_SERVICES:`grooming,${many}`,PAWSPACE_SERVICE_START_OTP_ELIGIBLE_STATUSES:`assigned,${many}`});w.seedBooking('WIDE-POLICY');
+ const issued=await w.body(await w.issue(w.customer,'WIDE-POLICY'));assert.equal(issued.status,200);
+ let claims=0;const prepare=w.db.prepare.bind(w.db);w.db.prepare=sql=>{const statement=prepare(sql);const bind=statement.bind.bind(statement);statement.bind=(...values)=>{if(sql.startsWith("UPDATE service_start_otp_challenges SET status='verified'")){claims++;assert.equal(values.length,17);assert.ok(sql.includes('json_each(?)'))}return bind(...values)};return statement};
+ const verified=await w.body(await w.verify(w.provider,'WIDE-POLICY',issued.data.code,'WIDE-KEY'));assert.equal(verified.status,200);assert.equal(claims,1);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM service_start_otp_action_keys').get().n,1);
+});

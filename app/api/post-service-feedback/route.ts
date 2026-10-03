@@ -48,8 +48,8 @@ async function customerContext(request:Request,requestedCustomerId?:string){
 export async function GET(request:Request){
   try{
     const url=new URL(request.url),bookingId=text(url.searchParams.get("bookingId"));
-    if(!bookingId)return json({error:"A booking is required"},400);
     const{db,customerId}=await customerContext(request,url.searchParams.get("customerId")||undefined);
+    if(!bookingId)return json({error:"A booking is required"},400);
     const policy=feedbackCallPolicyFromEnv(await runtime());
     const[invitation,call]=await Promise.all([postServiceReviewInvitation(db,{bookingId,customerId}),feedbackCallEligibility(db,{bookingId,customerId,policy})]);
     return json({data:{invitation,call}});
@@ -81,8 +81,8 @@ export async function POST(request:Request){
       return await dispatchDue(request,body);
     }
     const bookingId=text(body.bookingId);
-    if(!bookingId)return json({error:"A booking is required"},400);
     const{db,actor,customerId}=await customerContext(request,body.customerId);
+    if(!bookingId)return json({error:"A booking is required"},400);
     if(action==="schedule_call"){
       const data=await scheduleFeedbackCall(db,{bookingId,customerId,preferredAt:preferredAtMs(body.preferredAt),consentConfirmed:body.consentConfirmed===true,consentSource:"customer_app_feedback_call_request",actorId:customerId,policy:feedbackCallPolicyFromEnv(await runtime())});
       await securityAudit(db,actor,"post_service_feedback.call.schedule","customer",customerId,"completed",{bookingId,scheduleId:data.schedule.id,scheduledFor:data.schedule.scheduledFor,duplicatePrevented:data.duplicatePrevented});

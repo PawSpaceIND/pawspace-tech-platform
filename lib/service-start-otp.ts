@@ -165,13 +165,12 @@ type ClaimInput = { policy: ServiceStartOtpPolicy; challengeId: string; bookingI
  */
 async function claimChallenge(db: Db, c: ClaimInput): Promise<"claimed" | "unclaimed" | "key_taken"> {
   const statuses = [...c.policy.eligibleStatuses], services = [...c.policy.services];
-  const marks = (list: string[]) => list.map(() => "?").join(",");
   const claim = db.prepare(
     "UPDATE service_start_otp_challenges SET status='verified',verified_at=?,verified_by=?,consent_id=?,verifier_salt=NULL,verifier_hash=NULL,closed_at=? " +
     "WHERE id=? AND booking_id=? AND status='issued' AND attempts<? AND expires_at>=? AND customer_id=? AND provider_id=? AND service_code=? " +
     "AND EXISTS (SELECT 1 FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id WHERE b.id=? AND b.customer_id=? AND w.provider_id=? " +
-    `AND LOWER(b.service_code)=? AND LOWER(b.service_code) IN (${marks(services)}) AND LOWER(b.status) IN (${marks(statuses)}))`,
-  ).bind(c.now, c.actorId, c.consentId, c.now, c.challengeId, c.bookingId, c.policy.maxAttempts, c.now, c.customerId, c.providerId, c.serviceCode, c.bookingId, c.customerId, c.providerId, c.serviceCode, ...services, ...statuses);
+    `AND LOWER(b.service_code)=? AND LOWER(b.service_code) IN (SELECT value FROM json_each(?)) AND LOWER(b.status) IN (SELECT value FROM json_each(?)))`,
+  ).bind(c.now, c.actorId, c.consentId, c.now, c.challengeId, c.bookingId, c.policy.maxAttempts, c.now, c.customerId, c.providerId, c.serviceCode, c.bookingId, c.customerId, c.providerId, c.serviceCode, JSON.stringify(services), JSON.stringify(statuses));
   const reserve = db.prepare(
     "INSERT INTO service_start_otp_action_keys (idempotency_key,booking_id,actor_id,action,result_json,created_at) SELECT ?,?,?,'verify',?,? FROM service_start_otp_challenges WHERE id=? AND status='verified' AND consent_id=?",
   ).bind(c.idempotencyKey, c.bookingId, c.actorId, JSON.stringify(c.artifact), c.now, c.challengeId, c.consentId);

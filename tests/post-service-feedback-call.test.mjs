@@ -639,3 +639,10 @@ test('route dispatch selection and optional customer identity never grant a diff
  assert.equal((await post(scheduleBody({customerId:'CON-OTHER',preferredAt:daytimeTomorrowIso()}),{cookie:owner.cookie})).status,403);
  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM post_service_feedback_calls').get().n,0);
 });
+
+test('route authenticates missing-booking customer requests before returning validation details',async()=>{
+ const {sqlite,owner,provider}=await routeWorld();
+ for(const headers of [{},{cookie:provider.cookie},staff(FINANCE)]){assert.equal((await get('',headers)).status,401);assert.equal((await post({},headers)).status,401)}
+ assert.equal((await get('',{cookie:owner.cookie})).status,400);assert.equal((await post({}, {cookie:owner.cookie})).status,400);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM post_service_feedback_calls').get().n,0);
+});
