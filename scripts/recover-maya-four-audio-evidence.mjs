@@ -37,7 +37,7 @@ const settings=await cfRead('/workers/scripts/pawspace-staging/settings');
 await save('current-staging-not-historical',{annotation:settings.annotations?.['workers/message'],aiModelBindings:settings.bindings.filter(b=>b.type==='plain_text'&&/^PAWSPACE_AI_(VOICE_MODEL|PROVIDER_MODEL|PROVIDER)$/.test(b.name)).map(b=>({name:b.name,value:b.text??b.value}))});
 const tables=await q("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'ai_%' OR name LIKE '%pet%' OR name LIKE '%booking%' OR name LIKE '%voice%' OR name LIKE '%payment%' OR name LIKE '%communication%')");
 await save('schema-table-names',tables);
-for(const name of ['canonical_pets','canonical_bookings','ai_voice_calls','ai_conversation_turns','ai_handoffs','ai_tool_executions','ai_provider_runtime_requests','ai_runtime_requests','ai_usage_events','communication_messages','communication_threads']){
+for(const name of ['canonical_pets','canonical_bookings','ai_voice_calls','ai_conversation_turns','ai_handoffs','ai_context_snapshots','ai_suggestions','ai_tool_execution_requests','ai_tool_audit_events','ai_provider_runtime_requests','ai_runtime_requests','ai_usage_events','communication_messages','communication_threads']){
  if(!tables.some(t=>t.name===name))continue;
  const schema=await q('PRAGMA table_info('+name+')');await save('schema-'+name,schema);
  const cols=schema.map(x=>x.name);
