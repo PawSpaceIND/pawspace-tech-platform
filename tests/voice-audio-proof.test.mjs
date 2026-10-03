@@ -141,7 +141,8 @@ test('non-dialing demos verify encrypted phone controls through runtime truth, n
 });
 test('audio proof rejects the real rollout refusal without inventing a queued handoff',async t=>{
  const spoken=await spokenHandoff(t,{staffPause:false,rolloutBlocked:true});
- assert.match(spoken,/AI voice cannot continue this conversation/);
+ assert.match(spoken,/team needs to help.*no live transfer has been made/);
+ assert.doesNotMatch(spoken,/queued|nobody has joined/i);
  assert.equal(audioProofChecks({...valid,reply:spoken}).substantiveReply,false);
  assert.equal(audioProof({...valid,reply:spoken}),false);
 });

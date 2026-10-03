@@ -4,6 +4,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import WatiConversation,{type WatiChoice,type WatiMessage} from "../../components/wati-chat/WatiConversation";
 import styles from "./page.module.css";
 import {createTranscriptPoll} from "../../../lib/v2/transcript-poll";
+import {withCallbackNotices,type LocalCallbackNotice} from "../../../lib/v2/callback-notices";
 
 /*
  * PawSpace web chat, WATI-style: the bot opens with service buttons and a short questionnaire, PawSpace
@@ -12,7 +13,7 @@ import {createTranscriptPoll} from "../../../lib/v2/transcript-poll";
  */
 type Identity="checking"|"customer"|"guest"|"unavailable";
 type BotReply={text:string;choices:WatiChoice[];inputHint:string|null};
-type PublicTurn={data?:{bot?:BotReply;display?:string;ai?:{turn?:{output?:string}}|null;lead?:{captured?:boolean}|null;verify?:{phone:string;sandboxCode?:string}|null;verified?:boolean;transcript?:Transcript|null};error?:string};
+type PublicTurn={data?:{bot?:BotReply;display?:string;ai?:{turn?:{output?:string}}|null;lead?:{captured?:boolean}|null;verify?:{phone:string;sandboxCode?:string}|null;verified?:boolean;transcript?:Transcript|null;callbackNotice?:string|null;callbackOutcome?:string|null};error?:string};
 type ThreadMessage={id:string;role:"customer"|"ai"|"bot"|"team";text:string;createdAt:number;author:string|null;choices?:WatiChoice[];inputHint?:string|null};
 type Transcript={threadId:string|null;messages:ThreadMessage[];handoff:{active:boolean;status:"queued"|"staff_active"|null}};
 
@@ -56,7 +57,8 @@ export default function V2Chat(){
  /* Every change to the shown conversation bumps this; a read that started before a newer change (a tap's
   * reply, the customer's own message) is dropped instead of putting an older conversation back. */
  const shownVersion=useRef(0);
- const showTranscript=useCallback((next:Transcript|((current:Transcript|null)=>Transcript|null))=>{shownVersion.current+=1;setTranscript(next);},[]);
+ const callbackNotices=useRef<LocalCallbackNotice<ThreadMessage>[]>([]);
+ const showTranscript=useCallback((next:Transcript|((current:Transcript|null)=>Transcript|null))=>{shownVersion.current+=1;setTranscript(current=>{const updated=typeof next==="function"?next(current):next;return updated?withCallbackNotices(updated,callbackNotices.current):updated;});},[]);
  const loadTranscript=useCallback(async(signal?:AbortSignal)=>{const startedAt=shownVersion.current;const r=await fetch("/api/ai-web-chat?mode=thread",{cache:"no-store",signal});if(signal?.aborted)return null;if(r.status===401){setIdentity("guest");return null;}if(!r.ok)throw new Error("Chat updates are temporarily unavailable");const payload=await r.json().catch(()=>null) as {data?:Transcript}|null;if(!payload||!("data" in payload))throw new Error("Invalid chat update");if(signal?.aborted)return null;if(payload?.data&&shownVersion.current===startedAt)showTranscript(payload.data);return payload?.data||null;},[showTranscript]);
  const withTeam=Boolean(transcript?.handoff.active);
  useEffect(()=>{if(mode!=="authenticated"||identity!=="customer")return;let active=true;const controller=new AbortController();
@@ -89,12 +91,19 @@ export default function V2Chat(){
     if(data?.lead?.captured)next.push({id:localId(),side:"system",text:"Your details were shared with the PawSpace team"});
     // Sandbox environments return the code instead of sending an SMS; production never does.
     if(data?.verify?.sandboxCode)next.push({id:localId(),side:"system",text:`Test environment - your code is ${data.verify.sandboxCode}`});
+    if(data?.callbackNotice)next.push({id:localId(),side:"system",text:data.callbackNotice});
+    else if(data?.callbackOutcome==="unsupported_scheduling")next.push({id:localId(),side:"system",text:"Scheduling is not available. The PawSpace team has been asked to follow up."});
     setPublicMessages(current=>[...current,...next]);setPublicHint(data?.bot?.inputHint||null);
    }else{
     // The customer's message shows at once; the server's answer replaces the conversation with the stored one.
     const sentAt=Date.now();showTranscript(current=>current?{...current,messages:[...current.messages,{id:`pending-${sentAt}`,role:"customer",text:shown,createdAt:sentAt} as Transcript["messages"][number]]}:current);
-    const payload=await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key}) as {data?:{transcript?:Transcript|null}}|null;
-    if(payload?.data?.transcript)showTranscript(payload.data.transcript);else await loadTranscript();
+    const payload=await post({mode,bot:true,message:choice?"":text,choiceId,idempotencyKey:"v2-web-"+pending.current.key}) as {data?:{transcript?:Transcript|null;callbackNotice?:string|null;callbackOutcome?:string|null}}|null;
+    const notice=payload?.data?.callbackNotice||(payload?.data?.callbackOutcome==="unsupported_scheduling"?"Scheduling is not available. The PawSpace team has been asked to follow up.":null);
+    const updated=payload?.data?.transcript||await loadTranscript();
+    if(updated){
+     if(notice){const id=`callback-notice-${pending.current.key}`;callbackNotices.current=[...callbackNotices.current.filter(item=>item.message.id!==id),{threadId:updated.threadId,message:{id,role:"bot",text:notice,createdAt:Date.now(),author:null}}];}
+     showTranscript(updated);
+    }
    }
    setDraft("");pending.current=null;
   }catch(cause){setError(cause instanceof Error?cause.message:"Chat is temporarily unavailable.");if(mode==="authenticated")void loadTranscript().catch(()=>{});}

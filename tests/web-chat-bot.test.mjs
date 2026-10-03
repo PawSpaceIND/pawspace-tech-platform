@@ -150,6 +150,7 @@ function answerFor(reply) {
   if (prompt.includes("name")) return { text: "Asha Rao" };
   if (prompt.includes("mobile")) return { text: "98765 43210" };
   if (prompt.includes("email")) return { text: "asha@example.com" };
+  if (prompt.includes("am/pm")) return { text: "10:30 AM" };
   if (prompt.includes("dd/mm")) return { text: "28/09" };
   return { text: "Indiranagar, Bengaluru 560038" };
 }
@@ -517,7 +518,7 @@ test("WATI grooming: 'No' to confirm starts again; an active subscription goes t
   assert.equal(subscription.event.type, "completed");
   assert.equal(subscription.event.followUp, "team");
   assert.match(subscription.event.summary, /Add-ons list: 1, 3[\s\S]*New address: New flat, HSR Layout/);
-  assert.match(subscription.reply.text, /for order confirmation[\s\S]*Space for grooming/);
+  assert.match(subscription.reply.text, /discuss your subscription request[\s\S]*Space for grooming/);
   const same = walk("grooming", ["Yes", "30/09", "3pm-5pm", "No", "Yes, it's same"]).result;
   assert.equal(same.event.type, "completed", "the same address ends the subscription branch");
 });
@@ -562,7 +563,7 @@ test("WATI boarding and sitting: new booking, existing booking, and the eldest p
 });
 
 test("WATI pet taxi: round trips ask the waiting period, and 'No' to the summary asks what to change", () => {
-  const { result, asked } = walk("pet_taxi", ["Incity", "Dog", "1", "3+ years", "1-2", "Yes", "Vet Visits", "05/10", "10:30 AM", "Round Trip", "60 mins", "HSR Layout", "Cessna vet clinic", "No", "Pick up at 11 AM instead"]);
+  const { result, asked } = walk("pet_taxi", ["Incity", "Dog", "1", "3+ years", "1-2", "Yes", "Vet Visits", "05/10", "10:30 AM", "Round Trip", "60 mins", "HSR Layout", "Cessna vet clinic", "No", "Pick up at 11 AM instead", "Yes"]);
   assert.match(asked[10], /waiting period/);
   assert.match(asked[13], /Please confirm the following details[\s\S]*Handler: Yes[\s\S]*Do you confirm the above details\?/);
   assert.equal(result.event.type, "completed");

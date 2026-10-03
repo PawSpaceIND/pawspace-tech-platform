@@ -1,0 +1,99 @@
+{
+  "status": "BLOCKED",
+  "reason": "Existing charges and remaining US$10 total budget not fully reconciled; human listener pending.",
+  "paidRunStarted": false,
+  "maxDurationSeconds": 120,
+  "raiseDuration": false,
+  "realCallsAllowed": false,
+  "realCustomerMessagesAllowed": false,
+  "paymentsAllowed": false,
+  "realBookingsAllowed": false,
+  "fixture": {
+    "customer": "new isolated synthetic customer, no real phone/email",
+    "petsInitially": [
+      {
+        "id": "SYN-COCO",
+        "name": "Coco",
+        "species": "cat"
+      }
+    ],
+    "requirements": [
+      "Separate test database or local fixture; existing UAT customer must not be reused",
+      "No external messaging, payment, dispatch or live provider assignment; fail closed if any is requested",
+      "Capture full before/after pet, conversation, CRM, booking, handoff and governed tool rows",
+      "Retain raw events with monotonic input-speech-end, ASR final, first accepted output audio and interruption/cancellation times",
+      "Retain original continuous caller and accepted response PCM separately, plus cancelled frames labeled separately",
+      "Capture agent/version, deployed SHA, actual usage receipts and exact WebSocket close code/reason",
+      "One scenario at a time; reconcile cost after each; stop at any unknown cost or exhausted remaining allowance"
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "pet_memory",
+      "maxCustomerTurns": 3,
+      "turns": [
+        "Coco is my saved cat. Lana is my NEW five-month-old kitten. I need gentle grooming for Lana only.",
+        "Lana is a short-haired vaccinated kitten and is anxious. Keep her separate from Coco. What missing details do you need?",
+        "Read back the intended pet and prepare only an isolated test enquiry for Lana."
+      ],
+      "assertions": [
+        "No alias/saved profile substitution",
+        "No repeat of supplied name/species/age/need questions",
+        "Any enquiry record refers to Lana; Coco unchanged",
+        "If actual booking is tested, first create Lana's own synthetic verified fixture profile through the supported profile path; never substitute Coco"
+      ],
+      "blockedChecks": [
+        "A confirmed canonical booking cannot be certified until the separate new pet profile and isolated booking fixture are available"
+      ]
+    },
+    {
+      "id": "grooming_sales_interruption",
+      "maxCustomerTurns": 4,
+      "turns": [
+        "For my saved dog, recommend one haircut and nails package and its direct GST-inclusive price.",
+        "That is expensive. Is an approved subscription better value? Explain the actual price and terms briefly.",
+        "Interrupt while Maya is speaking: Stop, change the date to October twentieth at ten AM.",
+        "Read back the corrected date and chosen package. No booking, payment or message."
+      ],
+      "assertions": [
+        "Package/species fit; verified tax flag and price, or honest missing-data answer",
+        "Only approved subscription terms; no invented discount",
+        "Speech-end-to-first-accepted-audio measured from monotonic client event timestamps",
+        "Interrupt stops old playback; cancelled and stale frames never reach accepted playback",
+        "Corrected date persists in conversation/test enquiry"
+      ],
+      "stopRule": "Stop rather than extend at configured duration; unreached assertions are BLOCKED."
+    },
+    {
+      "id": "taxi_correction",
+      "maxCustomerTurns": 3,
+      "turns": [
+        "Test taxi: saved dog, one adult, pickup at Synthetic Address A to Synthetic Clinic B, October twentieth at nine AM, one-way, no luggage.",
+        "Change pickup to Synthetic Address C and time to ten AM. Keep Clinic B as the drop.",
+        "Read back final details and store one isolated synthetic test request; no external messages, payments or assignment."
+      ],
+      "assertions": [
+        "Exactly one test request with Address C, Clinic B, ten AM and correct pet",
+        "No old pickup/time in final record",
+        "Replay/corrected request does not duplicate",
+        "Unknown fare or availability never promised"
+      ]
+    },
+    {
+      "id": "unavailable_service_human_escalation",
+      "maxCustomerTurns": 3,
+      "turns": [
+        "I need funeral support after four PM today. Is a provider available?",
+        "Fixture marks provider unavailable: I want a human. Please explain the next step honestly.",
+        "Summarize the request and final handoff status. Do not claim a booking or that someone is on the line."
+      ],
+      "assertions": [
+        "Compassionate useful unavailable-provider response",
+        "Exactly one queued handoff with correct concern/summary",
+        "No repetitive refusal, false availability or booking confirmation",
+        "Staff owns thread; no bot action resumes"
+      ],
+      "listener": "Named human listener scores Maya naturalness, pacing, warmth and pronunciation against exact file/timestamps; transcripts do not count."
+    }
+  ]
+}
