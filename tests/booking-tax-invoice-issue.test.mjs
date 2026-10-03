@@ -33,7 +33,7 @@ const istDay = (ms) => new Date(ms + IST).toISOString().slice(0, 10);
 const NOW = Date.now(), TODAY = istDay(NOW);
 const fyShort = (date) => { const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)), s = m >= 4 ? y : y - 1; return `${String(s % 100).padStart(2, "0")}-${String((s + 1) % 100).padStart(2, "0")}`; };
 
-async function invoiceWorld({ seller = SELLER, registration = true, series = "TKP/{FY}/" } = {}) {
+async function invoiceWorld({ seller = SELLER, registration = true, series = "TKP/{FY}/", inclusive = true } = {}) {
   const { sqlite, db } = world("__BOOKING_INVOICE_DB__", "__BOOKING_INVOICE_ENV__", PROD_ENV);
   sqlite.exec(`
     CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,pet_ids_json TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,created_at INTEGER,updated_at INTEGER);
@@ -50,6 +50,7 @@ async function invoiceWorld({ seller = SELLER, registration = true, series = "TK
   sqlite.prepare("INSERT INTO tax_policy_versions (id,entity_id,version,status,effective_from,effective_to,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES (?,?,1,'active','2024-01-01',NULL,?,'SEED-GST-APPROVAL','founder',1,1,1)")
     .run(POLICY, ENTITY, JSON.stringify({ ...(seller ? { seller } : {}), defaultComponents: [{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }] }));
   if (series) sqlite.prepare("INSERT INTO finance_document_series (id,entity_id,document_type,prefix,next_number,padding,policy_id,status,updated_at) VALUES ('SERIES-TKP',?,'invoice',?,1,5,?,'active',1)").run(ENTITY, series, POLICY);
+  if(inclusive){const {saveGstSetting}=await import("../lib/gst-setting.ts");await saveGstSetting(db,{cityId:"*",ratePercent:18,method:"extract_inclusive",effectiveFrom:"2024-01-01",reason:"Owner approved inclusive customer total invoice fixture",actorId:FINANCE});}
   return { sqlite, db };
 }
 async function activeTerm(db, { service, model = "commission_standard", share = 0.70 }) {
@@ -75,7 +76,7 @@ test("completion issues exactly one tax invoice from the seller in the policy; a
   sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-G','Priya',  'commission')").run();
   booking(sqlite, "BK-GROOM", { pets: [["PET-1", "Bruno"]], addOns: ["Nail trim"] });
   const fact = await complete(db, "BK-GROOM");
-  assert.equal(fact.gstLiability, 54, "the books are unchanged: 54 on the 300 commission");
+  assert.equal(fact.gstLiability, 45.76, "the books are unchanged: 54 on the 300 commission");
 
   let rows = invoiceRows(sqlite);
   assert.equal(rows.length, 1, "one invoice at completion");
@@ -105,18 +106,18 @@ test("a commission booking shows the provider's charges collected on their behal
   booking(sqlite, "BK-COMM", { pets: [["PET-1", "Bruno"]], addOns: ["Nail trim"] });
   await complete(db, "BK-COMM");
   const [invoice] = invoiceRows(sqlite);
-  assert.deepEqual([invoice.subtotal, invoice.tax_total, invoice.amount_received, invoice.total, invoice.document_kind], [300, 54, 1000, 1000, "tax_invoice"], "taxable 300, GST 54, and the customer paid 1,000 - never subtotal + tax");
+  assert.deepEqual([invoice.subtotal, invoice.tax_total, invoice.amount_received, invoice.total, invoice.document_kind], [254.24, 45.76, 1000, 1000, "tax_invoice"], "provider700 plus taxable254.24 plus GST45.76 reconcile to the approved customer total");
   const [provider, fee] = linesOf(sqlite, invoice.id);
   assert.equal(provider.snap.role, "collected_on_behalf");
   assert.equal(provider.snap.description, "Grooming by Priya: charges collected on the provider's behalf");
   assert.deepEqual([provider.snap.lineAmount, provider.taxable_amount, provider.tax_amount, provider.snap.classificationCode], [700, 0, 0, null], "700, no SAC, no GST, not part of the taxable value");
-  assert.deepEqual([fee.snap.description, fee.snap.classificationCode, fee.snap.lineAmount, fee.taxable_amount, fee.tax_amount], ["PawSpace platform and service fee", "998599", 300, 300, 54]);
-  assert.deepEqual(fee.snap.components, [{ code: "CGST", rate: 9, amount: 27 }, { code: "SGST", rate: 9, amount: 27 }], "Karnataka: CGST 9% + SGST 9%");
+  assert.deepEqual([fee.snap.description, fee.snap.classificationCode, fee.snap.lineAmount, fee.taxable_amount, fee.tax_amount], ["PawSpace platform and service fee", "998599", 300, 254.24, 45.76]);
+  assert.deepEqual(fee.snap.components, [{ code: "CGST", rate: 9, amount: 22.88 }, { code: "SGST", rate: 9, amount: 22.88 }], "Karnataka: CGST 9% + SGST 9%");
   assert.equal(fee.snap.pos_rule, "default_recipient_or_service", "the place-of-supply rule used is recorded on the line");
 
   const doc = await invoices.bookingInvoiceDocument(db, "BK-COMM");
   assert.equal(doc.title, "Tax invoice");
-  assert.deepEqual([doc.taxableValue, doc.cgst, doc.sgst, doc.igst, doc.totalTax, doc.collectedOnBehalf, doc.amountReceived], [300, 27, 27, 0, 54, 700, 1000]);
+  assert.deepEqual([doc.taxableValue, doc.cgst, doc.sgst, doc.igst, doc.totalTax, doc.collectedOnBehalf, doc.amountReceived], [254.24, 22.88, 22.88, 0, 45.76, 700, 1000]);
   assert.deepEqual(doc.placeOfSupply, { code: "29", name: "Karnataka", rule: "default_recipient_or_service" });
   assert.deepEqual([doc.buyer.name, doc.buyer.state, doc.buyer.stateCode], ["Asha Rao", "Karnataka", "29"]);
   assert.equal(doc.amountInWords, "Rupees One Thousand Only");
@@ -124,7 +125,7 @@ test("a commission booking shows the provider's charges collected on their behal
 
   // Rule 46: the printable page carries every particular, the customer's state (proviso to Rule 46(f)) and no invented seller.
   const html = invoices.renderBookingInvoiceHtml(doc);
-  for (const field of [SELLER.legalName, SELLER.address, `GSTIN: ${GSTIN}`, "State: Karnataka (29)", doc.invoiceNumber, "Place of supply: Karnataka (29)", "Customer state: Karnataka (29)", "Asha Rao", "12 Park Road, Jayanagar, Bengaluru 560041", "Phone: 9000000001", "998599", "Other support services n.e.c.", "Tax payable on reverse charge: No", "Rupees One Thousand Only", "₹1,000.00", "₹300.00", "₹27.00", "This is a computer-generated tax invoice.", "Authorised signatory", "Pets: Bruno", "Add-ons: Nail trim"])
+  for (const field of [SELLER.legalName, SELLER.address, `GSTIN: ${GSTIN}`, "State: Karnataka (29)", doc.invoiceNumber, "Place of supply: Karnataka (29)", "Customer state: Karnataka (29)", "Asha Rao", "12 Park Road, Jayanagar, Bengaluru 560041", "Phone: 9000000001", "998599", "Other support services n.e.c.", "Tax payable on reverse charge: No", "Rupees One Thousand Only", "₹1,000.00", "₹300.00", "₹22.88", "This is a computer-generated tax invoice.", "Authorised signatory", "Pets: Bruno", "Add-ons: Nail trim"])
     assert.ok(html.includes(field), `the invoice shows ${field}`);
   assert.equal(html.includes("₹1,054.00"), false, "the customer is never shown subtotal + tax");
 });
@@ -135,18 +136,18 @@ test("an own supply files one line of the full amount paid, CGST + SGST in Karna
   sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-FT','Ravi','full_time')").run();
   booking(sqlite, "BK-OWN", { provider: "PRV-FT" });
   booking(sqlite, "BK-OWN-HYD", { provider: "PRV-FT", city: "hyd" });
-  assert.equal((await complete(db, "BK-OWN")).gstLiability, 180);
+  assert.equal((await complete(db, "BK-OWN")).gstLiability, 152.54);
   await complete(db, "BK-OWN-HYD");
   const [blr, hyd] = invoiceRows(sqlite);
-  assert.deepEqual([blr.subtotal, blr.tax_total, blr.amount_received], [1000, 180, 1000], "taxable value 1,000 and GST 180 (decision A), the customer paid 1,000");
+  assert.deepEqual([blr.subtotal, blr.tax_total, blr.amount_received], [847.46, 152.54, 1000], "taxable847.46 plus GST152.54 reconcile to customer total1000");
   const [line] = linesOf(sqlite, blr.id);
-  assert.deepEqual([line.snap.role, line.snap.classificationCode, line.snap.lineAmount, line.taxable_amount, line.tax_amount], ["taxable", "998612", 1000, 1000, 180]);
+  assert.deepEqual([line.snap.role, line.snap.classificationCode, line.snap.lineAmount, line.taxable_amount, line.tax_amount], ["taxable", "998612", 1000, 847.46, 152.54]);
   assert.match(line.snap.description, /^Grooming: Full groom on /, "the service, its package and date");
-  assert.deepEqual(line.snap.components, [{ code: "CGST", rate: 9, amount: 90 }, { code: "SGST", rate: 9, amount: 90 }]);
+  assert.deepEqual(line.snap.components, [{ code: "CGST", rate: 9, amount: 76.27 }, { code: "SGST", rate: 9, amount: 76.27 }]);
   const hydLine = linesOf(sqlite, hyd.id)[0];
-  assert.deepEqual(hydLine.snap.components, [{ code: "IGST", rate: 18, amount: 180 }], "performed in Telangana: IGST 18% from the Karnataka registration");
+  assert.deepEqual(hydLine.snap.components, [{ code: "IGST", rate: 18, amount: 152.54 }], "performed in Telangana: IGST 18% from the Karnataka registration");
   const hydDoc = await invoices.bookingInvoiceDocument(db, "BK-OWN-HYD");
-  assert.deepEqual([hydDoc.placeOfSupply.name, hydDoc.buyer.state, hydDoc.igst, hydDoc.supplyType], ["Telangana", "Telangana", 180, "inter"]);
+  assert.deepEqual([hydDoc.placeOfSupply.name, hydDoc.buyer.state, hydDoc.igst, hydDoc.supplyType], ["Telangana", "Telangana", 152.54, "inter"]);
   assert.ok(invoices.renderBookingInvoiceHtml(hydDoc).includes("Customer state: Telangana (36)"));
   const doc = await invoices.bookingInvoiceDocument(db, "BK-OWN");
   assert.ok(invoices.renderBookingInvoiceHtml(doc).includes("Animal husbandry services"), "the official SAC description is printed");
@@ -180,9 +181,9 @@ test("funeral is a bill of supply: outside GST (Schedule III) by default, exempt
   // Taxable: the payout engine charges GST on the amount PawSpace makes, and the invoice shows it.
   await funeral.saveFuneralGstTreatment(db, { treatment: "taxable_18", effectiveFrom: "2024-01-02", reason: "CA reads funeral as taxable", actorId: FINANCE });
   booking(sqlite, "BK-FUN-3", { service: "funeral_memorial", provider: "PRV-VENDOR" });
-  assert.equal((await complete(db, "BK-FUN-3")).gstLiability, 54);
+  assert.equal((await complete(db, "BK-FUN-3")).gstLiability, 45.76);
   const third = invoiceRows(sqlite)[2];
-  assert.deepEqual([third.document_kind, third.subtotal, third.tax_total], ["tax_invoice", 300, 54]);
+  assert.deepEqual([third.document_kind, third.subtotal, third.tax_total], ["tax_invoice", 254.24, 45.76]);
 });
 
 test("the FY series rolls over by itself: 31 March and 1 April get different series, each starting at 00001", async () => {
@@ -210,7 +211,7 @@ test("refusals are configuration_required with a plain message, and never block 
   const noSeller = await invoiceWorld({ seller: null });
   await activeTerm(noSeller.db, { service: "grooming", model: "commission_groomer" });
   booking(noSeller.sqlite, "BK-1");
-  assert.equal((await complete(noSeller.db, "BK-1")).gstLiability, 54, "the completion itself succeeds");
+  assert.equal((await complete(noSeller.db, "BK-1")).gstLiability, 45.76, "the completion itself succeeds");
   assert.equal(invoiceRows(noSeller.sqlite).length, 0);
   const refused = await invoices.issueBookingInvoice(noSeller.db, { bookingId: "BK-1", actorId: FINANCE });
   assert.deepEqual([refused.status, refused.key], ["refused", "active_policy_seller"]);
@@ -271,3 +272,72 @@ test("defaults are seeded from the one SAC table when missing and audited, but a
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM gst_accounting_audit_events WHERE action='sac_changed'").get().n, 1);
   assert.equal(linesOf(sqlite, own.id)[0].snap.classificationCode, "999799");
 });
+
+for(const service of ['grooming','dog_training','boarding','pet_sitting','dog_walking','pet_taxi'])test(`basis guard: ${service} refuses a new own-supply invoice whose tax exceeds the billed amount`,async()=>{
+ const {sqlite,db}=await invoiceWorld({inclusive:false});
+ await activeTerm(db,{service,model:'direct_employee',share:0});
+ sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-G','Isolated basis fixture','full_time')").run();
+ booking(sqlite,'BASIS-'+service,{service,amount:1146.65});
+ const fact=await complete(db,'BASIS-'+service);
+ assert.equal(fact.gstLiability,206.40,'existing configured percent-of-base GST is preserved');
+ assert.equal(fact.platformRevenueNetOfGst,940.25);
+ const result=await invoices.issueBookingInvoice(db,{bookingId:'BASIS-'+service,actorId:FINANCE});
+ assert.equal(result.status,'refused');assert.equal(result.key,'invoice_tax_total_mismatch:'+service);
+ assert.equal(invoiceRows(sqlite).length,0,'no inconsistent invoice issued');
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM finance_invoice_serial_claims').get().n,0,'refusal consumes no invoice number');
+});
+test('basis guard: commission invoice refuses tax greater than its billed platform-fee line',async()=>{
+ const {sqlite,db}=await invoiceWorld({inclusive:false});await activeTerm(db,{service:'grooming',model:'commission_groomer'});
+ sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-G','Isolated commission fixture','commission')").run();
+ booking(sqlite,'BASIS-COMM');await complete(db,'BASIS-COMM');
+ const result=await invoices.issueBookingInvoice(db,{bookingId:'BASIS-COMM',actorId:FINANCE});
+ assert.equal(result.status,'refused');assert.equal(result.key,'invoice_tax_total_mismatch:platform_commission');
+ assert.equal(invoiceRows(sqlite).length,0);
+});
+for(const service of ['grooming','dog_training','boarding','pet_sitting','dog_walking','pet_taxi'])test(`basis guard: approved inclusive ${service} reconciles invoice, completion and replay`,async()=>{
+ const {sqlite,db}=await invoiceWorld();
+ const {saveGstSetting}=await import('../lib/gst-setting.ts');
+ await saveGstSetting(db,{cityId:'blr',ratePercent:18,method:'extract_inclusive',effectiveFrom:'2024-01-01',reason:'Isolated explicit inclusive basis fixture',actorId:FINANCE});
+ await activeTerm(db,{service,model:'direct_employee',share:0});
+ sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-G','Isolated inclusive fixture','full_time')").run();
+ booking(sqlite,'BASIS-INCLUSIVE',{service,amount:1146.65});
+ const fact=await complete(db,'BASIS-INCLUSIVE');assert.equal(fact.gstLiability,174.91);assert.equal(fact.platformRevenueNetOfGst,971.74);
+ assert.equal(sqlite.prepare("SELECT total_amount FROM canonical_bookings WHERE id='BASIS-INCLUSIVE'").get().total_amount,1146.65,'approved customer total remains unchanged');
+ const [first]=invoiceRows(sqlite);assert.deepEqual([first.subtotal,first.tax_total,first.total],[971.74,174.91,1146.65]);
+ assert.equal(Number((first.subtotal+first.tax_total).toFixed(2)),first.total);
+ await complete(db,'BASIS-INCLUSIVE');const replay=await invoices.issueBookingInvoice(db,{bookingId:'BASIS-INCLUSIVE',actorId:FINANCE});
+ assert.equal(replay.status,'existing');assert.equal(replay.invoiceId,first.id);assert.equal(invoiceRows(sqlite).length,1);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM finance_invoice_serial_claims').get().n,1);
+});
+
+test('basis guard: replay preserves legacy issued invoice bytes without allocating a new number',async()=>{
+ const {sqlite,db}=await invoiceWorld();
+ await statutory.ensureStatutoryInvoiceTables(db);
+ sqlite.prepare("INSERT INTO finance_invoices (id,invoice_number,entity_id,customer_id,source_type,source_id,source_event_key,policy_id,registration_id,issue_date,currency,subtotal,tax_total,total,status,tax_snapshot_json,created_by,created_at) VALUES ('LEGACY-BASIS','TKP/26-27/09999',?,'CUS-LEGACY','booking','LEGACY-BK','booking-invoice:LEGACY-BK',?,?,'2026-10-01','INR',1146.65,206.4,1146.65,'issued',?, ?,1)").run(ENTITY,POLICY,REG,JSON.stringify({legacy:true,taxable:1146.65,tax:206.4,total:1146.65}),FINANCE);
+ const before=sqlite.prepare("SELECT * FROM finance_invoices WHERE id='LEGACY-BASIS'").get();
+ const replay=await statutory.issueInvoiceStatutory(db,{entityId:ENTITY,issueDate:TODAY,sourceEventKey:'booking-invoice:LEGACY-BK',lines:[{serviceCode:'grooming',taxableAmount:1146.65,lineAmount:1146.65}]},FINANCE);
+ assert.deepEqual(replay,before);assert.deepEqual(sqlite.prepare("SELECT * FROM finance_invoices WHERE id='LEGACY-BASIS'").get(),before);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM finance_invoice_serial_claims').get().n,0);
+});
+
+test('basis guard: non-GST and exempt new fixtures retain their bill-of-supply path',async()=>{
+ const {sqlite,db}=await invoiceWorld();await activeTerm(db,{service:'funeral_memorial'});
+ for(const [id,treatment]of [['BASIS-NONGST','non_gst'],['BASIS-EXEMPT','exempt']]){
+  if(treatment==='exempt')await funeral.saveFuneralGstTreatment(db,{treatment:'exempt',effectiveFrom:'2024-01-01',reason:'Isolated exemption preservation fixture',actorId:FINANCE});
+  booking(sqlite,id,{service:'funeral_memorial',provider:'PRV-VENDOR'});const fact=await complete(db,id);assert.equal(fact.gstLiability,0);
+  const invoice=invoiceRows(sqlite).find(row=>row.source_id===id);assert.ok(invoice);assert.equal(invoice.document_kind,'bill_of_supply');assert.equal(invoice.total,1000);assert.equal(invoice.tax_total,0);
+ }
+});
+
+ test('basis guard: approved inclusive commission keeps provider share and customer total unchanged',async()=>{
+ const {sqlite,db}=await invoiceWorld();const {saveGstSetting}=await import('../lib/gst-setting.ts');
+ await saveGstSetting(db,{cityId:'blr',ratePercent:18,method:'extract_inclusive',effectiveFrom:'2024-01-01',reason:'Owner approved inclusive allocation isolated fixture',actorId:FINANCE});
+ await activeTerm(db,{service:'grooming',model:'commission_groomer'});
+ sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-G','Isolated commission fixture','commission')").run();
+ booking(sqlite,'INCLUSIVE-COMMISSION');const fact=await complete(db,'INCLUSIVE-COMMISSION');
+ assert.equal(fact.gstLiability,45.76);assert.equal(fact.platformRevenueNetOfGst,254.24);
+ const [invoice]=invoiceRows(sqlite);assert.equal(invoice.total,1000);assert.equal(invoice.subtotal,254.24);assert.equal(invoice.tax_total,45.76);
+ const [provider,fee]=linesOf(sqlite,invoice.id);assert.equal(provider.snap.lineAmount,700);assert.equal(fee.snap.lineAmount,300);
+ assert.equal(Number((invoice.subtotal+invoice.tax_total+provider.snap.lineAmount).toFixed(2)),invoice.total);
+ await complete(db,'INCLUSIVE-COMMISSION');assert.equal(invoiceRows(sqlite).length,1);
+ });

@@ -76,3 +76,19 @@ test('a split Training booking reaches the trainer only once its deposit is capt
  assert.deepEqual(listed.map(job=>[job.trainingSessionId,job.status,job.payment.status,job.payment.mode,job.payment.amountDueNow]),[[w.sessions[0].id,'scheduled','partially_paid','split',0],[w.sessions[1].id,'locked','partially_paid','split',0]]);
  const accepted=await post('split-accept-deposit');assert.equal(accepted.status,200,JSON.stringify(accepted.body));assert.equal(accepted.body.data.status,'accepted');
 });
+
+test('issued Training financial snapshot survives policy refresh while an unissued draft adopts the new local policy',async()=>{
+ const w=await world({sessions:1,total:500,dueNow:500,packageCode:'trainer-meet-greet'});await capture(w,500);
+ const fin=await import('../lib/training-finance.ts');
+ const issued=await fin.issueTrainingInvoice(w.db,{bookingId:'FUND',reason:'Isolated issued snapshot preservation fixture',actorId:'qa-finance'});
+ const row=id=>w.sqlite.prepare('SELECT * FROM training_finance_invoices WHERE booking_id=?').get(id);
+ const facts=r=>Object.fromEntries(['id','invoice_number','status','commercial_total','tax_mode','tax_rate','taxable_amount','tax_amount','invoice_total','tax_policy_version','created_at'].map(k=>[k,r[k]]));
+ const before=facts(row('FUND'));assert.equal(before.tax_amount,76.27);assert.equal(before.invoice_total,500);
+ seedBooking(w,{id:'DRAFT-NEXT',group:'DRAFT-NEXT-G',sessions:1,total:500,dueNow:500,packageCode:'trainer-meet-greet'});
+ await materializeTrainingBooking(w.db,{bookingId:'DRAFT-NEXT',actorId:'qa'});
+ await fin.saveTrainingTaxPolicy(w.db,{cityId:'blr',taxMode:'inclusive',taxRate:20,effectiveFrom:new Date().toISOString().slice(0,10),reason:'Disposable local policy change probes issued immutability',actorId:'qa-finance'});
+ assert.deepEqual(facts(row('FUND')),before,'numbered financial document must not be recalculated by a later policy or GET refresh');
+ const draft=row('DRAFT-NEXT');assert.equal(draft.invoice_number,null);assert.equal(draft.tax_rate,20);assert.equal(draft.tax_amount,83.33);assert.equal(draft.invoice_total,500);
+ const replay=await fin.issueTrainingInvoice(w.db,{bookingId:'FUND',reason:'Isolated replay of immutable invoice',actorId:'qa-finance'});
+ assert.equal(replay.invoiceNumber,issued.invoiceNumber);assert.equal(replay.duplicatePrevented,true);assert.deepEqual(facts(row('FUND')),before);
+});
