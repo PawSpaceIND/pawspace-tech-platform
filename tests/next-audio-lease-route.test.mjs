@@ -83,5 +83,5 @@ import {preservedNextAudioBytes} from './helpers/next-audio-reviewed-delta.mjs';
 test('exact reviewed workflow suffix can be reversed but any guard mutation fails',()=>{
  const path='.github/workflows/elevenlabs-provider-preflight.yml',bytes=readFileSync(path),before=preservedNextAudioBytes(path,bytes);
  assert.ok(!before.toString().includes('next-bounded-audio:'));
- for(const [a,b] of [["test \"$GITHUB_RUN_ATTEMPT\" = \"1\"","true"],["group: pawspace-staging-sweep","group: other"],["node --experimental-strip-types scripts/next-ten-audio-runner.mjs","node old-runner.mjs"]])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(bytes.toString().replace(a,b))));
+ for(const [a,b] of [["test \"$GITHUB_RUN_ATTEMPT\" = \"1\"","true"],["group: pawspace-staging-sweep","group: other"],["node --experimental-strip-types scripts/next-ten-audio-runner.mjs","node old-runner.mjs"]])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(before.toString()+bytes.toString().slice(before.length).replace(a,b))));
 });
