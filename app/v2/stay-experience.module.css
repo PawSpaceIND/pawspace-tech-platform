@@ -16,3 +16,11 @@
 
 .page.page { background:var(--brand-bg) !important; color:var(--brand-text) !important; font-family:var(--paw-font) !important; --emerald:var(--brand-primary); --emerald-deep:var(--brand-hero); --emerald-soft:var(--brand-strong); --gold:var(--brand-gold); --ink:var(--brand-text); --muted:var(--brand-muted); --cream:var(--brand-bg); --paper:var(--brand-surface); --line:var(--brand-line); }
 .page .art{overflow:hidden;background:#f7eee4;min-height:0;aspect-ratio:1;max-height:360px}.page .art img{display:block;width:100%;height:100%;object-fit:cover}.page .hero>div{min-width:0}@media(max-width:760px){.page .art{aspect-ratio:16/9;max-height:250px}.page .art img{object-position:center 38%}}
+
+/* Stay discovery has a dedicated hero; keep its artwork visible in both styles. */
+.page .art img { display:block !important; }
+/* Navigation remains reachable in the page flow and cannot cover identity fields. */
+.page .dock { position:static; left:auto; bottom:auto; transform:none; width:max-content; max-width:100%; margin:24px auto 0; }
+@media(max-width:760px) { .page .dock { width:100%; } }
+/* The shared appearance control stays reachable after stay content, without floating over forms. */
+:global(body):has(.page) :global(.paw-appearance-trigger) { position:relative !important; inset:auto !important; transform:none !important; width:fit-content; min-width:44px; min-height:44px; margin:12px 16px 12px auto; }

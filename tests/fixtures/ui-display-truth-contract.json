@@ -58,12 +58,12 @@
           "const pretty = (value: unknown) => String(value || \"Not recorded\").replaceAll(\"_\", \" \").replace(/\\b\\w/g, letter => letter.toUpperCase());\n/** A customer's paid reschedule, in words Ops can act on. */\nconst rescheduleStatus = (value: unknown) => ({ quoted: \"Price shown, not paid\", awaiting_payment: \"Customer paying, time held\", paid: \"Paid, moving\", applying: \"Paid, moving\", applied: \"Paid and moved\", expired: \"Hold lapsed, not paid\", cancelled: \"Booking cancelled\", refund_requested: \"Could not move, refund raised\", refunded: \"Could not move, refunded\", move_failed: \"Could not move, needs support\" } as Record<string, string>)[String(value)] ?? pretty(value);"
         ],
         [
-          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} \u00b7 {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} \u00b7 ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article></div></div>}",
-          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} \u00b7 {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} \u00b7 ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article><article><span>Reschedule payments</span><b>{selected.rescheduleRequests?.length ?? 0}</b><p>{selected.rescheduleRequests?.[0] ? `${rescheduleStatus(selected.rescheduleRequests[0].status)} \u00b7 ${money(selected.rescheduleRequests[0].difference_amount)} more for ${when(selected.rescheduleRequests[0].to_start)}` : \"No paid reschedule\"}</p></article></div></div>}"
+          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} · {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} · ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article></div></div>}",
+          "          {tab === \"Payments\" && <div className={styles.tabBody}><div className={styles.financeHero}><div><span>PAYMENT STATUS</span><h3>{pretty(selected.payment_status)}</h3><p>{pretty(selected.payment_mode)} · {pretty(selected.payment_method)}</p></div><b>{money(selected.payment_amount)}</b></div><div className={styles.cards}><article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway: {pretty(selected.gateway)}</p></article><article><span>Refund cases</span><b>{selected.refunds.length}</b><p>{selected.refunds[0] ? `${pretty(selected.refunds[0].status)} · ${money(selected.refunds[0].amount)}` : \"No refund requested\"}</p></article><article><span>Reschedule payments</span><b>{selected.rescheduleRequests?.length ?? 0}</b><p>{selected.rescheduleRequests?.[0] ? `${rescheduleStatus(selected.rescheduleRequests[0].status)} · ${money(selected.rescheduleRequests[0].difference_amount)} more for ${when(selected.rescheduleRequests[0].to_start)}` : \"No paid reschedule\"}</p></article></div></div>}"
         ],
         [
-          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} \u00b7 {pretty(item.status)} \u00b7 Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk \u2192</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>Refund \u00b7 {pretty(item.status)}</b><p>{money(item.amount)} \u00b7 {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking \u00b7 {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}",
-          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} \u00b7 {pretty(item.status)} \u00b7 Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk \u2192</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>{item.purpose === \"reschedule_difference\" ? \"Reschedule difference refund\" : \"Refund\"} \u00b7 {pretty(item.status)}</b><p>{money(item.amount)} \u00b7 {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}{item.gateway_payment_id ? ` \u00b7 to payment ${String(item.gateway_payment_id)}` : \"\"}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking \u00b7 {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}"
+          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} · {pretty(item.status)} · Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk →</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>Refund · {pretty(item.status)}</b><p>{money(item.amount)} · {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking · {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}",
+          "          {tab === \"Tickets & refunds\" && <div className={styles.tabBody}><div className={styles.dual}><section className={styles.feed}><header><span>LINKED TICKETS</span><h3>{selected.tickets.length}</h3></header>{selected.tickets.map(item => <article key={String(item.id)}><b>{String(item.subject)}</b><p>{pretty(item.priority)} · {pretty(item.status)} · Level {Number(item.escalation_level || 0)}</p><small>Customer sees: {String(item.customer_status)}</small></article>)}{!selected.tickets.length && <p className={styles.clear}>No customer-experience ticket linked.</p>}<Link href=\"/crm\">Open CX ticket desk →</Link></section><section className={styles.feed}><header><span>REFUND & REBOOKING</span><h3>{selected.refunds.length + selected.rebooking.length}</h3></header>{selected.refunds.map(item => <article key={String(item.id)}><b>{item.purpose === \"reschedule_difference\" ? \"Reschedule difference refund\" : \"Refund\"} · {pretty(item.status)}</b><p>{money(item.amount)} · {String(item.reason)}</p><small>{String(item.gateway_reference || \"Gateway reference pending\")}{item.gateway_payment_id ? ` · to payment ${String(item.gateway_payment_id)}` : \"\"}</small></article>)}{selected.rebooking.map(item => <article key={String(item.id)}><b>Rebooking · {pretty(item.status)}</b><p>{String(item.reason)}</p><small>Eligible {when(item.eligible_at)}</small></article>)}{!selected.refunds.length && !selected.rebooking.length && <p className={styles.clear}>No refund or rebooking case linked.</p>}</section></div></div>}"
         ],
         [
           "import ServiceProofReview from \"./service-proof-review\";\n",
@@ -91,7 +91,7 @@
         ],
         [
           "<small>Due now across records</small>",
-          "<small>Available to collect \u00b7 may be due later</small>"
+          "<small>Available to collect · may be due later</small>"
         ],
         [
           "<article><span>Due now</span><b>{money(selected.amount_due_now)}</b><p>Gateway:",
@@ -120,19 +120,19 @@
           "<section className={styles.metrics} aria-label=\"Control snapshot metrics\" aria-busy={tower.loading}>"
         ],
         [
-          "tower.loading?\"\u2014\":tower.data?.headline.signalsTracked??0",
+          "tower.loading?\"—\":tower.data?.headline.signalsTracked??0",
           "snapshotMetric(tower.data?.headline.signalsTracked,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"\u2014\":tower.data?.headline.needsAttention??0",
+          "tower.loading?\"—\":tower.data?.headline.needsAttention??0",
           "snapshotMetric(tower.data?.headline.needsAttention,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"\u2014\":tower.data?.headline.signalsClear??0",
+          "tower.loading?\"—\":tower.data?.headline.signalsClear??0",
           "snapshotMetric(tower.data?.headline.signalsClear,tower.loading,tower.error)"
         ],
         [
-          "tower.loading?\"\u2014\":tower.data?.headline.openItems??0",
+          "tower.loading?\"—\":tower.data?.headline.openItems??0",
           "snapshotMetric(tower.data?.headline.openItems,tower.loading,tower.error)"
         ],
         [
@@ -140,12 +140,12 @@
           "<i data-signal-severity={s.severity}>{controlSignalLabel(s.severity)}</i>"
         ],
         [
-          "{tower.loading?\"Loading governance signals\u2026\":\"No connected signal currently needs display.\"}",
-          "{tower.loading?\"Loading governance signals\u2026\":tower.error?\"Governance signals unavailable. Reload after access or connectivity is restored.\":\"No connected signal currently needs display.\"}"
+          "{tower.loading?\"Loading governance signals…\":\"No connected signal currently needs display.\"}",
+          "{tower.loading?\"Loading governance signals…\":tower.error?\"Governance signals unavailable. Reload after access or connectivity is restored.\":\"No connected signal currently needs display.\"}"
         ],
         [
           "<p className={styles.muted}>No governed changes recorded yet.</p>",
-          "<p className={styles.muted}>{tower.loading?\"Loading governed changes\u2026\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
+          "<p className={styles.muted}>{tower.loading?\"Loading governed changes…\":tower.error?\"Audit history unavailable.\":\"No governed changes recorded yet.\"}</p>"
         ],
         [
           "<details data-staff-context=\"true\"><summary>Control sections</summary>",
@@ -344,7 +344,7 @@
     "app/api/customer-account/route.ts": "53c61a2527582d29736cffb023da0522e04aebfef4c132b1af7d0a7e0736c66a",
     "app/api/customer-billing/route.ts": "bdfd62d75827d58b68ddd97e5907e7fc562d809c74c1b8e5ed67f046749bd554",
     "app/api/customer-business-view/route.ts": "d39847618c22f582e1807e743d8311c6f35e2396079c7b2d0d98a64939024b29",
-    "app/api/customer-checkout/route.ts": "a2a7538fccc7f4bd5a94d74849f2a45cb4f0ff7b573c5c4cc1e0a7698379df80",
+    "app/api/customer-checkout/route.ts": "7bcf291a02644a1a58bc748914d57a9cd84822e1155869c4623a6d458b83ba53",
     "app/api/customer-contact/route.ts": "328b522bb3d365f031298b8d7be90bc32c12f976309f53d58cc929b7261dbd48",
     "app/api/customer-data-reveal/route.ts": "d436820a7d136265e764179f17100d5365519c851e106e900d686d7a1cbeb7db",
     "app/api/customer-grooming-summary/route.ts": "75f56018da412b3c9dd447f2bc111a4471e980272e57c1b6b1f9c9158da7d60f",
@@ -729,7 +729,7 @@
     "app/mobile-app/address-picker.tsx": "35211eb7022a36a30a066e88838dbae95d0cf7c4ec9377cc1884860a81e088b2",
     "app/mobile-app/boarding-customer-stay-panel.tsx": "9af8609f7557968a9cdff6b3ed0b9bc9d907a9e81689434e6563c25ae16bbf8d",
     "app/mobile-app/boarding-customer-stay-status.tsx": "1ebaa41cbe03d9943cf3474d809e1472bf7b1cbbae019b118ed54e44e833a5fc",
-    "app/mobile-app/booking-confirmation/booking-confirmation-view.tsx": "d33ccb559de928a3b1d6280f52734a7fd3516b9c83107cb0578e3762b7eefc53",
+    "app/mobile-app/booking-confirmation/booking-confirmation-view.tsx": "2316d6735b555d2cd7ee6e82408d7ae028813be6d4aba3b378aa80bdcd80aadb",
     "app/mobile-app/booking-confirmation/booking-confirmation.module.css": "729def622e9975f93cfac156ac549f4565aa6df8216e25aba4bd936baf742472",
     "app/mobile-app/booking-confirmation/page.tsx": "a00193f5d8e0d888d5e1f0446f433b1627b3a729a8dfd7b2b0c205b9fe6fcbb5",
     "app/mobile-app/booking-payment-page.module.css": "71f9ba1968b12553a433e52d0c8b6f178c9101eb46cc7c3f5343fadea17880ab",
@@ -739,7 +739,7 @@
     "app/mobile-app/coupon-field.module.css": "370fe06c5bb539bb69fbbe2d37ff21d8900fc18bf04774d5c5721a60f4460d95",
     "app/mobile-app/coupon-field.tsx": "7e0caf51aa1c413b2be801064cb8aa5493e1c0ccc088c31b6019f704e12f946a",
     "app/mobile-app/customer-account-view.tsx": "1f0d142001e7c953bfa1803ecef5da0374275c9992079b5543bbe70a1ade1fdf",
-    "app/mobile-app/customer-checkout-button.tsx": "383e39bbece0cb32253881c6fddd03ba36c12f6e9f82d1b17270df9336b9960c",
+    "app/mobile-app/customer-checkout-button.tsx": "d74b1a2b4a5ef3ada8a3c7dfd9390c3d43d28b1ffeac27f149224a378eefed14",
     "app/mobile-app/customer-grooming-live-card.module.css": "c798eb184c1e1acd7cc93ee0a1876f9585af2bf967063499adc1104e3e3fbaad",
     "app/mobile-app/customer-grooming-live-card.tsx": "c7014c1d620690045b2937de19273ba7c3632a81c377b86759f4da36553ce186",
     "app/mobile-app/customer-login.tsx": "c58e76e575f16132dd853c8347b9912c5c81c38f2ba8a9741d56bccd0877f6f1",
@@ -1010,7 +1010,7 @@
     "app/v2/sitting/manage/layout.tsx": "e0b95fc1692aa37774da650b1d70ddfb1f05774a185356bffb9de52881a32677",
     "app/v2/sitting/manage/page.tsx": "a82b5690908c4e9fba6b7c90ce2acb73f098a7b774bacc16c6ef3982db244568",
     "app/v2/sitting/page.tsx": "fc1aca928949dac070f7545dbf0f605e2fd587ff8f7d00e0ad57f2c013f7d99a",
-    "app/v2/stay-experience.module.css": "890feafac0e523df8f295a3a68419eee7c8c9058880a1931bc8efe1b9a56bbb3",
+    "app/v2/stay-experience.module.css": "44c5fa226b2909b69ea017a922f3fe115af4cc65829fb2dd1077114d2e9068c9",
     "app/v2/stay-experience.tsx": "6aa3850a93e3f7001de552042e7f51091975f82320ce862dabae20a689125384",
     "app/v2/taxi/boarding-taxi-experience.module.css": "539704be2c710d1de1db98b2a0bf2f14317d4291f5424dce2f5e6a2cf682f8eb",
     "app/v2/taxi/boarding-taxi-experience.tsx": "b67eda61b1363c9b6911c2c31d2039ee677a0752f1f4b4ad2b87b16c7c292524",
@@ -1172,7 +1172,7 @@
     "lib/customer-activity.ts": "2db6bc126ccc563938b55428006cf58c8667fd6592bf59cae0ad229be00e571b",
     "lib/customer-billing.ts": "7f7b9087d9cbf1373dc4b8f6d8f0bd1994a3f31c90cd6b3ca92862a731d2a155",
     "lib/customer-business-view.ts": "9a4b42765ec6fcf28503ba5649878f62e0d667c34428b8ac3bb35ff032420ab2",
-    "lib/customer-checkout-client.ts": "6cc5a500570909de2b320b7b108c2d9f5c9f41dceb77dc2d21bc08a339e1400e",
+    "lib/customer-checkout-client.ts": "95bcb0ea6b808aecba0556edb53eec4a2aa9ffe6107615907199e0fda4609462",
     "lib/customer-checkout-server.ts": "9cb52f75f1a471cefef0993e1985a69ba0593af21e8ebd272787119e8c12d84f",
     "lib/customer-email.ts": "d4c70a65cdc410f2deb69666fc9ab771abdd1e1e08a646aa2603a5c419ae7a93",
     "lib/customer-location-disclosure.ts": "f01a35e8159beb3797993da28165e5f2735e94bc0f8ebff2ed9291a5a4506f97",

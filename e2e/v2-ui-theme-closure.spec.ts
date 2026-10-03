@@ -161,9 +161,10 @@ test("Mobile utilities do not cover dock targets, including the signed-in notifi
     const appearanceButton = page.getByRole("button", { name: "Change PawSpace appearance" });
     const updates = page.getByRole("button", { name: "Order notifications", exact: true });
     await expect(updates).toBeVisible();
-    const utilities = [await appearanceButton.boundingBox(), await updates.boundingBox()];
     const targets = page.locator('nav[aria-label="PawSpace V2 navigation"] a:visible, nav[aria-label="PawSpace mobile navigation"] :is(a,button):visible');
     for (const target of await targets.all()) {
+      await target.scrollIntoViewIfNeeded();
+      const utilities = [await appearanceButton.boundingBox(), await updates.boundingBox()];
       const box = (await target.boundingBox())!;
       // Chat utilities are in document flow and may be below the fixed dock.
       // Non-overlap must include all four directions, not only above/left/right.
