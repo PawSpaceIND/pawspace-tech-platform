@@ -38,10 +38,15 @@ export async function inspectNextAudioStoredState(env=process.env,request=fetch)
  const matchedSchema=[...raw.matchAll(/no such (?:column|table):\s*([A-Za-z_][A-Za-z0-9_.]*)/g)].map(x=>x[1]),knownSchema=[...new Set(matchedSchema.filter(x=>schemaNames.has(x)))].slice(0,50),unknownSchemaMatchCount=matchedSchema.filter(x=>!schemaNames.has(x)).length;
  return {readOnly:true,budgetId:id,tableNames:[...tables],tableShapes,budgetPresent:Boolean(budget),evidencePresent:Boolean(evidence),budgetReceiptHash:hash(budget),evidenceReceiptHash:hash(evidence),exactEqual:Boolean(budget&&evidence&&budget.receipt_json===evidence.receipt_json),canonicalEqual:Boolean(br&&er&&differing.length===0),differentKeys,unknownDifferentKeyCount,budget:budget?{capMicros:budget.cap_micros,reservedMicros:budget.reserved_micros,conversations:budget.conversations,expiresAt:budget.expires_at}:null,counts,telemetry:{available:telemetry!==null,signatures,schemaNames:knownSchema,unknownSchemaMatchCount},paidGenerationRequests:0,phoneDialed:false};
 }
+export function assertSourceOnlyAudioReceiptAmendment(before,after,from){
+ if(!/^[a-f0-9]{40}$/.test(String(from||''))||before?.sourceSha!==from||after?.sourceSha===from||!/^[a-f0-9]{40}$/.test(String(after?.sourceSha||'')))throw Error('Source-only amendment identity refused');
+ const keys=[...new Set([...Object.keys(before||{}),...Object.keys(after||{})])];
+ if(keys.some(k=>k!=='sourceSha'&&JSON.stringify(before?.[k])!==JSON.stringify(after?.[k])))throw Error('Source-only amendment cannot change rates, expiry, configuration or evidence');
+}
 export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  const {validateAudioRateReceipt,NEXT_AUDIO_BUDGET_ID}=await import('../lib/next-audio-budget.ts');
  if(env.GITHUB_SHA!==env.EXPECTED_SHA||env.GITHUB_RUN_ATTEMPT!=='1'||!env.NEXT_AUDIO_RATE_RECEIPT_JSON||!env.CLOUDFLARE_API_TOKEN||!env.CLOUDFLARE_ACCOUNT_ID||!env.STAGING_D1_ID||env.STAGING_D1_ID===env.PRODUCTION_D1_ID)throw Error('Pinned trusted ceiling prerequisites missing');
- const receipt=JSON.parse(env.NEXT_AUDIO_RATE_RECEIPT_JSON);if(receipt?.readOnlyDiagnostic===true)return inspectNextAudioStoredState(env,request);validateAudioRateReceipt(receipt,Date.now());
+ const input=JSON.parse(env.NEXT_AUDIO_RATE_RECEIPT_JSON);if(input?.readOnlyDiagnostic===true)return inspectNextAudioStoredState(env,request);const {sourceAmendmentFrom,...receipt}=input;validateAudioRateReceipt(receipt,Date.now());
  if(/UNIT TEST|invented/i.test(receipt.evidenceReference))throw Error('Reviewed live ceiling evidence required');
  const region=env.ELEVENLABS_API_BASE||'https://api.in.residency.elevenlabs.io';
  if(region!=='https://api.elevenlabs.io'&&region!=='https://api.in.residency.elevenlabs.io')throw Error('Exact provider region required');
@@ -57,7 +62,17 @@ export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  const query=(sql,params=[])=>cf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{sql,params});
  await query('CREATE TABLE IF NOT EXISTS next_audio_rate_evidence (id TEXT PRIMARY KEY,region TEXT NOT NULL,receipt_json TEXT NOT NULL)');
  await query('INSERT OR IGNORE INTO next_audio_rate_evidence (id,region,receipt_json) VALUES (?,?,?)',[NEXT_AUDIO_BUDGET_ID,region,JSON.stringify(receipt)]);
- const stored=(await query('SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+ let stored=(await query('SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+ if(sourceAmendmentFrom&&stored?.region===region&&stored?.receipt_json!==JSON.stringify(receipt)){
+  const previous=JSON.parse(stored.receipt_json);assertSourceOnlyAudioReceiptAmendment(previous,receipt,sourceAmendmentFrom);
+  const state=(await query('SELECT cap_micros,reserved_micros,conversations,receipt_json,expires_at FROM next_audio_budget WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+  if(state)throw Error('Source-only amendment requires the proven absent budget row; no ledger rewrite');
+  const claims=(await query('SELECT COUNT(*) AS n FROM next_audio_batch_claims WHERE budget_id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+  const attempts=(await query('SELECT (SELECT COUNT(*) FROM next_audio_attempts)+(SELECT COUNT(*) FROM next_audio_speech_attempts) AS n'))[0]?.results?.[0];
+  if(claims?.n!==0||attempts?.n!==0)throw Error('Source-only amendment refused after claim or attempt');
+  await query('UPDATE next_audio_rate_evidence SET receipt_json=? WHERE id=? AND receipt_json=? AND NOT EXISTS (SELECT 1 FROM next_audio_budget WHERE id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_batch_claims WHERE budget_id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_attempts) AND NOT EXISTS (SELECT 1 FROM next_audio_speech_attempts)',[JSON.stringify(receipt),NEXT_AUDIO_BUDGET_ID,stored.receipt_json,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_BUDGET_ID]);
+  stored=(await query('SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+ }
  if(stored?.region!==region||stored?.receipt_json!==JSON.stringify(receipt))throw Error('Ceiling already pinned differently; no overwrite or reset');
  // Secret bindings reveal names only. The authenticated runtime gate checks their actual values
  // against this trusted receipt before any batch claim or provider generation is possible.
