@@ -1,3 +1,4 @@
+import { isAtlasNativeScope } from "./atlas-native-boundary.mjs";
 import {verifiedBookingConfirmation} from "./ai-booking-claim-truth";
 import { assertNativeDemoBusinessAllowed, isNativeDemoThread } from "./native-attended-demo";
 import{needsImmediateVetGuidance,emergencyGuidanceOnly,IMMEDIATE_VET_GUIDANCE}from"./ai-emergency-guidance";
@@ -220,7 +221,7 @@ export async function orchestrateAiTurn(db:D1Database,input:{actor:Authenticated
  if(String(reservation.thread_id)!==input.threadId||String(reservation.customer_id)!==input.customerId||String(reservation.input_message_id)!==input.inputMessageId||String(reservation.channel)!==input.channel)throw new Response("AI idempotency key was already used for a different canonical turn",{status:409});
  if(String(reservation.owner_token)!==ownerToken){const completed=reservation.turn_id?await db.prepare("SELECT * FROM ai_conversation_turns WHERE id=?").bind(String(reservation.turn_id)).first<Row>():null;if(completed)return{duplicatePrevented:true,turn:completed,autonomousExecution:false};return{duplicatePrevented:true,pending:true,retryable:true,turn:null,autonomousExecution:false};}
  try{assertTurnCurrent();const classified=classifyAiIntent(text),salesService=input.provider?.salesService,salesChannel=input.channel==="chat"?"chat" as const:input.channel==="whatsapp"?"whatsapp" as const:"voice" as const,intent:AiIntentDecision=salesService&&classified.intent==="unknown"&&!classified.policyRisk?{...classified,intent:isVoiceSalesQuoteRequest(text)?"booking_create":"service_info",confidence:0.82,confidenceBasis:"service_scoped_dialogue",signals:["authenticated_specialist_dialogue"]}:input.channel==="voice"&&classified.intent==="unknown"&&!classified.policyRisk&&!detectPromptInjection(text).blocked&&input.voiceFollowupIntent?.signals.includes("voice_conversation_followup")?input.voiceFollowupIntent:classified,provider=input.provider||notConnectedAiProvider;
- const informationOnly=intent.signals.includes(POLICY_INFORMATION_SIGNAL)||Boolean(salesService&&isSalesInformationQuestion(text));
+ const informationOnly=isAtlasNativeScope()||intent.signals.includes(POLICY_INFORMATION_SIGNAL)||Boolean(salesService&&isSalesInformationQuestion(text));
  const audience=isStaffActor(input.actor)?"staff":"customer";
  // The context snapshot is written while the turn proceeds; it is awaited where the suggestion needs it.
  const [{context,contextRefPromise},session,rolloutGate]=await Promise.all([

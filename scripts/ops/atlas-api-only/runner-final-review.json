@@ -1,0 +1,26 @@
+{
+  "verdict": "CLEAN exactpacket source and protocol review",
+  "runnerSHA256": "25eede009d6fb49f5a27a31f0303f7f1a75a989ec580d4119cd6ebf4750469b5",
+  "workflowSHA256": "fd40eb0ea852b51633b3370240a5f235901f6921c4d4d77b7d4de75d0a296a45",
+  "all7PacketHashesAndReviewDocMatch": true,
+  "tests": {
+    "pass": 15,
+    "fail": 0
+  },
+  "reconstructedPriorRunnerSHA256": "294d685484331a76754e7c965ae4a5c65b038100693e3cc3bb4d4351d53328e2",
+  "prior294dReconstructionMatches": true,
+  "hostingCapMicros": 250000,
+  "preTaxWorkloadUpperMicros": 152791,
+  "taxFeeContingencyMicros": 97209,
+  "totalArithmeticMatches": true,
+  "hostingApprovalSource": "Parent explicit user authorization at2026-10-03T19:31:39; bill evidence supplied by parent not independently queried",
+  "runtimeBundleUnchanged": "58910c59c04d91e6a57f134570fa0305c9231530d7f95659a728aebc71c80ec6",
+  "deltaReview": "Hosting marker+receipt changed; 600sec existing signed UAT cookie, fsync receipt, exact5statuskeys and ledgerpresent/outstanding0 independently inspected. No new provider/auth/MFA permissions.",
+  "limits": [
+    "No reviewerhostingwrites orpaidcalls",
+    "No globalaccountwideinvoice guarantee; cost expected conditional bound",
+    "Externalkill/interruption can preventfinally; emergency recovery necessary",
+    "Cronpropagationdelay not eliminated"
+  ],
+  "releaseGate": "No source/protocol blocker found for exact preparedno-model packet; publisher retains live execution/reconciliation authority"
+}

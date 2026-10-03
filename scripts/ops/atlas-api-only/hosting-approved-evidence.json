@@ -1,0 +1,24 @@
+{
+  "approvalObservedAt": "2026-10-03T19:31:39Z",
+  "approvedTotalMicros": 250000,
+  "scope": "one temporary existing staging Worker/D1 verification including applicable taxes; no upgrade; model requests excluded",
+  "preTaxWorkloadUpperMicros": 152791,
+  "taxFeeContingencyMicros": 97209,
+  "parentBillingAttestation": {
+    "itemizedReminderObservedAt": "2026-10-03T10:24Z",
+    "confirmationObservedAt": "2026-10-03T15:24Z",
+    "D1USD": "27.23",
+    "CPUUSD": "1.74",
+    "existingBaseUSD": "5.00",
+    "totalUSD": "33.97",
+    "addedTaxFeesObservedUSD": "0.00",
+    "messageIds": [
+      "1a1014b8c36d6c9e",
+      "1a1025dc3d68b62f"
+    ]
+  },
+  "qualification": "Reasonable expected bounded task cost under approved total; no invented accountwide invoice or prospective tax guarantee",
+  "newResources": 0,
+  "subscriptionUpgrade": false,
+  "modelRequestsAuthorized": false
+}

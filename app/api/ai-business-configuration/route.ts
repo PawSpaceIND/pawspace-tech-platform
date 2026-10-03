@@ -1,3 +1,5 @@
+import {requireFounderRole} from "../../../lib/intelligence/atlas-data";
+import {atlasTextTestStatus} from "../../../lib/atlas-text-test-status";
 import{aiKnowledgeCoverage,stageMayaKnowledgeDrafts}from"../../../lib/ai-knowledge-coverage";
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{aiBusinessConfigurationSnapshot,createAiBusinessDraft,resolveActiveAiBusinessConfig,retrieveApprovedKnowledge,setAiKillSwitch,transitionAiBusinessConfig,type AiConfigEntityType,type AiConfigLifecycleAction,type AiKillSwitchScope}from"../../../lib/ai-business-configuration";
@@ -8,7 +10,7 @@ type Body={action?:string;entityType?:AiConfigEntityType;entityId?:string;lifecy
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI business configuration write blocked",{status:403});}
 
-export async function GET(request:Request){try{await authorize(request,"settings.manage");const db=await database(),url=new URL(request.url),mode=url.searchParams.get("mode");if(mode==="status"){
+export async function GET(request:Request){try{const actor=await authorize(request,"settings.manage");const db=await database(),url=new URL(request.url),mode=url.searchParams.get("mode");if(mode==="atlas_text_admission_status"){requireFounderRole(actor);const {env}=await import("cloudflare:workers");return json({data:await atlasTextTestStatus(db,env as unknown as Record<string,unknown>)});}if(mode==="status"){
    // This read must not grow with the number of configuration versions. It used to call
    // aiBusinessConfigurationSnapshot, which pulls up to 100 profiles, 200 intents, 200 knowledge
    // sources, 100 prompt policies and 200 audit events - roughly 800 rows across six queries - purely

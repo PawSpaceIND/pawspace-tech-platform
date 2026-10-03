@@ -7,6 +7,13 @@ export type AiRuntimeReservation={id:string;reservedTokens:number;reservedCostMi
 export type AiRuntimePreflight={allowed:true;reservation:AiRuntimeReservation}|{allowed:false;reason:"quota_exceeded"|"circuit_open"|"runtime_control_unavailable"};
 
 const integer=(env:Env,key:string,fallback:number,min:number,max:number)=>{const raw=Number(text(env[key]));if(!Number.isFinite(raw)||raw<=0)return fallback;return Math.min(max,Math.max(min,Math.floor(raw)));};
+/** Shared read-only projection of the same limits used by request admission. */
+export function aiRuntimeQuotaConfiguration(env:Env){return{
+ requestsPerMinute:integer(env,"PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE",240,1,10_000),
+ tokensPerDay:integer(env,"PAWSPACE_AI_MAX_RESERVED_TOKENS_PER_DAY",5_000_000,1_000,1_000_000_000),
+ costPer1k:integer(env,"PAWSPACE_AI_ESTIMATED_COST_MICROS_PER_1K_TOKENS",0,0,1_000_000_000),
+ costPerDay:integer(env,"PAWSPACE_AI_MAX_ESTIMATED_COST_MICROS_PER_DAY",0,0,2_000_000_000),
+};}
 const dayStart=(now:number)=>Math.floor(now/86_400_000)*86_400_000;
 const reservationTtlMs=(env:Env)=>integer(env,"PAWSPACE_AI_RESERVATION_TTL_MS",180_000,30_000,3_600_000);
 
@@ -63,10 +70,7 @@ export async function reserveAiProviderRequest(db:D1Database,env:Env,input:{prov
   await ensureAiProviderRuntimeControl(db);
   sweepExpiredReservations(db,env,now);
 
-  const requestsPerMinute=integer(env,"PAWSPACE_AI_MAX_REQUESTS_PER_MINUTE",240,1,10_000);
-  const tokensPerDay=integer(env,"PAWSPACE_AI_MAX_RESERVED_TOKENS_PER_DAY",5_000_000,1_000,1_000_000_000);
-  const costPer1k=integer(env,"PAWSPACE_AI_ESTIMATED_COST_MICROS_PER_1K_TOKENS",0,0,1_000_000_000);
-  const costPerDay=integer(env,"PAWSPACE_AI_MAX_ESTIMATED_COST_MICROS_PER_DAY",0,0,2_000_000_000);
+  const {requestsPerMinute,tokensPerDay,costPer1k,costPerDay}=aiRuntimeQuotaConfiguration(env);
   const reservedTokens=estimateAiTokenReservation(input.systemPrompt,input.userPrompt,input.maxOutputTokens);
   const reservedCostMicros=costPer1k>0?Math.ceil((reservedTokens/1000)*costPer1k):0;
   const id=uid();
@@ -112,7 +116,7 @@ export async function completeAiProviderRequest(db:D1Database,env:Env,input:{res
  try{
   await ensureAiProviderRuntimeControl(db);
   const actualTokens=Number.isFinite(Number(input.actualTokens))?Math.max(0,Math.floor(Number(input.actualTokens))):null;
-  const costPer1k=integer(env,"PAWSPACE_AI_ESTIMATED_COST_MICROS_PER_1K_TOKENS",0,0,1_000_000_000);
+  const {costPer1k}=aiRuntimeQuotaConfiguration(env);
   const actualCost=actualTokens!=null&&costPer1k>0?Math.ceil((actualTokens/1000)*costPer1k):null;
   const status=input.failureClass?"failed":"completed";
   const completion=db.prepare("UPDATE ai_provider_runtime_requests SET status=?,failure_class=?,actual_tokens=?,actual_cost_micros=?,updated_at=? WHERE id=?")

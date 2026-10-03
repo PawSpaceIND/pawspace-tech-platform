@@ -1,3 +1,4 @@
+import { bindReservedAtlasGeneration } from "./atlas-native-boundary.mjs";
 /** One generation, no counting endpoint; normal model-context ceiling bounds input. */
 type Db={prepare(sql:string):{bind(...values:unknown[]):{run():Promise<{meta?:{changes?:number}}>;first():Promise<Record<string,unknown>|null>}}};
 type Env=Record<string,unknown>;
@@ -26,7 +27,9 @@ export async function reserveTextTest(db:Db|undefined,env:Env,input:{provider:st
  AND (SELECT COUNT(*) FROM atlas_text_test_requests WHERE job_id=?) < ?
  AND (SELECT COALESCE(SUM(reserved_micros),0) FROM atlas_text_test_requests WHERE job_id=?) + ? <= ?
  AND NOT EXISTS(SELECT 1 FROM atlas_text_test_requests WHERE job_id=? AND status IN ('reserved','unknown'))`).bind(id,APPROVAL.jobId,REVIEWED_RATE.version,input.scope.threadId,INPUT_UPPER,input.maxOutput,RESERVED_MICROS,now,now,APPROVAL.expiresAt,APPROVAL.jobId,APPROVAL.maxTurns,APPROVAL.jobId,RESERVED_MICROS,APPROVAL.capMicros,APPROVAL.jobId).run();
- if(Number(result.meta?.changes)!==1)throw Error("job_admission_refused");return{id,inputUpper:INPUT_UPPER,reservedMicros:RESERVED_MICROS};
+ if(Number(result.meta?.changes)!==1)throw Error("job_admission_refused");
+ bindReservedAtlasGeneration({claimId:id,body:JSON.stringify(directPayload(input.model,input.systemPrompt,input.userPrompt,input.maxOutput)),expiresAt:APPROVAL.expiresAt});
+ return{id,inputUpper:INPUT_UPPER,reservedMicros:RESERVED_MICROS};
 }
 export function assertTextTestDispatch(claim:Claim|null,now=Date.now()){if(claim&&(now<APPROVAL.startsAt||now>=APPROVAL.expiresAt||now>=REVIEWED_RATE.validUntil))throw Error("approval_expired");}
 export async function markTextTestUnknown(db:Db,claim:Claim){await db.prepare("UPDATE atlas_text_test_requests SET status='unknown' WHERE id=? AND job_id=? AND status='reserved'").bind(claim.id,APPROVAL.jobId).run();}

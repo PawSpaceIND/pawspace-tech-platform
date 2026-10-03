@@ -1,0 +1,60 @@
+{
+  "verdict": "CLEAN_FOR_REVIEWED_SOURCE_AND_LOCAL_NATIVE_QUALIFICATION",
+  "bundleSHA256": "58910c59c04d91e6a57f134570fa0305c9231530d7f95659a728aebc71c80ec6",
+  "patchSHA256": "a86e85e5983a8fb08abf23ab2a3663bbc8caeac8e62ab5dcf0e3ba8ded0b7689",
+  "files": 8,
+  "sourceManifestMatches": 306,
+  "tests": {
+    "pass": 25,
+    "fail": 0
+  },
+  "independentNativeChecks": {
+    "kind": "actual_API_only_bundle_native_Workerd",
+    "bundleSha256": "58910c59c04d91e6a57f134570fa0305c9231530d7f95659a728aebc71c80ec6",
+    "checks": [
+      "health",
+      "fixture read requires existing staff auth",
+      "protected status requires existing auth",
+      "other status mode refused",
+      "no customer session",
+      "staff header is not customer session",
+      "nonchat action route",
+      "foreign origin",
+      "ambient ASSETS binding refused"
+    ],
+    "outboundAttempts": 0,
+    "topLevelApplicationInitializersBeforeBoundary": 0,
+    "providerCredentialsUsed": false,
+    "actualAuthenticatedGenerationQualified": false,
+    "cloudWrites": 0
+  },
+  "criticalInvariants": {
+    "ordinaryProviderChanges": "imports + conditional Atlas branch; existing normal request context and prompt path unchanged outside isAtlasNativeScope",
+    "compactScope": "fixed CUS0000/chat/Grooming sales-information question; medical/policy turns refused",
+    "policyPreservation": "full basePrompt BASE/PET_CARE/channel + SALES_INFORMATION + narrow fixed information policy; approved profile/promptPolicy retained whole; oversize refuses",
+    "context": "owned customer/thread plus bounded owned pets/bookings/history, current Grooming catalogue and approved knowledge; omitted facts explicitly unknown, no tools",
+    "coreInformationOnly": "isAtlasNativeScope OR previous conditions, existing action rejection before offer/execution",
+    "transport": "only CFworkers/async_hooks external imports; immutable native fetch/WebSocket; no app initializer before boundary; exact single-use ledger permit; manual redirect and all3xx refusal",
+    "bindings": "provided+ambient env checked on every permitted handler; only DB and inert version metadata objects; same existing Worker/D1 finite config no triggers or alternate bindings",
+    "auth": "normal canonical customer session fixed CUS0000; normal middleware retained; Founder status and staff fixture reads use existing auth",
+    "expiry": "real expired canonical native preflight403 remains; no approval renewal"
+  },
+  "ownerNativePositiveProof": {
+    "testOnlyClock": true,
+    "syntheticCanonicalFixture": true,
+    "capturedBodyBytes": 8667,
+    "oneLocalNativeCapturedAttempt": true,
+    "realExternalRequests": 0,
+    "unknownLedgerBlocksRetry": true,
+    "modelActionEnvelopeRejected": true
+  },
+  "remainingDeploymentGates": [
+    "Root verify configured same existing staging Worker/D1/secrets and serving exact bundle SHA",
+    "Hosted ledger/schema and approved CUS0000/Grooming fixture/readiness",
+    "Fresh provider+hosting quota evidence and explicit budget renewal",
+    "No live model output quality or hosted authenticated-generation acceptance proven"
+  ],
+  "scopeLimit": "Temporary API-only staging excludes general/UI routes; standard worker entry untouched. Local synthetic proof is not hosted acceptance.",
+  "cloudWrites": 0,
+  "paidCalls": 0
+}
