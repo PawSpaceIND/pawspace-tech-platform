@@ -11,9 +11,9 @@
  * customer tax invoice of the seller in the tax policy (TKP/yy-yy/00001, lib/booking-tax-invoice.ts): the credit note is
  * issued against it and reuses what it printed; the booking's own service invoice is the fallback when there is none.
  *
- *   20% of Rs 1,000 at 70/30   refund 200; credit note taxable 60, GST 10.80 (CGST 5.40 + SGST 5.40); payout 700 -> 560 before
+ *   20% of Rs 1,000 at 70/30   refund 200; credit note taxable 50.85, GST 9.15 (CGST 4.58 + SGST 4.57); payout 700 -> 560 before
  *                              release (140), or a 140 recovery from the next payout after release.
- *   own supply, 20%            credit note taxable 200, GST 36.
+ *   own supply, 20%            credit note taxable 169.49, GST 30.51.
  *   funeral                    no GST on the note (Schedule III by default): GSTR-3B 3.1(e) and GSTR-1 Table 8 reduced.
  *   GSTR-3B of the refund month: output tax reduced by exactly the credit notes; GSTR-1 carries them (B2CS reduced for an
  *                              unregistered customer, CDNR for a registered one, CDNUR for a B2C Large invoice).
@@ -114,6 +114,9 @@ async function refundWorld(t, { invoiceSeries = true } = {}) {
     CREATE TABLE booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
   `);
   await gstAccounting.ensureGstAccountingTables(db);
+  // Approved inclusive economics apply only to this disposable fixture.
+  const { saveGstSetting } = await import("../lib/gst-setting.ts");
+  await saveGstSetting(db, { cityId: "*", ratePercent: 18, method: "extract_inclusive", effectiveFrom: "2024-01-01", reason: "Owner-approved inclusive finance fixture", actorId: "finance.fixture@pawspace.test" });
   await returns.ensureGstReturnTables(db);
   // The seller of record (owner decision B): TK PETCARE, from the entity's active tax policy.
   sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'IN','active','founder',1,1,1)").run(ENTITY, SELLER.legalName);
@@ -222,11 +225,11 @@ function assertBooksBalance(f) {
 }
 const scope = (periodCode) => ({ entityId: ENTITY, registrationId: REG, periodCode, reason: `${periodCode} filing` });
 
-test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 60 + 10.80, provider payout 700 -> 560 before release", async (t) => {
+test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 50.85 + 9.15, provider payout 700 -> 560 before release", async (t) => {
   const f = await refundWorld(t);
   await verifiedProvider(f, "PRV-G");
   const fact = await completedBooking(f, "BK-ESC-1", { provider: "PRV-G" });
-  assert.deepEqual([fact.providerPayoutAccrued, fact.platformFee, fact.gstLiability], [700, 300, 54], "completion: 700 to the provider, PawSpace's 300 carries 54 GST");
+  assert.deepEqual([fact.providerPayoutAccrued, fact.platformFee, fact.gstLiability], [700, 300, 45.76], "completion: 700 to the provider, PawSpace's 300 carries 45.76 GST");
   const queued = await payoutQueue.runProviderPayoutQueueSweep(f.db, { force: true });
   assert.deepEqual(queued.errors, []);
   assert.equal(f.row("SELECT amount,status FROM provider_payout_queue_items WHERE booking_id='BK-ESC-1'").amount, 700);
@@ -236,7 +239,7 @@ test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 60
   assert.equal(preview.status, 200, JSON.stringify(preview.body));
   const position = preview.body.data.position;
   assert.deepEqual([position.payment.amountPaid, position.payment.refundable, position.preview.amount], [1000, 1000, 200]);
-  assert.deepEqual([position.preview.creditNote.taxableValue, position.preview.creditNote.tax], [60, 10.8], "the credit note it will produce");
+  assert.deepEqual([position.preview.creditNote.taxableValue, position.preview.creditNote.tax], [50.85, 9.15], "the credit note it will produce");
   assert.deepEqual([position.preview.providerImpact.stage, position.preview.providerImpact.providerShare], ["before_release", 140]);
   assert.match(position.preview.providerImpact.label, /Rs 140\.00 comes off the provider's queued payout before it is released/);
 
@@ -274,18 +277,18 @@ test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 60
   assert.equal(f.row("SELECT status FROM booking_refund_cases WHERE id=?", `${request.id}-RF`).status, "processed");
   assert.equal(f.row("SELECT status FROM escalation_refund_requests WHERE id=?", request.id).status, "processed");
 
-  // Section 34 credit note for PawSpace's own share: 30% of 200 = 60 taxable, 10.80 GST.
+  // The Rs 60 inclusive fee reduction splits into taxable value 50.85 and GST 9.15.
   const cn = note(f, "BK-ESC-1");
   assert.equal(cn.credit_note_number, `${NOTE_PREFIX}00001`, "its own financial-year series: TKC/yy-yy/ + 5 digits");
   assert.ok(cn.credit_note_number.length <= 16);
-  assert.deepEqual([cn.treatment, cn.refund_amount, cn.value_reduced, cn.taxable_value, cn.tax_total, cn.cgst, cn.sgst, cn.igst, cn.gst_rate], ["commission", 200, 60, 60, 10.8, 5.4, 5.4, 0, 18]);
+  assert.deepEqual([cn.treatment, cn.refund_amount, cn.value_reduced, cn.taxable_value, cn.tax_total, cn.cgst, cn.sgst, cn.igst, cn.gst_rate], ["commission", 200, 60, 50.85, 9.15, 4.58, 4.57, 0, 18]);
   assert.deepEqual([cn.original_invoice_number, cn.original_invoice_kind, cn.original_invoice_date, cn.period_code, cn.issue_date], [invoiceNumber(COMPLETED, 1), "finance_invoice", istDate(COMPLETED), REFUND_PERIOD, istDate(Date.now())], "the IST month the refund was processed, against the seller's customer tax invoice");
   assert.equal(f.row("SELECT source_event_key FROM finance_invoices WHERE id=?", cn.original_invoice_id).source_event_key, "booking-invoice:BK-ESC-1", "the invoice completion issued, untouched by the refund");
   assert.deepEqual([cn.sac, JSON.parse(cn.snapshot_json).seller.legalName], ["998599", SELLER.legalName], "the SAC and the seller the invoice printed");
   assert.deepEqual([cn.place_of_supply, cn.supply_type, cn.gstr1_section, cn.recipient_registered, cn.refund_reference, cn.seller_gstin], ["29", "INTRA", "b2cs", 0, "rfnd_ESC1", SELLER_GSTIN]);
   assert.equal(cn.original_invoice_fy, `20${financialYear(istDate(COMPLETED))}`, "the financial year of the original invoice is recorded (s.34(2) time limit)");
-  assert.equal(ledger(f, "2130-GST Payable", "BK-ESC-1"), r2(54 - 10.8), "10.80 of the 54 GST taken back off 2130");
-  assert.equal(f.row("SELECT COALESCE(SUM(amount),0) n FROM finance_tax_ledger WHERE source_type='credit_note' AND source_id=?", cn.id).n, -10.8, "the tax ledger adjustment the statutory package nets");
+  assert.equal(ledger(f, "2130-GST Payable", "BK-ESC-1"), r2(45.76 - 9.15), "9.15 of the 45.76 GST taken back off 2130");
+  assert.equal(f.row("SELECT COALESCE(SUM(amount),0) n FROM finance_tax_ledger WHERE source_type='credit_note' AND source_id=?", cn.id).n, -9.15, "the tax ledger adjustment the statutory package nets");
 
   // The provider payout: 700 -> 560 before release; the provider is told.
   const item = f.row("SELECT * FROM provider_payout_queue_items WHERE booking_id='BK-ESC-1'");
@@ -301,8 +304,8 @@ test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 60
   assert.match(JSON.parse(messages[1].payload_json).body, new RegExp(`processed to your original payment method.*Credit note ${NOTE_PREFIX.replaceAll("/", "\\/")}00001`));
   assert.match(JSON.parse(messages[1].payload_json).body, /Sorry about the missed nail trim/);
 
-  // Net cost to PawSpace: its own 60 less the 10.80 GST it no longer owes. 200 refunded - 140 provider - 10.80 GST = 49.20.
-  assert.equal(r2(f.row("SELECT COALESCE(SUM(debit-credit),0) n FROM finance_journal_entries WHERE account_code='4900-Refunds and Cancellations'").n), 49.2);
+  // Net cost: refund 200 less provider reduction 140 and GST reduction 9.15 equals 50.85.
+  assert.equal(r2(f.row("SELECT COALESCE(SUM(debit-credit),0) n FROM finance_journal_entries WHERE account_code='4900-Refunds and Cancellations'").n), 50.85);
   assertBooksBalance(f);
 
   // The release pays 560, once.
@@ -320,7 +323,7 @@ test("20% of a Rs 1,000 commission booking at 70/30: Rs 200 back, credit note 60
   assert.equal(f.row("SELECT COUNT(*) n FROM provider_payout_notices").n, 1);
   assert.equal(f.row("SELECT COUNT(*) n FROM security_audit_events WHERE action='escalation_refund.settle'").n, 1);
   assert.equal(f.refunds.length, 1, "and no second gateway refund");
-  assert.equal(ledger(f, "2130-GST Payable", "BK-ESC-1"), 43.2);
+  assert.equal(ledger(f, "2130-GST Payable", "BK-ESC-1"), 36.61);
   assertBooksBalance(f);
 });
 
@@ -376,22 +379,22 @@ test("the provider's share is worked out from the payout record if the completio
   assert.deepEqual([recorded.stage, recorded.payable, recorded.providerShare], ["before_queue", 700, 140], "else from the payout record completion finalised, never a silent zero");
 });
 
-test("own supply: 20% of Rs 1,000 gives a credit note of taxable 200 and GST 36, and there is no provider payout to adjust", async (t) => {
+test("own supply: 20% of Rs 1,000 gives a credit note of taxable 169.49 and GST 30.51, and there is no provider payout to adjust", async (t) => {
   const f = await refundWorld(t);
   f.sqlite.prepare("INSERT INTO provider_capacity_profiles VALUES ('PRV-FT','full_time')").run();
   const fact = await completedBooking(f, "BK-OWN", { provider: "PRV-FT", providerModel: "full_time" });
-  assert.equal(fact.gstLiability, 180, "PawSpace's own supply: 18% of the 1,000");
+  assert.equal(fact.gstLiability, 152.54, "PawSpace's own supply: GST extracted from the inclusive 1,000");
   const { hook } = await refundAfterCompletion(f, "BK-OWN", 20);
   const cn = note(f, "BK-OWN");
-  assert.deepEqual([cn.treatment, cn.refund_amount, cn.value_reduced, cn.taxable_value, cn.tax_total, cn.cgst, cn.sgst, cn.igst], ["own_supply", 200, 200, 200, 36, 18, 18, 0]);
+  assert.deepEqual([cn.treatment, cn.refund_amount, cn.value_reduced, cn.taxable_value, cn.tax_total, cn.cgst, cn.sgst, cn.igst], ["own_supply", 200, 200, 169.49, 30.51, 15.26, 15.25, 0]);
   assert.equal(cn.sac, "998612", "the SAC the own supply's invoice line carries (animal husbandry services)");
-  assert.equal(ledger(f, "2130-GST Payable", "BK-OWN"), 144, "180 - 36");
+  assert.equal(ledger(f, "2130-GST Payable", "BK-OWN"), 122.03, "152.54 - 30.51");
   const settlement = f.row("SELECT * FROM escalation_refund_settlements WHERE booking_id='BK-OWN'");
   assert.deepEqual([settlement.status, settlement.payout_stage, settlement.provider_share, settlement.tcs_outcome], ["settled", "no_provider_payout", 0, "not_a_taxable_commission_supply"]);
   assert.equal(f.row("SELECT COUNT(*) n FROM provider_payout_notices").n, 0, "nobody to tell: no provider payout on an own supply");
   assert.equal(hook.escalationRefund.results[0].creditNoteNumber, `${NOTE_PREFIX}00001`);
-  // PawSpace carries the whole refund less the GST it no longer owes: 200 - 36.
-  assert.equal(r2(f.row("SELECT COALESCE(SUM(debit-credit),0) n FROM finance_journal_entries WHERE account_code='4900-Refunds and Cancellations'").n), 164);
+  // PawSpace carries the refund less extracted GST: 200 - 30.51.
+  assert.equal(r2(f.row("SELECT COALESCE(SUM(debit-credit),0) n FROM finance_journal_entries WHERE account_code='4900-Refunds and Cancellations'").n), 169.49);
   assertBooksBalance(f);
 });
 
@@ -430,40 +433,40 @@ test("GSTR-3B of the refund month shows output tax reduced by exactly the credit
   const before3b = await returns.generateGstr3b(f.db, scope(REFUND_PERIOD), FINANCE);
   const before1 = await returns.generateGstr1(f.db, scope(REFUND_PERIOD), FINANCE);
   const beforePrevious = await returns.generateGstr3b(f.db, scope(COMPLETION_PERIOD), FINANCE);
-  assert.deepEqual([before3b.summary.totalOutputTax, beforePrevious.summary.totalOutputTax], [54, 54]);
+  assert.deepEqual([before3b.summary.totalOutputTax, beforePrevious.summary.totalOutputTax], [45.76, 45.76]);
 
   await refundAfterCompletion(f, "BK-PREV", 20);
   const cn = note(f, "BK-PREV");
-  assert.deepEqual([cn.period_code, cn.tax_total, cn.gstr1_section], [REFUND_PERIOD, 10.8, "b2cs"], "an unregistered intra-State customer: a negative B2CS adjustment in the month of issue");
+  assert.deepEqual([cn.period_code, cn.tax_total, cn.gstr1_section], [REFUND_PERIOD, 9.15, "b2cs"], "an unregistered intra-State customer: a negative B2CS adjustment in the month of issue");
 
   const gstr3b = await returns.generateGstr3b(f.db, scope(REFUND_PERIOD), FINANCE);
   assert.equal(r2(before3b.summary.totalOutputTax - gstr3b.summary.totalOutputTax), cn.tax_total, "reduced by exactly the credit note");
-  assert.equal(gstr3b.summary.totalOutputTax, 43.2);
-  assert.equal(gstr3b.summary.netTaxPayable, 43.2);
-  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: 240, iamt: 0, camt: 21.6, samt: 21.6, csamt: 0 }, "3.1(a): 300 + 27 + 27 less the note's 60 + 5.40 + 5.40");
-  assert.deepEqual([gstr3b.summary.creditNotes.count, gstr3b.summary.creditNotes.taxReduced, gstr3b.summary.creditNotes.taxableValueReduced], [1, 10.8, 60]);
+  assert.equal(gstr3b.summary.totalOutputTax, 36.61);
+  assert.equal(gstr3b.summary.netTaxPayable, 36.61);
+  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: 203.39, iamt: 0, camt: 18.3, samt: 18.31, csamt: 0 }, "3.1(a) nets the issued invoice and its proportionate inclusive credit note");
+  assert.deepEqual([gstr3b.summary.creditNotes.count, gstr3b.summary.creditNotes.taxReduced, gstr3b.summary.creditNotes.taxableValueReduced], [1, 9.15, 50.85]);
   const gstr1 = await returns.generateGstr1(f.db, scope(REFUND_PERIOD), FINANCE);
-  assert.deepEqual(gstr1.payload.b2cs.find((b) => b.pos === "29" && b.rt === 18), { sply_ty: "INTRA", pos: "29", typ: "OE", rt: 18, txval: 240, iamt: 0, camt: 21.6, samt: 21.6, csamt: 0 }, "Table 7 B2CS, net of the note");
+  assert.deepEqual(gstr1.payload.b2cs.find((b) => b.pos === "29" && b.rt === 18), { sply_ty: "INTRA", pos: "29", typ: "OE", rt: 18, txval: 203.39, iamt: 0, camt: 18.3, samt: 18.31, csamt: 0 }, "Table 7 B2CS, net of the note");
   const hsn = gstr1.payload.hsn.data.find((h) => h.hsn_sc === "998599");
-  assert.deepEqual([hsn.txval, hsn.camt, hsn.samt], [240, 21.6, 21.6]);
+  assert.deepEqual([hsn.txval, hsn.camt, hsn.samt], [203.39, 18.3, 18.31]);
   assert.deepEqual([gstr1.payload.cdnr ?? [], gstr1.payload.cdnur ?? []], [[], []], "not CDNR (unregistered) and not CDNUR (not a B2C Large invoice)");
-  assert.equal(r2(before1.summary.totalOutputTax - gstr1.summary.totalOutputTax), 10.8);
-  assert.deepEqual(gstr1.summary.creditNotes.notes.map((n) => [n.number, n.section, n.originalInvoice, n.taxableValue, n.tax]), [[cn.credit_note_number, "b2cs", cn.original_invoice_number, 60, 10.8]]);
+  assert.equal(r2(before1.summary.totalOutputTax - gstr1.summary.totalOutputTax), 9.15);
+  assert.deepEqual(gstr1.summary.creditNotes.notes.map((n) => [n.number, n.section, n.originalInvoice, n.taxableValue, n.tax]), [[cn.credit_note_number, "b2cs", cn.original_invoice_number, 50.85, 9.15]]);
   assert.deepEqual([gstr1.summary.bookingInvoices.count, gstr1.summary.invoiceVariances.count], [1, 0], "the month's supply is filed from its invoice, with no variance");
   assert.equal(gstr1.summary.creditNotes.negativeB2cs, false);
   // The completion month is not rewritten.
   const previous = await returns.generateGstr3b(f.db, scope(COMPLETION_PERIOD), FINANCE);
-  assert.equal(previous.summary.totalOutputTax, 54);
+  assert.equal(previous.summary.totalOutputTax, 45.76);
   assert.equal(previous.summary.ledgerCheck.agrees, true, "the completion's own journal still matches what that month filed");
 
   const view = await close.monthlyCloseView(f.db, { period: REFUND_PERIOD, actorId: FINANCE });
-  assert.deepEqual([view.gst.outputTax, view.gst.creditNoteTax], [43.2, 10.8], "the monthly close is net of the note");
+  assert.deepEqual([view.gst.outputTax, view.gst.creditNoteTax], [36.61, 9.15], "the monthly close is net of the note");
   const payables = await taxPayments.taxPayableReconciliation(f.db, { periodCode: REFUND_PERIOD });
-  assert.deepEqual([payables.gst.filedServiceGst, payables.gst.accrued, payables.gst.difference, payables.gst.creditNoteGst, payables.gst.creditNotes], [43.2, 43.2, 0, 10.8, 1], "2130 accrued net of the note equals what is filed");
+  assert.deepEqual([payables.gst.filedServiceGst, payables.gst.accrued, payables.gst.difference, payables.gst.creditNoteGst, payables.gst.creditNotes], [36.61, 36.61, 0, 9.15, 1], "2130 accrued net of the note equals what is filed");
   const untouched = await taxPayments.taxPayableReconciliation(f.db, { periodCode: COMPLETION_PERIOD });
-  assert.deepEqual([untouched.gst.filedServiceGst, untouched.gst.accrued, "creditNoteGst" in untouched.gst, "creditNotes" in untouched.gst, "tcsReversedForRefunds" in untouched.tcs], [54, 54, false, false, false], "a month with no note reads exactly as before");
+  assert.deepEqual([untouched.gst.filedServiceGst, untouched.gst.accrued, "creditNoteGst" in untouched.gst, "creditNotes" in untouched.gst, "tcsReversedForRefunds" in untouched.tcs], [45.76, 45.76, false, false, false], "a month with no note reads exactly as before");
   const pkg = await gstAccounting.generateStatutoryPackage(f.db, scope(REFUND_PERIOD), MAKER);
-  assert.equal(pkg.summary.adjustments, -10.8, "the statutory package carries the note as a tax ledger adjustment, as for any credit note");
+  assert.equal(pkg.summary.adjustments, -9.15, "the statutory package carries the note as a tax ledger adjustment, as for any credit note");
   assert.equal(pkg.summary.ledgerCheck.agrees, true);
   assertBooksBalance(f);
 });
@@ -476,24 +479,24 @@ test("GSTR-1: a registered customer's note is CDNR; CDNUR only against a B2C Lar
   await completedBooking(f, "BK-B2B", { provider: "PRV-A", customer: "CUS-B2B" });
   // PawSpace's own supply to a Maharashtra customer: its invoice is worth the 1,50,000 paid (IGST included) - a B2C Large invoice.
   const own = await completedBooking(f, "BK-B2CL", { service: "boarding", provider: "PRV-FT", providerModel: "full_time", customer: "CUS-B2CL", amount: 150000 });
-  assert.equal(own.gstLiability, 27000, "18% of the 1,50,000 PawSpace makes, IGST to Maharashtra");
+  assert.equal(own.gstLiability, 22881.36, "IGST extracted from inclusive own supply 1,50,000 to Maharashtra");
   // A commission booking of the same size: the booking is above Rs 1 lakh, but PawSpace's own line on the invoice is its 45,000 fee.
   const stay = await completedBooking(f, "BK-LARGE", { service: "boarding", provider: "PRV-H", customer: "CUS-LARGE", amount: 150000 });
-  assert.equal(stay.gstLiability, 8100, "18% of the 45,000 commission");
-  assert.deepEqual(f.rows("SELECT source_id,subtotal,tax_total,total FROM finance_invoices ORDER BY source_id"), [{ source_id: "BK-B2B", subtotal: 300, tax_total: 54, total: 1000 }, { source_id: "BK-B2CL", subtotal: 150000, tax_total: 27000, total: 150000 }, { source_id: "BK-LARGE", subtotal: 45000, tax_total: 8100, total: 150000 }], "the invoices as the seller issued them: GST included in what the customer paid");
+  assert.equal(stay.gstLiability, 6864.41, "GST extracted from inclusive commission 45,000");
+  assert.deepEqual(f.rows("SELECT source_id,subtotal,tax_total,total FROM finance_invoices ORDER BY source_id"), [{ source_id: "BK-B2B", subtotal: 254.24, tax_total: 45.76, total: 1000 }, { source_id: "BK-B2CL", subtotal: 127118.64, tax_total: 22881.36, total: 150000 }, { source_id: "BK-LARGE", subtotal: 38135.59, tax_total: 6864.41, total: 150000 }], "the invoices as the seller issued them: GST included in what the customer paid");
   for (const id of ["BK-B2B", "BK-B2CL", "BK-LARGE"]) await refundAfterCompletion(f, id, 20);
   const b2b = note(f, "BK-B2B"), b2cl = note(f, "BK-B2CL"), large = note(f, "BK-LARGE");
   assert.deepEqual([b2b.gstr1_section, b2b.recipient_gstin, b2b.recipient_registered, b2b.credit_note_number], ["cdnr", CUSTOMER_GSTIN, 1, `${NOTE_PREFIX}00001`]);
-  assert.deepEqual([b2cl.gstr1_section, b2cl.place_of_supply, b2cl.supply_type, b2cl.taxable_value, b2cl.igst, b2cl.cgst, b2cl.credit_note_number, JSON.parse(b2cl.snapshot_json).originalInvoice.value], ["cdnur", "27", "INTER", 30000, 5400, 0, `${NOTE_PREFIX}00002`, 150000], "20% of the 1,50,000 own supply, IGST 18%; numbered in sequence");
-  assert.deepEqual([large.gstr1_section, large.place_of_supply, large.supply_type, large.taxable_value, large.igst, JSON.parse(large.snapshot_json).originalInvoice.value], ["b2cs", "27", "INTER", 9000, 1620, 45000], "the invoice's own value (the 45,000 fee) is under the B2C Large limit, so the note nets Table 7");
+  assert.deepEqual([b2cl.gstr1_section, b2cl.place_of_supply, b2cl.supply_type, b2cl.taxable_value, b2cl.igst, b2cl.cgst, b2cl.credit_note_number, JSON.parse(b2cl.snapshot_json).originalInvoice.value], ["cdnur", "27", "INTER", 25423.73, 4576.27, 0, `${NOTE_PREFIX}00002`, 150000], "20% of the inclusive own supply, IGST extracted; numbered in sequence");
+  assert.deepEqual([large.gstr1_section, large.place_of_supply, large.supply_type, large.taxable_value, large.igst, JSON.parse(large.snapshot_json).originalInvoice.value], ["b2cs", "27", "INTER", 7627.12, 1372.88, 45000], "the invoice's own value (the 45,000 fee) is under the B2C Large limit, so the note nets Table 7");
   const gstr1 = await returns.generateGstr1(f.db, scope(REFUND_PERIOD), FINANCE);
-  assert.deepEqual(gstr1.payload.cdnr, [{ ctin: CUSTOMER_GSTIN, ntty: "C", nt_num: b2b.credit_note_number, nt_dt: b2b.issue_date, pos: "29", rchrg: "N", inv_typ: "R", val: 70.8, itms: [{ num: 1, itm_det: { rt: 18, txval: 60, iamt: 0, camt: 5.4, samt: 5.4, csamt: 0 } }] }], "val is taxable value + tax, as the existing credit note path files it");
-  assert.deepEqual(gstr1.payload.cdnur, [{ typ: "B2CL", ntty: "C", nt_num: b2cl.credit_note_number, nt_dt: b2cl.issue_date, pos: "27", rchrg: "N", inv_typ: "R", val: 35400, itms: [{ num: 1, itm_det: { rt: 18, txval: 30000, iamt: 5400, camt: 0, samt: 0, csamt: 0 } }] }]);
+  assert.deepEqual(gstr1.payload.cdnr, [{ ctin: CUSTOMER_GSTIN, ntty: "C", nt_num: b2b.credit_note_number, nt_dt: b2b.issue_date, pos: "29", rchrg: "N", inv_typ: "R", val: 60, itms: [{ num: 1, itm_det: { rt: 18, txval: 50.85, iamt: 0, camt: 4.58, samt: 4.57, csamt: 0 } }] }], "val is taxable value + tax, as the existing credit note path files it");
+  assert.deepEqual(gstr1.payload.cdnur, [{ typ: "B2CL", ntty: "C", nt_num: b2cl.credit_note_number, nt_dt: b2cl.issue_date, pos: "27", rchrg: "N", inv_typ: "R", val: 30000, itms: [{ num: 1, itm_det: { rt: 18, txval: 25423.73, iamt: 4576.27, camt: 0, samt: 0, csamt: 0 } }] }]);
   assert.deepEqual([gstr1.summary.cdnrCount, gstr1.summary.cdnurCount], [1, 1]);
-  assert.deepEqual(gstr1.payload.b2cs, [{ sply_ty: "INTER", pos: "27", typ: "OE", rt: 18, txval: -9000, iamt: -1620, camt: 0, samt: 0, csamt: 0 }], "the large booking's note: a negative Table 7 line for Maharashtra in the month of issue");
+  assert.deepEqual(gstr1.payload.b2cs, [{ sply_ty: "INTER", pos: "27", typ: "OE", rt: 18, txval: -7627.12, iamt: -1372.88, camt: 0, samt: 0, csamt: 0 }], "the large booking's note: a negative Table 7 line for Maharashtra in the month of issue");
   assert.equal(gstr1.summary.creditNotes.negativeB2cs, true);
   const gstr3b = await returns.generateGstr3b(f.db, scope(REFUND_PERIOD), FINANCE);
-  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: -39060, iamt: -7020, camt: -5.4, samt: -5.4, csamt: 0 }, "the net figure flows into 3.1(a)");
+  assert.deepEqual(gstr3b.payload.sup_details.osup_det, { txval: -33101.7, iamt: -5949.15, camt: -4.58, samt: -4.57, csamt: 0 }, "the net figure flows into 3.1(a)");
 });
 
 test("a note still waiting for its invoice when its month closes is issued in the next open month; the request still reaches processed", async (t) => {
@@ -516,7 +519,7 @@ test("a note still waiting for its invoice when its month closes is issued in th
   const run = await escalation.settleEscalationRefunds(f.db, { refundCaseIds: [caseId], asOf: nextMonthDay });
   assert.equal(run.settled, 1, JSON.stringify(run));
   const cn = note(f, "BK-WAIT");
-  assert.deepEqual([cn.period_code, cn.issue_date, cn.taxable_value, cn.tax_total], [NEXT_PERIOD, istDate(nextMonthDay), 60, 10.8]);
+  assert.deepEqual([cn.period_code, cn.issue_date, cn.taxable_value, cn.tax_total], [NEXT_PERIOD, istDate(nextMonthDay), 50.85, 9.15]);
   const settlement = f.row("SELECT status,period_code,issue_date,moved_from_period FROM escalation_refund_settlements WHERE refund_case_id=?", caseId);
   assert.deepEqual(settlement, { status: "settled", period_code: NEXT_PERIOD, issue_date: istDate(nextMonthDay), moved_from_period: REFUND_PERIOD });
   assert.equal(f.row("SELECT COUNT(*) n FROM finance_journal_entries WHERE period_code=? AND source_type='escalation_credit_note'", REFUND_PERIOD).n, 0);
@@ -822,7 +825,7 @@ test("the printable credit note carries the Rule 53(1A) particulars and the refu
     SELLER.legalName, `GSTIN: <b>${SELLER_GSTIN}</b>`,
     `Credit note number: <b>${cn.credit_note_number}</b>`, `Date of issue: <b>${dmy(cn.issue_date)}</b>`,
     `Original invoice: <b>${invoiceNumber(COMPLETED, 1)}</b> dated ${dmy(istDate(COMPLETED))}`, "Place of supply: <b>Karnataka (29)</b>", "<td>998599</td>",
-    "Customer BK-PRINT", "Unregistered recipient", "Taxable value reduced", "CGST @ 9% reduced", "SGST @ 9% reduced", "₹5.40", "Total tax reduced", "₹10.80", "₹60.00",
+    "Customer BK-PRINT", "Unregistered recipient", "Taxable value reduced", "CGST @ 9% reduced", "SGST @ 9% reduced", "₹4.58", "₹4.57", "Total tax reduced", "₹9.15", "₹50.85",
     `Refund reference: rfnd_ESC1 / ${approved.refundCaseId}`, "₹140.00 of it was the service provider's charge", "Authorised signatory",
   ]) assert.ok(html.includes(expected), `the printed note shows ${expected}`);
   const json = await (await creditNoteRoute.GET(asActor(FINANCE, `/api/credit-notes?id=${encodeURIComponent(cn.credit_note_number)}`))).json();
@@ -873,7 +876,7 @@ test("Section 34(2): past 30 November after the invoice's financial year no note
   assert.match(settlement.credit_note_error, /^time_barred: a credit note against invoice TKP\/\d\d-\d\d\/00001 \(financial year 2024-25\) had to be declared by 2025-11-30/);
   assert.equal(settlement.provider_share, 140, "the provider's share is still taken off");
   assert.equal(note(f, "BK-OLD"), undefined);
-  assert.equal(ledger(f, "2130-GST Payable", "BK-OLD"), 54, "PawSpace's output tax is not reduced");
+  assert.equal(ledger(f, "2130-GST Payable", "BK-OLD"), 45.76, "PawSpace's output tax is not reduced");
   assert.equal(f.row("SELECT status FROM escalation_refund_requests WHERE booking_id='BK-OLD'").status, "processed");
 });
 
@@ -901,7 +904,7 @@ test("no invoice series yet: the note waits, and once Finance issues the missing
   const later = await refundSweep.runAutomaticBookingRefundSweep(f.db, ENV, { asOf: Date.now() + 2 * 60 * 60_000 });
   assert.equal(later.escalationSettlements.settled, 1, JSON.stringify(later.escalationSettlements));
   const cn = note(f, "BK-LATE");
-  assert.deepEqual([cn.original_invoice_kind, cn.original_invoice_number, cn.original_invoice_date, cn.taxable_value, cn.tax_total, cn.sac], ["finance_invoice", invoiceNumber(SAME_MONTH_COMPLETED, 1), istDate(SAME_MONTH_COMPLETED), 60, 10.8, "998599"]);
+  assert.deepEqual([cn.original_invoice_kind, cn.original_invoice_number, cn.original_invoice_date, cn.taxable_value, cn.tax_total, cn.sac], ["finance_invoice", invoiceNumber(SAME_MONTH_COMPLETED, 1), istDate(SAME_MONTH_COMPLETED), 50.85, 9.15, "998599"]);
   const snapshot = JSON.parse(cn.snapshot_json);
   assert.deepEqual([snapshot.customer.name, snapshot.seller.legalName, snapshot.placeOfSupply.code], ["Customer BK-LATE", SELLER.legalName, "29"], "the recipient, seller and place of supply as the invoice printed them");
   assert.equal(f.row("SELECT status FROM escalation_refund_requests WHERE booking_id='BK-LATE'").status, "processed");
@@ -913,7 +916,7 @@ test("with no customer tax invoice, the booking's own service invoice is the ori
   await completedBooking(f, "BK-VERT", { verticalInvoice: true });
   await refundAfterCompletion(f, "BK-VERT", 20);
   const cn = note(f, "BK-VERT");
-  assert.deepEqual([cn.original_invoice_kind, cn.original_invoice_number, cn.original_invoice_date, cn.taxable_value, cn.tax_total, cn.gstr1_section, cn.sac], ["booking_invoice", "INV/BK-VERT", istDate(COMPLETED), 60, 10.8, "b2cs", "998599"], "the vertical's invoice, the SAC the returns file the commission under");
+  assert.deepEqual([cn.original_invoice_kind, cn.original_invoice_number, cn.original_invoice_date, cn.taxable_value, cn.tax_total, cn.gstr1_section, cn.sac], ["booking_invoice", "INV/BK-VERT", istDate(COMPLETED), 50.85, 9.15, "b2cs", "998599"], "the vertical's invoice, the SAC the returns file the commission under");
   assert.equal(JSON.parse(cn.snapshot_json).seller.legalName, SELLER.legalName, "the seller from the active tax policy");
 });
 

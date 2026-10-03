@@ -33,6 +33,8 @@ async function seedSyntheticInvoiceSeller(ctx){
  const {ensureGstAccountingTables}=await import('../lib/gst-accounting.ts');
  const {ensureGstReturnTables}=await import('../lib/gst-returns.ts');
  await ensureGstAccountingTables(ctx.db);await ensureGstReturnTables(ctx.db);
+ const {saveGstSetting}=await import("../lib/gst-setting.ts");
+ await saveGstSetting(ctx.db,{cityId:"*",ratePercent:18,method:"extract_inclusive",effectiveFrom:"2024-01-01",reason:"Synthetic inclusive recovery invoice fixture",actorId:"finance.fixture@pawspace.test"});
  const seller={legalName:'Synthetic Probe Seller',gstin:'29AAICT7352F1Z0',stateCode:'29',state:'Karnataka',address:'Synthetic local fixture address'};
  ctx.sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES ('PROBE-ENTITY',?,'IN','active','fixture-checker',1,1,1)").run(seller.legalName);
  ctx.sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES ('PROBE-REG','PROBE-ENTITY','IN-KA','gstin',?,'active','2024-01-01',NULL,'fixture-checker',1,1,1)").run(seller.gstin);

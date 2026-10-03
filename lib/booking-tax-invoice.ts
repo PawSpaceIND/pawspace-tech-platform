@@ -67,6 +67,7 @@ const REFUSALS:Record<string,string>={
 /** The plain-English reason an invoice was refused, from a configuration_required key. */
 export function bookingInvoiceRefusal(key:string){
  const[head,...rest]=key.split(":"),name=rest.length?bookingServiceName(rest.join(":")):"A service";
+ if(head==="invoice_tax_total_mismatch")return`${name}: taxable value plus GST does not equal the billed amount. Finance must reconcile the configured GST basis before issuing a new invoice.`;
  if(head==="tax_classification")return`${name} has no SAC classification in the active tax policy. Set its SAC on the GST screen.`;
  if(head==="tax_classification_sac")return`${name} has no valid SAC in the active tax policy (4 or 6 digits starting 99). Set it on the GST screen.`;
  if(["tax_component_code","tax_component_rate","tax_components"].includes(head))return`${name}'s tax classification has no valid GST rate.`;
