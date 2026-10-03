@@ -22,6 +22,16 @@ function withEnv(extra = {}) {
 }
 const adapter = await import("../lib/ai-provider-adapter.ts");
 
+test("next audio without a durable lease refuses before any paid provider fetch",async()=>{
+ withEnv({DB:undefined,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"unit-test-only",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"});
+ const previous=globalThis.fetch;let requests=0;
+ globalThis.fetch=async()=>{requests++;throw Error("paid fetch forbidden");};
+ try {
+  const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"price",channel:"voice",nextAudioConversation:{threadId:"THREAD-VOICE-NDEMO-NEXT-AUDIO-unit",customerId:"synthetic"}});
+  assert.equal(result.connected,false);assert.equal(result.failure,"runtime_control_unavailable");assert.equal(requests,0);
+ } finally {globalThis.fetch=previous;}
+});
+
 const textBody = (text, stopReason = "end_turn") => ({ id: "msg_1", type: "message", role: "assistant", stop_reason: stopReason, content: [{ type: "text", text }] });
 
 // ---------------------------------------------------------------------------
