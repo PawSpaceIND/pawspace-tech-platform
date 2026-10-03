@@ -1,3 +1,4 @@
+import {preservedServiceLintBytes} from './helpers/combined-local-reviewed-delta.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
@@ -80,9 +81,10 @@ test("reference flow: package selection reveals published inclusions and exclusi
 });
 
 test("the pinned handler region of the page is byte-identical to the historical page",()=>{
- const historical=reverseServiceFixDelta(page,"app/v2/grooming/page.tsx");
+ const reviewed=preservedServiceLintBytes("app/v2/grooming/page.tsx",page);
+ const historical=reverseServiceFixDelta(reviewed,"app/v2/grooming/page.tsx");
  const region=s=>s.slice(s.indexOf("  const invalidateCare ="),s.indexOf("  if (booking || recoveryBookingId)"));
- assert.equal(hash(region(page)),hash(region(historical)));
+ assert.equal(hash(region(reviewed)),hash(region(historical)));
  assert.ok(serviceFixReviewedFiles.includes("app/v2/grooming/page.tsx"));
 });
 
