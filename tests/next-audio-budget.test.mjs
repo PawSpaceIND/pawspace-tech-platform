@@ -64,10 +64,10 @@ import {preservedNextAudioBytes} from './helpers/next-audio-reviewed-delta.mjs';
 test('historical runtime bytes reconcile only the exact reviewed budget additions',()=>{
  const path='lib/ai-grounded-runtime-provider.ts',source=readFileSync(new URL('../'+path,import.meta.url));
  const hash=b=>createHash('sha256').update(b).digest('hex');
- assert.equal(hash(preservedNextAudioBytes(path,source)),'d3949debfc2377a94b6428d7206ee63efc28c88f455dd3c92db15e503f17e5b3');
+ assert.equal(hash(preservedNextAudioBytes(path,source)),'a61691f2cee7230cb315ede9ebd5722f78c3fc6a0500531fbc1fc694774c1740');
  for(const [a,b] of [['nextAudioConversation:{threadId:input.threadId,customerId:input.customerId}','nextAudioConversation:{threadId:input.threadId,customerId:"OTHER"}'],['isNextAudioThread(input.threadId)','true'],['./next-audio-budget','./unknown-budget']])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(source.toString().replace(a,b))));
  const mutation=source.toString().replace('maxTokens:channel===','maxTokens:false&&channel===');
- assert.notEqual(hash(preservedNextAudioBytes(path,Buffer.from(mutation))),'d3949debfc2377a94b6428d7206ee63efc28c88f455dd3c92db15e503f17e5b3');
+ assert.notEqual(hash(preservedNextAudioBytes(path,Buffer.from(mutation))),'a61691f2cee7230cb315ede9ebd5722f78c3fc6a0500531fbc1fc694774c1740');
 });
 
 test('adapter historical normalization catches guard deletion, price bypass and ordinary-provider changes',()=>{

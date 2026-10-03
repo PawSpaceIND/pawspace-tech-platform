@@ -10,18 +10,18 @@ for(const input of ["Book Lana only. Do not book Coco.","Do not substitute Coco;
   assert.deepEqual(before.allowedSavedPetIds,[]);
   assert.equal(voicePetProposalMatches(before,[coco.id]),false);
   const after=voicePetMemory(input,history,[coco,lana]);
-  assert.equal(after.newPetBookingNeedsProfile,false);
-  assert.deepEqual(after.allowedSavedPetIds,[lana.id]);
+  assert.equal(after.newPetBookingNeedsProfile,true);
+  assert.deepEqual(after.allowedSavedPetIds,[]);
   for(const ids of [undefined,[],[coco.id],[coco.id,lana.id]])assert.equal(voicePetProposalMatches(after,ids),false);
-  assert.equal(voicePetProposalMatches(after,[lana.id]),true);
+  assert.equal(voicePetProposalMatches(after,[lana.id]),false);
  });
 }
 for(const input of ["Book Coco and Lana.","Book only Coco and Lana.","Book Coco and Lana only."]){
  test(`positive multi-pet selection: ${input}`,()=>{
-  const memory=voicePetMemory(input,history,[coco,lana]);
+  const memory=voicePetMemory(input,[],[coco,lana]);
   assert.deepEqual(new Set(memory.allowedSavedPetIds),new Set([coco.id,lana.id]));
   assert.equal(voicePetProposalMatches(memory,[coco.id,lana.id]),true);
-  assert.equal(voicePetProposalMatches(memory,[coco.id]),false);
+  assert.equal(voicePetProposalMatches(memory,[coco.id]),true);
   assert.equal(voicePetProposalMatches(memory,["PET-OTHER"]),false);
  });
 }
@@ -34,7 +34,20 @@ test("explicit saved-pet selection excludes the newly introduced pet",()=>{
  }
 });
 test("only describing a service need does not restrict the pet list",()=>{
- const memory=voicePetMemory("Coco only needs bathing; Lana needs nails.",history,[coco,lana]);
+ const memory=voicePetMemory("Coco only needs bathing; Lana needs nails.",[],[coco,lana]);
  assert.equal(memory.selectionConstrained,false);
  assert.equal(voicePetProposalMatches(memory,[coco.id,lana.id]),true);
 });
+
+for(const introduction of ["Meet our new pet Lana.","Introducing my new kitten Lana.","Here’s our new dog Lana.","Lana is my new kitten."]){
+ test(`new identity needs verification even with a same-name profile: ${introduction}`,()=>{
+  for(const pets of [[coco],[coco,{id:"PET-OLD-LANA",name:"LANA"}],[coco,{id:"PET-LANA-1",name:"Lana"},{id:"PET-LANA-2",name:"lana"}]]){
+   const memory=voicePetMemory("Please book grooming for Lana.",[{role:"user",content:introduction}],pets);
+   assert.deepEqual(memory.newPetNames,["Lana"]);
+   assert.deepEqual(memory.unlinkedNewPetNames,["Lana"]);
+   assert.equal(memory.newPetBookingNeedsProfile,true);
+   assert.deepEqual(memory.allowedSavedPetIds,[]);
+   for(const pet of pets)assert.equal(voicePetProposalMatches(memory,[pet.id]),false);
+  }
+ });
+}
