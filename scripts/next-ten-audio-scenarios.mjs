@@ -17,3 +17,9 @@ export const NEXT_TEN_AUDIO_SCENARIOS = [
 
 /** Initial five-service pass. Later groups require explicit durable continuation, never a claim reset. */
 export const NEXT_FIVE_AUDIO_SCENARIOS = ['grooming_multipet','training_goals','boarding_app_only','sitting_app_only','taxi_correction'].map(id=>({...NEXT_TEN_AUDIO_SCENARIOS.find(s=>s.id===id),service:({grooming_multipet:'grooming',training_goals:'dog_training',boarding_app_only:'pet_boarding',sitting_app_only:'pet_sitting',taxi_correction:'pet_taxi'})[id]}));
+
+export function validateNextAudioExecutionPins(env){
+ const checkout=String(env.EXPECTED_SHA||''),runtime=String(env.EXPECTED_RUNTIME_SHA||checkout);
+ if(!/^[a-f0-9]{40}$/.test(checkout)||env.GITHUB_SHA!==checkout||!/^[a-f0-9]{40}$/.test(runtime)||(runtime!==checkout&&env.NEXT_AUDIO_ENGINE!=='workers_ai'))throw Error('Exact reviewed checkout and certified runtime pins required');
+ return runtime;
+}

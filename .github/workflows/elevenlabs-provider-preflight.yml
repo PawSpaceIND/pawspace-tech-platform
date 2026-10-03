@@ -1423,8 +1423,9 @@ jobs:
     environment: pawspace-staging
     timeout-minutes: 35
     env:
-      NEXT_AUDIO_ENGINE: ${{ inputs.audio_profile == 'workers_ai_bounded' && 'workers_ai' || 'elevenlabs' }}
+      NEXT_AUDIO_ENGINE: ${{ (inputs.audio_profile == 'workers_ai_bounded' || inputs.audio_profile == 'workers_ai_bounded_one') && 'workers_ai' || 'elevenlabs' }}
       EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+      EXPECTED_RUNTIME_SHA: ${{ inputs.confirm == 'next-audio-execute-reviewed-usd5' && inputs.audio_profile == 'workers_ai_bounded_one' && inputs.probe_input || inputs.expected_staging_sha }}
       EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
       SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
       PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
@@ -1447,7 +1448,7 @@ jobs:
           test "$GITHUB_SHA" = "$EXPECTED_SHA"
           test "$GITHUB_RUN_ATTEMPT" = "1"
       - name: Read native feature and rate gates without generating audio
-        if: ${{ inputs.confirm != 'next-audio-execute-reviewed-usd5' || inputs.audio_profile != 'workers_ai_bounded' }}
+        if: ${{ inputs.confirm != 'next-audio-execute-reviewed-usd5' || (inputs.audio_profile != 'workers_ai_bounded' && inputs.audio_profile != 'workers_ai_bounded_one') }}
         run: node scripts/inspect-next-audio-fees.mjs
       - name: Set and verify staging provider hard duration without generating audio
         if: ${{ inputs.confirm == 'next-audio-prepare-duration' }}
