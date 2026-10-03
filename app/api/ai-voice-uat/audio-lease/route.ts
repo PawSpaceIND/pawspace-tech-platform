@@ -33,10 +33,11 @@ async function context(request:Request){
  if((region!=="https://api.elevenlabs.io"&&region!=="https://api.in.residency.elevenlabs.io")||region!==evidence!.region||!text(e.ELEVENLABS_API_KEY)||!text(e.ELEVENLABS_GROOMING_AGENT_ID))refuse("next_audio_region_or_agent_unproven");
  stage="native_url";const nativeUrl=new URL(`${region}/v1/convai/agents/${encodeURIComponent(text(e.ELEVENLABS_GROOMING_AGENT_ID))}`);
  stage="native_headers";const nativeHeaders=new Headers({"xi-api-key":text(e.ELEVENLABS_API_KEY)});
- stage="native_request_base";const nativeBase=new Request(nativeUrl,{headers:nativeHeaders,redirect:"error"});
+ stage="native_request_base";const nativeBase=new Request(nativeUrl.href,{headers:nativeHeaders,redirect:"manual"});
  stage="native_timeout";const nativeSignal=AbortSignal.timeout(15000);
  stage="native_request";const nativeRequest=new Request(nativeBase,{signal:nativeSignal});
  stage="native_fetch";const response=await fetch(nativeRequest);
+ if(response.status>=300&&response.status<400)refuse("next_audio_native_redirect_refused");
  if(!response.ok)refuse("next_audio_agent_config_read_refused");
  stage="native_json";const agent=JSON.parse(await readBoundedText(response,512*1024)) as Row;
  stage="native_hash";const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(agent)))),b=>b.toString(16).padStart(2,"0")).join("");
