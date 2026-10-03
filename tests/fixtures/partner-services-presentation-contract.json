@@ -1224,7 +1224,7 @@
     "lib/razorpay-sandbox-webhook-relay.ts": "1e11d06d0deab42fac2b5a0e8df0c22ad6aef1ada3ced9b07830dee9bce8af6a",
     "lib/razorpay-settlement-reconciliation.ts": "9a69c4f101faad6453682be69b0d7341f58ce2164fa06dfbcef052bd5e47c77f",
     "lib/razorpay-subscriptions.ts": "0fc96ac678795b86edd060d955ff33479d3206461ac6e1eca1d87194a3a3368a",
-    "lib/razorpayx-client.ts": "7513912942b092839f118f6a8a863551e469d69ab8ad7c08bc3f474cce6587ee",
+    "lib/razorpayx-client.ts": "76ec06f78d03c6b8d51c168ad4c32b9781d48f4f65643705b288225e75ee4f6f",
     "lib/razorpayx-live-payout.ts": "5610467fb971db38acbd43f57b1b9db51204471519d4e1a6ec9a8dbd0eab7e28",
     "lib/razorpayx-payout-runtime.ts": "5fc8daccb30defc87e1bc438f422637f171436df43a8875495479bbe53200f33",
     "lib/read-report-json.ts": "b28c76d265bd521fa0bb040a96ac7ffd78308b6e930729653cab2f22ccd8d9a4",
