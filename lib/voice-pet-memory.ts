@@ -11,10 +11,29 @@ export function voicePetMemory(input:string,history:History[],pets:Pet[]){
   for(const m of claim.matchAll(/\bnew\s+(?:kitten|puppy|cat|dog|pet)\s+(?:named|called)\s+([A-Za-z][A-Za-z'-]{1,30})\b/gi))names.set(normalize(m[1]),m[1]);
  }
  const savedNames=new Set(pets.map(p=>normalize(p.name))),unlinkedNewPetNames=[...names].filter(([name])=>!savedNames.has(name)).map(([,name])=>name);
- const mentioned=(name:string)=>new RegExp("\\b"+name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b","i").test(input);
- const explicitlySelectedSavedPet=pets.some(p=>mentioned(String(p.name??"")));
- const newPetBookingNeedsProfile=unlinkedNewPetNames.length>0&&(unlinkedNewPetNames.some(mentioned)||!explicitlySelectedSavedPet);
- const intendedNewSavedPetIds=pets.filter(p=>names.has(normalize(p.name))&&(mentioned(String(p.name??""))||!explicitlySelectedSavedPet)).map(p=>String(p.id??""));
- const allowedSavedPetIds=[...new Set([...intendedNewSavedPetIds,...pets.filter(p=>mentioned(String(p.name??""))).map(p=>String(p.id??""))])];
- return{allowedSavedPetIds,newPetNames:[...names.values()],unlinkedNewPetNames,newPetBookingNeedsProfile,intendedNewSavedPetIds,identityRule:"new_pets_are_separate_not_saved_profile_aliases"};
+ const escape=(name:string)=>name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+ const mentioned=(name:string)=>new RegExp("\\b"+escape(name)+"\\b","i").test(input);
+ const candidateNames=[...new Set([...pets.map(p=>String(p.name??"")),...names.values()].filter(Boolean))];
+ const excluded=(name:string)=>new RegExp("(?:\\bnot|\\bnever|\\bdon['’]t|\\bexcept|\\bexcluding|\\bexclude|\\binstead of|\\brather than)\\s+(?:(?:book|groom|schedule|reserve|use|include|select|choose|substitute|for|the|saved|cat|dog|pet|profile)\\s+){0,5}"+escape(name)+"\\b","i").test(input);
+ const excludedNames=candidateNames.filter(excluded);
+ const exclusiveNames=new Set<string>();
+ if(candidateNames.length){
+  const namePattern="(?:"+candidateNames.map(escape).join("|")+")",listPattern=namePattern+"(?:\\s*(?:,|and|&)\\s*"+namePattern+")*";
+  const patterns=[new RegExp("\\bonly\\s+(?:for\\s+)?("+listPattern+")\\b","gi"),new RegExp("\\b("+listPattern+")\\s+only(?=\\s*[,.;!?]|$)","gi")];
+  for(const pattern of patterns)for(const match of input.matchAll(pattern))for(const name of candidateNames)if(new RegExp("\\b"+escape(name)+"\\b","i").test(match[1]))exclusiveNames.add(normalize(name));
+ }
+ const selected=(name:string)=>mentioned(name)&&!excluded(name)&&(!exclusiveNames.size||exclusiveNames.has(normalize(name)));
+ const explicitlySelectedSavedPet=pets.some(p=>selected(String(p.name??"")));
+ const relevantNewNames=unlinkedNewPetNames.filter(name=>!excluded(name)&&(!exclusiveNames.size||exclusiveNames.has(normalize(name))));
+ const newPetBookingNeedsProfile=relevantNewNames.length>0&&(relevantNewNames.some(selected)||!explicitlySelectedSavedPet);
+ const intendedNewSavedPetIds=pets.filter(p=>names.has(normalize(p.name))&&!excluded(String(p.name??""))&&(!exclusiveNames.size||exclusiveNames.has(normalize(p.name)))&&(selected(String(p.name??""))||!explicitlySelectedSavedPet)).map(p=>String(p.id??""));
+ const allowedSavedPetIds=[...new Set([...intendedNewSavedPetIds,...pets.filter(p=>selected(String(p.name??""))).map(p=>String(p.id??""))])];
+ const selectionConstrained=excludedNames.length>0||exclusiveNames.size>0;
+
+ return{selectionConstrained,allowedSavedPetIds,newPetNames:[...names.values()],unlinkedNewPetNames,newPetBookingNeedsProfile,intendedNewSavedPetIds,identityRule:"new_pets_are_separate_not_saved_profile_aliases"};
+}
+
+/** A proposal cannot add an excluded pet, omit the intended new saved pet, or fall back without IDs. */
+export function voicePetProposalMatches(memory:ReturnType<typeof voicePetMemory>,petIds:unknown){
+ return Array.isArray(petIds)&&petIds.length>0&&petIds.every(id=>typeof id==="string"&&memory.allowedSavedPetIds.includes(id))&&memory.intendedNewSavedPetIds.every(id=>petIds.includes(id));
 }

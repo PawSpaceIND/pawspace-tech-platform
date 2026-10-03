@@ -1,0 +1,14 @@
+/* Existing Boarding Finance authority; scoped targets and narrow-screen reading. */
+.boarding.boarding :is(button,input) { min-height:48px; box-sizing:border-box; max-width:100%; }
+.boarding header > a { display:inline-flex; align-items:center; min-height:48px; }
+.boarding button { margin-block:4px; line-height:1.4; }
+.boarding p,.boarding small { overflow-wrap:anywhere; }
+.boarding pre { overflow-wrap:anywhere; }
+.bookingLookup { align-items:stretch; }
+.bookingLookup input { min-width:0; }
+.boarding :is(button,input,a):focus-visible { outline:3px solid var(--paw-link); outline-offset:3px; }
+@media(max-width:600px) {
+ .bookingLookup { display:grid !important; grid-template-columns:minmax(0,1fr); }
+ .bookingLookup :is(input,button) { width:100%; }
+ .bookingLookup button { margin-block:0; }
+}

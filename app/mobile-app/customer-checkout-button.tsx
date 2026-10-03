@@ -21,7 +21,7 @@ function CustomerCheckoutButtonInner({ bookingId, paymentStatus, onRefresh }: { 
   }, [waiting]);
   return <div aria-busy={busy||waiting}>
     {state.message && <p className={state.phase === "error" ? styles.error : undefined} role={state.phase === "error" ? "alert" : "status"}>{state.message}</p>}
-    {!["captured", "settled"].includes(state.phase) && <button type="button" className={styles.button} disabled={busy||waiting}
+    {!["captured", "settled", "nothing_due"].includes(state.phase) && <button type="button" className={styles.button} disabled={busy||waiting}
       onClick={() => { void controller.current?.start(); }}>
       {waiting ? "Waiting for payment confirmation…" : busy ? "Payment in progress…" : state.canCheck ? "Check payment status" : paymentStatus === "captured" ? "Check balance (test)" : "Review & pay (test)"}
     </button>}

@@ -5,7 +5,7 @@ import{approvedServiceRefundCase,ensureCanonicalRefundCaseTable,recordServiceLed
 
 type Row=Record<string,unknown>;
 export type SittingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"approve_settlement"|"reconcile";
-export type SittingFinanceInput={bookingId:string;action:SittingFinanceAction;actorId:string;idempotencyKey:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;replacementGroupId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
+export type SittingFinanceInput={bookingId:string;action:SittingFinanceAction;actorId:string;idempotencyKey:string;cancellationRequestId?:string;refundId?:string;dateChangeRequestId?:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;replacementGroupId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
 const parse=(value:unknown)=>{try{return JSON.parse(String(value??"{}")) as Record<string,unknown>}catch{return{}}};
 
 
@@ -43,50 +43,81 @@ async function context(db:D1Database,bookingId:string){await ensureSittingFinanc
  // the booking price. PAWSPACE-QA-A2: this SELECT used to alias p.amount, so an unpaid booking
  // reconciled at full price.
  row.captured_amount=await collectedForBooking(db,bookingId);return row;}
-async function prior(db:D1Database,key:string){const row=await db.prepare("SELECT result_json FROM sitting_finance_action_keys WHERE idempotency_key=?").bind(key).first<Row>();return row?parse(row.result_json):null;}
-async function remember(db:D1Database,input:SittingFinanceInput,result:Record<string,unknown>){await db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),Date.now()).run();return result;}
+function selectedRow(input:SittingFinanceInput){
+ const field=input.action==="approve_cancel"?"cancellationRequestId":input.action==="record_refund"?"refundId":input.action==="apply_date_change"?"dateChangeRequestId":null;
+ if(!field)return null;
+ const value=input[field];
+ if(typeof value!=="string"||!value.trim())throw new Response(`${field} is required for this Sitting finance action`,{status:400});
+ return{field,id:value.trim()};
+}
+async function prior(db:D1Database,input:SittingFinanceInput){
+ const row=await db.prepare("SELECT booking_id,action,result_json FROM sitting_finance_action_keys WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+ if(!row)return null;
+ const result=parse(row.result_json),target=selectedRow(input);
+ if(String(row.booking_id)!==input.bookingId||String(row.action)!==input.action||target&&String(result[target.field]||"")!==target.id)throw new Response("Idempotency key does not match this Sitting action target",{status:409});
+ return result;
+}
+async function remember(db:D1Database,input:SittingFinanceInput,result:Record<string,unknown>){
+ const target=selectedRow(input),stored=target?{...result,[target.field]:target.id}:result;
+ await db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)")
+ .bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(stored),Date.now()).run();return stored;
+}
 function why(input:SittingFinanceInput){const value=String(input.reason||"").trim();if(value.length<3)throw new Response("A reason is required",{status:400});return value;}
 function validFutureWindow(start:string,end:string){const a=new Date(start).getTime(),b=new Date(end).getTime();if(!Number.isFinite(a)||!Number.isFinite(b)||b<=a||a<=Date.now())throw new Response("A valid future Sitting care window is required",{status:400});}
 async function freshQuote(db:D1Database,booking:Row,quoteId:string,start:string,end:string){const quote=await db.prepare("SELECT * FROM sitting_commercial_quotes WHERE id=?").bind(quoteId).first<Row>();if(!quote||String(quote.status)!=="open"||Number(quote.expires_at)<Date.now())throw new Response("A fresh open Sitting server quote is required",{status:409});if(String(quote.package_code)!==String(booking.package_code)||String(quote.scheduled_start)!==start||String(quote.scheduled_end)!==end)throw new Response("Sitting change quote does not match the requested care window",{status:409});return quote;}
-async function replacementSchedule(db:D1Database,booking:Row,groupId:string,start:string,end:string){const decision=await db.prepare("SELECT selected_provider_id,status FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first<Row>();if(!decision||String(decision.status)!=="assigned"||!decision.selected_provider_id)throw new Response("A canonical replacement Sitting schedule is required",{status:409});const reservations=await db.prepare("SELECT provider_id,scheduled_start,scheduled_end,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(groupId).all<Row>();if(reservations.results.length!==1)throw new Response("Sitting date change requires exactly one replacement reservation",{status:409});const reservation=reservations.results[0];if(String(reservation.provider_id)!==String(decision.selected_provider_id)||String(reservation.scheduled_start)!==start||String(reservation.scheduled_end)!==end)throw new Response("Replacement Sitting reservation does not match the requested window",{status:409});if(groupId===String(booking.schedule_group_id))throw new Response("Date change must use a fresh scheduling group",{status:409});return{providerId:String(decision.selected_provider_id)};}
+async function replacementSchedule(db:D1Database,booking:Row,groupId:string,start:string,end:string){const decision=await db.prepare("SELECT selected_provider_id,status FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first<Row>();if(!decision||String(decision.status)!=="assigned"||!decision.selected_provider_id)throw new Response("A canonical replacement Sitting schedule is required",{status:409});const reservations=await db.prepare("SELECT provider_id,scheduled_start,scheduled_end,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(groupId).all<Row>();if(reservations.results.length!==1)throw new Response("Sitting date change requires exactly one replacement reservation",{status:409});const reservation=reservations.results[0];if(String(reservation.provider_id)!==String(decision.selected_provider_id)||String(reservation.scheduled_start)!==start||String(reservation.scheduled_end)!==end)throw new Response("Replacement Sitting reservation does not match the requested window",{status:409});if(groupId===String(booking.schedule_group_id))throw new Response("Date change must use a fresh scheduling group",{status:409});const provider=await db.prepare("SELECT name,provider_model FROM provider_capacity_profiles WHERE id=?").bind(decision.selected_provider_id).first<Row>();if(!provider)throw new Response("Replacement Sitting provider profile is missing",{status:409});return{providerId:String(decision.selected_provider_id),providerName:String(provider.name),providerModel:String(provider.provider_model)};}
 
-export async function mutateSittingFinance(db:D1Database,input:SittingFinanceInput){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});await ensureSittingFinanceTables(db);const old=await prior(db,input.idempotencyKey);if(old)return{...old,duplicatePrevented:true};const booking=await context(db,input.bookingId),now=Date.now(),status=String(booking.status);
+export async function mutateSittingFinance(db:D1Database,input:SittingFinanceInput){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});const target=selectedRow(input);await ensureSittingFinanceTables(db);const old=await prior(db,input);if(old)return{...old,duplicatePrevented:true};const booking=await context(db,input.bookingId),now=Date.now(),status=String(booking.status);
  if(input.action==="request_cancel"){
   if(["cancelled","completed"].includes(status))throw new Response("Closed Sitting bookings cannot accept a cancellation request",{status:409});if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});const reason=why(input),id=crypto.randomUUID();await db.prepare("INSERT INTO sitting_cancellation_requests (id,booking_id,requested_by,reason,status,created_at,updated_at) VALUES (?,?,?,?, 'policy_review_required',?,?)").bind(id,input.bookingId,input.actorId,reason,now,now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"policy_review_required",refundPolicy:"configuration_required",bookingPreserved:true});
  }
  if(input.action==="approve_cancel"){
-  /* A delivered stay must not be cancellable. request_cancel already refuses a closed booking, but
-   * approve_cancel refused only in_progress - so a request opened while the booking was `assigned`
-   * stayed approvable after the sitter had actually checked out. Approving it then refunded the
-   * customer in full for a service they received AND stranded the sitter, because prepare_settlement
-   * requires status==="completed", which the cancel had just overwritten. Scoped to `completed` only:
-   * a further approval on an already-cancelled booking is the legitimate second half of a split refund,
-   * capped by collected funds - tests/refund-cap-collected-funds.test.mjs:259 exists to catch exactly the
-   * over-broad guard that would break it. [AUDIT-C6] */
-  if(status==="completed")throw new Response("A delivered Sitting booking cannot be cancelled or refunded",{status:409});
-  if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});const request=await db.prepare("SELECT * FROM sitting_cancellation_requests WHERE booking_id=? AND status='policy_review_required' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!request)throw new Response("No Sitting cancellation request is awaiting policy review",{status:409});if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});// The refund ceiling belongs to the BOOKING, not to one approval. Applied per approval, N open
-  // cancellation requests approved N full refunds: two requests moved 200% of the money collected out of
-  // the company, and the reconciliation row reported the overage as a net of ZERO because the net is
-  // clamped by Math.max(0, captured - refundTotal). The atomic claim below is a different control - it
-  // stops two approvers racing on ONE request, which is not what this was. `collected` is now the
-  // remaining headroom, so the refusal message below still names the right ceiling.
-  const amount=Number(input.approvedRefundAmount),collectedTotal=await collectedForBooking(db,input.bookingId),alreadyApprovedRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled')").bind(input.bookingId).first<Row>().catch(()=>null),alreadyApproved=Number(alreadyApprovedRow?.total||0),collected=Math.round(Math.max(0,collectedTotal-alreadyApproved)*100)/100;if(!Number.isFinite(amount)||amount<0||amount>collected)throw new Response(`Approved refund cannot exceed the amount actually collected for this booking (collected \u20b9${collected}). Sitting refunds are capped by captured funds, never by the booking total.`,{status:409});const reason=why(input),refundId=amount>0?crypto.randomUUID():null;
-  // ATOMIC CLAIM (PAWSPACE-QA-004). This UPDATE used to sit inside the same batch as the refund-ledger
-  // INSERT, and the INSERT was conditional only on `amount > 0`. Two approvers who both read the request
-  // while it was still policy_review_required therefore both reached the batch and both inserted a
-  // refund: QA reproduced 2 ledger rows totalling Rs 8,000 for one approved Rs 4,000 refund, with both
-  // calls returning success. The claim now runs FIRST and alone, and only the approver whose UPDATE
-  // actually changed a row is allowed to write anything further.
-  // Sitting's UPDATE also carried NO status predicate at all - `WHERE id=?` - so a losing approver
-  // additionally overwrote decision_by and approved_refund_amount, destroying the first approval's
-  // audit truth. The predicate is added here as well as the changes check.
-  const claim=await db.prepare("UPDATE sitting_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=? WHERE id=? AND status='policy_review_required'").bind(amount,input.actorId,reason,now,request.id).run();
-  if(Number(claim?.meta?.changes||0)!==1)throw new Response("This Sitting cancellation has already been decided by another approver",{status:409});
-  const statements=[db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status!='completed'").bind(now,input.bookingId),db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id)];// The approved refund is also its canonical case (same id), so BCC, the Finance queues and the refund webhook see it.
-  if(refundId)statements.push(db.prepare("INSERT INTO sitting_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now),approvedServiceRefundCase(db,{refundId,bookingId:input.bookingId,amount,reason,requestedBy:String(request.requested_by),approvedBy:input.actorId,service:"pet_sitting",cancellationRequestId:String(request.id),policySource:"explicit_staff_approval",now}));await db.batch(statements);return remember(db,input,{bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true});
+  try{
+   // A delivered/in-progress stay cannot be cancelled. An already-cancelled booking may
+   // still approve another legitimate split refund, within the shared captured ceiling.
+   if(status==="completed")throw new Response("A delivered Sitting booking cannot be cancelled or refunded",{status:409});
+   if(status==="in_progress")throw new Response("In-progress Sitting cancellation requires an Operations incident workflow",{status:409});
+   const request=await db.prepare("SELECT * FROM sitting_cancellation_requests WHERE booking_id=? AND id=? AND status='policy_review_required'").bind(input.bookingId,target!.id).first<Row>();
+   if(!request)throw new Response("No Sitting cancellation request is awaiting policy review",{status:409});
+   if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});
+   const amount=Number(input.approvedRefundAmount),collectedTotal=await collectedForBooking(db,input.bookingId),alreadyApprovedRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled')").bind(input.bookingId).first<Row>().catch(()=>null),alreadyApproved=Number(alreadyApprovedRow?.total||0),collected=Math.round(Math.max(0,collectedTotal-alreadyApproved)*100)/100;
+   if(!Number.isFinite(amount)||amount<0||amount>collected)throw new Response(`Approved refund cannot exceed the amount actually collected for this booking (collected ₹${collected}). Sitting refunds are capped by captured funds, never by the booking total.`,{status:409});
+   const reason=why(input),refundId=amount>0?crypto.randomUUID():null;
+   const result={bookingId:input.bookingId,status:"cancelled",cancellationRequestId:target!.id,approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true};
+   // Claim, replay result and dependent effects commit together. A zero-row claim makes
+   // the existing NOT NULL cache constraint abort the batch. A failed obligation/cache
+   // write cannot leave a stranded approval or cancellation. The claim reserves the
+   // shared captured ceiling and also rejects a booking checked in since the read.
+   const statements=[
+    db.prepare(`UPDATE sitting_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=?
+   WHERE id=? AND booking_id=? AND status='policy_review_required'
+   AND EXISTS(SELECT 1 FROM canonical_bookings WHERE id=sitting_cancellation_requests.booking_id AND status NOT IN ('completed','in_progress'))
+   AND ?<=ROUND(MAX(0,?-
+    (SELECT COALESCE(SUM(amount),0) FROM sitting_refund_ledger WHERE booking_id=? AND status NOT IN ('failed','cancelled'))-
+    (SELECT COALESCE(SUM(r.approved_refund_amount),0) FROM sitting_cancellation_requests r WHERE r.booking_id=? AND r.status='approved'
+     AND NOT EXISTS(SELECT 1 FROM sitting_refund_ledger l WHERE l.booking_id=r.booking_id AND l.cancellation_request_id=r.id))),2)`).bind(amount,input.actorId,reason,now,request.id,input.bookingId,amount,collectedTotal,input.bookingId,input.bookingId),
+    db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,CASE WHEN changes()=1 THEN ? ELSE NULL END,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
+    db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=? AND status NOT IN ('completed','in_progress')").bind(now,input.bookingId),
+    db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
+    // Resolve the current group inside this transaction: a date change may have committed since context was read.
+    db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status!='cancelled'").bind(input.bookingId),
+   ];
+   if(refundId)statements.push(
+    db.prepare("INSERT INTO sitting_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now),
+    approvedServiceRefundCase(db,{refundId,bookingId:input.bookingId,amount,reason,requestedBy:String(request.requested_by),approvedBy:input.actorId,service:"pet_sitting",cancellationRequestId:String(request.id),policySource:"explicit_staff_approval",now})
+   );
+   await db.batch(statements);return result;
+  }catch(error){
+   // A concurrent same-key request may have read before its winner committed. Replay
+   // only the fully committed result; a different booking/action/row remains denied.
+   const replay=await prior(db,input);if(replay)return{...replay,duplicatePrevented:true};
+   const message=error instanceof Error?error.message:String(error);
+   if(/NOT NULL constraint failed: sitting_finance_action_keys\.booking_id|UNIQUE constraint failed: sitting_finance_action_keys\.idempotency_key/.test(message))throw new Response("This Sitting cancellation or refundable balance changed; refresh before retrying",{status:409});
+   throw error;
+  }
  }
  if(input.action==="record_refund"){
-  const reference=String(input.refundReference||"").trim();if(!reference)throw new Response("Sandbox refund reference is required",{status:400});const refund=await db.prepare("SELECT * FROM sitting_refund_ledger WHERE booking_id=? AND status='sandbox_pending' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!refund)throw new Response("No Sitting sandbox refund is pending",{status:409});const duplicate=await db.prepare("SELECT id FROM sitting_refund_ledger WHERE reference=?").bind(reference).first<Row>();if(duplicate&&String(duplicate.id)!==String(refund.id))throw new Response("Refund reference was already used",{status:409});
+  const reference=String(input.refundReference||"").trim();if(!reference)throw new Response("Sandbox refund reference is required",{status:400});const refund=await db.prepare("SELECT * FROM sitting_refund_ledger WHERE booking_id=? AND id=? AND status='sandbox_pending'").bind(input.bookingId,target!.id).first<Row>();if(!refund)throw new Response("No Sitting sandbox refund is pending",{status:409});const duplicate=await db.prepare("SELECT id FROM sitting_refund_ledger WHERE reference=?").bind(reference).first<Row>();if(duplicate&&String(duplicate.id)!==String(refund.id))throw new Response("Refund reference was already used",{status:409});
   // The same canonical chain as Boarding: the refund reaches the collection ledger, reconciliation, the booking payment and the timeline with the Sitting ledger row.
   const cancellation=refund.cancellation_request_id?await db.prepare("SELECT requested_by,decision_by,decision_reason FROM sitting_cancellation_requests WHERE id=?").bind(refund.cancellation_request_id).first<Row>():null;
   const canonical=await recordServiceLedgerRefund(db,{ledger:"sitting_refund_ledger",service:"pet_sitting",refund,cancellation,reference,actorId:input.actorId,policySource:"explicit_staff_approval",fallbackReason:"Pet Sitting cancellation refund",now});
@@ -96,7 +127,43 @@ export async function mutateSittingFinance(db:D1Database,input:SittingFinanceInp
   if(!["confirmed","assigned"].includes(status))throw new Response("Sitting date changes are allowed only before check-in",{status:409});const start=String(input.requestedStart||""),end=String(input.requestedEnd||"");validFutureWindow(start,end);const reason=why(input),id=crypto.randomUUID();await db.prepare("INSERT INTO sitting_date_change_requests (id,booking_id,requested_start,requested_end,status,old_total,requested_by,reason,created_at,updated_at) VALUES (?,?,?,?, 'commercial_quote_required',?,?,?,?,?)").bind(id,input.bookingId,start,end,booking.total_amount,input.actorId,reason,now,now).run();return remember(db,input,{requestId:id,bookingId:input.bookingId,status:"commercial_quote_required",stayWindowUnchanged:true});
  }
  if(input.action==="apply_date_change"){
-  if(!["confirmed","assigned"].includes(status))throw new Response("Sitting date changes are blocked after check-in",{status:409});const request=await db.prepare("SELECT * FROM sitting_date_change_requests WHERE booking_id=? AND status='commercial_quote_required' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!request)throw new Response("No Sitting date change is awaiting a commercial quote",{status:409});const start=String(request.requested_start),end=String(request.requested_end),quoteId=String(input.quoteId||"").trim(),groupId=String(input.replacementGroupId||"").trim();const quote=await freshQuote(db,booking,quoteId,start,end),schedule=await replacementSchedule(db,booking,groupId,start,end),oldTotal=Number(booking.total_amount),newTotal=Number(quote.total_amount),delta=newTotal-oldTotal;if(delta<0)throw new Response("A lower-priced date change requires an approved refund policy",{status:409});if(delta>0&&!String(input.paymentAdjustmentReference||"").trim())throw new Response("Additional sandbox payment reference is required",{status:409});const paymentRef=delta>0?String(input.paymentAdjustmentReference):null;await db.batch([db.prepare("UPDATE sitting_date_change_requests SET quote_id=?,replacement_group_id=?,status='applied',new_total=?,amount_delta=?,payment_adjustment_reference=?,updated_at=? WHERE id=?").bind(quoteId,groupId,newTotal,delta,paymentRef,now,request.id),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id),db.prepare("UPDATE canonical_bookings SET schedule_group_id=?,provider_id=?,scheduled_start=?,scheduled_end=?,total_amount=?,updated_at=? WHERE id=?").bind(groupId,schedule.providerId,start,end,newTotal,now,input.bookingId),db.prepare("UPDATE provider_work_orders SET schedule_group_id=?,provider_id=?,scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(groupId,schedule.providerId,start,end,now,input.bookingId),db.prepare("UPDATE booking_payments SET amount=?,amount_due_now=?,detail_json=?,updated_at=? WHERE booking_id=?").bind(newTotal,newTotal,JSON.stringify({dateChange:true,previousTotal:oldTotal,amountDelta:delta,paymentAdjustmentReference:paymentRef,liveMoney:false}),now,input.bookingId),db.prepare("INSERT INTO sitting_date_change_quote_links (quote_id,booking_id,request_id,created_at) VALUES (?,?,?,?)").bind(quoteId,input.bookingId,request.id,now),db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,input.bookingId,quoteId)]);return remember(db,input,{bookingId:input.bookingId,status:"date_changed",quoteId,replacementGroupId:groupId,providerId:schedule.providerId,scheduledStart:start,scheduledEnd:end,totalAmount:newTotal,amountDelta:delta,sandboxOnly:true});
+  try{
+   if(!["confirmed","assigned"].includes(status))throw new Response("Sitting date changes are blocked after check-in",{status:409});
+   const request=await db.prepare("SELECT * FROM sitting_date_change_requests WHERE booking_id=? AND id=? AND status='commercial_quote_required'").bind(input.bookingId,target!.id).first<Row>();
+   if(!request)throw new Response("No Sitting date change is awaiting a commercial quote",{status:409});
+   const start=String(request.requested_start),end=String(request.requested_end),quoteId=String(input.quoteId||"").trim(),groupId=String(input.replacementGroupId||"").trim();
+   const quote=await freshQuote(db,booking,quoteId,start,end),schedule=await replacementSchedule(db,booking,groupId,start,end),oldTotal=Number(booking.total_amount),newTotal=Number(quote.total_amount),delta=newTotal-oldTotal;
+   if(delta<0)throw new Response("A lower-priced date change requires an approved refund policy",{status:409});
+   if(delta>0&&!String(input.paymentAdjustmentReference||"").trim())throw new Response("Additional sandbox payment reference is required",{status:409});
+   const paymentRef=delta>0?String(input.paymentAdjustmentReference):null;
+   const result={bookingId:input.bookingId,status:"date_changed",dateChangeRequestId:target!.id,quoteId,replacementGroupId:groupId,providerId:schedule.providerId,scheduledStart:start,scheduledEnd:end,totalAmount:newTotal,amountDelta:delta,sandboxOnly:true};
+   // D1 executes this batch as one transaction. Each claim is immediately followed by a
+   // changes() assertion using an existing NOT NULL booking_id constraint: a zero-row claim
+   // aborts the batch before any dependent effect. Cache, claims and all canonical writes
+   // roll back together on failure; no standalone applied request or success cache can remain.
+   await db.batch([
+    db.prepare(`UPDATE sitting_date_change_requests SET quote_id=?,replacement_group_id=?,status='applied',new_total=?,amount_delta=?,payment_adjustment_reference=?,updated_at=?
+     WHERE id=? AND booking_id=? AND status='commercial_quote_required'
+     AND EXISTS(SELECT 1 FROM canonical_bookings WHERE id=? AND status IN ('confirmed','assigned') AND schedule_group_id=? AND total_amount=?)`)
+     .bind(quoteId,groupId,newTotal,delta,paymentRef,now,request.id,input.bookingId,input.bookingId,booking.schedule_group_id,oldTotal),
+    db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,CASE WHEN changes()=1 THEN ? ELSE NULL END,?,?,?)")
+     .bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
+    db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open' AND expires_at>=?").bind(now,input.bookingId,quoteId,now),
+    db.prepare("INSERT INTO sitting_date_change_quote_links (quote_id,booking_id,request_id,created_at) VALUES (?,CASE WHEN changes()=1 THEN ? ELSE NULL END,?,?)").bind(quoteId,input.bookingId,request.id,now),
+    db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id),
+    db.prepare("UPDATE canonical_bookings SET schedule_group_id=?,provider_id=?,scheduled_start=?,scheduled_end=?,total_amount=?,updated_at=? WHERE id=?").bind(groupId,schedule.providerId,start,end,newTotal,now,input.bookingId),
+    db.prepare("UPDATE provider_work_orders SET schedule_group_id=?,provider_id=?,provider_name=?,provider_model=?,scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(groupId,schedule.providerId,schedule.providerName,schedule.providerModel,start,end,now,input.bookingId),
+    db.prepare("UPDATE booking_payments SET amount=?,amount_due_now=?,detail_json=?,updated_at=? WHERE booking_id=?").bind(newTotal,newTotal,JSON.stringify({dateChange:true,previousTotal:oldTotal,amountDelta:delta,paymentAdjustmentReference:paymentRef,liveMoney:false}),now,input.bookingId),
+   ]);
+   return result;
+  }catch(error){
+   // An exact concurrent retry may have missed the initial cache read. Its winner's cache
+   // is now committed with the complete transaction; another key/row never acquires it.
+   const replay=await prior(db,input);if(replay)return{...replay,duplicatePrevented:true};
+   const message=error instanceof Error?error.message:String(error);
+   if(/NOT NULL constraint failed: (sitting_finance_action_keys|sitting_date_change_quote_links)\.booking_id|UNIQUE constraint failed: sitting_date_change_quote_links\.quote_id/.test(message))throw new Response("This Sitting date change or quote changed; refresh before retrying",{status:409});
+   throw error;
+  }
  }
  if(input.action==="prepare_settlement"){
   if(status!=="completed")throw new Response("Sitter settlement can be prepared only after canonical checkout",{status:409});

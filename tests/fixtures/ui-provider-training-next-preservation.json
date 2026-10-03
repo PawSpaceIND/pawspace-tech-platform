@@ -1,0 +1,38 @@
+{
+  "file": "app/team/people/provider-training/page.tsx",
+  "beforeHash": "186c498655adee997fa5a50d030a156938747e935f9a2621ad95c90920c58317",
+  "replacements": [
+    [
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";",
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";\nimport styles from \"./provider-training-content.module.css\";"
+    ],
+    [
+      "return <StaffModule><main style=",
+      "return <StaffModule><main className={styles.training} style="
+    ],
+    [
+      "<input placeholder=\"Title\" value={title} onChange={event=>setTitle(event.target.value)} style={{width:\"100%\",marginBottom:6}}/>",
+      "<label className={styles.field}><span>Title</span><input placeholder=\"Title\" value={title} onChange={event=>setTitle(event.target.value)} style={{width:\"100%\",marginBottom:6}}/></label>"
+    ],
+    [
+      "<select value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:\"100%\",marginBottom:6}}>{[\"all\",\"grooming\",\"dog_training\",\"boarding\",\"pet_sitting\",\"pet_taxi\",\"dog_walking\",\"pet_food\",\"pet_relocation\"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select>",
+      "<label className={styles.field}><span>Service</span><select aria-label=\"Service\" value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:\"100%\",marginBottom:6}}>{[\"all\",\"grooming\",\"dog_training\",\"boarding\",\"pet_sitting\",\"pet_taxi\",\"dog_walking\",\"pet_food\",\"pet_relocation\"].map(code=><option key={code} value={code}>{label(code)}</option>)}</select></label>"
+    ],
+    [
+      "<input placeholder=\"Summary\" value={summary} onChange={event=>setSummary(event.target.value)} style={{width:\"100%\",marginBottom:6}}/>",
+      "<label className={styles.field}><span>Summary</span><input placeholder=\"Summary\" value={summary} onChange={event=>setSummary(event.target.value)} style={{width:\"100%\",marginBottom:6}}/></label>"
+    ],
+    [
+      "<textarea placeholder=\"Content sections (one per line)\" value={sections} onChange={event=>setSections(event.target.value)} style={{width:\"100%\",minHeight:80,marginBottom:6}}/>",
+      "<label className={styles.field}><span>Content sections (one per line)</span><textarea placeholder=\"Content sections (one per line)\" value={sections} onChange={event=>setSections(event.target.value)} style={{width:\"100%\",minHeight:80,marginBottom:6}}/></label>"
+    ],
+    [
+      "<input placeholder=\"Quiz question\" value={question} onChange={event=>setQuestion(event.target.value)} style={{width:\"100%\",marginBottom:6}}/>",
+      "<label className={styles.field}><span>Quiz question</span><input placeholder=\"Quiz question\" value={question} onChange={event=>setQuestion(event.target.value)} style={{width:\"100%\",marginBottom:6}}/></label>"
+    ],
+    [
+      "<input placeholder=\"Options separated by | (first is index 0)\" value={options} onChange={event=>setOptions(event.target.value)} style={{width:\"100%\",marginBottom:6}}/>",
+      "<label className={styles.field}><span>Quiz options (separate with |; first index is 0)</span><input placeholder=\"Options separated by | (first is index 0)\" value={options} onChange={event=>setOptions(event.target.value)} style={{width:\"100%\",marginBottom:6}}/></label>"
+    ]
+  ]
+}

@@ -1,7 +1,7 @@
 name: Grouped UI successor (visual QA pending)
 on:
   pull_request:
-    paths: ['app/**', 'tests/fixtures/*contract.json', 'tests/*presentation*.test.mjs', 'tests/*appearance*.test.mjs', 'e2e/ui-successor.spec.ts', 'playwright.ui-successor.config.ts', '.github/workflows/ui-successor.yml']
+    paths: ['app/**', 'tests/fixtures/*contract.json', 'tests/fixtures/ui-content-next-preservation.json', 'tests/*presentation*.test.mjs', 'tests/*preservation*.test.mjs', 'tests/*appearance*.test.mjs', 'tests/partner-entry-redesign.test.mjs', 'e2e/ui-successor.spec.ts', 'e2e/ui-next-group.spec.ts', 'e2e/ui-content-next.spec.ts', 'e2e/ui-staff-finish.spec.ts', 'playwright.ui-staff-finish.config.ts', 'playwright.ui-successor.config.ts', '.github/workflows/ui-successor.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Install locked dependencies
         run: npm run install:ci
       - name: Preserve reviewed sources and presentation contracts
-        run: node --experimental-strip-types --test tests/v2-account-presentation-preservation.test.mjs tests/training-family-presentation.test.mjs tests/schedule-readiness-presentation.test.mjs tests/mobile-appearance-preference.test.mjs tests/staff-style-token-propagation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/staff-crm-control-presentation.test.mjs tests/staff-operations-presentation.test.mjs tests/staff-team-completion-presentation.test.mjs tests/ui-display-truth.test.mjs
+        run: node --experimental-strip-types --test tests/ui-finance-next-preservation.test.mjs tests/ui-staff-content-next-preservation.test.mjs tests/ui-boarding-finance-next-preservation.test.mjs tests/ui-content-next-preservation.test.mjs tests/partner-entry-redesign.test.mjs tests/staff-shell-next-presentation.test.mjs tests/v2-account-presentation-preservation.test.mjs tests/training-family-presentation.test.mjs tests/schedule-readiness-presentation.test.mjs tests/mobile-appearance-preference.test.mjs tests/staff-style-token-propagation.test.mjs tests/customer-partner-theme.test.mjs tests/inbox-workspace-presentation.test.mjs tests/partner-services-presentation.test.mjs tests/staff-admin-self-service-presentation.test.mjs tests/staff-crm-control-presentation.test.mjs tests/staff-operations-presentation.test.mjs tests/staff-team-completion-presentation.test.mjs tests/ui-display-truth.test.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Install Chromium

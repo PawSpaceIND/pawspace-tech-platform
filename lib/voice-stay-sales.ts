@@ -13,7 +13,7 @@ export async function prepareStaySalesQuote(db: D1Database, input: {
  schedule: Row; booking: Row; petCount: number;
 }): Promise<Row> {
  const { schedule, booking, service } = input;
- if (!["prepaid", "split_50_50"].includes(text(booking.paymentMode))) throw refuse("Choose an approved stay payment option", 400);
+ if (!["prepaid", "split_50_50"].includes(text(booking.paymentMode))) throw refuse("Please choose full payment upfront, or a 50/50 split if this is an eligible overnight stay longer than four nights. For an eligible split, the remaining half is due 24 hours before check-in.", 400);
  const start = Date.parse(text(schedule.scheduledStart)), end = Date.parse(text(schedule.scheduledEnd));
  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw refuse("Exact start and end times are required for care", 400);
  if (schedule.occurrences !== undefined && Number(schedule.occurrences) !== 1) throw refuse("A stay uses one continuous care reservation", 400);

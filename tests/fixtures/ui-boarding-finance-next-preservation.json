@@ -1,0 +1,19 @@
+{
+  "base": "36d558cfab0828c7b4f679756ca2cf8855c4f9e8",
+  "file": "app/team/finance/boarding/boarding-finance-workspace.tsx",
+  "beforeHash": "25d53a2689e23f7cd3920754499d93d261a28e28a7e219ca5ff6b1b1154e9aac",
+  "replacements": [
+    [
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";",
+      "import StaffModule from \"../../../components/staff-workspace/StaffModule\";\nimport styles from \"./boarding-content.module.css\";"
+    ],
+    [
+      "<StaffModule><main style=",
+      "<StaffModule><main className={styles.boarding} style="
+    ],
+    [
+      "<section style={{display:\"flex\",gap:10,marginBottom:18}}>",
+      "<section className={styles.bookingLookup} style={{display:\"flex\",gap:10,marginBottom:18}}>"
+    ]
+  ]
+}

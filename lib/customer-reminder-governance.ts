@@ -149,9 +149,9 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
   const asOf = input.asOf ?? Date.now();
   const policy = await currentCadencePolicy(db);
   const rows = await db.prepare(
-    "SELECT customer_id,MAX(scheduled_end) last_completed FROM canonical_bookings WHERE service_code='grooming' AND status='completed' GROUP BY customer_id"
+    "SELECT b.customer_id,b.id booking_id,b.scheduled_end last_completed FROM canonical_bookings b WHERE b.service_code='grooming' AND b.status='completed' AND NOT EXISTS (SELECT 1 FROM canonical_bookings newer WHERE newer.customer_id=b.customer_id AND newer.service_code='grooming' AND newer.status='completed' AND (newer.scheduled_end>b.scheduled_end OR (newer.scheduled_end=b.scheduled_end AND newer.id>b.id)))"
   ).all<Row>();
-  let queued = 0, suppressed = 0, skippedFutureBooking = 0;
+  let queued = 0, suppressed = 0, skippedFutureBooking = 0, skippedUnverifiableHistory = 0;
   for (const row of rows.results) {
     const customerId = String(row.customer_id);
     const lastCompletedMs = Date.parse(String(row.last_completed));
@@ -163,18 +163,38 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
     ).bind(customerId, new Date(asOf).toISOString()).first<Row>();
     if (future) { skippedFutureBooking++; continue; }
     const cycle = Math.floor(daysSince / policy.groomingRebookingDays);
-    const cycleKey = `grooming_rebooking:${customerId}:${cycle}`;
+    const cycleKey = `grooming_rebooking:${customerId}:${String(row.booking_id)}:${cycle}`;
+    // Preserve an already queued legacy cycle for the same completion day during rollout.
+    // Old keys did not record the booking; their as-of clock and days-since payload bound that day.
+    await ensureCommunicationTables(db);
+    const legacy = await db.prepare("SELECT created_at,payload_json FROM communication_messages WHERE idempotency_key=? AND customer_id=? AND template_key='grooming_rebooking_reminder'").bind(`grooming_rebooking:${customerId}:${cycle}`,customerId).first<Row>();
+    if (legacy) {
+      let payload: Row;
+      try { payload = JSON.parse(String(legacy.payload_json)); }
+      catch { skippedUnverifiableHistory++; continue; }
+      const legacyDays = payload && !Array.isArray(payload) ? payload.daysSinceLastService : null;
+      if (typeof legacyDays !== "number" || !Number.isInteger(legacyDays) || legacyDays < 0 || !Number.isFinite(Number(legacy.created_at)) || Number(legacy.created_at) <= 0) {
+        skippedUnverifiableHistory++; continue;
+      }
+      if (Math.floor((Number(legacy.created_at)-lastCompletedMs)/day) === legacyDays) {
+        // Reuse the original key: its idempotent enqueue repairs a missing nonterminal outbox.
+        await enqueueCommunication(db, { customerId, cityId: "blr", channel: await preferredChannel(db, customerId), purpose: "lifecycle",
+          idempotencyKey: `grooming_rebooking:${customerId}:${cycle}`, templateKey: "grooming_rebooking_reminder",
+          payload, createdBy: input.actorId, scheduledAt: asOf, asOf });
+        continue;
+      }
+    }
     const channel = await preferredChannel(db, customerId);
     const result = await enqueueCommunication(db, {
-      customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
-      templateKey: "grooming_rebooking_reminder", payload: { daysSinceLastService: daysSince, cadenceDays: policy.groomingRebookingDays },
+      customerId, cityId: "blr", bookingId: String(row.booking_id), channel, purpose: "lifecycle", idempotencyKey: cycleKey,
+      templateKey: "grooming_rebooking_reminder", payload: { daysSinceLastService: daysSince, cadenceDays: policy.groomingRebookingDays, completedBookingId: String(row.booking_id) },
       createdBy: input.actorId, scheduledAt: asOf, asOf,
     });
-    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle }, asOf);
+    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle, completedBookingId: String(row.booking_id) }, asOf);
     if (result.duplicatePrevented) continue;
     if (result.status === "suppressed") suppressed++; else queued++;
   }
-  return { queued, suppressed, skippedFutureBooking, cadenceDays: policy.groomingRebookingDays };
+  return { queued, suppressed, skippedFutureBooking, skippedUnverifiableHistory, cadenceDays: policy.groomingRebookingDays };
 }
 
 /**

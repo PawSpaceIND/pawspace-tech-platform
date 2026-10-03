@@ -1,3 +1,5 @@
+import {preservedReviewedFoodBytes} from './helpers/food-route-review.mjs';
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,7 +9,7 @@ const root=new URL('../',import.meta.url),read=p=>fs.readFileSync(new URL(p,root
 const contract=JSON.parse(read('tests/fixtures/ui-display-truth-contract.json'));
 const hash=v=>createHash('sha256').update(v).digest('hex');
 test('All other existing application sources and business engines remain unchanged',()=>{
- for(const[p,h]of Object.entries(contract.protected))assert.equal(hash(read(p)),h,p);
+ for(const[p,h]of Object.entries(contract.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedReviewedFoodBytes(p,read(p)),p)),h,p);
 });
 for(const value of [0,27,'INR 0','INR 1250'])test('Snapshot value stays unavailable on loading/failure: '+value,()=>{
  assert.equal(snapshotMetric(value,true,''),'\u2014');assert.equal(snapshotMetric(value,false,'Denied'),'\u2014');

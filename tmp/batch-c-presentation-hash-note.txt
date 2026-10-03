@@ -1,0 +1,1 @@
+Presentation fixtures pinned to AI-02 orchestrator sha256 fae47970ba45ee7ad831f396102952a06298fd81fe25b39dda659a3e7ba491d9.

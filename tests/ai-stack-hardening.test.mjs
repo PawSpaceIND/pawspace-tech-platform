@@ -170,7 +170,7 @@ async function twoCustomers() {
 
 test("real execution: a turn's AI context contains only that customer's data", async () => {
   const { sqlite, db, orchestrator } = await twoCustomers();
-  const result = await orchestrator.orchestrateAiTurn(db, { actor: staffActor, threadId: "THR-A", customerId: "CUS-A", inputMessageId: "MSG-A-1", idempotencyKey: "turn-a-1", channel: "chat", provider: connectedProvider });
+  const result = await orchestrator.orchestrateAiTurn(db, { actor: staffActor, threadId: "THR-A", customerId: "CUS-A", inputMessageId: "MSG-A-1", idempotencyKey: "turn-a-1", channel: "chat", provider: {...connectedProvider,async generate(){return {text:"I can review your booking status.",provider:"test_provider",modelRef:"test-model-1",latencyMs:5,confidence:0.9};}} });
   assert.equal(result.duplicatePrevented, false);
   assert.equal(result.turn.outcome, "draft_review_required");
   const snapshot = sqlite.prepare("SELECT customer_id,context_json FROM ai_context_snapshots WHERE id=?").get(result.turn.contextId);

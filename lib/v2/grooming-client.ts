@@ -1,3 +1,4 @@
+import type {PublicGroomingSubscription} from "./grooming-subscription-projection";
 import { apiSend } from "../api-fetch";
 import { groomingSlotWindow, groomingSlotAvailable } from "../grooming-booking-calendar";
 import { previewUatProviders, type ProviderPreview } from "../uat-scheduling-client";
@@ -20,21 +21,24 @@ export type V2GroomingPackage = {
   description: string;
   audience: "dog" | "cat" | "young";
   bundles: V2GroomingBundle[];
+  subscription?: PublicGroomingSubscription;
 };
 
 export type V2GroomingCatalogue = {
   serviceCode: "grooming";
   packages: V2GroomingPackage[];
+  subscriptions?: PublicGroomingSubscription[];
 };
 
 export type V2GroomingQuote = {
+  subscriptionVersion?:number;
   price: number;
-  source: "pricing_control" | "fallback_default";
+  source: "pricing_control" | "subscription_control" | "fallback_default";
 };
 
-export async function loadV2GroomingCatalogue(): Promise<V2GroomingCatalogue> {
+export async function loadV2GroomingCatalogue(input?:{cityId:string;zoneId?:string;date?:string}): Promise<V2GroomingCatalogue> {
   return apiSend<V2GroomingCatalogue>(
-    "/api/v2/grooming-catalogue",
+    input ? `/api/v2/grooming-catalogue?${new URLSearchParams({includeSubscriptions:"1",cityId:input.cityId,...(input.zoneId?{zoneId:input.zoneId}:{}),...(input.date?{date:input.date}:{})})}` : "/api/v2/grooming-catalogue",
     { cache: "no-store" },
     "We could not load grooming packages right now.",
   );
@@ -50,6 +54,7 @@ export async function resolveV2GroomingCoverage(pincode: string): Promise<Resolv
 
 export async function quoteV2Grooming(input: {
   bundle: V2GroomingBundle;
+  subscription?:PublicGroomingSubscription;
   isoDate: string;
   slotIndex: number;
   cityId: string;
@@ -62,6 +67,12 @@ export async function quoteV2Grooming(input: {
     throw new Error("This package is not published for the selected date. Refresh the care packages.");
   }
   const { start, end } = groomingSlotWindow(input.isoDate, input.slotIndex, input.bundle.slotMinutes);
+  if(input.subscription){
+    const fresh=await loadV2GroomingCatalogue({cityId:input.cityId,zoneId:input.zoneId,date:input.isoDate});
+    const plan=fresh.subscriptions?.find(p=>p.code===input.subscription?.code);
+    if(!plan||plan.version!==input.subscription.version||plan.price!==input.subscription.price||plan.sessions!==input.subscription.sessions||plan.validityValue!==input.subscription.validityValue||plan.validityUnit!==input.subscription.validityUnit)throw new Error("This subscription changed or is no longer available. Refresh the care plans before booking.");
+    return {quote:{price:plan.price,source:"subscription_control" as const,subscriptionVersion:plan.version},scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()};
+  }
   const quote = await apiSend<V2GroomingQuote>(
     "/api/live-price-quote",
     {

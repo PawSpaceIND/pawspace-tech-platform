@@ -1,7 +1,10 @@
 "use client";
+import {subscriptionPackage,subscriptionSavings} from "../../../lib/v2/grooming-subscription-projection";
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect */
 
 import Link from "next/link";
+import GroomingVerifiedAddressPicker from "./verified-address-picker";
+import GroomingCustomerIntake from "./customer-intake";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { couponNeedsReapply } from "../../../lib/coupon-reapply-guard";
 import type { CustomerAccountRecord } from "../../../lib/customer-account";
@@ -29,6 +32,7 @@ import {
   type V2GroomingPaymentChoice,
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
+import GroomingGuestPreview from "./guest-preview";
 import V2GroomingPaymentPanel from "./payment-panel";
 import V2GroomingCouponBox, { type V2CouponIntent } from "./coupon-box";
 import ContactForm from "../../contact/contact-form";
@@ -49,6 +53,7 @@ const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "curren
 
 export default function V2GroomingPage() {
   const recoveryBookingId = useQueryParameter("bookingId");
+  const [guest, setGuest] = useState(false);
   const [account, setAccount] = useState<CustomerAccountRecord | null>(null);
   const [catalogue, setCatalogue] = useState<V2GroomingCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +67,8 @@ export default function V2GroomingPage() {
   const [comfort, setComfort] = useState<"friendly" | "anxious" | "aggressive">("friendly");
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [largeHousehold, setLargeHousehold] = useState<string[] | null>(null);
-  const [selectedPackageCode, setSelectedPackageCode] = useState("");
+  const [guestPackageCode, setGuestPackageCode] = useState(() => {try{return recoveryBookingId?"":window.sessionStorage.getItem("pawspace_v2_grooming_guest_package")||"";}catch{return "";}});
+  const [selectedPackageCode, setSelectedPackageCode] = useState(guestPackageCode);
   const [address, setAddress] = useState("");
   const [savedAddressId, setSavedAddressId] = useState("");
   // A typed doorstep is kept in the account only when the customer asks; availability checks never save it.
@@ -107,11 +113,13 @@ export default function V2GroomingPage() {
       const [session, availability, nextCatalogue] = await Promise.all([
         loadV2CustomerSession(),
         loadV2ServiceAvailability(),
-        loadV2GroomingCatalogue(),
+        loadV2GroomingCatalogue({cityId:"blr"}),
       ]);
-      if (!session) throw new Error("Sign in from PawSpace V2 before booking grooming.");
       const grooming = availability.find(service => service.code === "grooming");
       if (!grooming?.enabled) throw new Error("Grooming is not accepting bookings in your area right now.");
+      setCatalogue(nextCatalogue);
+      setGuest(!session);
+      if (!session) return;
       const nextAccount = await loadV2CustomerAccount();
       setAccount(nextAccount);
       const saved=nextAccount.addresses.find(item=>item.isDefault)||nextAccount.addresses[0];
@@ -136,11 +144,13 @@ export default function V2GroomingPage() {
   const audience = selectedPets[0] ? v2GroomingPetAudience(selectedPets[0], date || undefined) : null;
   const selectionIssue = v2GroomingSelectionIssue(selectedPets, undefined, date || undefined);
   const mixedAudience = Boolean(selectionIssue);
+  const subscriptionPackages = useMemo(() => (catalogue?.subscriptions||[]).flatMap(plan=>{const care=catalogue?.packages.find(pkg=>pkg.code===plan.servicePackageCode);return care?plan.eligiblePetTypes.flatMap(species=>{const audience=species==="cat"?"cat":species==="dog"?"dog":null;const pkg=audience?subscriptionPackage(plan,care,audience):null;return pkg?[pkg]:[];}):[];}),[catalogue]);
   const packages = useMemo(
-    () => (catalogue?.packages || []).filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
-    [catalogue, audience, selectedPets.length],
+    () => [...(catalogue?.packages || []),...subscriptionPackages].filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
+    [catalogue, subscriptionPackages, audience, selectedPets.length],
   );
-  const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || packages[0] || null;
+  useEffect(()=>{if(!coverage?.cityId||!date)return;let active=true;void loadV2GroomingCatalogue({cityId:coverage.cityId,zoneId:coverage.zoneId,date}).then(next=>{if(active)setCatalogue(next);}).catch(()=>{if(active)setCatalogue(current=>current?{...current,subscriptions:[]}:current);});return()=>{active=false;};},[coverage?.cityId,coverage?.zoneId,date]);
+  const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || (guestPackageCode && selectedPackageCode === guestPackageCode ? null : packages[0]) || null;
   const packageBundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
   // Same package and price with a longer slot, so availability, the quote window, the groomer check and checkout agree.
   const extraCare = v2ExtraCareReason(selectedPets);
@@ -262,7 +272,7 @@ export default function V2GroomingPage() {
     if (providerSelection === "auto") setSelectedProviderId("");
     try {
       if (!groomingSlotAvailable(date, slotIndex, bundle.slotMinutes)) throw new Error("That grooming slot can no longer be booked. Pick another time.");
-      const priced = await quoteV2Grooming({ bundle, isoDate: date, slotIndex, cityId: coverage.cityId, zoneId: coverage.zoneId });
+      const priced = await quoteV2Grooming({ bundle, subscription:selectedPackage?.subscription, isoDate: date, slotIndex, cityId: coverage.cityId, zoneId: coverage.zoneId });
       if (!mounted.current || version !== careVersion.current) return;
       const preview = await previewV2Groomers({
         customerId: account.customerId,
@@ -289,11 +299,14 @@ export default function V2GroomingPage() {
     }
   };
 
+  useEffect(()=>{if(!booking&&!recoveryBookingId)return;setGuestPackageCode("");try{window.sessionStorage.removeItem("pawspace_v2_grooming_guest_package");}catch{/* No draft survives a completed/recovered booking in this visit. */}},[booking,recoveryBookingId]);
   if (booking || recoveryBookingId) return <V2GroomingPaymentPanel
     key={booking?.bookingId || recoveryBookingId} bookingId={booking?.bookingId || recoveryBookingId}
     initialAddress={address} initialPincode={pincode} preparing={checkoutBusy} />;
 
   if (loading) return <main className={styles.loading}><span className={styles.loader}>✦</span><b>Preparing a beautiful grooming experience…</b></main>;
+
+  if (guest && catalogue && !fatal) return <GroomingGuestPreview catalogue={catalogue} selectedCode={selectedPackageCode} onSelect={code => {setGuestPackageCode(code);setSelectedPackageCode(code);try{window.sessionStorage.setItem("pawspace_v2_grooming_guest_package",code);}catch{/* Keep the current visit usable without storage. */}}} onVerified={() => void bootstrap()}/>;
 
   if (fatal || !account || !catalogue) return (
     <main className={styles.errorPage}>
@@ -332,6 +345,7 @@ export default function V2GroomingPage() {
         </div>
       </section>
 
+      {guestPackageCode && <p role="status" className={styles.helper}>Your guest choice: {[...catalogue.packages,...subscriptionPackages].find(pkg => pkg.code === guestPackageCode)?.name || "a previously selected package"}. {packages.some(pkg => pkg.code === guestPackageCode) ? "The package is selected for your current pets. Check the final price and availability." : "This choice does not match your current pet selection. Choose the matching pets or a compatible package below before booking."}</p>}
       {largeHousehold && <section id="v2-large-family-enquiry" tabIndex={-1} role="dialog" aria-modal="false" aria-label="Large pet family enquiry" className={styles.step}>
         <h2>Plan care for more than four pets</h2><p>Your four-pet booking is unchanged. Send a separate enquiry for the full family; this does not confirm a booking.</p>
         <ContactForm initial={{name:account.name,phone:account.primaryPhone,service:"Grooming",petNames:largeHousehold.join(", "),message:`Please plan grooming for ${largeHousehold.length} pets: ${largeHousehold.join(", ")}. Requested date: ${date}.`}}/>
@@ -367,10 +381,11 @@ export default function V2GroomingPage() {
               {packages.map(pkg => {
                 const option = groomingBundleForCount(pkg, selectedPets.length);
                 const selected = selectedPackage?.code === pkg.code;
-                return <button key={pkg.code} className={`${styles.packageCard} ${selected ? styles.selectedPackage : ""}`} onClick={() => { invalidateCare(); setSelectedPackageCode(pkg.code); }} disabled={mixedAudience || !option}>
-                  <div className={styles.packageTop}><span>{AUDIENCE_LABEL[pkg.audience]}</span>{selected && <strong>Selected</strong>}</div>
+                return <button key={pkg.code} className={`${styles.packageCard} ${selected ? styles.selectedPackage : ""}`} onClick={() => { invalidateCare(); setGuestPackageCode("");try{window.sessionStorage.removeItem("pawspace_v2_grooming_guest_package");}catch{/* Current selection remains usable. */} setSelectedPackageCode(pkg.code); if(pkg.subscription)setPaymentMode("prepaid"); }} disabled={mixedAudience || !option}>
+                  <div className={styles.packageTop}><span>{pkg.subscription ? "Subscription" : "One-time"} · {AUDIENCE_LABEL[pkg.audience]}</span>{selected && <strong>Selected</strong>}</div>
                   <h3>{pkg.name}</h3>
                   <p>{pkg.description}</p>
+                  {pkg.subscription && <p>{pkg.subscription.sessions} {pkg.subscription.familyWallet?"shared credits":"credits"} · valid {pkg.subscription.validityValue} {pkg.subscription.validityUnit} · {pkg.subscription.creditsPerPet} credit(s) per pet per visit. {(() => {const care=catalogue.packages.find(p=>p.code===pkg.subscription?.servicePackageCode);const saving=care?subscriptionSavings(pkg,care):null;return saving===null?"Equivalent one-time savings unavailable.":`Save ${money(saving)} versus equivalent published one-time catalogue care. Actual single-visit prices can vary.`;})()}</p>}
                   <div className={styles.packageBottom}><b>{option ? money(option.price) : "Unavailable"}</b><small>{option ? `${option.slotMinutes} min · ${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "This bundle is not published"}</small></div>
                 </button>;
               })}
@@ -386,7 +401,17 @@ export default function V2GroomingPage() {
 
           <section id="v2-grooming-address" tabIndex={-1} aria-labelledby="v2-grooming-address-title" className={styles.step} onFocusCapture={() => setActiveStep(3)}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2 id="v2-grooming-address-title">Where should we come?</h2></div></div>
+            <GroomingCustomerIntake account={account} disabled={checkoutBusy} onProfileSaved={setAccount} />
+            <p className={styles.helper}>Save your contact details and address once, then reuse them for future visits. Pet photos are optional in your pet profile.</p>
             {account.addresses.length>0&&<label>Saved service address<select style={{display:"block",width:"100%",maxWidth:"100%"}} value={savedAddressId} onChange={event=>{const saved=account.addresses.find(item=>item.id===event.target.value);setSavedAddressId(event.target.value);if(saved){setAddress(serviceAddressText({...saved,postalCode:undefined}));setPincode(saved.postalCode||"");}invalidateDoorstep();}}><option value="">Enter a different address</option>{account.addresses.map(item=><option key={item.id} value={item.id}>{item.label}: {item.line1}{item.isDefault?" (default)":""}</option>)}</select></label>}
+            <GroomingVerifiedAddressPicker disabled={checkoutBusy} onInvalidated={() => {
+              if(checkoutLock.current)return;
+              invalidateDoorstep();setCoverageError("");setAddress("");setPincode("");setSavedAddressId("");setSaveAddress(false);
+            }} onSelect={draft => {
+              if(checkoutLock.current)return;
+              invalidateDoorstep();setCoverageError("");setAddress(draft.address);setPincode(draft.pincode);setSavedAddressId("");setSaveAddress(false);setCoverage(draft.coverage);
+            }}/>
+            <details><summary>Use device location instead</summary>
             <GroomingLocationAssist key={JSON.stringify([account.customerId, address, pincode, savedAddressId, locationRevision])}
               disabled={checkoutBusy} onPendingChange={onLocationPendingChange} onManualEntry={editServiceAddress}
               onConfirm={draft => {
@@ -395,6 +420,7 @@ export default function V2GroomingPage() {
                 setSavedAddressId(""); setSaveAddress(false); setLocationRevision(value => value + 1);
                 addressInputRef.current?.focus();
               }} />
+            </details>
             {address && <button type="button" className={styles.liveButton} onClick={editServiceAddress}>Change address</button>}
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input ref={addressInputRef} value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
@@ -409,14 +435,14 @@ export default function V2GroomingPage() {
 
           <section id="v2-grooming-time" tabIndex={-1} aria-labelledby="v2-grooming-time-title" className={styles.step} onFocusCapture={() => setActiveStep(4)}>
             <div className={styles.stepHead}><span>04</span><div><small>LIVE AVAILABILITY</small><h2 id="v2-grooming-time-title">Pick a beautiful time</h2></div></div>
-            <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
+            <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} aria-pressed={date === item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
             <div className={styles.slotGrid}>{SLOT_LABELS.map((label, index) => {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
               return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
             })}</div>
             <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy || locationPending} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
             {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
-            {providerError && <p className={styles.inlineError}>{providerError}</p>}
+            {providerError && <p role="alert" className={styles.inlineError}>{providerError}</p>}
           </section>
 
           {providers && providers.providers.length > 0 && <section className={styles.step}>
@@ -440,16 +466,17 @@ export default function V2GroomingPage() {
             <div><span>When</span><b>{summaryWhen}</b></div>
             <div><span>Groomer</span><b>{providerSelection === "auto" ? "PawSpace chooses · confirmed at reservation" : providers?.providers.find(item => item.id === selectedProviderId)?.name || "Selected groomer unavailable"}</b></div>
           </div>
-          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
-          {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={couponContextKey} contextKey={couponContextKey} intentRef={couponIntentRef} onChecked={setCouponCheckedKey} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} paymentMode={paymentMode} onChange={onCouponChange} />}
+          <div className={styles.priceBlock}><span>{quote ? "Verified live price" : "Package price"}</span><b>{quote ? money(quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>Includes extras {money(addOnTotal)}</small>}<small>{quote ? (quote.source === "subscription_control" ? "Confirmed from Subscription Control" : quote.source === "pricing_control" ? "Confirmed from Pricing Control" : "Confirmed canonical package price") : "Final price checks your exact slot and zone"}</small></div>
+          {quote && basketTotal !== null && account && coverage && bundle && <V2GroomingCouponBox key={couponContextKey} contextKey={couponContextKey} isSubscription={Boolean(selectedPackage?.subscription)} intentRef={couponIntentRef} onChecked={setCouponCheckedKey} orderValue={basketTotal} customerId={account.customerId} cityId={coverage.cityId} packageCode={bundle.packageCode} paymentMode={paymentMode} onChange={onCouponChange} />}
           {quote && coupon.quoteId && <div className={styles.priceBlock}><span>Coupon {coupon.code} · −{money(coupon.discount)}</span><b>{money(Math.max(0, quote.price + addOnTotal - coupon.discount))}</b><small>Total after the server-checked coupon</small></div>}
+          {selectedPackage?.subscription && <p className={styles.helper}>Subscription purchase is prepaid. Credits activate only after verified payment under the existing wallet policy.</p>}
           {quote && <div className={styles.addressBox} role="group" aria-label="Payment timing">
             <b>How would you like to pay?</b>
             <div className={styles.providerGrid}>
               <button type="button" className={paymentMode === "prepaid" ? styles.providerSelected : styles.providerCard} aria-pressed={paymentMode === "prepaid"} onClick={() => { setPaymentMode("prepaid"); setCouponCheckedKey(""); }}>
                 <div><b>Pay now</b><small>Secure Razorpay / UPI checkout</small></div><strong>{paymentMode === "prepaid" ? "✓" : "Choose"}</strong>
               </button>
-              <button type="button" className={paymentMode === "pay_after_service" ? styles.providerSelected : styles.providerCard} aria-pressed={paymentMode === "pay_after_service"} onClick={() => { setPaymentMode("pay_after_service"); setCouponCheckedKey(""); }}>
+              <button type="button" className={paymentMode === "pay_after_service" ? styles.providerSelected : styles.providerCard} aria-pressed={paymentMode === "pay_after_service"} disabled={Boolean(selectedPackage?.subscription)} onClick={() => { setPaymentMode("pay_after_service"); setCouponCheckedKey(""); }}>
                 <div><b>Pay after service</b><small>₹0 now · settle by payment link / UPI or cash after grooming</small></div><strong>{paymentMode === "pay_after_service" ? "✓" : "Choose"}</strong>
               </button>
             </div>

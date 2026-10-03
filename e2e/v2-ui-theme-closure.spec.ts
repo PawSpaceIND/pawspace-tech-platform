@@ -109,7 +109,11 @@ for (const theme of ["emerald", "signature"] as const) for (const mode of ["ligh
           hero: getComputedStyle(e.closest('section')!).backgroundColor }));
         expect(contrast(pair.color, pair.bg === "rgba(0, 0, 0, 0)" ? pair.hero : pair.bg)).toBeGreaterThanOrEqual(4.5);
       }
-      await expect(links.filter({ hasText: route.endsWith("boarding") ? "Boarding" : "Pet Sitting" })).toHaveAttribute("aria-current", "page");
+      const activeLink = page.locator(`[class*="modeSwitch"] a[href="${route}"]`);
+      await expect(activeLink).toHaveCount(1);
+      await expect(activeLink).toHaveAttribute("aria-current", "page");
+      await expect(links.nth(0)).toHaveText("Boarding · host’s home");
+      await expect(links.nth(1)).toHaveText("Sitting · your home");
       await expect(links.nth(0)).toHaveAttribute("href", "/v2/boarding"); await expect(links.nth(1)).toHaveAttribute("href", "/v2/sitting");
     }
   });
@@ -157,9 +161,10 @@ test("Mobile utilities do not cover dock targets, including the signed-in notifi
     const appearanceButton = page.getByRole("button", { name: "Change PawSpace appearance" });
     const updates = page.getByRole("button", { name: "Order notifications", exact: true });
     await expect(updates).toBeVisible();
-    const utilities = [await appearanceButton.boundingBox(), await updates.boundingBox()];
     const targets = page.locator('nav[aria-label="PawSpace V2 navigation"] a:visible, nav[aria-label="PawSpace mobile navigation"] :is(a,button):visible');
     for (const target of await targets.all()) {
+      await target.scrollIntoViewIfNeeded();
+      const utilities = [await appearanceButton.boundingBox(), await updates.boundingBox()];
       const box = (await target.boundingBox())!;
       // Chat utilities are in document flow and may be below the fixed dock.
       // Non-overlap must include all four directions, not only above/left/right.
@@ -361,9 +366,20 @@ for (const variant of laneVariants) test(`Payment lane: order updates and appear
     const g = await page.evaluate(selector => {
       const box = (e: Element | null) => { const b = e!.getBoundingClientRect(); return {left: b.left, right: b.right, top: b.top, bottom: b.bottom}; };
       return {lane: box(document.querySelector(selector)), appearance: box(document.querySelector('.paw-appearance-trigger')),
-        updates: box(document.querySelector('.ps-order-fab > button')), width: innerWidth, scrollWidth: document.documentElement.scrollWidth};
+        updates: box(document.querySelector('.ps-order-fab > button')),
+        appearancePosition: getComputedStyle(document.querySelector('.paw-appearance-trigger')!).position,
+        updatesPosition: getComputedStyle(document.querySelector('.ps-order-fab')!).position,
+        width: innerWidth, scrollWidth: document.documentElement.scrollWidth};
     }, variant.lane);
-    expect.soft(g.lane.right + 8, `${at}: payment content keeps out of the buttons' lane`).toBeLessThanOrEqual(Math.min(g.appearance.left, g.updates.left));
+    if (variant.name === 'shared payment surface' || variant.name === 'balance status card') {
+      // Booking detail utilities now follow the content in document flow. Require both to stay there,
+      // and keep the full payment region above them; the scroll sweep below still hit-tests Pay.
+      expect(g.appearancePosition, at).toBe('relative');
+      expect(g.updatesPosition, at).toBe('relative');
+      expect.soft(g.lane.bottom + 8, `${at}: payment content precedes both footer controls`).toBeLessThanOrEqual(Math.min(g.appearance.top, g.updates.top));
+    } else {
+      expect.soft(g.lane.right + 8, `${at}: payment content keeps out of the buttons' lane`).toBeLessThanOrEqual(Math.min(g.appearance.left, g.updates.left));
+    }
     expect.soft(gap(g.appearance, g.updates), `${at}: the two buttons do not touch`).toBeGreaterThanOrEqual(8);
     if (width <= 820) {
       expect.soft(g.appearance.bottom + 8, `${at}: Appearance stacks above order updates`).toBeLessThanOrEqual(g.updates.top);

@@ -93,7 +93,8 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
 
 });
 
-test("new kitten cannot be booked against the saved cat; facts and canonical rows stay separate",async t=>{
+for(const profileLinked of [false,true])for(const inputText of ["Yes, book a grooming appointment for Lana.","Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
+test(`wrong saved-cat proposal is refused (${profileLinked?"saved":"unsaved"} Lana): ${inputText}`,async t=>{
  const ctx=await setupJourney();t.after(()=>ctx.close());
  const customerId="CUS-PET-MEMORY",petId="PET-COCO",threadId="THREAD-PET-MEMORY",now=Date.now();
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
@@ -106,10 +107,14 @@ test("new kitten cannot be booked against the saved cat; facts and canonical row
  await rollout.setAiRolloutStage(ctx.db,{stage:"customers",reason:"isolated pet-memory regression",actorEmail:"founder@pawspace.test"});
  await orchestrator.ensureAiConversationOrchestrator(ctx.db);
  ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
+ if(profileLinked){
+  await seedOwnedPet(ctx.db,customerId,"PET-LANA","Lana");
+  ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='PET-LANA'").run();
+ }
  const before=ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId);
  const priorFetch=globalThis.fetch;t.after(()=>{globalThis.fetch=priorFetch;});
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
- let requests=0,profileLinked=false;
+ let requests=0;
  globalThis.fetch=async(url,init)=>{
   assert.ok(String(url).includes("api.openai.com"),"no external message/payment/booking API");
   requests++;
@@ -123,29 +128,15 @@ test("new kitten cannot be booked against the saved cat; facts and canonical row
   ]}),status:"completed",usage:{total_tokens:100}});
  };
  const {runElevenLabsGroundedTurn}=await import("../lib/elevenlabs-custom-llm.ts");
- const result=await runElevenLabsGroundedTurn(ctx.db,{input:[
-  {role:"user",content:"Coco is my saved cat. Lana is my new five-month-old kitten."},
-  {role:"assistant",content:"Which pet should I book grooming for?"},
-  {role:"user",content:"Yes, book a grooming appointment for Lana."}
- ],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
- assert.equal(requests,1,JSON.stringify({result,turn:ctx.sqlite.prepare("SELECT * FROM ai_conversation_turns WHERE id=?").get(result.turnId)}));
- assert.match(result.output,/Lana is a new pet without a saved profile/);
+ const result=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:`Please book a grooming appointment for Lana. ${inputText}`}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ assert.equal(requests,1,"each isolated case reached the model and pet identity guard");
+ assert.match(result.output,profileLinked?/Lana has a separate saved profile/:/Lana is a new pet without a saved profile/);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),before);
  const mutations=ctx.sqlite.prepare("SELECT tool_code FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").all(customerId).filter(x=>x.tool_code!=="approved_knowledge.read");
  assert.deepEqual(mutations,[]);
- // Once Lana has her own fixture profile, a wrong Coco proposal must still be refused.
- await seedOwnedPet(ctx.db,customerId,"PET-LANA","Lana");
- ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='PET-LANA'").run();
- profileLinked=true;
- const afterLink=ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId);
- const linked=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:"Yes, book a grooming appointment for Lana."}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
- assert.match(linked.output,/Lana has a separate saved profile/);
- assert.equal(requests,2);
- assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
- assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),afterLink);
-
 });
+}
 
 test("staff pause explains the recorded handoff without another handoff or paid model call",async t=>{
  const ctx=await setupJourney();t.after(()=>ctx.close());

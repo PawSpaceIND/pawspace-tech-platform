@@ -32,6 +32,9 @@ async function invoiceWorld() {
     CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER);
   `);
   await gstAccounting.ensureGstAccountingTables(db);
+  // Approved inclusive economics apply only to this disposable fixture.
+  const { saveGstSetting } = await import("../lib/gst-setting.ts");
+  await saveGstSetting(db, { cityId: "*", ratePercent: 18, method: "extract_inclusive", effectiveFrom: "2024-01-01", reason: "Owner-approved inclusive finance fixture", actorId: "finance.fixture@pawspace.test" });
   await returns.ensureGstReturnTables(db);
   sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'IN','active','founder',1,1,1)").run(ENTITY, SELLER.legalName);
   sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'IN-KA','gstin',?,'active','2024-01-01',NULL,'founder',1,1,1)").run(REG, ENTITY, GSTIN);
@@ -56,7 +59,7 @@ test("a series number already used by a hand-issued invoice is refused, never th
     .run(`TKP/${fyShort(TODAY)}/00001`, ENTITY, POLICY, REG, TODAY);
 
   const fact = await completion.resolveServiceCompletionFinance(db, { bookingId: "BK-K", actorId: FINANCE, completedAt: NOW });
-  assert.equal(fact.gstLiability, 54, "the completion stands");
+  assert.equal(fact.gstLiability, 45.76, "the completion stands");
 
   const outcome = await invoices.issueBookingInvoice(db, { bookingId: "BK-K", actorId: FINANCE });
   assert.equal(outcome.status, "refused");

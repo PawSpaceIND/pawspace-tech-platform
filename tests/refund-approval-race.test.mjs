@@ -127,7 +127,7 @@ async function raceApprovals({ service, bookingId, ledgerTable, requestTable, se
   // Now the race, on a shim that holds the first batch.
   const racing = racingD1(sqlite, { holdClaimMatching: approvalUpdate });
   globalThis.__RACE_DB__ = racing.db;
-  const approve = (actorId, idempotencyKey, approvedRefundAmount) => mutate(racing.db, { bookingId, action: "approve_cancel", actorId, approvedRefundAmount, reason: "Approved per cancellation policy review", idempotencyKey });
+  const approve = (actorId, idempotencyKey, approvedRefundAmount) => mutate(racing.db, { bookingId, action: "approve_cancel", actorId, approvedRefundAmount, reason: "Approved per cancellation policy review", idempotencyKey,...(service==="Pet Sitting"?{cancellationRequestId:pending.id}:{}) });
 
   const first = approve("approver.one@pawspace.in", "appr-1", amountA);
   const second = approve("approver.two@pawspace.in", "appr-2", amountB);

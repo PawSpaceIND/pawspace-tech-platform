@@ -40,6 +40,13 @@ test('Every Team route resolves to one of the shared staff frames, including del
  for(const page of pages){
   const s=read('app/team/'+page);
   if(/<(?:StaffModule|StaffWorkspace|OpsShell|TeamShell)\b/.test(s))continue;
+  if(page==='people/payroll/page.tsx'){
+   assert.match(s,/embedded=false/, 'Legacy payroll must default to its standalone shell.');
+   assert.match(s,/const Frame=embedded\?Fragment:StaffModule;/);
+   assert.match(s,/return <Frame><main/);
+   assert.match(s,/<\/main><\/Frame>/);
+   continue;
+  }
   const target=delegates[page];assert.ok(target,'Unframed Team route: '+page);
   assert.ok(s.includes(target[0]),'The original route delegation must remain: '+page);
   assert.match(read(target[1]),/<(?:StaffModule|StaffWorkspace|OpsShell|TeamShell)\b/,'Delegated screen must use the frame: '+page);

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type no-calls, premium-maya-readiness, discover-premium-voices, measure-voice-llm, specialist-call, or direct-grooming-call.'
+        description: 'Type no-calls, premium-maya-readiness, discover-premium-voices, measure-voice-llm, demo-five-sales-conversations, specialist-call, or direct-grooming-call.'
         required: true
         default: ''
       uat_voice_call_id:
@@ -221,25 +221,32 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
         run: node scripts/pause-staging-phone-calls.mjs
   demo-three-voice-conversations:
-    if: ${{ inputs.confirm == 'demo-three-voice-conversations' }}
+    if: ${{ inputs.confirm == 'demo-three-voice-conversations' || inputs.confirm == 'demo-five-sales-conversations' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency:
       group: pawspace-staging-sweep
       cancel-in-progress: false
       queue: max
-    timeout-minutes: 12
+    timeout-minutes: ${{ inputs.confirm == 'demo-five-sales-conversations' && 25 || 12 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Verify offline managed audio boundaries
+        if: ${{ inputs.confirm == 'demo-five-sales-conversations' }}
+        run: node --test tests/maya-managed-sales-demo-boundaries.test.mjs
       - name: Install synthetic microphone tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y espeak-ng ffmpeg
-      - name: Run three actual audio conversations without dialing
+      - name: Run bounded actual audio conversations without dialing
         env:
+          MANAGED_DEMO_SUITE: ${{ inputs.confirm == 'demo-five-sales-conversations' && 'five-sales' || 'legacy-three' }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
           SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
@@ -257,7 +264,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: maya-three-voice-demos
+          name: ${{ inputs.confirm == 'demo-five-sales-conversations' && 'maya-five-managed-voice-demos' || 'maya-three-voice-demos' }}
           path: voice-demo-results/
           retention-days: 7
   diagnose-native-audio:
@@ -1406,3 +1413,64 @@ jobs:
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
         run: node --experimental-strip-types scripts/voice-sales-launch-preflight.mjs
+
+  next-bounded-audio:
+    if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' || inputs.confirm == 'next-audio-inspect' || inputs.confirm == 'next-audio-prepare-duration' || inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+    runs-on: ubuntu-22.04
+    environment: pawspace-staging
+    timeout-minutes: 35
+    env:
+      NEXT_AUDIO_ENGINE: ${{ inputs.audio_profile == 'workers_ai_bounded' && 'workers_ai' || 'elevenlabs' }}
+      EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
+      EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+      SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+      PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+      ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify pinned checkout and prohibit workflow reruns
+        shell: bash
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+      - name: Read native feature and rate gates without generating audio
+        if: ${{ inputs.confirm != 'next-audio-execute-reviewed-usd5' || inputs.audio_profile != 'workers_ai_bounded' }}
+        run: node scripts/inspect-next-audio-fees.mjs
+      - name: Set and verify staging provider hard duration without generating audio
+        if: ${{ inputs.confirm == 'next-audio-prepare-duration' }}
+        run: node scripts/prepare-next-audio-duration.mjs
+      - name: Store independently reviewed ceiling through existing staging administration
+        if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' }}
+        env:
+          NEXT_AUDIO_RATE_RECEIPT_JSON: ${{ inputs.probe_input }}
+        run: node --experimental-strip-types scripts/prepare-next-audio-duration.mjs
+      - name: Install synthetic microphone tools
+        if: ${{ inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Execute only through authenticated bounded leases
+        if: ${{ inputs.confirm == 'next-audio-execute-reviewed-usd5' }}
+        run: node --experimental-strip-types scripts/next-ten-audio-runner.mjs
+      - name: Preserve partial audio and metadata receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-ten-bounded-audio
+          path: |
+            voice-audit-results/
+            artifacts/agent-deadlines/
+          retention-days: 7

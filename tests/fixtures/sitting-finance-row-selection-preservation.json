@@ -1,0 +1,35 @@
+{
+  "file": "app/team/finance/sitting/sitting-finance-workspace.tsx",
+  "beforeHash": "e9196f96774f8fa3ea2b9010f9f7c2d068f45ed7de6d6b6e3ae81cb5a694b88d",
+  "afterHash": "25f5e9faece070b13f0a657fa9b89927e4bfec0fefb2ee0c2f0cbe93f52046af",
+  "replacements": [
+    [
+      "   await updateSittingFinance({bookingId:targetId,action:String(payload.action) as never,idempotencyKey:String(payload.idempotencyKey),reason:payload.reason as string|undefined,requestedStart:payload.requestedStart as string|undefined,requestedEnd:payload.requestedEnd as string|undefined,quoteId:payload.quoteId as string|undefined,replacementGroupId:payload.replacementGroupId as string|undefined,approvedRefundAmount:payload.approvedRefundAmount as number|undefined,refundReference:payload.refundReference as string|undefined,paymentAdjustmentReference:payload.paymentAdjustmentReference as string|undefined});\n",
+      "   await updateSittingFinance({bookingId:targetId,action:String(payload.action) as never,idempotencyKey:String(payload.idempotencyKey),cancellationRequestId:payload.cancellationRequestId as string|undefined,refundId:payload.refundId as string|undefined,dateChangeRequestId:payload.dateChangeRequestId as string|undefined,reason:payload.reason as string|undefined,requestedStart:payload.requestedStart as string|undefined,requestedEnd:payload.requestedEnd as string|undefined,quoteId:payload.quoteId as string|undefined,replacementGroupId:payload.replacementGroupId as string|undefined,approvedRefundAmount:payload.approvedRefundAmount as number|undefined,refundReference:payload.refundReference as string|undefined,paymentAdjustmentReference:payload.paymentAdjustmentReference as string|undefined});\n"
+    ],
+    [
+      " function approveCancel(row:Row){const amount=Number(window.prompt(`Approved refund amount for ${bookingId} (0 to ${String(data?.booking.total_amount||0)})`,\"0\"));const reason=window.prompt(\"Finance approval reason / policy reference\")||\"\";if(Number.isFinite(amount)&&amount>=0&&reason.trim().length>=3)void act({action:\"approve_cancel\",idempotencyKey:`sitting-finance:approve-cancel:${String(row.id)}`,approvedRefundAmount:amount,reason},\"Cancellation approved under explicit Finance authority.\")}\n",
+      " function approveCancel(row:Row){const amount=Number(window.prompt(`Approved refund amount for ${bookingId} (0 to ${String(data?.booking.total_amount||0)})`,\"0\"));const reason=window.prompt(\"Finance approval reason / policy reference\")||\"\";if(Number.isFinite(amount)&&amount>=0&&reason.trim().length>=3)void act({action:\"approve_cancel\",cancellationRequestId:String(row.id),idempotencyKey:`sitting-finance:approve-cancel:${String(row.id)}`,approvedRefundAmount:amount,reason},\"Cancellation approved under explicit Finance authority.\")}\n"
+    ],
+    [
+      " function recordRefund(row:Row){const reference=window.prompt(`Sandbox refund reference for ${money(row.amount)}`)||\"\";if(reference)void act({action:\"record_refund\",idempotencyKey:`sitting-finance:refund:${String(row.id)}:${reference}`,refundReference:reference},\"Sandbox refund reference recorded.\")}\n",
+      " function recordRefund(row:Row){const reference=window.prompt(`Sandbox refund reference for ${money(row.amount)}`)||\"\";if(reference)void act({action:\"record_refund\",refundId:String(row.id),idempotencyKey:`sitting-finance:refund:${String(row.id)}:${reference}`,refundReference:reference},\"Sandbox refund reference recorded.\")}\n"
+    ],
+    [
+      " function applyDateChange(row:Row){const quoteId=window.prompt(\"Fresh canonical Sitting quote ID\")||\"\",replacementGroupId=window.prompt(\"Fresh replacement scheduling group ID\")||\"\";if(!quoteId||!replacementGroupId)return;const oldTotal=Number(row.old_total||0),newTotal=Number(row.new_total||0),paymentAdjustmentReference=newTotal>oldTotal?window.prompt(\"Additional sandbox payment reference\")||\"\":undefined;void act({action:\"apply_date_change\",idempotencyKey:`sitting-finance:date-change:${String(row.id)}:${quoteId}`,quoteId,replacementGroupId,paymentAdjustmentReference},\"Canonical Sitting date change applied.\")}\n",
+      " function applyDateChange(row:Row){const quoteId=window.prompt(\"Fresh canonical Sitting quote ID\")||\"\",replacementGroupId=window.prompt(\"Fresh replacement scheduling group ID\")||\"\";if(!quoteId||!replacementGroupId)return;const oldTotal=Number(row.old_total||0),newTotal=Number(row.new_total||0),paymentAdjustmentReference=newTotal>oldTotal?window.prompt(\"Additional sandbox payment reference\")||\"\":undefined;void act({action:\"apply_date_change\",dateChangeRequestId:String(row.id),idempotencyKey:`sitting-finance:date-change:${String(row.id)}:${quoteId}`,quoteId,replacementGroupId,paymentAdjustmentReference},\"Canonical Sitting date change applied.\")}\n"
+    ],
+    [
+      " function prepareSettlement(){void act({action:\"prepare_settlement\",idempotencyKey:`sitting-finance:settlement:${bookingId}`},\"Sitter settlement projected from canonical completion finance.\")}\n",
+      " function prepareSettlement(){void act({action:\"prepare_settlement\",idempotencyKey:`sitting-finance:settlement:${String(data?.booking.id||\"\")}`},\"Sitter settlement projected from canonical completion finance.\")}\n"
+    ],
+    [
+      " function approveSettlement(){const reason=window.prompt(\"Finance approval reason / reference\")||\"\";if(reason.trim().length>=3)void act({action:\"approve_settlement\",idempotencyKey:`sitting-finance:settlement-approve:${bookingId}`,reason},\"Canonical sitter settlement approved. No live payout was instructed.\")}\n",
+      " function approveSettlement(){const reason=window.prompt(\"Finance approval reason / reference\")||\"\";if(reason.trim().length>=3)void act({action:\"approve_settlement\",idempotencyKey:`sitting-finance:settlement-approve:${String(data?.booking.id||\"\")}`,reason},\"Canonical sitter settlement approved. No live payout was instructed.\")}\n"
+    ],
+    [
+      " function reconcile(){void act({action:\"reconcile\",idempotencyKey:`sitting-finance:reconcile:${bookingId}:${Date.now()}`},\"Sitting finance reconciliation refreshed.\")}\n",
+      " function reconcile(){void act({action:\"reconcile\",idempotencyKey:`sitting-finance:reconcile:${String(data?.booking.id||\"\")}:${Date.now()}`},\"Sitting finance reconciliation refreshed.\")}\n"
+    ]
+  ]
+}

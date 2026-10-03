@@ -1,6 +1,7 @@
 import Link from "next/link";
 import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from "../team-console.module.css";
+import presentation from "../presentation-next/staff-content.module.css";
 
 const QUEUES = [
   { href: "/team/operations/live-tracking", title: "Live tracking control", body: "Active provider location sessions, punctuality signals and recovery exceptions on one canonical Ops surface." },
@@ -17,8 +18,8 @@ export default function TeamOperations() {
       description="Open live provider tracking, the canonical cross-service Booking Command Center, or a service-specific exception and recovery queue."
       >
 
-    <section className={styles.cardGrid}>
-      {QUEUES.map((queue) => <Link key={queue.href} href={queue.href} className={styles.linkCard}>
+    <section className={`${styles.cardGrid} ${presentation.queues}`}>
+      {QUEUES.map((queue) => <Link key={queue.href} href={queue.href} className={`${styles.linkCard} ${presentation.queue}`}>
         <h2>{queue.title}</h2>
         <p>{queue.body}</p>
         <span className={styles.linkCue}>Open →</span>

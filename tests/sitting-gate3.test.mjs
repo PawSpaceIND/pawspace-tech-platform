@@ -32,10 +32,15 @@ async function financeWorld(options = {}) {
   globalThis.__SITTING_G3_ENV__ = {};
   const seeded = await seedSittingBooking(db, sqlite, options);
   await finance.ensureSittingFinanceTables(db);
-  const act = (action, extra = {}) => finance.mutateSittingFinance(db, {
-    bookingId: seeded.bookingId, action, actorId: extra.actorId ?? MAKER,
-    idempotencyKey: extra.idempotencyKey ?? nextKey("SG3"), ...extra,
-  });
+  const selected={};
+  const act = async (action, extra = {}) => {
+    const field={approve_cancel:'cancellationRequestId',record_refund:'refundId',apply_date_change:'dateChangeRequestId'}[action];
+    const result=await finance.mutateSittingFinance(db, {bookingId:seeded.bookingId,action,actorId:extra.actorId ?? MAKER,idempotencyKey:extra.idempotencyKey ?? nextKey("SG3"),...(field?{[field]:selected[field]}:{}),...extra});
+    if(action==='request_cancel')selected.cancellationRequestId=result.requestId;
+    if(action==='request_date_change')selected.dateChangeRequestId=result.requestId;
+    if(action==='approve_cancel')selected.refundId=result.refundId;
+    return result;
+  };
   const refunds = async () => (await db.prepare("SELECT * FROM sitting_refund_ledger WHERE booking_id=? ORDER BY rowid").bind(seeded.bookingId).all()).results;
   return { sqlite, db, ...seeded, act, refunds };
 }
@@ -68,12 +73,12 @@ test("Pet Sitting Gate 3 caps an approved refund by the money collected, never b
 test("Pet Sitting Gate 3 keeps the refund ceiling per booking, not per approval", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
 
-  await world.act("request_cancel", { reason: "first request from the customer" });
-  await world.act("request_cancel", { actorId: "second.maker@pawspace.test", reason: "second request raised in error" });
-  await world.act("approve_cancel", { actorId: CHECKER, approvedRefundAmount: 1500, reason: "partial refund approved" });
+  const firstRequest = await world.act("request_cancel", { reason: "first request from the customer" });
+  const secondRequest = await world.act("request_cancel", { actorId: "second.maker@pawspace.test", reason: "second request raised in error" });
+  await world.act("approve_cancel", { cancellationRequestId: secondRequest.requestId, actorId: CHECKER, approvedRefundAmount: 1500, reason: "partial refund approved" });
 
   const second = await refusal(world.act("approve_cancel", {
-    actorId: "another.checker@pawspace.test", approvedRefundAmount: 1500, reason: "approving the second request",
+    cancellationRequestId: firstRequest.requestId, actorId: "another.checker@pawspace.test", approvedRefundAmount: 1500, reason: "approving the second request",
   }));
   assert.equal(second?.status, 409);
   assert.match(second.message, /collected ₹500/, "the headroom is 2000 - 1500, not the full 2000 again");
@@ -144,7 +149,7 @@ test("Pet Sitting Gate 3 sends an in-progress cancellation to Operations instead
   assert.match(blockedRequest.message, /In-progress Sitting cancellation requires an Operations incident workflow/);
 
   const blocked = await refusal(world.act("approve_cancel", {
-    actorId: CHECKER, approvedRefundAmount: 100, reason: "approving a mid-visit cancellation",
+    cancellationRequestId: "NO-PENDING-REQUEST", actorId: CHECKER, approvedRefundAmount: 100, reason: "approving a mid-visit cancellation",
   }));
   assert.equal(blocked?.status, 409);
   assert.match(blocked.message, /Operations incident workflow/);
@@ -160,9 +165,9 @@ test("Pet Sitting Gate 3 sends an in-progress cancellation to Operations instead
 // ---------------------------------------------------------------------------------------------
 test("Pet Sitting Gate 3 refund ledger is sandbox-only and refuses a reused reference", async () => {
   const world = await financeWorld({ amount: 2000, amountDueNow: 2000 });
-  await world.act("request_cancel", { reason: "plans changed for the family" });
-  await world.act("request_cancel", { actorId: "third.maker@pawspace.test", reason: "raised again by the desk" });
-  await world.act("approve_cancel", { actorId: CHECKER, approvedRefundAmount: 600, reason: "approved by finance" });
+  const familyRequest = await world.act("request_cancel", { reason: "plans changed for the family" });
+  const deskRequest = await world.act("request_cancel", { actorId: "third.maker@pawspace.test", reason: "raised again by the desk" });
+  await world.act("approve_cancel", { cancellationRequestId: deskRequest.requestId, actorId: CHECKER, approvedRefundAmount: 600, reason: "approved by finance" });
 
   const [pending] = await world.refunds();
   assert.equal(pending.status, "sandbox_pending", "an approved refund is pending in sandbox, never paid out here");
@@ -175,7 +180,7 @@ test("Pet Sitting Gate 3 refund ledger is sandbox-only and refuses a reused refe
   await world.act("record_refund", { actorId: CHECKER, refundReference: "SBX-SIT-1" });
   assert.equal((await world.refunds())[0].status, "sandbox_recorded");
 
-  await world.act("approve_cancel", { actorId: "fourth.checker@pawspace.test", approvedRefundAmount: 400, reason: "second approval" });
+  await world.act("approve_cancel", { cancellationRequestId: familyRequest.requestId, actorId: "fourth.checker@pawspace.test", approvedRefundAmount: 400, reason: "second approval" });
   const replayed = await refusal(world.act("record_refund", { actorId: CHECKER, refundReference: "SBX-SIT-1" }));
   assert.equal(replayed?.status, 409);
   assert.match(replayed.message, /reference was already used/);
@@ -230,6 +235,8 @@ test("Pet Sitting Gate 3 applies a governed date change with the same booking/pa
   });
   assert.equal(quote.totalAmount, 399, "same governed visit must not invent a reschedule surcharge");
 
+  // The replacement reservation must reference an existing canonical provider profile.
+  world.sqlite.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,updated_by,updated_at) VALUES (?,'blr','Synthetic Sitting provider','commission','[\"pet_sitting\"]','[\"blr-east\"]',1,4.9,95,1,30,4,3,'active',1,'2026-01-01','fixture',?)").run(world.providerId,Date.now());
   const replacementGroupId = `GRP-SIT-CHANGE-${Date.now()}`;
   const now = Date.now();
   await world.db.batch([

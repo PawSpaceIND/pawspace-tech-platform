@@ -1,0 +1,47 @@
+/* Existing Finance data and authority, with scoped reading and action hierarchy. */
+.page.page { padding:clamp(16px,3vw,32px) !important; }
+.header { align-items:flex-start !important; gap:24px !important; }
+.page.page h1 { font-size:clamp(25px,3vw,36px) !important; line-height:1.15; letter-spacing:-.025em; }
+.header > div:first-child { flex:1 1 420px; min-width:0; }
+.header p { max-width:70ch; line-height:1.6; }
+.tools { flex:1 1 480px; align-items:stretch; }
+.page .tools :is(a,button) { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; line-height:1.4; }
+.ledger { min-width:0; }
+.filters { gap:10px !important; padding-block:12px; }
+.filters button { min-height:48px; font:inherit; font-weight:750; line-height:1.3; }
+.metrics { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)) !important; gap:16px !important; margin-bottom:24px !important; }
+.metric { min-width:0; }
+.metric small { font-size:14px; line-height:1.4; }
+.metric strong { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.exceptions { line-height:1.6; }
+.exceptions a { display:inline-flex; align-items:center; min-height:48px; }
+.tableCard { margin-block:24px; min-width:0; }
+.tableRegion { overscroll-behavior-inline:contain; scrollbar-gutter:stable; }
+.tableRegion table { min-width:660px; line-height:1.5; }
+.tableCard:last-child .tableRegion table { min-width:1180px; }
+.tableRegion th { font-size:13px; letter-spacing:.01em; }
+.tableRegion td { font-variant-numeric:tabular-nums; }
+.tableRegion a { display:inline-flex; align-items:center; min-height:48px; text-underline-offset:3px; }
+.gst { min-width:0; }
+.gst p,.gst li { line-height:1.6; }
+.gstFields { gap:16px !important; }
+.gstFields > label { min-width:0; line-height:1.5; }
+.gstFields :is(select,input:not([type=radio]),button) { min-height:48px; box-sizing:border-box; max-width:100%; font:inherit; }
+.gstFields fieldset { min-width:0; flex:1 1 360px; }
+.gstFields fieldset label { display:flex !important; align-items:center; gap:10px; min-height:48px; line-height:1.5; padding-block:6px; }
+.gstFields input[type=radio] { flex:none; width:20px; height:20px; margin:0; }
+.gst details summary { display:list-item; min-height:48px; padding-block:12px; box-sizing:border-box; cursor:pointer; }
+.page :is(a,button,input,select,summary,[tabindex]):focus-visible,.ledger :is(a,button,[tabindex]):focus-visible,.gst :is(button,input,select,summary):focus-visible { outline:3px solid var(--staff-primary); outline-offset:3px; }
+@media(max-width:600px) {
+ .tools { display:grid !important; grid-template-columns:minmax(0,1fr); width:100%; }
+ .tools :is(a,button) { width:100%; justify-content:flex-start; }
+ .gstFields { display:grid !important; grid-template-columns:minmax(0,1fr); }
+ .gstFields > label,.gstFields fieldset,.gstFields button { width:100%; }
+ .gstFields :is(select,input:not([type=radio])) { width:100% !important; }
+ .filters button { flex:1 1 140px; }
+}
+
+.ledger .tableRegion:focus-visible { outline-offset:-3px; }
+/* Analytics filters on this Finance screen share the same touch size as ledger actions. */
+.page.page :is(button,input:not([type=radio]),select) { min-height:48px; }
+:global(body):has(.page) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger) { min-height:48px !important; }

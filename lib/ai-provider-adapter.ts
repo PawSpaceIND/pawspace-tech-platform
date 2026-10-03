@@ -7,6 +7,7 @@ import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-b
 import { sanitizeAiProviderText } from "./ai-provider-safety";
 import { completeAiProviderRequest, reserveAiProviderRequest, type AiRuntimeReservation } from "./ai-provider-runtime-control";
 import { resolveExplicitAiKillSwitches } from "./ai-runtime-kill-switch";
+import { isNextAudioThread, reserveNextAudioAttempt } from "./next-audio-budget";
 
 export type AiProviderRef = "openai" | "anthropic";
 export const AI_PROVIDER_REF: AiProviderRef = "anthropic";
@@ -29,6 +30,7 @@ export type AiFailureClass =
   | "runtime_control_unavailable"
   | "timeout"
   | "network"
+  | "cancelled"
   | "rate_limited"
   | "provider_error"
   | "client_error"
@@ -49,6 +51,7 @@ const FAILURE_REASON: Record<AiFailureClass, string> = {
   runtime_control_unavailable: "External AI is disabled because its runtime budget control could not be verified",
   timeout: "The AI provider did not respond within the configured deadline",
   network: "The AI provider could not be reached",
+  cancelled: "The caller cancelled the AI provider request",
   rate_limited: "The AI provider rate-limited this request",
   provider_error: "The AI provider returned a server error",
   client_error: "The AI provider rejected this request",
@@ -219,7 +222,10 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
+  const abortError=()=>Object.assign(new Error("AI provider request cancelled"),{name:"AbortError"});
+  const assertActive=()=>{if(input.signal?.aborted)throw abortError();};
+  assertActive();
   const env = await runtimeEnv();
   const providerRef = aiProviderRef(env);
   const apiKey = aiProviderCredential(env,providerRef);
@@ -230,6 +236,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const governanceAllowed = await governanceAllowsExternalAi(env, input, modelRef, providerRef);
   mark("governanceCompleted");
   if (!governanceAllowed) return fail("governance_blocked");
+  assertActive();
 
   const safeSystemPrompt = sanitizeAiProviderText(input.systemPrompt).text;
   const safeUserPrompt = sanitizeAiProviderText(input.userPrompt).text;
@@ -238,21 +245,41 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
 
   let reservation: AiRuntimeReservation = null;
+  // The additional pool covers every actual request, including voice recovery and proposal repair.
+  // Missing D1, pinned inclusive rates, expired lease or exhausted balance denies external fetch.
+  if (input.nextAudioConversation && isNextAudioThread(input.nextAudioConversation.threadId)) {
+    if (!db || input.channel !== "voice" || str(env,"PAWSPACE_DEPLOYMENT_ENV")!=="staging" || str(env,"FORBID_PRODUCTION")!=="true" || str(env,"PAWSPACE_VOICE_PHONE_TESTS_PAUSED")!=="true" || str(env,"PAWSPACE_PAYMENT_ENV")!=="sandbox" || str(env,"PAWSPACE_PAYMENT_LIVE_APPROVED")!=="false") return fail("runtime_control_unavailable");
+    try {
+      await reserveNextAudioAttempt(db,{...input.nextAudioConversation,provider:providerRef,model:modelRef,sourceSha:str(env,"PAWSPACE_STAGING_BUILD_SHA"),systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,outputTokens:maxTokens,now:Date.now()});
+    } catch { return fail("runtime_control_unavailable"); }
+    assertActive();
+  }
   if (db) {
     mark("reservationStarted");
     const preflight = await reserveAiProviderRequest(db, env, { provider: providerRef, modelRef, channel: input.channel, intent: input.intent, systemPrompt: safeSystemPrompt, userPrompt: safeUserPrompt, maxOutputTokens: maxTokens });
     mark("reservationCompleted");
     if (!preflight.allowed) return fail(preflight.reason);
     reservation = preflight.reservation;
+    if(input.signal?.aborted){
+      await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: "cancelled", retryableFailure: false });
+      throw abortError();
+    }
   }
 
   const finishFailure = async (failure: AiFailureClass, status?: number) => {
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: failure, retryableFailure: isRetryableAiFailure(failure) });
     return fail(failure, status);
   };
+  const finishAbort = async ():Promise<never> => {
+    if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: "cancelled", retryableFailure: false });
+    throw abortError();
+  };
 
   const configuredTimeoutMs=aiTimeoutMs(env),requestedTimeoutMs=Number(input.timeoutMs),timeoutMs=Number.isFinite(requestedTimeoutMs)&&requestedTimeoutMs>0?Math.min(configuredTimeoutMs,Math.max(MIN_TIMEOUT_MS,Math.floor(requestedTimeoutMs))):configuredTimeoutMs;
   const controller = new AbortController();
+  const abortFromCaller=()=>controller.abort();
+  input.signal?.addEventListener("abort",abortFromCaller,{once:true});
+  if(input.signal?.aborted)controller.abort();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   const streaming = Boolean(input.onDelta) && providerRef === "openai";
@@ -274,6 +301,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             body: JSON.stringify({ model: modelRef, max_tokens: maxTokens, system: safeSystemPrompt, messages: [{ role: "user", content: safeUserPrompt }] }),
           });
     } catch {
+      if(input.signal?.aborted)return await finishAbort();
       return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
 
@@ -327,10 +355,12 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
           }
         }
       } catch {
+        if(input.signal?.aborted)return await finishAbort();
         return await finishFailure(controller.signal.aborted ? "timeout" : "network");
       }
       mark("providerBodyCompleted");
       if (!streamed.trim()) return await finishFailure("empty_output");
+      if(input.signal?.aborted)return await finishAbort();
       if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: usageTokens });
       return {
         connected: true, text: streamed, modelRef, providerRef,
@@ -343,6 +373,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     try {
       raw = await readBoundedText(response, MAX_AI_RESPONSE_BYTES);
     } catch (error) {
+      if(input.signal?.aborted)return await finishAbort();
       if (error instanceof ProviderResponseTooLarge) return await finishFailure("oversized_output");
       return await finishFailure(controller.signal.aborted ? "timeout" : "network");
     }
@@ -352,6 +383,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     try { parsed = JSON.parse(raw); } catch { return await finishFailure("malformed_output"); }
     const extracted = providerRef === "openai" ? extractOpenAiText(parsed) : extractAiText(parsed);
     if ("failure" in extracted) return await finishFailure(extracted.failure);
+    if(input.signal?.aborted)return await finishAbort();
 
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: extracted.usageTokens });
     mark("providerAccountingCompleted");
@@ -365,6 +397,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
       ...(extracted.usageTokens === undefined ? {} : { usageTokens: extracted.usageTokens }),
     };
   } finally {
+    input.signal?.removeEventListener("abort",abortFromCaller);
     clearTimeout(timer);
   }
 }

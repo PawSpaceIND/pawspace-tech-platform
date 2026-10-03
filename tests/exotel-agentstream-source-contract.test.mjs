@@ -58,15 +58,15 @@ test("native AgentStream isolates each call conversation and preserves business 
 test("native AgentStream uses PawSpace specialist sales profiles with scheduling authority", () => {
   assert.match(bridge, /value === "grooming_sales".*"grooming"/s);
   assert.match(bridge, /value === "training_sales".*"dog_training"/s);
-  assert.match(bridge, /salesService:active\.salesService/);
+  assert.match(bridge, /salesService:\s*active\.salesService/);
   assert.match(bridge, /"scheduling\.book"/);
 });
 
 test("native AgentStream speaks the governed opening disclosure before normal turns", () => {
   assert.match(bridge, /SELECT opening_disclosure,active FROM voice_call_scripts WHERE use_case=\?/);
-  assert.match(bridge, /synthesizeLinear16\(env, active\.openingDisclosure, active\.sampleRate\)/);
+  assert.match(bridge, /synthesizeLinear16\(env, active\.openingDisclosure, active\.sampleRate, controller\.signal\)/);
   assert.match(bridge, /recordSegment\(env, active, "assistant", active\.openingDisclosure/);
-  assert.match(bridge, /queueAudio\(active, greeting\.audio/);
+  assert.match(bridge, /queueAudio\(active, greeting\.stream/);
 });
 
 test("native AgentStream preserves bounded canonical voice follow-up history", () => {
@@ -95,9 +95,50 @@ test("native AgentStream canonicalizes connection evidence and is reconnect-idem
 test("native AgentStream transport interruption stays reconnectable until explicit stop", () => {
   assert.match(bridge, /agentstream_transport_interrupted/);
   assert.match(bridge, /recordTransportInterruption\(env, active, "socket_closed"\)/);
-  assert.match(bridge, /recordTransportInterruption\(env, session, "socket_error"\)/);
+  assert.match(bridge, /recordTransportInterruption\(env, active, "socket_error"\)/);
   assert.match(bridge, /kind === "stop".*closeSession\(env, active/s);
-  assert.doesNotMatch(bridge, /addEventListener\("close".*closeSession/s);
+  // Bound the assertion to close callbacks: the demo cleanup listener appears before
+  // the explicit-stop handler, whose required closeSession must not be mistaken for cleanup.
+  const closeCallbacks = [...bridge.matchAll(/server\.addEventListener\("close",\s*\(\)\s*=>\s*\{([\s\S]*?)\}\);/g)];
+  assert.equal(closeCallbacks.length, 2, "inspect both demo cleanup and ordinary transport callbacks");
+  for (const [, callback] of closeCallbacks) assert.doesNotMatch(callback, /closeSession/);
+  assert.match(closeCallbacks[0][1], /clearTimeout\(expiryTimer\)/);
+  assert.match(closeCallbacks[1][1], /recordTransportInterruption\(env, active, "socket_closed"\)/);
+});
+
+test("bounded native close contract still rejects session termination inside either close callback", () => {
+  const callbacks = source => [...source.matchAll(/server\.addEventListener\("close",\s*\(\)\s*=>\s*\{([\s\S]*?)\}\);/g)];
+  const assertReconnectable = source => {
+    const found = callbacks(source);
+    assert.equal(found.length, 2);
+    for (const [, callback] of found) assert.doesNotMatch(callback, /closeSession/);
+  };
+  assertReconnectable(bridge); // An explicit stop elsewhere must remain permitted.
+  for (const [listener, body] of callbacks(bridge)) {
+    const forbidden = listener.replace(body, `closeSession(env, active);${body}`);
+    const changed = bridge.replace(listener, forbidden);
+    assert.throws(() => assertReconnectable(changed), { code: "ERR_ASSERTION" });
+  }
+});
+
+test("native AgentStream handles media immediately, cancels stale speech, and streams first audio", () => {
+  assert.match(bridge, /if \(kind === "media"\)/);
+  assert.ok(bridge.indexOf('if (kind === "media")') < bridge.indexOf("controlChain = controlChain.then"));
+  assert.match(bridge, /cancelStaleGeneration\(active, "caller_speech"\)/);
+  assert.match(bridge, /activeTtsControllers = new Set<AbortController>\(\)/);
+  assert.match(bridge, /for \(const controller of activeTtsControllers\) controller\.abort\(\)/);
+  assert.match(bridge, /sendAudioStream\(/);
+  assert.match(bridge, /agentstream_first_audio/);
+  assert.match(bridge, /firstAudioMs: sent\.firstAudioMs/);
+});
+
+test("native AgentStream persists assistant history only after carrier queue succeeds", () => {
+  const openingQueue = bridge.indexOf('await queueAudio(active, greeting.stream');
+  const openingPersist = bridge.indexOf('await recordSegment(env, active, "assistant", active.openingDisclosure');
+  const turnQueue = bridge.indexOf('await queueAudio(active, tts.stream');
+  const turnPersist = bridge.indexOf('await recordSegment(env, active, "assistant", generated.output');
+  assert.ok(openingQueue >= 0 && openingPersist > openingQueue);
+  assert.ok(turnQueue >= 0 && turnPersist > turnQueue);
 });
 
 test("native AgentStream auto-detects STT language and records safe turn-quality telemetry", () => {
@@ -107,7 +148,7 @@ test("native AgentStream auto-detects STT language and records safe turn-quality
   assert.match(bridge, /nativeVoiceTurnDiagnostics\(/);
   assert.match(bridge, /transcriptChars: stt\.text\.length/);
   assert.match(bridge, /assistantChars: generated\.output\.length/);
-  assert.match(bridge, /synthesizeNativeCarrierTts\(env, output, sampleRate\)/);
+  assert.match(bridge, /synthesizeNativeCarrierTts\(env, output, sampleRate, \{ signal \}\)/);
   assert.match(bridge, /ttsModel: tts\.model/);
   assert.match(bridge, /ttsProvider: tts\.provider/);
   assert.match(bridge, /ttsFallbackUsed: tts\.fallbackUsed/);

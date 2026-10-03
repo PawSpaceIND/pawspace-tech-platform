@@ -1,0 +1,40 @@
+{
+  "app/team/operations/page.tsx": {
+    "hash": "6b2690bd925ef75ac59f59fe9002aa979f11a37a4432dcb56ed03e61654f9dd2",
+    "replacements": [
+      [
+        "import styles from \"../team-console.module.css\";",
+        "import styles from \"../team-console.module.css\";\nimport presentation from \"../presentation-next/staff-content.module.css\";"
+      ],
+      [
+        "className={styles.cardGrid}",
+        "className={`${styles.cardGrid} ${presentation.queues}`}"
+      ],
+      [
+        "className={styles.linkCard}",
+        "className={`${styles.linkCard} ${presentation.queue}`}"
+      ]
+    ]
+  },
+  "app/team/people/page.tsx": {
+    "hash": "48f3a4bc80a6dfe4cd511e11fa11bbfe9419998139a43fa98808a3b5563e851e",
+    "replacements": [
+      [
+        "import styles from\"../team-console.module.css\";",
+        "import styles from\"../team-console.module.css\";\nimport presentation from \"../presentation-next/staff-content.module.css\";"
+      ],
+      [
+        "className={styles.nav} aria-label=\"People workspaces\"",
+        "className={`${styles.nav} ${presentation.workspaces}`} aria-label=\"People workspaces\""
+      ],
+      [
+        "className={styles.field}>Find someone",
+        "className={`${styles.field} ${presentation.search}`}>Find someone"
+      ],
+      [
+        "className={styles.recordMeta}",
+        "className={`${styles.recordMeta} ${presentation.details}`}"
+      ]
+    ]
+  }
+}

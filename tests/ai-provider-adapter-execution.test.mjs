@@ -22,6 +22,16 @@ function withEnv(extra = {}) {
 }
 const adapter = await import("../lib/ai-provider-adapter.ts");
 
+test("next audio without a durable lease refuses before any paid provider fetch",async()=>{
+ withEnv({DB:undefined,PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"unit-test-only",PAWSPACE_AI_VOICE_MODEL:"gpt-5.6-luna"});
+ const previous=globalThis.fetch;let requests=0;
+ globalThis.fetch=async()=>{requests++;throw Error("paid fetch forbidden");};
+ try {
+  const result=await adapter.requestAiDraftWithVoiceRecovery({systemPrompt:"sys",userPrompt:"price",channel:"voice",nextAudioConversation:{threadId:"THREAD-VOICE-NDEMO-NEXT-AUDIO-unit",customerId:"synthetic"}});
+  assert.equal(result.connected,false);assert.equal(result.failure,"runtime_control_unavailable");assert.equal(requests,0);
+ } finally {globalThis.fetch=previous;}
+});
+
 const textBody = (text, stopReason = "end_turn") => ({ id: "msg_1", type: "message", role: "assistant", stop_reason: stopReason, content: [{ type: "text", text }] });
 
 // ---------------------------------------------------------------------------
@@ -176,6 +186,22 @@ test("a network failure is classified as network, and is retryable", async () =>
     const result = await adapter.requestAiDraft({ systemPrompt: "sys", userPrompt: "hi" });
     assert.equal(result.failure, "network");
     assert.equal(result.retryable, true);
+  } finally { stub.restore(); }
+});
+
+test("caller cancellation aborts the upstream provider request instead of becoming a timeout", async () => {
+  withEnv({ PAWSPACE_AI_PROVIDER_TIMEOUT_MS: "30000" });
+  const control = new AbortController(); let upstreamAborted = false, markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const stub = stubFetch((_url, init) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener("abort", () => { upstreamAborted = true; reject(Object.assign(new Error("aborted"), { name: "AbortError" })); });
+    markStarted();
+  }));
+  try {
+    const pending = adapter.requestAiDraft({ systemPrompt: "sys", userPrompt: "hi", signal: control.signal });
+    await started; control.abort();
+    await assert.rejects(pending, error => error instanceof Error && error.name === "AbortError");
+    assert.equal(upstreamAborted, true);
   } finally { stub.restore(); }
 });
 

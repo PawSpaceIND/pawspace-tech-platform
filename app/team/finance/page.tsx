@@ -1,4 +1,5 @@
 "use client";
+import styles from "./finance-content.module.css";
 import {MetricBars, TargetProgress, VisualGrid} from "../../components/ui/ReportVisuals";
 import VisualAnalytics from "../../components/ui/VisualAnalytics";
 
@@ -24,11 +25,11 @@ export default function TeamFinance(){
   useEffect(()=>{let active=true;readLedger("").then(body=>{if(active)setData(body);}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load finance ledger");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
   const chooseService=(code:string)=>{setService(code);void load(code);};
 
-  return <StaffModule><main style={{minHeight:"100vh",background:"var(--staff-bg)",padding:"32px",fontFamily:"inherit",color:"var(--staff-text)"}}>
+  return <StaffModule><main className={styles.page} style={{minHeight:"100vh",background:"var(--staff-bg)",padding:"32px",fontFamily:"inherit",color:"var(--staff-text)"}}>
     <div style={{maxWidth:1420,margin:"0 auto"}}>
-      <header style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:20,alignItems:"center",marginBottom:24}}>
+      <header className={styles.header} style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:20,alignItems:"center",marginBottom:24}}>
         <div><small style={{fontWeight:800,letterSpacing:1.4,color:"var(--paw-link)"}}>PAWSPACE TEAM · FINANCE</small><h1 style={{fontSize:32,margin:"8px 0"}}>Service finance & reconciliation</h1><p style={{margin:0,color:"var(--staff-muted)"}}>Boarding, Pet Sitting, Pet Taxi, Grooming and Training bookings with their payment state, from the canonical payment, reconciliation and refund records.</p></div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:10}}><button disabled={loading} onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"1px solid var(--staff-line)",background:"var(--staff-surface)",fontWeight:700}}>Refresh</button><Link href="/team/finance/reconciliation" style={linkStyle}>Reconciliation &amp; exceptions</Link><Link href="/team/finance/cash-flow" style={linkStyle}>Cash flow & earned revenue</Link><Link href="/team/finance/statutory" style={linkStyle}>GST, input tax & returns</Link><Link href="/team/finance/training" style={linkStyle}>Training finance</Link><Link href="/team/finance/boarding" style={linkStyle}>Boarding finance</Link><Link href="/team/finance/sitting" style={linkStyle}>Pet Sitting finance</Link><Link href="/team/finance/taxi" style={linkStyle}>Pet Taxi finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:"calc(10px * var(--paw-radius-scale))",background:"var(--staff-primary)",color:"var(--staff-on-primary)",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
+        <div className={styles.tools} style={{display:"flex",flexWrap:"wrap",gap:10}}><button disabled={loading} onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:"calc(10px * var(--paw-radius-scale))",border:"1px solid var(--staff-line)",background:"var(--staff-surface)",fontWeight:700}}>Refresh</button><Link href="/team/finance/reconciliation" style={linkStyle}>Reconciliation &amp; exceptions</Link><Link href="/team/finance/cash-flow" style={linkStyle}>Cash flow & earned revenue</Link><Link href="/team/finance/statutory" style={linkStyle}>GST, input tax & returns</Link><Link href="/team/finance/training" style={linkStyle}>Training finance</Link><Link href="/team/finance/boarding" style={linkStyle}>Boarding finance</Link><Link href="/team/finance/sitting" style={linkStyle}>Pet Sitting finance</Link><Link href="/team/finance/taxi" style={linkStyle}>Pet Taxi finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:"calc(10px * var(--paw-radius-scale))",background:"var(--staff-primary)",color:"var(--staff-on-primary)",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
       </header>
 
       <GroomingGstPanel />

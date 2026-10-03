@@ -79,7 +79,7 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(trainer,/action:"start"\}\);try\{await trainingSessionAction\(\{sessionId:selected\.id,action:"save_report",\.\.\.attendanceOnly\}/,'the pre-check is persisted right after a successful start');
   assert.match(trainer,/const attendanceOnly:Record<string,unknown>=\{report:\{attendance:report\.attendance\}\}/,'only attendance is saved at start, so no default scores are recorded');
   assert.match(trainer,/onClick=\{\(\)=>void startSession\(\)\}>Start session</);
-  assert.match(trainer,/<span>ATTENDANCE & SAFETY<\/span>.*\{attendanceControls\}<\/section><div className=\{styles\.actions\}><button disabled=\{busy\} onClick=\{\(\)=>void act\("save_report",\{report\}\)\}>Save report/,'the in-session report keeps the confirmations editable');
+  assert.match(trainer,/<span>ATTENDANCE & SAFETY<\/span>.*\{attendanceControls\}<\/section><div className=\{styles\.actions\}><button disabled=\{busy\|\|!evidenceSettled\} onClick=\{\(\)=>void act\("save_report",\{report\}\)\}>Save report/,'the in-session report keeps the confirmations editable');
   assert.match(trainer,/!selected\.ownerHandover\|\|!attendanceReady\|\|!trainingProgressReady\(scores\)\} onClick=\{\(\)=>void act\("complete",\{report\}\)\}/,'completion waits for a genuine confirmation');
   assert.match(trainer,/const attendanceReady=safeArea&&\(attendanceMode!=="parent"\|\|parentConfirmed\);/);
   assert.match(trainer,/<strong>\{trainerName\|\|providerId\}<\/strong>/,'the header shows the trainer name, falling back to the provider id');
@@ -100,8 +100,11 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(trainer,/const newestRequest=\(counter:\{current:number\}\)=>\{const request=\+\+counter\.current;return\(\)=>request===counter\.current;\};/);
   // Every photo read takes a turn first, and every write of its result checks that the turn is still current.
   const reads=trainer.match(/await loadTrainingEvidence\(/g)||[],turns=trainer.match(/const current=newestRequest\(evidenceRequest\);/g)||[];
-  assert.equal(reads.length,4);assert.equal(turns.length,3,'showEvidence, refreshEvidence and addEvidence (whose two reads share one turn)');
-  assert.equal((trainer.match(/setEvidence\(result\.assets\)/g)||[]).length,(trainer.match(/if\(current\(\)\)\{?setEvidence\(result\.assets\)/g)||[]).length,'no unguarded evidence write');
-  assert.match(trainer,/async function selectSession\(session:TrainerSession\)\{setSelectedId\(session\.id\);applyEditor\(editorFrom\(session\)\);await showEvidence\(session\.id\);\}/);
+  assert.equal(reads.length,3);assert.equal(turns.length,2,'showEvidence and addEvidence (whose two reads share one turn); refreshEvidence delegates to showEvidence');
+  assert.match(trainer,/async function refreshEvidence\(\)\{if\(!selected\|\|busy\)return;setBusy\(true\);try\{await showEvidence\(selected\.id\);\}finally\{setBusy\(false\);\}\}/);
+  assert.match(trainer,/const evidenceSettled=Boolean\(selected&&evidenceSessionId===selected\.id&&!evidenceLoading&&!evidenceError\);/);
+  assert.match(trainer,/disabled=\{busy\|\|!evidenceSettled\|\|Boolean\(evidenceError\)/);
+  assert.equal((trainer.match(/setEvidence\(result\.assets\)/g)||[]).length,(trainer.match(/if\(current\(\)(?:&&selectedRef\.current===sessionId)?\)\{?setEvidence\(result\.assets\)/g)||[]).length,'no unguarded evidence write');
+  assert.match(trainer,/async function selectSession\(session:TrainerSession\)\{selectedRef\.current=session\.id;setSelectedId\(session\.id\);applyEditor\(editorFrom\(session\)\);await showEvidence\(session\.id\);\}/);
  });
 }

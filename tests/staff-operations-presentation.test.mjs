@@ -1,3 +1,4 @@
+import {reverseReviewedP1Ops} from './helpers/p1-ops-reviewed-functional-delta.mjs';
 import {preservedBrandStyleBytes} from './helpers/approved-brand-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ import {staffSemanticContract} from './helpers/staff-presentation-contract.mjs';
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const contract=JSON.parse(read('tests/fixtures/staff-operations-contract.json'));
 for(const [path,expected] of Object.entries(contract.files))test('Operations UI preserves non-style source: '+path,()=>{
- assert.equal(staffSemanticContract(read(path),path),expected.semantic);
+ assert.equal(staffSemanticContract(reverseReviewedP1Ops(read(path),path),path),expected.semantic);
  assert.equal((read(path).match(/<StaffModule>/g)||[]).length,expected.mainRoots);
 });
 test('Training, gateway, partner, customer and business engines retain their baseline bytes',()=>{

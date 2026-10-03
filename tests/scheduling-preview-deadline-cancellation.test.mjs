@@ -24,7 +24,7 @@ import { d1, ORIGIN } from "./helpers/execution-harness.mjs";
 
 installWorkersHooks("__SCHED_DEADLINE_DB__", "__SCHED_DEADLINE_ENV__");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-globalThis.fetch = async () => Response.json({ status: "OK", results: [{ formatted_address: "Test address, Bengaluru", geometry: { location: { lat: 12.9784, lng: 77.6408 } } }] });
+globalThis.fetch = async (url) => Response.json({ status: "OK", results: [{ formatted_address: new URL(String(url)).searchParams.get("address"), geometry: { location: { lat: 12.9784, lng: 77.6408 } } }] });
 
 const route = await import("../app/api/uat-scheduling/route.ts");
 const metricsLib = await import("../lib/request-d1-metrics.ts");

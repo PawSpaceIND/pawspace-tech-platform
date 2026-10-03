@@ -1,0 +1,15 @@
+/* Keep the existing workspace destinations, filters and staff permissions. */
+.queues { grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:20px; }
+.queue.queue { min-width:0; min-height:48px; padding:24px; gap:14px; }
+.queue h2 { font-size:20px; line-height:1.35; }
+.queue p { line-height:1.65; }
+.queue :is(h2,p,span) { overflow-wrap:anywhere; }
+.queue:focus-visible,.workspaces a:focus-visible,.search input:focus-visible { outline:3px solid var(--staff-primary); outline-offset:3px; }
+.workspaces { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:12px; }
+.workspaces a { color:var(--paw-link) !important; min-height:48px; padding:12px 16px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; border-radius:var(--paw-control-radius); }
+.search input { min-height:48px; width:100%; max-width:100%; font:inherit; }
+.details { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px 20px; line-height:1.6; }
+.details > span { min-width:0; overflow-wrap:anywhere; }
+@media(max-width:600px) { .queues,.workspaces,.details { grid-template-columns:minmax(0,1fr); } .queue.queue { padding:20px; } }
+:global(body):has(.queues) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger),
+:global(body):has(.workspaces) :global([data-paw-appearance-slot="staff"] .paw-appearance-trigger) { min-height:48px !important; }

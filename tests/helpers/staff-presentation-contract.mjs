@@ -1,3 +1,4 @@
+import {reverseAtlasHandoffDeadline} from './atlas-handoff-deadline-review.mjs';
 import ts from 'typescript';
 import {createHash} from 'node:crypto';
 
@@ -32,6 +33,7 @@ export function collectStyleRoots(file) {
 
 /** Ignore only presentation fields; every handler, request, payload, condition and text remains. */
 export function staffSemanticContract(source, name='page.tsx') {
+  source=reverseAtlasHandoffDeadline(source,name);
   const file=parseStaffPage(source,name), {aliases}=collectStyleRoots(file);
   const transformed=ts.transform(file,[context=>{
     const visit=node=>{

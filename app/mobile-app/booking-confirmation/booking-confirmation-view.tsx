@@ -6,6 +6,7 @@ import { CustomerCheckoutController, loadCustomerConfirmationProjection, type Ch
 import { customerBookingManageHref } from "../../../lib/customer-activity";
 import { customerScopedHref } from "../../../lib/v2/route-scope";
 import styles from "./booking-confirmation.module.css";
+import { customerPaymentVerified } from "../../../lib/customer-payment-display";
 
 type Props = { bookingId: string; orderId: string; paymentId: string; signature: string; payment: string; code: string; routeScope?: "legacy" | "v2" };
 const SERVICE_LABEL: Record<string, string> = { grooming: "Grooming", dog_training: "Dog Training", boarding: "Boarding", pet_sitting: "Pet Sitting", pet_taxi: "Pet Taxi", dog_walking: "Dog Walking", food: "Fresh Food", vet_consult: "Vet Consultation" };
@@ -67,7 +68,7 @@ function BookingConfirmationInner(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, props.orderId, props.paymentId, props.signature, failedReturn]);
 
-  const verified = state.phase === "captured" || state.phase === "settled";
+  const verified = customerPaymentVerified(projection);
   useEffect(() => {
     if (state.phase !== "pending") return;
     const timer = window.setInterval(() => { void controller.current?.resume(); }, 2500);
@@ -80,17 +81,18 @@ function BookingConfirmationInner(props: Props) {
   const manageHref = projection ? customerBookingManageHref({id:projection.bookingId,serviceCode:projection.serviceCode,scheduledStart:projection.scheduledStart,status:projection.bookingStatus}, props.routeScope) : null;
   const serviceName = projection ? SERVICE_LABEL[projection.serviceCode] || projection.serviceCode.replaceAll("_", " ") : "PawSpace";
   const canonicalReady = Boolean(projection?.ready);
-  const success = verified && canonicalReady;
+  const success = canonicalReady;
 
   return <main className={styles.page} data-pawspace-mobile="true"><div className={styles.content}>
     <Link href={home}>← Back to PawSpace</Link>
     <header><p className={styles.eyebrow}>{success ? "BOOKING CONFIRMED" : failedReturn ? "PAYMENT NOT COMPLETED" : "PAYMENT RETURN"}</p><h1>{success ? `Your ${serviceName} booking is confirmed` : `Your ${serviceName} booking`}</h1></header>
     {!bookingId ? <section className={styles.card}><p>Open a booking from your Activity to view its confirmation.</p></section> : <>
-      {success && <section className={`${styles.card} ${styles.success}`} aria-label="Payment verified"><i>✓</i><h2>Payment verified by PawSpace</h2><p>{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
+      {success && verified && <section className={`${styles.card} ${styles.success}`} aria-label="Payment verified"><i>✓</i><h2>Payment verified by PawSpace</h2><p>{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
+      {success && !verified && <section className={styles.card} aria-label="Booking payment status"><h2>{["refunded", "partially_refunded"].includes(projection?.paymentStatus || "") ? "Refund recorded" : projection?.paymentMode === "pay_after_service" ? "Payment after service" : "Booking payment status"}</h2><p role="status">{["refunded", "partially_refunded"].includes(projection?.paymentStatus || "") ? "A refund is recorded for this booking. Check the payment status below for the current record." : projection?.paymentMode === "pay_after_service" ? "Your booking can proceed. Payment collection has not been verified by PawSpace." : "No verified payment capture is recorded here. Booking value and the amount payable now do not prove payment."}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
       {verified && !canonicalReady && <section className={`${styles.card} ${styles.pending}`} aria-label="Confirmation synchronizing"><h2>Finalizing your confirmed booking</h2><p role="status">Payment is verified. PawSpace is reading the assigned provider, exact slot and transaction directly from the server before showing success.</p></section>}
       {!verified && state.phase === "pending" && <section className={`${styles.card} ${styles.pending}`} aria-label="Payment pending"><h2>Waiting for Razorpay confirmation</h2><p role="status">{state.message}</p><p className={styles.reference}>Booking reference · {bookingId}</p></section>}
       {!verified && failedReturn && state.phase === "ready" && <section className={`${styles.card} ${styles.failed}`} aria-label="Payment failed"><h2>The payment did not go through</h2><p role="alert">Razorpay reported {props.code || "PAYMENT_FAILED"}. PawSpace has not verified a successful payment. If your bank shows a debit, check payment status or contact support before retrying.</p></section>}
-      {state.message && !verified && state.phase !== "pending" && !(failedReturn && state.phase === "ready") && <p role={state.phase === "error" ? "alert" : "status"} className={state.phase === "error" ? styles.error : styles.status}>{state.message}</p>}
+      {state.message && !verified && !["captured", "settled"].includes(state.phase) && state.phase !== "pending" && !(failedReturn && state.phase === "ready") && <p role={state.phase === "error" ? "alert" : "status"} className={state.phase === "error" ? styles.error : styles.status}>{state.message}</p>}
       {!loaded ? <p role="status" className={styles.status}>Loading your booking…</p> : projectionError ? <section className={styles.card}><p role="alert">{projectionError}</p><div className={styles.actions}><button type="button" className={styles.secondary} onClick={() => { setProjectionError(""); setLoaded(false); setRefresh(value => value + 1); }}>Try again</button><Link className={styles.secondary} href={home}>Sign in to your account</Link></div></section>
         : !projection ? <section className={styles.card}><h2>Booking unavailable</h2><p>This booking is not on your account. Check that you are signed in to the account that made the booking.</p></section>
         : <section className={styles.card} aria-label="Booking details"><h2>{projection.packageName}</h2><dl>

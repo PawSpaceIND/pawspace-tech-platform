@@ -1,6 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 import Link from"next/link";
+import styles from "../work-content.module.css";
 import{partnerServiceTime}from"../../../lib/partner-job-time";
 import{partnerJobWorkspaceHref}from"../../../lib/partner-job-workspace";
 import{acceptAvailable,describeProviderOffer}from"../../../lib/provider-offer-copy";
@@ -41,10 +42,10 @@ export default function PartnerJobsPage(){
   const btn:React.CSSProperties={padding:"8px 14px",borderRadius:"calc(9px * var(--paw-radius-scale))",border:"none",background:C.green,color:"#01261F",fontWeight:700,cursor:"pointer"};
   const chip=(color:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:"rgba(255,255,255,0.06)",color});
 
-  const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
+  const jobCard=(job:Job)=><div key={job.bookingId} data-testid={`partner-job-${job.bookingId}`} className={styles.jobCard} style={{borderBottom:`1px solid ${C.line}`,padding:"10px 0",display:"grid",gap:6}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
       <span><b>{job.serviceCode}</b> · {job.packageName} <small style={{color:C.dim}}>for {job.customerFirstName}</small></span>
-      <span style={chip(statusColor(job.status))}>{job.status.replace(/_/g," ")}</span>
+      <span className={styles.status} data-status={job.status} style={chip(statusColor(job.status))}>{job.status.replace(/_/g," ")}</span>
     </div>
     <div style={{color:C.dim,fontSize:13,display:"flex",gap:14,flexWrap:"wrap"}}>
       <span>{when(job.scheduledStart)} → {when(job.scheduledEnd)}</span>
@@ -55,7 +56,7 @@ export default function PartnerJobsPage(){
     {job.serviceCode==="grooming"&&job.safetyRequirements.length?<div style={{fontSize:13,color:C.orange}}><b>Safety:</b> {job.safetyRequirements.map(safetyLabel).join(" · ")}</div>:null}
     {job.serviceCode==="grooming"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Add-ons:</b> {job.addOns.join(" · ")}</div>:null}
     {job.serviceCode==="boarding"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Requested extras:</b> {job.addOns.join(" · ")} <small>(subject to your agreement)</small></div>:null}
-    {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
+    {partnerJobWorkspaceHref(job)?<div><Link data-testid={`partner-workspace-${job.bookingId}`} className={styles.workspaceLink} href={partnerJobWorkspaceHref(job) as string} style={{color:C.green,fontWeight:700}}>Open assigned workspace →</Link></div>:null}
     {job.offer?<div style={{fontSize:13,color:job.offer.state==="expired"||job.offer.state==="withdrawn"?C.orange:C.dim}}><b style={{color:C.ink}}>{describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).label}</b> · {describeProviderOffer(job.offer,{noun:nounFor(job.serviceCode),bucket:job.group==="past"?"past":undefined}).detail}</div>:null}
     {job.serviceCode==="boarding"&&["awaiting_host_acceptance","recovery_pending"].includes(job.status)&&job.stayId&&acceptAvailable(job.offer??{state:"open"},job.group==="past"?"past":undefined)?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
@@ -65,12 +66,12 @@ export default function PartnerJobsPage(){
 
   const section=(title:string,jobs:Job[]|undefined,empty:string,accent=false)=><>
     <h2 style={h2}>{title}{jobs?.length?` (${jobs.length})`:""}</h2>
-    <div style={{...card,...(accent?{borderLeft:`4px solid ${C.orange}`}:{})}}>
+    <div className={styles.jobSection} style={{...card,...(accent?{borderLeft:`4px solid ${C.orange}`}:{})}}>
       {jobs?.length?jobs.map(jobCard):<p style={{color:C.dim,margin:0}}>{empty}</p>}
     </div>
   </>;
 
-  return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif"}}>
+  return <main className={styles.jobs} style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif"}}>
     <div style={{maxWidth:1000,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/partner/workspace" style={{color:C.dim,textDecoration:"none"}}>← Partner workspace</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · PARTNER JOB FEED</p>

@@ -23,6 +23,7 @@
  * reads source. That audit is right - this reads source - so the name matches the evidence class.
  */
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -54,9 +55,21 @@ for (const file of sourceFiles) {
   }
 }
 
+// This deliberately inactive capability requires explicit release-certified provisioning.
+// Execute its exact migration instead of pretending an admission request creates grant authority.
+const provisionedDemoTables = new Set(["native_attended_demo_grants", "native_attended_demo_audit"]);
+const demoSchema = new DatabaseSync(":memory:");
+demoSchema.exec(readFileSync(path.join(ROOT, "drizzle/0046_native_attended_demo_grants.sql"), "utf8"));
+for (const table of provisionedDemoTables) {
+  assert.equal(demoSchema.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table).n, 1);
+  assert.deepEqual([...written.get(table) ?? []], ["lib/native-attended-demo.ts"], `${table} must stay confined to explicitly provisioned demo admission`);
+  assert.equal(demoSchema.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, `${table} must have no seeded authority`);
+}
+demoSchema.close();
+
 test("SCHEMA-1: every table production code writes to is created at runtime", () => {
   const orphans = [...written.entries()]
-    .filter(([table]) => !created.has(table))
+    .filter(([table]) => !created.has(table) && !provisionedDemoTables.has(table))
     .map(([table, files]) => `${table}  <- written by ${[...files].sort()[0]}`);
 
   assert.deepEqual(orphans, [],

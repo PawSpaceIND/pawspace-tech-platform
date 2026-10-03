@@ -1,0 +1,69 @@
+{
+  "base": "bbe2909cec4684f0db5665902025e09036029555",
+  "reversals": {
+    "page.tsx": [
+      [
+        "return <StaffModule><main style=",
+        "return <StaffModule><main className={styles.page} style="
+      ],
+      [
+        "<header style=",
+        "<header className={styles.header} style="
+      ],
+      [
+        "<div style={{display:\"flex\",flexWrap:\"wrap\",gap:10}}>",
+        "<div className={styles.tools} style={{display:\"flex\",flexWrap:\"wrap\",gap:10}}>"
+      ]
+    ],
+    "finance-ledger.tsx": [
+      [
+        "<nav aria-label=\"Service\"",
+        "<nav className={styles.filters} aria-label=\"Service\""
+      ],
+      [
+        "return <>",
+        "return <div className={styles.ledger}>"
+      ],
+      [
+        "  </>;",
+        "  </div>;"
+      ],
+      [
+        "data-staff-grid=\"stats\"",
+        "className={styles.metrics} data-staff-grid=\"stats\""
+      ],
+      [
+        "<article key={String(name)}",
+        "<article className={styles.metric} key={String(name)}"
+      ],
+      [
+        "<section role=\"status\"",
+        "<section className={styles.exceptions} role=\"status\""
+      ],
+      [
+        "<section style={{ ...card, padding: 0, overflow: \"hidden\"",
+        "<section className={styles.tableCard} style={{ ...card, padding: 0, overflow: \"hidden\""
+      ],
+      [
+        "<div role=\"region\"",
+        "<div className={styles.tableRegion} role=\"region\""
+      ]
+    ],
+    "grooming-gst-panel.tsx": [
+      [
+        "<section style={box}",
+        "<section className={styles.gst} style={box}"
+      ],
+      [
+        "<div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 12, alignItems: \"end\", marginTop: 12 }}>",
+        "<div className={styles.gstFields} style={{ display: \"flex\", flexWrap: \"wrap\", gap: 12, alignItems: \"end\", marginTop: 12 }}>"
+      ]
+    ]
+  },
+  "beforeHashes": {
+    "app/team/finance/page.tsx": "fa7753e66594def8af011c775191ee55f4ac377ba37a6b496cf5ff4c0f99b42f",
+    "app/team/finance/finance-ledger.tsx": "11bd57137f4fe0effe2e1fb9f6e97d451035c2646a5ed2812c1473f122b598fe",
+    "app/team/finance/grooming-gst-panel.tsx": "ce4d6fb9dbe444c893c61cbc4cb7f1697b617d70d7b4bcad97a6cfc9acc6fc39"
+  },
+  "visualQA": "pending; dependencies missing"
+}

@@ -201,7 +201,14 @@ async function paidSitting({ total = 2000 } = {}) {
   sqlite.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,'razorpay','sandbox',?,?,0,'INR','captured','matched',0,'evt-capture',?)").run(paymentId, seeded.bookingId, total, total, Date.now());
   const finance = await import("../lib/sitting-finance-governance.ts");
   let seq = 0;
-  const act = (action, actorId, extra = {}) => finance.mutateSittingFinance(db, { bookingId: seeded.bookingId, action, actorId, idempotencyKey: `sit-${action}-${++seq}`, reason: "Customer cannot host the sitter", ...extra });
+  const selected={};
+  const act = async (action, actorId, extra = {}) => {
+    const field={approve_cancel:'cancellationRequestId',record_refund:'refundId',apply_date_change:'dateChangeRequestId'}[action];
+    const result=await finance.mutateSittingFinance(db,{bookingId:seeded.bookingId,action,actorId,idempotencyKey:`sit-${action}-${++seq}`,reason:"Customer cannot host the sitter",...(field?{[field]:selected[field]}:{}),...extra});
+    if(action==='request_cancel')selected.cancellationRequestId=result.requestId;
+    if(action==='approve_cancel')selected.refundId=result.refundId;
+    return result;
+  };
   await act("request_cancel", REQUESTER);
   return { sqlite, db, act, reconciliation, bookingId: seeded.bookingId, paymentId };
 }

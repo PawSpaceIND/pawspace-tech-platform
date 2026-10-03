@@ -1,0 +1,3 @@
+/* Opt-in Sitting controls retain inherited focus, wrapping and disabled styles. */
+.sitting.sitting :is(button,input) { min-height:48px; box-sizing:border-box; max-width:100%; }
+.sitting header a { display:inline-flex; align-items:center; min-height:48px; box-sizing:border-box; }

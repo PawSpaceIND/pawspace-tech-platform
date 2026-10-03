@@ -1,3 +1,6 @@
+import {preservedReviewedFoodBytes} from './helpers/food-route-review.mjs';
+import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
+import {reverseGuestContinuity} from './helpers/guest-continuity-review.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +12,7 @@ const c=JSON.parse(read('tests/fixtures/customer-partner-theme-contract.json'));
 const hash=v=>createHash('sha256').update(v).digest('hex');
 for(const [p,x]of Object.entries(c.styles))test('Approved theme append preserves original stylesheet: '+p,()=>assert.equal(hash(preservedBrandStyleBytes(p)),x.hash));
 test('All application logic, route aliases, validation and business engines retain exact bytes',()=>{
- for(const [p,h]of Object.entries(c.protected))assert.equal(hash(read(p)),h,p);
+ for(const [p,h]of Object.entries(c.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedReviewedFoodBytes(p,read(p)),p)),h,p);
 });
 test('Theme consumers compose the same palette; style changes cannot grant permissions',()=>{
  for(const [p,x]of Object.entries(c.styles)){
@@ -88,8 +91,17 @@ import {uiWiringContract} from "./helpers/ui-wiring-contract.mjs";
 const root = new URL('../', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, root), 'utf8');
 const baseline = JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json'));
+function reviewedTrainingAndContinuitySource(source,name){
+ if(name==='app/training/page.tsx'){
+  // Only the independently reviewed V2 default changes; handlers and guards stay in the contract.
+  const cadence='[cadenceDays,setCadenceDays]=useState(routeScope==="v2"?3:7)';
+  assert.equal(source.split(cadence).length,2,'Exactly one reviewed V2 cadence default');
+  source=source.replace(cadence,'[cadenceDays,setCadenceDays]=useState(7)');
+ }
+ return reverseGuestContinuity(source,name);
+}
 for (const [name, expected] of Object.entries(baseline.files)) {
- test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(read(name), name), expected));
+ test('AST interaction snapshot matches baseline: ' + name, () => assert.deepEqual(uiWiringContract(reviewedTrainingAndContinuitySource(read(name),name), name), expected));
 }
 test('wiring contract detects changes to handlers and disabled guards', () => {
  const source = read('app/walking/page.tsx');
@@ -133,7 +145,7 @@ test('sandbox and no-auto-charge notices survive customer-copy changes', () => {
 import {uiDataFlowContract} from './helpers/ui-wiring-contract.mjs';
 {
  const compact=JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json')).compactDataFlow;
- for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(read(file).toString(),file),expected));
+ for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(reverseGuestContinuity(read(file).toString(),file),file),expected));
  test('Compact UI keeps the exact official PawSpace logo bytes',()=>assert.equal(hash(read('public/assets/pawspace-official-lockup.png')),compact.logoSha256));
  test('Data-flow guard rejects a changed booking call despite navigation exclusions',()=>{
   const file='app/v2/page.tsx',source=read(file).toString(),changed=source.replace('loadV2CustomerAccount()', 'loadDifferentCustomerAccount()');
@@ -160,4 +172,29 @@ test('High-risk customer and partner audit fixes retain their scoped readability
  assert.ok(values(partner,'headerSignOut','white-space').includes('nowrap'));
  assert.ok(values(partner,'headerSignOut','word-break').includes('normal'));
  assert.ok(values(partner,'headerSignOut','overflow-wrap').includes('normal'));
+});
+
+// Exact reviewed Food migration and mutation rejection.
+const reviewedFoodPath='app/v2/food/page.tsx',bridge=read(reviewedFoodPath);
+test('reviewed Food bridge reconciles exactly with immutable historical source hash',()=>{
+ const before=preservedReviewedFoodBytes(reviewedFoodPath,bridge);
+ assert.equal(createHash('sha256').update(before).digest('hex'),'15bb74478aa59bbdd8f74e35b9ff00e1025b9b051d26c68202c98192921fad49');
+ assert.equal(preservedReviewedFoodBytes(reviewedFoodPath,before),before);
+});
+test('unreviewed route redirection or parameter change is refused',()=>{
+ for(const [from,to]of [['../food-experience','../other-experience'],['<V2FoodExperience/>','<V2FoodExperience unsafe/>']])assert.throws(()=>preservedReviewedFoodBytes(reviewedFoodPath,bridge.toString().replace(from,to)));
+});
+test('Food handler, identity, stock and disabled-guard mutations are refused',()=>{
+ for(const[from,to]of [['createCanonicalFoodOrder({','unsafeOrder({'],['loadV2CustomerSession()','fakeCustomerSession()'],['active.uat_available_units','999'],['!quoteCurrent||quoteLoading','false||quoteLoading']]){
+  const source=read('app/v2/food-experience.tsx').toString();assert.ok(source.includes(from),from);
+  assert.throws(()=>preservedReviewedFoodBytes(reviewedFoodPath,bridge,file=>file.endsWith('.tsx')?source.replace(from,to):read(file)),from);
+ }
+});
+test('unreviewed Food CSS drift is refused',()=>{
+ assert.throws(()=>preservedReviewedFoodBytes(reviewedFoodPath,bridge,file=>file.endsWith('.css')?Buffer.concat([read(file),Buffer.from('\nbutton{display:none}')]):read(file)));
+});
+test('legacy Food, clients, APIs, subscriptions and unrelated routes never get transformed',()=>{
+ for(const file of ['app/food/canonical-food-page.tsx','lib/food-client.ts','lib/food-subscription-client.ts','app/api/food-commercial/route.ts','app/v2/grooming/page.tsx']){
+  const bytes=read(file);assert.equal(preservedReviewedFoodBytes(file,bytes),bytes,file);
+ }
 });

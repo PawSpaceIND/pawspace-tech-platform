@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const externalCalls = [];
 globalThis.fetch = async (url) => {
   externalCalls.push(String(url).replace(/key=[^&]+/, "key=***"));
-  return Response.json({ status: "OK", results: [{ formatted_address: "Test address, Bengaluru", geometry: { location: { lat: 12.9784, lng: 77.6408 } } }] });
+  return Response.json({ status: "OK", results: [{ formatted_address: new URL(String(url)).searchParams.get("address"), geometry: { location: { lat: 12.9784, lng: 77.6408 } } }] });
 };
 
 const route = await import("../app/api/uat-scheduling/route.ts");

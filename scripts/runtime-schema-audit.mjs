@@ -24,7 +24,8 @@ function sqlArguments(source) {
   for (const match of source.matchAll(pattern)) {
     const literal = match[1];
     const body = literal.slice(1, -1);
-    values.push(body.replace(/\$\{[\s\S]*?\}/g, " "));
+    // Keep a syntax boundary so FROM ${source} cannot consume a following SQL keyword.
+    values.push(body.replace(/\$\{[\s\S]*?\}/g, " (?) "));
   }
   return values;
 }

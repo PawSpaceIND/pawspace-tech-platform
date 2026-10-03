@@ -1,2 +1,4 @@
-// V2 route bridge: reuse the canonical governed staff module; do not fork business logic.
-export { default } from "../../../../team/people/payroll/page";
+import PayrollPage from "../../../../team/people/payroll/page";
+
+// The V2 layout owns the single workspace shell for payroll and governance.
+export default function V2PayrollPage(){return <PayrollPage embedded/>;}

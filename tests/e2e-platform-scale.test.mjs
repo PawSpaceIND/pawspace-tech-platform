@@ -505,7 +505,7 @@ test("E2E-700 refunds, cancellation and money-out safety", async () => {
     await m.ensureSittingFinanceTables(db);
     sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('E2E-BK-DLV','E2E-CUS-0002','blr','z1','pet_sitting','pkg','S','E2E-SG-DLV','E2E-PRV-01','2026-09-02T04:00:00.000Z','2026-09-03T04:00:00.000Z','completed','customer_app',4000,'INR','{}','e2e',?,?)").run(NOW, NOW);
     try {
-      await m.mutateSittingFinance(db, { action: "approve_cancel", bookingId: "E2E-BK-DLV", reason: "e2e delivered-stay probe", actorId: "e2e:ops", idempotencyKey: "e2e-cancel-dlv-1" });
+      await m.mutateSittingFinance(db, { action: "approve_cancel", cancellationRequestId:"E2E-DELIVERED-REQUEST", bookingId: "E2E-BK-DLV", reason: "e2e delivered-stay probe", actorId: "e2e:ops", idempotencyKey: "e2e-cancel-dlv-1" });
     } catch (error) {
       if (error instanceof Response && error.status === 409) return "delivered stay correctly refused (409)";
       throw error;

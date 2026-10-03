@@ -83,7 +83,7 @@ test("AUDIT-C6: a DELIVERED sitting booking cannot be cancelled and refunded", a
   sqlite.prepare("UPDATE canonical_bookings SET status='completed' WHERE id='BK-C6'").run();
 
   const approved = await call(() => mutate(db, {
-    bookingId: "BK-C6", action: "approve_cancel", actorId: "finance@pawspace.in",
+    bookingId: "BK-C6", action: "approve_cancel", cancellationRequestId:requested.value.requestId, actorId: "finance@pawspace.in",
     reason: "Approving the earlier cancellation request", idempotencyKey: "app-c6",
     approvedRefundAmount: PRICE,
   }));
@@ -108,7 +108,7 @@ test("AUDIT-C6b: a genuinely undelivered sitting booking can still be cancelled"
   }));
   assert.ok(requested.ok);
   const approved = await call(() => mutate(db, {
-    bookingId: "BK-C6", action: "approve_cancel", actorId: "finance@pawspace.in",
+    bookingId: "BK-C6", action: "approve_cancel", cancellationRequestId:requested.value.requestId, actorId: "finance@pawspace.in",
     reason: "Approved, service not delivered", idempotencyKey: "app-ok", approvedRefundAmount: PRICE,
   }));
   assert.ok(approved.ok, `an undelivered booking must still be cancellable: ${approved.body ?? ""}`);

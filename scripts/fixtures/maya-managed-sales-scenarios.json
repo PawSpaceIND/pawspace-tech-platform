@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "confirmationsAllowed": false,
+  "facts": "Synthetic enquiries; these are not facts asserted about an attended caller or their pet.",
+  "scenarios": [
+    {
+      "id": "grooming_price_value", "service": "grooming", "language": "en",
+      "turns": [
+        {"text": "I am comparing grooming options for two dogs. What changes the current price, and what is included? Please only explain; do not book or send anything.", "recognition": ["groom", "price"]},
+        {"text": "Wait, I meant two dogs of different sizes. How do you price each dog, and is a subscription actually better value?", "recognition": ["two", "subscription"], "interruptPrevious": true},
+        {"text": "That sounds expensive. Which approved option is worth paying for, and what benefit would I lose with the basic option?", "recognition": ["expensive", "basic"]},
+        {"text": "Could you compare the total and any approved discount without inventing an offer? Tell me if you need more facts.", "recognition": ["discount", "facts"]},
+        {"text": "I am still deciding. Explain the next step briefly, but do not reserve, book, charge, or contact me.", "recognition": ["deciding", "book"]}
+      ]
+    },
+    {
+      "id": "puppy_vaccination_tamil", "service": "grooming", "language": "ta",
+      "turns": [
+        {"text": "தமிழில் பேசுங்கள். என் நாய்க்குட்டிக்கு grooming பற்றி தகவல் வேண்டும். இப்போது booking செய்ய வேண்டாம்.", "recognition": ["groom", "booking"]},
+        {"text": "நாய்க்குட்டியின் வயது மற்றும் vaccination விவரங்கள் எப்போது தேவை? சரியாகத் தெரியாததை ஊகிக்க வேண்டாம்.", "recognition": ["vaccination"]},
+        {"text": "தடுப்பூசி ஆவணம் முழுமையாக இல்லாவிட்டால் முதலில் vet ஆலோசனை வேண்டுமா? மருத்துவ முடிவு சொல்ல வேண்டாம்.", "recognition": ["vet"]},
+        {"text": "விலை மற்றும் grooming package பற்றி தமிழில் சுருக்கமாக விளக்குங்கள். பாதுகாப்புக்காக என்ன தகவல் கேட்பீர்கள்?", "recognition": ["groom", "package"]},
+        {"text": "இது தகவலுக்காக மட்டுமே. booking செய்யாதீர்கள், payment வேண்டாம், message அனுப்பாதீர்கள்.", "recognition": ["booking", "payment", "message"]}
+      ]
+    },
+    {
+      "id": "training_fit_upgrade", "service": "training", "language": "en",
+      "turns": [
+        {"text": "I need help with puppy jumping, pulling on walks, and basic commands. Which training package fits those goals? Explain only, without a booking.", "recognition": ["training", "puppy"]},
+        {"text": "What can the basic package realistically cover, and when is the upgrade useful? Please do not guarantee a behaviour result.", "recognition": ["basic", "upgrade"]},
+        {"text": "What are the approved price, number of sessions, validity, and payment stages? If something is missing, say so.", "recognition": ["price", "sessions"]},
+        {"text": "I can only attend on weekends. Can you explain how actual slots are checked instead of promising availability?", "recognition": ["weekend", "slots"]},
+        {"text": "Please recap the fit and next step in two sentences. I am not confirming a booking or payment, and do not message me.", "recognition": ["recap", "payment"]}
+      ]
+    },
+    {
+      "id": "boarding_payment", "service": "boarding", "language": "en",
+      "turns": [
+        {"text": "How does boarding pricing work for two pets, and does the caregiver set the rate? I only want information.", "recognition": ["boarding", "pets"]},
+        {"text": "Is a catalogue starting price the final price? Explain what the app must confirm for my dates and caregiver.", "recognition": ["price", "caregiver"]},
+        {"text": "Does payment happen before or after I choose the caregiver in the app? Please explain the current policy without taking payment here.", "recognition": ["payment", "app"]},
+        {"text": "Can you finish a boarding booking on this call, or must I complete it in the app? Be clear about what has actually been created.", "recognition": ["boarding", "app"]},
+        {"text": "I will decide in the app later. Do not create a request, booking, reservation, payment, or message for me.", "recognition": ["app", "booking"]}
+      ]
+    },
+    {
+      "id": "sitting_price_handoff", "service": "pet_sitting", "language": "en", "handoffAllowed": true,
+      "turns": [
+        {"text": "I am comparing pet sitting at home and overnight care. How is the caregiver price determined? This is only an enquiry.", "recognition": ["sitting", "price"]},
+        {"text": "If you cannot see a rate for my area, please say it is missing. Can you explain how I check it in the app?", "recognition": ["rate", "app"]},
+        {"text": "Do not make up a price. Can you recover by asking one useful question and explaining the app step?", "recognition": ["price", "question"]},
+        {"text": "Please explain why the final sitting booking stays in the app. Do not create a request or payment.", "recognition": ["sitting", "app"]},
+        {"text": "I want a human to review the missing rate. Please hand this conversation to the team, without booking, charging, reserving, or sending a message.", "recognition": ["human", "rate"], "expectHandoff": true}
+      ]
+    }
+  ]
+}
