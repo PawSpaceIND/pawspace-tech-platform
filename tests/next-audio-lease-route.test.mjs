@@ -127,3 +127,10 @@ test('Workers speech uses only configured models; failed synthesis and repeats c
  assert.equal((await route.POST(w.request({...common,action:'workers_stt',audioRef:'data:audio/wav;base64,'+Buffer.from('invalid').toString('base64')}))).status,403);assert.equal(paid,before);
  globalThis.__PAWSPACE_TEST_ENV__.VOICE_CARRIER_TTS_MODEL='other';assert.equal((await route.POST(w.request({...common,action:'workers_stt',audioRef:'data:audio/wav;base64,'+wav.toString('base64')}))).status,403);assert.equal(paid,before);
 });
+test('failed Workers TTS is charged against attempt slots and never falls back to ElevenLabs',async t=>{
+ let attempts=0;const w=await world(t,{AI:{async run(model){assert.equal(model,'@cf/deepgram/aura-2-en');attempts++;throw Error('synthetic Workers TTS failure')}},VOICE_STT_MODEL:'@cf/openai/whisper-large-v3-turbo',VOICE_CARRIER_TTS_MODEL:'@cf/deepgram/aura-2-en'});w.seedEvidence();
+ const claim=(await (await route.POST(w.request({action:'claim_batch',runId:'123'}))).json()).data,common={customerId:'SYNTHETIC',callId:'CALL',batchToken:claim.batchToken};assert.equal((await route.POST(w.request(common))).status,201);
+ for(let i=0;i<4;i++)assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'No booking.'}))).status,500);
+ assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'No booking.'}))).status,403);assert.equal(attempts,4);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM next_audio_speech_attempts WHERE kind='tts'").get().n,4);
+});
