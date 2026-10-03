@@ -77,6 +77,11 @@ function directoryAnswer(service:PublicServiceEntry,question:string,knowledge:Ar
 }
 
 const PRICE_QUESTION=/\b(price|prices|pricing|cost|costs|fee|fees|charge|charges|package|packages|plan|plans|how much|rate|rates)\b/i;
+/** Only a plain catalogue/price lookup may bypass conversation. A price word inside a care,
+ * subscription, package-detail or budget question must not erase the rest of the customer's intent. */
+const PRICE_LOOKUP_WORDS=new Set([...AVAILABILITY_WORDS,"what","whats","which","how","much","price","prices","pricing","cost","costs","fee","fees","charge","charges","package","packages","plan","plans","rate","rates","for","of","does","list","show","me","tell","about"]);
+function isPlainPriceLookup(service:PublicServiceEntry,question:string){let rest=phrase(question);for(const alias of serviceAliases(service))while(rest.includes(alias))rest=rest.replace(alias," ");return rest.trim().split(" ").filter(Boolean).every(word=>PRICE_LOOKUP_WORDS.has(word));}
+
 const inr=(value:unknown)=>`₹${Number(value).toLocaleString("en-IN")}`;
 /**
  * A Training price or package question is answered from the governed Training catalogue itself, the same
@@ -124,13 +129,13 @@ export async function runPublicAiWebChat(db:D1Database,input:{query:string;histo
   * like every other question, and the directory answer is its fallback when no provider answers. */
  if(matchedService){
   // A Training price or package question is answered from the governed Training catalogue, before the model.
-  const catalogueAnswer=matchedService.enabled&&matchedService.code==="dog_training"&&PRICE_QUESTION.test(inspected.redacted)?await trainingCatalogueAnswer(db):null;
+  const catalogueAnswer=matchedService.enabled&&matchedService.code==="dog_training"&&PRICE_QUESTION.test(inspected.redacted)&&isPlainPriceLookup(matchedService,inspected.redacted)?await trainingCatalogueAnswer(db):null;
   if(catalogueAnswer){
    await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_training_catalogue_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
    return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output:catalogueAnswer,provider:"canonical_training_catalogue",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
   }
   // Owner decision: other services quote their published "from" price, from the same tables the booking prices from.
-  const priceAnswer=matchedService.enabled&&matchedService.code!=="dog_training"&&PUBLISHED_PRICE_QUESTION.test(inspected.redacted)?await publishedPriceAnswer(db,matchedService).catch(()=>null):null;
+  const priceAnswer=matchedService.enabled&&matchedService.code!=="dog_training"&&PUBLISHED_PRICE_QUESTION.test(inspected.redacted)&&isPlainPriceLookup(matchedService,inspected.redacted)?await publishedPriceAnswer(db,matchedService).catch(()=>null):null;
   if(priceAnswer){
    await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:"canonical_service_answer",providerConnected:false,serviceCode:matchedService.code,serviceEnabled:matchedService.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();
    return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output:priceAnswer,provider:"canonical_service_directory",modelRef:null,outcome:"reply_ready",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};
