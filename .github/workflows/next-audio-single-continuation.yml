@@ -1,0 +1,91 @@
+name: Single bounded audio continuation
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [amend-source, execute-one]
+        required: true
+      expected_checkout_sha:
+        type: string
+        required: true
+      expected_runtime_sha:
+        type: string
+        required: true
+      parent_run_id:
+        type: string
+        required: true
+      parent_source_sha:
+        type: string
+        required: true
+      specialist_customer_id:
+        type: string
+        required: true
+      expected_tester_sha256:
+        type: string
+        required: true
+      receipt_json:
+        type: string
+        required: false
+permissions:
+  contents: read
+jobs:
+  one-continuation:
+    runs-on: ubuntu-22.04
+    environment: pawspace-staging
+    timeout-minutes: 8
+    concurrency:
+      group: pawspace-staging-sweep
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_checkout_sha }}
+      EXPECTED_RUNTIME_SHA: ${{ inputs.expected_runtime_sha }}
+      NEXT_AUDIO_ENGINE: workers_ai
+      NEXT_AUDIO_PARENT_RUN_ID: ${{ inputs.parent_run_id }}
+      NEXT_AUDIO_PARENT_SOURCE_SHA: ${{ inputs.parent_source_sha }}
+      SPECIALIST_CUSTOMER_ID: ${{ inputs.specialist_customer_id }}
+      EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
+      PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+      ELEVENLABS_API_BASE: ${{ vars.ELEVENLABS_API_BASE }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      GROOMING_AGENT_ID: ${{ vars.ELEVENLABS_GROOMING_AGENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify exact checkout and prohibit workflow reruns
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+      - name: Amend receipt source only and verify the existing consumed ledger
+        if: ${{ inputs.mode == 'amend-source' }}
+        env:
+          CONTINUATION_RECEIPT_JSON: ${{ inputs.receipt_json }}
+        run: |
+          node --experimental-strip-types --input-type=module <<'NODE'
+          import {provisionNextAudioCeiling} from './scripts/prepare-next-audio-duration.mjs';
+          const receipt=JSON.parse(process.env.CONTINUATION_RECEIPT_JSON);
+          if(receipt.sourceSha!==process.env.EXPECTED_RUNTIME_SHA||receipt.sourceAmendmentFrom!==process.env.NEXT_AUDIO_PARENT_SOURCE_SHA||receipt.continuationParentRunId!==process.env.NEXT_AUDIO_PARENT_RUN_ID||receipt.continuationParentSourceSha!==process.env.NEXT_AUDIO_PARENT_SOURCE_SHA||receipt.continuationCustomerId!==process.env.SPECIALIST_CUSTOMER_ID)throw Error('Exact continuation receipt metadata required');
+          console.log(JSON.stringify(await provisionNextAudioCeiling({...process.env,NEXT_AUDIO_RATE_RECEIPT_JSON:process.env.CONTINUATION_RECEIPT_JSON})));
+          NODE
+      - name: Install synthetic microphone tools
+        if: ${{ inputs.mode == 'execute-one' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Execute exactly one run-bound continuation through existing bounded leases
+        if: ${{ inputs.mode == 'execute-one' }}
+        run: node --experimental-strip-types scripts/next-ten-audio-runner.mjs
+      - name: Preserve partial recordings and failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-one-continuation-audio
+          path: voice-audit-results/
+          retention-days: 7

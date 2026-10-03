@@ -1,0 +1,11 @@
+export function assertContinuationReceiptState(state,claim,oldJson,previous,parentRunId,parentSourceSha,customerId){
+ if(state?.receipt_json!==oldJson||state?.cap_micros!==10000000||state?.reserved_micros!==377600||state?.conversations!==1||state?.expires_at!==previous.validUntil||claim?.run_id!==parentRunId||claim?.source_sha!==parentSourceSha||previous.sourceSha!==parentSourceSha||!customerId||!/^[1-9][0-9]{0,24}$/.test(parentRunId)||!/^[a-f0-9]{40}$/.test(parentSourceSha))throw Error('Source-only continuation amendment state refused');
+}
+export function continuationReceiptAmendmentBatch(id,region,oldJson,newJson,expiresAt,parentRunId,parentSourceSha,customerId,now){
+ const guard="EXISTS (SELECT 1 FROM next_audio_batch_claims WHERE budget_id=? AND run_id=? AND source_sha=?) AND (SELECT COUNT(*) FROM next_audio_leases WHERE budget_id=?)=1 AND EXISTS (SELECT 1 FROM next_audio_leases l JOIN ai_voice_calls c ON c.thread_id=l.thread_id AND c.customer_id=l.customer_id JOIN communication_threads t ON t.id=l.thread_id AND t.customer_id=l.customer_id WHERE l.budget_id=? AND l.customer_id=? AND l.attempts=0 AND l.expires_at<=? AND c.status='completed' AND c.transport_provider='sandbox_simulator' AND c.consent_status='verified') AND NOT EXISTS (SELECT 1 FROM next_audio_attempts) AND NOT EXISTS (SELECT 1 FROM next_audio_speech_attempts) AND NOT EXISTS (SELECT 1 FROM next_audio_batch_continuations WHERE budget_id=?)";
+ const params=[id,parentRunId,parentSourceSha,id,id,customerId,now,id];
+ return [
+  {sql:`UPDATE next_audio_budget SET receipt_json=? WHERE id=? AND receipt_json=? AND cap_micros=10000000 AND reserved_micros=377600 AND conversations=1 AND expires_at=? AND expires_at>? AND EXISTS (SELECT 1 FROM next_audio_rate_evidence WHERE id=? AND region=? AND receipt_json=?) AND ${guard}`,params:[newJson,id,oldJson,expiresAt,now,id,region,oldJson,...params]},
+  {sql:`UPDATE next_audio_rate_evidence SET receipt_json=? WHERE id=? AND region=? AND receipt_json=? AND changes()=1 AND EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND receipt_json=? AND cap_micros=10000000 AND reserved_micros=377600 AND conversations=1 AND expires_at=?) AND ${guard}`,params:[newJson,id,region,oldJson,id,newJson,expiresAt,...params]},
+ ];
+}

@@ -1,3 +1,4 @@
+import {claimNextAudioContinuation} from "../../../../lib/next-audio-continuation";
 import {NEXT_AUDIO_INSERT_THREAD_SQL,NEXT_AUDIO_ATTACH_CALL_SQL,NEXT_AUDIO_ADMISSION_READBACK_SQL,assertNextAudioAdmission} from "../../../../lib/next-audio-admission";
 import {resolveWorkersAiStt} from "../../../../lib/voice-workers-ai";
 import {synthesizeNativeCarrierTts} from "../../../../lib/voice-native-tts";
@@ -59,6 +60,13 @@ export async function POST(request:Request){try{
   const token=await claimNextAudioBatch(c.db,text(body.runId),c.receipt.sourceSha,Date.now());
   return json({data:{batchToken:token,budgetId:NEXT_AUDIO_BUDGET_ID,sourceSha:c.receipt.sourceSha}},201);
  }
+ if(body.action==="claim_continuation"){
+  await requireCustomerOwnership(c.db,c.actor,customerId);
+  const customer=await c.db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(customerId).first<Row>();
+  if(!customer||!isVoiceAllowlisted(c.e,customer.primary_phone))refuse("next_audio_test_customer_not_allowlisted");
+  const token=await claimNextAudioContinuation(c.db,{parentRunId:text(body.parentRunId),runId:text(body.runId),parentSourceSha:text(body.parentSourceSha),sourceSha:c.receipt.sourceSha,customerId,now:Date.now()},NEXT_AUDIO_BUDGET_ID);
+  return json({data:{batchToken:token,budgetId:NEXT_AUDIO_BUDGET_ID,sourceSha:c.receipt.sourceSha,continuationRunId:text(body.runId),parentRunId:text(body.parentRunId)}},201);
+ }
  await requireNextAudioBatch(c.db,text(body.batchToken),c.receipt.sourceSha);
  await requireCustomerOwnership(c.db,c.actor,customerId);
  const customer=await c.db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(customerId).first<Row>();
@@ -101,4 +109,4 @@ export async function POST(request:Request){try{
  // Trigger writes contribute to D1 meta.changes; returned identities and owned live state prove admission.
  try{assertNextAudioAdmission(updates,{callId,threadId,customerId,now:Date.now()});}catch{refuse("next_audio_call_changed_during_admission");}
  return json({data:{threadId,customerId,callId,...lease,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,phoneDialed:false}},201);
-}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);if(error instanceof Error&&/^next_audio_batch_/.test(error.message))return json({error:error.message},403);return authError(error,"Next audio lease refused");}}
+}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);if(error instanceof Error&&/^next_audio_(?:batch_|continuation_)/.test(error.message))return json({error:error.message},403);return authError(error,"Next audio lease refused");}}

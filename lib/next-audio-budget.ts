@@ -95,7 +95,11 @@ export async function claimNextAudioBatch(db:D1Database, runId:string, sourceSha
  return token;
 }
 export async function requireNextAudioBatch(db:D1Database, token:string, sourceSha:string) {
- const row=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+ let row=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+ if(!row){
+  const exists=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='next_audio_batch_continuations'").first<Row>();
+  if(exists)row=await db.prepare("SELECT c.token FROM next_audio_batch_claims c JOIN next_audio_batch_continuations r ON r.budget_id=c.budget_id AND r.parent_run_id=c.run_id WHERE c.budget_id=? AND c.token=? AND r.source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+ }
  if(!row)throw new Error("next_audio_batch_claim_required");
 }
 
