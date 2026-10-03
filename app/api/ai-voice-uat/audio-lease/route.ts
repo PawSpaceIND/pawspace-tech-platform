@@ -67,12 +67,13 @@ export async function POST(request:Request){try{
   const token=await claimNextAudioContinuation(c.db,{parentRunId:text(body.parentRunId),runId:text(body.runId),parentSourceSha:text(body.parentSourceSha),sourceSha:c.receipt.sourceSha,customerId,now:Date.now()},NEXT_AUDIO_BUDGET_ID);
   return json({data:{batchToken:token,budgetId:NEXT_AUDIO_BUDGET_ID,sourceSha:c.receipt.sourceSha,continuationRunId:text(body.runId),parentRunId:text(body.parentRunId)}},201);
  }
- await requireNextAudioBatch(c.db,text(body.batchToken),c.receipt.sourceSha);
+ const continuation=await requireNextAudioBatch(c.db,text(body.batchToken),c.receipt.sourceSha,{runId:text(body.runId),customerId});
  await requireCustomerOwnership(c.db,c.actor,customerId);
  const customer=await c.db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(customerId).first<Row>();
  if(!customer||!isVoiceAllowlisted(c.e,customer.primary_phone))refuse("next_audio_test_customer_not_allowlisted");
  const call=await c.db.prepare("SELECT thread_id FROM ai_voice_calls WHERE id=? AND customer_id=? AND status='active' AND transport_provider='sandbox_simulator' AND consent_status='verified'").bind(callId,customerId).first<Row>();
  if(text(body.action).startsWith("workers_")){
+  if(continuation&&(!continuation.threadId||continuation.threadId!==text(call?.thread_id)))refuse("next_audio_continuation_lease_binding_required");
   if(!call||!text(call.thread_id).startsWith(NEXT_AUDIO_THREAD_PREFIX)||!c.e.AI||c.e.VOICE_STT_MODEL!=="@cf/openai/whisper-large-v3-turbo"||c.e.VOICE_CARRIER_TTS_MODEL!=="@cf/deepgram/aura-2-en")refuse("next_audio_workers_speech_unproven");
   const threadId=text(call!.thread_id),now=Date.now(),speechText=text(body.text);
   try{
@@ -95,9 +96,10 @@ export async function POST(request:Request){try{
    refuse("next_audio_workers_action_invalid");
   }catch(error){if(error instanceof Error&&/^next_audio_speech_/.test(error.message))refuse(error.message);throw error;}
  }
+ if(continuation?.threadId)refuse("next_audio_continuation_lease_already_consumed_or_unavailable");
  if(!call||text(call.thread_id).startsWith(NEXT_AUDIO_THREAD_PREFIX))refuse("next_audio_active_synthetic_call_required");
  const threadId=NEXT_AUDIO_THREAD_PREFIX+crypto.randomUUID(),now=Date.now();
- const lease=await reserveNextAudioLease(c.db,{threadId,customerId,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,now});
+ const lease=await reserveNextAudioLease(c.db,{threadId,customerId,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,now,...(continuation?{continuationRunId:continuation.runId}:{})});
  await ensureCommunicationTables(c.db);
  // Closing/completing a synthetic call also prevents further paid model attempts on its lease.
  await c.db.prepare("CREATE TRIGGER IF NOT EXISTS next_audio_call_stop AFTER UPDATE OF status ON ai_voice_calls WHEN NEW.status<>'active' BEGIN UPDATE next_audio_leases SET expires_at=MIN(expires_at,CAST(strftime('%s','now') AS INTEGER)*1000) WHERE thread_id=OLD.thread_id; END").run();

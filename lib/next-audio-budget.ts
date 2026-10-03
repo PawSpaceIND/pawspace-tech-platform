@@ -1,3 +1,4 @@
+import {nextAudioContinuationLeaseBatch,NEXT_AUDIO_CONTINUATION_AUTH_SQL} from "./next-audio-continuation";
 /** Same next-ten allocation, increased to $10 total on 2026-10-03. Reservations and claims never reset. */
 export const NEXT_AUDIO_BUDGET_ID = "next-ten-audio-additional-usd5-20261002";
 export const NEXT_AUDIO_CAP_MICROS = 10_000_000;
@@ -50,16 +51,24 @@ export async function provisionNextAudioBudget(db: D1Database, receipt: AudioRat
  // Upgrade only the previously authorized cap; preserve all spent/reserved amounts, leases and dispatch claims.
  await db.prepare("UPDATE next_audio_budget SET cap_micros=10000000 WHERE id=? AND cap_micros=5000000").bind(NEXT_AUDIO_BUDGET_ID).run();
 }
-export async function reserveNextAudioLease(db: D1Database, input: { threadId: string; customerId: string; sourceSha: string; agentConfigSha256: string; providerHardDurationSeconds: number; now: number }) {
+export async function reserveNextAudioLease(db: D1Database, input: { threadId: string; customerId: string; sourceSha: string; agentConfigSha256: string; providerHardDurationSeconds: number; now: number; continuationRunId?:string }) {
  if (!isNextAudioThread(input.threadId) || !input.customerId || !positive(input.providerHardDurationSeconds) || input.providerHardDurationSeconds > 120) throw new Error("next_audio_identity_or_native_duration_invalid");
  const row = await db.prepare("SELECT receipt_json FROM next_audio_budget WHERE id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();
  if (!row) throw new Error("next_audio_rate_receipt_missing");
  const r = JSON.parse(String(row.receipt_json)) as AudioRateReceipt;
  validateAudioRateReceipt(r, input.now);
+ const originalClaim=await db.prepare("SELECT source_sha FROM next_audio_batch_claims WHERE budget_id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();
+ if(originalClaim&&originalClaim.source_sha!==input.sourceSha&&!input.continuationRunId)throw Error("next_audio_continuation_lease_binding_required");
  const deadline = input.now + input.providerHardDurationSeconds * 1000;
  if (r.sourceSha !== input.sourceSha || r.agentConfigSha256 !== input.agentConfigSha256 || deadline >= r.validUntil) throw new Error("next_audio_revision_configuration_or_expiry_mismatch");
  const nativeBound = Math.ceil(input.providerHardDurationSeconds / 60 * r.nativeMicrosPerMinute);
  if (!positive(nativeBound)) throw new Error("next_audio_native_bound_invalid");
+ if(input.continuationRunId){
+  const batch=nextAudioContinuationLeaseBatch(NEXT_AUDIO_BUDGET_ID,{threadId:input.threadId,customerId:input.customerId,runId:input.continuationRunId,sourceSha:input.sourceSha,deadline,nativeBound,now:input.now});
+  const results=await db.batch(batch.map(q=>db.prepare(q.sql).bind(...q.params)));
+  if(results.length!==3||results.some(r=>Number(r.meta?.changes)!==1))throw Error("next_audio_continuation_lease_already_consumed_or_unavailable");
+  return {deadline,nativeBound};
+ }
  const results = await db.batch([
   db.prepare("INSERT INTO next_audio_leases (thread_id,budget_id,customer_id,attempts,expires_at) SELECT ?,?,?,0,? WHERE EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND cap_micros=10000000 AND conversations<10 AND reserved_micros+?<=cap_micros AND expires_at>?)")
    .bind(input.threadId,NEXT_AUDIO_BUDGET_ID,input.customerId,deadline,NEXT_AUDIO_BUDGET_ID,nativeBound,deadline),
@@ -94,13 +103,15 @@ export async function claimNextAudioBatch(db:D1Database, runId:string, sourceSha
  if(Number(r.meta?.changes)!==1)throw new Error("next_audio_batch_already_claimed_or_unavailable");
  return token;
 }
-export async function requireNextAudioBatch(db:D1Database, token:string, sourceSha:string) {
- let row=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
- if(!row){
-  const exists=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='next_audio_batch_continuations'").first<Row>();
-  if(exists)row=await db.prepare("SELECT c.token FROM next_audio_batch_claims c JOIN next_audio_batch_continuations r ON r.budget_id=c.budget_id AND r.parent_run_id=c.run_id WHERE c.budget_id=? AND c.token=? AND r.source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+export async function requireNextAudioBatch(db:D1Database, token:string, sourceSha:string,execution?:{runId:string;customerId:string}) {
+ const original=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+ if(original)return null;
+ const exists=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='next_audio_batch_continuations'").first<Row>();
+ if(exists&&execution&&/^[1-9][0-9]{0,24}$/.test(execution.runId)&&execution.customerId){
+  const row=await db.prepare(NEXT_AUDIO_CONTINUATION_AUTH_SQL).bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha,execution.runId,execution.customerId).first<Row>();
+  if(row)return {runId:String(row.run_id),customerId:String(row.customer_id),threadId:row.thread_id===null?null:String(row.thread_id)};
  }
- if(!row)throw new Error("next_audio_batch_claim_required");
+ throw new Error("next_audio_batch_claim_required");
 }
 
 /** Speech envelope: <=4 x30s ASR and <=4 x2500 UTF-8 bytes TTS per lease; charge on failed attempts too. */

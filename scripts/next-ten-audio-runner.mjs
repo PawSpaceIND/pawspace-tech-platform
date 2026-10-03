@@ -58,7 +58,7 @@ async function runScenario(scenario){
  try{
   await isolation();
   context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
-  const lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken}),threadId=lease.threadId;
+  const lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken,runId:env.GITHUB_RUN_ID}),threadId=lease.threadId;
   if(!threadId.startsWith('THREAD-VOICE-NDEMO-NEXT-AUDIO-')||lease.sourceSha!==runtimeSha||lease.providerHardDurationSeconds>120||lease.deadline<=Date.now())throw Error('Bounded native lease invalid');
   result.lease={deadline:lease.deadline,nativeBound:lease.nativeBound,sourceSha:lease.sourceSha,agentConfigSha256:lease.agentConfigSha256};
   const signedResponse=await fetch(eleven+'/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await readDemoJson(signedResponse);if(!signedResponse.ok)throw Error('Demo socket authorization refused');
@@ -122,8 +122,8 @@ async function runWorkersScenario(scenario){
  const result={id:scenario.id,service:scenario.service,engine:'workers_ai_whisper_aura2_with_actual_pawspace_brain',turns:[],errors:[],listened:false,phoneDialed:false,carrierCertified:false,liveInterruptionCertified:false,plannedTurns:scenario.prompts.length};let context,lease;
  try{
   await isolation();context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
-  lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken});
-  const common={customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken};
+  lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken,runId:env.GITHUB_RUN_ID});
+  const common={runId:env.GITHUB_RUN_ID,customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken};
   const request=async body=>{
    if(Date.now()>=lease.deadline)throw Error('Bounded lease expired');
    const r=await fetch(origin+'/api/ai-voice-uat/audio-lease',{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify({...common,...body}),signal:AbortSignal.timeout(Math.max(1,Math.min(30000,lease.deadline-Date.now())))});
