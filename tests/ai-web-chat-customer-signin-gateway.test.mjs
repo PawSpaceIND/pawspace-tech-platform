@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {installWorkersHooks} from './helpers/module-hooks.mjs';
+installWorkersHooks('__CALLBACK_SIGNIN_DB__','__CALLBACK_SIGNIN_ENV__');
+const gateway=await import('../lib/api-gateway.ts');
+const original={requiredPermission:async req=>{const u=new URL(req.url);if(u.pathname==='/api/team-overview')return 'dashboard.view';if(req.method==='GET')return u.searchParams.get('mode')==='thread'?'scheduling.book':null;return (await req.clone().json()).mode==='authenticated'?'scheduling.book':null;}};
+let fetchAttempts=0;globalThis.fetch=async()=>{fetchAttempts++;throw new Error('network prohibited');};
+const origin='https://pawspace-staging.karthik-fce.workers.dev';
+const db={prepare(){throw new Error('unexpected database access');},batch(){throw new Error('unexpected database write');}};
+const env={DB:db,PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'synthetic-unit-test-signing-key-not-hosted'};
+const request=(path='/api/ai-web-chat?mode=thread',body)=>new Request(origin+path,body?{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)}:{});
+async function refused(req,settings=env){const response=await gateway.authorizeApiRequest(req,settings);assert.ok(response instanceof Response);assert.equal(response.status,401);assert.equal(response.headers.get('cache-control'),'no-store');return response.json();}
+test('signed-out chat transcript keeps refusal and customer recovery guidance',async()=>{const body=await refused(request());assert.equal(body.code,'customer_sign_in_required');assert.equal(body.signInUrl,'/mobile-app');assert.match(body.error,/see your conversation/);});
+test('authenticated callback input gets customer sign-in without consuming the caller body',async()=>{const req=request('/api/ai-web-chat',{mode:'authenticated',message:'Please call me back',idempotencyKey:'signin-local'});const body=await refused(req);assert.equal(body.code,'customer_sign_in_required');assert.equal(body.signInUrl,'/mobile-app');assert.match(body.error,/chat about your bookings/);assert.equal((await req.json()).message,'Please call me back');});
+test('customer guidance also applies without staging login settings',async()=>{const response=await gateway.authorizeApiRequest(request(),{DB:db});assert.equal(response.status,401);const body=await response.json();assert.equal(body.signInUrl,'/mobile-app');assert.equal(body.code,'customer_sign_in_required');});
+test('staff sign-in guidance remains the existing staging response',async()=>{const body=await refused(request('/api/team-overview'));assert.equal(body.code,'sign_in_required');assert.equal(body.signInUrl,'/staging-login');});
+test('public chat knowledge remains public without claiming a customer session',async()=>{const result=await gateway.authorizeApiRequest(request('/api/ai-web-chat?q=boarding'),env);assert.equal(result.permission,null);assert.equal(result.actor.roleCode,'public');});
+test('cross-origin authenticated chat still fails before authentication',async()=>{const req=new Request(origin+'/api/ai-web-chat',{method:'POST',headers:{origin:'https://foreign.test','content-type':'application/json'},body:JSON.stringify({mode:'authenticated'})});const response=await gateway.authorizeApiRequest(req,env);assert.equal(response.status,403);});
+test('a body-supplied customer ID does not authenticate a caller',async()=>{const body=await refused(request('/api/ai-web-chat',{mode:'authenticated',customerId:'CUS-FOREIGN',choiceId:'request_call'}));assert.equal(body.code,'customer_sign_in_required');});
+test('protected/public permission mapping is unchanged and no external request is attempted',async()=>{for(const req of [request(),request('/api/team-overview'),request('/api/ai-web-chat?q=boarding'),request('/api/ai-web-chat',{mode:'authenticated',choiceId:'request_call'}),request('/api/ai-web-chat',{mode:'public'})])assert.equal(await gateway.requiredPermission(req),await original.requiredPermission(req));assert.equal(fetchAttempts,0);});

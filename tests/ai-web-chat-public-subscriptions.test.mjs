@@ -1,0 +1,52 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { installAiHooks, freshUatAiDb, stubFetch, jsonResponse } from "./helpers/ai-harness.mjs";
+installAiHooks();
+const { runPublicAiWebChat } = await import("../lib/ai-web-chat-adapter.ts");
+async function world() {
+ const {db} = freshUatAiDb({PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-not-real"});
+ for (const [file,fn] of [["pricing-control-runtime","ensurePricingControlRuntime"],["training-commercial-governance","ensureTrainingCommercialTables"],["boarding-governance","ensureBoardingGovernanceTables"],["sitting-governance","ensureSittingGovernanceTables"],["walking-governance","ensureWalkingGovernanceTables"],["taxi-governance","ensureTaxiGovernanceTables"]]) await (await import(`../lib/${file}.ts`))[fn](db);
+ await db.prepare("UPDATE service_packages SET active=1 WHERE package_code='dog-basic'").run();
+ return db;
+}
+const {ensureGroomingSubscriptionPlans}=await import("../lib/grooming-governance.ts");
+const {publicGroomingSubscriptionCatalogue}=await import("../lib/public-grooming-subscription-catalogue.ts");
+async function plan(db,id,{city="blr",zone=null,price=3597,species="dog",active=1,from="2020-01-01",to=null,version=1}={}){await db.prepare("INSERT INTO grooming_subscription_plans (id,plan_code,city_id,zone_id,name,price,session_count,validity_value,eligible_pet_types_json,service_package_code,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,'sub3',?,?, 'Three visits',?,3,4,?,'dog-basic',?,?,?,?,'private-operator',0)").bind(id,city,zone,price,JSON.stringify([species]),active,version,from,to).run();}
+const ask=(db,extra={})=>runPublicAiWebChat(db,{query:"What do grooming subscriptions cost?",sessionKey:"public-plans",careContext:{serviceCode:"grooming",species:"dog"},...extra});
+test("public prompt receives eligible effective zone-specific plan and exact credit context",async()=>{const db=await world();await ensureGroomingSubscriptionPlans(db);await plan(db,"generic");await plan(db,"zone",{zone:"east",price:3300,version:2});await plan(db,"othercity",{city:"hyd",price:100});await plan(db,"otherzone",{zone:"west",price:200});await plan(db,"paused",{active:0});await plan(db,"future",{from:"2099-01-01"});await plan(db,"expired",{to:"2020-01-02"});const net=stubFetch(()=>jsonResponse({status:"completed",output_text:"Published plan is ₹3300 for 3 visits in 4 months.",usage:{input_tokens:1,output_tokens:1,total_tokens:2}}));try{const result=await ask(db,{cityId:"blr",zoneId:"east"});assert.equal(net.calls.length,1);const body=JSON.parse(net.calls[0].init.body),catalogue=JSON.parse(body.input).currentServiceCatalogue.groomingSubscriptions;assert.equal(catalogue.status,"published");assert.equal(catalogue.plans.length,1);assert.equal(catalogue.plans[0].price,3300);assert.equal(catalogue.plans[0].sessions,3);assert.equal(catalogue.plans[0].validityValue,4);assert.equal(catalogue.plans[0].creditsPerPet,1);assert.deepEqual(catalogue.plans[0].eligiblePetTypes,["dog"]);assert.ok(!JSON.stringify(catalogue).includes("private-operator"));assert.match(body.instructions,/not a pay-as-you-go tariff/);assert.match(result.ai.turn.output,/3300/);}finally{net.restore();}});
+test("missing location, absent table and empty configuration fail truthfully without provider",async()=>{for(const mode of ["location","table","empty"]){const db=await world();if(mode==="empty")await ensureGroomingSubscriptionPlans(db);const net=stubFetch(()=>{throw new Error("No external model allowed")});try{const result=await ask(db,mode==="location"?{}:{cityId:"blr"});assert.match(result.ai.turn.output,mode==="location"?/Choose the service city/:/cannot verify a published/);assert.equal(net.calls.length,0);assert.doesNotMatch(result.ai.turn.output,/₹|prepaid.only/);}finally{net.restore();}}});
+test("species filtering cannot fall back to lower-priority override and missing zone excludes zone-only plans",async()=>{const db=await world();await ensureGroomingSubscriptionPlans(db);await plan(db,"doggeneric");await plan(db,"catoverride",{zone:"east",species:"cat"});assert.equal((await publicGroomingSubscriptionCatalogue(db,{cityId:"blr",zoneId:"east",species:"dog"})).plans.length,0);assert.equal((await publicGroomingSubscriptionCatalogue(db,{cityId:"blr",species:"dog"})).plans.length,1);});
+
+test("provider outage returns verified plan facts without inventing collection policy",async()=>{const db=await world();await ensureGroomingSubscriptionPlans(db);await plan(db,"generic");const net=stubFetch(()=>jsonResponse({error:{message:"test outage"}},503));try{const result=await ask(db,{cityId:"blr"});assert.match(result.ai.turn.output,/INR 3597, 3 credits within 4 months/);assert.match(result.ai.turn.output,/not a pay-as-you-go tariff/);assert.doesNotMatch(result.ai.turn.output,/prepaid-only|pay after each service|automatic renewal/);}finally{net.restore();}});
+
+for(const [service,query] of [["boarding","What do boarding subscriptions cost?"],["dog_training","What do dog training subscriptions cost?"]])test(`explicit ${service} subscription question overrides stale Grooming context`,async()=>{
+ const db=await world();const net=stubFetch(()=>jsonResponse({status:"completed",output_text:"Named service answer",usage:{input_tokens:1,output_tokens:1,total_tokens:2}}));
+ try{const result=await runPublicAiWebChat(db,{query,sessionKey:`stale-context-${service}`,careContext:{serviceCode:"grooming",species:"dog"}});assert.equal(net.calls.length,1);const body=JSON.parse(net.calls[0].init.body),prompt=JSON.parse(body.input);assert.equal(prompt.question,query);assert.equal(Object.hasOwn(prompt.currentServiceCatalogue,"groomingSubscriptions"),false);assert.doesNotMatch(body.instructions,/groomingSubscriptions contains published plans/);assert.equal(result.ai.turn.output,"Named service answer");}finally{net.restore();}
+});
+test("context-only Grooming subscription question still requires a published location",async()=>{
+ const db=await world();const net=stubFetch(()=>{throw new Error("No external model allowed")});
+ try{const result=await runPublicAiWebChat(db,{query:"What do subscriptions cost?",sessionKey:"context-only-subscription",careContext:{serviceCode:"grooming",species:"dog"}});assert.match(result.ai.turn.output,/Choose the service city and zone in Grooming/);assert.equal(net.calls.length,0);}finally{net.restore();}
+});
+
+for(const mode of ["missing_location","published_outage"])test(`subscription answer survives event insertion failure: ${mode}`,async()=>{
+ const db=await world();if(mode==="published_outage"){await ensureGroomingSubscriptionPlans(db);await plan(db,"outage-plan");}
+ const broken={...db,prepare(sql){const statement=db.prepare(sql);if(!sql.startsWith("INSERT INTO ai_web_chat_events")||!sql.includes("'public_turn'"))return statement;const wrap=original=>({...original,bind:(...args)=>wrap(original.bind(...args)),run:async()=>{throw new Error("injected event storage failure");}});return wrap(statement);}};
+ const net=stubFetch(()=>jsonResponse({error:{message:"test outage"}},503));
+ try{const result=await ask(broken,mode==="published_outage"?{cityId:"blr"}:{});assert.match(result.ai.turn.output,mode==="published_outage"?/INR 3597, 3 credits within 4 months/:/Choose the service city and zone/);assert.equal(result.ai.turn.outcome,"reply_ready");if(mode==="missing_location")assert.equal(net.calls.length,0);assert.doesNotMatch(result.ai.turn.output,/injected|prepaid-only/);}finally{net.restore();}
+});
+
+
+test("public guided bot forwards location and sanitized care hints to the governed catalogue",async()=>{
+ const db=await world();await ensureGroomingSubscriptionPlans(db);await plan(db,"cat-east",{zone:"east",species:"cat",price:4200});
+ const {POST}=await import("../app/api/ai-web-chat/route.ts");
+ const net=stubFetch(()=>jsonResponse({status:"completed",output_text:"Verified cat plan",usage:{input_tokens:1,output_tokens:1,total_tokens:2}}));
+ try{
+  const response=await POST(new Request("https://staging.pawspace.test/api/ai-web-chat",{method:"POST",headers:{origin:"https://staging.pawspace.test","content-type":"application/json","cf-connecting-ip":"192.0.2.41"},body:JSON.stringify({mode:"public",bot:true,sessionKey:"bot-care-context-00001",message:"What do subscriptions cost?",cityId:"blr",zoneId:"east",careContext:{serviceCode:"grooming",species:"cat",packageCode:"cat-basic",customerId:"private-injected"}})}));
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+  assert.equal(net.calls.length,1);
+  const prompt=JSON.parse(JSON.parse(net.calls[0].init.body).input);
+  assert.deepEqual(prompt.untrustedCareContext,{serviceCode:"grooming",species:"cat",packageCode:"cat-basic"});
+  assert.equal(prompt.currentServiceCatalogue.groomingSubscriptions.plans[0].price,4200);
+  assert.equal(prompt.currentServiceCatalogue.groomingSubscriptions.plans.length,1);
+ }finally{net.restore();}
+});

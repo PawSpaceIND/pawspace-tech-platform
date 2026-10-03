@@ -107,3 +107,13 @@ test('a signed-in customer asking about their own next session is a booking-stat
  assert.equal(classifyAiIntent('I want a refund for my booking').intent,'refund_review','money questions still go to a person');
  for(const request of ['Please cancel my booking','Can I change my session to Friday?'])assert.equal(classifyAiIntent(request).intent,'booking_change',request+' is a change, not a status question');
 });
+
+
+test('Training care and budget questions still reach conversation rather than a price-only catalogue',async t=>{
+ const {db}=await world(t);
+ for(const [file,fn] of [["pricing-control-runtime","ensurePricingControlRuntime"],["training-commercial-governance","ensureTrainingCommercialTables"],["boarding-governance","ensureBoardingGovernanceTables"],["sitting-governance","ensureSittingGovernanceTables"],["walking-governance","ensureWalkingGovernanceTables"],["taxi-governance","ensureTaxiGovernanceTables"]])await(await import(`../lib/${file}.ts`))[fn](db);
+ const {stubFetch,jsonResponse}=await import('./helpers/ai-harness.mjs');
+ globalThis.__CHAT_RECOVERY_ENV__={PAWSPACE_DEPLOYMENT_ENV:'e2e',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'test-not-real'};
+ const net=stubFetch(()=>jsonResponse({status:'completed',output_text:'Governed Training care answer',usage:{input_tokens:1,output_tokens:1,total_tokens:2}}));
+ try{for(const query of ['What dog training packages in Bengaluru work for my anxious dog and what do they cost?','My dog training budget is ₹2000. Which package fits?']){const before=net.calls.length;const result=await adapter.runPublicAiWebChat(db,{query,sessionKey:'training-care-intent'});assert.equal(net.calls.length,before+1,query);assert.equal(JSON.parse(JSON.parse(net.calls.at(-1).init.body).input).question,query);assert.notEqual(result.ai.turn.provider,'canonical_training_catalogue');}}finally{net.restore();}
+});
