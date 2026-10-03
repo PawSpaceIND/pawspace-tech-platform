@@ -67,9 +67,32 @@ for (const table of provisionedDemoTables) {
 }
 demoSchema.close();
 
+// Atlas text tests use a separate explicitly provisioned isolated database; admission never creates it.
+const provisionedAtlasTables=new Set(["atlas_text_test_requests"]);
+function certifyAtlasSchema(sql,writers){
+ const schema=new DatabaseSync(":memory:");
+ try{
+  schema.exec(sql);
+  for(const table of provisionedAtlasTables){
+   assert.equal(schema.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table).n,1,`${table} requires the exact isolated migration`);
+   assert.deepEqual([...writers.get(table)??[]],["lib/atlas-text-test-admission.ts"],`${table} must stay confined to isolated Atlas admission`);
+   assert.equal(schema.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n,0,`${table} must have no seeded requests or authority`);
+  }
+ }finally{schema.close();}
+}
+const atlasMigration=readFileSync(path.join(ROOT,"migrations/atlas-text-test-isolated.sql"),"utf8");
+certifyAtlasSchema(atlasMigration,written);
+test("isolated Atlas certification refuses a missing schema or additional writer",()=>{
+ assert.throws(()=>certifyAtlasSchema("",written));
+ const otherWriter=new Map(written);
+ otherWriter.set("atlas_text_test_requests",new Set(["lib/atlas-text-test-admission.ts","lib/unrelated-writer.ts"]));
+ assert.throws(()=>certifyAtlasSchema(atlasMigration,otherWriter));
+ assert.throws(()=>certifyAtlasSchema(atlasMigration+"\nINSERT INTO atlas_text_test_requests VALUES ('seed','job','rate','thread',1,1,1,'reserved',NULL,0);",written));
+});
+
 test("SCHEMA-1: every table production code writes to is created at runtime", () => {
   const orphans = [...written.entries()]
-    .filter(([table]) => !created.has(table) && !provisionedDemoTables.has(table))
+    .filter(([table]) => !created.has(table) && !provisionedDemoTables.has(table) && !provisionedAtlasTables.has(table))
     .map(([table, files]) => `${table}  <- written by ${[...files].sort()[0]}`);
 
   assert.deepEqual(orphans, [],
