@@ -22,3 +22,6 @@ test('source amendment updates evidence only and refuses existing budget or clai
  if(variant==='clean'){await provisionNextAudioCeiling(e,request);assert.equal(updates,1);assert.deepEqual(JSON.parse(stored),next);assert.equal(JSON.parse(stored).validUntil,old.validUntil);}else{await assert.rejects(()=>provisionNextAudioCeiling(e,request),/Source-only amendment/);assert.equal(updates,0);assert.equal(stored,JSON.stringify(old));}assert.ok(sql.every(x=>!x.startsWith('DELETE')&&!x.startsWith('UPDATE next_audio_budget')));
  }
 });
+
+import {NextAudioReadinessFailure} from '../lib/next-audio-budget.ts';
+test('runtime classifier returns only fixed stages and error categories',()=>{const e=new NextAudioReadinessFailure('customer_secret_name',new Error('customer private 9591887878'));assert.equal(e.stage,'unknown');assert.equal(e.kind,'unexpected');assert.equal(e.message.includes('9591887878'),false);assert.equal(new NextAudioReadinessFailure('budget_schema',new Error('D1_ERROR: private query')).kind,'D1_ERROR');assert.equal(new NextAudioReadinessFailure('native_json',new SyntaxError('private')).kind,'SyntaxError');assert.equal(new NextAudioReadinessFailure('budget_provision',new Error('next_audio_budget_receipt_already_pinned')).kind,'receipt_already_pinned');});
