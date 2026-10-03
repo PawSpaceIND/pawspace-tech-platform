@@ -140,3 +140,7 @@ test('failed Workers TTS is charged against attempt slots and never falls back t
  assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'No booking.'}))).status,403);assert.equal(attempts,4);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM next_audio_speech_attempts WHERE kind='tts'").get().n,4);
 });
+test('actual readiness contract omits provider and rejects wrong runtime provider or model',async t=>{
+ const w=await world(t);w.seedEvidence();const response=await route.GET(w.request()),data=(await response.json()).data;assert.equal(response.status,200);assert.equal(data.provider,undefined);assert.equal(data.model,undefined);assert.equal(data.paidExecutionAllowed,true);
+ for(const patch of [{PAWSPACE_AI_PROVIDER:'wrong'},{PAWSPACE_AI_VOICE_MODEL:'wrong'}]){const denied=await world(t,patch);denied.seedEvidence();const r=await route.GET(denied.request());assert.equal(r.status,403);assert.match((await r.json()).error,/runtime_rate_or_source_mismatch/);}
+});
