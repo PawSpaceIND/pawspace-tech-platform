@@ -1,4 +1,4 @@
-import { reserveTextTest, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from "./atlas-text-test-admission";
+import { reserveTextTest, countTextTestInput, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from "./atlas-text-test-admission";
 /**
  * The single boundary between PawSpace and an external language-model provider.
  * Every external request is privacy-sanitized, governance-checked, budgeted and circuit-broken here.
@@ -278,7 +278,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     throw abortError();
   };
 
-  try { textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta)}); } catch { return await finishFailure("runtime_control_unavailable"); }
+  try { const exactInput=await countTextTestInput(env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,streaming:Boolean(input.onDelta),systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt},apiKey,fetch,Date.now(),undefined,db); textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta),exactInput}); } catch { return await finishFailure("runtime_control_unavailable"); }
 
   const configuredTimeoutMs=aiTimeoutMs(env),requestedTimeoutMs=Number(input.timeoutMs),timeoutMs=Number.isFinite(requestedTimeoutMs)&&requestedTimeoutMs>0?Math.min(configuredTimeoutMs,Math.max(MIN_TIMEOUT_MS,Math.floor(requestedTimeoutMs))):configuredTimeoutMs;
   const controller = new AbortController();
@@ -298,7 +298,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             method: "POST",
             signal: controller.signal,
             headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(streaming ? { stream: true } : {}), ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
+            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(textTestClaim?{service_tier:"default"}:{}), ...(streaming ? { stream: true } : {}), ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
           })
         : await fetch(ANTHROPIC_MESSAGES_URL, {
             method: "POST",
