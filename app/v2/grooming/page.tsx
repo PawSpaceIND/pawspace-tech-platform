@@ -43,6 +43,7 @@ import {formatIndiaRange} from "../../../lib/india-time";
 import {serviceAddressText} from "../../../lib/service-address-text";
 import PetManager from "../pet-form";
 import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
+import { groomingCommercialPackages } from "../../../lib/grooming-commercial-catalogue";
 import { groomingBasketTotal } from "../../../lib/v2/grooming-money";
 import { groomingTestCoinQuote } from "../../../lib/v2/grooming-test-coin-quote";
 import TestCoinServicePreview from "../test-coin-service-preview";
@@ -106,6 +107,8 @@ export default function V2GroomingPage() {
   const onCouponChange = useCallback((discount: number, code: string, quoteId?: string) => setCoupon({ discount, code, quoteId: quoteId || "" }), []);
   const checkoutLock = useRef(false), mounted = useRef(true);
   const coverageVersion = useRef(0), careVersion = useRef(0);
+  // Each (address, PIN) pair verifies itself once; a failed check waits for the customer, never loops.
+  const autoCoverageKey = useRef("");
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const bootstrap = useCallback(async () => {
@@ -151,7 +154,7 @@ export default function V2GroomingPage() {
     () => [...(catalogue?.packages || []),...subscriptionPackages].filter(pkg => pkg.audience === audience && Boolean(groomingBundleForCount(pkg, selectedPets.length))),
     [catalogue, subscriptionPackages, audience, selectedPets.length],
   );
-  useEffect(()=>{if(!coverage?.cityId||!date)return;let active=true;void loadV2GroomingCatalogue({cityId:coverage.cityId,zoneId:coverage.zoneId,date}).then(next=>{if(active)setCatalogue(next);}).catch(()=>{if(active)setCatalogue(current=>current?{...current,subscriptions:[]}:current);});return()=>{active=false;};},[coverage?.cityId,coverage?.zoneId,date]);
+  useEffect(()=>{if(!coverage?.cityId||!date)return;let active=true;void loadV2GroomingCatalogue({cityId:coverage.cityId,zoneId:coverage.zoneId,date}).then(next=>{if(active)setCatalogue(next);}).catch(()=>{/* Workbook row 6: a failed zone reload used to wipe the published subscription plans from the grid; the city catalogue already shown stays. */});return()=>{active=false;};},[coverage?.cityId,coverage?.zoneId,date]);
   const selectedPackage = packages.find(pkg => pkg.code === selectedPackageCode) || (guestPackageCode && selectedPackageCode === guestPackageCode ? null : packages[0]) || null;
   const packageBundle = selectedPackage ? groomingBundleForCount(selectedPackage, selectedPets.length) : null;
   // Same package and price with a longer slot, so availability, the quote window, the groomer check and checkout agree.
@@ -167,6 +170,8 @@ export default function V2GroomingPage() {
   const couponContextKey = JSON.stringify([account?.customerId, basketTotal, bundle?.packageCode, scheduledStart, coverage?.cityId, coverage?.zoneId, paymentMode]);
   const couponChecking = Boolean(quote && couponCheckedKey !== couponContextKey);
   const coinQuote = groomingTestCoinQuote({ basketTotal, quoteReady: Boolean(quote) && !providerBusy, couponChecking, coupon, paymentMode });
+  // The amount payment review will charge: a server-checked coupon for THIS basket, not one still being checked or stale.
+  const couponApplied = Boolean(quote && coupon.quoteId && !couponChecking && !couponNeedsReapply(coupon.code, coupon.quoteId));
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
   const stepAccess = groomingStepAccess({ petCount: selectedPets.length, selectionIssue: mixedAudience,
@@ -185,6 +190,25 @@ export default function V2GroomingPage() {
   useEffect(() => {
     if (selectedPackage && selectedPackage.code !== selectedPackageCode) setSelectedPackageCode(selectedPackage.code);
   }, [selectedPackage, selectedPackageCode]);
+  const previousStep = GROOMING_STEPS.find(step => step.number === activeStep - 1), currentStep = GROOMING_STEPS.find(step => step.number === activeStep);
+  // Published inclusions and exclusions for the selected package (a subscription reads its care package); nothing is invented.
+  const packageTruth = selectedPackage ? groomingCommercialPackages.find(item => item.code === (selectedPackage.subscription?.servicePackageCode || selectedPackage.code)) || null : null;
+  // Early serviceability (workbook Grooming rows 1 and 7): the saved, default or typed address verifies itself as soon as
+  // its house line and six-digit PIN are present, once per address, so a mismatch surfaces here and not at payment.
+  // The address identity, PIN validation and the server-side doorstep verification at booking are unchanged.
+  useEffect(() => {
+    const key = JSON.stringify([address.trim(), pincode]);
+    if (pincode.length !== 6 || address.trim().length < 8 || coverage || coverageBusy || locationPending || checkoutBusy || autoCoverageKey.current === key) return;
+    autoCoverageKey.current = key;
+    const timer = setTimeout(() => { void verifyCoverage(); }, 350);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, pincode, coverage, coverageBusy, locationPending, checkoutBusy]);
+  // Once the live price and groomers are confirmed, the next step is the payment review in the summary.
+  useEffect(() => {
+    if (!quote || !providers?.providers.length) return;
+    document.getElementById("v2-grooming-summary")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }, [quote, providers]);
 
   const invalidateCare = () => {
     careVersion.current++;
@@ -335,6 +359,10 @@ export default function V2GroomingPage() {
         </nav>
         <Link href="/v2" className={styles.close} aria-label="Close grooming booking">×</Link>
       </header>
+      <div className={styles.backBar} aria-label="Previous step">
+        {previousStep ? <button type="button" onClick={() => navigateToStep(previousStep)}>← Back to {previousStep.label}</button> : <Link href="/v2">← Back to PawSpace</Link>}
+        <span>Step {activeStep} of {GROOMING_STEPS.length}{currentStep ? ` · ${currentStep.label}` : ""}</span>
+      </div>
 
       <section className={styles.hero}>
         <div>
@@ -395,8 +423,17 @@ export default function V2GroomingPage() {
             </div> : <div className={styles.empty}>No published package supports this pet selection yet.</div>}
             {youngIssue && <p id="v2-young-issue" className={styles.inlineError} role="alert">{youngIssue.message}{youngIssue.fix && <> <a href="/v2/account">{youngIssue.fix === "add_date_of_birth" ? "Add a date of birth in your account" : "Update the date of birth in your account"}</a>.</>}</p>}
             {extraCare && <p className={styles.helper} role="note">{extraCare}</p>}
-            {availableAddOns.length > 0 && <div className={styles.helper} aria-label="Extras and care notes">
-              <b>Extras</b>{availableAddOns.map(item => <label key={item.label} style={{ display: "block" }}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> {item.label} · {money(item.price)}</label>)}
+            {selectedPackage && bundle && <div className={styles.packageDetail} aria-label="Selected package details">
+              <div className={styles.packageDetailHead}><span>SELECTED PACKAGE · {money(bundle.price)} for {selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"}</span><b>{selectedPackage.name}</b><small>{selectedPackage.description}</small></div>
+              {packageTruth ? <div className={styles.inclusionColumns}>
+                <div><b>Included</b><ul>{packageTruth.included.map(item => <li key={item}>✓ {item}</li>)}</ul></div>
+                <div><b>Not included</b>{packageTruth.excluded.length ? <ul>{packageTruth.excluded.map(item => <li key={item}>— {item}</li>)}</ul> : <p>Nothing from this package's published list is left out.</p>}</div>
+              </div> : <p className={styles.helper}>The itemised inclusion list for this package is not published in the commercial catalogue; the description above is what PawSpace has confirmed.</p>}
+              {availableAddOns.length > 0 && <details className={styles.addOnPicker} open={chosenAddOns.length > 0}>
+                <summary>Add-ons · add extra services to your grooming{chosenAddOns.length ? ` (${chosenAddOns.length} selected)` : ""}</summary>
+                {availableAddOns.map(item => <label key={item.label}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> <span>{item.label}</span><b>{money(item.price)}</b></label>)}
+                <small>Add-on prices are the published commercial catalogue prices and are added to your total below.</small>
+              </details>}
               <label style={{ display: "block", marginTop: 8 }}>How is your pet with grooming?<select style={{ display: "block", width: "100%", maxWidth: "100%" }} value={comfort} onChange={event => setComfort(event.target.value as typeof comfort)}><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
               <label style={{ display: "block", marginTop: 8 }}>Notes for your groomer (optional)<textarea maxLength={300} value={specialInstructions} onChange={event => setSpecialInstructions(event.target.value)} placeholder="e.g. Sensitive paws, please use the balcony tap" style={{ display: "block", width: "100%", maxWidth: "100%" }} /></label>
             </div>}
@@ -428,7 +465,9 @@ export default function V2GroomingPage() {
             <div className={styles.addressBox}>
               <label><span>House, street & area</span><input ref={addressInputRef} value={address} onChange={e => { setAddress(e.target.value); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="e.g. 21, 18th Main, HSR Layout" /></label>
               <label className={styles.pinField}><span>PIN code</span><input inputMode="numeric" value={pincode} onChange={e => { setPincode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSavedAddressId(""); invalidateDoorstep(); }} placeholder="560102" /></label>
-              <button onClick={() => void verifyCoverage()} disabled={coverageBusy || locationPending || pincode.length !== 6}>{coverageBusy ? "Checking…" : "Check service area"}</button>
+              <div style={{ gridColumn: "1 / -1" }}>{coverageBusy ? <p role="status" className={styles.helper}>Checking serviceability for this address…</p>
+                : coverageError ? <button type="button" onClick={() => void verifyCoverage()} disabled={locationPending || pincode.length !== 6}>Check this address again</button>
+                : !coverage && <p className={styles.helper}>Serviceability is checked automatically once your house line and six-digit PIN are in.</p>}</div>
             </div>
             {!savedAddressId && address.trim().length >= 8 && <label className={styles.helper}><input type="checkbox" checked={saveAddress} onChange={event => setSaveAddress(event.target.checked)} /> Save this address to my account</label>}
             {coverage && <div className={styles.coverageSuccess}><span>✓</span><div><b>{coverage.zoneName} is covered</b><small>{coverage.area}, {coverage.city} · {coverage.pincode}</small></div><strong>AREA</strong></div>}
@@ -441,10 +480,11 @@ export default function V2GroomingPage() {
             <div className={styles.dateStrip}>{dates.map(item => <button key={item.isoDate} aria-pressed={date === item.isoDate} className={date === item.isoDate ? styles.dateSelected : ""} onClick={() => { invalidateCare(); setDate(item.isoDate); }}><small>{item.day}</small><b>{item.date}</b></button>)}</div>
             <div className={styles.slotGrid}>{SLOT_LABELS.map((label, index) => {
               const available = Boolean(bundle && date && groomingSlotAvailable(date, index, bundle.slotMinutes));
-              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Check live groomers" : "Unavailable"}</small></button>;
+              return <button key={label} disabled={!available} className={slotIndex === index ? styles.slotSelected : ""} onClick={() => { invalidateCare(); setSlotIndex(index); }}><span>{available&&bundle?formatIndiaRange(groomingSlotWindow(date,index,bundle.slotMinutes).start,groomingSlotWindow(date,index,bundle.slotMinutes).end):label}</span><small>{available ? "Select" : "Unavailable"}</small></button>;
             })}</div>
-            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy || locationPending} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Checking PawSpace live…" : "Check live price & groomers"}</button>
-            {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to check live prices and groomers.</p>}
+            <button className={styles.liveButton} disabled={!bundle || !coverage || mixedAudience || Boolean(youngIssue) || providerBusy || locationPending} aria-describedby={blockingIssue?.id} onClick={() => void checkLiveCare()}><span>✦</span>{providerBusy ? "Confirming price & groomers…" : "Next · confirm price & groomers"}</button>
+            {blockingIssue && <p className={styles.helper}>Resolve the issue in step {blockingIssue.step} to continue.</p>}
+            <p className={styles.helper}>Next confirms the exact live price and an available groomer for this slot, then takes you to payment review. Nothing is reserved yet.</p>
             {providerError && <p role="alert" className={styles.inlineError}>{providerError}</p>}
           </section>
 
@@ -460,7 +500,7 @@ export default function V2GroomingPage() {
           </section>}
         </fieldset>
 
-        <aside className={styles.summary}>
+        <aside id="v2-grooming-summary" className={styles.summary}>
           <div className={styles.summaryTop}><span>YOUR CARE PLAN</span><b>{quote ? "Live price checked" : "Your selected care"}</b></div>
           <div className={styles.summaryPet}><img src="/assets/pawspace-grooming-cartoon.webp" alt="" /><div><b>{selectedPets.map(pet => pet.name).join(" + ") || "Choose your pet"}</b><small>{selectedPets.length ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "No pet selected"}</small></div></div>
           <div className={styles.summaryRows}>
@@ -487,11 +527,15 @@ export default function V2GroomingPage() {
           </div>}
           <TestCoinServicePreview serviceName="Grooming" customerId={account?.customerId} eligibleAmount={coinQuote.eligibleAmount} actualPayable={coinQuote.actualPayable}/>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; {paymentMode === "prepaid" ? "secure payment opens only after its doorstep is verified." : "nothing is charged now and the balance is due after service."}</p></div>
-          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : paymentMode === "prepaid" ? "Reserve & review payment" : "Reserve · pay after service"} <span>→</span></button>
+          <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : paymentMode === "prepaid" ? "Next · review payment" : "Next · reserve, pay after service"} <span>→</span></button>
           {locationPending && <p id="v2-location-review-pending" role="status" className={styles.helper}>Review or cancel the current-location suggestion before reserving.</p>}
           {checkoutError && <p role="alert" className={styles.inlineError}>{checkoutError}</p>}
           <small className={styles.footnote}>Reservation and payment begin only after you press the secure checkout button.</small>
         </aside>
+        <div className={styles.stickyTotal} role="status" aria-label="Running total">
+          <div><span>{quote ? (couponApplied ? `Total after coupon ${coupon.code}` : "Verified live price") : selectedPackage ? "Package price" : "No package selected"}</span><b>{quote ? money(couponApplied ? Math.max(0, quote.price + addOnTotal - coupon.discount) : quote.price + addOnTotal) : bundle ? money(bundle.price + addOnTotal) : "—"}</b>{addOnTotal > 0 && <small>incl. add-ons {money(addOnTotal)}</small>}{couponApplied && <small>{money(quote!.price + addOnTotal)} − {money(coupon.discount)} coupon</small>}{quote && couponChecking && <small>Checking coupon…</small>}{quote && !couponChecking && couponNeedsReapply(coupon.code, coupon.quoteId) && <small>Coupon {coupon.code} needs re-applying</small>}</div>
+          <button type="button" onClick={() => { const next = quote ? "v2-grooming-summary" : coverage ? "v2-grooming-time" : selectedPackage ? "v2-grooming-address" : "v2-grooming-package"; document.getElementById(next)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{quote ? "Review & pay" : "Next"}</button>
+        </div>
       </div>
     </main>
   );

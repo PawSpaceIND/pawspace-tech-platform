@@ -15,6 +15,9 @@ const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",curr
 /** Only the server can approve a discount. Offer browsing is read-only and private codes stay unlisted. */
 export default function V2GroomingCouponBox({customerId,cityId,packageCode,orderValue,contextKey,paymentMode,isSubscription=false,intentRef,onChecked,onChange}:Props){
   const [code,setCode]=useState(""),[applied,setApplied]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
+  // An automatically applied offer that no longer matches (or could not be re-checked): reported to the page so booking stays
+  // blocked until the customer chooses again or removes it, but never written into the special-code field.
+  const [stale,setStale]=useState("");
   const offerKey=JSON.stringify([customerId,cityId,packageCode,orderValue,isSubscription]);
   const [offersResult,setOffersResult]=useState<{key:string;data:V2GroomingOffers}|null>(null);
   const [offersFailure,setOffersFailure]=useState<{key:string;text:string}|null>(null),[retry,setRetry]=useState(0);
@@ -26,7 +29,8 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
     const normalized=value.trim().toUpperCase();if(!normalized)return;
     const current=++version.current;
     intentRef.current={customerId,mode,code:normalized};
-    setCode(normalized);setBusy(true);setApplied("");setMessage("");onChange(0,normalized);
+    // Workbook Grooming row 5: an automatically applied offer is reported as applied, never typed into the special-code box.
+    if(mode==="manual")setCode(normalized);setStale("");setBusy(true);setApplied("");setMessage("");onChange(0,normalized);
     try{
       const result=await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode:paymentMode==="prepaid"?"full":"after_service",isSubscription });
       if(current!==version.current)return;
@@ -51,7 +55,7 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
         if(intent.mode==="manual"){if(intent.code)void apply(intent.code,"manual");else{onChange(0,"");onChecked(contextKey);}return;}
         const best=value.normalCouponsAllowed?value.coupons[0]:undefined;
         if(best){void apply(best.code,"automatic");return;}
-        if(intent.code){setCode(intent.code);setMessage("Your previous coupon no longer matches this booking. Remove it or choose another offer.");onChange(0,intent.code);}
+        if(intent.code){if(intent.mode==="automatic")setStale(intent.code);else setCode(intent.code);setMessage(`Your previous coupon ${intent.code} no longer matches this booking. Choose an offer again or remove it.`);onChange(0,intent.code);}
         else onChange(0,"");
         onChecked(contextKey);
       })
@@ -60,13 +64,13 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
         setOffersFailure({key:offerKey,text:error instanceof Error?error.message:"Available offers could not be checked."});
         if(version.current!==initialVersion)return;
         const intent=intentRef.current;
-        if(intent.customerId===customerId&&intent.mode!=="removed"&&intent.code){setCode(intent.code);onChange(0,intent.code);}
+        if(intent.customerId===customerId&&intent.mode!=="removed"&&intent.code){if(intent.mode==="automatic")setStale(intent.code);else setCode(intent.code);onChange(0,intent.code);}
         onChecked(contextKey);
       });
     return()=>{current=false;controller.abort();invalidateRequest();};
   },[customerId,cityId,packageCode,orderValue,isSubscription,offerKey,retry,contextKey,intentRef,apply,onChange,onChecked,invalidateRequest]);
-  const remove=()=>{version.current++;intentRef.current={customerId,mode:"removed",code:""};setBusy(false);setCode("");setApplied("");setMessage("Coupon removed. Choose an offer to apply a discount again.");onChange(0,"");onChecked(contextKey);};
-  const editCode=(value:string)=>{version.current++;intentRef.current={customerId,mode:"editing",code:value.trim().toUpperCase()};setBusy(false);setCode(value);setApplied("");setMessage("");onChange(0,value.trim().toUpperCase());onChecked(contextKey);};
+  const remove=()=>{version.current++;intentRef.current={customerId,mode:"removed",code:""};setBusy(false);setCode("");setStale("");setApplied("");setMessage("Coupon removed. Choose an offer to apply a discount again.");onChange(0,"");onChecked(contextKey);};
+  const editCode=(value:string)=>{version.current++;intentRef.current={customerId,mode:"editing",code:value.trim().toUpperCase()};setBusy(false);setCode(value);setStale("");setApplied("");setMessage("");onChange(0,value.trim().toUpperCase());onChecked(contextKey);};
   return <div className={`${styles.addressBox} ${offersStyle.offers}`} role="group" aria-label="Coupon code">
     <section aria-label="Available offers">
       <h3>Available offers</h3>
@@ -84,7 +88,9 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
       <button type="button" disabled={busy||!code.trim()} onClick={()=>void apply(code)}>{busy?"Checking…":applied?"Applied":"Apply"}</button>
     </details>
     {message&&<p role={applied||!code?"status":"alert"} className={applied?styles.helper:styles.inlineError}>{message}</p>}
-    {(applied||code)&&<button type="button" onClick={remove}>Remove coupon</button>}
+    {applied&&!code&&<p className={offersStyle.appliedChip} role="status"><b>{applied}</b> applied to this booking</p>}
+    {stale&&!applied&&!code&&<p role="alert" className={styles.inlineError}>Offer {stale} is no longer applied. Choose an offer again or remove it to continue.</p>}
+    {(applied||code||stale)&&<button type="button" onClick={remove}>Remove coupon</button>}
     <small>The best eligible normal offer applies automatically. Change or remove it at any time. One offer per booking.</small>
   </div>;
 }

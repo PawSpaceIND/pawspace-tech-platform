@@ -14,3 +14,6 @@
 .offers .card>div{min-width:80px}
 .offers input{max-width:100%;min-width:0;box-sizing:border-box}
 .offers button{white-space:normal;line-height:1.3}
+
+/* Workbook Grooming row 5: the auto-applied offer is shown as a chip; the special-code box stays empty. */
+.offers .appliedChip{margin:10px 0 0;padding:8px 12px;border:1px solid var(--brand-line);border-radius:999px;display:inline-block;font-size:13px}
