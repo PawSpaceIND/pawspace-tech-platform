@@ -25,7 +25,7 @@ async function context(request:Request){
  const receipt=JSON.parse(String(evidence!.receipt_json)) as AudioRateReceipt;validateAudioRateReceipt(receipt,Date.now());
  if(/UNIT TEST|invented/i.test(receipt.evidenceReference)||receipt.sourceSha!==text(e.PAWSPACE_STAGING_BUILD_SHA)||text(e.PAWSPACE_AI_PROVIDER)!==receipt.provider||text(e.PAWSPACE_AI_VOICE_MODEL)!==receipt.model)refuse("next_audio_runtime_rate_or_source_mismatch");
  const region=text(e.ELEVENLABS_API_BASE)||"https://api.in.residency.elevenlabs.io";
- if(!["https://api.elevenlabs.io","https://api.in.residency.elevenlabs.io"].includes(region)||region!==evidence!.region||!text(e.ELEVENLABS_API_KEY)||!text(e.ELEVENLABS_GROOMING_AGENT_ID))refuse("next_audio_region_or_agent_unproven");
+ if((region!=="https://api.elevenlabs.io"&&region!=="https://api.in.residency.elevenlabs.io")||region!==evidence!.region||!text(e.ELEVENLABS_API_KEY)||!text(e.ELEVENLABS_GROOMING_AGENT_ID))refuse("next_audio_region_or_agent_unproven");
  const response=await fetch(`${region}/v1/convai/agents/${encodeURIComponent(text(e.ELEVENLABS_GROOMING_AGENT_ID))}`,{headers:{"xi-api-key":text(e.ELEVENLABS_API_KEY)},redirect:"error",signal:AbortSignal.timeout(15000)});
  if(!response.ok)refuse("next_audio_agent_config_read_refused");
  const agent=JSON.parse(await readBoundedText(response,512*1024)) as Row;

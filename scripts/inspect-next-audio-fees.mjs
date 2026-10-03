@@ -46,7 +46,7 @@ async function getJson(url,key,fetcher){
 export async function inspectManagedAudioFees(env=process.env,fetcher=fetch){
  const key=env.ELEVENLABS_API_KEY,id=env.GROOMING_AGENT_ID,configured=String(env.ELEVENLABS_API_BASE??'').trim(),region=configured||'https://api.in.residency.elevenlabs.io';
  if(!key||!id)throw Error('Existing staging metadata credentials/agent missing');
- if(!REGIONS.includes(region))throw Error('Approved provider region required');
+ if(region!=='https://api.elevenlabs.io'&&region!=='https://api.in.residency.elevenlabs.io')throw Error('Approved provider region required');
  const agent=await getJson(region+'/v1/convai/agents/'+encodeURIComponent(id),key,fetcher);
  if(!agent.body)throw Error('Agent metadata read refused: '+agent.status);
  // Validate the staging brain before any further read. Never follow redirects or fall back regions.
