@@ -1,15 +1,10 @@
-name: Temporary Atlas existing staging API-only no-model qualification
+name: Recover certified human-test staging
 on:
   workflow_dispatch:
     inputs:
+      expected_sha:
+        required: true
       confirm:
-        description: 'atlas-api-only-no-model'
-        required: true
-      expected_operation_sha:
-        description: 'Exact reviewed operations branch commit'
-        required: true
-      candidate_source_sha:
-        description: 'Exact reviewed runtime source commit represented by frozen589 bundle'
         required: true
 permissions:
   contents: read
@@ -17,46 +12,31 @@ concurrency:
   group: pawspace-staging-sweep
   cancel-in-progress: false
 jobs:
-  qualify-and-restore:
-    if: ${{ inputs.confirm == 'atlas-api-only-no-model' && startsWith(github.ref, 'refs/heads/ops/atlas-api-only-') }}
+  recover:
+    if: ${{ inputs.confirm == 'restore-certified-staging' && startsWith(github.ref, 'refs/heads/ops/atlas-restore-') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     environment: pawspace-staging
-    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.expected_operation_sha }}
+          ref: ${{ inputs.expected_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Validate exact review commit and frozen protocol artifacts
+      - name: Reconcile and restore exact certified staging
         env:
-          EXPECTED_OPERATION_SHA: ${{ inputs.expected_operation_sha }}
-        run: |
-          test "$GITHUB_SHA" = "$EXPECTED_OPERATION_SHA"
-          test "$(git rev-parse HEAD)" = "$EXPECTED_OPERATION_SHA"
-          cd scripts/ops/atlas-api-only
-          sha256sum --check SHA256SUMS
-          node --test runner.test.mjs
-      - name: Temporary bounded API-only verification and immediate certified restoration
-        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRM: ${{ inputs.confirm }}
-          EXPECTED_OPERATION_SHA: ${{ inputs.expected_operation_sha }}
-          EXPECTED_CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          HOSTING_ENVELOPE_APPROVED: bounded-hosting-25c-total-20261003-193139
-          EVIDENCE_PATH: atlas-api-only-receipt.json
-        run: |
-          cd scripts/ops/atlas-api-only
-          node generate-config.mjs
-          node runner.mjs
-      - name: Preserve confirmed and uncertain mutation evidence
+          EVIDENCE_PATH: recovery-receipt.json
+        run: node scripts/ops/atlas-recovery/recover.mjs
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: atlas-api-only-no-model-${{ github.sha }}
-          path: scripts/ops/atlas-api-only/atlas-api-only-receipt.json
-          if-no-files-found: warn
+          name: certified-staging-recovery-${{ github.sha }}
+          path: recovery-receipt.json
+          if-no-files-found: error
           retention-days: 7
