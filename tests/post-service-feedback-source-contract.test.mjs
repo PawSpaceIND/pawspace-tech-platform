@@ -111,3 +111,16 @@ test("owner files do not reference this slice", () => {
     assert.doesNotMatch(read(owner), /post-service-feedback|post_service_feedback|PostServiceFeedback/, `${owner} is untouched by this slice`);
   }
 });
+
+// Execute the actual policy gates so this suite detects behaviour as well as source structure.
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
+installWorkersHooks("__PSFC_CONTRACT_DB__", "__PSFC_CONTRACT_ENV__");
+const feedbackRuntime = await import("../lib/post-service-feedback-call.ts");
+test("executed feedback dispatch refuses default, unknown and production environments",()=>{
+ assert.equal(feedbackRuntime.syntheticDispatchPermitted({}),false);
+ const permitted={PAWSPACE_POST_SERVICE_FEEDBACK_CALL_TEST_DISPATCH:"on",FORBID_PRODUCTION:"true",PAWSPACE_VOICE_ENV:"sandbox",PAWSPACE_DEPLOYMENT_ENV:"staging",APP_ENV:"test"};
+ assert.equal(feedbackRuntime.syntheticDispatchPermitted(permitted),true);
+ for(const field of ["PAWSPACE_DEPLOYMENT_ENV","APP_ENV"])assert.equal(feedbackRuntime.syntheticDispatchPermitted({...permitted,[field]:"production"}),false);
+ assert.equal(feedbackRuntime.syntheticDispatchPermitted({...permitted,PAWSPACE_POST_SERVICE_FEEDBACK_CALL_TEST_DISPATCH:"off"}),false);
+ assert.equal(feedbackRuntime.syntheticDispatchPermitted({...permitted,PAWSPACE_VOICE_ENV:"live"}),false);
+});

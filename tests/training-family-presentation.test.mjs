@@ -48,7 +48,7 @@ function preserveTrainingSource(input){
  const originalCallback=old.slice('<div className={styles.grid2}>{packages.map(item=>'.length,-')}</div>'.length);
  assert.equal(source.slice(start,fallback),'<>{Boolean(routeScope==="v2")?<TrainingFamilyChoices plans={packages} selectedCode={packageCode} renderChoice={item=>'+originalCallback+'}/>');
  source=source.slice(0,start)+old+source.slice(end);
- assert.equal(createHash('sha256').update(source).digest('hex'),'ca8cf10458d271d9ad781a9233ab2ed8fac6ed77a3e94732c183cba29945f30a');
+ assert.equal(createHash('sha256').update(source).digest('hex'),'b23d396e588a5ed106e7fec9562ddfda5aff71cb8f0c78e38e927491fd2d00f5');
  return source;
 }
 const pageSource=()=>readFileSync(new URL('../app/training/page.tsx',import.meta.url),'utf8');

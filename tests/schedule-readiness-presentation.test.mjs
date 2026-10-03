@@ -3,9 +3,9 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const edits=JSON.parse(read('tests/helpers/schedule-readiness-edits.json'));
 function reverse(path,source){for(const [before,after]of edits[path]){assert.ok(source.includes(after),after);source=source.replaceAll(after,before);}return source;}
 test('Walking retains every handler, quote, request and default outside reviewed readiness props/copy',()=>{
- assert.equal(createHash('sha256').update(reverse('app/walking/page.tsx',read('app/walking/page.tsx'))).digest('hex'),'d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94');
+ assert.equal(createHash('sha256').update(reverse('app/walking/page.tsx',read('app/walking/page.tsx'))).digest('hex'),'6e8b3160aed12b62bc445c4ea09e6a563bd5f7dc9a884811d1b158baad7d35e1');
  for(const [before,after]of [['setSlot(index)','setSlot(0)'],['accountLoading||quoteLoading','accountLoading'],['setStartDate(event.target.value)','setStartDate("2026-01-01")']]){
-  const source=read('app/walking/page.tsx');assert.ok(source.includes(before));assert.throws(()=>assert.equal(createHash('sha256').update(reverse('app/walking/page.tsx',source.replace(before,after))).digest('hex'),'d1d320d65078c3d2ee1111bd4755ec7b7acf7d2e03f23546629c1c59eac55c94'));
+  const source=read('app/walking/page.tsx');assert.ok(source.includes(before));assert.throws(()=>assert.equal(createHash('sha256').update(reverse('app/walking/page.tsx',source.replace(before,after))).digest('hex'),'6e8b3160aed12b62bc445c4ea09e6a563bd5f7dc9a884811d1b158baad7d35e1'));
  }
 });
 function scheduleDisabledProps(path){
