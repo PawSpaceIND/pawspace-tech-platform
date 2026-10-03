@@ -1,0 +1,33 @@
+[
+  {
+    "file": "lib/ai-web-chat-adapter.ts",
+    "baseCommit": "9ded97b5032c360e859053cec6b85cbfcbc505c8",
+    "beforeSha256": "233c83eca68d660dab74c596fbf69920679059d856f29387e3c7eb7a09d7bcae",
+    "afterSha256": "6871bfabd790833edddd4f2528b880164b0b65a1cc41d2a8b6466494479fc649",
+    "replacements": [
+      [
+        "const PRICE_LOOKUP_WORDS=new Set([...AVAILABILITY_WORDS,\"what\",\"whats\",\"which\",\"how\",\"much\",\"price\",\"prices\",\"pricing\",\"cost\",\"costs\",\"fee\",\"fees\",\"charge\",\"charges\",\"package\",\"packages\",\"plan\",\"plans\",\"rate\",\"rates\",\"for\",\"of\",\"does\",\"list\",\"show\",\"me\",\"tell\",\"about\"]);\n",
+        "const PRICE_LOOKUP_WORDS=new Set([...AVAILABILITY_WORDS,\"what\",\"whats\",\"which\",\"how\",\"much\",\"price\",\"prices\",\"pricing\",\"cost\",\"costs\",\"fee\",\"fees\",\"charge\",\"charges\",\"package\",\"packages\",\"plan\",\"plans\",\"rate\",\"rates\",\"for\",\"of\",\"does\",\"list\",\"show\",\"me\",\"tell\",\"about\",\"and\",\"they\"]);\n"
+      ],
+      [
+        "  await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)\").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:\"subscription_catalogue_missing\",catalogueStatus:subscriptions.status,customerDataAccess:false,toolExecution:false}),now).run();\n  return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:\"canonical_subscription_catalogue\",modelRef:null,outcome:\"reply_ready\",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};\n }\n const directoryReply=async(service:PublicServiceEntry,providerFailure?:string)=>{\n  const subscriptionFallback=subscriptions?.status===\"published\"?`Published grooming subscription plans for the selected location:\\n${subscriptions.plans.map(plan=>`\u2022 ${String(plan.name)}: ${String(plan.currency)} ${Number(plan.price)}, ${Number(plan.sessions)} credits within ${Number(plan.validityValue)} ${String(plan.validityUnit)}; ${String(plan.servicePackageCode)}, ${Number(plan.creditsPerPet)} credit(s) per pet.`).join(\"\\n\")}\\nThese are plan prices, not a pay-as-you-go tariff or verified wallet balance. Check species eligibility and the published payment terms in Grooming before choosing a plan.`:null;\n  const output=careReplyWithoutUnrequestedOffers(subscriptionFallback||directoryAnswer(service,inspected.redacted,grounded.knowledge),couponRequested);\n  await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)\").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:\"canonical_service_answer\",providerConnected:false,...(providerFailure?{providerFailure}:{}),serviceCode:service.code,serviceEnabled:service.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run();\n",
+        "  await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)\").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:\"subscription_catalogue_missing\",catalogueStatus:subscriptions.status,customerDataAccess:false,toolExecution:false}),now).run().catch(()=>{console.error(\"ai-web-chat: subscription catalogue event write failed\");});\n  return{...grounded,serviceDirectory,sessionKey,ai:{providerConnected:false,turn:{output,provider:\"canonical_subscription_catalogue\",modelRef:null,outcome:\"reply_ready\",handoffReason:null}},customerDataAccess:false,toolExecution:false,autonomousExecution:false,trustSafetyRedacted:inspected.detected};\n }\n const directoryReply=async(service:PublicServiceEntry,providerFailure?:string)=>{\n  const subscriptionFallback=subscriptions?.status===\"published\"?`Published grooming subscription plans for the selected location:\\n${subscriptions.plans.map(plan=>`\u2022 ${String(plan.name)}: ${String(plan.currency)} ${Number(plan.price)}, ${Number(plan.sessions)} credits within ${Number(plan.validityValue)} ${String(plan.validityUnit)}; ${String(plan.servicePackageCode)}, ${Number(plan.creditsPerPet)} credit(s) per pet.`).join(\"\\n\")}\\nThese are plan prices, not a pay-as-you-go tariff or verified wallet balance. Check species eligibility and the published payment terms in Grooming before choosing a plan.`:null;\n  const output=careReplyWithoutUnrequestedOffers(subscriptionFallback||directoryAnswer(service,inspected.redacted,grounded.knowledge),couponRequested);\n  await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,NULL,NULL,'public_turn',?,?,?)\").bind(crypto.randomUUID(),`public:${sessionKey}`,JSON.stringify({outcome:\"canonical_service_answer\",providerConnected:false,...(providerFailure?{providerFailure}:{}),serviceCode:service.code,serviceEnabled:service.enabled,customerDataAccess:false,toolExecution:false,trustSafetyRedacted:inspected.detected}),now).run().catch(error=>{if(!subscriptions)throw error;console.error(\"ai-web-chat: subscription catalogue event write failed\");});\n"
+      ],
+      [
+        "  const catalogueAnswer=matchedService.enabled&&matchedService.code===\"dog_training\"&&PRICE_QUESTION.test(inspected.redacted)&&isPlainPriceLookup(matchedService,inspected.redacted)?await trainingCatalogueAnswer(db):null;\n",
+        "  const catalogueAnswer=matchedService.enabled&&matchedService.code===\"dog_training\"&&PRICE_QUESTION.test(inspected.redacted)&&isPlainPriceLookup(matchedService,inspected.redacted.replace(/\\bin (?:bengaluru|bangalore)\\b/gi,\" \"))?await trainingCatalogueAnswer(db):null;\n"
+      ]
+    ]
+  },
+  {
+    "file": "app/api/ai-web-chat/route.ts",
+    "beforeSha256": "17ab4972ec96d9d1130e8b560bec48789e66e4cc5fbe13df71dfd891682c015e",
+    "afterSha256": "4d24e92e0ecfe4e2240fd690f7cfae207a4e09074e71290edf6c217bdae9a19e",
+    "replacements": [
+      [
+        "  ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey})).ai;\n",
+        "  ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey,careContext:atlasCareContext(body.careContext),cityId:body.cityId,zoneId:body.zoneId})).ai;\n"
+      ]
+    ]
+  }
+]
