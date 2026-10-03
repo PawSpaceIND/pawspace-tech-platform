@@ -1,6 +1,6 @@
-/** Additional authorized $5 pool. No old balance is reused; reservations are never refunded. */
+/** Same next-ten allocation, increased to $10 total on 2026-10-03. Reservations and claims never reset. */
 export const NEXT_AUDIO_BUDGET_ID = "next-ten-audio-additional-usd5-20261002";
-export const NEXT_AUDIO_CAP_MICROS = 5_000_000;
+export const NEXT_AUDIO_CAP_MICROS = 10_000_000;
 export const NEXT_AUDIO_THREAD_PREFIX = "THREAD-VOICE-NDEMO-NEXT-AUDIO-";
 export const isNextAudioThread = (id: string) => id.startsWith(NEXT_AUDIO_THREAD_PREFIX);
 type Row = Record<string, unknown>;
@@ -41,10 +41,12 @@ export async function ensureNextAudioBudget(db: D1Database) {
 export async function provisionNextAudioBudget(db: D1Database, receipt: AudioRateReceipt, now: number) {
  validateAudioRateReceipt(receipt, now);
  await ensureNextAudioBudget(db);
- await db.prepare("INSERT OR IGNORE INTO next_audio_budget (id,cap_micros,reserved_micros,conversations,receipt_json,expires_at) VALUES (?,5000000,?,0,?,?)")
+ await db.prepare("INSERT OR IGNORE INTO next_audio_budget (id,cap_micros,reserved_micros,conversations,receipt_json,expires_at) VALUES (?,10000000,?,0,?,?)")
   .bind(NEXT_AUDIO_BUDGET_ID, receipt.optionalBatchMicros, JSON.stringify(receipt), receipt.validUntil).run();
  const stored = await db.prepare("SELECT receipt_json FROM next_audio_budget WHERE id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();
  if (stored?.receipt_json !== JSON.stringify(receipt)) throw new Error("next_audio_budget_receipt_already_pinned");
+ // Upgrade only the previously authorized cap; preserve all spent/reserved amounts, leases and dispatch claims.
+ await db.prepare("UPDATE next_audio_budget SET cap_micros=10000000 WHERE id=? AND cap_micros=5000000").bind(NEXT_AUDIO_BUDGET_ID).run();
 }
 export async function reserveNextAudioLease(db: D1Database, input: { threadId: string; customerId: string; sourceSha: string; agentConfigSha256: string; providerHardDurationSeconds: number; now: number }) {
  if (!isNextAudioThread(input.threadId) || !input.customerId || !positive(input.providerHardDurationSeconds) || input.providerHardDurationSeconds > 120) throw new Error("next_audio_identity_or_native_duration_invalid");
@@ -57,7 +59,7 @@ export async function reserveNextAudioLease(db: D1Database, input: { threadId: s
  const nativeBound = Math.ceil(input.providerHardDurationSeconds / 60 * r.nativeMicrosPerMinute);
  if (!positive(nativeBound)) throw new Error("next_audio_native_bound_invalid");
  const results = await db.batch([
-  db.prepare("INSERT INTO next_audio_leases (thread_id,budget_id,customer_id,attempts,expires_at) SELECT ?,?,?,0,? WHERE EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND cap_micros=5000000 AND conversations<10 AND reserved_micros+?<=cap_micros AND expires_at>?)")
+  db.prepare("INSERT INTO next_audio_leases (thread_id,budget_id,customer_id,attempts,expires_at) SELECT ?,?,?,0,? WHERE EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND cap_micros=10000000 AND conversations<10 AND reserved_micros+?<=cap_micros AND expires_at>?)")
    .bind(input.threadId,NEXT_AUDIO_BUDGET_ID,input.customerId,deadline,NEXT_AUDIO_BUDGET_ID,nativeBound,deadline),
   db.prepare("UPDATE next_audio_budget SET reserved_micros=reserved_micros+?,conversations=conversations+1 WHERE id=? AND EXISTS (SELECT 1 FROM next_audio_leases WHERE thread_id=? AND customer_id=? AND expires_at=?)")
    .bind(nativeBound,NEXT_AUDIO_BUDGET_ID,input.threadId,input.customerId,deadline),
@@ -73,7 +75,7 @@ export async function reserveNextAudioAttempt(db: D1Database, input: {threadId:s
  if (input.sourceSha !== receipt.sourceSha || input.provider !== receipt.provider || input.model !== receipt.model) throw new Error("next_audio_runtime_provider_mismatch");
  const bound = modelAttemptBound(receipt,input.systemPrompt,input.userPrompt,input.outputTokens,input.now), id=crypto.randomUUID();
  const result = await db.batch([
-  db.prepare("INSERT INTO next_audio_attempts (id,thread_id,reserved_micros,created_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_budget b JOIN next_audio_leases l ON l.budget_id=b.id WHERE b.id=? AND b.cap_micros=5000000 AND b.reserved_micros+?<=b.cap_micros AND b.expires_at>? AND l.thread_id=? AND l.customer_id=? AND l.expires_at>? AND l.attempts<6)")
+  db.prepare("INSERT INTO next_audio_attempts (id,thread_id,reserved_micros,created_at) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_budget b JOIN next_audio_leases l ON l.budget_id=b.id WHERE b.id=? AND b.cap_micros=10000000 AND b.reserved_micros+?<=b.cap_micros AND b.expires_at>? AND l.thread_id=? AND l.customer_id=? AND l.expires_at>? AND l.attempts<6)")
    .bind(id,input.threadId,bound,input.now,NEXT_AUDIO_BUDGET_ID,bound,input.now,input.threadId,input.customerId,input.now),
   db.prepare("UPDATE next_audio_budget SET reserved_micros=reserved_micros+? WHERE id=? AND EXISTS (SELECT 1 FROM next_audio_attempts WHERE id=?)").bind(bound,NEXT_AUDIO_BUDGET_ID,id),
   db.prepare("UPDATE next_audio_leases SET attempts=attempts+1 WHERE thread_id=? AND EXISTS (SELECT 1 FROM next_audio_attempts WHERE id=?)").bind(input.threadId,id),

@@ -116,6 +116,6 @@ async function runScenario(scenario){
 }
 for(const scenario of NEXT_TEN_AUDIO_SCENARIOS)await runScenario(scenario);
 await isolation();const after=await bookingIds();
-const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:5,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
+const summary={budgetId:'next-ten-audio-additional-usd5-20261002',capUsd:10,listened:false,continuousTiming:'Actual packet timestamps retained; concatenated WAV omits gaps. Do not infer conversation latency from WAV duration.',startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
 await writeFile('voice-audit-results/ten-conversations.json',JSON.stringify(summary,null,2));
 console.log('MAYA_TEN_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));

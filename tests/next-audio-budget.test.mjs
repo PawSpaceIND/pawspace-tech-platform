@@ -34,11 +34,11 @@ test('native local D1: retries concurrently use at most6 attempt slots; expiry a
  await budget.reserveNextAudioLease(db,lease(2));
  for(const patch of [{customerId:'other'},{now:now+120000},{provider:'anthropic'},{model:'other'},{sourceSha:'c'.repeat(40)},{outputTokens:701}])await assert.rejects(()=>budget.reserveNextAudioAttempt(db,{...attempt(2),...patch}));
 });
-test('native local D1: aggregate model and native reservations never exceed extra$5; failed attempts remain reserved',{timeout:60000},async t=>{
- const r={...receipt(),optionalBatchMicros:4600000};const db=await world(t,r);await budget.reserveNextAudioLease(db,lease(1));
+test('native local D1: aggregate model and native reservations never exceed total$10; failed attempts remain reserved',{timeout:60000},async t=>{
+ const r={...receipt(),optionalBatchMicros:9600000};const db=await world(t,r);await budget.reserveNextAudioLease(db,lease(1));
  const input={...attempt(1),systemPrompt:'x'.repeat(65000)};
  const results=await Promise.allSettled(Array.from({length:20},()=>budget.reserveNextAudioAttempt(db,input)));assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
- const row=await db.prepare('SELECT reserved_micros FROM next_audio_budget').first();assert.ok(row.reserved_micros<=5000000);assert.ok(row.reserved_micros>4920000);
+ const row=await db.prepare('SELECT reserved_micros FROM next_audio_budget').first();assert.ok(row.reserved_micros<=10000000);assert.ok(row.reserved_micros>9920000);
 });
 test('native local D1: pinned evidence cannot be reset or changed; duplicate lease does not charge twice',{timeout:60000},async t=>{
  const db=await world(t);await budget.reserveNextAudioLease(db,lease(1));await assert.rejects(()=>budget.reserveNextAudioLease(db,lease(1)));
@@ -89,4 +89,17 @@ test('native D1 concurrent fresh dispatches claim allocation exactly once',{time
  await assert.rejects(()=>budget.claimNextAudioBatch(db,'999','a'.repeat(40),now+1));
  assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_batch_claims').first()).n,1);
  assert.equal((await db.prepare('SELECT conversations FROM next_audio_budget').first()).conversations,0);
+});
+
+test('cap increase preserves incurred reservations and consumed batch claim',{timeout:60000},async t=>{
+ const db=await world(t),token=await budget.claimNextAudioBatch(db,'123','a'.repeat(40),now);
+ await budget.reserveNextAudioLease(db,lease(1));await budget.reserveNextAudioAttempt(db,attempt(1));
+ await db.prepare('UPDATE next_audio_budget SET cap_micros=5000000').run();
+ const before=await db.prepare('SELECT * FROM next_audio_budget').first();
+ await budget.provisionNextAudioBudget(db,receipt(),now);
+ const after=await db.prepare('SELECT * FROM next_audio_budget').first();
+ assert.equal(after.cap_micros,10000000);for(const key of ['reserved_micros','conversations','receipt_json','expires_at'])assert.equal(after[key],before[key]);
+ await budget.requireNextAudioBatch(db,token,'a'.repeat(40));await assert.rejects(()=>budget.claimNextAudioBatch(db,'124','a'.repeat(40),now));
+ assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_attempts').first()).n,1);
+ await assert.rejects(()=>budget.provisionNextAudioBudget(db,{...receipt(),optionalBatchMicros:0},now));
 });
