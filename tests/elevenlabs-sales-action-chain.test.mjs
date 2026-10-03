@@ -116,7 +116,9 @@ test(`wrong saved-cat proposal is refused (${profileLinked?"saved":"unsaved"} La
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
  let requests=0;
  globalThis.fetch=async(url,init)=>{
-  assert.ok(String(url).includes("api.openai.com"),"no external message/payment/booking API");
+  const target=new URL(String(url));
+  assert.equal(target.protocol,"https:","model mock only accepts HTTPS");
+  assert.equal(target.hostname,"api.openai.com","no external message/payment/booking API");
   requests++;
   const req=JSON.parse(init.body),input=JSON.parse(req.input);
   assert.deepEqual(input.canonicalContext.voicePetMemory.unlinkedNewPetNames,profileLinked?[]:["Lana"]);
