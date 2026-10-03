@@ -426,3 +426,9 @@ test('voice diagnostics separate provider request, body and accounting without c
     assert.equal(unaffected.text,result.text);
   } finally { stub.restore(); }
 });
+
+test('isolated Atlas flags cannot reach a paid fetch while operational tariff is unknown',async()=>{
+ withEnv({DB:undefined,PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_OPENAI_API_KEY:'unit-test-only',PAWSPACE_AI_MODEL:'gpt-5.6-terra',PAWSPACE_ATLAS_TEXT_TEST_JOB_ID:'Sentinel_f67e3c5a85f88191b07279e0edbe250c',PAWSPACE_ISOLATED_FINANCE_TEST:'true',PAWSPACE_FINANCE_TEST_DESCRIPTOR:'FINANCE-TEST-OPS-GROOMING-01',PAWSPACE_DEPLOYMENT_ENV:'staging'});
+ const previous=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests++;throw Error('network forbidden')};
+ try{const result=await adapter.requestAiDraft({systemPrompt:'system',userPrompt:'synthetic',channel:'chat',textTestScope:{customerId:'CUS0000',threadId:'THREAD-SYNTHETIC'},maxTokens:1200});assert.equal(result.connected,false);assert.equal(result.failure,'runtime_control_unavailable');assert.equal(requests,0)}finally{globalThis.fetch=previous}
+});

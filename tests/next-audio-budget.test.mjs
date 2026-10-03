@@ -123,3 +123,14 @@ test('speech attempt slots are atomic, never refunded and bound all failed/dupli
  await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960001}));await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960000,now:now+120000}));await assert.rejects(()=>budget.reserveNextAudioSpeech(db,{...base,kind:'stt',units:960000,customerId:'other'}));
  await budget.provisionNextAudioBudget(db,receipt(),now);await assert.rejects(()=>budget.reserveNextAudioSpeech(db,base));assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_speech_attempts').first()).n,4);
 });
+
+import {preservedAtlasTextBytes} from './helpers/atlas-text-reviewed-delta.mjs';
+const atlasRead=p=>readFileSync(new URL('../'+p,import.meta.url)),atlasHash=b=>createHash('sha256').update(b).digest('hex');
+test('Atlas normalizer rejects guard removal, ownership drift, price bypass and changed cancellation/audio',()=>{
+ const p='lib/ai-provider-adapter.ts',s=atlasRead(p).toString();
+ for(const[a,b]of [['await countTextTestInput','void countTextTestInput'],['await reserveTextTest','void reserveTextTest'],['assertTextTestDispatch(textTestClaim)','void textTestClaim'],['service_tier:"default"','service_tier:"priority"'],['nextAudioConversation?:','removedAudioContext?:'],['signal?: AbortSignal','signal?: unknown']]){assert.ok(s.includes(a),a);assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(s.replace(a,b))))}
+ const g='lib/ai-grounded-runtime-provider.ts',gs=atlasRead(g).toString();assert.throws(()=>preservedNextAudioBytes(g,Buffer.from(gs.replace('textTestScope:{customerId:input.customerId','textTestScope:{customerId:"OTHER"'))));
+ const changedAdmission=atlasRead('lib/atlas-text-test-admission.ts').toString().replace('if(!rate)throw Error','if(false)throw Error');assert.throws(()=>preservedAtlasTextBytes(p,atlasRead(p),()=>Buffer.from(changedAdmission)));
+ const cancelled=s.replace('input.signal?.removeEventListener("abort",abortFromCaller);','void input.signal;');assert.notEqual(atlasHash(preservedNextAudioBytes(p,Buffer.from(cancelled))),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
+ const ordinary=s.replace('const maxTokens = Math.min(8_000','const maxTokens = Math.min(8');assert.notEqual(atlasHash(preservedNextAudioBytes(p,Buffer.from(ordinary))),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
+});
