@@ -1,0 +1,34 @@
+{
+  "verdict": "CLEAN reviewed single synthetic session protocol with supervised restoration condition",
+  "runnerSHA256": "cbf1b648abd6e27561740f26b6c461b7ff08802a6762ea0882b18d6bd0a263e6",
+  "workflowSHA256": "4fd1ee39c12d0a199d82e967c1f6e27f86139337145f1a961d6de9e1eaaa6e84",
+  "bundleSHA256": "c51f26d5a54a3d18bfb21a517bbc724b181d36cf85db8782aab0cdb52d97875d",
+  "independentRenewedWindowGuardTests": {
+    "pass": 17,
+    "fail": 0
+  },
+  "approvalWindow": "2026-10-03T19:59:55Z to2026-10-03T20:59:55Z; conservative fixed expiry <=1h after firstrequest",
+  "totalBudgetMicros": 6000000,
+  "allocationsMicros": {
+    "model": 4643760,
+    "hosting": 500000,
+    "taxFeeContingency": 856240
+  },
+  "oneDispatch": "unknown state fsync before exactlyone canonicalnormalroute POST; no autoretries; sharedledger requires emptybefore/status and singleclaimafter",
+  "authentication": "existing normalFounderUAT and sandbox customerOTP; strictfixture verifies CUS0000/9100000000 and liveOTPdisabled before request; session/code/cookie memory only; no MFAgrant or bypass",
+  "safetyFixesVerified": [
+    "exact5named statusbindings plus customerCUS0000/retained0",
+    "completedactualcharge safeintegernonnegative<=4643760",
+    "restricted modelresponse fields; outputemail/phone redaction; no rawresponse/session material"
+  ],
+  "sourceRenewalDiff": "Nativeguard START/END+admission authorization receipt/window updated; immutable endpoint/body/scope/permit/ledger bounds unchanged",
+  "restoration": "Publisher must monitor every terminal/uncertain outcome and immediately dispatch existing normaldeploy-staging pinned c18; rollback10220 prohibitedforce. restorationRequired persisted before firstCronclear; no automatic compensation in this runner.",
+  "limits": [
+    "workflow3min may interrupt; publisher supervision/knownnormalredeploy essential",
+    "Unknown dispatch retains conservative reserve and mustneverretry",
+    "Real modelanswer quality and live restoration not verified by reviewer",
+    "Reasonable expected inclusive total uses parentapproved cost/tax evidence; no accountwideinvoice guarantee"
+  ],
+  "reviewerCloudWrites": 0,
+  "reviewerModelCalls": 0
+}

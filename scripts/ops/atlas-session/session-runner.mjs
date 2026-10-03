@@ -1,0 +1,54 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
+import {uploadMetadata,SQL} from '../atlas-api-only/runner.mjs';
+import {apiOnlyConfig} from '../atlas-api-only/make-api-only-config.mjs';
+const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
+const normalSha='c18b15caea9551505398746dc9335a962f17e8ae',normalVersion='1cf2af17-8a15-4532-b178-05acce572490';
+const job='Sentinel_f67e3c5a85f88191b07279e0edbe250c',database='1b879a28-c8a9-40b0-830d-1ce439061a00';
+const bundleSha='c51f26d5a54a3d18bfb21a517bbc724b181d36cf85db8782aab0cdb52d97875d';
+const expiry=Date.parse('2026-10-03T20:59:55Z');
+const receipt={kind:'approved_single_synthetic_information_turn',approval:'user-combined-six-total-20261003-195955',totalCapMicros:6000000,modelReservationMicros:4643760,hostingReservationMicros:500000,taxFeeContingencyMicros:856240,maximumDispatches:1,dispatches:0,operations:[],originRequests:0,modelResult:null,restorationRequired:false,restoreProcedure:'Normal deploy-staging.yml pinned c18b15ca; root sole owner monitors and dispatches once after terminal; rollback prohibited'};
+const hash=v=>createHash('sha256').update(typeof v==='string'||Buffer.isBuffer(v)?v:JSON.stringify(v)).digest('hex');
+const save=()=>writeFileSync(env.EVIDENCE_PATH||'session-receipt.json',JSON.stringify(receipt,null,2)+'\n',{flush:true});
+const check=(v,m)=>{if(!v)throw Error(m)};
+const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,2000);
+const base=`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}`,script=base+'/workers/scripts/pawspace-staging';
+async function api(url,method='GET',body,phase='read',mutation=false){
+ const op={phase,method,state:mutation?'uncertain_before_dispatch':'read_pending'};receipt.operations.push(op);save();
+ let r;try{r=await fetch(url,{method,headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{})},...(body?{body:body instanceof FormData?body:JSON.stringify(body)}:{}),redirect:'manual',signal:AbortSignal.timeout(20000)});}catch{op.state=mutation?'unknown_no_retry':'read_failed';save();throw Error(phase+'_transport_unknown_no_retry')}
+ op.httpStatus=r.status;const p=await r.json().catch(()=>null);op.errors=(p?.errors??[]).map(x=>({code:x.code,message:redact(x.message)}));
+ if(!r.ok||p?.success!==true){op.state=p?.success===false?'rejected':mutation?'unknown_no_retry':'read_failed';save();throw Error(phase+'_http_'+r.status+'_'+JSON.stringify(op.errors))}
+ op.state='confirmed';save();return p.result;
+}
+async function query(name){const p=await api(base+'/d1/database/'+database+'/query','POST',{sql:SQL[name],params:[]},'select_'+name);check(p?.length===1&&p[0].success&&Array.isArray(p[0].results)&&p[0].results.length<=10000,'query_shape');check(p[0].meta.rows_written===0&&p[0].meta.changed_db===false,'read_only_query_required');receipt.nativeRowsRead=(receipt.nativeRowsRead||0)+p[0].meta.rows_read;check(receipt.nativeRowsRead<=1000000,'read_envelope');return p[0].results;}
+async function originRequest(path,init={}){check(++receipt.originRequests<=12,'origin_envelope');const r=await fetch(origin+path,{...init,redirect:'manual',signal:AbortSignal.timeout(path==='/api/ai-web-chat'?45000:20000)});return r;}
+try{
+ check(env.CONFIRM==='atlas-one-turn-six-total'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-session-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_scope_refused');
+ check(Date.now()>=Date.parse('2026-10-03T19:59:55Z')&&Date.now()<expiry-120000,'fresh_window_refused');
+ check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY,'existing_connection_missing');
+ const deployments=await api(script+'/deployments');const active=deployments?.deployments?.[0];check(active?.versions?.length===1&&active.versions[0].percentage===100&&active.versions[0].version_id===normalVersion,'normal_version_changed');receipt.beforeVersion=normalVersion;
+ const schedules=await api(script+'/schedules');const crons=(Array.isArray(schedules)?schedules:schedules?.schedules)?.map(x=>x.cron).sort();check(JSON.stringify(crons)===JSON.stringify(['*/15 * * * *','*/5 * * * *','15 2 * * *']),'normal_crons_changed');receipt.beforeCrons=crons;
+ const founder='pawspace_uat='+encodeURIComponent(await issueUatToken({PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY},'founder@pawspace.in',600));
+ const fixture=async(sha,version)=>{const r=await originRequest('/__staging/fixture-isolation?expectedSha='+sha+'&scope=grooming_strict',{headers:{cookie:founder}});check(r.ok,'fixture_http_'+r.status);const p=await r.json();check(p.ok&&p.version?.buildSha===sha&&(!version||p.version.id===version),'fixture_unproven');return{versionId:p.version.id,buildSha:p.version.buildSha};};
+ receipt.beforeFixture=await fixture(normalSha,normalVersion);
+ const beforeNormal=await query('normal'),beforeLedger=await query('ledger');receipt.before={normalDigest:hash(beforeNormal),normalRows:beforeNormal.length,ledgerDigest:hash(beforeLedger),ledgerRows:beforeLedger.length};
+ check(beforeLedger.length===0,'prior_charge_or_uncertain_request_refused');save();
+ const headers={cookie:founder,origin,'content-type':'application/json'};
+ const otp=await originRequest('/api/customer-otp',{method:'POST',headers,body:JSON.stringify({action:'request',phone:'9100000000'})});check(otp.ok,'sandbox_otp_request_'+otp.status);const challenge=(await otp.json()).data;
+ check(challenge?.sandboxDelivery===true&&challenge.liveSmsDelivered===false&&challenge.challengeId&&challenge.sandboxCode,'normal_sandbox_otp_unproven');
+ const verify=await originRequest('/api/customer-otp',{method:'POST',headers,body:JSON.stringify({action:'verify',challengeId:challenge.challengeId,code:challenge.sandboxCode,name:'Synthetic UAT Customer',cityId:'blr'})});check(verify.ok,'sandbox_otp_verify_'+verify.status);const identity=(await verify.json()).data;check(identity?.customerId==='CUS0000','canonical_customer_binding_refused');
+ const customerCookie=String(verify.headers.get('set-cookie')??'').split(';')[0];check(customerCookie.startsWith('pawspace_'),'normal_customer_session_missing');receipt.normalAuthentication={customerId:'CUS0000',sandboxDelivery:true,liveSmsDelivered:false};save();
+ const bundle=readFileSync(new URL('./atlas-api-review.js',import.meta.url));check(hash(bundle)===bundleSha,'bundle_changed');
+ const vars={PAWSPACE_ENV:'staging',FORBID_PRODUCTION:'true',PAWSPACE_PRODUCTION_ENFORCE:'false',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',PAWSPACE_COMMUNICATION_ENV:'uat',PAWSPACE_VOICE_ENV:'disabled',PAWSPACE_STAGING_LIVE_CUSTOMER_OTP:'false',PAWSPACE_SCHEDULING_ENV:'uat',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_AI_PROVIDER_MODEL:'gpt-5.6-terra',PAWSPACE_AI_EXECUTIVE_ACTIVE:'false',PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true'};
+ const config=apiOnlyConfig({name:'pawspace-staging',compatibility_date:'2026-05-22',d1_databases:[{binding:'DB',database_id:database}],vars},{expectedD1:database,expectedSha:env.GITHUB_SHA,jobId:job,origin});
+ receipt.restorationRequired=true;save();await api(script+'/schedules','PUT',[],'clear_schedules',true);
+ const form=new FormData();form.set('metadata',new Blob([JSON.stringify(uploadMetadata(config))],{type:'application/json'}));form.set('atlas-api-review.js',new Blob([bundle],{type:'application/javascript+module'}),'atlas-api-review.js');await api(script,'PUT',form,'temporary_upload',true);
+ receipt.temporaryFixture=await fixture(env.GITHUB_SHA);save();
+ const statusResponse=await originRequest('/api/ai-business-configuration?mode=atlas_text_admission_status',{headers:{cookie:founder}});check(statusResponse.ok,'status_http_'+statusResponse.status);const status=(await statusResponse.json()).data;check(status?.versionId===receipt.temporaryFixture.versionId&&Object.keys(status.bindings??{}).sort().join(',')==='deploymentMatchesStaging,descriptorMatchesApproved,isolationFlagTrue,jobIdMatchesApproved,jobIdPresent'&&Object.values(status.bindings).every(x=>x===true)&&status.approval?.jobId===job&&status.approval.customerId==='CUS0000'&&status.approval.expired===false&&status.approval.expiresAt==='2026-10-03T20:59:55.000Z'&&status.ledger?.present===true&&status.ledger.requests===0&&status.ledger.retainedMicros===0&&status.ledger.outstandingOrUnknown===0,'fresh_admission_status_refused');
+ check(Date.now()<expiry-45000,'remaining_window_refused');receipt.dispatches=1;receipt.firstRequestAt=new Date().toISOString();receipt.modelResult={state:'unknown_before_dispatch'};save();
+ const response=await originRequest('/api/ai-web-chat',{method:'POST',headers:{cookie:customerCookie,origin,'content-type':'application/json'},body:JSON.stringify({mode:'authenticated',message:'Which Grooming package includes bath and nail clipping for a Labrador, and what are the published prices? Please recommend the best fit.',idempotencyKey:'atlas-six-total-one-'+env.GITHUB_SHA})});
+ const result=await response.json().catch(()=>null);receipt.modelResult={state:'route_response_received',httpStatus:response.status,payload:{error:result?.error?redact(result.error):null,autonomousExecution:result?.data?.autonomousExecution??null,duplicatePrevented:result?.data?.duplicatePrevented??null,withTeam:result?.data?.withTeam??false,turn:{output:String(result?.data?.ai?.turn?.output??'').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[email]').replace(/\b\d{10,13}\b/g,'[phone]').slice(0,12000),outcome:result?.data?.ai?.turn?.outcome??null,provider:result?.data?.ai?.turn?.provider??null,modelRef:result?.data?.ai?.turn?.modelRef??null}}};save();console.log('FIRST_SYNTHETIC_RESULT '+JSON.stringify(receipt.modelResult));
+ const afterLedger=await query('ledger');receipt.afterLedger=afterLedger.map(x=>({id:x.id,jobId:x.job_id,status:x.status,reservedMicros:x.reserved_micros,actualUpperMicros:x.actual_upper_micros}));check(afterLedger.length<=1&&afterLedger.every(x=>x.job_id===job&&x.reserved_micros===4643760),'retained_charge_unexpected');
+ check(afterLedger.every(x=>x.status!=='completed'||(Number.isSafeInteger(x.actual_upper_micros)&&x.actual_upper_micros>=0&&x.actual_upper_micros<=4643760)),'actual_charge_unproven');receipt.noRetry=true;receipt.completedAt=new Date().toISOString();receipt.ok=response.ok&&afterLedger.length===1&&afterLedger[0].status==='completed';save();if(!receipt.ok)process.exitCode=1;
+}catch(error){receipt.ok=false;receipt.failure=redact(error.message);save();console.error(receipt.failure);process.exitCode=1;}

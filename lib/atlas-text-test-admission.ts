@@ -2,7 +2,7 @@ import { bindReservedAtlasGeneration } from "./atlas-native-boundary.mjs";
 /** One generation, no counting endpoint; normal model-context ceiling bounds input. */
 type Db={prepare(sql:string):{bind(...values:unknown[]):{run():Promise<{meta?:{changes?:number}}>;first():Promise<Record<string,unknown>|null>}}};
 type Env=Record<string,unknown>;
-export const APPROVAL=Object.freeze({jobId:"Sentinel_f67e3c5a85f88191b07279e0edbe250c",provider:"openai",model:"gpt-5.6-terra",customerId:"CUS0000",fixture:"FINANCE-TEST-OPS-GROOMING-01",capMicros:5_000_000,maxTurns:10,capBasis:"api_usage_tax_excluded",taxScopeApproval:"Sentinel_2adfdd39a5b48191b4ba13d4a82e2d67",replacementApproval:"Sentinel_a52fd374e18081919932a9355544e680",startsAt:Date.parse("2026-10-03T14:11:15Z"),expiresAt:Date.parse("2026-10-03T15:11:15Z"),maxInputTokens:20_000,maxOutputTokens:1200});
+export const APPROVAL=Object.freeze({jobId:"Sentinel_f67e3c5a85f88191b07279e0edbe250c",provider:"openai",model:"gpt-5.6-terra",customerId:"CUS0000",fixture:"FINANCE-TEST-OPS-GROOMING-01",capMicros:5_000_000,maxTurns:10,capBasis:"api_usage_tax_excluded",taxScopeApproval:"Sentinel_2adfdd39a5b48191b4ba13d4a82e2d67",replacementApproval:"user-combined-six-total-20261003-195955",startsAt:Date.parse("2026-10-03T19:59:55Z"),expiresAt:Date.parse("2026-10-03T20:59:55Z"),maxInputTokens:20_000,maxOutputTokens:1200});
 export const INPUT_UPPER=1_050_000,OUTPUT_UPPER=1200;
 // Long-context input2x/output1.5x, plus conservative10%regional uplift; no caching.
 export const RESERVED_MICROS=4_643_760;

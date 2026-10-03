@@ -1,0 +1,55 @@
+{
+  "review": "CLEAN minimal fixed renewal with existing retained-ledger limits",
+  "bundleSha256": "c51f26d5a54a3d18bfb21a517bbc724b181d36cf85db8782aab0cdb52d97875d",
+  "sourceChanges": [
+    {
+      "path": "lib/atlas-text-test-admission.ts",
+      "before": "cb8b127c752504f917da18a08ffeca5368d9249b8635cdf7989a6619cd4ab0e4",
+      "after": "d7f8640128e2e2c989170212533581b3871edb9d758d949c6702ac53508b8d23",
+      "exactMinimalReversal": true
+    },
+    {
+      "path": "lib/atlas-generation-shape-guard.mjs",
+      "before": "99f4aa4ce0580b6dddaa7afbf0c2e32b76d719056c186cf8a2a06dacc35ddf9f",
+      "after": "10ea3a42f1cacc91a4d667a0d231653b2657fb373ca6f11e85edb94a5a769b8e",
+      "exactMinimalReversal": true
+    }
+  ],
+  "sourceUnchanged": [
+    {
+      "path": "lib/ai-grounded-runtime-provider.ts",
+      "before": "c8af285b98f464421ac5bbb8497b881840ab807b515e0de05cb42926dfc2b905",
+      "after": "c8af285b98f464421ac5bbb8497b881840ab807b515e0de05cb42926dfc2b905"
+    },
+    {
+      "path": "lib/atlas-compact-grooming-context.mjs",
+      "before": "e64529d07a20f3b0b67ab74cb7a1a30730e4c66dd065a8b1455588d73823c0f0",
+      "after": "e64529d07a20f3b0b67ab74cb7a1a30730e4c66dd065a8b1455588d73823c0f0"
+    },
+    {
+      "path": "lib/atlas-native-boundary.mjs",
+      "before": "3d293475a874c06c47de1a606cd13248354951b95acb696a03afd6b264ff6ac4",
+      "after": "3d293475a874c06c47de1a606cd13248354951b95acb696a03afd6b264ff6ac4"
+    },
+    {
+      "path": "lib/ai-conversation-orchestrator.ts",
+      "before": "ff2f0ba398f80fc0d898ee2abf6ffde08938c6a01667750e4458a1fac3c3546f",
+      "after": "ff2f0ba398f80fc0d898ee2abf6ffde08938c6a01667750e4458a1fac3c3546f"
+    }
+  ],
+  "tests": {
+    "proposalUnitConfigShapeCompact": 25,
+    "actualSQLiteAdmission": 9,
+    "nativeFullCanonicalCapturedRefusal": true,
+    "nativeFullCanonicalActionRejection": true,
+    "realExternalRequests": 0
+  },
+  "limits": {
+    "modelCapMicros": 5000000,
+    "reservedMicrosPerRequest": 4643760,
+    "maxTurns": 10,
+    "absoluteStartsAt": "2026-10-03T19:59:55Z",
+    "absoluteExpiresAt": "2026-10-03T20:59:55Z"
+  },
+  "scope": "Local only; no paid/hosted requests; financial expected-fit evidence belongs to parent; normal c18 restoration via pinned deploy, not rollback"
+}
