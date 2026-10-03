@@ -93,8 +93,8 @@ test("Voice short confirmation action plan executes reserve -> booking -> Razorp
 
 });
 
-for(const profileLinked of [false,true])for(const inputText of ["Yes, book a grooming appointment for Lana.","Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
-test(`wrong saved-cat proposal is refused (${profileLinked?"saved":"unsaved"} Lana): ${inputText}`,async t=>{
+for(const introduction of ["Lana is my new five-month-old kitten.","Meet our new pet Lana."])for(const profileLinked of [false,true])for(const inputText of ["Yes, book a grooming appointment for Lana.","Book Lana only. Do not book Coco.","Do not substitute Coco; this is only for Lana."]){
+test(`new-pet proposal needs verified identity (${profileLinked?"same-name saved profile":"unsaved"}; ${introduction}): ${inputText}`,async t=>{
  const ctx=await setupJourney();t.after(()=>ctx.close());
  const customerId="CUS-PET-MEMORY",petId="PET-COCO",threadId="THREAD-PET-MEMORY",now=Date.now();
  globalThis.__GROOM_GOLDEN_ENV__={...globalThis.__GROOM_GOLDEN_ENV__,PAWSPACE_DEPLOYMENT_ENV:"staging",PAWSPACE_AI_PROVIDER:"openai",PAWSPACE_OPENAI_API_KEY:"test-only"};
@@ -108,7 +108,7 @@ test(`wrong saved-cat proposal is refused (${profileLinked?"saved":"unsaved"} La
  await orchestrator.ensureAiConversationOrchestrator(ctx.db);
  ctx.sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES (?,?,'open','ai-orchestrator',?,?)").run(threadId,customerId,now,now);
  if(profileLinked){
-  await seedOwnedPet(ctx.db,customerId,"PET-LANA","Lana");
+  await seedOwnedPet(ctx.db,customerId,"PET-LANA","LANA");
   ctx.sqlite.prepare("UPDATE canonical_pets SET species='cat' WHERE id='PET-LANA'").run();
  }
  const before=ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId);
@@ -121,18 +121,19 @@ test(`wrong saved-cat proposal is refused (${profileLinked?"saved":"unsaved"} La
   assert.equal(target.hostname,"api.openai.com","no external message/payment/booking API");
   requests++;
   const req=JSON.parse(init.body),input=JSON.parse(req.input);
-  assert.deepEqual(input.canonicalContext.voicePetMemory.unlinkedNewPetNames,profileLinked?[]:["Lana"]);
+  assert.deepEqual(input.canonicalContext.voicePetMemory.unlinkedNewPetNames,["Lana"]);
   assert.match(req.instructions,/NEW pet|new kitten/);
   return Response.json({output_text:JSON.stringify({reply:"Ready",actions:[
-   {toolCode:"schedule.reserve",arguments:{serviceCode:"grooming",petIds:[petId],serviceAddress:"Synthetic address",servicePincode:"560038",scheduledStart:"2026-10-20T04:30:00Z",scheduledEnd:"2026-10-20T06:30:00Z"}},
-   {toolCode:"booking.create",arguments:{petIds:[petId],packageCode:"cat-basic",paymentMode:"prepaid"}},
+   {toolCode:"schedule.reserve",arguments:{serviceCode:"grooming",petIds:[profileLinked?"PET-LANA":petId],serviceAddress:"Synthetic address",servicePincode:"560038",scheduledStart:"2026-10-20T04:30:00Z",scheduledEnd:"2026-10-20T06:30:00Z"}},
+   {toolCode:"booking.create",arguments:{petIds:[profileLinked?"PET-LANA":petId],packageCode:"cat-basic",paymentMode:"prepaid"}},
    {toolCode:"checkout.payment_order.create",arguments:{}}
   ]}),status:"completed",usage:{total_tokens:100}});
  };
  const {runElevenLabsGroundedTurn}=await import("../lib/elevenlabs-custom-llm.ts");
- const result=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:"Lana is my new five-month-old kitten."},{role:"user",content:`Please book a grooming appointment for Lana. ${inputText}`}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+ const result=await runElevenLabsGroundedTurn(ctx.db,{input:[{role:"user",content:introduction},{role:"user",content:`Please book a grooming appointment for Lana. ${inputText}`}],elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
  assert.equal(requests,1,"each isolated case reached the model and pet identity guard");
- assert.match(result.output,profileLinked?/Lana has a separate saved profile/:/Lana is a new pet without a saved profile/);
+ assert.equal(result.providerRef,"pet_identity_guard");
+ assert.match(result.output,/Lana is described as a new pet.*verify.*profile/);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
  assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").all(customerId),before);
  const mutations=ctx.sqlite.prepare("SELECT tool_code FROM ai_tool_execution_requests WHERE customer_id=? AND status='completed'").all(customerId).filter(x=>x.tool_code!=="approved_knowledge.read");
@@ -155,6 +156,15 @@ test("staff pause explains the recorded handoff without another handoff or paid 
  }
  assert.match(outputs[0],/booking reference/);assert.match(outputs[1],/can't approve/);assert.match(outputs[2],/queued.*nobody has joined/);
  assert.equal(new Set(outputs).size,3);
+ // A non-refund handoff must keep its actual service context without invoking the model.
+ ctx.sqlite.prepare("UPDATE ai_handoffs SET reason='service_request' WHERE id='HANDOFF-ONE'").run();
+ for(const service of ["funeral","grooming"]){
+  const reply=await runElevenLabsGroundedTurn(ctx.db,{input:`What details does the team need before the ${service} handoff?`,elevenlabs_extra_body:{pawspace_customer_id:customerId,pawspace_thread_id:threadId}});
+  assert.equal(reply.path,"human_handoff");
+  assert.doesNotMatch(reply.output,/refund|amount/i);
+  assert.match(reply.output,/service details/);
+ }
+
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=?").get(threadId).n,1);
  assert.equal(ctx.sqlite.prepare("SELECT assigned_to FROM communication_threads WHERE id=?").get(threadId).assigned_to,"cx-ai-handoff");
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE customer_id=?").get(customerId).n,0);
