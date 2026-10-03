@@ -239,11 +239,6 @@ jobs:
       - name: Verify offline managed audio boundaries
         if: ${{ inputs.confirm == 'demo-five-sales-conversations' }}
         run: node --test tests/maya-managed-sales-demo-boundaries.test.mjs
-      - name: Store independently reviewed ceiling through existing staging administration
-        if: ${{ inputs.confirm == 'next-audio-provision-reviewed-ceiling' }}
-        env:
-          NEXT_AUDIO_RATE_RECEIPT_JSON: ${{ inputs.probe_input }}
-        run: node --experimental-strip-types scripts/prepare-next-audio-duration.mjs
       - name: Install synthetic microphone tools
         run: |
           sudo apt-get update -qq
