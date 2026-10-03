@@ -41,7 +41,17 @@ export async function inspectNextAudioStoredState(env=process.env,request=fetch)
 export function assertSourceOnlyAudioReceiptAmendment(before,after,from){
  if(!/^[a-f0-9]{40}$/.test(String(from||''))||before?.sourceSha!==from||after?.sourceSha===from||!/^[a-f0-9]{40}$/.test(String(after?.sourceSha||'')))throw Error('Source-only amendment identity refused');
  const keys=[...new Set([...Object.keys(before||{}),...Object.keys(after||{})])];
- if(keys.some(k=>k!=='sourceSha'&&JSON.stringify(before?.[k])!==JSON.stringify(after?.[k])))throw Error('Source-only amendment cannot change rates, expiry, configuration or evidence');
+ if(JSON.stringify(Object.keys(before||{}).sort())!==JSON.stringify(Object.keys(after||{}).sort())||keys.some(k=>k!=='sourceSha'&&JSON.stringify(before?.[k])!==JSON.stringify(after?.[k])))throw Error('Source-only amendment cannot change rates, expiry, configuration or evidence');
+}
+export function assertUnusedAudioBudgetSourceAmendment(state,oldJson,receipt,counts){
+ if(state?.receipt_json!==oldJson||state?.cap_micros!==10000000||state?.reserved_micros!==0||state?.conversations!==0||state?.expires_at!==receipt.validUntil||['claims','attempts','leases'].some(k=>counts?.[k]!==0))throw Error('Source-only amendment requires an identical unused allocation with no leases, claims or attempts');
+}
+export function unusedAudioBudgetSourceAmendmentBatch(id,region,oldJson,newJson,expiresAt){
+ const unused='NOT EXISTS (SELECT 1 FROM next_audio_batch_claims WHERE budget_id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_leases WHERE budget_id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_attempts) AND NOT EXISTS (SELECT 1 FROM next_audio_speech_attempts)';
+ return [
+  {sql:`UPDATE next_audio_budget SET receipt_json=? WHERE id=? AND receipt_json=? AND cap_micros=10000000 AND reserved_micros=0 AND conversations=0 AND expires_at=? AND EXISTS (SELECT 1 FROM next_audio_rate_evidence WHERE id=? AND region=? AND receipt_json=?) AND ${unused}`,params:[newJson,id,oldJson,expiresAt,id,region,oldJson,id,id]},
+  {sql:`UPDATE next_audio_rate_evidence SET receipt_json=? WHERE id=? AND region=? AND receipt_json=? AND changes()=1 AND EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND receipt_json=? AND cap_micros=10000000 AND reserved_micros=0 AND conversations=0 AND expires_at=?) AND ${unused}`,params:[newJson,id,region,oldJson,id,newJson,expiresAt,id,id]},
+ ];
 }
 export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  const {validateAudioRateReceipt,NEXT_AUDIO_BUDGET_ID}=await import('../lib/next-audio-budget.ts');
@@ -66,11 +76,21 @@ export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  if(sourceAmendmentFrom&&stored?.region===region&&stored?.receipt_json!==JSON.stringify(receipt)){
   const previous=JSON.parse(stored.receipt_json);assertSourceOnlyAudioReceiptAmendment(previous,receipt,sourceAmendmentFrom);
   const state=(await query('SELECT cap_micros,reserved_micros,conversations,receipt_json,expires_at FROM next_audio_budget WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
-  if(state)throw Error('Source-only amendment requires the proven absent budget row; no ledger rewrite');
+  const leases=(await query('SELECT COUNT(*) AS n FROM next_audio_leases WHERE budget_id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
   const claims=(await query('SELECT COUNT(*) AS n FROM next_audio_batch_claims WHERE budget_id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
   const attempts=(await query('SELECT (SELECT COUNT(*) FROM next_audio_attempts)+(SELECT COUNT(*) FROM next_audio_speech_attempts) AS n'))[0]?.results?.[0];
-  if(claims?.n!==0||attempts?.n!==0)throw Error('Source-only amendment refused after claim or attempt');
+  if(claims?.n!==0||attempts?.n!==0||leases?.n!==0)throw Error('Source-only amendment refused after lease, claim or attempt');
+  if(state){
+   assertUnusedAudioBudgetSourceAmendment(state,stored.receipt_json,previous,{claims:claims.n,attempts:attempts.n,leases:leases.n});
+   // D1 REST batch executes both receipt-only updates in one transaction. All ledger fields remain untouched.
+   const batch=unusedAudioBudgetSourceAmendmentBatch(NEXT_AUDIO_BUDGET_ID,region,stored.receipt_json,JSON.stringify(receipt),previous.validUntil);
+   const result=await cf('/d1/database/'+encodeURIComponent(env.STAGING_D1_ID)+'/query',{batch});
+   if(result.length!==2||result.some(r=>r.success!==true||r.meta?.changes!==1))throw Error('Source-only amendment atomic compare-and-swap refused');
+   const readback=(await query('SELECT cap_micros,reserved_micros,conversations,receipt_json,expires_at FROM next_audio_budget WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
+   assertUnusedAudioBudgetSourceAmendment(readback,JSON.stringify(receipt),receipt,{claims:0,attempts:0,leases:0});
+  }else{
   await query('UPDATE next_audio_rate_evidence SET receipt_json=? WHERE id=? AND receipt_json=? AND NOT EXISTS (SELECT 1 FROM next_audio_budget WHERE id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_batch_claims WHERE budget_id=?) AND NOT EXISTS (SELECT 1 FROM next_audio_attempts) AND NOT EXISTS (SELECT 1 FROM next_audio_speech_attempts)',[JSON.stringify(receipt),NEXT_AUDIO_BUDGET_ID,stored.receipt_json,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_BUDGET_ID]);
+  }
   stored=(await query('SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?',[NEXT_AUDIO_BUDGET_ID]))[0]?.results?.[0];
  }
  if(stored?.region!==region||stored?.receipt_json!==JSON.stringify(receipt))throw Error('Ceiling already pinned differently; no overwrite or reset');
