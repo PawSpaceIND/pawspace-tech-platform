@@ -45,3 +45,36 @@ test('native local D1: pinned evidence cannot be reset or changed; duplicate lea
  await assert.rejects(()=>budget.provisionNextAudioBudget(db,{...receipt(),optionalBatchMicros:0},now));
  await budget.provisionNextAudioBudget(db,receipt(),now);assert.equal((await db.prepare('SELECT reserved_micros FROM next_audio_budget').first()).reserved_micros,820000);
 });
+
+import {createAudioEventReceipt} from '../scripts/next-audio-evidence.mjs';
+test('audio before transcript is retained; a late ASR event cannot overwrite latency',()=>{
+ let now=100;const r=createAudioEventReceipt(()=>now);r.callerSpeechEnded();now=850;
+ r.receive({type:'audio',audio_event:{event_id:1,audio_base_64:Buffer.from([1,2,3,4]).toString('base64')}});
+ now=900;r.receive({type:'user_transcript'});now=950;r.receive({type:'agent_response'});
+ const s=r.snapshot();assert.equal(s.firstAudioAfterCallerEndMs,750);assert.equal(s.audioChunks[0].pcm.length,4);assert.equal(s.listened,false);
+});
+test('missing audio stays unknown; interruption and native conversation ID are retained',()=>{
+ const r=createAudioEventReceipt(()=>20);r.receive({type:'conversation_initiation_metadata',conversation_initiation_metadata_event:{conversation_id:'synthetic-provider-id'}});r.receive({type:'interruption'});
+ assert.equal(r.snapshot().firstAudioAfterCallerEndMs,null);assert.equal(r.snapshot().conversationId,'synthetic-provider-id');assert.ok(r.snapshot().events.some(e=>e.type==='interruption'));
+});
+
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {preservedNextAudioBytes} from './helpers/next-audio-reviewed-delta.mjs';
+test('historical runtime bytes reconcile only the exact reviewed budget additions',()=>{
+ const path='lib/ai-grounded-runtime-provider.ts',source=readFileSync(new URL('../'+path,import.meta.url));
+ const hash=b=>createHash('sha256').update(b).digest('hex');
+ assert.equal(hash(preservedNextAudioBytes(path,source)),'d3949debfc2377a94b6428d7206ee63efc28c88f455dd3c92db15e503f17e5b3');
+ for(const [a,b] of [['nextAudioConversation:{threadId:input.threadId,customerId:input.customerId}','nextAudioConversation:{threadId:input.threadId,customerId:"OTHER"}'],['isNextAudioThread(input.threadId)','true'],['./next-audio-budget','./unknown-budget']])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(source.toString().replace(a,b))));
+ const mutation=source.toString().replace('maxTokens:channel===','maxTokens:false&&channel===');
+ assert.notEqual(hash(preservedNextAudioBytes(path,Buffer.from(mutation))),'d3949debfc2377a94b6428d7206ee63efc28c88f455dd3c92db15e503f17e5b3');
+});
+
+test('adapter historical normalization catches guard deletion, price bypass and ordinary-provider changes',()=>{
+ const p='lib/ai-provider-adapter.ts',source=readFileSync(new URL('../'+p,import.meta.url));
+ const hash=b=>createHash('sha256').update(b).digest('hex');
+ assert.equal(hash(preservedNextAudioBytes(p,source)),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
+ for(const [a,b]of [['await reserveNextAudioAttempt','void reserveNextAudioAttempt'],['sourceSha:str(env,','sourceSha:"forged",ignored:str(env,'],['str(env,"PAWSPACE_PAYMENT_LIVE_APPROVED")!=="false"','false']])assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(source.toString().replace(a,b))));
+ const changed=source.toString().replace('const MAX_TIMEOUT_MS = 120_000','const MAX_TIMEOUT_MS = 999_000');
+ assert.notEqual(hash(preservedNextAudioBytes(p,Buffer.from(changed))),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
+});

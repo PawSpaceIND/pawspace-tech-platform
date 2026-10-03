@@ -1,0 +1,18 @@
+{
+  "reviewedSha": "8d26ab3a8f3a79b6fa93541adb16021fda06e6e9",
+  "file": "lib/ai-provider-adapter.ts",
+  "reversals": [
+    [
+      "",
+      "import { isNextAudioThread, reserveNextAudioAttempt } from \"./next-audio-budget\";\n"
+    ],
+    [
+      "export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {\n",
+      "export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {\n"
+    ],
+    [
+      "",
+      "  // The additional pool covers every actual request, including voice recovery and proposal repair.\n  // Missing D1, pinned inclusive rates, expired lease or exhausted balance denies external fetch.\n  if (input.nextAudioConversation && isNextAudioThread(input.nextAudioConversation.threadId)) {\n    if (!db || input.channel !== \"voice\" || str(env,\"PAWSPACE_DEPLOYMENT_ENV\")!==\"staging\" || str(env,\"FORBID_PRODUCTION\")!==\"true\" || str(env,\"PAWSPACE_VOICE_PHONE_TESTS_PAUSED\")!==\"true\" || str(env,\"PAWSPACE_PAYMENT_ENV\")!==\"sandbox\" || str(env,\"PAWSPACE_PAYMENT_LIVE_APPROVED\")!==\"false\") return fail(\"runtime_control_unavailable\");\n    try {\n      await reserveNextAudioAttempt(db,{...input.nextAudioConversation,provider:providerRef,model:modelRef,sourceSha:str(env,\"PAWSPACE_STAGING_BUILD_SHA\"),systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,outputTokens:maxTokens,now:Date.now()});\n    } catch { return fail(\"runtime_control_unavailable\"); }\n    assertActive();\n  }\n"
+    ]
+  ]
+}

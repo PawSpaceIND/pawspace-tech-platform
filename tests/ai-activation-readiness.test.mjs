@@ -24,7 +24,7 @@ test("AI provider credentials remain isolated and fail-safe during OpenAI migrat
   const credentialNames = envNames.filter(name => /(?:API_KEY|TOKEN|SECRET)$/.test(name));
   assert.deepEqual(credentialNames, ["PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_OPENAI_API_KEY"],
     `AI provider credential set changed unexpectedly: ${credentialNames.join(", ") || "none"}`);
-  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER", "PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_AI_VOICE_MODEL", "PAWSPACE_DEPLOYMENT_ENV", "PAWSPACE_OPENAI_API_KEY"],
+  assert.deepEqual(envNames, ["PAWSPACE_AI_PROVIDER", "PAWSPACE_AI_PROVIDER_API_KEY", "PAWSPACE_AI_PROVIDER_MODEL", "PAWSPACE_AI_PROVIDER_TIMEOUT_MS", "PAWSPACE_AI_VOICE_MODEL", "PAWSPACE_DEPLOYMENT_ENV", "PAWSPACE_OPENAI_API_KEY", "PAWSPACE_PAYMENT_ENV", "PAWSPACE_PAYMENT_LIVE_APPROVED", "PAWSPACE_STAGING_BUILD_SHA", "PAWSPACE_VOICE_PHONE_TESTS_PAUSED"],
     `the adapter reads an unexpected environment input: ${envNames.join(", ")}`);
   assert.ok(adapter.includes('const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";'));
   assert.match(adapter, /authorization: `Bearer \$\{apiKey\}`/);

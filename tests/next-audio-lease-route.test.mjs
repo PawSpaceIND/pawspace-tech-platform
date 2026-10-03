@@ -1,0 +1,57 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+import {installAiHooks,freshAiDb,seedCustomer} from './helpers/ai-harness.mjs';
+installAiHooks();
+const route=await import('../app/api/ai-voice-uat/audio-lease/route.ts');
+const {issueUatToken}=await import('../lib/uat-staging-auth.ts');
+const {ensureAiVoiceUatTables}=await import('../lib/ai-voice-uat.ts');
+const budget=await import('../lib/next-audio-budget.ts');
+const origin='https://pawspace-staging.karthik-fce.workers.dev';
+async function world(t,patch={}){
+ const env={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'synthetic-only-signing-key'.repeat(3),PAWSPACE_DEPLOYMENT_ENV:'staging',FORBID_PRODUCTION:'true',PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',PAWSPACE_STAGING_BUILD_SHA:'a'.repeat(40),PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_AI_VOICE_MODEL:'gpt-5.6-luna',ELEVENLABS_API_BASE:'https://api.elevenlabs.io',ELEVENLABS_API_KEY:'unit-test-only-not-real',ELEVENLABS_GROOMING_AGENT_ID:'synthetic',PAWSPACE_VOICE_UAT_ALLOWLIST:'9876500088',...patch};
+ const w=freshAiDb(env);t.after(()=>w.sqlite.close());
+ w.sqlite.prepare("INSERT INTO app_users(id,email,name,role_code,status,created_at,updated_at) VALUES('F','founder@pawspace.in','Founder','founder','active',0,0)").run();
+ seedCustomer(w.sqlite,'SYNTHETIC','Synthetic tester','9876500088');await ensureAiVoiceUatTables(w.db);
+ w.sqlite.prepare("INSERT INTO ai_voice_calls(id,thread_id,customer_id,transport_provider,direction,status,consent_status,started_at,created_by) VALUES('CALL','INITIAL','SYNTHETIC','sandbox_simulator','inbound','active','verified',0,'founder@pawspace.in')").run();
+ await budget.ensureNextAudioBudget(w.db);w.sqlite.exec('CREATE TABLE next_audio_rate_evidence(id TEXT PRIMARY KEY,region TEXT NOT NULL,receipt_json TEXT NOT NULL)');
+ const agent={conversation_config:{agent:{prompt:{custom_llm:{url:origin+'/api/elevenlabs/v1'}}},conversation:{max_duration_seconds:120}}};
+ // All monetary values are test fixtures. A fake metadata origin is the only outbound fetch here.
+ const receipt={currency:'USD',inclusiveOfFeesAndTaxes:true,sourceSha:'a'.repeat(40),agentConfigSha256:createHash('sha256').update(JSON.stringify(agent)).digest('hex'),provider:'openai',model:'gpt-5.6-luna',validUntil:Date.now()+600000,nativeMicrosPerMinute:160000,optionalBatchMicros:500000,inputMicrosPerToken:1,outputMicrosPerToken:8,framingTokenUpper:4096,evidenceReference:'synthetic test reference'};
+ const token=await issueUatToken(env,'founder@pawspace.in',3600),cookie='pawspace_uat='+encodeURIComponent(token);
+ const previous=globalThis.fetch;t.after(()=>globalThis.fetch=previous);let reads=0;
+ globalThis.fetch=async(url,init)=>{reads++;assert.equal(String(url),'https://api.elevenlabs.io/v1/convai/agents/synthetic');assert.equal(init.method??'GET','GET');return Response.json(agent);};
+ return {...w,env,agent,receipt,cookie,reads:()=>reads,seedEvidence(r=receipt){w.sqlite.prepare('INSERT OR REPLACE INTO next_audio_rate_evidence VALUES(?,?,?)').run(budget.NEXT_AUDIO_BUDGET_ID,env.ELEVENLABS_API_BASE,JSON.stringify(r));},request(body,headers={}){return new Request(origin+'/api/ai-voice-uat/audio-lease',{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});}};
+}
+test('lease HTTP cannot provide invented rates; missing trusted evidence blocks without provider fetch',async t=>{
+ const w=await world(t);const r=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL',receipt:w.receipt}));assert.equal(r.status,403);assert.equal((await r.json()).error,'next_audio_account_charge_ceiling_not_attested');assert.equal(w.reads(),0);
+});
+test('same origin and authentication required before metadata or paid work',async t=>{
+ const w=await world(t);w.seedEvidence();for(const h of [{origin:'https://other.test'},{cookie:''}]){const r=await route.GET(w.request(undefined,h));assert.ok([401,403].includes(r.status));}assert.equal(w.reads(),0);
+});
+test('valid synthetic admission creates immutable deny namespace and completing call revokes attempt deadline',async t=>{
+ const w=await world(t);w.seedEvidence();const r=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL'}));assert.equal(r.status,201,JSON.stringify(await r.clone().json()));const {data}=await r.json();assert.ok(data.threadId.startsWith(budget.NEXT_AUDIO_THREAD_PREFIX));assert.equal(data.nativeBound,320000);
+ assert.equal(w.sqlite.prepare('SELECT thread_id FROM ai_voice_calls').get().thread_id,data.threadId);
+ w.sqlite.prepare("UPDATE ai_voice_calls SET status='completed' WHERE id='CALL'").run();assert.ok(w.sqlite.prepare('SELECT expires_at FROM next_audio_leases').get().expires_at<=Date.now());
+ const again=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL'}));assert.equal(again.status,403);
+});
+test('provider native duration must be configured, not merely a socket timer',async t=>{
+ const w=await world(t);w.agent.conversation_config.conversation.max_duration_seconds=600;w.receipt.agentConfigSha256=createHash('sha256').update(JSON.stringify(w.agent)).digest('hex');w.seedEvidence();const r=await route.GET(w.request());assert.equal(r.status,403);assert.equal((await r.json()).error,'next_audio_native_hard_duration_or_config_unproven');assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM next_audio_leases').get().n,0);
+});
+test('source, config, unit-test pricing and caller allowlist mismatches fail closed',async t=>{
+ const w=await world(t);for(const p of [{sourceSha:'c'.repeat(40)},{agentConfigSha256:'d'.repeat(64)},{evidenceReference:'UNIT TEST ONLY: invented'}]){w.seedEvidence({...w.receipt,...p});assert.equal((await route.GET(w.request())).status,403);}
+ w.seedEvidence();w.sqlite.prepare("UPDATE canonical_customers SET primary_phone='9876500099'").run();assert.equal((await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL'}))).status,403);
+});
+
+import {prepareNextAudioDuration} from '../scripts/prepare-next-audio-duration.mjs';
+const durationEnv={ELEVENLABS_API_BASE:'https://api.elevenlabs.io',ELEVENLABS_API_KEY:'unit-test-only',GROOMING_AGENT_ID:'synthetic',EXPECTED_SHA:'a'.repeat(40),GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ATTEMPT:'1'};
+const config=n=>({conversation_config:{agent:{prompt:{custom_llm:{url:'https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1'}}},conversation:{max_duration_seconds:n}}});
+test('only native max duration is patched; verification reads back provider enforcement',async()=>{
+ let current=config(600);const methods=[];const r=await prepareNextAudioDuration(durationEnv,async(url,init)=>{assert.equal(url,'https://api.elevenlabs.io/v1/convai/agents/synthetic');methods.push(init.method);if(init.method==='PATCH'){assert.deepEqual(JSON.parse(init.body),{conversation_config:{conversation:{max_duration_seconds:120}}});current=config(120);}return Response.json(current);});
+ assert.deepEqual(methods,['GET','PATCH','GET']);assert.equal(r.providerHardDurationSeconds,120);assert.equal(r.paidGenerationRequests,0);assert.equal(r.paidExecutionAllowed,false);
+});
+test('production brain or replay cannot receive a configuration write',async()=>{
+ let writes=0;const bad=config(600);bad.conversation_config.agent.prompt.custom_llm.url='https://production.example/api/elevenlabs/v1';await assert.rejects(()=>prepareNextAudioDuration(durationEnv,async(_,i)=>{if(i.method==='PATCH')writes++;return Response.json(bad);}));assert.equal(writes,0);
+ await assert.rejects(()=>prepareNextAudioDuration({...durationEnv,GITHUB_RUN_ATTEMPT:'2'},()=>assert.fail('no HTTP')));
+});
+test('ignored duration mutation fails rather than substituting a local socket timeout',async()=>{
+ await assert.rejects(()=>prepareNextAudioDuration(durationEnv,async()=>Response.json(config(600))),/readback failed/);
+});
