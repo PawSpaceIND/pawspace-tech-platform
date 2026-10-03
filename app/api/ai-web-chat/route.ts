@@ -157,7 +157,7 @@ async function publicBotTurn(db:D1Database,request:Request,body:Body){
  let ai:unknown=null,lead:unknown=null;
  if(turn.event.type==="ai"){
   if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);
-  ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey})).ai;
+  ai=(await runPublicAiWebChat(db,{query:turn.event.question,history:body.history,sessionKey,careContext:atlasCareContext(body.careContext),cityId:body.cityId,zoneId:body.zoneId})).ai;
  }
  const state=turn.state;
  if(turn.event.type==="completed"){

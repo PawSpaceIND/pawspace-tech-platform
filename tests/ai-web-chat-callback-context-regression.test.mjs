@@ -3,7 +3,13 @@
  * Does not change tests/ai-web-chat-callback-handoff.test.mjs.
  */
 import test from "node:test";
+
+// Freeze callback fixtures at 11:30 IST; runtime quiet-hours guards remain active.
+test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-03T06:00:00Z") }));
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { reverseAtlasHandoffDeadline } from "./helpers/atlas-handoff-deadline-review.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
 import { uatVoiceEnv, ALLOWLISTED_PHONE } from "./helpers/voice-harness.mjs";
@@ -18,6 +24,14 @@ globalThis.fetch = async (input, init) => {
 };
 
 const control = await import("../lib/ai-first-control-plane.ts");
+test("cancellation preservation accepts only the exact reviewed correction", () => {
+ const path="lib/ai-first-control-plane.ts";
+ const source=readFileSync(new URL("../"+path,import.meta.url),"utf8");
+ const baseline=reverseAtlasHandoffDeadline(source,path);
+ assert.equal(createHash("sha256").update(baseline).digest("hex"),"a9e303d4f77512dd3d07deb9b162a6947878c3432a91c06b2f0a0bfeda0017e7");
+ assert.equal(reverseAtlasHandoffDeadline(baseline,path),baseline);
+ for(const changed of [source.replace('status:409','status:200'),source.replace('if(state==="cancelled")','if(state==="queued")'),source+source])assert.throws(()=>reverseAtlasHandoffDeadline(changed,path));
+});
 const gov = await import("../lib/voice-outbound-governance.ts");
 const route = await import("../app/api/ai-web-chat/route.ts");
 
@@ -368,5 +382,43 @@ test("canonical dog_training obeys Training disabled for catalogue and active-bo
   await assert.rejects(()=>control.requestGovernedCustomerCallback(ctx.db,ctx.env,request(booking?{bookingId:"BOOK-FIRST"}:{cityId:"hyd",serviceCode:"dog_training"})),error=>error instanceof Response&&error.status===409);
   assert.equal(n(ctx.sqlite,"voice_call_orders"),0);assert.equal(n(ctx.sqlite,"voice_call_consents"),0);
  }
+ assert.deepEqual(fetches,[]);
+});
+
+
+test("owned quiet-hours-blocked callback cancellation refuses without changing terminal evidence", async t => {
+ t.mock.timers.setTime(Date.parse("2026-10-03T16:01:00Z"));
+ const ctx=await fixture();
+ const first=await control.requestGovernedCustomerCallback(ctx.db,ctx.env,request({bookingId:"BOOK-FIRST"}));
+ assert.equal(first.callback.state,"blocked_quiet_hours");
+ const cookie=await customerCookie(ctx.db,"CUS-REG",PHONE);
+ const snapshot=()=>Object.fromEntries(["voice_call_orders","voice_call_state_transitions","voice_call_policy_decisions","ai_callback_request_context"].map(table=>[table,ctx.sqlite.prepare(`SELECT * FROM ${table}`).all()]));
+ const before=snapshot();
+ for(let attempt=0;attempt<2;attempt++) {
+  const response=await post(ctx.db,{mode:"authenticated",cancelCallId:first.callback.callId},{cookie});
+  assert.equal(response.status,409,JSON.stringify(response.payload));
+  assert.equal(response.payload.error,"Voice call cannot be cancelled in its current state");
+  assert.deepEqual(snapshot(),before);
+ }
+ const replay=await control.requestGovernedCustomerCallback(ctx.db,ctx.env,request());
+ assert.equal(replay.callback.state,"blocked_quiet_hours");
+ assert.equal(replay.callback.callId,first.callback.callId);
+ assert.equal(replay.callback.duplicatePrevented,true);
+ assert.equal(ctx.sqlite.prepare("SELECT dialed_at FROM voice_call_orders").get().dialed_at,null);
+ assert.deepEqual(fetches,[]);
+});
+
+
+test("owned cancelled callback cancellation remains idempotent", async () => {
+ const ctx=await fixture();
+ const first=await control.requestGovernedCustomerCallback(ctx.db,ctx.env,request({bookingId:"BOOK-FIRST"}));
+ const cookie=await customerCookie(ctx.db,"CUS-REG",PHONE);
+ const once=await post(ctx.db,{mode:"authenticated",cancelCallId:first.callback.callId},{cookie});
+ assert.equal(once.status,200,JSON.stringify(once.payload));
+ const before=ctx.sqlite.prepare("SELECT * FROM voice_call_state_transitions").all();
+ const twice=await post(ctx.db,{mode:"authenticated",cancelCallId:first.callback.callId},{cookie});
+ assert.equal(twice.status,200,JSON.stringify(twice.payload));
+ assert.equal(ctx.sqlite.prepare("SELECT state FROM voice_call_orders").get().state,"cancelled");
+ assert.deepEqual(ctx.sqlite.prepare("SELECT * FROM voice_call_state_transitions").all(),before);
  assert.deepEqual(fetches,[]);
 });

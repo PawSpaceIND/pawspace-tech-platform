@@ -27,3 +27,26 @@ test("context-only Grooming subscription question still requires a published loc
  const db=await world();const net=stubFetch(()=>{throw new Error("No external model allowed")});
  try{const result=await runPublicAiWebChat(db,{query:"What do subscriptions cost?",sessionKey:"context-only-subscription",careContext:{serviceCode:"grooming",species:"dog"}});assert.match(result.ai.turn.output,/Choose the service city and zone in Grooming/);assert.equal(net.calls.length,0);}finally{net.restore();}
 });
+
+for(const mode of ["missing_location","published_outage"])test(`subscription answer survives event insertion failure: ${mode}`,async()=>{
+ const db=await world();if(mode==="published_outage"){await ensureGroomingSubscriptionPlans(db);await plan(db,"outage-plan");}
+ const broken={...db,prepare(sql){const statement=db.prepare(sql);if(!sql.startsWith("INSERT INTO ai_web_chat_events")||!sql.includes("'public_turn'"))return statement;const wrap=original=>({...original,bind:(...args)=>wrap(original.bind(...args)),run:async()=>{throw new Error("injected event storage failure");}});return wrap(statement);}};
+ const net=stubFetch(()=>jsonResponse({error:{message:"test outage"}},503));
+ try{const result=await ask(broken,mode==="published_outage"?{cityId:"blr"}:{});assert.match(result.ai.turn.output,mode==="published_outage"?/INR 3597, 3 credits within 4 months/:/Choose the service city and zone/);assert.equal(result.ai.turn.outcome,"reply_ready");if(mode==="missing_location")assert.equal(net.calls.length,0);assert.doesNotMatch(result.ai.turn.output,/injected|prepaid-only/);}finally{net.restore();}
+});
+
+
+test("public guided bot forwards location and sanitized care hints to the governed catalogue",async()=>{
+ const db=await world();await ensureGroomingSubscriptionPlans(db);await plan(db,"cat-east",{zone:"east",species:"cat",price:4200});
+ const {POST}=await import("../app/api/ai-web-chat/route.ts");
+ const net=stubFetch(()=>jsonResponse({status:"completed",output_text:"Verified cat plan",usage:{input_tokens:1,output_tokens:1,total_tokens:2}}));
+ try{
+  const response=await POST(new Request("https://staging.pawspace.test/api/ai-web-chat",{method:"POST",headers:{origin:"https://staging.pawspace.test","content-type":"application/json","cf-connecting-ip":"192.0.2.41"},body:JSON.stringify({mode:"public",bot:true,sessionKey:"bot-care-context-00001",message:"What do subscriptions cost?",cityId:"blr",zoneId:"east",careContext:{serviceCode:"grooming",species:"cat",packageCode:"cat-basic",customerId:"private-injected"}})}));
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+  assert.equal(net.calls.length,1);
+  const prompt=JSON.parse(JSON.parse(net.calls[0].init.body).input);
+  assert.deepEqual(prompt.untrustedCareContext,{serviceCode:"grooming",species:"cat",packageCode:"cat-basic"});
+  assert.equal(prompt.currentServiceCatalogue.groomingSubscriptions.plans[0].price,4200);
+  assert.equal(prompt.currentServiceCatalogue.groomingSubscriptions.plans.length,1);
+ }finally{net.restore();}
+});

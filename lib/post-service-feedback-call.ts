@@ -352,6 +352,19 @@ export type ScheduleFeedbackCallInput = {
   policy: FeedbackCallPolicy | null; asOf?: number;
 };
 
+const LIVE_STATUSES = ["scheduled", "dispatching"];
+/**
+ * A request for a minute this booking already used. While that earlier request is still live the new
+ * one is a replay and answers with the row that exists. Once it has been cancelled, placed, missed or
+ * otherwise closed, nothing is scheduled any more, so answering "duplicate prevented" would let the
+ * route report success and the screen say a call is scheduled when none is: refuse instead, naming
+ * the minute as used, so the customer picks another one.
+ */
+function replayOrRefuse(prior: Row) {
+  if (LIVE_STATUSES.includes(text(prior.status))) return { scheduled: text(prior.status) === "scheduled", duplicatePrevented: true, schedule: summarise(prior) };
+  throw new PostServiceFeedbackError("time_already_used", "That minute was already used for a feedback call request on this booking. Choose another minute.", 409);
+}
+
 /**
  * The customer asks for one feedback call at a time of their choosing. Idempotent on
  * (booking, chosen time); a second live request for the same booking at another time is refused until
@@ -377,7 +390,7 @@ export async function scheduleFeedbackCall(db: Db, input: ScheduleFeedbackCallIn
 
   const idempotencyKey = `post-service-feedback-call:${booking.bookingId}:${scheduledFor}`;
   const prior = await db.prepare("SELECT * FROM post_service_feedback_calls WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-  if (prior) return { scheduled: text(prior.status) === "scheduled", duplicatePrevented: true, schedule: summarise(prior) };
+  if (prior) return replayOrRefuse(prior);
   const live = await activeSchedule(db, booking.bookingId);
   if (live) throw new PostServiceFeedbackError("already_scheduled", "A feedback call is already scheduled for this booking. Cancel it to choose another time.", 409);
 
@@ -389,7 +402,7 @@ export async function scheduleFeedbackCall(db: Db, input: ScheduleFeedbackCallIn
   } catch (error) {
     // Lost a race on either unique constraint: report the row that won instead of a 500.
     const raced = await db.prepare("SELECT * FROM post_service_feedback_calls WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-    if (raced) return { scheduled: text(raced.status) === "scheduled", duplicatePrevented: true, schedule: summarise(raced) };
+    if (raced) return replayOrRefuse(raced);
     const other = await activeSchedule(db, booking.bookingId);
     if (other) throw new PostServiceFeedbackError("already_scheduled", "A feedback call is already scheduled for this booking. Cancel it to choose another time.", 409);
     throw error;
