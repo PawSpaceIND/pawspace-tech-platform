@@ -105,3 +105,9 @@ export async function reserveNextAudioSpeech(db:D1Database,input:{threadId:strin
  const r=await db.prepare("INSERT INTO next_audio_speech_attempts (id,thread_id,kind,units,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_leases WHERE thread_id=? AND customer_id=? AND expires_at>?) AND (SELECT COUNT(*) FROM next_audio_speech_attempts WHERE thread_id=? AND kind=?)<4").bind(crypto.randomUUID(),input.threadId,input.kind,input.units,input.now,input.threadId,input.customerId,input.now,input.threadId,input.kind).run();
  if(Number(r.meta?.changes)!==1)throw new Error("next_audio_speech_budget_or_lease_refused");
 }
+
+/** Fixed diagnostic vocabulary only; raw provider/DB errors never enter the HTTP response. */
+export class NextAudioReadinessFailure extends Error {
+ readonly stage: string;readonly kind: string;
+ constructor(stage:string,error:unknown){super('Next audio readiness refused');this.stage=['authentication','customer_schema','voice_schema','budget_schema','rate_evidence','receipt_validation','native_url','native_headers','native_request_base','native_timeout','native_request','native_fetch','native_json','native_hash','budget_provision'].includes(stage)?stage:'unknown';const name=error instanceof Error?error.name:'';const message=error instanceof Error?error.message:'';this.kind=['TypeError','ReferenceError','SyntaxError','RangeError','ProviderResponseTooLarge'].includes(name)?name:message.includes('D1_ERROR')?'D1_ERROR':message.includes('SQLITE_ERROR')?'SQLITE_ERROR':message.includes('Cannot perform I/O on behalf of a different request')?'cross_request_io':message==='next_audio_budget_receipt_already_pinned'?'receipt_already_pinned':message==='next_audio_inclusive_rate_evidence_unproven'?'rate_evidence_invalid':'unexpected';}
+}

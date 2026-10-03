@@ -8,40 +8,49 @@ import {ensureCommunicationTables} from "../../../../lib/communication-engine";
 import {isVoiceAllowlisted} from "../../../../lib/voice-call-gate";
 import {decodeInlineAudio,readBoundedRequestText} from "../../../../lib/voice-safe-fetch";
 import {readBoundedText} from "../../../../lib/provider-response-bounds";
-import {reserveNextAudioSpeech,claimNextAudioBatch,requireNextAudioBatch,ensureNextAudioBudget,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_THREAD_PREFIX,provisionNextAudioBudget,reserveNextAudioLease,validateAudioRateReceipt,type AudioRateReceipt} from "../../../../lib/next-audio-budget";
+import {NextAudioReadinessFailure,reserveNextAudioSpeech,claimNextAudioBatch,requireNextAudioBatch,ensureNextAudioBudget,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_THREAD_PREFIX,provisionNextAudioBudget,reserveNextAudioLease,validateAudioRateReceipt,type AudioRateReceipt} from "../../../../lib/next-audio-budget";
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const refuse=(reason:string)=>{throw new Response(reason,{status:403});};
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{"cache-control":"no-store"}});
 async function context(request:Request){
+ let stage="authentication";try{
  if(request.headers.get("origin")!==new URL(request.url).origin)refuse("next_audio_same_origin_required");
  const actor=await resolveActor(request);requirePermission(actor,"communications.call");
  if(actor.email!=="founder@pawspace.in"||actor.developmentPreview)refuse("next_audio_founder_auth_required");
  const {env}=await import("cloudflare:workers"),e=env as unknown as Row;
  if(text(e.PAWSPACE_DEPLOYMENT_ENV)!=="staging"||text(e.FORBID_PRODUCTION)!=="true"||text(e.PAWSPACE_VOICE_PHONE_TESTS_PAUSED)!=="true"||text(e.PAWSPACE_PAYMENT_ENV)!=="sandbox"||text(e.PAWSPACE_PAYMENT_LIVE_APPROVED)!=="false"||text(e.PAWSPACE_RAZORPAYX_ENV)!=="sandbox"||text(e.PAWSPACE_RAZORPAYX_LIVE_APPROVED)!=="false")refuse("next_audio_isolation_refused");
  if(!/^[a-f0-9]{40}$/.test(text(e.PAWSPACE_STAGING_BUILD_SHA)))refuse("next_audio_version_missing");
- const db=await database();await ensureCustomerAccountTables(db);await ensureAiVoiceUatTables(db);await ensureNextAudioBudget(db);
+ const db=await database();stage="customer_schema";await ensureCustomerAccountTables(db);stage="voice_schema";await ensureAiVoiceUatTables(db);stage="budget_schema";await ensureNextAudioBudget(db);
+ stage="rate_evidence";
  // Only existing privileged D1 administration can provision evidence. HTTP bodies cannot supply rates.
  await db.prepare("CREATE TABLE IF NOT EXISTS next_audio_rate_evidence (id TEXT PRIMARY KEY,region TEXT NOT NULL,receipt_json TEXT NOT NULL)").run();
  const evidence=await db.prepare("SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();
  if(!evidence)refuse("next_audio_account_charge_ceiling_not_attested");
- const receipt=JSON.parse(String(evidence!.receipt_json)) as AudioRateReceipt;validateAudioRateReceipt(receipt,Date.now());
+ stage="receipt_validation";const receipt=JSON.parse(String(evidence!.receipt_json)) as AudioRateReceipt;validateAudioRateReceipt(receipt,Date.now());
  if(/UNIT TEST|invented/i.test(receipt.evidenceReference)||receipt.sourceSha!==text(e.PAWSPACE_STAGING_BUILD_SHA)||text(e.PAWSPACE_AI_PROVIDER)!==receipt.provider||text(e.PAWSPACE_AI_VOICE_MODEL)!==receipt.model)refuse("next_audio_runtime_rate_or_source_mismatch");
  const region=text(e.ELEVENLABS_API_BASE)||"https://api.in.residency.elevenlabs.io";
  if((region!=="https://api.elevenlabs.io"&&region!=="https://api.in.residency.elevenlabs.io")||region!==evidence!.region||!text(e.ELEVENLABS_API_KEY)||!text(e.ELEVENLABS_GROOMING_AGENT_ID))refuse("next_audio_region_or_agent_unproven");
- const response=await fetch(`${region}/v1/convai/agents/${encodeURIComponent(text(e.ELEVENLABS_GROOMING_AGENT_ID))}`,{headers:{"xi-api-key":text(e.ELEVENLABS_API_KEY)},redirect:"error",signal:AbortSignal.timeout(15000)});
+ stage="native_url";const nativeUrl=new URL(`${region}/v1/convai/agents/${encodeURIComponent(text(e.ELEVENLABS_GROOMING_AGENT_ID))}`);
+ stage="native_headers";const nativeHeaders=new Headers({"xi-api-key":text(e.ELEVENLABS_API_KEY)});
+ stage="native_request_base";const nativeBase=new Request(nativeUrl.href,{headers:nativeHeaders,redirect:"manual"});
+ stage="native_timeout";const nativeSignal=AbortSignal.timeout(15000);
+ stage="native_request";const nativeRequest=new Request(nativeBase,{signal:nativeSignal});
+ stage="native_fetch";const response=await fetch(nativeRequest);
+ if(response.status>=300&&response.status<400)refuse("next_audio_native_redirect_refused");
  if(!response.ok)refuse("next_audio_agent_config_read_refused");
- const agent=JSON.parse(await readBoundedText(response,512*1024)) as Row;
- const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(agent)))),b=>b.toString(16).padStart(2,"0")).join("");
+ stage="native_json";const agent=JSON.parse(await readBoundedText(response,512*1024)) as Row;
+ stage="native_hash";const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(agent)))),b=>b.toString(16).padStart(2,"0")).join("");
  const c=agent.conversation_config as Row,p=(c?.agent as Row)?.prompt as Row,duration=Number((c?.conversation as Row)?.max_duration_seconds);
  if(hash!==receipt.agentConfigSha256||(p?.custom_llm as Row)?.url!=="https://pawspace-staging.karthik-fce.workers.dev/api/elevenlabs/v1"||!Number.isInteger(duration)||duration<60||duration>120)refuse("next_audio_native_hard_duration_or_config_unproven");
- await provisionNextAudioBudget(db,receipt,Date.now());
+ stage="budget_provision";await provisionNextAudioBudget(db,receipt,Date.now());
  return {actor,db,e,receipt,duration,hash};
+ }catch(error){if(error instanceof Response)throw error;throw new NextAudioReadinessFailure(stage,error);}
 }
 export async function GET(request:Request){try{
  const c=await context(request),budget=await c.db.prepare("SELECT cap_micros,reserved_micros,conversations,expires_at FROM next_audio_budget WHERE id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();
  return json({data:{paidExecutionAllowed:true,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,budget,workersSpeechReady:Boolean(c.e.AI)&&c.e.VOICE_STT_MODEL==="@cf/openai/whisper-large-v3-turbo"&&c.e.VOICE_CARRIER_TTS_MODEL==="@cf/deepgram/aura-2-en",phoneDialed:false}});
-}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Next audio readiness refused");}}
+}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);if(error instanceof NextAudioReadinessFailure)return json({error:error.message,diagnostic:{stage:error.stage,kind:error.kind}},500);return authError(error,"Next audio readiness refused");}}
 export async function POST(request:Request){try{
  const c=await context(request),raw=await readBoundedRequestText(request,2*1024*1024);
  const body=JSON.parse(raw) as Row;if(!text(body.action).startsWith("workers_")&&raw.length>4096)refuse("next_audio_payload_too_large");const customerId=text(body.customerId),callId=text(body.callId);
