@@ -6,6 +6,7 @@ type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:s
 
 async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
   if(["/api/customer-meet-and-greet","/api/customer-caregiver-chat"].includes(url.pathname)&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/v2/test-coins"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
   // The published V2 grooming catalogue is intentionally outside session scope. Checkout is
   // customer-only; booking ownership remains in the route and never trusts a client customer ID.
   if(method==="GET"&&url.pathname==="/api/v2/grooming-checkout")return{permission:"scheduling.book",subjectType:"customer"};

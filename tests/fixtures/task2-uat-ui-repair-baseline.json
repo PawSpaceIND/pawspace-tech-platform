@@ -3,7 +3,7 @@
   "unchanged": {
     "app/v2/stay-experience.tsx": "6aa3850a93e3f7001de552042e7f51091975f82320ce862dabae20a689125384",
     "app/v2/stay-guest-preview.tsx": "c1326c30186d9b6a53591267043a2144066b893e5acd237f54797a7ea84ad178",
-    "app/mobile-app/stay-flow.tsx": "d687be847261c69dc4e696a082e9b0189d26704633ade1af20d509d3a65d5dff",
+    "app/mobile-app/stay-flow.tsx": "f0ab854b87240b144ae4d22678d7ced5bbff714d66c0e3f2ec47906e2c0b94e5",
     "app/mobile-app/customer-login.tsx": "c58e76e575f16132dd853c8347b9912c5c81c38f2ba8a9741d56bccd0877f6f1",
     "lib/v2/stay-guest-draft.ts": "982c886e5b55d21ca051792d82647c8c32503c2211a888bb4979161e283c27b5",
     "app/v2/presentation.module.css": "3a201fab2e8db78e646277e899222fec8528e441f529e8ae3babbc75fafed5ef",

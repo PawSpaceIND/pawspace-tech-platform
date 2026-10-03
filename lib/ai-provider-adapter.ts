@@ -1,3 +1,4 @@
+import { reserveTextTest, directPayload, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from "./atlas-text-test-admission";
 /**
  * The single boundary between PawSpace and an external language-model provider.
  * Every external request is privacy-sanitized, governance-checked, budgeted and circuit-broken here.
@@ -222,7 +223,7 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; textTestScope?: Scope; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
   const abortError=()=>Object.assign(new Error("AI provider request cancelled"),{name:"AbortError"});
   const assertActive=()=>{if(input.signal?.aborted)throw abortError();};
   assertActive();
@@ -244,6 +245,8 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const db = env.DB as D1Database | undefined;
   if (!db && str(env, "PAWSPACE_DEPLOYMENT_ENV").toLowerCase() === "production") return fail("runtime_control_unavailable");
 
+  let textTestClaim: Claim|null=null;
+  let textTestSettled=false;
   let reservation: AiRuntimeReservation = null;
   // The additional pool covers every actual request, including voice recovery and proposal repair.
   // Missing D1, pinned inclusive rates, expired lease or exhausted balance denies external fetch.
@@ -275,6 +278,8 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     throw abortError();
   };
 
+  try { textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta)}); } catch { return await finishFailure("runtime_control_unavailable"); }
+
   const configuredTimeoutMs=aiTimeoutMs(env),requestedTimeoutMs=Number(input.timeoutMs),timeoutMs=Number.isFinite(requestedTimeoutMs)&&requestedTimeoutMs>0?Math.min(configuredTimeoutMs,Math.max(MIN_TIMEOUT_MS,Math.floor(requestedTimeoutMs))):configuredTimeoutMs;
   const controller = new AbortController();
   const abortFromCaller=()=>controller.abort();
@@ -285,6 +290,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   const streaming = Boolean(input.onDelta) && providerRef === "openai";
   try {
     let response: Response;
+    try{assertTextTestDispatch(textTestClaim);}catch{return await finishFailure("runtime_control_unavailable");}
     mark("providerRequestStarted");
     try {
       response = providerRef === "openai"
@@ -292,7 +298,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
             method: "POST",
             signal: controller.signal,
             headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(streaming ? { stream: true } : {}), ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
+            body: JSON.stringify(textTestClaim?directPayload(modelRef,safeSystemPrompt,safeUserPrompt,maxTokens):{ model: modelRef, instructions: safeSystemPrompt, input: safeUserPrompt, max_output_tokens: maxTokens, store: false, ...(textTestClaim?{service_tier:"default"}:{}), ...(streaming ? { stream: true } : {}), ...(input.channel === "voice" && modelRef === DEFAULT_VOICE_AI_MODEL_REF ? { reasoning: { effort: "none" } } : {}) }),
           })
         : await fetch(ANTHROPIC_MESSAGES_URL, {
             method: "POST",
@@ -385,6 +391,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     if ("failure" in extracted) return await finishFailure(extracted.failure);
     if(input.signal?.aborted)return await finishAbort();
 
+    if(textTestClaim&&db){try{await settleTextTest(db,textTestClaim,parsed);textTestSettled=true;}catch{return await finishFailure("runtime_control_unavailable");}}
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, actualTokens: extracted.usageTokens });
     mark("providerAccountingCompleted");
     return {
@@ -399,6 +406,7 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
   } finally {
     input.signal?.removeEventListener("abort",abortFromCaller);
     clearTimeout(timer);
+    if(textTestClaim&&db&&!textTestSettled){try{await markTextTestUnknown(db,textTestClaim);}catch{/* reserved status itself prevents further admission */}}
   }
 }
 

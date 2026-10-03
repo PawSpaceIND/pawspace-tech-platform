@@ -44,6 +44,8 @@ import {serviceAddressText} from "../../../lib/service-address-text";
 import PetManager from "../pet-form";
 import { groomingAddOnsForSpecies } from "../../../lib/grooming-add-ons";
 import { groomingBasketTotal } from "../../../lib/v2/grooming-money";
+import { groomingTestCoinQuote } from "../../../lib/v2/grooming-test-coin-quote";
+import TestCoinServicePreview from "../test-coin-service-preview";
 import GroomingLocationAssist from "./location-assist";
 import { GROOMING_STEPS, groomingStepAccess, suggestedGroomerId, type GroomingStep } from "../../../lib/v2/grooming-navigation";
 
@@ -164,6 +166,7 @@ export default function V2GroomingPage() {
   const basketTotal = quote ? groomingBasketTotal(quote.price, addOnTotal) : null;
   const couponContextKey = JSON.stringify([account?.customerId, basketTotal, bundle?.packageCode, scheduledStart, coverage?.cityId, coverage?.zoneId, paymentMode]);
   const couponChecking = Boolean(quote && couponCheckedKey !== couponContextKey);
+  const coinQuote = groomingTestCoinQuote({ basketTotal, quoteReady: Boolean(quote) && !providerBusy, couponChecking, coupon, paymentMode });
   const summaryWhen=useMemo(()=>{if(!date||!bundle)return "Choose a date and package";try{const window=groomingSlotWindow(date,slotIndex,bundle.slotMinutes);return formatIndiaRange(scheduledStart||window.start,scheduledEnd||window.end);}catch{return "Choose a time that fits the full service duration";}},[date,slotIndex,bundle,scheduledStart,scheduledEnd]);
   const [dates] = useState(() => groomingBookingDates(Date.now(), 14));
   const stepAccess = groomingStepAccess({ petCount: selectedPets.length, selectionIssue: mixedAudience,
@@ -482,6 +485,7 @@ export default function V2GroomingPage() {
             </div>
             <small>No split payment for Grooming. Cash is recorded by the provider and reconciled by Accounts.</small>
           </div>}
+          <TestCoinServicePreview serviceName="Grooming" customerId={account?.customerId} eligibleAmount={coinQuote.eligibleAmount} actualPayable={coinQuote.actualPayable}/>
           <div className={styles.safe}><span>◆</span><p><b>Nothing reserved yet.</b> Review your care details. The next step creates one booking; {paymentMode === "prepaid" ? "secure payment opens only after its doorstep is verified." : "nothing is charged now and the balance is due after service."}</p></div>
           <button className={styles.continue} disabled={!quote || basketTotal === null || !coverage || !(providerSelection === "auto" ? providers?.providers.length : providers?.providers.some(item => item.id === selectedProviderId)) || !scheduledStart || !scheduledEnd || checkoutBusy || providerBusy || mixedAudience || Boolean(youngIssue) || couponChecking || couponNeedsReapply(coupon.code, coupon.quoteId) || locationPending} aria-describedby={locationPending ? "v2-location-review-pending" : blockingIssue?.id} onClick={() => void beginSecureCheckout()}>{checkoutBusy ? "Reserving…" : paymentMode === "prepaid" ? "Reserve & review payment" : "Reserve · pay after service"} <span>→</span></button>
           {locationPending && <p id="v2-location-review-pending" role="status" className={styles.helper}>Review or cancel the current-location suggestion before reserving.</p>}
