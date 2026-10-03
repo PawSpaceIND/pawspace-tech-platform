@@ -87,7 +87,7 @@ export async function POST(request: Request) {
           JOIN booking_payments p ON p.booking_id=b.id
           WHERE b.id=? AND b.customer_id=?`).bind(bookingId, session.subjectId).first<Record<string, unknown>>();
       if (!stage || !projection) return json({ error: "Payment record was not found." }, 404);
-      let status = stage.stage === "settled" || stage.dueNow <= 0 ? "captured" : "awaiting_confirmation";
+      let status = stage.dueNow <= 0 ? "nothing_due" : "awaiting_confirmation";
       const bookingStatus = String(projection.booking_status), paymentStatus = String(projection.payment_status), paymentMode = String(projection.payment_mode);
       let transactionId = String(projection.transaction_id || "");
       const bookingReady = ["confirmed", "assigned", "on_the_way", "arrived", "in_service", "in_progress", "completed"].includes(bookingStatus);
@@ -105,7 +105,9 @@ export async function POST(request: Request) {
         status = capturedOrder && transactionId ? "captured" : "awaiting_confirmation";
       }
       const paymentReady = paymentMode === "pay_after_service" ? Number(projection.amount_due_now || 0) <= 0 : paymentStatus === "captured" && Boolean(transactionId);
-      if (!requestedOrder && paymentReady && bookingReady) status = "captured";
+      // Eligibility to proceed with pay-after is not evidence of collection.
+      const paymentCaptured = paymentStatus === "captured" && (paymentMode === "pay_after_service" || Boolean(transactionId));
+      if (!requestedOrder && paymentCaptured) status = "captured";
       const canonical = await readCustomerCheckoutConfirmation(db, session.subjectId, bookingId);
       const balanceWindow = stage.stage === "outstanding_balance" ? await outstandingBalanceWindow(db, bookingId) : null;
       return json({ data: { bookingId, orderId: typeof body.orderId === "string" ? body.orderId : undefined, environment: "sandbox", status, confirmation: {

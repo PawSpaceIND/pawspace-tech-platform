@@ -25,7 +25,9 @@ test("booking confirmation renders only the customer-owned canonical server proj
   const page = await readFile(new URL("../app/mobile-app/booking-confirmation/booking-confirmation-view.tsx", import.meta.url), "utf8");
   assert.match(page, /loadCustomerConfirmationProjection\(bookingId, abort\.signal\)/);
   assert.doesNotMatch(page, /loadCustomerAccount|localStorage|sessionStorage/, "the success page must not reconstruct pre-payment client state");
-  assert.match(page, /const success = verified && canonicalReady/);
+  assert.match(page, /const success = canonicalReady/, "booking readiness remains distinct from verified collection");
+  assert.match(page, /const verified = customerPaymentVerified\(projection\)/);
+  assert.match(page, /success && verified && <section/, "only verified collection renders the Payment verified banner");
   for (const field of ["scheduledStart", "scheduledEnd", "providerName", "providerModel", "paymentStatus", "transactionId"]) assert.match(page, new RegExp(`projection\\.${field}`));
   assert.match(page, /Finalizing your confirmed booking/, "capture alone shows a synchronization state, not success");
 });

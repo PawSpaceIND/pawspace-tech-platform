@@ -378,7 +378,8 @@ test('real order route persists one server-priced intent and reuses it across re
 
 test('a settled booking shows nothing due without opening the SDK or claiming a new capture', async () => {
   const c = client({ order: { connected: false, status: 'nothing_due' } }); await c.controller.start();
-  assert.equal(c.opened.length, 0); assert.equal(c.states.at(-1).phase, 'settled');
+  assert.equal(c.opened.length, 0); assert.equal(c.states.at(-1).phase, 'nothing_due');
+  assert.notEqual(c.states.at(-1).phase, 'captured');
   assert.equal(c.requests.length, 1);
 });
 
