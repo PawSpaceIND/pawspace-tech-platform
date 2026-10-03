@@ -29,6 +29,9 @@ async function backlogWorld() {
     CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER);
   `);
   await gstAccounting.ensureGstAccountingTables(db);
+  // Approved inclusive economics apply only to this disposable fixture.
+  const { saveGstSetting } = await import("../lib/gst-setting.ts");
+  await saveGstSetting(db, { cityId: "*", ratePercent: 18, method: "extract_inclusive", effectiveFrom: "2024-01-01", reason: "Owner-approved inclusive finance fixture", actorId: "finance.fixture@pawspace.test" });
   sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,'IN','active','founder',1,1,1)").run(ENTITY, SELLER.legalName);
   sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,effective_to,approved_by,approved_at,created_at,updated_at) VALUES ('SEEDTR-TKPET-KA',?,'IN-KA','gstin',?,'active','2024-01-01',NULL,'founder',1,1,1)").run(ENTITY, GSTIN);
   sqlite.prepare("INSERT INTO tax_policy_versions (id,entity_id,version,status,effective_from,effective_to,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES (?,?,1,'active','2024-01-01',NULL,?,'APR','founder',1,1,1)").run(POLICY, ENTITY, JSON.stringify({ seller: SELLER }));
