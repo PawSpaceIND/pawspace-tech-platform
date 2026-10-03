@@ -1,10 +1,10 @@
 import {writeFileSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
-const ORIGINAL='66d593c5-ce73-458e-925c-ca23c92c0934',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
+const ORIGINAL='1cf2af17-8a15-4532-b178-05acce572490',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
 const crons=['*/5 * * * *','*/15 * * * *','15 2 * * *'];
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
-const receipt={kind:'certified_staging_incident_recovery',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37148795839};
+const receipt={kind:'certified_staging_read_only_verification',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37148795839};
 const save=()=>writeFileSync(env.EVIDENCE_PATH||'recovery-receipt.json',JSON.stringify(receipt,null,2)+'\n');
 const check=(v,m)=>{if(!v)throw Error(m)};
 const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,1000);
@@ -22,12 +22,9 @@ try{
  check(env.CONFIRM==='restore-certified-staging'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-restore-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_recovery_refused');
  check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY,'existing_connection_missing');
  receipt.before=await active();receipt.schedulesBefore=await schedules();save();
- check([ORIGINAL,TEMP].includes(receipt.before.versionId),'unrelated_deployment_refused');
- if(receipt.before.versionId!==ORIGINAL){
-  try{await api('/deployments','POST',{strategy:'percentage',versions:[{version_id:ORIGINAL,percentage:100}],annotations:{'workers/message':'Recover certified staging for attended human tests'}});}catch(error){receipt.restoreError=redact(error.message);receipt.afterFailedRestore=await active();save();if(receipt.afterFailedRestore.versionId!==ORIGINAL)throw error;receipt.restoreResultReconciled=true;}
- }
+ check(receipt.before.versionId===ORIGINAL,'unexpected_deployment_refused');
  receipt.after=await active();check(receipt.after.versionId===ORIGINAL,'certified_version_not_restored');save();
- if(JSON.stringify(receipt.schedulesBefore)!==JSON.stringify([...crons].sort()))await api('/schedules','PUT',crons.map(cron=>({cron})));
+
  receipt.schedulesAfter=await schedules();check(JSON.stringify(receipt.schedulesAfter)===JSON.stringify([...crons].sort()),'cron_restore_unproven');save();
  const cookie='pawspace_uat='+encodeURIComponent(await issueUatToken({PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY},'founder@pawspace.in',600));
  const get=async path=>{const r=await fetch(origin+path,{headers:{cookie},redirect:'manual',signal:AbortSignal.timeout(20000)});check(r.ok,'origin_'+r.status+'_'+path);return r;};
