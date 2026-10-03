@@ -44,6 +44,8 @@ jobs:
       - name: Payment environment + live gate + outbox hardening
         run: node --experimental-strip-types --test tests/payments-production-hardening.test.mjs
       - name: Finance P0/P1 source contracts
+        # This source contract exists only on the original finance branch.
+        if: github.ref == 'refs/heads/fix/financial-lifecycle-p0-p1' || github.head_ref == 'fix/financial-lifecycle-p0-p1'
         run: node --test tests/financial-lifecycle-concurrency.test.mjs
       - name: Finance P0/P1 executable concurrency and duplicate acceptance
         run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
