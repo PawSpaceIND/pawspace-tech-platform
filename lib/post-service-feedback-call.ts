@@ -10,7 +10,7 @@
  *      customer's rating, never carries a reward, and never records that a review was posted.
  *      The private feedback-completion reward stays entirely inside lib/service-review-governance.ts.
  *
- *   2. `scheduleFeedbackCall` / `runPostServiceFeedbackCallSweep` let a customer ask for ONE automated
+ *   2. `scheduleFeedbackCall` / `dispatchPostServiceFeedbackTestCalls` let a customer ask for ONE automated
  *      feedback call at a time they choose, and later hand that request to an INJECTED, test-only call
  *      placer. This module never imports or invokes a telephony entry point: the sweep refuses to run
  *      unless a caller supplies a provider that declares itself test-only, and a scheduler owner is
@@ -448,7 +448,7 @@ export type FeedbackCallSweepInput = {
  * Nothing in this repository wires a placer by default. The customer route only ever injects the
  * synthetic no-dial placer, and only in an explicitly non-production configuration.
  */
-export async function runPostServiceFeedbackCallSweep(db: Db, input: FeedbackCallSweepInput) {
+export async function dispatchPostServiceFeedbackTestCalls(db: Db, input: FeedbackCallSweepInput) {
   await ensurePostServiceFeedbackTables(db);
   const placer = input.placer;
   if (!placer || placer.testOnly !== true || typeof placer.placeCall !== "function" || !text(placer.label)) {

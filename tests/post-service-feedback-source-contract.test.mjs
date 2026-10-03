@@ -42,7 +42,7 @@ test("the contract has no telephony entry point and places calls only through an
   assert.match(lib, /placer\.testOnly !== true/, "and the sweep checks it at run time");
   assert.match(lib, /call_placer_not_injected/, "no placer means refuse");
   assert.doesNotMatch(lib, /input\.placer\s*(\?\?|\|\|)|placer\s*=\s*[^;\n]*(\?\?|\|\|)/, "no default placer expression");
-  const sweep = lib.slice(lib.indexOf("export async function runPostServiceFeedbackCallSweep"));
+  const sweep = lib.slice(lib.indexOf("export async function dispatchPostServiceFeedbackTestCalls"));
   assert.doesNotMatch(sweep, /syntheticFeedbackCallPlacer\(/, "the sweep never constructs a placer of its own");
   assert.match(lib, /production_call_reported/, "a production call reported through the placer halts the sweep");
 });

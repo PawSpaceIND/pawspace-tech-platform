@@ -1,6 +1,6 @@
 import{authError,authFailure,database,requirePermission,resolveActor,securityAudit,type AuthenticatedActor}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
-import{PostServiceFeedbackError,cancelFeedbackCall,feedbackCallEligibility,feedbackCallPolicyFromEnv,postServiceReviewInvitation,runPostServiceFeedbackCallSweep,scheduleFeedbackCall,syntheticDispatchPermitted,syntheticFeedbackCallPlacer}from"../../../lib/post-service-feedback-call";
+import{PostServiceFeedbackError,cancelFeedbackCall,feedbackCallEligibility,feedbackCallPolicyFromEnv,postServiceReviewInvitation,dispatchPostServiceFeedbackTestCalls,scheduleFeedbackCall,syntheticDispatchPermitted,syntheticFeedbackCallPlacer}from"../../../lib/post-service-feedback-call";
 
 /**
  * Post-service honest review links and consented feedback calls, for the customer who actually received
@@ -66,7 +66,7 @@ async function dispatchDue(request:Request,body:FeedbackBody){
         await securityAudit(db,actor,"post_service_feedback.call.dispatch","post_service_feedback_calls",null,"denied",{reason:"synthetic_dispatch_not_permitted"});
         return json({error:"Feedback-call dispatch is off. It runs only as a synthetic no-dial test in an explicitly non-production configuration.",code:"synthetic_dispatch_not_permitted"},403);
       }
-      const data=await runPostServiceFeedbackCallSweep(db,{placer:syntheticFeedbackCallPlacer("route_synthetic_no_dial"),policy:feedbackCallPolicyFromEnv(env),actorId:actor.email,limit:Number(body.limit)||undefined});
+      const data=await dispatchPostServiceFeedbackTestCalls(db,{placer:syntheticFeedbackCallPlacer("route_synthetic_no_dial"),policy:feedbackCallPolicyFromEnv(env),actorId:actor.email,limit:Number(body.limit)||undefined});
       await securityAudit(db,actor,"post_service_feedback.call.dispatch","post_service_feedback_calls",null,"completed",{placer:data.placer,scanned:data.scanned,simulated:data.simulated,blocked:data.blocked,cancelled:data.cancelled,missed:data.missed,failed:data.failed});
       return json({data});
 }

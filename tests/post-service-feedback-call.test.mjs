@@ -158,7 +158,7 @@ test("an unknown scheduling policy refuses eligibility, scheduling and dispatch 
 
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: null, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: null, asOf: IST_16 });
   assert.equal(run.blocked, 1, JSON.stringify(run));
   assert.equal(requests.length, 0, "the placer was never asked");
   assert.equal(scheduleRows(sqlite)[0].outcome, "call_policy_unknown");
@@ -279,7 +279,7 @@ test("the sweep refuses to run without an injected test-only placer and changes 
   const { db, sqlite } = await world();
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   for (const placer of [undefined, null, {}, { label: "x", async placeCall() { return {}; } }, { testOnly: "true", label: "x", async placeCall() { return {}; } }, { testOnly: true, label: "", async placeCall() { return {}; } }, { testOnly: true, label: "x" }]) {
-    await assert.rejects(mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 }), error => error.code === "call_placer_not_injected" && error.status === 503);
+    await assert.rejects(mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 }), error => error.code === "call_placer_not_injected" && error.status === 503);
   }
   const row = scheduleRows(sqlite)[0];
   assert.equal(row.status, "scheduled"); assert.equal(row.attempt_count, 0);
@@ -290,11 +290,11 @@ test("a due call is handed to the injected placer exactly once, with the booking
   const { db, sqlite } = await world();
   const { schedule } = await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   const { placer, requests } = recordingPlacer("dialled");
-  const early = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 - HOUR });
+  const early = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 - HOUR });
   assert.equal(early.scanned, 0, "nothing is placed before the customer's chosen time");
   assert.equal(requests.length, 0);
 
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + MINUTE });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + MINUTE });
   assert.equal(run.placed, 1, JSON.stringify(run));
   assert.equal(run.placer, "test_recording_placer");
   assert.equal(requests.length, 1);
@@ -308,7 +308,7 @@ test("a due call is handed to the injected placer exactly once, with the booking
   assert.equal(row.status, "placed"); assert.equal(row.attempt_count, 1); assert.equal(row.voice_call_id, `TEST-${schedule.id}-1`);
   assert.equal(voiceOrders(sqlite), 0, "the contract never touched the voice ledger itself");
 
-  const again = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + 2 * MINUTE });
+  const again = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + 2 * MINUTE });
   assert.equal(again.scanned, 0);
   assert.equal(requests.length, 1, "a second sweep asks for nothing");
 
@@ -322,7 +322,7 @@ test("a due call is handed to the injected placer exactly once, with the booking
 test("the synthetic no-dial placer records a simulated outcome, consumes the attempt, and dials nothing", async () => {
   const { db, sqlite } = await world();
   const { schedule } = await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer: mod.syntheticFeedbackCallPlacer("fixture_synthetic"), policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer: mod.syntheticFeedbackCallPlacer("fixture_synthetic"), policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.simulated, 1, JSON.stringify(run)); assert.equal(run.placed, 0);
   const row = scheduleRows(sqlite)[0];
   assert.equal(row.status, "simulated"); assert.equal(row.outcome, "simulated_no_dial"); assert.equal(row.voice_call_id, `SYN-${schedule.id}-1`); assert.equal(row.attempt_count, 1);
@@ -333,7 +333,7 @@ test("a placer that reports a production call is recorded as a failure and halts
   const { db, sqlite } = await world();
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   const { placer } = recordingPlacer("dialled", { productionCall: true, label: "misconfigured_placer" });
-  await assert.rejects(mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 }), error => error.code === "production_call_reported");
+  await assert.rejects(mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 }), error => error.code === "production_call_reported");
   const row = scheduleRows(sqlite)[0];
   assert.equal(row.status, "failed"); assert.equal(row.outcome, "production_call_reported");
 });
@@ -343,16 +343,16 @@ test("blocked and failed placer outcomes, and a throwing placer, are recorded wi
     const { db, sqlite } = await world();
     await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
     const { placer, requests } = recordingPlacer(outcome);
-    const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+    const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
     assert.equal(run[expectedStatus], 1, JSON.stringify(run));
     assert.equal(scheduleRows(sqlite)[0].outcome, expectedOutcome);
-    await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + MINUTE });
+    await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + MINUTE });
     assert.equal(requests.length, 1, "no automatic retry");
   }
   const { db, sqlite } = await world();
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   const { placer } = recordingPlacer("dialled", { throwError: Object.assign(new Error("owner refused"), { name: "CanonicalRecipientOwnershipError" }) });
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.blocked, 1);
   assert.equal(scheduleRows(sqlite)[0].outcome, "recipient_ownership_refused");
 });
@@ -362,7 +362,7 @@ test("an opt-out recorded after scheduling cancels the call at dispatch and the 
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   await gov.recordVoiceOptOut(db, { phone: ALLOWLISTED_PHONE, source: "customer_request", actorId: "qa", asOf: NOW + HOUR });
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.cancelled, 1, JSON.stringify(run));
   assert.equal(requests.length, 0);
   const row = scheduleRows(sqlite)[0];
@@ -376,7 +376,7 @@ test("central consent withdrawn after scheduling cancels the call at dispatch", 
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   sqlite.prepare("UPDATE communication_consent SET voice_allowed=0 WHERE customer_id='CON-V1'").run();
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.cancelled, 1);
   assert.equal(requests.length, 0);
   assert.equal(scheduleRows(sqlite)[0].outcome, "voice_consent_not_explicit");
@@ -387,7 +387,7 @@ test("lineage is re-read at dispatch: a booking that is no longer completed or o
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   sqlite.prepare("UPDATE canonical_bookings SET status='cancelled' WHERE id='BKG-V1'").run();
   const first = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer: first.placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer: first.placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.cancelled, 1);
   assert.equal(scheduleRows(sqlite)[0].outcome, "booking_not_completed");
   assert.equal(first.requests.length, 0);
@@ -396,7 +396,7 @@ test("lineage is re-read at dispatch: a booking that is no longer completed or o
   await mod.scheduleFeedbackCall(second.db, { ...base, preferredAt: IST_16 });
   second.sqlite.prepare("UPDATE canonical_bookings SET customer_id='CON-OTHER' WHERE id='BKG-V1'").run();
   const owner = recordingPlacer();
-  const ownerRun = await mod.runPostServiceFeedbackCallSweep(second.db, { placer: owner.placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const ownerRun = await mod.dispatchPostServiceFeedbackTestCalls(second.db, { placer: owner.placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(ownerRun.cancelled, 1);
   assert.equal(scheduleRows(second.sqlite)[0].outcome, "booking_not_owned");
   assert.equal(owner.requests.length, 0);
@@ -407,7 +407,7 @@ test("a registered number that changed after consent is not placed", async () =>
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   sqlite.prepare("UPDATE canonical_customers SET primary_phone=? WHERE id='CON-V1'").run(OTHER_PHONE);
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 });
   assert.equal(run.placed, 0);
   assert.equal(requests.length, 0);
   assert.equal(scheduleRows(sqlite)[0].status, "cancelled");
@@ -418,7 +418,7 @@ test("quiet hours are re-checked at dispatch time in the customer's timezone", a
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_20 });
   sqlite.prepare("UPDATE communication_policies SET quiet_start_hour=19 WHERE city_id='blr'").run();
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_20 });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_20 });
   assert.equal(run.blocked, 1, JSON.stringify(run));
   assert.equal(requests.length, 0);
   assert.equal(scheduleRows(sqlite)[0].outcome, "quiet_hours");
@@ -428,7 +428,7 @@ test("a due call the sweep did not reach inside the configured window is missed,
   const { db, sqlite } = await world();
   await mod.scheduleFeedbackCall(db, { ...base, preferredAt: IST_16 });
   const { placer, requests } = recordingPlacer();
-  const run = await mod.runPostServiceFeedbackCallSweep(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + FIXTURE_POLICY.dispatchWindowMs + MINUTE });
+  const run = await mod.dispatchPostServiceFeedbackTestCalls(db, { placer, policy: FIXTURE_POLICY, asOf: IST_16 + FIXTURE_POLICY.dispatchWindowMs + MINUTE });
   assert.equal(run.missed, 1);
   assert.equal(requests.length, 0);
   assert.equal(scheduleRows(sqlite)[0].status, "missed");
