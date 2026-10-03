@@ -47,7 +47,11 @@ a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret
 # commit that introduced the test; the test now assembles them at runtime. Exact historical finding only.
 522ca30e594b05724b80917e6adabad99c9b549f:tests/web-chat-visitor-verify.test.mjs:generic-api-key:16
 
-# Non-credential: synthetic RazorpayX TEST key id `rzp_test_provider` used only as sandbox fixture in
+# Non-credential: synthetic RazorpayX TEST key identifier used only as sandbox fixture in
 # Path B provider-status-sync tests (PR #1250 commit 03936fbd). Exact historical finding only; tip now
 # uses short fixture id rzp_test_LOCAL that the rule does not match. Literal not reproduced here.
 03936fbdf46e9fa81662485ae5226f95a47d7c76:tests/razorpayx-provider-status-sync.test.mjs:pawspace-payment-secret-key:10
+
+# Historical documentation comment reproduced that same loopback-only fixture identifier.
+# Exact comment finding only; no credential or general rule suppression.
+7b03f7b40f2e0631e8ed948f3adee02232be61b4:.gitleaksignore:pawspace-payment-secret-key:50
