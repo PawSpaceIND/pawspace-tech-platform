@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - fix/financial-lifecycle-p0-p1
+      - fix/rpx-provider-status-sync-sandbox
+  pull_request:
+    paths:
+      - lib/razorpayx-*.ts
+      - app/api/razorpayx-test-reconcile/**
+      - tests/razorpayx-*.test.mjs
+      - .github/workflows/finance-p0-p1-targeted.yml
   workflow_dispatch:
 
 permissions:

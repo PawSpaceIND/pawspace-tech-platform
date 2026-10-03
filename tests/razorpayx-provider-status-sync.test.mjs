@@ -150,3 +150,45 @@ test("source contract: Path B sync is wired beside books-only reconcile without 
  assert.match(route,/reconcileRecordedRazorpayXPayout/);
  assert.doesNotMatch(route,/verifyRazorpayRawBody|x-razorpay-signature/);
 });
+
+
+for(const [field,value] of [["id","pout_OTHER"],["reference_id","OTHER"],["currency","USD"],["fund_account_id","fa_OTHER"]])test(`rejects provider ${field} mismatch without settlement`,async()=>{
+ const p=await provider("processed",{[field]:value});try{const w=await world();await seedCommission(w);seedRelease(w);
+ await assert.rejects(()=>w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,baseEnv(p.url),{payoutId:"RPX-LOCAL-1"}),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT status FROM provider_order_payouts").get().status,"provider_processing_sandbox");
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='razorpayx_payout_settlement'").get().n,0);
+ }finally{await p.close();}
+});
+test("provider state cannot bind a different booking instruction",async()=>{
+ const p=await provider();try{const w=await world();await seedCommission(w);seedRelease(w);w.sqlite.exec("UPDATE razorpayx_payout_provider_state SET booking_id='OTHER'");
+ await assert.rejects(()=>w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,baseEnv(p.url),{payoutId:"RPX-LOCAL-1"}),e=>e instanceof Response&&e.status===409);
+ assert.equal(w.sqlite.prepare("SELECT status FROM provider_order_payouts").get().status,"provider_processing_sandbox");
+ }finally{await p.close();}
+});
+for(const status of ["provider_queued_sandbox","provider_pending_sandbox"])test(`failed advances ${status}`,async()=>{
+ const p=await provider("failed");try{const w=await world();await seedCommission(w,{status});w.sqlite.prepare("UPDATE razorpayx_payout_provider_state SET provider_status=?").run(status.includes("queued")?"queued":"pending");
+ const r=await w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,baseEnv(p.url),{payoutId:"RPX-LOCAL-1"});assert.equal(r.providerStatus,"failed");assert.equal(r.advanced,true);
+ }finally{await p.close();}
+});
+test("failure after provider and source writes rolls back the entire settlement",async()=>{
+ const p=await provider();try{const w=await world();await seedCommission(w);seedRelease(w);const original=w.db.batch;
+ w.db.batch=items=>original(items.some(s=>s.sql.includes("INSERT INTO razorpayx_receipt_assertions"))?[...items,w.db.prepare("INSERT INTO missing_rollback_table VALUES (1)")]:items);
+ await assert.rejects(()=>w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,baseEnv(p.url),{payoutId:"RPX-LOCAL-1"}),/missing_rollback_table/);
+ assert.equal(w.sqlite.prepare("SELECT status FROM provider_order_payouts").get().status,"provider_processing_sandbox");assert.equal(w.sqlite.prepare("SELECT provider_status FROM razorpayx_payout_provider_state").get().provider_status,"processing");
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='razorpayx_payout_settlement'").get().n,0);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM razorpayx_receipt_assertions").get().n,0);
+ }finally{await p.close();}
+});
+
+test("processed payout can advance to reversed without a duplicate settlement",async()=>{
+ const processed=await provider("processed");let reversed;try{const w=await world();await seedCommission(w);seedRelease(w);
+ const first=await w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,baseEnv(processed.url),{payoutId:"RPX-LOCAL-1"});assert.equal(first.accounting.status,"principal_settled");
+ reversed=await provider("reversed");const env=baseEnv(reversed.url);
+ const result=await w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,env,{payoutId:"RPX-LOCAL-1"});assert.equal(result.providerStatus,"reversed");assert.equal(result.advanced,true);
+ assert.equal(w.sqlite.prepare("SELECT status FROM provider_order_payouts").get().status,"payout_reversed_sandbox");
+ assert.equal(w.sqlite.prepare("SELECT provider_status FROM razorpayx_payout_provider_state").get().provider_status,"reversed");
+ const replay=await w.runtime.reconcileRazorpayXProviderStatusFromApi(w.db,env,{payoutId:"RPX-LOCAL-1"});assert.equal(replay.advanced,false);
+ assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='razorpayx_payout_settlement'").get().n,2);
+ assert.equal([...processed.calls,...reversed.calls].filter(c=>c.method==='POST').length,0);
+ }finally{await processed.close();if(reversed)await reversed.close();}
+});
