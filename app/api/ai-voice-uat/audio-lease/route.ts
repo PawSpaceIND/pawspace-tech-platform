@@ -1,4 +1,6 @@
 import {authError,database,requireCustomerOwnership,requirePermission,resolveActor} from "../../../../lib/server-auth";
+import {ensureCustomerAccountTables} from "../../../../lib/customer-account";
+import {ensureAiVoiceUatTables} from "../../../../lib/ai-voice-uat";
 import {ensureCommunicationTables} from "../../../../lib/communication-engine";
 import {isVoiceAllowlisted} from "../../../../lib/voice-call-gate";
 import {readBoundedRequestText} from "../../../../lib/voice-safe-fetch";
@@ -15,7 +17,7 @@ async function context(request:Request){
  const {env}=await import("cloudflare:workers"),e=env as unknown as Row;
  if(text(e.PAWSPACE_DEPLOYMENT_ENV)!=="staging"||text(e.FORBID_PRODUCTION)!=="true"||text(e.PAWSPACE_VOICE_PHONE_TESTS_PAUSED)!=="true"||text(e.PAWSPACE_PAYMENT_ENV)!=="sandbox"||text(e.PAWSPACE_PAYMENT_LIVE_APPROVED)!=="false"||text(e.PAWSPACE_RAZORPAYX_ENV)!=="sandbox"||text(e.PAWSPACE_RAZORPAYX_LIVE_APPROVED)!=="false")refuse("next_audio_isolation_refused");
  if(!/^[a-f0-9]{40}$/.test(text(e.PAWSPACE_STAGING_BUILD_SHA)))refuse("next_audio_version_missing");
- const db=await database();await ensureNextAudioBudget(db);
+ const db=await database();await ensureCustomerAccountTables(db);await ensureAiVoiceUatTables(db);await ensureNextAudioBudget(db);
  // Only existing privileged D1 administration can provision evidence. HTTP bodies cannot supply rates.
  await db.prepare("CREATE TABLE IF NOT EXISTS next_audio_rate_evidence (id TEXT PRIMARY KEY,region TEXT NOT NULL,receipt_json TEXT NOT NULL)").run();
  const evidence=await db.prepare("SELECT region,receipt_json FROM next_audio_rate_evidence WHERE id=?").bind(NEXT_AUDIO_BUDGET_ID).first<Row>();

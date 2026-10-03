@@ -77,3 +77,11 @@ test('completion failure is independently recorded after export failure',async()
  await finalizeAudioScenario({result,recordings:[['agent',[{atMs:1,pcm:Buffer.from([1]),format:'bad'}]]],exportRecording:async()=>{throw Error('export')},completeCall:async()=>{throw Error('complete')},persist:async()=>{persisted=true}});
  assert.equal(persisted,true);assert.equal(result.syntheticCallCompleted,false);assert.equal(result.errors.length,2);
 });
+
+import {readFileSync} from 'node:fs';
+import {preservedNextAudioBytes} from './helpers/next-audio-reviewed-delta.mjs';
+test('exact reviewed workflow suffix can be reversed but any guard mutation fails',()=>{
+ const path='.github/workflows/elevenlabs-provider-preflight.yml',bytes=readFileSync(path),before=preservedNextAudioBytes(path,bytes);
+ assert.ok(!before.toString().includes('next-bounded-audio:'));
+ for(const [a,b] of [["test \"$GITHUB_RUN_ATTEMPT\" = \"1\"","true"],["group: pawspace-staging-sweep","group: other"],["node --experimental-strip-types scripts/next-ten-audio-runner.mjs","node old-runner.mjs"]])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(bytes.toString().replace(a,b))));
+});
