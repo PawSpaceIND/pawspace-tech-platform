@@ -109,7 +109,7 @@ test('trusted hosted provisioning pins runtime/config and cannot overwrite evide
  if(url.endsWith('/query')){const body=JSON.parse(init.body);sql.push(body.sql);if(body.sql.startsWith('INSERT')&&!stored)stored={region:body.params[1],receipt_json:body.params[2]};return Response.json({success:true,result:[{results:body.sql.startsWith('SELECT')?[stored]:[]}]});}
  return Response.json({success:true,result:{name:'pawspace-staging'}});
  };
- const r=await provisionNextAudioCeiling(e,fetcher);assert.equal(r.paidGenerationRequests,0);assert.equal(r.trustedCeilingStored,true);assert.ok(sql.every(x=>!x.includes('next_audio_budget')&&!x.includes('UPDATE')&&!x.includes('DELETE')));
+ const r=await provisionNextAudioCeiling({...e,GITHUB_SHA:'b'.repeat(40),EXPECTED_SHA:'b'.repeat(40)},fetcher);assert.equal(r.inspectorCheckoutSha,'b'.repeat(40));assert.equal(r.sourceSha,'a'.repeat(40));assert.equal(r.paidGenerationRequests,0);assert.equal(r.trustedCeilingStored,true);assert.ok(sql.every(x=>!x.includes('next_audio_budget')&&!x.includes('UPDATE')&&!x.includes('DELETE')));
  await assert.rejects(()=>provisionNextAudioCeiling({...e,NEXT_AUDIO_RATE_RECEIPT_JSON:JSON.stringify({...receipt,optionalBatchMicros:0})},fetcher),/already pinned/);
  const writes=sql.length;vars.PAWSPACE_VOICE_PHONE_TESTS_PAUSED='false';await assert.rejects(()=>provisionNextAudioCeiling(e,fetcher),/isolation/);assert.equal(sql.length,writes);
  await assert.rejects(()=>provisionNextAudioCeiling({...e,STAGING_D1_ID:'production-only'},()=>assert.fail('no HTTP')));
