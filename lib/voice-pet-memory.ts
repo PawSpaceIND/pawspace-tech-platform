@@ -18,4 +18,3 @@ export function voicePetMemory(input:string,history:History[],pets:Pet[]){
  const allowedSavedPetIds=[...new Set([...intendedNewSavedPetIds,...pets.filter(p=>mentioned(String(p.name??""))).map(p=>String(p.id??""))])];
  return{allowedSavedPetIds,newPetNames:[...names.values()],unlinkedNewPetNames,newPetBookingNeedsProfile,intendedNewSavedPetIds,identityRule:"new_pets_are_separate_not_saved_profile_aliases"};
 }
-
