@@ -1,4 +1,5 @@
 "use client";
+import TestCoinServicePreview from "../v2/test-coin-service-preview";
 import type {StayGuestDraft} from "../../lib/v2/stay-guest-draft";
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./stay-flow.module.css";
@@ -739,6 +740,7 @@ export default function StayFlow({ mode: initialMode, customer, onModeChange, ro
               Booking total<b>{quoteMoney(total)}</b>
             </strong>
           </div>
+          {routeScope==="v2"&&<TestCoinServicePreview serviceName={mode==="boarding"?"Boarding":"Pet Sitting"} customerId={customer.customerId} eligibleAmount={activeQuote?.totalAmount??null} actualPayable={activeQuote?.amountDueNow??null}/>}
           {splitEligible ? (
             <section className={styles.paymentChoice}>
               <header>

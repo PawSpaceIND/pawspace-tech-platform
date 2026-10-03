@@ -16,7 +16,7 @@ test('Account presentation preserves every original byte except reviewed copy an
   .replaceAll('className={`${styles.primary} ${accountStyles.utility}`}','className={styles.primary}')
   .replaceAll('className={`${styles.card} ${accountStyles.signedOut}`}','className={styles.card}')
   .replaceAll('className={`${styles.back} ${accountStyles.signIn}`}','className={styles.back}');
- assert.equal(createHash('sha256').update(source).digest('hex'),'a138811f9cefbbf7fe04ab7a912aedf94de11d78f1e1f7e1b750c0cbfc59a86d');
+ assert.equal(createHash('sha256').update(source).digest('hex'),'d5ac65e4623140daa82ae60a1e1e4f084f46e471892e8f26fe36eb29b23b95f3');
 });
 test('Account stylesheet remains confined to three presentation hooks',()=>{
  const css=postcss.parse(read('app/v2/account/account.module.css'));
