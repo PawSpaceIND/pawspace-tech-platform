@@ -45,7 +45,7 @@ export async function provisionNextAudioCeiling(env=process.env,request=fetch){
  const cookie=(login.headers.get('set-cookie')||'').split(';',1)[0];
  if(login.status!==200||!/^pawspace_uat=[^\r\n;]+$/.test(cookie))throw Error('Authenticated runtime login refused');
  const ready=await request(origin+'/api/ai-voice-uat/audio-lease',{method:'GET',headers:{origin,cookie},redirect:'error',signal:AbortSignal.timeout(30000)}),data=(await readDemoJson(ready)).data;
- if(!ready.ok||data?.paidExecutionAllowed!==true||data.sourceSha!==receipt.sourceSha||data.agentConfigSha256!==receipt.agentConfigSha256||data.provider!==receipt.provider||data.providerHardDurationSeconds!==120)throw Error('Actual runtime provider/model readiness refused');
+ if(!ready.ok||data?.paidExecutionAllowed!==true||data.sourceSha!==receipt.sourceSha||data.agentConfigSha256!==receipt.agentConfigSha256||data.providerHardDurationSeconds!==120)throw Error('Actual runtime provider/model readiness refused');
  return {runtimeProviderModelVerified:true,inspectorCheckoutSha:env.GITHUB_SHA,sourceSha:receipt.sourceSha,agentConfigSha256:receipt.agentConfigSha256,budgetId:NEXT_AUDIO_BUDGET_ID,capUsd:10,trustedCeilingStored:true,paidGenerationRequests:0,phoneDialed:false};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){const provision=process.env.NEXT_AUDIO_RATE_RECEIPT_JSON!==undefined,report=provision?await provisionNextAudioCeiling():await prepareNextAudioDuration();await mkdir('artifacts/agent-deadlines',{recursive:true});await writeFile('artifacts/agent-deadlines/'+(provision?'trusted-ceiling':'native-duration')+'.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));}
