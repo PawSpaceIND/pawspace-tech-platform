@@ -33,6 +33,7 @@ export async function ensureNextAudioBudget(db: D1Database) {
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_budget (id TEXT PRIMARY KEY, cap_micros INTEGER NOT NULL, reserved_micros INTEGER NOT NULL, conversations INTEGER NOT NULL, receipt_json TEXT NOT NULL, expires_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_leases (thread_id TEXT PRIMARY KEY, budget_id TEXT NOT NULL, customer_id TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS next_audio_batch_claims (budget_id TEXT PRIMARY KEY, token TEXT NOT NULL, run_id TEXT NOT NULL, source_sha TEXT NOT NULL, claimed_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS next_audio_attempts (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, reserved_micros INTEGER NOT NULL, created_at INTEGER NOT NULL)"),
  ]);
 }
@@ -79,4 +80,17 @@ export async function reserveNextAudioAttempt(db: D1Database, input: {threadId:s
  ]);
  if (result.some(r=>Number(r.meta?.changes)!==1)) throw new Error("next_audio_attempt_budget_exhausted_or_expired");
  return {id,reservedMicros:bound};
+}
+
+/** A dispatch consumes this allocation once, even if it fails before its first socket. No reclaim/reset. */
+export async function claimNextAudioBatch(db:D1Database, runId:string, sourceSha:string, now:number) {
+ if (!/^[0-9]+$/.test(runId)||!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("next_audio_batch_identity_invalid");
+ const token=crypto.randomUUID();
+ const r=await db.prepare("INSERT OR IGNORE INTO next_audio_batch_claims (budget_id,token,run_id,source_sha,claimed_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM next_audio_budget WHERE id=? AND conversations=0 AND expires_at>?)").bind(NEXT_AUDIO_BUDGET_ID,token,runId,sourceSha,now,NEXT_AUDIO_BUDGET_ID,now).run();
+ if(Number(r.meta?.changes)!==1)throw new Error("next_audio_batch_already_claimed_or_unavailable");
+ return token;
+}
+export async function requireNextAudioBatch(db:D1Database, token:string, sourceSha:string) {
+ const row=await db.prepare("SELECT token FROM next_audio_batch_claims WHERE budget_id=? AND token=? AND source_sha=?").bind(NEXT_AUDIO_BUDGET_ID,token,sourceSha).first<Row>();
+ if(!row)throw new Error("next_audio_batch_claim_required");
 }

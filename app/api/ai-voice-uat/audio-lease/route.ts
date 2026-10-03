@@ -3,7 +3,7 @@ import {ensureCommunicationTables} from "../../../../lib/communication-engine";
 import {isVoiceAllowlisted} from "../../../../lib/voice-call-gate";
 import {readBoundedRequestText} from "../../../../lib/voice-safe-fetch";
 import {readBoundedText} from "../../../../lib/provider-response-bounds";
-import {ensureNextAudioBudget,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_THREAD_PREFIX,provisionNextAudioBudget,reserveNextAudioLease,validateAudioRateReceipt,type AudioRateReceipt} from "../../../../lib/next-audio-budget";
+import {claimNextAudioBatch,requireNextAudioBatch,ensureNextAudioBudget,NEXT_AUDIO_BUDGET_ID,NEXT_AUDIO_THREAD_PREFIX,provisionNextAudioBudget,reserveNextAudioLease,validateAudioRateReceipt,type AudioRateReceipt} from "../../../../lib/next-audio-budget";
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const refuse=(reason:string)=>{throw new Response(reason,{status:403});};
@@ -40,6 +40,11 @@ export async function GET(request:Request){try{
 export async function POST(request:Request){try{
  const c=await context(request),raw=await readBoundedRequestText(request,4096);if(raw.length>4096)refuse("next_audio_payload_too_large");
  const body=JSON.parse(raw) as Row,customerId=text(body.customerId),callId=text(body.callId);
+ if(body.action==="claim_batch"){
+  const token=await claimNextAudioBatch(c.db,text(body.runId),c.receipt.sourceSha,Date.now());
+  return json({data:{batchToken:token,budgetId:NEXT_AUDIO_BUDGET_ID,sourceSha:c.receipt.sourceSha}},201);
+ }
+ await requireNextAudioBatch(c.db,text(body.batchToken),c.receipt.sourceSha);
  await requireCustomerOwnership(c.db,c.actor,customerId);
  const customer=await c.db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(customerId).first<Row>();
  if(!customer||!isVoiceAllowlisted(c.e,customer.primary_phone))refuse("next_audio_test_customer_not_allowlisted");
@@ -56,4 +61,4 @@ export async function POST(request:Request){try{
  ]);
  if(updates.some(r=>Number(r.meta?.changes)!==1))refuse("next_audio_call_changed_during_admission");
  return json({data:{threadId,customerId,callId,...lease,sourceSha:c.receipt.sourceSha,agentConfigSha256:c.hash,providerHardDurationSeconds:c.duration,phoneDialed:false}},201);
-}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Next audio lease refused");}}
+}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);if(error instanceof Error&&/^next_audio_batch_/.test(error.message))return json({error:error.message},403);return authError(error,"Next audio lease refused");}}

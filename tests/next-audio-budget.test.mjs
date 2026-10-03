@@ -78,3 +78,15 @@ test('adapter historical normalization catches guard deletion, price bypass and 
  const changed=source.toString().replace('const MAX_TIMEOUT_MS = 120_000','const MAX_TIMEOUT_MS = 999_000');
  assert.notEqual(hash(preservedNextAudioBytes(p,Buffer.from(changed))),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
 });
+
+test('native D1 concurrent fresh dispatches claim allocation exactly once',{timeout:60000},async t=>{
+ const db=await world(t);
+ const outcomes=await Promise.allSettled(Array.from({length:12},(_,i)=>budget.claimNextAudioBatch(db,String(100+i),'a'.repeat(40),now)));
+ assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
+ const token=outcomes.find(x=>x.status==='fulfilled').value;
+ await budget.requireNextAudioBatch(db,token,'a'.repeat(40));
+ await assert.rejects(()=>budget.requireNextAudioBatch(db,token,'b'.repeat(40)));
+ await assert.rejects(()=>budget.claimNextAudioBatch(db,'999','a'.repeat(40),now+1));
+ assert.equal((await db.prepare('SELECT COUNT(*) n FROM next_audio_batch_claims').first()).n,1);
+ assert.equal((await db.prepare('SELECT conversations FROM next_audio_budget').first()).conversations,0);
+});

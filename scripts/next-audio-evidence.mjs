@@ -18,3 +18,15 @@ export function createAudioEventReceipt(clock=()=>performance.now()) {
   },
  };
 }
+
+/** Persist metadata and close the synthetic call even when an exporter or format parser fails. */
+export async function finalizeAudioScenario({result,recordings,exportRecording,completeCall,persist,scrub=String}) {
+ for(const [label,chunks] of recordings){
+  result[label+'PacketTimeline']=chunks.map(x=>({atMs:x.atMs,bytes:x.pcm.length,format:x.format}));
+  if(!chunks.length)continue;
+  try{await exportRecording(label,chunks);}catch(e){result.errors.push('Recording export '+label+' failed: '+scrub(e.message));}
+ }
+ try{await completeCall();}catch(e){result.syntheticCallCompleted=false;result.errors.push('Synthetic call completion could not be verified: '+scrub(e.message));}
+ result.completedAt=new Date().toISOString();
+ await persist();
+}

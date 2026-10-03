@@ -28,7 +28,7 @@ test('same origin and authentication required before metadata or paid work',asyn
  const w=await world(t);w.seedEvidence();for(const h of [{origin:'https://other.test'},{cookie:''}]){const r=await route.GET(w.request(undefined,h));assert.ok([401,403].includes(r.status));}assert.equal(w.reads(),0);
 });
 test('valid synthetic admission creates immutable deny namespace and completing call revokes attempt deadline',async t=>{
- const w=await world(t);w.seedEvidence();const r=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL'}));assert.equal(r.status,201,JSON.stringify(await r.clone().json()));const {data}=await r.json();assert.ok(data.threadId.startsWith(budget.NEXT_AUDIO_THREAD_PREFIX));assert.equal(data.nativeBound,320000);
+ const w=await world(t);w.seedEvidence();const claim=await route.POST(w.request({action:'claim_batch',runId:'123'}));const batchToken=(await claim.json()).data.batchToken;const r=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL',batchToken}));assert.equal(r.status,201,JSON.stringify(await r.clone().json()));const {data}=await r.json();assert.ok(data.threadId.startsWith(budget.NEXT_AUDIO_THREAD_PREFIX));assert.equal(data.nativeBound,320000);
  assert.equal(w.sqlite.prepare('SELECT thread_id FROM ai_voice_calls').get().thread_id,data.threadId);
  w.sqlite.prepare("UPDATE ai_voice_calls SET status='completed' WHERE id='CALL'").run();assert.ok(w.sqlite.prepare('SELECT expires_at FROM next_audio_leases').get().expires_at<=Date.now());
  const again=await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL'}));assert.equal(again.status,403);
@@ -54,4 +54,26 @@ test('production brain or replay cannot receive a configuration write',async()=>
 });
 test('ignored duration mutation fails rather than substituting a local socket timeout',async()=>{
  await assert.rejects(()=>prepareNextAudioDuration(durationEnv,async()=>Response.json(config(600))),/readback failed/);
+});
+
+test('fresh dispatches and replay cannot claim the approved allocation twice',async t=>{
+ const w=await world(t);w.seedEvidence();
+ const first=await route.POST(w.request({action:'claim_batch',runId:'123'}));assert.equal(first.status,201);
+ for(const runId of ['123','124'])assert.notEqual((await route.POST(w.request({action:'claim_batch',runId}))).status,201);
+ assert.notEqual((await route.POST(w.request({customerId:'SYNTHETIC',callId:'CALL',batchToken:'other'}))).status,201);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM next_audio_batch_claims').get().n,1);
+ assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM next_audio_leases').get().n,0);
+});
+import {finalizeAudioScenario} from '../scripts/next-audio-evidence.mjs';
+test('format/export failures retain packet metadata and final JSON and still complete call',async()=>{
+ for(const failure of ['unknown format','ffmpeg failed']){
+ const result={errors:[],providerConversationId:'actual-id'};let completed=0,persisted;
+ await finalizeAudioScenario({result,recordings:[['caller',[{atMs:1,pcm:Buffer.from([1,2]),format:'unknown'}]],['agent',[{atMs:2,pcm:Buffer.from([3]),format:'pcm_16000'}]]],exportRecording:async()=>{throw Error(failure)},completeCall:async()=>{completed++;result.syntheticCallCompleted=true},persist:async()=>{persisted=JSON.parse(JSON.stringify(result))}});
+ assert.equal(completed,1);assert.equal(persisted.providerConversationId,'actual-id');assert.equal(persisted.callerPacketTimeline[0].bytes,2);assert.equal(persisted.agentPacketTimeline.length,1);assert.equal(persisted.errors.length,2);assert.ok(persisted.completedAt);
+ }
+});
+test('completion failure is independently recorded after export failure',async()=>{
+ const result={errors:[]};let persisted=false;
+ await finalizeAudioScenario({result,recordings:[['agent',[{atMs:1,pcm:Buffer.from([1]),format:'bad'}]]],exportRecording:async()=>{throw Error('export')},completeCall:async()=>{throw Error('complete')},persist:async()=>{persisted=true}});
+ assert.equal(persisted,true);assert.equal(result.syntheticCallCompleted,false);assert.equal(result.errors.length,2);
 });

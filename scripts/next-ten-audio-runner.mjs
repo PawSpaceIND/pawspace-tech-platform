@@ -1,5 +1,5 @@
 import {NEXT_TEN_AUDIO_SCENARIOS} from './next-ten-audio-scenarios.mjs';
-import {createAudioEventReceipt} from './next-audio-evidence.mjs';
+import {createAudioEventReceipt,finalizeAudioScenario} from './next-audio-evidence.mjs';
 // Ten bounded genuine ASR -> canonical PawSpace brain -> TTS sessions. No telephony dial API.
 import {execFileSync} from 'node:child_process';
 import {writeFile,mkdir} from 'node:fs/promises';
@@ -44,6 +44,8 @@ await mkdir('voice-audit-results',{recursive:true});
 const before=await bookingIds(),reports=[];
 async function leaseRequest(body){const r=await fetch(origin+'/api/ai-voice-uat/audio-lease',{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)}),b=await readDemoJson(r);if(!r.ok)throw Error('Audio budget lease refused ('+r.status+'): '+String(b.error||'unproven'));return b.data;}
 const batchReadiness=await leaseRequest();if(batchReadiness.sourceSha!==env.EXPECTED_SHA||batchReadiness.paidExecutionAllowed!==true)throw Error('Exact guarded batch is not ready');
+const batchClaim=await leaseRequest({action:'claim_batch',runId:env.GITHUB_RUN_ID});
+if(batchClaim.budgetId!=='next-ten-audio-additional-usd5-20261002'||batchClaim.sourceSha!==env.EXPECTED_SHA||!batchClaim.batchToken)throw Error('Durable batch admission refused');
 const scrub=t=>String(t||'').replace(/\+?\d{10,15}/g,'[number]').replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,'[email]');
 async function runScenario(scenario){
  const result={id:scenario.id,service:scenario.service,goal:scenario.goal,startedAt:new Date().toISOString(),turns:[],errors:[],phoneDialed:false,plannedTurns:scenario.prompts.length};
@@ -52,7 +54,7 @@ async function runScenario(scenario){
  try{
   await isolation();
   context=validateDemoContext(await app({action:'start',customerId:env.SPECIALIST_CUSTOMER_ID,direction:'inbound',transportProvider:'sandbox_simulator',consent:true,language:'en'}));
-  const lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId}),threadId=lease.threadId;
+  const lease=await leaseRequest({customerId:env.SPECIALIST_CUSTOMER_ID,callId:context.callId,batchToken:batchClaim.batchToken}),threadId=lease.threadId;
   if(!threadId.startsWith('THREAD-VOICE-NDEMO-NEXT-AUDIO-')||lease.sourceSha!==env.EXPECTED_SHA||lease.providerHardDurationSeconds>120||lease.deadline<=Date.now())throw Error('Bounded native lease invalid');
   result.lease={deadline:lease.deadline,nativeBound:lease.nativeBound,sourceSha:lease.sourceSha,agentConfigSha256:lease.agentConfigSha256};
   const signedResponse=await fetch(eleven+'/v1/convai/conversation/get-signed-url?agent_id='+encodeURIComponent(env.GROOMING_AGENT_ID),{headers,signal:AbortSignal.timeout(30000)}),signed=await readDemoJson(signedResponse);if(!signedResponse.ok)throw Error('Demo socket authorization refused');
@@ -101,12 +103,16 @@ async function runScenario(scenario){
   socket.close();
   if(conversationId){for(let n=0;n<10;n++){await delay(3000);const r=await fetch(eleven+'/v1/convai/conversations/'+encodeURIComponent(conversationId),{headers,signal:AbortSignal.timeout(15000)});if(!r.ok)break;const final=await readDemoJson(r);result.providerConversationId=conversationId;result.providerCostFiat=final.metadata?.cost_fiat??null;result.providerCostCredits=final.metadata?.cost??null;result.providerCharging=final.metadata?.charging??null;result.billingCurrency='unverified; retain provider units without converting';result.providerStatus=final.status;result.providerDurationSeconds=final.metadata?.call_duration_secs;result.providerUserTurns=(final.transcript||[]).filter(x=>x.role==='user').length;result.finalTranscript=(final.transcript||[]).map(x=>({role:x.role,time:x.time_in_call_secs,text:scrub(x.message)}));if(final.status==='done'||final.status==='failed')break;}}
  }catch(e){result.errors.push(scrub(e.message));}
- finally{clearTimeout(deadlineTimer);socket?.close();
+ finally{
+  clearTimeout(deadlineTimer);try{socket?.close();}catch(e){result.errors.push('Socket close failed: '+scrub(e.message));}
   if(conversationId)result.providerConversationId=conversationId;
-  // Raw actual packets plus their timestamps survive partial runs; never label a truncated case a pass.
-  for(const [label,chunks] of [['caller',callerAudio],['agent',providerAudio]]){if(!chunks.length)continue;const rate=audioFormat(chunks[0].format).rate,rawPath=`voice-audit-results/${scenario.id}-${label}-all.raw`,wavPath=`voice-audit-results/${scenario.id}-${label}-all.wav`;await writeFile(rawPath,Buffer.concat(chunks.map(x=>x.pcm)));execFileSync('ffmpeg',['-loglevel','error','-y','-f',chunks[0].format.startsWith('pcm')?'s16le':'mulaw','-ar',String(rate),'-ac','1','-i',rawPath,wavPath]);result[label+'PacketTimeline']=chunks.map(x=>({atMs:x.atMs,bytes:x.pcm.length,format:x.format}));}
-  result.completedAllPlannedTurns=result.turns.length===result.plannedTurns&&result.turns.every(t=>!t.error);result.acceptancePassed=false;result.qualityReview='Pending semantic and listening review; completion is not a pass';if(context){try{await app({action:'complete',callId:context.callId,outcome:'synthetic_multiturn_audio_audit',disposition:'info_shared'});result.syntheticCallCompleted=true;}catch(e){result.syntheticCallCompleted=false;result.errors.push('Synthetic call completion could not be verified: '+scrub(e.message));}}}
- result.completedAt=new Date().toISOString();await writeFile(`voice-audit-results/${scenario.id}.json`,JSON.stringify(result,null,2));reports.push(result);console.log('MAYA_AUDIO_AUDIT_SCENARIO='+JSON.stringify({id:result.id,completedTurns:result.turns.length,plannedTurns:result.plannedTurns,errors:result.errors,handoffs:result.turns.filter(t=>t.handoff).length,providerStatus:result.providerStatus}));
+  result.completedAllPlannedTurns=result.turns.length===result.plannedTurns&&result.turns.every(t=>!t.error);result.acceptancePassed=false;result.qualityReview='Pending semantic and listening review; completion is not a pass';
+  await finalizeAudioScenario({result,recordings:[['caller',callerAudio],['agent',providerAudio]],scrub,
+   exportRecording:async(label,chunks)=>{const rawPath=`voice-audit-results/${scenario.id}-${label}-all.raw`,wavPath=`voice-audit-results/${scenario.id}-${label}-all.wav`;await writeFile(rawPath,Buffer.concat(chunks.map(x=>x.pcm)));const rate=audioFormat(chunks[0].format).rate;execFileSync('ffmpeg',['-loglevel','error','-y','-f',chunks[0].format.startsWith('pcm')?'s16le':'mulaw','-ar',String(rate),'-ac','1','-i',rawPath,wavPath]);},
+   completeCall:async()=>{if(context){await app({action:'complete',callId:context.callId,outcome:'synthetic_multiturn_audio_audit',disposition:'info_shared'});result.syntheticCallCompleted=true;}},
+   persist:()=>writeFile(`voice-audit-results/${scenario.id}.json`,JSON.stringify(result,null,2))});
+ }
+ reports.push(result);console.log('MAYA_AUDIO_AUDIT_SCENARIO='+JSON.stringify({id:result.id,completedTurns:result.turns.length,plannedTurns:result.plannedTurns,errors:result.errors,handoffs:result.turns.filter(t=>t.handoff).length,providerStatus:result.providerStatus}));
 }
 for(const scenario of NEXT_TEN_AUDIO_SCENARIOS)await runScenario(scenario);
 await isolation();const after=await bookingIds();
