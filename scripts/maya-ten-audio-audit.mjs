@@ -73,11 +73,12 @@ async function runScenario(scenario){
    try{
     const wav=execFileSync('espeak-ng',['--stdout','-s','165',prompt],{maxBuffer:2097152,timeout:10000});
     const pcm=execFileSync('ffmpeg',['-loglevel','error','-i','pipe:0','-ar','16000','-ac','1','-f','s16le','pipe:1'],{input:wav,maxBuffer:2097152,timeout:10000});
+    await writeFile(`voice-audit-results/${scenario.id}-${index+1}-caller.wav`,wav);
     const input=Buffer.concat([Buffer.alloc(16000),pcm,Buffer.alloc(64000)]);
     for(let offset=0;offset<input.length;offset+=3200){if(error)throw error;if(closed)throw Error('Demo disconnected during speech');socket.send(JSON.stringify({user_audio_chunk:input.subarray(offset,offset+3200).toString('base64')}));await delay(100);}
     await waitFor(()=>state.transcript&&state.reply&&state.audioBytes>1600&&state.nonSilentBytes>100&&!state.replyInterrupted&&state.playbackEndAt>0&&Date.now()>=state.playbackEndAt+1500&&Date.now()-state.lastAudio>1500,true);
    }catch(e){turn.error=scrub(e.message);}
-   Object.assign(turn,{transcript:scrub(state.transcript),reply:scrub(state.reply),audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,responseAfterAsrMs:firstResponseAt&&lastAsrAt?Math.max(0,firstResponseAt-lastAsrAt):null,interrupted:state.replyInterrupted});
+   Object.assign(turn,{transcript:scrub(state.transcript),reply:scrub(state.reply),audioBytes:state.audioBytes,nonSilentBytes:state.nonSilentBytes,responseAfterAsrMs:null,latencyMeasurementValid:false,interrupted:state.replyInterrupted});
    turn.handoff=/routing this.*PawSpace team member|AI voice cannot continue|contact the PawSpace team for help/i.test(turn.reply);
    turn.nonEnglish=/[\u0900-\u0dff]/u.test(turn.reply);
    if(turnAudio.length){const f=audioFormat(outputFormat),rawPath=`voice-audit-results/${scenario.id}-${index+1}.raw`,wavPath=`voice-audit-results/${scenario.id}-${index+1}.wav`;await writeFile(rawPath,Buffer.concat(turnAudio));execFileSync('ffmpeg',['-loglevel','error','-y','-f',outputFormat.startsWith('pcm')?'s16le':'mulaw','-ar',String(f.rate),'-ac','1','-i',rawPath,wavPath]);}
@@ -94,5 +95,5 @@ async function runScenario(scenario){
 for(const scenario of MAYA_AUDIO_SCENARIOS)await runScenario(scenario);
 await isolation();const after=await bookingIds();
 const summary={startedOnRevision:env.EXPECTED_SHA,phoneDialed:false,engine:'elevenlabs_audio_with_actual_pawspace_staging_brain',inputVoice:'espeak_synthetic_English',carrierCertified:false,bookingSetUnchanged:JSON.stringify(before)===JSON.stringify(after),reports};
-await writeFile('voice-audit-results/ten-conversations.json',JSON.stringify(summary,null,2));
-console.log('MAYA_TEN_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));
+await writeFile('voice-audit-results/four-conversations.json',JSON.stringify(summary,null,2));
+console.log('MAYA_FOUR_AUDIO_AUDIT_COMPLETE='+JSON.stringify({scenarios:reports.length,turns:reports.reduce((n,r)=>n+r.turns.length,0),phoneDialed:false,bookingSetUnchanged:summary.bookingSetUnchanged}));

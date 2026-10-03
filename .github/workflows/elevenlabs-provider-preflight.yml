@@ -303,7 +303,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y espeak-ng ffmpeg
-      - name: Run ten multi-turn actual audio conversations without dialing
+      - name: Run four complex actual audio conversations without dialing
         env:
           EXPECTED_SHA: ${{ inputs.expected_staging_sha }}
           EXPECTED_TESTER_SHA256: ${{ inputs.expected_tester_sha256 }}
@@ -322,7 +322,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: maya-ten-audio-audit
+          name: maya-four-complex-audio-audit
           path: voice-audit-results/
           retention-days: 7
   diagnose-native-audio:

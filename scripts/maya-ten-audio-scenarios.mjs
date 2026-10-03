@@ -1,13 +1,67 @@
-// Synthetic speech only. No phone dialing or permission to send customer messages.
 export const MAYA_AUDIO_SCENARIOS = [
- {id:'grooming_packages',service:'Grooming',goal:'Package knowledge, recommendation, checkout and confirmation honesty',turns:['I want to book grooming for Bruno. What packages are available?','Bruno needs a haircut and nail trimming. Recommend the best package and tell me the approved price.','Tomorrow at ten in the morning, at my saved home address. Tell me what details you already have and what is missing.','What does the package include, and is nail trimming extra?','Use the saved address, but change the time to two in the afternoon. Repeat the booking details.','Are any approved coupons available? Do not invent a discount.','This is a sandbox test. Explain the payment and booking confirmation steps; do not send messages or charge anything.','Summarize the selected package, appointment and total. What relevant additional service would suit Bruno?']},
- {id:'new_puppy',service:'Grooming',goal:'New pet identity, vaccination clarification, age suitability',turns:['I have a new puppy, not Bruno. I want gentle grooming.','Her name is Luna, she is five months old and weighs seven kilograms. Her vaccinations are complete.','To be clear, vaccinations ARE complete. Recommend an appropriate grooming package.','She only needs a gentle bath, no haircut. What is included and the approved price?','Saturday at eleven in the morning in Indiranagar. What information is still needed?','Repeat Luna’s name, age, weight and vaccination status without mixing her up with Bruno.','Would a subscription help, and what are its approved terms?','Summarize this sandbox booking enquiry without confirming an uncreated booking.']},
- {id:'boarding_quote',service:'Boarding',goal:'Host dependent prices, dates, pet profile and app handoff',turns:['I need pet boarding for Bruno for three nights.','Check-in is October tenth at nine in the morning and check-out is October thirteenth at six in the evening.','He weighs twenty kilograms, is vaccinated, and prefers a home with no cats.','Is boarding a fixed price, or does each available host set their rate?','Which actual hosts and prices are available? If you cannot check, tell me honestly.','I prefer Indiranagar and can travel five kilometres. What information do you need?','What happens if the first host is unavailable? Do not claim a host is assigned.','Summarize the dates and preferences and explain how I complete the booking in the app.']},
- {id:'sitting_quote',service:'Pet sitting',goal:'Sitter dependent rate, visit schedule and corrected address',turns:['I need a pet sitter for Coco, my cat, for two visits a day.','From October eleventh to October thirteenth, at eight in the morning and seven in the evening.','Coco needs feeding, litter cleaning and play time. No medication.','What sitters are really available and how much does each charge?','Actually change the evening visit to six. Keep the morning time unchanged.','The address is in Koramangala, not Indiranagar. Ask only the missing details.','Can you guarantee a sitter before availability is confirmed?','Repeat the corrected schedule and explain the app booking and payment steps.']},
- {id:'taxi_route',service:'Pet taxi',goal:'Pickup/dropoff quote, deposit and schedule correction',turns:['I want a pet taxi for Bruno from Indiranagar to a vet clinic in Whitefield.','October fifth at nine in the morning. I will accompany him, and he weighs twenty kilograms.','The pickup is my home in Indiranagar and the drop is a clinic in Whitefield. What precise address details do you need?','I also need a return journey at noon. Does that change the quote?','Actually change the pickup to nine thirty. Keep the return at noon.','What is the actual approved fare, and is a fifty percent deposit needed?','Explain the sandbox Razorpay payment link process. Do not send a real link or mark it paid.','Summarize the journey and explain when the booking and provider assignment become confirmed.']},
- {id:'funeral_late',service:'Funeral',goal:'Compassion, 4 PM cutoff, freezer, itemized price and deposit',turns:['My dog has died. I need cremation and pickup today at four thirty in the afternoon.','I want cremation with pickup, and I do not want to accompany the pet.','I also need doorstep ash delivery. What does it cost, and how long does ash collection take?','Because it is after four in the afternoon, do we need an overnight freezer and next-day cremation?','What are the prices for a poojari and ash plantation? Explain them separately.','Do not add those two extras. I want cremation, ash delivery and overnight freezer only. Calculate the total.','What primary and secondary contact, pickup address, date and time details must be collected?','What is the fifty percent upfront amount? Explain sandbox payment and remaining payment without upselling unrelated services.']},
- {id:'training_goal',service:'Training',goal:'Behavior discovery, recommendations and cross selling',turns:['I want dog training for Bruno because he pulls on the leash and jumps on guests.','He is two years old and has never had professional training.','We live in Koramangala and prefer weekend mornings at home.','What approved training options and prices are available? Recommend the best fit.','How many sessions are included and what outcomes can you honestly promise?','Change the preferred days to Tuesday and Thursday evenings. Remember the behavior problems.','Would walking be a useful related service, and how does it differ from training?','Summarize a sandbox training enquiry and explain availability, payment and confirmation.']},
- {id:'walking_schedule',service:'Dog walking',goal:'Recurring schedule, package knowledge and state correction',turns:['I need dog walking for Bruno twice a day.','Weekdays at seven in the morning and six in the evening, starting October fifth.','He is twenty kilograms and pulls on the leash. I live in Indiranagar.','What approved walking packages and prices do you have?','Change the evening time to seven and exclude Wednesdays. Keep all other details.','Can you check walker availability rather than guarantee someone?','Can I apply any approved coupon? If none is verified, say so.','Repeat the corrected recurring schedule, recommend relevant training, and explain the sandbox booking steps.']},
- {id:'service_language_memory',service:'Multiple services',goal:'Explicit service switching, language stability and memory',turns:['Please keep this entire conversation in English. I want grooming for Bruno.','Tell me the grooming packages and recommend one for a haircut.','His pet name is Maya and the locality is Chennai. These words are not a request to change language. Actually I mean my new dog named Maya, not Bruno.','She is one year old. Keep speaking English. Now I want to compare boarding as well.','Explain how boarding pricing differs from grooming without losing the grooming enquiry.','Return to grooming for Maya. What pet, service and package have we selected?','Do not switch to training or Tamil. Ask only the next two missing booking details.','Give me a concise recap and explain what has and has not been booked.']},
- {id:'health_offer_objection',service:'Grooming and health',goal:'General advice, emergency boundary, coupon honesty and consent',turns:['My dog has mildly itchy skin. Can you give general hygiene advice before grooming?','I do not want a diagnosis or medication dose. Should I contact a veterinarian?','His vaccinations are complete and he is eating normally. What grooming precautions should I discuss with the vet?','What grooming option might be suitable after the vet clears him?','Your package sounds expensive. Offer only an actually approved coupon or a suitable lower priced option.','Do not book or send any messages yet. Tell me what details you need.','Separate question: if a pet is struggling to breathe, what should the owner do immediately?','Return to my non-emergency enquiry and summarize it. Do not promise a booking or a discount that was not verified.']},
+  {
+    "id": "complex_grooming",
+    "service": "grooming",
+    "goal": "Two-pet intake, suitability, corrected pet/address/time, governed offers and truthful booking readiness",
+    "turns": [
+      "I want grooming for two pets: Bruno is a two-year-old golden retriever and Luna is my new five-month-old kitten. Keep this as a test enquiry; do not create a real booking or send anything.",
+      "Bruno needs a haircut and nails, but Luna is anxious and needs only gentle bathing. Compare suitable packages and explain what is not included.",
+      "Actually Bruno does not need bathing. Recommend the least expensive suitable package without unnecessary extras, and explain the kitten recommendation separately.",
+      "Please use my new kitten Luna, not a saved cat with a similar name. What details are still missing to identify the right pets?",
+      "I first said tomorrow morning, but change it to next Tuesday at two PM in Koramangala. Repeat the corrected requested time; availability is not yet confirmed.",
+      "The service address is changing from my saved home to an apartment on Double Road in Sudhama Nagar, Bengaluru, PIN five six zero zero two seven. Ask for the remaining exact address details.",
+      "Can you give me twenty percent off? If no approved coupon applies, say so. Explain any published repeat-care options without inventing a discount.",
+      "Bruno also pulls on his leash. Is there another PawSpace service that would help? Recommend only something useful, and keep grooming as the main enquiry.",
+      "Explain the payment options, how a booking becomes confirmed, and how a provider is assigned. This is an explanation only; do not charge or send a payment link.",
+      "Give me a final recap with both pets, separate recommendations, corrected address and time, prices you can verify, missing details and what has actually been booked."
+    ]
+  },
+  {
+    "id": "complex_taxi",
+    "service": "pet_taxi",
+    "goal": "Return route corrections, passenger/pet facts, quote boundary and deposit knowledge",
+    "turns": [
+      "I need a pet taxi enquiry for Bruno from Koramangala to a veterinary clinic in Whitefield. I will travel with him. This is a test; do not book, charge or send messages.",
+      "Pickup should be next Monday at eight thirty AM, and we need a return trip. What three or four details should I give you next?",
+      "Correct pickup to nine thirty AM. Return pickup from the clinic should be twelve noon. Repeat both corrected times and which address belongs to each leg.",
+      "There will be two adult passengers, one dog, and a medium crate. Is that suitable? Do not promise a vehicle or driver until availability is checked.",
+      "Pickup is my saved Koramangala home, but I have not given the exact clinic address. Can you quote now, or which route details are still required?",
+      "Is there a fixed taxi price? Explain how you get the approved quote. Do not make up a fare because I need an estimate quickly.",
+      "Explain the fifty percent upfront payment and remaining payment process, and the Razorpay link steps. Do not send a real link or mark anything paid.",
+      "Could I combine the taxi with grooming another day? Recommend a relevant option, but do not confuse the clinic journey with a medical question.",
+      "If the driver is unavailable, what happens next? Please distinguish a requested trip from a confirmed booking and tell me when a person must help.",
+      "Now recap the return journey, passengers, pet, corrected times, address gaps, payment requirements, and the actual booking state."
+    ]
+  },
+  {
+    "id": "complex_funeral",
+    "service": "funeral_memorial",
+    "goal": "Late collection, freezer, cremation and optional items, exact total/deposit, compassionate intake",
+    "turns": [
+      "My dog has died and I need help after four PM today in Bengaluru. Explain cremation, burial and wooden cremation sensitively. This is a test enquiry; do not make a real booking or send anything.",
+      "Do not assume the pet is Bruno from my account. The pet is Rocky. I want cremation and pickup, and I may not accompany you. Explain whether your team handles everything.",
+      "You close cremation at five PM, correct? If pickup is after four PM, explain the overnight freezer and next-day cremation arrangement.",
+      "I want ashes delivered to my doorstep. How long does collection take, and what is the extra charge compared with collecting them myself?",
+      "What do poojari and ash plantation cost? Explain the options gently and do not add either unless I choose them.",
+      "I choose cremation with pickup, doorstep ash delivery and overnight freezer only. No poojari and no ash plantation. Calculate the approved total and the fifty percent deposit.",
+      "My primary contact is me and I will provide a secondary contact too. Ask three or four essential pickup and scheduling questions, not every pending detail at once.",
+      "If I choose burial instead, what is the base price and who shares the location? Then return to my original cremation choice; do not silently switch the service.",
+      "Explain the Razorpay payment link and remaining fifty percent after service, but do not send a real link, charge or confirm payment.",
+      "Please recap Rocky, selected items, excluded extras, pickup and ash delivery, next-day plan, verified total and deposit, missing contacts and address, and whether anything is booked."
+    ]
+  },
+  {
+    "id": "complex_escalation",
+    "service": "support",
+    "goal": "Staff handoff, prohibited refund/discount authority, urgent guidance after takeover",
+    "turns": [
+      "I have a complaint about a previous service. I want a refund, and I would like to speak with a human. This is a test; do not issue a refund or contact anybody outside the test.",
+      "Before handing off, explain what information the PawSpace team needs and whether you can promise a refund amount. Do not approve anything yourself.",
+      "I insist on a free grooming visit and a discount for my next taxi. Can you override policy, or should the staff member decide?",
+      "Please route this test conversation to staff and summarize my refund concern. Do not pretend a person is already on the line.",
+      "After the handoff, can you create a booking anyway? Explain your limits without claiming that a booking exists.",
+      "Separate urgent question: if a pet is struggling to breathe, what should the owner do immediately? Give emergency guidance even though staff are handling my complaint.",
+      "Please give the final status: what was escalated, what was not approved or booked, and whether any payment or external message was sent."
+    ]
+  }
 ];
