@@ -18,7 +18,7 @@ import{GROOMING_CLOSING_COUPON,GROOMING_CROSS_SELL_COUPON}from"./coupon-governan
 
 /** `value` is what the answer records when the button shows more than the answer (a price). */
 export type BotChoice={id:string;label:string;value?:string};
-type StepKind="choice"|"text"|"name"|"phone"|"email"|"date"|"end";
+type StepKind="choice"|"text"|"name"|"phone"|"email"|"date"|"time"|"end";
 type Answers=Record<string,string>;
 type Step={key:string;label:string;prompt:string|((answers:Answers)=>string);kind:StepKind;choices?:BotChoice[];hint?:string;
  /** Asked only when the visitor is not signed in: a signed-in customer's identity is already known. */
@@ -46,7 +46,7 @@ type Flow={code:string;service:string;label:string;steps:Step[];
 
 /* Bumped whenever a flow's steps change shape: a conversation saved under an older shape starts again
  * rather than resuming at a step index that now means a different question. */
-const BOT_STATE_VERSION=2;
+const BOT_STATE_VERSION=3;
 export type BotState={version:typeof BOT_STATE_VERSION;status:"menu"|"collecting"|"done";flow:string|null;step:number;answers:Record<string,string>;
  /** The CRM lead created for a visitor as soon as their number is known (web chat). */
  leadId?:string;
@@ -69,7 +69,7 @@ export type BotReply={text:string;choices:BotChoice[];inputHint:string|null};
 export type BotEvent=
  |{type:"none"}
  |{type:"ai";question:string}
- |{type:"call"}
+ |{type:"call";petId:string|null;serviceCode:string|null;serviceDate:string|null;requestedStart:string|number|null;cityId:string|null;bookingId:string|null;leadId:string|null}
  |{type:"human";reason:"customer_requested_human"|"refund_payment_dispute"|"complaint"|"safety"|"urgent_funeral_memorial"}
  |{type:"completed";flow:string;service:string;answers:Record<string,string>;summary:string;followUp?:"team";followUpReason?:"sensitive_relocation"};
 export type BotTurnResult={state:BotState;reply:BotReply;event:BotEvent;
@@ -147,7 +147,7 @@ const GROOMING:Flow={code:"grooming",service:"Grooming",label:"Grooming",steps:[
  {key:"time",label:"Service time",prompt:"Please choose service time",kind:"choice",choices:SERVICE_TIME,when:fresh},
  {key:"address",label:"Address",prompt:`Please type the service location address ${LOCATION_HINT}`,kind:"text",hint:"Address and map link",when:fresh,max:600},
  {key:"confirm",label:"Confirmed",prompt:"Would you like me to confirm the booking?",kind:"choice",choices:choices("OK","No"),when:fresh,showSummary:true,restartOn:"No"}],
- closing:answers=>`Thank you for your order 🙏\nOur representative will reach out to you ${subscribed(answers)?"for order confirmation":"regarding the payment & confirmation"}.\n\nWhat do we require from you?\n1️⃣ Space for grooming\n2️⃣ Access to water\n3️⃣ Access to electricity`,
+ closing:answers=>`Thank you for your grooming enquiry 🙏\nOur representative will reach out to you ${subscribed(answers)?"to discuss your subscription request":"to discuss payment and booking confirmation"}.\n\nWhat do we require from you?\n1️⃣ Space for grooming\n2️⃣ Access to water\n3️⃣ Access to electricity`,
  teamFollowUp:subscribed};
 
 const oneDog=is("dogCount","1"),severalDogs=is("dogCount","2","3 or more");
@@ -200,13 +200,15 @@ const PET_TAXI:Flow={code:"pet_taxi",service:"Pet Taxi",label:"Pet Taxi",steps:[
  {key:"purpose",label:"Travel purpose",prompt:"Select the purpose of your travel with pet",kind:"choice",choices:choices("Vet Visits","Airport/station","Leisure (incity)trip")},
  {key:"luggage",label:"Luggage",prompt:"Please select the number of luggage",kind:"choice",choices:choices("1-2","2-4","4 +"),when:is("purpose","Airport/station")},
  {key:"date",label:"Date",prompt:"Travel date\nPlease type travel date in DD/MM format",kind:"date",hint:"DD/MM"},
- {key:"time",label:"Time",prompt:"Travel time\nPlease type travel start time in AM/PM format.",kind:"text",hint:"For example 10:30 AM"},
+ {key:"time",label:"Time",prompt:"Travel time\nPlease type travel start time in AM/PM format.",kind:"time",hint:"For example 10:30 AM"},
  {key:"tripType",label:"Trip engagement",prompt:"Please select trip type",kind:"choice",choices:choices("One way trip","Round Trip")},
  {key:"waiting",label:"Waiting period",prompt:"Please select waiting period",kind:"choice",choices:choices("Less than 30 min","60 mins","More than 60mins"),when:is("tripType","Round Trip")},
  {key:"pickup",label:"Pick up address",prompt:"Please type the complete Pick up Address",kind:"text",hint:"Pick up address",max:600},
  {key:"drop",label:"Drop location address",prompt:"Please type the complete Drop location address",kind:"text",hint:"Drop address",max:600},
  {key:"confirm",label:"Confirmed",prompt:"Do you confirm the above details?",kind:"choice",choices:choices("Yes","No"),showSummary:true,last:is("confirm","Yes")},
- {key:"change",label:"Required change",prompt:"Please type the required change",kind:"text",hint:"What should we change?",when:is("confirm","No"),max:600}],
+ {key:"change",label:"Required change",prompt:"Please type the required change",kind:"text",hint:"What should we change?",when:is("confirm","No"),max:600},
+ {key:"changeConfirm",label:"Changes confirmed",prompt:"Do you confirm these details and the requested change for team review?",kind:"choice",choices:choices("Yes","No"),showSummary:true,when:is("confirm","No"),restartOn:"No"}],
+ teamFollowUp:answers=>answers.confirm==="No",
  closing:()=>"Thank you for providing your pet taxi booking details.\nWe're now processing your request and will send your personalised quote shortly.\nWe appreciate you choosing PawSpace Pet Taxi!",
  groomingOffer:true};
 
@@ -348,6 +350,7 @@ function validate(step:Step,raw:string):{value:string}|{error:string}{
  if(step.kind==="phone"){const digits=value.replace(/\D/g,"").replace(/^91(?=\d{10}$)/,"").replace(/^0(?=\d{10}$)/,"");return/^[6-9]\d{9}$/.test(digits)?{value:`+91${digits}`}:{error:"Please type a valid 10-digit Indian mobile number."};}
  // Domain labels are split on the dot so the pattern has one way to match (no polynomial backtracking).
  if(step.kind==="email")return value.length<=160&&/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value)&&(value.split(".").at(-1)?.length??0)>=2?{value:value.toLowerCase()}:{error:"That doesn't look like an email address. Please type it like name@example.com."};
+ if(step.kind==="time"){const match=value.match(/^(0?[1-9]|1[0-2])(?::([0-5]\d))?\s*(AM|PM)$/i);return match?{value:`${Number(match[1])}${match[2]?`:${match[2]}`:""} ${match[3].toUpperCase()}`}:{error:"Please type a valid time, for example 10:30 AM."};}
  if(step.kind==="date"){const date=parseDayMonth(value);return date?{value:date}:{error:"Please type the date in DD/MM format, for example 28/09."};}
  if(value.length>max)return{error:`Please keep it under ${max} characters.`};
  return value.length>=2?{value}:{error:"Please type a little more detail."};
@@ -394,7 +397,7 @@ export function runBotTurn(previous:BotState,input:{text?:string|null;choiceId?:
  /* "Request a call": a signed-in customer gets PawSpace's governed callback (the AI calls them); a visitor
   * leaves a name and number first, as a lead the team calls back. */
  if(picked?.id===REQUEST_CALL.id){
-  if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I'm arranging a call from PawSpace to your registered number now.",choices:[START_OVER],inputHint:"Type a message"},event:{type:"call"},display};
+  if(input.signedIn)return{state:{...state,status:"done"},reply:{text:"I’ll check whether PawSpace can call your registered number.",choices:[START_OVER],inputHint:"Type a message"},event:{type:"call",petId:state.answers.petId||null,serviceCode:state.answers.serviceCode||(state.flow&&state.flow!==TEAM_FLOW.code?state.flow:null),serviceDate:state.answers.date||state.answers.consultationDate||null,requestedStart:state.answers.requestedStart||null,cityId:state.answers.cityId||CITY_IDS[state.answers.city]||null,bookingId:state.answers.bookingId||null,leadId:state.leadId||state.answers.leadId||null},display};
   const steps=stepsFor(TEAM_FLOW,false);
   return{state:{version:BOT_STATE_VERSION,status:"collecting",flow:TEAM_FLOW.code,step:1,answers:{topic:"Requested a call back"}},reply:askReply(steps[1],"Happy to call you. "),event:{type:"none"},display};
  }
