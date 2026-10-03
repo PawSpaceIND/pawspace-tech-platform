@@ -129,6 +129,8 @@ cfg.vars = {
   PAWSPACE_MAPS_ENV: "sandbox",
   PAWSPACE_COMMUNICATION_ENV: "uat",
   PAWSPACE_VOICE_ENV: "uat",
+  VOICE_STT_MODEL: "@cf/openai/whisper-large-v3-turbo",
+  VOICE_CARRIER_TTS_MODEL: "@cf/deepgram/aura-2-en",
   PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED: "true",
   PAWSPACE_VOICE_UAT_AI_SELF_TEST_DAILY_CAP: "3",
   EXOTEL_SUBDOMAIN: "api.exotel.com",
