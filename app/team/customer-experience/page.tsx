@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import InboxFilters, { type SavedInboxView } from "../../components/staff-inbox/InboxFilters";
+import TemplateReply from "../../components/staff-inbox/TemplateReply";
+import { defaultStaffInboxView, type StaffInboxView } from "../../../lib/staff-inbox-contract";
+import type { InboxTemplate } from "../../../lib/staff-inbox-template";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
@@ -31,7 +35,11 @@ type Thread = Row & {
   ticket?: Row | null;
   communicationState?: CommunicationState | null;
 };
+type InboxContext = { acquisition: { origin: string | null; platform: string | null; utmSource: string | null; utmMedium: string | null; utmCampaign: string | null; campaignId: string | null; adId: string | null; recordedAt: number | null }; savedLocality: { area: string | null; city: string | null } | null };
 type Conversation = {
+  whatsappWindow?: { checkedAt: number; expiresAt: number | null; withinWindow: boolean };
+  operatorState?: { unread: number; favourite: number };
+  context?: InboxContext;
   thread: Row;
   participants: Row[];
   messages: Array<Row & { payload?: Row }>;
@@ -68,29 +76,38 @@ const aiReplyTemplateKey = "web_app_chat_ai_reply";
 /** Guided bot questions on a web chat thread (lib/ai-web-chat-adapter.ts WEB_CHAT_BOT_TEMPLATE_KEY). */
 const botTemplateKey = "web_app_chat_bot";
 const isWebChatConversation = (conversation: Conversation | null) => Boolean(conversation?.messages.some((message) => text(message.channel, "") === "chat") && !conversation?.messages.some((message) => text(message.channel, "") === "whatsapp"));
+const subscribeInitialSelection = () => () => {};
+const initialSelectionSnapshot = () => typeof window === "undefined" ? "" : new URL(window.location.href).searchParams.get("threadId") || "";
+const initialSelectionServerSnapshot = () => "";
 
 export default function CustomerExperiencePage() {
   const [threads, setThreads] = useState<Thread[]>([]);
-  const [selected, setSelected] = useState("");
+  const initialSelection = useSyncExternalStore(subscribeInitialSelection, initialSelectionSnapshot, initialSelectionServerSnapshot);
+  const [selectionOverride, setSelected] = useState<string | null>(null);
+  const selected = selectionOverride ?? initialSelection;
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [control, setControl] = useState<WhatsAppControl | null>(null);
   const [chatHandoff, setChatHandoff] = useState<ChatHandoff | null>(null);
-  const [serviceWindowCheckedAt, setServiceWindowCheckedAt] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
+  const [inboxView, setInboxView] = useState<StaffInboxView>(defaultStaffInboxView);
+  const query = inboxView.query;
+  const setQuery = (query: string) => setInboxView(current => ({ ...current, query }));
+  const statusFilter = inboxView.status;
+  const setStatusFilter = (status: StaffInboxView["status"]) => setInboxView(current => ({ ...current, status }));
+  const [savedViews, setSavedViews] = useState<SavedInboxView[]>([]);
+  const [templates, setTemplates] = useState<InboxTemplate[]>([]);
+  const [templateDrafts, setTemplateDrafts] = useState<Map<string, { key: string; clientRequestId: string }>>(() => new Map());
   const [cursorHistory, setCursorHistory] = useState<Cursor[]>([]);
   const [nextCursor, setNextCursor] = useState<Cursor | null>(null);
   const currentCursor = cursorHistory.at(-1);
-  const [filter, setFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("open");
-  const [drafts, setDrafts] = useState<Record<string, { text: string; clientRequestId: string }>>({});
-  const reply = drafts[selected]?.text || "";
-  const replyRequestId = drafts[selected]?.clientRequestId || "";
+  const [drafts, setDrafts] = useState<Map<string, { text: string; clientRequestId: string }>>(() => new Map());
+  const reply = drafts.get(selected)?.text || "";
+  const replyRequestId = drafts.get(selected)?.clientRequestId || "";
   const [internalNote, setInternalNote] = useState("");
   const [noteRequestId, setNoteRequestId] = useState("");
-  const activeThread = useRef("");
+  const activeThread = useRef(initialSelectionSnapshot());
   const mutationInFlight = useRef(false);
 
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
@@ -98,21 +115,23 @@ export default function CustomerExperiencePage() {
   const clearAccess = useCallback((threadId?: string) => {
     accessEpoch.current++;
     if (threadId) {
+      setTemplateDrafts(current => { const next = new Map(current); next.delete(threadId); return next; });
       setThreads(current => current.filter(row => row.id !== threadId));
-      setDrafts(current => { const next = { ...current }; delete next[threadId]; return next; });
+      setDrafts(current => { const next = new Map(current); next.delete(threadId); return next; });
     } else {
-      setThreads([]); setDrafts({}); setQuery(""); setCursorHistory([]); setNextCursor(null); setInternalNote(""); setNoteRequestId("");
+      setThreads([]); setDrafts(new Map()); setInboxView(defaultStaffInboxView); setSavedViews([]); setTemplates([]); setTemplateDrafts(new Map()); setCursorHistory([]); setNextCursor(null); setInternalNote(""); setNoteRequestId("");
     }
     if (!threadId || activeThread.current === threadId) {
       activeThread.current = "";
       setSelected(""); setConversation(null); setControl(null); setChatHandoff(null); setNotice("");
-      setServiceWindowCheckedAt(0); setRoutingReason("CX operator routing decision");
+      setRoutingReason("CX operator routing decision");
     }
-  }, []);
+  }, [setInternalNote, setNoteRequestId]);
   const selectThread = (id: string) => {
     if (activeThread.current === id) return;
     activeThread.current = id;
     setInternalNote(""); setNoteRequestId("");
+    const url = new URL(window.location.href); url.searchParams.set("threadId", id); window.history.replaceState(null, "", url);
     setSelected(id); setConversation(null); setControl(null); setChatHandoff(null); setError(""); setNotice("");
   };
 
@@ -121,8 +140,9 @@ export default function CustomerExperiencePage() {
     const params = new URLSearchParams({ limit: "50" });
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (query.trim()) params.set("q", query.trim());
-    if (filter === "whatsapp" || filter === "chat") params.set("channel", filter);
-    if (filter === "unassigned" || filter === "human") params.set("ownership", filter);
+    if (inboxView.channel !== "all") params.set("channel", inboxView.channel);
+    if (inboxView.ownership !== "all") params.set("ownership", inboxView.ownership);
+    if (inboxView.priority !== "all") params.set("priority", inboxView.priority);
     if (currentCursor) params.set("cursor", JSON.stringify(currentCursor));
     const response = await fetch(`/api/conversations?${params}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: { threads: Thread[]; nextCursor?: Cursor | null }; error?: string };
@@ -133,7 +153,7 @@ export default function CustomerExperiencePage() {
     const next = payload.data?.threads || [];
     if (shouldApply()) { setThreads(next); setNextCursor(payload.data?.nextCursor || null); }
     return next;
-  }, [statusFilter, query, filter, currentCursor, clearAccess]);
+  }, [inboxView, currentCursor, clearAccess, query, statusFilter]);
 
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
@@ -146,7 +166,6 @@ export default function CustomerExperiencePage() {
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
     if (!shouldApply() || activeThread.current !== id) return;
     setConversation(payload.data || null);
-    setServiceWindowCheckedAt(Date.now());
     return payload.data || null;
   }, [clearAccess]);
 
@@ -189,6 +208,59 @@ export default function CustomerExperiencePage() {
     if (!whatsapp && loaded && isWebChatConversation(loaded)) await loadChatHandoff(id, text(loaded.thread.customer_id, ""), shouldApply);
     else if (shouldApply() && activeThread.current === id) setChatHandoff(null);
   }, [loadConversation, loadControl, loadChatHandoff]);
+
+  useEffect(() => {
+    let active = true;
+    const epoch = accessEpoch.current;
+    const load = async () => {
+      try {
+        const results = await Promise.all(["saved_views", "template_catalog"].map(async view => {
+          const response = await fetch(`/api/conversations?view=${view}`, { cache: "no-store" });
+          const body = await response.json();
+          if (!active || epoch !== accessEpoch.current) return null;
+          if ([401, 403].includes(response.status)) clearAccess();
+          if (!response.ok) throw new Error(body.error || "Inbox tools could not be loaded");
+          return body.data;
+        }));
+        if (active && epoch === accessEpoch.current) { setSavedViews(results[0]?.views || []); setTemplates(results[1]?.templates || []); }
+      } catch (cause) { if (active && epoch === accessEpoch.current) setError(cause instanceof Error ? cause.message : String(cause)); }
+    };
+    void load();
+    return () => { active = false; };
+  }, [clearAccess]);
+
+  async function changeSavedView(action: "save_view" | "delete_view", name: string) {
+    if (mutationInFlight.current) return false;
+    const epoch = accessEpoch.current;
+    mutationInFlight.current = true; setBusy(true);
+    try {
+      const response = await fetch("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, name, ...(action === "save_view" ? { view: inboxView } : {}) }) });
+      const body = await response.json();
+      if (epoch !== accessEpoch.current) return false;
+      if ([401, 403].includes(response.status)) clearAccess();
+      if (!response.ok) throw new Error(body.error || "Saved view action failed");
+      const loaded = await fetch("/api/conversations?view=saved_views", { cache: "no-store" });
+      const payload = await loaded.json();
+      if (epoch !== accessEpoch.current) return false;
+      if ([401, 403].includes(loaded.status)) clearAccess();
+      if (!loaded.ok) throw new Error(payload.error || "Saved views could not be loaded");
+      setSavedViews(payload.data?.views || []); setNotice(action === "save_view" ? "Inbox view saved for you." : "Inbox view removed.");
+      return true;
+    } catch (cause) { if (epoch === accessEpoch.current) setError(cause instanceof Error ? cause.message : String(cause)); return false; }
+    finally { mutationInFlight.current = false; setBusy(false); }
+  }
+
+  async function sendTemplate(template: InboxTemplate) {
+    if (!canQueueTemplate || mutationInFlight.current) return;
+    const target = selected;
+    const draft = templateDrafts.get(target);
+    const clientRequestId = draft?.key === template.key && draft.clientRequestId ? draft.clientRequestId : crypto.randomUUID();
+    setTemplateDrafts(current => new Map(current).set(target, { key: template.key, clientRequestId }));
+    if (await act("template_reply", { templateKey: template.key, language: template.language, clientRequestId })) {
+      setTemplateDrafts(current => { const next = new Map(current); next.delete(target); return next; });
+      if (activeThread.current === target) setNotice("Approved template queued. The reply window opens when the customer responds.");
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -263,6 +335,7 @@ export default function CustomerExperiencePage() {
         body: JSON.stringify({ action, threadId: target, ...payload }),
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
+      if ([401, 403, 404].includes(response.status)) clearAccess(response.status === 401 ? undefined : target);
       if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
       await Promise.all([loadThreads(), loadThreadState(target)]);
       return true;
@@ -353,13 +426,13 @@ export default function CustomerExperiencePage() {
     const target = selected;
     const submittedText = reply;
     const clientRequestId = replyRequestId || crypto.randomUUID();
-    if (!replyRequestId) setDrafts(current => ({ ...current, [target]: { text: submittedText, clientRequestId } }));
+    if (!replyRequestId) setDrafts(current => new Map(current).set(target, { text: submittedText, clientRequestId }));
     const sent = isWebChat
       ? await chatAct("/api/chat-human-reply", { action: "human_reply", message, clientRequestId })
       : await controlAct("human_reply", { message, clientRequestId });
     if (sent) {
-      setDrafts(current => current[target]?.text === submittedText && current[target]?.clientRequestId === clientRequestId
-        ? { ...current, [target]: { text: "", clientRequestId: "" } } : current);
+      setDrafts(current => current.get(target)?.text === submittedText && current.get(target)?.clientRequestId === clientRequestId
+        ? new Map(current).set(target, { text: "", clientRequestId: "" }) : current);
       if (activeThread.current === target) setNotice(isWebChat ? "Reply posted in the customer's PawSpace web chat." : "Reply queued through the governed WhatsApp outbox.");
     }
   }
@@ -379,19 +452,15 @@ export default function CustomerExperiencePage() {
   const handoffRow = control?.handoff?.current || null;
   const handoffStatus = text(handoffRow?.status, "");
   const humanOwned = humanMode && (handoffStatus === "staff_active" || Boolean(assigned && assigned !== "ai-orchestrator"));
-  const lastInbound = [...messages].reverse().find((message) => text(message.direction, "") === "inbound");
-  const withinWindow = Boolean(
-    lastInbound
-      && serviceWindowCheckedAt > 0
-      && serviceWindowCheckedAt - Number(lastInbound.created_at || 0) <= 24 * 60 * 60_000,
-  );
+  const withinWindow = Boolean(conversation?.whatsappWindow?.withinWindow && conversation.whatsappWindow.expiresAt
+    && conversation.whatsappWindow.checkedAt < conversation.whatsappWindow.expiresAt);
   const lastMessage = messages[messages.length - 1];
   const customerName = text(thread?.customer_name || thread?.customer_id, "Customer");
   const phone = text(thread?.primary_phone, "Masked by role");
   const leadId = text(thread?.lead_id, "Not lead-linked");
   const ticket = thread?.ticket as Row | undefined;
   const booking = thread?.booking as Row | undefined;
-  const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
+  const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Checked when queuing a reply");
   const isWhatsApp = Boolean(control);
   const isWebChat = !isWhatsApp && isWebChatConversation(conversation);
   const chatHandoffStatus = text(chatHandoff?.current?.status, "");
@@ -400,6 +469,7 @@ export default function CustomerExperiencePage() {
   const canSendHumanReply = Boolean(conversation?.thread.id === selected && reply.trim() && !busy && (isWebChat
     ? chatStaffOwned && thread?.status !== "closed"
     : control?.threadId === selected && isWhatsApp && humanMode && control?.canHumanReply && withinWindow));
+  const canQueueTemplate = Boolean(conversation?.thread.id === selected && control?.threadId === selected && isWhatsApp && humanMode && !withinWindow && thread?.status === "open" && !busy);
   const modeLabel = humanMode ? "Human only" : aiMode ? "AI Assistant" : "Chatbot only";
 
   return (
@@ -407,7 +477,7 @@ export default function CustomerExperiencePage() {
       eyebrow="PawSpace team · Customer experience"
       nav={[{href:"/team/customer-experience",label:"Inbox",icon:"I"},{href:"/team/whatsapp/templates",label:"Templates",icon:"T"},{href:"/team/whatsapp/automation",label:"Automation",icon:"A"},{href:"/team/ai/handoff",label:"AI handoffs",icon:"H"}]}
       title="Inbox & AI"
-      description="Shared Inbox for WhatsApp and PawSpace web chat — WATI-style customer operations on PawSpace canonical conversations. UAT/sandbox only; production WhatsApp delivery stays disabled until release certification."
+      description="Your team workspace for WhatsApp and PawSpace web chat. Find conversations, take over from AI and keep customer context together."
       actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge></>}
     >
       {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
@@ -428,26 +498,13 @@ export default function CustomerExperiencePage() {
         <aside className={styles.list} id="inbox-conversations" tabIndex={-1}>
           <div className={styles.listTop}>
             <h2>Shared Inbox</h2>
-            <input className={styles.search} value={query} maxLength={200} onChange={(event) => { setQuery(event.target.value); setCursorHistory([]); setNextCursor(null); }} placeholder="Search leads or conversations..." />
+            <input className={styles.search} aria-label="Search conversations" value={query} maxLength={200} onChange={(event) => { setQuery(event.target.value); setCursorHistory([]); setNextCursor(null); }} placeholder="Search leads or conversations..." />
             <label>Conversation status
-              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setCursorHistory([]); setNextCursor(null); setDrafts({}); setInternalNote(""); setNoteRequestId(""); activeThread.current=""; setSelected(""); setConversation(null); setControl(null); setChatHandoff(null); setThreads([]); }}>
+              <select aria-label="Conversation status" disabled={busy} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StaffInboxView["status"]); setCursorHistory([]); setNextCursor(null); }}>
                 <option value="open">Open</option><option value="pending_customer">Awaiting customer</option><option value="resolved">Resolved</option><option value="closed">Closed</option><option value="all">All statuses</option>
               </select>
             </label>
-            <div className={styles.filters}>
-              {[["all", "All"], ["whatsapp", "WhatsApp"], ["chat", "Web chat"], ["unassigned", "Unassigned"], ["human", "Human owned"]].map(([key, label]) => (
-                <Button
-                  key={key}
-                  type="button"
-                  size="sm"
-                  variant={filter === key ? "primary" : "secondary"}
-                  onClick={() => { setFilter(key); setCursorHistory([]); setNextCursor(null); }}
-                  className={`${styles.filter} ${filter === key ? styles.filterActive : ""}`}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
+            <InboxFilters view={inboxView} saved={savedViews} busy={busy} onChange={view => { setInboxView(view); setCursorHistory([]); setNextCursor(null); }} onSave={name => changeSavedView("save_view", name)} onDelete={name => changeSavedView("delete_view", name)} />
           </div>
           <div className={styles.filters}>
             <span>Showing {threads.length} conversations on this page</span>
@@ -475,7 +532,7 @@ export default function CustomerExperiencePage() {
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
                   <small>{text(row.lastMessage?.text, row.lastMessage ? "Message" : "No messages yet")}</small>
                   {comm ? <div className={`${styles.communicationFlag} ${comm.state === "failed" ? styles.communicationFlagFailed : styles.communicationFlagPending}`} role="status"><b>{text(comm.label)}</b><span>Booking {text(comm.bookingId)} · customer may not know payment succeeded</span></div> : null}
-                  <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner} · ${pretty(row.status || "open")}` : pretty(row.status || "open")}</span></div>
+                  <div className={styles.pillWrap}>{Number(row.unread) === 1 ? <span className={styles.pill}>Unread</span> : null}{Number(row.favourite) === 1 ? <span className={styles.pill}>Favourite</span> : null}<span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner} · ${pretty(row.status || "open")}` : pretty(row.status || "open")}</span></div>
 
                 </button>
               );
@@ -491,6 +548,7 @@ export default function CustomerExperiencePage() {
               <div className={styles.person}><div className={styles.avatar}>{initials(customerName)}</div><div><h2>{customerName}</h2><small>{leadId} · {isWhatsApp ? `${modeLabel}${humanOwned ? ` · Owner: ${assigned}` : ""}` : isWebChat ? `Web chat${chatStaffOwned ? ` · Owner: ${text(chatHandoff?.current?.taken_over_by, assigned)}` : ""}` : pretty(lastMessage?.channel || "conversation")}</small></div></div>
               <span className={styles.window}>{isWhatsApp ? (withinWindow ? "WhatsApp service window open" : "Template required") : isWebChat ? "PawSpace web chat" : "Canonical conversation"}</span>
             </header>
+            <div className={styles.threadTools} aria-label="Personal conversation actions"><Button size="sm" variant="secondary" disabled={busy} onClick={() => { void act("priority", { unread: !Boolean(conversation?.operatorState?.unread) }); }}>{conversation?.operatorState?.unread ? "Mark as read" : "Mark as unread"}</Button><Button size="sm" variant="secondary" aria-pressed={Boolean(conversation?.operatorState?.favourite)} disabled={busy} onClick={() => { void act("priority", { favourite: !Boolean(conversation?.operatorState?.favourite) }); }}>{conversation?.operatorState?.favourite ? "Remove favourite" : "Add favourite"}</Button></div>
             {communicationState ? <div className={`${styles.communicationBanner} ${communicationState.state === "failed" ? styles.communicationBannerFailed : styles.communicationBannerPending}`} role="alert"><div><b>{text(communicationState.label)}</b><span>Financial confirmation is complete, but the mandatory customer communication has not been delivered.</span></div><small>Booking {text(communicationState.bookingId)} · {pretty(communicationState.outboxStatus)}{communicationState.attemptCount ? ` · attempt ${communicationState.attemptCount}${communicationState.maxAttempts ? `/${communicationState.maxAttempts}` : ""}` : ""}{communicationState.lastError ? ` · ${text(communicationState.lastError)}` : ""}</small></div> : null}
             <div className={styles.aiBar}>
               <div>
@@ -513,10 +571,11 @@ export default function CustomerExperiencePage() {
               ))}
             </section>
             <div className={styles.notice}>This workspace does not bypass consent, quiet-hour, retry or adapter controls. AI may make mistakes. Price, availability, payment, cancellation and provider actions stay governed.</div>
+            {isWhatsApp && !withinWindow ? <TemplateReply templates={templates} selectedKey={templateDrafts.get(selected)?.key || ""} busy={busy} canQueue={canQueueTemplate} onSelect={key => setTemplateDrafts(current => new Map(current).set(selected, { key, clientRequestId: "" }))} onQueue={template => { void sendTemplate(template); }} /> : null}
             <footer className={styles.composer}>
               <input
                 value={reply}
-                onChange={(event) => { const value = event.target.value; setDrafts(current => ({ ...current, [selected]: { text: value, clientRequestId: "" } })); }}
+                onChange={(event) => { const value = event.target.value; setDrafts(current => new Map(current).set(selected, { text: value, clientRequestId: "" })); }}
                 disabled={isWebChat ? !chatStaffOwned || busy : !isWhatsApp || !humanMode || busy || !withinWindow}
                 maxLength={4096}
                 placeholder={isWebChat ? (chatStaffOwned ? "Reply in the customer's PawSpace chat..." : "Take over to reply in this web chat") : !isWhatsApp ? "Select a WhatsApp thread to reply" : !humanMode ? "Take over or switch to Human only to reply" : !withinWindow ? "24-hour window closed — use an approved template" : "Reply as PawSpace CX..."}
@@ -531,7 +590,8 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Lead / Customer</strong><a>Canonical</a></div><div className={styles.kv}><span>Name</span><b>{customerName}</b><span>Phone</span><b>{phone}</b><span>Lead</span><b>{leadId}</b><span>Thread</span><b>{text(thread?.id)}</b></div></section>
           {communicationState ? <section className={`${styles.card} ${styles.communicationContext}`}><div className={styles.cardHead}><strong>Customer Awareness Risk</strong><a>{communicationState.state === "failed" ? "Action required" : "Delivery pending"}</a></div><div className={styles.kv}><span>Booking</span><b>{text(communicationState.bookingId)}</b><span>Financial state</span><b>Confirmed / captured</b><span>Customer state</span><b>Confirmation may be unseen</b><span>Queue</span><b>{pretty(communicationState.outboxStatus)}</b></div></section> : null}
           <section className={styles.card}><div className={styles.cardHead}><strong>Consent Evidence</strong><a>Governed</a></div><div className={styles.kv}><span>WhatsApp</span><b>{consentState}</b><span>Purpose</span><b>Lead response / service</b><span>Marketing</span><b>No</b><span>Opt-out</span><b>Prior opt-out always wins</b></div></section>
-          <section className={styles.card}><div className={styles.cardHead}><strong>Conversation details</strong><span>Recorded fields</span></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
+          <section className={styles.card}><div className={styles.cardHead}><strong>Conversation details</strong><span>Recorded fields</span></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Linked lead</span><b>{leadId}</b><span>Acquisition source</span><b>{text(conversation?.context?.acquisition.origin, "Not recorded")}</b><span>Source platform</span><b>{text(conversation?.context?.acquisition.platform, "Not recorded")}</b><span>UTM source / medium</span><b>{[conversation?.context?.acquisition.utmSource, conversation?.context?.acquisition.utmMedium].filter(Boolean).join(" / ") || "Not recorded"}</b><span>Campaign</span><b>{text(conversation?.context?.acquisition.utmCampaign || conversation?.context?.acquisition.campaignId, "Not recorded")}</b><span>Ad</span><b>{text(conversation?.context?.acquisition.adId, "Not recorded")}</b><span>Recorded at</span><b>{conversation?.context?.acquisition.recordedAt ? dateTime(conversation.context.acquisition.recordedAt) : "Not recorded"}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
+          <section className={styles.card}><div className={styles.cardHead}><strong>Saved address context</strong></div><div className={styles.kv}><span>Saved locality</span><b>{[conversation?.context?.savedLocality?.area, conversation?.context?.savedLocality?.city].filter(Boolean).join(", ") || "Not recorded"}</b><span>Service address</span><b>Check the linked booking; saved locality may differ.</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Booking</span><b>{text(booking?.id || thread?.booking_id, "Not linked")}</b><span>Service</span><b>{pretty(booking?.service_code)}</b><span>Package</span><b>{text(booking?.package_name)}</b><span>Booking status</span><b>{pretty(booking?.status)}</b><span>Scheduled start</span><b>{text(booking?.scheduled_start)}</b><span>Ticket</span><b>{text(ticket?.id || thread?.ticket_id, "Not linked")}</b><span>Priority</span><b>{pretty(ticket?.priority)}</b><span>Subject</span><b>{text(ticket?.subject, "No linked ticket details")}</b><span>Ticket status</span><b>{pretty(ticket?.status)}</b><span>Response due</span><b>{dateTime(ticket?.sla_due_at)}</b></div></section>
           <section className={styles.card}>
             <div className={styles.cardHead}><strong>Conversation Routing</strong><a>{isWhatsApp ? modeLabel : isWebChat ? "Web chat" : "Not WhatsApp"}</a></div>

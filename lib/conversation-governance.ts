@@ -73,22 +73,34 @@ async function conversationStaffContext(db:D1Database,thread:Row){
  ]);
  return {...thread,customer_name:customer?.name??null,primary_phone:customer?.primary_phone??null,booking:booking??null,ticket:ticket??null};
 }
-export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor;query?:string;channel?:string;ownership?:string;before?:{at:number;id:string}}){
+export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor;query?:string;channel?:string;ownership?:string;operatorState?:boolean;priority?:"unread"|"favourite";before?:{at:number;id:string}}){
  const limit=input.limit??100;
  if(!Number.isInteger(limit)||limit<1||limit>201)throw new Response("Invalid conversation limit",{status:400});
  if(input.status&&!["open","pending_customer","resolved","closed"].includes(input.status))throw new Response("Invalid conversation status filter",{status:400});
  if(input.channel&&!["whatsapp","sms","email","push","chat","voice"].includes(input.channel))throw new Response("Invalid conversation channel",{status:400});
- if(input.ownership&&!["unassigned","human"].includes(input.ownership))throw new Response("Invalid ownership filter",{status:400});
+ if(input.ownership&&!["unassigned","human","me"].includes(input.ownership))throw new Response("Invalid ownership filter",{status:400});
  if(input.query&&input.query.length>200)throw new Response("Conversation search is too long",{status:400});
  if(input.before&&(!Number.isSafeInteger(input.before.at)||input.before.at<0||typeof input.before.id!=="string"||!input.before.id||input.before.id.length>100))throw new Response("Invalid conversation cursor",{status:400});
+ if(input.ownership==="me"&&!input.actor)throw new Response("Assigned-to-me requires an actor",{status:400});
+ if(input.priority&&!(["unread","favourite"].includes(input.priority)&&input.operatorState&&input.actor))throw new Response("Invalid conversation priority filter",{status:400});
  await ensureConversationGovernance(db);
  let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";
  const binds:unknown[]=[],where:string[]=[];
+ const unreadSql="CASE WHEN COALESCE(p.unread,0)=1 OR EXISTS (SELECT 1 FROM communication_messages unread_message WHERE unread_message.thread_id=t.id AND unread_message.direction='inbound' AND unread_message.created_at>COALESCE(p.read_at,0)) THEN 1 ELSE 0 END";
+ if(input.operatorState&&input.actor){
+  query=query.replace("SELECT t.*,",`SELECT t.*,${unreadSql} unread,COALESCE(p.favourite,0) favourite,`)+" LEFT JOIN conversation_operator_priority p ON p.thread_id=t.id AND p.actor_email=?";
+  binds.push(input.actor.email.trim().toLowerCase());
+  if(input.priority==="unread")where.push(`(${unreadSql})=1`);
+  if(input.priority==="favourite")where.push("COALESCE(p.favourite,0)=1");
+ }
  if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}
  if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}
  if(input.status){where.push("t.status=?");binds.push(input.status);}
  if(input.channel){where.push("EXISTS (SELECT 1 FROM communication_messages channel_message WHERE channel_message.thread_id=t.id AND channel_message.channel=?)");binds.push(input.channel);}
  if(input.ownership==="unassigned")where.push("COALESCE(trim(t.assigned_to),'')=''");
+ if(input.ownership==="me"){
+  where.push("(lower(COALESCE(t.assigned_to,''))=lower(?) OR EXISTS (SELECT 1 FROM lead_assignments my_assignment JOIN lead_work_items my_lead ON my_lead.id=my_assignment.lead_id WHERE my_lead.id=t.lead_id AND my_lead.customer_id=t.customer_id AND my_assignment.status='current' AND lower(my_assignment.employee_email)=lower(?)))");binds.push(input.actor!.email,input.actor!.email);
+ }
  if(input.ownership==="human")where.push("COALESCE(trim(t.assigned_to),'') NOT IN ('','ai-orchestrator')");
  if(input.query?.trim()){
   where.push("instr(lower(t.id||' '||t.customer_id||' '||COALESCE(t.booking_id,'')||' '||COALESCE(t.lead_id,'')||' '||COALESCE(c.name,'')||' '||COALESCE(c.primary_phone,'')),lower(?))>0");
@@ -102,7 +114,7 @@ export async function listConversationThreads(db:D1Database,input:{customerId?:s
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
   if(!/no such table: canonical_customers/i.test(error instanceof Error?error.message:String(error)))throw error;
-  const fallback=query.replace("SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id","SELECT t.* FROM communication_threads t").replaceAll("COALESCE(c.name,'')","''").replaceAll("COALESCE(c.primary_phone,'')","''");
+  const fallback=query.replace("c.name customer_name,c.primary_phone", "NULL customer_name,NULL primary_phone").replace(" LEFT JOIN canonical_customers c ON c.id=t.customer_id", "").replaceAll("COALESCE(c.name,'')","''").replaceAll("COALESCE(c.primary_phone,'')","''");
   result=await db.prepare(fallback).bind(...binds).all<Row>();
  }
  const threads:Row[]=[];
