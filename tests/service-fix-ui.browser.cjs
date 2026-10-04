@@ -3,16 +3,17 @@
 // non-GET request that is not an explicit quote/preview mock is aborted and counted; no payment, reservation or booking
 // is created. Catalogue prices in the fixtures are deliberately NOT the workbook's example figures, so a displayed price
 // proves the UI shows the catalogue it was given. Run: PAWSPACE_TEST_BROWSER_EXECUTABLE=<chromium> node tests/service-fix-ui.browser.cjs
-const fs=require('fs'),http=require('http'),path=require('path'),os=require('os'),assert=require('assert/strict');
-const dir=path.resolve(__dirname,'..'),dep=dir+'/node_modules/',esbuild=require(dep+'esbuild'),{chromium}=require(dep+'playwright');
-const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'service-fix-ui-'));
 (async()=>{
+ const [fs,http,path,os,assert]=await Promise.all(['node:fs','node:http','node:path','node:os','node:assert/strict'].map(name=>import(name).then(module=>module.default)));
+ const loadDependency=(await import('node:module')).createRequire(__filename);
+ const dir=path.resolve(__dirname,'..'),dep=dir+'/node_modules/',esbuild=loadDependency(dep+'esbuild'),{chromium}=loadDependency(dep+'playwright');
+ const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'service-fix-ui-'));
  fs.writeFileSync(scratch+'/entry.tsx',`import React from 'react';import{createRoot}from'react-dom/client';
 import Grooming from '${dir}/app/v2/grooming/page';import TaxiFlow from '${dir}/app/mobile-app/taxi-flow';
 const q=new URLSearchParams(location.search);const which=q.get('page');
 createRoot(document.getElementById('app')!).render(which==='taxi'?<TaxiFlow routeScope="v2" customer={{customerId:'cust-fixture-1',customerName:'Priya Fixture',phone:'+919999900001'}}/>:<Grooming/>);`);
  await esbuild.build({entryPoints:[scratch+'/entry.tsx'],bundle:true,outfile:scratch+'/bundle.js',nodePaths:[dep],jsx:'automatic',define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'context',setup(b){
-  b.onResolve({filter:/^react(?:\/.*)?$|^react-dom(?:\/.*)?$/},a=>({path:require.resolve(a.path,{paths:[dep]})}));
+  b.onResolve({filter:/^react(?:\/.*)?$|^react-dom(?:\/.*)?$/},a=>({path:loadDependency.resolve(a.path,{paths:[dep]})}));
   b.onResolve({filter:/^(next\/link|next\/navigation|next\/image|.*\.module\.css|.*\.css)$/},a=>({path:a.path,namespace:'stub'}));
   b.onLoad({filter:/.*/,namespace:'stub'},a=>({loader:'js',contents:a.path.endsWith('.css')?'export default new Proxy({}, {get:(_,k)=>String(k)})':a.path==='next/navigation'?'export const useRouter=()=>({push(){},replace(){}});export const useSearchParams=()=>new URLSearchParams(location.search);export const usePathname=()=>location.pathname;':`import React from 'react';export default function Stub({children,href,...props}){return React.createElement('${a.path==='next/link'?'a':'div'}',{href,...props},children)}`}));
  }}]});

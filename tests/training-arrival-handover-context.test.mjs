@@ -7,7 +7,7 @@ const {approveTrainingArrivalTest:approve,availableTrainingArrivalSimulation:ava
 const {trainingHandoverReminder}=await import('../lib/training-session-context.ts');
 const contextRoute=await import('../app/api/training-session-context/route.ts');
 const approvalRoute=await import('../app/api/training-arrival-test-approval/route.ts');
-const sandbox={PAWSPACE_DEPLOYMENT_ENV:'e2e',PAWSPACE_UAT_PERSONAS:'on',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'synthetic-test-key-at-least-32-chars',FORBID_PRODUCTION:'true'};
+const sandbox={PAWSPACE_DEPLOYMENT_ENV:'e2e',PAWSPACE_UAT_PERSONAS:'on',PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'test-only-'.repeat(4),FORBID_PRODUCTION:'true'};
 const request=new Request('http://localhost/api/training-sessions');
 async function fixture({synthetic=false,env={}}={}){const w=freshWorld(env);seedBooking(w,{id:'AR1',group:'ARG',customer:synthetic?'UAT-AUDIT-CUSTOMER-A':undefined,sessions:2});if(synthetic)w.sqlite.prepare("UPDATE canonical_customers SET source='uat_audit_fixture',primary_phone='9000000841' WHERE id='UAT-AUDIT-CUSTOMER-A'").run();const p=await materializeTrainingProgramme(w.db,{bookingId:'AR1',actorId:'fixture'});return{...w,first:p.sessions[0]};}
 const act=(w,action,key,extra={})=>mutate(w.db,{sessionId:w.first.id,action,actorId:trainer(),idempotencyKey:key,...extra});

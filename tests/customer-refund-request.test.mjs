@@ -120,7 +120,7 @@ test('actual orchestrator engine error and foreign booking return truthful pendi
   if(mode==='engine_error')w.sqlite.exec("CREATE TRIGGER reject_refund_intake BEFORE INSERT ON unified_cases BEGIN SELECT RAISE(ABORT,'Synthetic private engine error'); END");
   else w.sqlite.prepare('UPDATE communication_messages SET payload_json=? WHERE id=?').run(JSON.stringify({text:'I want a refund for booking BKG-OTHER.'}),w.messageId);
   const result=await orchestrator.orchestrateAiTurn(w.db,{actor:w.actor,threadId:'THREAD-REFUND',customerId:'CUS-REFUND',inputMessageId:w.messageId,idempotencyKey:`failure-${mode}`,channel:'chat',provider:{status:'connected',provider:'synthetic',modelRef:'no-inference',async generate(){throw new Error('No model needed');}}});
-  assert.equal(result.turn.policyDecision,'refund_request_failed');assert.doesNotMatch(result.turn.output,/^Your.*request has been recorded|Synthetic private engine error|refund has been processed/);
+  assert.equal(result.turn.policyDecision,'refund_request_failed');assert.doesNotMatch(result.turn.output,/(?:^Your.*request has been recorded)|(?:Synthetic private engine error)|(?:refund has been processed)/);
   assert.equal(w.sqlite.prepare('SELECT count(*) n FROM unified_cases').get().n,0);assert.equal(w.sqlite.prepare("SELECT status FROM ai_handoffs WHERE thread_id='THREAD-REFUND'").get().status,'queued');
  }
 });

@@ -26,8 +26,8 @@ function render({status='arrived',providerModel='commission',saved=false,capture
   if(id.endsWith('training-session-client'))return{};
   return{__esModule:true,default:nullComponent};
  };
- const module={exports:{}};runInNewContext(code,{require:localRequire,module,exports:module.exports,Date,Intl,URLSearchParams});
- return renderToStaticMarkup(React.createElement(module.exports.default));
+ const evaluatedModule={exports:{}};runInNewContext(code,{require:localRequire,module:evaluatedModule,exports:evaluatedModule.exports,Date,Intl,URLSearchParams});
+ return renderToStaticMarkup(React.createElement(evaluatedModule.exports.default));
 }
 const button=(html,label)=>{const match=[...html.matchAll(/<button\b([^>]*)>([^<]*)<\/button>/g)].find(m=>m[2]===label);return match?{disabled:/\bdisabled=/.test(match[1])}:null;};
 test('actual trainer page renders arrived Save attendance before Start; persisted attendance and captured proof gate Start',()=>{

@@ -1,11 +1,13 @@
+import {ensureTrainingProgrammeTables} from "../../../lib/training-programme";
+import {ensureCanonicalBookingCoreTables} from "../../../lib/canonical-booking-core-schema";
 import {authError,authFailure,database,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from '../../../lib/server-auth';
 import {findIdentityBinding} from '../../../lib/identity-binding';
 import {withLifecycleMutationLock} from '../../../lib/lifecycle-mutation-lock';
-import {ensureTrainingRollingScheduleTables,rollingScheduleSummary,mutateTrainingRollingSchedule,type RollingMutation} from '../../../lib/training-rolling-scheduling';
+import {ensureTrainingRollingScheduleTables,rollingScheduleSummary,mutateTrainingRollingSchedule,type RollingMutation} from "../../../lib/training-rolling-scheduling";
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
 async function owned(db:D1Database,actor:AuthenticatedActor,bookingId:string,actorKind:string,sessionId?:string,changeId?:string){
- if(!['customer','provider'].includes(actorKind))throw authFailure('Choose the authenticated customer or provider actor',400);await ensureTrainingRollingScheduleTables(db);
+ if(!['customer','provider'].includes(actorKind))throw authFailure('Choose the authenticated customer or provider actor',400);await ensureTrainingRollingScheduleTables(db);await ensureTrainingProgrammeTables(db);await ensureCanonicalBookingCoreTables(db);
  const row=await db.prepare("SELECT p.customer_id,p.provider_id FROM training_programmes p JOIN canonical_bookings b ON b.id=p.booking_id WHERE b.id=? AND b.service_code='dog_training'").bind(bookingId).first<Row>();if(!row)throw authFailure('Canonical Training programme not found',404);
  let target=String(actorKind==='customer'?row.customer_id:row.provider_id);
  if(actorKind==='provider'&&(sessionId||changeId)){const session=await db.prepare('SELECT s.provider_id FROM training_sessions s WHERE s.booking_id=? AND (s.id=? OR s.id=(SELECT session_id FROM training_rolling_changes WHERE id=? AND booking_id=?))').bind(bookingId,sessionId??'',changeId??'',bookingId).first<Row>();if(!session)throw authFailure('Owned Training appointment not found',404);target=String(session.provider_id);}

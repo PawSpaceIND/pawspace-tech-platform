@@ -1,9 +1,11 @@
-import{authError,database,requireCustomerOwnership,requirePermission,requireProviderOwnership,resolveActor}from"../../../../lib/server-auth";
-import{ensureMediaBoundaryTables}from"../../../../lib/media-upload-boundary";
-import{readStoredObject}from"../../../../lib/media-storage-adapter";
+import {ensureTrainingProgrammeTables} from "../../../../lib/training-programme";
+import {ensureTrainingSessionLifecycleTables} from "../../../../lib/training-session-lifecycle";
+import{authError,database,requireCustomerOwnership,requirePermission,requireProviderOwnership,resolveActor} from "../../../../lib/server-auth";
+import{ensureMediaBoundaryTables} from "../../../../lib/media-upload-boundary";
+import{readStoredObject} from "../../../../lib/media-storage-adapter";
 export async function GET(request:Request){try{
- const id=new URL(request.url).searchParams.get("id")||"";const db=await database();await ensureMediaBoundaryTables(db);
- const actor=await resolveActor(request);
+ const id=new URL(request.url).searchParams.get("id")||"";const db=await database();
+ const actor=await resolveActor(request);await ensureMediaBoundaryTables(db);await ensureTrainingSessionLifecycleTables(db);await ensureTrainingProgrammeTables(db);
  const row=await db.prepare("SELECT a.*,p.customer_id,s.provider_id AS session_provider_id FROM training_session_media_links l JOIN service_media_assets a ON a.id=l.media_id JOIN training_sessions s ON s.id=l.session_id JOIN training_programmes p ON p.id=s.programme_id WHERE a.id=?").bind(id).first<Record<string,unknown>>();
  if(!row)return Response.json({error:"Training media not found"},{status:404});
  if(actor.subjectType==="customer")await requireCustomerOwnership(db,actor,String(row.customer_id));

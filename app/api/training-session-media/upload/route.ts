@@ -1,6 +1,7 @@
-import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../../lib/server-auth";
-import{APPROVED_MEDIA_UPLOAD_BOUNDARY,ensureMediaBoundaryTables,inspectMediaUploadGrant,redeemMediaUploadGrant}from"../../../../lib/media-upload-boundary";
-import{mediaStorageStatus,storeObject}from"../../../../lib/media-storage-adapter";
+import {ensureTrainingSessionLifecycleTables} from "../../../../lib/training-session-lifecycle";
+import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit} from "../../../../lib/server-auth";
+import{APPROVED_MEDIA_UPLOAD_BOUNDARY,ensureMediaBoundaryTables,inspectMediaUploadGrant,redeemMediaUploadGrant} from "../../../../lib/media-upload-boundary";
+import{mediaStorageStatus,storeObject} from "../../../../lib/media-storage-adapter";
 
 /** Training-only video bytes: bounded stream, server digest, private storage and one-use grant.
  * Registration and upload do not claim approval or delivery; playback requires the existing review gate.
@@ -13,8 +14,8 @@ const hex=(buffer:ArrayBuffer)=>Array.from(new Uint8Array(buffer)).map(byte=>byt
 
 export async function PUT(request:Request){try{
   const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)return json({error:"Cross-origin Training upload blocked"},403);
-  const db:Db=await database();await ensureMediaBoundaryTables(db);
-  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
+  const db:Db=await database();
+  const actor=await resolveActor(request);requirePermission(actor,"bookings.view");await ensureMediaBoundaryTables(db);await ensureTrainingSessionLifecycleTables(db);
   const mediaId=text(request.headers.get("x-pawspace-media-id")),token=text(request.headers.get("x-pawspace-upload-token"));
   if(!mediaId||!token)return json({error:"The media asset id and its upload token are required as headers"},400);
   const grant=await inspectMediaUploadGrant(db,{token,mediaId,trainingVideoUpload:true});

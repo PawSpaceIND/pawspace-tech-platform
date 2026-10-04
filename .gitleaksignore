@@ -55,3 +55,7 @@ a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret
 # Historical documentation comment reproduced that same loopback-only fixture identifier.
 # Exact comment finding only; no credential or general rule suppression.
 7b03f7b40f2e0631e8ed948f3adee02232be61b4:.gitleaksignore:pawspace-payment-secret-key:50
+
+# Exact historical false positive: public in-memory Training signing fixture, never a hosted credential.
+# Latest fixture uses an unmistakable test-only expression; all other findings remain enforced.
+bdb7df8bb8e201858855af28448d1a6f7e1dc183:tests/training-arrival-handover-context.test.mjs:generic-api-key:10
