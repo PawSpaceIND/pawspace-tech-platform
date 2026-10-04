@@ -81,7 +81,7 @@ for(const width of [320,391,768,1440])for(const service of ['training','walking'
    await page.goto(`/v2/${service}`);await rendered(page);
    const date=service==='training'?page.getByLabel(/First session date/):page.getByLabel('Start from',{exact:true});await expect(date).toBeDisabled();
    accountGate.release();await expect(date).toBeDisabled();catalogueGate.release();await expect(date).toBeEnabled();
-   await date.fill('2026-10-08');if(service==='training')await page.getByLabel('First session start (IST, on the hour)',{exact:true}).selectOption('11:00');
+   await date.fill('2026-10-08');if(service==='training')await page.getByLabel(/First session start \(IST, on the hour\)/).selectOption('11:00');
    else{const slot=page.getByRole('button',{name:/6:00 AM/}).first();await expect(slot).toBeEnabled();await slot.click();}
    await expect(date).toHaveValue('2026-10-08');await page.evaluate(()=>{for(const theme of ['coral','signature','emerald']){localStorage.setItem('pawspace.customer.theme',theme);window.dispatchEvent(new CustomEvent('pawspace-appearance-change',{detail:{theme,mode:'dark',style:'cartoon'}}));}});
    await expect(date).toHaveValue('2026-10-08');await evidence(page,info,`${service}-ready`);expect(writes).toEqual([]);

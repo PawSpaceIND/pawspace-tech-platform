@@ -25,7 +25,7 @@ export default function TeamRelocationEnquiries(){
   },[]);
 
   return <StaffModule><main style={{maxWidth:1100,margin:"0 auto",padding:28,fontFamily:"inherit",display:"grid",gap:16}}>
-    <header><Link href="/team">← Team</Link><p style={{color:"var(--ds-primary-500)",letterSpacing:1,fontSize:14}}>PET RELOCATION · ENQUIRIES</p><h1 style={{margin:0}}>Submitted relocation enquiries</h1><p>Legacy pickup/drop enquiries, newest first. Sandbox/UAT — no live money.</p><p>For current V2 relocation requests, document reviews and quotes, open <Link href="/team/relocation">Relocation operations →</Link>.</p></header>
+    <header><Link href="/team">← Team</Link><p style={{color:"var(--paw-text)",letterSpacing:1,fontSize:14}}>PET RELOCATION · ENQUIRIES</p><h1 style={{margin:0}}>Submitted relocation enquiries</h1><p>Legacy pickup/drop enquiries, newest first. Sandbox/UAT — no live money.</p><p>For current V2 relocation requests, document reviews and quotes, open <Link href="/team/relocation">Relocation operations →</Link>.</p></header>
     {error&&<p role="alert" style={{color:"var(--ds-danger-500)"}}>{error}</p>}
     {contactMasked&&<p style={{margin:0,color:"var(--ds-text-muted)",fontSize:14}}>Phone numbers and email are masked for your role.</p>}
     <section style={box}>

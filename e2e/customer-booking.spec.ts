@@ -449,7 +449,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
  const windowMs=mode==="sitting"?3600000:4*3600000;
  await page.locator("#grooming-address-line-1").fill("42, Indiranagar Double Road, Stage 2, Hoysala Nagar, Indiranagar, Bengaluru");await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/42.*Indiranagar Double Road/}).first().click();await expect(page.getByText(mode==="boarding"?"Host location":"Your location",{exact:true})).toBeVisible();await page.getByRole("button",{name:"Use this address",exact:true}).click();
  let eveningProviders:Array<{name:string}>=[];
- for(const[time,utc]of [["13:00","07:30"],["18:00","12:30"]]){
+ for(const[time,utc]of [["13:00","07:30"],mode==="boarding"?["16:00","10:30"]:["18:00","12:30"]]){
   const expectedStart=`${date}T${utc}:00.000Z`;
   const preview=mode==="sitting"?page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===windowMs):null;
   const quoted=page.waitForResponse(response=>response.url().endsWith(`/api/${mode}-commercial`)&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===expectedStart&&Date.parse(response.request().postDataJSON()?.scheduledEnd)-Date.parse(expectedStart)===windowMs);
@@ -464,12 +464,11 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   if(eveningProviders.length){for(const provider of eveningProviders)await expect(page.getByRole("heading",{name:provider.name,exact:true}).first()).toBeVisible();}
   else{await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();}
   await page.getByRole("button",{name:/← Plan/}).click();
-  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T08:00:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T09:00:00.000Z`);
-  // run-personas.sh owns a 14:00 IST execution clock; keep the final 60-minute visit around it.
-  // The 13:00/18:00 quote checks above remain unchanged. No application clock or time gate is edited.
+  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T09:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T10:30:00.000Z`);
+  // The governed Home Visit start must be on the hour and later than the fixture's 14:00 IST clock.
   const executionNow=Number(process.env.PAWSPACE_UAT_EXECUTION_NOW_MS);
   expect(Number.isSafeInteger(executionNow)).toBe(true);expect(executionNow).toBeGreaterThanOrEqual(Date.parse(`${date}T08:00:00.000Z`));expect(executionNow).toBeLessThan(Date.parse(`${date}T09:00:00.000Z`));
-  await page.getByLabel("Visit start time",{exact:true}).fill("13:30");
+  await page.getByLabel("Visit start time",{exact:true}).fill("15:00");
   const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
   await page.getByRole("button",{name:"See available sitters",exact:true}).click();
  }else{
@@ -496,7 +495,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
  await expect(intro).toContainText(meeting.request.id);await expect(intro).toContainText("not proof of payment or service completion");
  await intro.getByRole("button",{name:"Refresh introduction requests",exact:true}).click();await expect(intro).toContainText(meeting.request.id);
  await page.getByRole("button",{name:"Review protected booking",exact:true}).click();
- const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"1:30 pm":"1:00 pm");await expect(review).toContainText(mode==="sitting"?"1 hour":"4 hours");
+ const review=page.getByRole("article",{name:"Review stay details",exact:true});await expect(review).toContainText(mode==="sitting"?"3:00 pm":"1:00 pm");await expect(review).toContainText(mode==="sitting"?"1 hour":"4 hours");
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
@@ -515,10 +514,10 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible({timeout:30_000});
   await expect(page.getByText("Secure Razorpay checkout",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
-  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T08:00:00.000Z`);
+  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T09:30:00.000Z`);
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("UAT vet contact: 9000000951");
   await expect(page.getByRole("region",{name:"Meet and Greet",exact:true})).toContainText(meeting.request.id);
-  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/1:30:00 pm IST/i);
+  await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/3:00:00 pm IST/i);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/payment pending/i);
   const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
   await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
@@ -578,7 +577,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
-   const originalStart=`${date}T08:00:00.000Z`,originalEnd=`${date}T09:00:00.000Z`;
+   const originalStart=`${date}T09:30:00.000Z`,originalEnd=`${date}T10:30:00.000Z`;
    const cancelRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_cancel",idempotencyKey:`sitting-cancel-${bookingId}`,reason:"Verify founder zero-fee cancellation boundary"}});expect(cancelRequest.status(),await cancelRequest.text()).toBe(200);const cancelData=await cancelRequest.json();expect(cancelData.data.status).toBe("policy_review_required");expect(cancelData.data.bookingPreserved).toBe(true);expect(cancelData.data.refundPolicy).toBe("configuration_required");
    const dateRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_date_change",idempotencyKey:`sitting-date-${bookingId}`,reason:"Verify founder zero-fee reschedule boundary",requestedStart:originalStart,requestedEnd:originalEnd}});expect(dateRequest.status(),await dateRequest.text()).toBe(200);const dateData=await dateRequest.json();expect(dateData.data.status).toBe("commercial_quote_required");expect(dateData.data.stayWindowUnchanged).toBe(true);
    const afterRequests=await page.context().request.get("/api/customer-account");expect(afterRequests.ok()).toBeTruthy();const afterRequestRows=(await afterRequests.json()).data.bookings.filter((row:{id:string})=>row.id===bookingId);expect(afterRequestRows).toHaveLength(1);expect(new Date(afterRequestRows[0].scheduledStart).toISOString()).toBe(originalStart);expect(new Date(afterRequestRows[0].scheduledEnd).toISOString()).toBe(originalEnd);expect(afterRequestRows[0].providerId).toBe(providerId);
@@ -587,7 +586,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    await expect(sitterCare).toContainText("UAT vet contact: 9000000951");await expect(sitterCare).toContainText("UAT emergency contact: 9000000952");await expect(sitterCare).toContainText("UAT fixture: call the customer at the gate.");
    await page.getByRole("textbox",{name:"Food and water routine",exact:true}).fill("Use the labelled food container. Refresh water after the meal.");await page.getByRole("button",{name:"Save care instructions",exact:true}).click();await expect(page.getByRole("status")).toContainText("Care instructions saved.");
    await partner.getByRole("button",{name:"Refresh booking",exact:true}).click();await expect(sitterCare).toContainText("Use the labelled food container. Refresh water after the meal.");
-   await expect(partner.locator("main")).toContainText("1:30 pm IST");
+   await expect(partner.locator("main")).toContainText("3:00 pm IST");
    await partner.screenshot({path:test.info().outputPath("sitting-partner-accepted.png"),fullPage:true});
    await partner.evaluate(()=>Object.defineProperty(navigator,"geolocation",{configurable:true,value:{getCurrentPosition(_success:unknown,failure:(error:{code:number})=>void){failure({code:1});}}}));
    let checkInRequests=0;partner.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith("/api/sitting-lifecycle")&&request.postDataJSON()?.action==="check_in")checkInRequests++;});

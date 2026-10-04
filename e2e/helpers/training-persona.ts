@@ -125,9 +125,9 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     } });
     expect(address.ok(), await address.text()).toBeTruthy();
     await page.goto("/v2/training"); await dismissPrivacy(page);
-    await page.getByLabel(/^First session date/).fill(date);
-    await page.getByLabel("First session start (IST, on the hour)", { exact: true }).selectOption("13:00");
     await page.getByRole("button", { name: /Trainer Meet & Greet/ }).click();
+    await page.getByLabel(/^First session date/).fill(date);
+    await page.getByLabel(/First session start \(IST, on the hour\)/).selectOption("13:00");
     await expect(page.getByLabel("Payment mode")).toBeDisabled();
     await expect(page.getByLabel("Payment mode")).toHaveValue("prepaid");
     await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
