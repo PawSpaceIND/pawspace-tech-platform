@@ -131,7 +131,9 @@ if (problems.length || !isolated) {
 
 cfg.name = workerName;
 cfg.topLevelName = workerName;
-cfg.d1_databases = [{ binding: "DB", database_name: workerName, database_id: previewD1 }];
+// Wrangler resolves this path from the generated config in candidate/dist/server/.
+// Keep migrations in the candidate checkout, not the infrastructure checkout.
+cfg.d1_databases = [{ binding: "DB", database_name: workerName, database_id: previewD1, migrations_dir: "../../migrations" }];
 
 // Sandbox money, and every outbound live effect off. These are NON-SECRET switches, so they belong in
 // vars; the UAT credentials are installed separately as encrypted Worker secrets and are never written
