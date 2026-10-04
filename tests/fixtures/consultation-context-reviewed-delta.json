@@ -1,0 +1,146 @@
+{
+  "base": "9c06b8d7b09c51bd0ff05adf0d4a92ce4b6d60af",
+  "reviewedHead": "2fcc920a22641a3ae458e3037ed2ea0b883ec89e",
+  "files": {
+    "lib/ai-conversation-orchestrator.ts": {
+      "beforeSha256": "1bd9cf95bed3e425a87e8064c834cf9f0abd8ba66d2bba4763c8b3614c0a09f7",
+      "afterSha256": "7f1e36cb06d10deec3a6d16b3bbac521b60db0f573457c11426b03e00740a545",
+      "replacements": [
+        [
+          "export async function orchestrateAiTurn(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;inputMessageId:string;idempotencyKey:string;channel:string;qualificationReadOnly?:boolean;provider?:AiResponseProvider;voiceFollowupIntent?:AiIntentDecision;voiceConversationHistory?:Array<{role:string;content:string}>;nativeTurnKey?:string;assertCurrent?:()=>void;onLookupPending?:()=>()=>void;signal?:AbortSignal}){const abortError=()=>Object.assign(new Error(\"AI turn cancelled\"),{name:\"AbortError\"});const assertTurnCurrent=()=>{if(input.signal?.aborted)throw abortError();input.assertCurrent?.();};if(input.qualificationReadOnly&&input.channel!==\"chat\")throw new Response(\"Qualification is chat only\",{status:403});await ensureAiConversationOrchestrator(db);assertTurnCurrent();if(!input.threadId||!input.customerId||!input.inputMessageId||!input.idempotencyKey)throw new Error(\"Thread, customer, canonical input message and idempotency key are required\");if(!isChannel(input.channel))throw new Error(\"Unsupported AI conversation channel\");/* The message read, the replay lookup and the handoff check are independent reads: one round trip instead of\n",
+          "export async function orchestrateAiTurn(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;customerId:string;inputMessageId:string;idempotencyKey:string;channel:string;qualificationReadOnly?:boolean;chatStayReadOnly?:boolean;provider?:AiResponseProvider;voiceFollowupIntent?:AiIntentDecision;voiceConversationHistory?:Array<{role:string;content:string}>;nativeTurnKey?:string;assertCurrent?:()=>void;onLookupPending?:()=>()=>void;signal?:AbortSignal}){const abortError=()=>Object.assign(new Error(\"AI turn cancelled\"),{name:\"AbortError\"});const assertTurnCurrent=()=>{if(input.signal?.aborted)throw abortError();input.assertCurrent?.();};if((input.qualificationReadOnly||input.chatStayReadOnly)&&input.channel!==\"chat\")throw new Response(\"Qualification is chat only\",{status:403});await ensureAiConversationOrchestrator(db);assertTurnCurrent();if(!input.threadId||!input.customerId||!input.inputMessageId||!input.idempotencyKey)throw new Error(\"Thread, customer, canonical input message and idempotency key are required\");if(!isChannel(input.channel))throw new Error(\"Unsupported AI conversation channel\");/* The message read, the replay lookup and the handoff check are independent reads: one round trip instead of\n"
+        ],
+        [
+          " const informationOnly=Boolean(input.qualificationReadOnly)||intent.signals.includes(POLICY_INFORMATION_SIGNAL)||Boolean(salesService&&isSalesInformationQuestion(text));\n",
+          " const informationOnly=Boolean(input.qualificationReadOnly||input.chatStayReadOnly)||intent.signals.includes(POLICY_INFORMATION_SIGNAL)||Boolean(salesService&&isSalesInformationQuestion(text));\n"
+        ],
+        [
+          " const leadDecision=!input.qualificationReadOnly&&lowConfidence&&!chatModelFirst&&!explicitHandoff&&!policyRisk&&!rolloutGated&&provider.status===\"connected\"?await aiLeadLowConfidenceDecision(db,input.threadId,text):null;const followupAction=input.qualificationReadOnly||rolloutGated||intent.intent===\"refund_review\"||policyRisk||explicitHandoff||needsImmediateVetGuidance(text)||detectPromptInjection(text).blocked?null:await executeConversationFollowup(db,{actor:input.actor,customerId:input.customerId,threadId:input.threadId,inputMessageId:input.inputMessageId,turnKey:input.idempotencyKey,message:text,channel:input.channel,intentCode:intent.intent});if(input.qualificationReadOnly){\n",
+          " const leadDecision=!input.qualificationReadOnly&&!input.chatStayReadOnly&&lowConfidence&&!chatModelFirst&&!explicitHandoff&&!policyRisk&&!rolloutGated&&provider.status===\"connected\"?await aiLeadLowConfidenceDecision(db,input.threadId,text):null;const followupAction=input.qualificationReadOnly||input.chatStayReadOnly||rolloutGated||intent.intent===\"refund_review\"||policyRisk||explicitHandoff||needsImmediateVetGuidance(text)||detectPromptInjection(text).blocked?null:await executeConversationFollowup(db,{actor:input.actor,customerId:input.customerId,threadId:input.threadId,inputMessageId:input.inputMessageId,turnKey:input.idempotencyKey,message:text,channel:input.channel,intentCode:intent.intent});const appOnlyStay=Boolean(input.chatStayReadOnly)&&!policyRisk&&!explicitHandoff&&!rolloutGated&&provider.status===\"connected\";if(input.qualificationReadOnly||appOnlyStay){\n"
+        ],
+        [
+          " outcome=\"reply_ready\";policyDecision=\"qualification_read_only\";\n",
+          " outcome=\"reply_ready\";policyDecision=input.qualificationReadOnly?\"qualification_read_only\":\"chat_stay_read_only\";\n"
+        ],
+        [
+          " if(providerResult.failure||providerResult.unsupported||!providerResult.text.trim()||!safety.safe||providerResult.actionRequests?.length||providerResult.highImpactAction){output=\"The read-only answer could not be verified. No action or handoff was performed.\";policyDecision=\"qualification_answer_refused\";providerFailure=providerResult.failure||\"qualification_answer_refused\";providerResult={...providerResult,failure:providerFailure};}\n",
+          " if(providerResult.failure||providerResult.unsupported||!providerResult.text.trim()||!safety.safe||providerResult.actionRequests?.length||providerResult.highImpactAction){output=\"The read-only answer could not be verified. No action or handoff was performed.\";policyDecision=input.qualificationReadOnly?\"qualification_answer_refused\":\"chat_stay_answer_refused\";providerFailure=providerResult.failure||policyDecision;providerResult={...providerResult,failure:providerFailure};}\n"
+        ],
+        [
+          " }catch{assertTurnCurrent();output=\"The read-only answer is unavailable. No action or handoff was performed.\";policyDecision=\"qualification_provider_unavailable\";providerFailure=\"qualification_provider_unavailable\";providerResult={...providerResult,failure:providerFailure};}\n",
+          " }catch{assertTurnCurrent();output=\"The read-only answer is unavailable. No action or handoff was performed.\";policyDecision=input.qualificationReadOnly?\"qualification_provider_unavailable\":\"chat_stay_provider_unavailable\";providerFailure=policyDecision;providerResult={...providerResult,failure:providerFailure};}\n"
+        ]
+      ]
+    },
+    "lib/ai-grounded-runtime-provider.ts": {
+      "beforeSha256": "56c296366500dca5319e5646a6f7970343ec7f7d4a423626d202fd789c2dca78",
+      "afterSha256": "4cc6c207f2fce64d486800e329c26788921097e43cc20f40c360b17700f7152d",
+      "replacements": [
+        [
+          "import {buildCustomerConsultation,consultationDiscoveryReply,CUSTOMER_CONSULTATION_DIRECTIVE} from \"./customer-consultation\";\n",
+          "import {buildCustomerConsultation,consultationDiscoveryReply,chatConsultationService,CUSTOMER_CONSULTATION_DIRECTIVE} from \"./customer-consultation\";\n"
+        ],
+        [
+          "export const WEB_CHAT_SALES_DIRECTIVE=`Sales role: you are PawSpace's sales agent. Your goal is to turn this conversation into a confirmed booking. Recommend the single best-fit package for the customer's pet and need, quote its exact price from the server-owned catalogue, explain in one or two lines why it is the right choice, and always end by asking for the booking (for example: \"Shall I book this for you?\"). Handle hesitation by addressing the concern and offering the next closest package. Mention subscriptions or multi-session packs from the catalogue when they save the customer money. Stay warm and confident, keep momentum, and never leave a reply without a clear next step. Never invent discounts, offers, limited-time deals, scarcity or availability; use only what the catalogue, approved knowledge, approvedOffers or a governed tool supplied.`;\n",
+          "export const WEB_CHAT_SALES_DIRECTIVE=`Sales role: you are PawSpace's sales agent. Your goal is to turn this conversation into a confirmed booking. Recommend the single best-fit package for the customer's pet and need, quote its exact price from the server-owned catalogue, explain in one or two lines why it is the right choice, and end with one permitted next step. Ask to proceed only when this chat exposes a governed booking path for that service; caregiver selection, stay prices, booking and payment are completed in the app. Answer a requested explanation or next app step directly, without asking permission to explain it again. Handle hesitation by addressing the concern and offering the next closest package. Mention subscriptions or multi-session packs from the catalogue when they save the customer money. Stay warm and confident, keep momentum, and never leave a reply without a clear next step. Never invent discounts, offers, limited-time deals, scarcity or availability; use only what the catalogue, approved knowledge, approvedOffers or a governed tool supplied.`;\n"
+        ],
+        [
+          " ]);options.onTiming?.(\"groundingCompleted\");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),informationOnly=Boolean(options.qualification)||Boolean(policyEnquiry)||salesInformation||medicalQuestion;\n",
+          " ]);options.onTiming?.(\"groundingCompleted\");let systemPrompt=basePrompt;const policyEnquiry=policyEnquiryTopic(input.inputText),medicalQuestion=isPetMedicalQuestion(input.inputText),salesInformation=Boolean(options.salesService&&isSalesInformationQuestion(input.inputText)),chatService=channel===\"chat\"?(chatConsultationService(input.inputText)??options.salesService):null,chatStay=chatService===\"boarding\"||chatService===\"pet_sitting\",informationOnly=Boolean(options.qualification)||Boolean(policyEnquiry)||salesInformation||medicalQuestion||chatStay;\n"
+        ],
+        [
+          " if(options.salesService&&!medicalQuestion&&!policyEnquiry){\n  const consultation=buildCustomerConsultation({history:conversationHistory,currentText:input.inputText,context:grounded.context,service:options.salesService,channel});\n",
+          " if(chatStay){\n  Object.assign(grounded.context,{stayCapabilities:{caregiverCoverageLookup:false,caregiverAvailabilityLookup:false,fixedCaregiverQuote:false,bookingChannel:\"customer_app\"},availableActionTools:[],informationOnly:true});\n  systemPrompt+=\"\\nFor this app-only stay enquiry, explain the actual capability limit: this chat has no live caregiver coverage, availability or fixed-rate lookup. Do not request locality just to perform a nonexistent lookup. Explain approved care options, retain supplied visit frequency and duration, and direct selection, price and booking to the app. Ask only one relevant missing care question. A three-day absence is not proof of overnight care or billable units. Keep each pet's concerns separate. Never propose booking tools for this stay turn.\";\n  const lookup=/\\b(?:verify|check|confirm|lookup|look up)\\b.{0,90}\\b(?:coverage|availability|price|rate)\\b/i.test(input.inputText);\n  const action=/\\b(?:choose|select)\\b.{0,40}\\b(?:caregiver|sitter)\\b|\\bbook(?:\\s+it)?\\s+now\\b/i.test(input.inputText);\n  if(lookup||action)return{text:lookup?\"I can't verify live caregiver coverage, availability or a fixed price in this chat. In the PawSpace app, review available caregivers and their quoted visit or stay rates before booking.\":\"Caregiver selection, the quoted sitting or stay price, booking and payment are completed in the PawSpace app. I haven't selected a caregiver or made a booking.\",provider:\"conversation_capability\",modelRef:\"server_owned_app_only_stays\",latencyMs:0,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices:true,offerClaimsVerified:true,highImpactAction:false,actionRequests:[]};\n }\n if((options.salesService||chatStay)&&!medicalQuestion&&!policyEnquiry){\n  const consultation=buildCustomerConsultation({history:conversationHistory,currentText:input.inputText,context:grounded.context,service:chatStay?chatService:options.salesService,channel});\n"
+        ],
+        [
+          " const customerText=envelope?(envelope.reply||(envelope.actions.length?\"Let me check those booking details.\":\"\")):result.text;\n",
+          " const customerText=chatStay&&envelope?.actions.length?\"Caregiver selection, price, booking and payment are completed in the PawSpace app. I have not made a booking.\":envelope?(envelope.reply||(envelope.actions.length?\"Let me check those booking details.\":\"\")):result.text;\n"
+        ],
+        [
+          " return{text:spoken,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices,offerClaimsVerified,highImpactAction:false,actionRequests:medicalQuestion?[]:envelope?.actions};}};}\n",
+          " return{text:spoken,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,catalogueVerifiedPrices,offerClaimsVerified,highImpactAction:false,actionRequests:medicalQuestion||chatStay?[]:envelope?.actions};}};}\n"
+        ]
+      ]
+    },
+    "lib/ai-web-chat-adapter.ts": {
+      "beforeSha256": "f0738f9f270b26e69d424020a248fccd6cceed85b11f06ce936b12ed993a6ab8",
+      "afterSha256": "ce9c4cc8540c19d7756daffd13795232bf86a68dc6c44aacf5ddb447debbc90f",
+      "replacements": [
+        [
+          "",
+          "import{chatConsultationService}from'./customer-consultation';\n"
+        ],
+        [
+          "export function chatSalesServiceNamed(message:string):VoiceSalesService|null{\n if(/\\b(groom\\w*|bath|haircut|makeover|de-?shedding)\\b/i.test(message))return\"grooming\";\n if(/\\b(train\\w*|obedience|puppy class\\w*)\\b/i.test(message))return\"dog_training\";\n return null;\n}\n",
+          "export function chatSalesServiceNamed(message:string):VoiceSalesService|null{const selected=chatConsultationService(message);return selected===\"dog_walking\"||selected===\"funeral\"?null:selected;}\n\n"
+        ],
+        [
+          " const named=chatSalesServiceNamed(message),now=Date.now();\n const last=await db.prepare(\"SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC LIMIT 1\").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();\n let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??\"{}\")).service;if(service===\"grooming\"||service===\"dog_training\")remembered=service;}catch{}\n if(named&&named!==remembered)await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)\").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();\n return named??remembered;\n",
+          " const selected=chatConsultationService(message),named=chatSalesServiceNamed(message),now=Date.now();\n const last=await db.prepare(\"SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC,rowid DESC LIMIT 1\").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();\n let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??\"{}\")).service;if(service===\"grooming\"||service===\"dog_training\"||service===\"boarding\"||service===\"pet_sitting\"||service===\"pet_taxi\")remembered=service;}catch{}\n if(selected&&named!==remembered)await db.prepare(\"INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)\").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();\n return selected?named??undefined:remembered;\n"
+        ],
+        [
+          " try{const provider=await providerPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:\"chat\",provider,...(options.qualification?{qualificationReadOnly:true}:{})});}\n",
+          " try{const provider=await providerPromise,service=await salesPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:\"chat\",provider,...(service===\"boarding\"||service===\"pet_sitting\"?{chatStayReadOnly:true}:{}),...(options.qualification?{qualificationReadOnly:true}:{})});}\n"
+        ]
+      ]
+    },
+    "lib/customer-consultation.ts": {
+      "beforeSha256": "51ee9b1b5c23d90dd2b3f6cb50636f636d12dda02b3de8e4e2dd8487c105e2f7",
+      "afterSha256": "52d6a38a7c7c85929b0ddf8e6b952e8dc90dec8eb346cff69912224a1ccb8da5",
+      "replacements": [
+        [
+          "",
+          "/** Read-only chat topic selection; a paused service mention is not the active request. */\nexport function activeChatConsultationText(value:string){\n return value.replace(/\\b(?:switch|change|move)\\s+from\\b.*?\\bto\\s+/gi,' ').replace(/\\b(?:pause|stop|hold|no|not|don't want|don\u2019t want)\\s+(?:(?:my|the|a|an)\\s+)?(?:[A-Za-z]+\\s+){0,2}(?:grooming|training|boarding|daycare|sitting|sitter|haircut|taxi|cab|walking|walker|funeral|cremation)\\b/gi,' ');\n}\nexport function chatConsultationService(value:string):Service|null{\n const active=activeChatConsultationText(value);\n if(patterns.pet_taxi.test(active))return 'pet_taxi';\n if(patterns.dog_walking.test(active))return 'dog_walking';\n if(patterns.funeral.test(active))return 'funeral';\n const sitting=/\\b(?:sitting|sitter|caregiver)\\b|\\b(?:cat|pet)\\b.{0,90}\\bvisits?\\b/i.test(active);\n if(sitting)return 'pet_sitting';\n if(/\\b(?:boarding|daycare)\\b/i.test(active))return 'boarding';\n if(/\\b(?:groom\\w*|bath|haircut|makeover|de-?shedding)\\b/i.test(active))return 'grooming';\n if(/\\b(?:train\\w*|obedience|puppy class\\w*)\\b/i.test(active))return 'dog_training';\n return null;\n}\nfunction chatCareWindow(values:string[]){\n let window:'visits'|'overnight'|'daytime'|null=null;\n for(const value of values){\n  const denied=new Set<string>();\n  const active=value.replace(/\\b(?:not|no|never|cancel|stop|pause|without|don't want|don\u2019t want|rather than|instead of)\\s+(?:(?:the|any|a|an|short)\\s+)*(visits?|overnight|daytime|daycare|during the day)\\b/gi,(_,mode:string)=>{denied.add(/^visit/i.test(mode)?'visits':/^overnight/i.test(mode)?'overnight':'daytime');return ' ';});\n  const affirmed=[...active.matchAll(/\\b(visits?|overnight|daytime|daycare|during the day)\\b/gi)].at(-1)?.[1];\n  if(affirmed)window=/^visit/i.test(affirmed)?'visits':/^overnight/i.test(affirmed)?'overnight':'daytime';\n  else if(window&&denied.has(window))window=null;\n }\n return window;\n}\n"
+        ],
+        [
+          "",
+          " const chat=input.channel==='chat',careHistory:Array<{subject:string;text:string}>=[];\n"
+        ],
+        [
+          "",
+          " let careSubject=text(pet?.name)||'unverified_pet';\n"
+        ],
+        [
+          "  const value=message.content;\n",
+          "  const rawValue=message.content;\n  const value=chat?activeChatConsultationText(rawValue).replace(/\\bpulls?\\b/gi,'pulling').replace(/\\bbarks?\\b/gi,'barking'):rawValue;\n"
+        ],
+        [
+          "",
+          "  if(chat){\n   const species=value.match(/\\bmy\\s+(?:(?:elderly|senior|adult|young|new)\\s+)?(cat|dog|kitten|puppy)\\b/i)?.[1]?.toLowerCase();\n   if(species&&pet&&!new RegExp(species==='cat'||species==='kitten'?'cat|feline':'dog|canine','i').test(text(pet.species)||text(pet.pet_type))){pet=null;delete constraints.age;delete constraints.trust;delete constraints.results;delete constraints.time;}\n   if(species)careSubject=pet?text(pet.name)||'unverified_pet':'unverified_'+species;else if(named.length)careSubject=text(pet?.name)||'unverified_pet';\n   careHistory.push({subject:careSubject,text:rawValue});\n   const selected=chatConsultationService(rawValue);if(selected)service=selected;\n  }\n"
+        ],
+        [
+          "  if(matches.length===1&&!/\\b(?:no|not|don't want|don\u2019t want)\\s+(?:(?:any|a|an)\\s+)?(?:training|grooming|taxi|cab|boarding|daycare|sitting|sitter|walking|walker|funeral|cremation)\\b/i.test(value))service=matches[0];\n",
+          "  if(!(chat&&chatConsultationService(rawValue))&&matches.length===1&&!/\\b(?:no|not|don't want|don\u2019t want)\\s+(?:(?:any|a|an)\\s+)?(?:training|grooming|taxi|cab|boarding|daycare|sitting|sitter|walking|walker|funeral|cremation)\\b/i.test(value))service=matches[0];\n"
+        ],
+        [
+          " const knownAge=Boolean(constraints.age||pet&&[pet.age_months,pet.age_years,pet.age].some(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0)||pet&&(pet.date_of_birth||pet.dob));\n",
+          " const knownAge=Boolean(chat&&/\\b(?:adult|elderly|senior)\\s+(?:dog|cat|pet)\\b/i.test(input.currentText)||constraints.age||pet&&[pet.age_months,pet.age_years,pet.age].some(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0)||pet&&(pet.date_of_birth||pet.dob));\n"
+        ],
+        [
+          "",
+          " const recommendation=/\\b(?:compare|difference|better|best|recommend|suggest)\\b|\\bwhich\\b.{0,60}\\b(?:package|plan|training|programme|program)\\b.{0,30}\\b(?:fits?|suits?|right)\\b/i.test(input.currentText);\n const currentPetTurns=chat?careHistory.filter(entry=>entry.subject===careHistory.at(-1)?.subject).map(entry=>activeChatConsultationText(entry.text)):[];\n const currentPetText=currentPetTurns.join(' ');\n const careWindow=chat?chatCareWindow(currentPetTurns):null;\n"
+        ],
+        [
+          "",
+          "  if(chat&&recommendation&&needs[service]?.some(goal=>/pull|bark/.test(goal))&&!/\\b(?:lung(?:e|es|ed|ing)|bit(?:e|es|ten)|history|severity|mild|severe)\\b/i.test(currentPetText))questionList.push('Has your dog ever lunged or bitten, or is it mainly pulling and barking?');\n"
+        ],
+        [
+          "",
+          " if(chat&&(service==='boarding'||service==='pet_sitting')&&!careWindow)questionList.push('Do you need short visits, a daytime period, or overnight care?');\n"
+        ],
+        [
+          " const phase=/\\b(?:human|speak to someone|complaint|manager)\\b/i.test(current)?'handoff':/\\b(?:cancel|refund|upgrade|discount|coupon)\\b/i.test(current)?'policy':/\\b(?:expensive|afford|costly|trust|reliable|guarantee|will it work)\\b/i.test(current)?'objection':/\\b(?:prices?|costs?|fees?|rates?|charges?|fare|how much|payment amount|total amount|total spend)\\b|\\bwhat\\b.{0,35}\\b(?:pay|spend)\\b/i.test(current)?'price':/\\b(?:compare|difference|better|best|recommend|suggest)\\b/i.test(current)?questionList.length?'discover':'compare':'continue';\n",
+          " const phase=/\\b(?:human|speak to someone|complaint|manager)\\b/i.test(current)?'handoff':/\\b(?:cancel|refund|upgrade|discount|coupon)\\b/i.test(current)?'policy':/\\b(?:expensive|afford|costly|trust|reliable|guarantee|will it work)\\b/i.test(current)?'objection':/\\b(?:prices?|costs?|fees?|rates?|charges?|fare|how much|payment amount|total amount|total spend)\\b|\\bwhat\\b.{0,35}\\b(?:pay|spend)\\b/i.test(current)?'price':(chat?recommendation:/\\b(?:compare|difference|better|best|recommend|suggest)\\b/i.test(current))?questionList.length?'discover':'compare':'continue';\n"
+        ],
+        [
+          " return{service,phase,needs:service?needs[service]??[]:[],constraints,knownAge,questions:questionList.slice(0,2),comparisonOptions:options,subscriptionComparison:service==='grooming'?{source:'existing_scoped_grooming_subscription_catalogue',requiresVerifiedLocationSpeciesCreditsValidityAndTerms:true}:null,maximumQuestions:2,bookingConsent:false,identityVerified:false,priceAuthority:'existing_server_catalogue_or_quote',nextStep:service==='boarding'||service==='pet_sitting'?'verified_caregiver_information_then_app':service==='funeral'?'bereavement_support_then_existing_specialist_path':'governed_unconfirmed_quote_then_separate_confirmation'};\n",
+          " return{...(chat?{careHistory,careWindow,careWindowSource:currentPetText,priorServiceNeeds:needs}:{}),service,phase,needs:service?needs[service]??[]:[],constraints,knownAge,questions:questionList.slice(0,2),comparisonOptions:options,subscriptionComparison:service==='grooming'?{source:'existing_scoped_grooming_subscription_catalogue',requiresVerifiedLocationSpeciesCreditsValidityAndTerms:true}:null,maximumQuestions:2,bookingConsent:false,identityVerified:false,priceAuthority:'existing_server_catalogue_or_quote',nextStep:service==='boarding'||service==='pet_sitting'?'verified_caregiver_information_then_app':service==='funeral'?'bereavement_support_then_existing_specialist_path':'governed_unconfirmed_quote_then_separate_confirmation'};\n"
+        ],
+        [
+          " if(plan.service!=='dog_training'&&plan.service!=='grooming')return null;\n return plan.questions.join(' ');\n",
+          " if(plan.service!=='dog_training'&&plan.service!=='grooming'&&!(Object.hasOwn(plan,'careWindow')&&(plan.service==='boarding'||plan.service==='pet_sitting')))return null;\n return Object.hasOwn(plan,'careWindow')?plan.questions[0]:plan.questions.join(' ');\n"
+        ]
+      ]
+    }
+  }
+}
