@@ -14,7 +14,8 @@ import {
   type FoodQuote,
 } from "../../lib/food-client";
 import { createFoodSubscription } from "../../lib/food-subscription-client";
-import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
+import { resolveServiceCoverage, strictServicePincode, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
+import type { FoodDeliverySelection } from "../../lib/food-client";
 import { useFlowHistory } from "../../lib/use-flow-history";
 import BookingPaymentPage from "./booking-payment-page";
 
@@ -63,6 +64,10 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [intervalDays, setIntervalDays] = useState(repeatPlans[2].intervalDays);
   const [address, setAddress] = useState("");
   const [pincode, setPincode] = useState("");
+  // The delivery address and PIN exactly as the customer reviewed them with the server quote. The order and its
+  // confirmation use this frozen selection (and then the server's stored snapshot), never the live form fields.
+  const [reviewedDelivery, setReviewedDelivery] = useState<FoodDeliverySelection | null>(null);
+  const pinValid = strictServicePincode(pincode).ok;
   const [coverage, setCoverage] = useState<ResolvedServiceCoverage | null>(null);
   const [window_, setWindow] = useState(deliveryWindows[0]);
   const [quotes, setQuotes] = useState<FoodQuote[]>([]);
@@ -143,6 +148,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     try {
       const resolved = await resolveServiceCoverage(pincode);
       if (!coverage || coverage.zoneId !== resolved.zoneId) throw new Error("Service coverage changed. Check the delivery PIN code again.");
+      if (address.trim().length < 8) throw new Error("Enter the complete delivery address (house or flat, street and area).");
       if (!selectedPets.length) throw new Error("Select at least one pet before ordering Fresh Food.");
       const petBoundCart = cart.map((line) => {
         const item = itemBySku.get(line.sku);
@@ -154,6 +160,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
       const result = await quoteFoodCart(petBoundCart, resolved.zoneId, customer.customerId);
       setQuotes(result.quotes);
       setServerTotal(result.serverTotal);
+      setReviewedDelivery({ address: address.trim(), pincode: resolved.pincode });
       setStep(5);
     } catch (error) {
       setFlowError(error instanceof Error ? error.message : "Unable to get a server quote");
@@ -167,13 +174,16 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     actionLock.current=true; setConfirming(true);
     setFlowError("");
     try {
-      const resolved = await resolveServiceCoverage(pincode);
+      if (!reviewedDelivery) throw new Error("Review the delivery address with the server quote before ordering.");
+      const delivery = reviewedDelivery;
+      const resolved = await resolveServiceCoverage(delivery.pincode);
       if (!coverage || coverage.zoneId !== resolved.zoneId) throw new Error("Service coverage changed. Check the delivery PIN code again.");
       const created = await placeQuotedFoodOrders({
         quotes,
         customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone },
         cityId: resolved.cityId,
         zoneId: resolved.zoneId,
+        delivery,
       });
       const subs: SubscriptionCreated[] = [];
       if (plan === "repeat") {
@@ -222,8 +232,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
                 </p>
               )}
               <small>
-                Delivery: {window_} · {address ? `${address}, ` : ""}
-                {pincode || "Bengaluru"} · fulfilment team confirms dispatch
+                Delivery: {window_} · {order.deliverySnapshot ? `${order.deliverySnapshot.address}, ${order.deliverySnapshot.pincode}` : "delivery address not recorded on this order"} · fulfilment team confirms dispatch
               </small>
               {subscription && (
                 <span className={styles.subBadge}>
@@ -256,9 +265,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           </div>
           <label className={styles.field}>
             Service PIN code
-            <input value={pincode} inputMode="numeric" maxLength={6} onChange={(event) => { setPincode(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); setCatalogue([]); setCart([]); }} placeholder="Enter six-digit PIN code" />
+            <input value={pincode} inputMode="numeric" autoComplete="postal-code" onChange={(event) => { setPincode(event.target.value); setCoverage(null); setCatalogue([]); setCart([]); setReviewedDelivery(null); }} placeholder="Enter six-digit PIN code" />
           </label>
-          <button className={styles.primary} disabled={catalogueLoading || pincode.length !== 6} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Check service area & load catalogue"}</button>
+          <button className={styles.primary} disabled={catalogueLoading || !pinValid} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Check service area & load catalogue"}</button>
           {coverage && <p className={styles.hint}>Delivery coverage confirmed for {coverage.area || coverage.zoneName}, {coverage.city}.</p>}
           <div className={styles.petRow}>
             {petsLoading && <p className={styles.hint}>Loading your pets…</p>}
@@ -418,13 +427,13 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           </div>
           <label className={styles.field}>
             Delivery address
-            <input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="House, street, area" />
+            <input value={address} onChange={(event) => { setAddress(event.target.value); setReviewedDelivery(null); }} placeholder="House, street, area" />
           </label>
           <label className={styles.field}>
             Pincode
-            <input value={pincode} inputMode="numeric" maxLength={6} onChange={(event) => { setPincode(event.target.value.replace(/\D/g, "").slice(0, 6)); setCoverage(null); }} placeholder="Enter six-digit PIN code" />
+            <input value={pincode} inputMode="numeric" autoComplete="postal-code" onChange={(event) => { setPincode(event.target.value); setCoverage(null); setReviewedDelivery(null); }} placeholder="Enter six-digit PIN code" />
           </label>
-          {!coverage && <button className={styles.back} disabled={catalogueLoading || pincode.length !== 6} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Recheck service area"}</button>}
+          {!coverage && <button className={styles.back} disabled={catalogueLoading || !pinValid} onClick={() => void checkCoverage()}>{catalogueLoading ? "Checking service area…" : "Recheck service area"}</button>}
           <div className={styles.section}>
             <b>Preferred delivery window</b>
             <span>{coverage ? coverage.zoneName.toUpperCase() : "SERVICE AREA NOT CONFIRMED"}</span>
@@ -441,7 +450,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           <button className={styles.back} onClick={() => setStep(3)}>
             ← Plan
           </button>
-          <button className={styles.primary} disabled={quoting || !address.trim() || pincode.length !== 6 || !coverage} onClick={() => void reviewOrder()}>
+          <button className={styles.primary} disabled={quoting || !address.trim() || !pinValid || !coverage} onClick={() => void reviewOrder()}>
             {quoting ? "Getting server quote…" : "Review with server quote"}
           </button>
           {flowError && <p role="alert" className={styles.error}>{flowError}</p>}
@@ -469,7 +478,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
             <span>
               Delivery
               <b>
-                {address}, {pincode} · {window_}
+                {reviewedDelivery ? `${reviewedDelivery.address}, ${reviewedDelivery.pincode}` : "Review the delivery address again"} · {window_}
               </b>
             </span>
             <span>
