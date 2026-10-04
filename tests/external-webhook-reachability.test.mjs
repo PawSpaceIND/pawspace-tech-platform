@@ -160,6 +160,16 @@ test("no gateway-exempt route is left without any caller authentication", () => 
       assert.match(guard, /PAWSPACE_PAYMENT_LIVE_APPROVED/);
       continue;
     }
+    if (path === "/api/appearance") {
+      // Account appearance is session-owned, not public: the route requires a verified platform session (401 without
+      // one), takes its subject only from that session and refuses cross-origin writes.
+      const route = read(`app/api/${name}/route.ts`);
+      assert.match(route, /session = await resolvePlatformSession\(db, request\)/);
+      assert.match(route, /if \(!session\) throw json\(\{ error: "Verified identity session required" \}, 401\)/);
+      assert.match(route, /Appearance subject comes from the session" \}, 400\)/);
+      assert.match(route, /origin !== new URL\(request\.url\)\.origin\) \|\| request\.headers\.get\("sec-fetch-site"\) === "cross-site"\) return json\(\{ error: "Cross-origin appearance write blocked" \}, 403\)/);
+      continue;
+    }
     if (customerSessionSurfaces.has(path)) {
       const route = read(`app/api/${name}/route.ts`);
       assert.match(route, /await\s+resolveActor\(request\)/);

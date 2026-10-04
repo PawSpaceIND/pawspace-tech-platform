@@ -28,7 +28,9 @@ test('Ops schedule displays the same IST day regardless of process timezone', ()
 test('stay confirmation keeps payment and required care in their reviewed order', async () => {
   const flow = await readFile(new URL('../app/mobile-app/stay-flow.tsx', import.meta.url), 'utf8');
   assert.match(flow, /onClick=\{reviewCare\}/);
-  assert.match(flow, /aria-describedby=\{invalid/);
+  // Payment-first: the Care Card (with its required fields) is completed after payment, so the booking flow itself no
+  // longer renders care fields before payment.
+  assert.doesNotMatch(flow, /data-care-field=/);
   assert.match(flow, /setConfirmedCarePlan\(plan\)/);
   assert.match(flow, /setPendingPayment\(\{bookingId:canonicalBookingId/);
   const gate = await readFile(new URL('../app/mobile-app/stay-care-payment-gate.tsx', import.meta.url), 'utf8');
