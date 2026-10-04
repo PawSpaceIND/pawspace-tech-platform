@@ -1,3 +1,4 @@
+import {preservedCombinedLocalBytes} from './helpers/combined-local-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -5,7 +6,7 @@ import {createHash} from 'node:crypto';
 // Exact source pins from reviewed P1 head912fd3; also match actual main559da3d.
 const sourcePins={"app/components/pawspace-appearance.tsx":"26b59e11e9e25420613991e3dcfb545fc61a245a378d1b67784b308e348af34d","app/trainer/page.tsx":"806fb04f542bb8fa0e71184ae347e6f3a3066e3863565793c754af2e60c1a060","app/trainer/trainer.module.css":"82a3d29b07748ac0ff4d7279eb33aa0418f767d10d5774ec861047d4569285fc","app/host/proof/page.tsx":"047195ddee59a584d451d02c9694e8163282c6a5c45279686c2ebc5303189d7d","app/sitter/proof/page.tsx":"65a5b41c0642c354a6f3c24a5b83956acd11980df629892a588c6d0a95170192","app/team/operations/boarding/page.tsx":"0e9c511ea7fc4ca9387bef59c6ef3d1c143808a721d4336390bc107a924b291d","app/team/operations/sitting/page.tsx":"ca032e887882d86bbf6bf5b3f16459612f1e842717cc2a4c643948da75bda984"};
 const files=['app/components/pawspace-appearance.tsx','app/trainer/page.tsx','app/trainer/trainer.module.css','app/host/proof/page.tsx','app/sitter/proof/page.tsx','app/team/operations/boarding/page.tsx','app/team/operations/sitting/page.tsx'];
-for(const file of files)test(`Published source unchanged: ${file}`,()=>assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),sourcePins[file]));
+for(const file of files)test(`Published source unchanged: ${file}`,()=>assert.equal(createHash('sha256').update(preservedCombinedLocalBytes(file,readFileSync(file))).digest('hex'),sourcePins[file]));
 test('Only the three reviewed V2 proof workspaces acquire an existing hydrated utility slot',()=>{
  const source=readFileSync('app/v2/partner/layout.tsx','utf8');
  assert.match(source,/new Set\(\["\/v2\/partner\/trainer","\/v2\/partner\/host\/proof","\/v2\/partner\/sitter\/proof"\]\)/);

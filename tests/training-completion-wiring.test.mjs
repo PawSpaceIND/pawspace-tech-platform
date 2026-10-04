@@ -17,7 +17,7 @@ async function world(options={}){
 }
 async function withClient(w,fn){
  const original=globalThis.fetch,nav=Object.getOwnPropertyDescriptor(globalThis,"navigator"),calls=[];
- Object.defineProperty(globalThis,"navigator",{configurable:true,value:{geolocation:{getCurrentPosition:success=>success({coords:DOORSTEP})}}});
+ Object.defineProperty(globalThis,"navigator",{configurable:true,value:{geolocation:{getCurrentPosition:success=>success({coords:{...DOORSTEP,accuracy:5}})}}});
  globalThis.fetch=async(path,init={})=>{
   const method=init.method??"GET",url=new URL(path,ORIGIN);calls.push({path:url.pathname,method,body:init.body});
   const routes={"/api/training-sessions":sessionsRoute,"/api/training-session-media":media,"/api/service-media/upload":upload};
@@ -30,22 +30,27 @@ async function review(w,id){return routeCall(media.PATCH,"PATCH","/api/training-
 
 test("real Training client -> routes -> SQLite completes only after location, owner handover and released before/after bytes",async()=>{
  const w=await world();await withClient(w,async calls=>{
-  for(const action of ["accept","on_the_way","arrive","start"])await client.trainingSessionAction({sessionId:w.session.id,action});
+  for(const action of ["accept","on_the_way","arrive"])await client.trainingSessionAction({sessionId:w.session.id,action});
   const arrived=JSON.parse(calls.find(c=>c.path==='/api/training-sessions'&&JSON.parse(c.body).action==='arrive').body);assert.equal(arrived.latitude,DOORSTEP.latitude);assert.equal(arrived.longitude,DOORSTEP.longitude);
   const file=new File([png],"qa.png",{type:"image/png"});
+  await client.trainingSessionAction({sessionId:w.session.id,action:"save_report",report:{attendance:REPORT.attendance}});
   const before=await client.prepareTrainingEvidence({sessionId:w.session.id,file,purpose:"before_service"});
+  const repeated=await client.prepareTrainingEvidence({sessionId:w.session.id,file,purpose:"before_service"});assert.equal(repeated.id,before.id);assert.equal(repeated.alreadyUploaded,true);
+  await client.trainingSessionAction({sessionId:w.session.id,action:"start"});
+  await assert.rejects(client.trainingSessionAction({sessionId:w.session.id,action:"complete",report:REPORT}),/handover/i);
+  await client.trainingSessionAction({sessionId:w.session.id,action:"owner_handover",ownerHandoverCompleted:true});
   const after=await client.prepareTrainingEvidence({sessionId:w.session.id,file,purpose:"after_service"});
   assert.notEqual(before.id,after.id,"identical fixture bytes remain bound to their distinct proof slots");assert.equal(before.objectStored,false,"no real bucket is configured in this isolated world");assert.equal(calls.filter(c=>c.method==='PUT').length,2);
   const report={...REPORT,progress:{focus:7},evidenceRefs:[before.ref,after.ref]};
   await assert.rejects(client.trainingSessionAction({sessionId:w.session.id,action:"complete",report}));
-  await client.trainingSessionAction({sessionId:w.session.id,action:"owner_handover",ownerHandoverMinutes:18});
-  const rows=await client.loadTrainerSessions(TRAINER);assert.equal(rows[0].ownerHandover.durationMinutes,18);assert.ok(rows[0].ownerHandover.completedAt>0);
+
+  const rows=await client.loadTrainerSessions(TRAINER);assert.ok(rows[0].ownerHandover);assert.ok(rows[0].ownerHandover.completedAt>0);
   await assert.rejects(client.trainingSessionAction({sessionId:w.session.id,action:"complete",report}),"uploaded-only files cannot complete");
   const self=await routeCall(media.PATCH,"PATCH","/api/training-session-media",{cookie:w.cookie,body:{id:before.id,action:"record_review",decision:"approved",reason:"Uploader cannot approve"}});assert.equal(self.status,403);
   for(const id of [before.id,after.id]){const r=await review(w,id);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.data.proofReady,true);}
   const ready=await client.loadTrainingEvidence(w.session.id);assert.equal(ready.assets.filter(a=>a.proofReady).length,2);
   assert.ok(ready.assets.every(a=>a.scan_status==='pending'),"UAT human review is never mislabeled as a scanner result");
-  const repeated=await client.prepareTrainingEvidence({sessionId:w.session.id,file,purpose:"before_service"});assert.equal(repeated.id,before.id);assert.equal(repeated.alreadyUploaded,true);assert.equal(calls.filter(c=>c.method==='PUT').length,2);
+  assert.equal(calls.filter(c=>c.method==='PUT').length,2);
   const completed=await client.trainingSessionAction({sessionId:w.session.id,action:"complete",report});assert.equal(completed.status,"completed");
   assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions").get().n,1);assert.equal(w.sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='WIRE'").get().status,'completed');
  });
@@ -59,7 +64,7 @@ test("denied location does not send an arrival mutation",async()=>{
 });
 
 test("a lost registration response can be retried, while each session owns its pending upload",async()=>{
- const w=await world();const sha256=createHash('sha256').update(png).digest('hex');
+ const w=await world();await withClient(w,async()=>{for(const action of ['accept','on_the_way','arrive'])await client.trainingSessionAction({sessionId:w.session.id,action});await client.trainingSessionAction({sessionId:w.session.id,action:'save_report',report:{attendance:REPORT.attendance}});});const sha256=createHash('sha256').update(png).digest('hex');
  const body={sessionId:w.session.id,purpose:'before_service',mimeType:'image/png',sizeBytes:png.length,sha256,retryUpload:true};
  const first=await routeCall(media.POST,'POST','/api/training-session-media',{cookie:w.cookie,body});assert.equal(first.status,201);
  const next=await routeCall(media.POST,'POST','/api/training-session-media',{cookie:w.cookie,body});assert.equal(next.status,201);assert.notEqual(next.body.data.id,first.body.data.id);
@@ -75,6 +80,8 @@ test("a lost registration response can be retried, while each session owns its p
 
 test("Training proof keeps unscanned production assets blocked after human approval",async()=>{
  const w=await world({PAWSPACE_MEDIA_ENV:'production'});await withClient(w,async()=>{
+  for(const action of ['accept','on_the_way','arrive'])await client.trainingSessionAction({sessionId:w.session.id,action});
+  await client.trainingSessionAction({sessionId:w.session.id,action:"save_report",report:{attendance:REPORT.attendance}});
   const registered=await client.prepareTrainingEvidence({sessionId:w.session.id,file:new File([png],'qa.png',{type:'image/png'}),purpose:'before_service'});
   const reviewed=await review(w,registered.id);assert.equal(reviewed.status,200);assert.equal(reviewed.body.data.proofReady,false);
   const assets=(await client.loadTrainingEvidence(w.session.id)).assets;assert.equal(assets[0].proofReady,false);assert.equal(assets[0].access_status,'quarantined');
@@ -84,6 +91,6 @@ test("Training proof keeps unscanned production assets blocked after human appro
 test("trainer completion controls show each proof category and the saved handover, without claiming unreviewed uploads are approved",()=>{
  const html=renderToStaticMarkup(React.createElement(TrainingEvidenceControls,{assets:[{id:'M',purpose:'before_service',proofReady:false,access_status:'quarantined',review_status:'pending_review'}],busy:false,error:'',onUpload:()=>{},onRefresh:()=>{}}));
  assert.match(html,/Before photo: Awaiting approval/);assert.match(html,/After photo: Not uploaded/);assert.match(html,/Refresh photo approval/);
- const handed=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:{durationMinutes:18,completedAt:1},busy:false,onRecord:()=>{}}));assert.match(handed,/18 minutes/);
- const empty=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:null,busy:false,onRecord:()=>{}}));assert.match(empty,/Minutes completed/);assert.match(empty,/disabled=""/);
+ const handed=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:{durationMinutes:18,completedAt:1},busy:false,onRecord:()=>{}}));assert.match(handed,/Pet-parent handover completion recorded/);
+ const empty=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:null,busy:false,onRecord:()=>{}}));assert.match(empty,/I completed the pet-parent handover/);assert.match(empty,/Confirm completed handover/);assert.match(empty,/disabled=""/);
 });

@@ -196,12 +196,13 @@ test("a failed reservation is retryable instead of permanently locking the canon
 // ---------------------------------------------------------------------------
 test("a working provider is never consulted for a refund, and the turn records why", async () => {
   const { sqlite, db } = await world();
+  sqlite.prepare("INSERT INTO canonical_bookings(id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,created_at,updated_at) VALUES ('BKG-RISK','CUS-1','grooming','Synthetic package','completed','2026-10-01T10:00:00Z','2026-10-01T11:00:00Z',1000,?,?)").run(Date.now(),Date.now());
   const stub = answered("Sure, I have refunded you.");
-  const result = await turn(sqlite, db, { text: "I want a refund for the wrong charge", stub, key: "refund-risk" });
+  const result = await turn(sqlite, db, { text: "I want a refund for booking BKG-RISK for the wrong charge", stub, key: "refund-risk" });
 
   assert.equal(stub.calls.length, 0, "a refund conversation must not reach the model at all");
   assert.equal(result.turn.outcome, "handoff");
-  assert.equal(result.turn.policyDecision, "blocked_high_impact");
+  assert.equal(result.turn.policyDecision, "refund_request_recorded");
   assert.equal(result.turn.handoffReason, "refund_payment_dispute");
   assert.ok(!turns(sqlite)[0].output_text.includes("refunded you"), "the model's text is not stored as a reply");
 });

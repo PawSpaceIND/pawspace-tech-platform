@@ -5,8 +5,13 @@ installAiHooks();
 const {requestAiHumanHandoff,manageAiHumanHandoff,assertAiMayReply}=await import('../lib/ai-human-handoff.ts');
 async function world(){
  const {sqlite,db}=freshAiDb();
- let tail=Promise.resolve();
- db.batch=items=>{const operation=tail.then(async()=>{sqlite.exec('BEGIN');try{const results=[];for(const item of items)results.push(await item.run());sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}});tail=operation.catch(()=>{});return operation;};
+ // D1 serializes standalone operations with an atomic batch. A standalone UPDATE cannot
+ // run inside another request's transaction and then be undone by that request's rollback.
+ let tail=Promise.resolve();const nativePrepare=db.prepare;
+ const enqueue=operation=>{const result=tail.then(operation);tail=result.catch(()=>{});return result;};
+ const wrap=(statement,sql)=>({native:statement,sql,bind:(...args)=>wrap(statement.bind(...args),sql),first:(...args)=>enqueue(()=>statement.first(...args)),run:()=>enqueue(()=>statement.run()),all:()=>enqueue(()=>statement.all()),raw:()=>enqueue(()=>statement.raw())});
+ db.prepare=sql=>wrap(nativePrepare(sql),sql);
+ db.batch=items=>enqueue(async()=>{sqlite.exec('BEGIN');try{const results=[];for(const item of items)results.push(await (item.native||item).run());sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}});
  seedCustomer(sqlite,'CUS-H','Handoff','9876500044');
  await inboundMessage(sqlite,db,{threadId:'THREAD-H',customerId:'CUS-H',text:'Human please',idempotencyKey:'handoff'});
  applyOwnedDdl(sqlite,'lib/ai-conversation-orchestrator.ts');
@@ -47,4 +52,8 @@ test('concurrent handoff requests return the same canonical active handoff',asyn
  const w=await world();const results=await Promise.all([w.request(),w.request()]);
  assert.equal(results[0].handoff.id,results[1].handoff.id);assert.equal(results.filter(r=>r.duplicatePrevented).length,1);
  assert.equal(w.state().handoffs.length,1);assert.equal(w.state().assignments.filter(a=>a.status==='active').length,1);
+ assert.equal(results[0].ticketReceipt.caseId,results[1].ticketReceipt.caseId);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,1);assert.equal(w.sqlite.prepare('SELECT ticket_id FROM communication_threads').get().ticket_id,results[0].ticketReceipt.caseId);
 });
+
+for(const failure of ['unrelated case storage failure','UNIQUE constraint failed: unified_case_events.idempotency_key','UNIQUE constraint failed: unified_cases.idempotency_key'])test('ticket repair does not swallow unrelated errors or a collision without a persisted winner: '+failure,async()=>{const w=await world();await(await import('../lib/unified-case-center.ts')).ensureUnifiedCaseTables(w.db);w.sqlite.exec(`CREATE TRIGGER fail_case BEFORE INSERT ON unified_cases BEGIN SELECT RAISE(ABORT,'${failure}'); END`);await assert.rejects(w.request,error=>error instanceof Error&&error.message.includes(failure));assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,0);assert.equal(w.sqlite.prepare('SELECT ticket_id FROM communication_threads').get().ticket_id,null);w.sqlite.exec('DROP TRIGGER fail_case');const retry=await w.request();assert.equal(retry.duplicatePrevented,true);assert.ok(retry.ticketReceipt.caseId);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,1);});
+for(const [column,value] of [['customer_id','WRONG'],['source_type','wrong'],['source_id','wrong'],['case_type','refund'],['owner_team','finance'],['booking_id','foreign-booking'],['lead_id','foreign-lead'],['status','closed']])test('collision readback refuses mismatched persisted winner '+column,async()=>{const w=await world(),batch=w.db.batch;let injected=false;w.db.batch=async items=>{if(!injected&&items.some(item=>String(item.sql).startsWith('INSERT INTO unified_cases '))){injected=true;await batch(items);w.sqlite.prepare(`UPDATE unified_cases SET ${column}=?`).run(value);throw new Error('UNIQUE constraint failed: unified_cases.idempotency_key');}return batch(items);};await assert.rejects(w.request,/UNIQUE constraint failed: unified_cases\.idempotency_key/);assert.equal(w.sqlite.prepare('SELECT ticket_id FROM communication_threads').get().ticket_id,null);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM unified_cases').get().n,1);});

@@ -236,9 +236,10 @@ test("real execution: conversation snapshot filters turns at the query level, no
 // ---------------------------------------------------------------------------
 test("real execution: refund intent hands off to finance queue and pauses AI on the thread", async () => {
   const { sqlite, db, orchestrator, seedInbound } = await twoCustomers();
-  seedInbound("MSG-A-2", "THR-A", "CUS-A", "I want a refund, I was charged twice");
+  seedInbound("MSG-A-2", "THR-A", "CUS-A", "I want a refund for booking BK-A-1, I was charged twice");
   const result = await orchestrator.orchestrateAiTurn(db, { actor: staffActor, threadId: "THR-A", customerId: "CUS-A", inputMessageId: "MSG-A-2", idempotencyKey: "turn-a-refund", channel: "chat", provider: connectedProvider });
   assert.equal(result.turn.outcome, "handoff");
+  assert.equal(result.turn.policyDecision,"refund_request_recorded");
   const handoff = sqlite.prepare("SELECT customer_id,reason,queue_code,status FROM ai_handoffs WHERE thread_id=?").get("THR-A");
   assert.equal(handoff.customer_id, "CUS-A");
   assert.equal(handoff.reason, "refund_payment_dispute");

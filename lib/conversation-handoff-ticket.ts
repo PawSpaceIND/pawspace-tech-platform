@@ -27,7 +27,19 @@ export async function ensureConversationHandoffTicket(db:D1Database,input:{hando
  }
  if(linked?.booking_id){if(bookingId&&text(linked.booking_id)!==bookingId)throw new Response("Case booking conflicts with handoff",{status:409});bookingId=text(linked.booking_id);if(!await db.prepare("SELECT id FROM canonical_bookings WHERE id=? AND customer_id=?").bind(bookingId,input.customerId).first())throw new Response("Case booking ownership denied",{status:403});}
 
- const created=linked?{case:linked}:await createUnifiedCase(db,{idempotencyKey:`conversation-handoff:${input.handoffId}`,caseType:finance?"refund":"lead_escalation",severity:finance?"high":"medium",title:"Conversation requires human followup",description:`Canonical conversation handoff: ${text(handoff.reason)}`,customerId:input.customerId,bookingId,leadId,sourceType:"ai_handoff",sourceId:input.handoffId,ownerTeam:finance?"finance":"operations",actorId:input.actorId});
+ const caseKey=`conversation-handoff:${input.handoffId}`;
+ let created:{case:Row|null};
+ if(linked)created={case:linked};
+ else{
+  try{created=await createUnifiedCase(db,{idempotencyKey:caseKey,caseType:finance?"refund":"lead_escalation",severity:finance?"high":"medium",title:"Conversation requires human followup",description:`Canonical conversation handoff: ${text(handoff.reason)}`,customerId:input.customerId,bookingId,leadId,sourceType:"ai_handoff",sourceId:input.handoffId,ownerTeam:finance?"finance":"operations",actorId:input.actorId});}
+  catch(error){
+   if(!/UNIQUE constraint failed:\s*unified_cases\.idempotency_key/i.test(error instanceof Error?error.message:String(error)))throw error;
+   const winner=await db.prepare("SELECT * FROM unified_cases WHERE idempotency_key=?").bind(caseKey).first<Row>();
+   if(!winner||text(winner.customer_id)!==input.customerId||text(winner.source_type)!=="ai_handoff"||text(winner.source_id)!==input.handoffId||text(winner.case_type)!==(finance?"refund":"lead_escalation")||text(winner.owner_team)!==(finance?"finance":"operations")||text(winner.booking_id)!==text(bookingId)||text(winner.lead_id)!==text(leadId)||!["open","in_progress","waiting"].includes(text(winner.status)))throw error;
+   created={case:winner};
+  }
+ }
+
  const caseId=text(created.case?.id);if(!caseId)throw new Error("Canonical handoff case receipt missing");
  await db.prepare("UPDATE communication_threads SET ticket_id=? WHERE id=? AND customer_id=? AND (ticket_id IS NULL OR ticket_id=?)").bind(caseId,input.threadId,input.customerId,caseId).run();
  const bound=await db.prepare("SELECT ticket_id FROM communication_threads WHERE id=? AND customer_id=?").bind(input.threadId,input.customerId).first<Row>();if(text(bound?.ticket_id)!==caseId)throw new Response("Handoff ticket changed concurrently",{status:409});
