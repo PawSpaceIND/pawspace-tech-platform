@@ -27,7 +27,10 @@ async function fixture(page:Page){
   return reply({});
  });
  await page.goto("/v2/training");
- await page.getByRole("button",{name:/Foundation Training/}).click();
+ // Programmes are grouped into family disclosures that stay closed until one of their plans is chosen; open Puppy.
+ const summary=page.locator("summary",{hasText:/^Puppy/}),family=summary.locator("xpath=.."),plan=family.getByRole("button",{name:/Foundation Training/});
+ await expect(async()=>{if(await family.getAttribute("open")===null)await summary.click();await expect(plan).toBeVisible({timeout:2_000});}).toPass({timeout:15_000});
+ await plan.click();
  const firstDate=page.getByLabel(/First session date/);
  await expect(firstDate).toBeEnabled();await firstDate.fill("2026-10-08");
  await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
@@ -40,7 +43,10 @@ test("V2 Training defaults to automatic matching and uses the assigned trainer b
  await expect(page.getByRole("heading",{name:"Complete payment to confirm"})).toBeVisible();
  expect(state.reservations).toHaveLength(1);expect(state.reservations[0].providerSelection).toBe("auto");expect(state.reservations[0].preferredProviderId).toBeUndefined();
  expect(state.bookings).toHaveLength(1);expect(state.bookings[0].provider).toMatchObject({id:"TRAINER-NEW"});
- await expect(page.getByRole("region",{name:"Reserved training details"})).toContainText("Currently Available Trainer");
+ // The scheduler's provisional trainer is never shown (lib/training-assignment-view.ts): the screen reads
+ // "Finding your certified trainer" until the programme reports an award.
+ const reserved=page.getByRole("region",{name:"Reserved training details"});
+ await expect(reserved).toContainText("Finding your certified trainer");await expect(reserved).not.toContainText("Currently Available Trainer");
  expect(state.reservations[0].occurrences).toBe(1);
 });
 test("V2 Training reservation refusal creates no booking or payment",async({page})=>{
