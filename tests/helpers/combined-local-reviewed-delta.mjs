@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import {preservedGroomingBackBarBytes} from './grooming-back-bar-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
 import {preservedChatQualificationBytes} from './chat-qualification-reviewed-delta.mjs';
@@ -19,7 +20,7 @@ function reverse(source,entry,path){
  return Buffer.isBuffer(source)?Buffer.from(out):out;
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
-export function preservedTrainingIntegratedBytes(path,bytes){
+export function preservedTrainingIntegratedBytes(path,bytes){bytes=preservedAcceptedUiBytes(path,bytes);
  if(path==='e2e/v2-grooming.spec.ts'&&hash(bytes)==='16132dcb56b13354e8a060c5a5eefbe9c8d5bd8984f1b97ae5345bb539c968ca'){
   const prior=`  const review = page.getByRole("group", { name: "Current location", exact: true });\n  // The Google-capable picker has its own location action. Exercise the retained\n  // review/cancel path through its actual disclosure rather than that other button.\n  if (!await review.isVisible()) await page.getByText("Use device location instead", { exact: true }).click();`;
   const reviewed=`  const essentialOnly = page.getByRole("button", { name: "Essential Only" });\n  if (await essentialOnly.isVisible()) await essentialOnly.click();\n  const disclosure = page.locator("details").filter({ has: page.locator("summary", { hasText: "Use device location instead" }) });\n  if (await disclosure.getAttribute("open") === null) {\n    await disclosure.locator("summary").focus();\n    await disclosure.locator("summary").press("Enter");\n    await expect(disclosure).toHaveAttribute("open", "");\n  }\n  const review = page.getByRole("group", { name: "Current location", exact: true });\n  // The Google-capable picker has its own location action. Exercise the retained\n  // review/cancel path through its actual disclosure rather than that other button.`;
@@ -29,8 +30,8 @@ export function preservedTrainingIntegratedBytes(path,bytes){
  }
  return training.files[path]?reverse(bytes,training.files[path],path):bytes;
 }
-export function preservedCombinedLocalBytes(path,bytes){bytes=preservedGroomingBackBarBytes(path,bytes);bytes=preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes)));if(receipt.files[path]&&hash(bytes)===receipt.files[path].beforeSha256)return bytes;bytes=preservedTrainingIntegratedBytes(path,bytes);return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
-export function preservedServiceLintBytes(path,bytes){
+export function preservedCombinedLocalBytes(path,bytes){bytes=preservedAcceptedUiBytes(path,bytes);bytes=preservedGroomingBackBarBytes(path,bytes);bytes=preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes)));if(receipt.files[path]&&hash(bytes)===receipt.files[path].beforeSha256)return bytes;bytes=preservedTrainingIntegratedBytes(path,bytes);return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
+export function preservedServiceLintBytes(path,bytes){bytes=preservedAcceptedUiBytes(path,bytes);
  if(path!==correction.file)return bytes;
  // PR 1266: a controlled <details open> prop reclosed the add-on picker during
  // async quote rerenders in mobile WebKit. Reverse only this reviewed one-line fix

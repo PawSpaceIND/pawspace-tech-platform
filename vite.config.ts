@@ -17,6 +17,7 @@ const localBindingConfig = {
     NODE_ENV: process.env.NODE_ENV || "",
     FORBID_PRODUCTION: process.env.FORBID_PRODUCTION || "",
     PAWSPACE_DEPLOYMENT_ENV: process.env.PAWSPACE_DEPLOYMENT_ENV || "",
+    PAWSPACE_PUBLIC_ORIGIN: process.env.PAWSPACE_PUBLIC_ORIGIN || "",
     PAWSPACE_LOCAL_PREVIEW: process.env.PAWSPACE_LOCAL_PREVIEW || "on",
     PAWSPACE_SCHEDULING_ENV: process.env.PAWSPACE_SCHEDULING_ENV || "uat",
     PAWSPACE_MEDIA_ENV: process.env.PAWSPACE_MEDIA_ENV || "uat",

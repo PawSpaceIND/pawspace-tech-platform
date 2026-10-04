@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -11,7 +12,7 @@ export const serviceFixReviewedFiles=Object.freeze(Object.keys(delta.files));
  * version (any other edit, however small, is refused), every reviewed hunk must occur exactly once, and the reversal
  * must restore the historical bytes exactly. Historical bytes pass through untouched; unrelated paths are returned as they are.
  */
-export function reverseServiceFixDelta(source,path){
+export function reverseServiceFixDelta(source,path){source=preservedAcceptedUiBytes(path,source);
  const entry=delta.files[path];if(!entry)return source;
  const text=Buffer.isBuffer(source)?source.toString():String(source);
  if(hash(text)===entry.originalHash)return text;

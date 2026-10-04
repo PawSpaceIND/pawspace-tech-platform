@@ -55,3 +55,17 @@ test("isolated Atlas schema certification rejects omission, extra consumers/writ
   writeFileSync(migration,sql+"\nINSERT INTO atlas_text_test_requests VALUES ('seed','job','rate','thread',1,1,1,'reserved',NULL,0);");assert.throws(()=>auditRuntimeSchemaCoverage(root));
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test("direct unique constant SQL creators are scanned; unused, ambiguous and dynamic constants do not certify", () => {
+ const root=mkdtempSync(join(tmpdir(),"constant-schema-"));
+ try {mkdirSync(join(root,"lib"));const file=join(root,"lib/appearance-preferences.ts");
+  for(const [prefix,missing] of [["const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; db.prepare(PREFERENCE_DDL);",false],["const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`;",true],["const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; function f(){const PREFERENCE_DDL = `SELECT 1`; db.prepare(PREFERENCE_DDL);}",true],["const PREFERENCE_DDL = `CREATE TABLE ${name}(id TEXT)`; db.prepare(PREFERENCE_DDL);",true]]){writeFileSync(file,prefix+' db.prepare("SELECT id FROM const_table");');assert.equal(auditRuntimeSchemaCoverage(root).missing.some(row=>row.table==='const_table'),missing);}
+  for(const prefix of [
+   "const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; function f(){const PREFERENCE_DDL = runtimeSql; db.prepare(PREFERENCE_DDL);}",
+   "const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; function f(PREFERENCE_DDL){db.prepare(PREFERENCE_DDL);}",
+   "import {PREFERENCE_DDL} from './untrusted'; const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; db.prepare(PREFERENCE_DDL);",
+   "const PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; function f({PREFERENCE_DDL}){db.prepare(PREFERENCE_DDL);}",
+   "let PREFERENCE_DDL = `CREATE TABLE const_table(id TEXT)`; db.prepare(PREFERENCE_DDL);",
+  ]){writeFileSync(file,prefix+' db.prepare("SELECT id FROM const_table");');assert.equal(auditRuntimeSchemaCoverage(root).missing.some(row=>row.table==='const_table'),true,prefix);}
+ } finally {rmSync(root,{recursive:true,force:true});}
+});

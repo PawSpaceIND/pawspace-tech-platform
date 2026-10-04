@@ -1,3 +1,7 @@
+import './helpers/accepted-ui-test-correction-cases.mjs';
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
+import './helpers/accepted-ui-preservation-cases.mjs';
+import './helpers/ci-historical-preservation-composition-cases.mjs';
 import {preservedGroomingBackBarBytes} from './helpers/grooming-back-bar-reviewed-delta.mjs';
 import './helpers/chat-ledger-preservation-cases.mjs';
 import './helpers/chat-qualification-preservation-cases.mjs';
@@ -21,14 +25,14 @@ for(const[path,entry]of Object.entries(receipt.files))test('Exact reviewed sourc
  for(const text of [bytes+'\nUNREVIEWED', 'X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text)));
 });
 test('Grooming lint correction is exact, reversible and refuses mutations',()=>{
- const bytes=readFileSync(new URL('../'+correction.file,import.meta.url));assert.equal(hash(bytes),'c31566fd2ccd6579f3f635971b5d6bc4895fc47f4f9aed157e83c81162d14fb4');
+ const bytes=preservedAcceptedUiBytes(correction.file,readFileSync(new URL('../'+correction.file,import.meta.url)));assert.equal(hash(bytes),'c31566fd2ccd6579f3f635971b5d6bc4895fc47f4f9aed157e83c81162d14fb4');
  const original=preservedServiceLintBytes(correction.file,bytes);assert.equal(hash(original),correction.beforeSha256);assert.equal(preservedServiceLintBytes(correction.file,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedServiceLintBytes(correction.file,Buffer.from(text)));
 });
 test('Unrelated source retains identity',()=>{const bytes=Buffer.from('untouched');assert.equal(preservedCombinedLocalBytes('lib/unrelated.ts',bytes),bytes);assert.equal(preservedServiceLintBytes('lib/unrelated.ts',bytes),bytes);});
 const training=JSON.parse(readFileSync(new URL('./fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 for(const[path,entry]of Object.entries(training.files))test('Exact integrated Training delta rejects unrelated edits: '+path,()=>{
- const bytes=readFileSync(new URL('../'+path,import.meta.url));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedAcceptedUiBytes(path,readFileSync(new URL('../'+path,import.meta.url)));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedTrainingIntegratedBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedTrainingIntegratedBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedTrainingIntegratedBytes(path,Buffer.from(text)));
 });
@@ -44,7 +48,7 @@ test('integrated handover projection retains operational proof and excludes raw 
 
 const backBar=JSON.parse(readFileSync(new URL('./fixtures/grooming-back-bar-reviewed-delta.json',import.meta.url),'utf8'));
 test('Grooming back-bar CSS restores exact 7e bytes and rejects unrelated mutations',()=>{
- const path=backBar.file,bytes=readFileSync(new URL('../'+path,import.meta.url));
+ const path=backBar.file,bytes=preservedAcceptedUiBytes(path,readFileSync(new URL('../'+path,import.meta.url)));
  assert.equal(hash(bytes),backBar.afterSha256);
  const original=preservedGroomingBackBarBytes(path,bytes);
  assert.equal(hash(original),backBar.beforeSha256);

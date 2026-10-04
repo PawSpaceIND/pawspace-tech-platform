@@ -1301,3 +1301,61 @@
 .careDate input { width:100%; box-sizing:border-box; min-height:44px; }
 .durationSummary { padding:12px; background:var(--ui-canvas); border-radius:calc(12px * var(--paw-radius-scale)); font-weight:600; }
 @media(max-width:380px) { .datePair { grid-template-columns:1fr; } }
+/* Workbook rows 41-59: a prominent top back control, host filters, search diagnostics and gated chat. */
+.topBack {
+  display: flex;
+  margin: 0 0 12px;
+}
+.topBack a,
+.topBack button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(11px * var(--paw-radius-scale));
+  background: var(--ui-surface, transparent);
+  color: var(--ui-brand-deep);
+  font-weight: 700;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.diagnosis {
+  border: 1px solid var(--ui-line);
+  border-radius: calc(11px * var(--paw-radius-scale));
+  padding: 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diagnosis summary {
+  font-weight: 700;
+  cursor: pointer;
+}
+.diagnosis ul,
+.diagnosis ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.diagnosis code {
+  font-family: inherit;
+  font-weight: 700;
+  color: var(--ui-ink);
+}
+.diagnosis button {
+  min-height: 44px;
+  margin: 6px 6px 0 0;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: calc(8px * var(--paw-radius-scale));
+  background: transparent;
+  color: var(--ui-brand-deep);
+  font-weight: 700;
+}
+.gated {
+  display: block;
+  font-size: 12px;
+  color: var(--ui-muted);
+}
