@@ -1,0 +1,16 @@
+{
+  "action": "preview",
+  "clientRequestId": "FINANCE-TEST-OPS-GROOMING-01-HOSTED-FT-20261011-03",
+  "customerId": "CUS0000",
+  "petIds": ["PET-CUS0000-CUS0000P0"],
+  "serviceCode": "grooming",
+  "cityId": "blr",
+  "zoneId": "blr-south",
+  "serviceAddress": "Clearly labelled synthetic TEST fixture, BTM Layout Bengaluru 560068",
+  "servicePincode": "560068",
+  "saveAddress": false,
+  "providerSelection": "specific",
+  "preferredProviderId": "uatcap_groom_ft",
+  "scheduledStart": "2026-10-11T06:30:00Z",
+  "scheduledEnd": "2026-10-11T08:30:00Z"
+}
