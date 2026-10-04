@@ -24,14 +24,14 @@ export type SyncGuard = { shouldContinue?: () => boolean; signal?: AbortSignal }
 const superseded = (): AccountAppearanceWrite => ({ kind: "error", message: "superseded: identity or navigation changed" });
 const live = (guard?: SyncGuard) => !(guard?.signal?.aborted) && (guard?.shouldContinue ? guard.shouldContinue() : true);
 
-const KEY_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+const PUBLIC_BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
 /** 8..128 characters from A-Za-z0-9_- (the contract's idempotency key grammar). */
 export function createIdempotencyKey(length = 32): string {
   const size = Math.min(128, Math.max(8, Math.floor(length)));
   const bytes = new Uint8Array(size);
   if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") crypto.getRandomValues(bytes);
   else for (let i = 0; i < size; i++) bytes[i] = Math.floor(Math.random() * 256);
-  let key = ""; for (const b of bytes) key += KEY_CHARS[b % KEY_CHARS.length];
+  let key = ""; for (const b of bytes) key += PUBLIC_BASE64URL_ALPHABET[b % PUBLIC_BASE64URL_ALPHABET.length];
   return key;
 }
 export function isIdempotencyKey(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value); }

@@ -417,8 +417,8 @@
       "kind": "new source/asset"
     },
     "app/components/appearance-account-client.ts": {
-      "sha256": "293fcdcc67f03bac13a2c51c620a9fef79214e38e86058cd5518777bb0a98001",
-      "bytes": 9538,
+      "sha256": "27c8e76fae69f34b22fb946e4220a9a6ac6734ed08778a0aa72c92e43a320e1f",
+      "bytes": 9586,
       "kind": "new source/asset"
     },
     "app/components/appearance-context.tsx": {

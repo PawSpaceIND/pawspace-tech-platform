@@ -12,6 +12,10 @@ function routesAt(dir: string, prefix = "/v2"): string[] {
 }
 const routes = routesAt(path.resolve("app/v2")).sort();
 async function choose(page: Page, appearance: Appearance) {
+  // Signature fixtures use the current cookie; Emerald fixtures exercise inactive legacy migration.
+  if (appearance.theme === "signature") {
+    await page.context().addCookies([{ name: "pawspace-appearance", value: `v1.editorial.editorial.${appearance.mode}.-`, url: origin }]);
+  }
   await page.addInitScript(a => {
     localStorage.setItem("pawspace.customer.theme", a.theme);
     localStorage.setItem("pawspace.visual-style", a.style);
@@ -30,8 +34,14 @@ async function choose(page: Page, appearance: Appearance) {
 async function visit(page: Page, route: string, appearance: Appearance) {
   await page.goto(route, { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-pawspace-v2]")).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", appearance.theme);
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", "editorial");
   await expect(page.locator("html")).toHaveAttribute("data-paw-mode", appearance.mode);
+  await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
+  if (appearance.theme === "emerald") {
+    const record = (await page.context().cookies()).find(cookie => cookie.name === "pawspace-appearance");
+    expect(decodeURIComponent(record?.value ?? "")).toContain("theme~emerald");
+    if (appearance.style === "cartoon") expect(decodeURIComponent(record?.value ?? "")).toContain("style~cartoon");
+  }
   await page.waitForFunction(() => {
     const dev = document.querySelector('script[src^="/@id/"]'), hrefs = (window as unknown as { __v2ClientCss?: string[] }).__v2ClientCss ?? [];
     const injected = Array.from(document.querySelectorAll("style[data-vite-dev-id]"), style => style.getAttribute("data-vite-dev-id") ?? "");
@@ -86,8 +96,8 @@ for (const theme of ["emerald", "signature"] as const) for (const mode of ["ligh
   for (const style of ["cartoon", "professional"] as const) test(`Home artwork and contrast: ${theme}/${mode}/${style}`, async ({ page }) => {
     const appearance = { theme, mode, style };
     await choose(page, appearance); await visit(page, "/v2", appearance);
-    await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(style === "professional" ? 0 : 8);
-    await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(style === "professional" ? 8 : 0);
+    await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(8);
+    await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(0);
     const pairs = await page.evaluate(() => {
       const pick = (selector: string, parent: string) => { const e = document.querySelector(selector)!, p = e.closest(parent)!;
         return { text: getComputedStyle(e).color, background: getComputedStyle(p).backgroundColor }; };
@@ -179,16 +189,16 @@ test("Mobile utilities do not cover dock targets, including the signed-in notifi
 });
 test("Appearance selections persist across V2 navigation, reload and system display changes", async ({ page }) => {
   await page.goto('/v2');
-  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'emerald');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'editorial');
   const trigger = page.getByRole('button', {name: 'Change PawSpace appearance'});
   await trigger.click();
   const dialog = page.getByRole('dialog', {name: 'Make PawSpace yours.'});
-  await dialog.getByRole('radio', {name: /Brand Purple \+ Gold/}).check();
-  await dialog.getByRole('radio', {name: /Professional/}).check();
+  await dialog.getByRole('radio', {name: /Editorial Sanctuary/}).check();
+  await expect(dialog.getByRole('radio', {name: /Modern Concierge/})).toBeDisabled();
   await dialog.getByRole('radio', {name: /^dark$/i}).check();
   await dialog.getByRole('button', {name: 'Done', exact: true}).click();
   await page.goto('/v2/workspaces'); await page.reload();
-  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'signature');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'editorial');
   await expect(page.locator('html')).toHaveAttribute('data-paw-style', 'professional');
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'dark');
   const darkPalette = await page.locator('main').evaluate(main => {
@@ -231,8 +241,8 @@ for (const theme of ['emerald','signature'] as const) for (const style of ['prof
     await expect(tile).toBeVisible(); const box=(await tile.boundingBox())!;
     expect(box.y+box.height).toBeLessThan(748); expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
   }
-  await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(style==='cartoon'?8:0);
-  await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(style==='professional'?8:0);
+  await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(8);
+  await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(0);
   await expect(page.locator('img[src="/assets/pawspace-official-lockup.png"]:visible')).toHaveCount(1);
   await expect(page.getByRole('link',{name:'Vet help Ask PawSpace',exact:true})).toHaveAttribute('href','/v2/chat');
   await expect(page.getByRole('link',{name:'Funeral care Sensitive support',exact:true})).toHaveAttribute('href','/v2/funeral-memorial');
@@ -251,10 +261,13 @@ test('Switching visual styles preserves the current Training form and sends no b
  const mutations:string[]=[];page.on('request',r=>{if(r.method()==='POST'&&/booking|payment|scheduling/.test(r.url()))mutations.push(r.url());});
  await page.getByRole('button',{name:'Change PawSpace appearance'}).click();
  const dialog=page.getByRole('dialog',{name:'Make PawSpace yours.'});
- await dialog.getByRole('radio',{name:/Fun/}).check();await dialog.getByRole('radio',{name:/Brand Purple \+ Gold/}).check();
+ await dialog.getByRole('radio',{name:/Editorial Sanctuary/}).check();
+ await expect(dialog.getByRole('radio',{name:/Modern Concierge/})).toBeDisabled();
+ await dialog.getByRole('radio',{name:'dark',exact:true}).check();
  await dialog.getByRole('button',{name:'Done',exact:true}).click();
- await expect(date).toHaveValue('2026-10-15');await expect(page.locator('html')).toHaveAttribute('data-paw-style','cartoon');
- await expect(page.locator('html')).toHaveAttribute('data-paw-theme','signature');expect(mutations).toEqual([]);
+ await expect(date).toHaveValue('2026-10-15');await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');
+ await expect(page.locator('html')).toHaveAttribute('data-paw-mode','dark');
+ await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');expect(mutations).toEqual([]);
 });
 
 test('Signed-in compact home projects the existing pets and saved area without changing the account',async({page})=>{
