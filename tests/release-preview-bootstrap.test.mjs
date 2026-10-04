@@ -177,6 +177,7 @@ test("an isolated configuration binds the preview database and nothing else", ()
   assert.equal(config.d1_databases.length, 1, "exactly one database may be bound");
   assert.equal(config.d1_databases[0].binding, "DB");
   assert.equal(config.d1_databases[0].database_id, GOOD.RELEASE_PREVIEW_D1_ID);
+  assert.equal(config.d1_databases[0].migrations_dir, "../../migrations");
   assert.equal(config.vars.PAWSPACE_RELEASE_SHA, VALID_SHA);
 });
 
@@ -412,9 +413,10 @@ test("the workflow gives the gate a per-attempt run tag, not a constant", () => 
   assert.ok(!/['"]gate['"]/.test(tag), "no constant fallback may appear in the hosted tag");
 });
 
-test("the migration is addressed by database id, not by a name that could resolve elsewhere", () => {
+test("the migration binding is verified against the isolated preview database id", () => {
   const migrate = job.steps.find((step) => /Migrate/.test(step.name || ""));
-  assert.match(String(migrate.run), /migrations apply "\$PREVIEW_D1"/, "the migration target must be the preview id");
+  assert.match(String(migrate.run), /binding\.database_id !== process\.env\.PREVIEW_D1/, "the binding must match the isolated preview id");
+  assert.match(String(migrate.run), /migrations apply DB --config dist\/server\/wrangler\.json --remote/, "Wrangler must use the verified candidate binding");
 });
 
 // --- nothing sensitive may be committed --------------------------------------------------------
