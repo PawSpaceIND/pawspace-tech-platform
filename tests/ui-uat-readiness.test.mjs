@@ -25,11 +25,16 @@ test('Ops schedule displays the same IST day regardless of process timezone', ()
   } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
 });
 
-test('confirmation retains the same required care guard as the step-local validator', async () => {
+test('stay confirmation keeps payment and required care in their reviewed order', async () => {
   const flow = await readFile(new URL('../app/mobile-app/stay-flow.tsx', import.meta.url), 'utf8');
-  assert.match(flow, /missingStayCareFields\(mode,careDraft\)\.length/);
   assert.match(flow, /onClick=\{reviewCare\}/);
   assert.match(flow, /aria-describedby=\{invalid/);
+  assert.match(flow, /setConfirmedCarePlan\(plan\)/);
+  assert.match(flow, /setPendingPayment\(\{bookingId:canonicalBookingId/);
+  const gate = await readFile(new URL('../app/mobile-app/stay-care-payment-gate.tsx', import.meta.url), 'utf8');
+  assert.match(gate, /Complete payment first, then add your Care Card/);
+  assert.match(gate, /caregiver cannot check in without them/);
+  assert.match(gate, /<BookingPaymentPage returnAfterVerified=\{false\}/);
   const ops = await readFile(new URL('../app/booking-command-center/page.tsx', import.meta.url), 'utf8');
   assert.match(ops, /const when = .*formatIndiaDateTime/);
   assert.doesNotMatch(ops, /date\.toLocaleString/);
