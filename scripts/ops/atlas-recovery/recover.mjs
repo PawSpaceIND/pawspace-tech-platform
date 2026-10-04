@@ -1,43 +1,36 @@
-import {writeFileSync,readFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
-import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
-const ORIGINAL='57bf797a-39d9-4764-8843-e5a5d1a93d26',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
-const crons=['*/5 * * * *','*/15 * * * *','15 2 * * *'];
-const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
-const receipt={kind:'normal_staging_provider_login_diagnosis',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37174622760};
-const save=()=>writeFileSync(env.EVIDENCE_PATH||'recovery-receipt.json',JSON.stringify(receipt,null,2)+'\n');
-const check=(v,m)=>{if(!v)throw Error(m)};
-const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY,env.PAWSPACE_UAT_ACCESS_CODE].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,1000);
-const base=`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/pawspace-staging`;
-async function api(suffix,method='GET',body){
- const op={path:suffix,method,state:method==='GET'?'read_pending':'uncertain_before_dispatch'};receipt.operations.push(op);save();
- let r;try{r=await fetch(base+suffix,{method,headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),redirect:'manual',signal:AbortSignal.timeout(20000)});}catch{op.state=method==='GET'?'read_failed':'unknown_no_retry';save();throw Error('transport_unknown_'+suffix)}
- op.httpStatus=r.status;const p=await r.json().catch(()=>null);op.success=p?.success===true;op.errors=(p?.errors??[]).map(e=>({code:e.code,message:redact(e.message)}));
- if(!r.ok||p?.success!==true){op.state=p?.success===false?'rejected':method==='GET'?'read_failed':'unknown_no_retry';save();throw Error('http_'+r.status+'_'+suffix+'_'+JSON.stringify(op.errors))}
- op.state='confirmed';save();return p.result;
+import {writeFileSync} from 'node:fs';
+import {sameSavedAddress} from '../../../lib/saved-address-identity.ts';
+import {serviceAddressText} from '../../../lib/service-address-text.ts';
+const env=process.env,version='57bf797a-39d9-4764-8843-e5a5d1a93d26',database='1b879a28-c8a9-40b0-830d-1ce439061a00';
+const receipt={kind:'read_only_finance_network_evidence',operations:[],databaseWrites:0,modelRequests:0,originRequests:0};
+const save=()=>writeFileSync('finance-network-receipt.json',JSON.stringify(receipt,null,2)+'\n');
+const check=(value,code)=>{if(!value)throw Error(code);};
+const base=`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}`;
+async function api(path,body){
+ const op={method:body?'POST_SELECT':'GET',state:'read_pending'};receipt.operations.push(op);save();
+ const response=await fetch(base+path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+ const payload=await response.json().catch(()=>null);op.httpStatus=response.status;op.success=payload?.success===true;save();check(response.ok&&payload?.success===true,'read_refused');op.state='confirmed';save();return payload.result;
 }
-async function active(){const p=await api('/deployments');check(Array.isArray(p?.deployments)&&p.deployments.length>0,'deployments_shape');const d=p.deployments[0];check(d.versions?.length===1&&d.versions[0].percentage===100,'mixed_or_unknown_deployment');return{deploymentId:d.id,versionId:d.versions[0].version_id};}
-async function schedules(){const p=await api('/schedules');const a=Array.isArray(p)?p:p?.schedules;check(Array.isArray(a),'schedules_shape');return a.map(x=>x.cron).sort();}
 try{
- check(env.CONFIRM==='restore-certified-staging'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-restore-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_recovery_refused');
- check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY&&String(env.PAWSPACE_UAT_ACCESS_CODE??'').length>0,'existing_connection_missing');
- receipt.before=await active();receipt.schedulesBefore=await schedules();save();
- check(receipt.before.versionId===ORIGINAL,'unexpected_deployment_refused');
- receipt.after=await active();check(receipt.after.versionId===ORIGINAL,'certified_version_not_restored');save();
-
- receipt.schedulesAfter=await schedules();check(JSON.stringify(receipt.schedulesAfter)===JSON.stringify([...crons].sort()),'cron_restore_unproven');save();
- const cookie='pawspace_uat='+encodeURIComponent(await issueUatToken({PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY},'founder@pawspace.in',600));
- const get=async path=>{const r=await fetch(origin+path,{headers:{cookie},redirect:'manual',signal:AbortSignal.timeout(20000)});check(r.ok,'origin_'+r.status+'_'+path);return r;};
- const fixture=await(await get('/__staging/fixture-isolation?expectedSha='+SHA+'&scope=grooming_strict')).json();check(fixture.ok===true&&fixture.version?.id===ORIGINAL&&fixture.version?.buildSha===SHA,'restored_fixture_or_auth_failed');receipt.fixture={ok:true,versionId:fixture.version.id,buildSha:fixture.version.buildSha};
- const health=await(await get('/healthz')).json();check(health.status==='ok','health_failed');receipt.health=true;
- const favicon=Buffer.from(await(await get('/favicon.svg')).arrayBuffer());check(createHash('sha256').update(favicon).digest('hex')==='e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7','assets_hash_failed');receipt.assets=true;
- const ui=await get('/staging-login');check((ui.headers.get('content-type')??'').includes('text/html'),'normal_ui_failed');receipt.ui=true;
-
- receipt.providerLogin={state:'uncertain_before_dispatch',requests:1};save();
- let login;try{login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code:env.PAWSPACE_UAT_ACCESS_CODE,email:'asha.groomer1@tkpetcare.in'}),redirect:'manual',signal:AbortSignal.timeout(20000)});}catch{receipt.providerLogin.state='unknown_no_retry';save();throw Error('provider_login_transport_unknown_no_retry');}
- const loginBody=await login.json().catch(()=>null);
- const error=String(loginBody?.error??'');
- receipt.providerLogin={state:'response_received',requests:1,httpStatus:login.status,sessionIssued:login.status===200&&String(login.headers.get('set-cookie')??'').includes('pawspace_uat='),refusalKind:error.startsWith('That email cannot sign in here.')?'staff_identity_ineligible':error==='Invalid access code'?'access_code_invalid':error==='Permission denied'?'permission_denied':error?'other_refusal':null};save();
- check(receipt.providerLogin.sessionIssued,'provider_login_unproven');
- receipt.ok=true;receipt.completedAt=new Date().toISOString();receipt.schedulePropagation='API read confirms all3; edge propagation may take15minutes';save();console.log('Certified staging version,3crons,authenticated fixture,UI/assets/health restored.');
-}catch(error){receipt.ok=false;receipt.failure=redact(error.message);save();console.error(receipt.failure);process.exitCode=1;}
+ check(env.CONFIRM==='read-only-finance-network-evidence'&&env.EXPECTED_SHA===env.GITHUB_SHA&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/finance-network-read-/.test(env.GITHUB_REF_NAME??''),'scope_refused');
+ check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN,'existing_connection_missing');
+ const script='/workers/scripts/pawspace-staging';
+ const active=(await api(script+'/deployments'))?.deployments?.[0];check(active?.versions?.length===1&&active.versions[0].percentage===100&&active.versions[0].version_id===version,'normal_version_changed');
+ const resource=await api(script+'/versions/'+version),bindings=resource.resources?.bindings;check(Array.isArray(bindings),'bindings_unproven');
+ check(bindings.filter(x=>x.type==='d1').length===1&&bindings.some(x=>x.type==='d1'&&x.name==='DB'&&(x.id??x.database_id)===database),'dedicated_db_refused');
+ const vars=Object.fromEntries(bindings.filter(x=>x.type==='plain_text').map(x=>[x.name,String(x.text??x.value??'')]));
+ check(vars.PAWSPACE_STAGING_BUILD_SHA==='c18b15caea9551505398746dc9335a962f17e8ae'&&vars.PAWSPACE_PAYMENT_ENV==='sandbox'&&vars.FORBID_PRODUCTION==='true','sandbox_revision_refused');
+ check(!bindings.some(x=>['secret_text','secret_key'].includes(x.type)&&x.name==='PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE'),'fixture_flag_secret_unreadable');
+ const truthy=v=>['1','true','on','yes'].includes(String(v??'').trim().toLowerCase());
+ receipt.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=truthy(vars.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE);
+ receipt.serviceDiscoveryFixtureEnabled=receipt.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE&&vars.PAWSPACE_PAYMENT_ENV.toLowerCase()==='sandbox'&&(String(vars.NODE_ENV??'').toLowerCase()==='test'||String(vars.PAWSPACE_SCHEDULING_ENV??'').toLowerCase()==='uat');
+ const sql='SELECT a.line1,a.line2,a.area,a.city,a.postal_code,g.address_text,g.latitude,g.longitude,g.city_id AS geocode_city,g.zone_id AS geocode_zone,m.city_id AS resolved_city_id,m.zone_id AS resolved_zone_id,m.city AS resolved_city,m.area AS resolved_area FROM customer_addresses a LEFT JOIN customer_service_address_geocodes g ON g.address_id=a.id AND g.customer_id=a.customer_id AND g.pincode=a.postal_code LEFT JOIN service_zone_mappings m ON m.pincode=a.postal_code WHERE a.customer_id=? AND a.postal_code=? ORDER BY a.is_default DESC,a.updated_at DESC,a.created_at DESC LIMIT 20';
+ const queried=await api('/d1/database/'+database+'/query',{sql,params:['CUS0000','560068']});check(queried?.length===1&&queried[0].success&&Array.isArray(queried[0].results)&&queried[0].meta.rows_written===0&&queried[0].meta.changed_db===false,'read_only_select_unproven');
+ const rows=queried[0].results;receipt.ownedAddressCountWithinBound=rows.length;
+ receipt.cachedOwnedGeocode=rows.some(row=>{
+  if(row.resolved_city_id!=='blr'||row.resolved_zone_id!=='blr-south'||row.geocode_city!==row.resolved_city_id||row.geocode_zone!==row.resolved_zone_id||typeof row.latitude!=='number'||typeof row.longitude!=='number'||!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude)||row.latitude<-90||row.latitude>90||row.longitude<-180||row.longitude>180||typeof row.address_text!=='string')return false;
+  const address=serviceAddressText({line1:row.line1,line2:row.line2,area:row.area,city:row.city,postalCode:'560068',country:'India'});
+  return sameSavedAddress({line1:row.address_text,area:row.resolved_area,city:row.resolved_city,postalCode:'560068'},{line1:address,area:row.resolved_area,city:row.resolved_city,postalCode:'560068'});
+ });
+ receipt.servingVersion=version;receipt.servingSha=vars.PAWSPACE_STAGING_BUILD_SHA;receipt.target={customerId:'CUS0000',pincode:'560068',city:'blr',zone:'blr-south'};receipt.ok=true;receipt.completedAt=new Date().toISOString();save();
+}catch(error){receipt.ok=false;receipt.failure=['scope_refused','existing_connection_missing','read_refused','normal_version_changed','bindings_unproven','dedicated_db_refused','sandbox_revision_refused','fixture_flag_secret_unreadable','read_only_select_unproven'].includes(error.message)?error.message:'read_transport_or_source_failed';save();process.exitCode=1;}
