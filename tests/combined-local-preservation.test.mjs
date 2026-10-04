@@ -59,3 +59,18 @@ test('Grooming back-bar CSS restores exact 7e bytes and rejects unrelated mutati
  assert.equal(preservedGroomingBackBarBytes('unrelated',bytes),bytes);
  for(const changed of [bytes+'\nUNREVIEWED',bytes.toString().replace('min-height:60px','min-height:44px'),bytes.toString().replace(backBar.append,backBar.append+backBar.append),bytes.toString().replace(backBar.append,backBar.append.trim()),bytes.toString().replaceAll('\n','\r\n'),'X'+bytes.toString().slice(1)])assert.throws(()=>preservedGroomingBackBarBytes(path,Buffer.from(changed)));
 });
+
+
+test('Exact native add-on pointer retry restores history and rejects assertion mutations',()=>{
+ const path='e2e/v2-grooming.spec.ts',bytes=readFileSync(new URL('../'+path,import.meta.url));
+ assert.equal(hash(bytes),'766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230');
+ assert.equal(hash(preservedTrainingIntegratedBytes(path,bytes)),'72106356e17dd30c32a66a6d498d7b9fbc4f678e1185a058bf46a0f08f8e784c');
+ const original=preservedCombinedLocalBytes(path,bytes);
+ assert.equal(hash(original),'1c91a9503698107ea2064a7a8dd5292563fb35463817b403f5f7184c76606498');
+ assert.equal(preservedCombinedLocalBytes(path,original),original);
+ assert.equal(preservedTrainingIntegratedBytes('unrelated',bytes),bytes);
+ const text=bytes.toString();
+ const pairs=[['timeout: 2_000','timeout: 20_000'],['disclosure.locator("summary").click();','disclosure.locator("summary").click({ force: true });'],['toHaveAttribute("open", "", { timeout: 2_000 })','toHaveAttribute("open", "", { timeout: 20_000 })'],['await expect(checkbox).toBeChecked();','await checkbox.isChecked();'],['expect(state.bookingWrites).toBe(0)','expect(state.bookingWrites).toBeGreaterThanOrEqual(0)'],['SECOND','OTHER']];
+ for(const [before,after] of pairs){assert.ok(text.includes(before),before);assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text.replace(before,after))));}
+ for(const changed of [text+'\nUNREVIEWED','X'+text.slice(1),text.slice(1),text.replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(changed)));
+});
