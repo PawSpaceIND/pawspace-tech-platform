@@ -29,13 +29,14 @@ test("rows 3 and 6: pickup address and PIN are chosen together at the trip step 
  assert.match(flow,/import \{loadCustomerAccount,type CustomerPet\} from "\.\.\/\.\.\/lib\/customer-account-client";/);
  assert.match(flow,/import \{serviceAddressConflict\} from "\.\.\/\.\.\/lib\/service-address-consistency";/);
  assert.match(flow,/<select aria-label="Saved pickup address"/);
- assert.match(flow,/setPickup\(serviceAddressText\(\{\.\.\.saved,postalCode:undefined\}\)\);setPincode\(String\(saved\.postalCode\|\|""\)\.replace\(\/\\D\/g,""\)\.slice\(0,6\)\);/,"one saved address fills both the label and the PIN");
+ assert.match(flow,/setPickup\(serviceAddressText\(\{\.\.\.saved,postalCode:undefined\}\)\);setPincode\(String\(saved\.postalCode\?\?""\)\);/,"one saved address fills both the label and its unchanged PIN; malformed saved values are never repaired silently");
  assert.match(flow,/resolveServiceCoverage\(pincode\)\.then\(coverage=>\{if\(!active\)return;const conflict=serviceAddressConflict\(pickup,coverage\.city,coverage\.pincode\);/);
- assert.match(flow,/disabled=\{!addressesValid\|\|!scheduledStart\|\|pincode\.length!==6\|\|!pickupVerified\}/,"Next waits for a completed, successful pickup check: checking, failed or unchecked cannot advance");
+ assert.match(flow,/const pinValid=strictServicePincode\(pincode\)\.ok;/);
+ assert.match(flow,/disabled=\{!addressesValid\|\|!scheduledStart\|\|!pinValid\|\|!pickupVerified\}/,"Next waits for a completed, successful pickup check: checking, failed or unchecked cannot advance");
  assert.match(flow,/const pickupVerified=pickupCheck\?\.key===pickupKey&&pickupCheck\.status==="ok";/);
  // Validation is not removed: the reserve path still resolves coverage and sends the address and PIN to the scheduler.
  assert.match(flow,/const coverage=await resolveServiceCoverage\(pincode\);/);
- assert.match(flow,/serviceAddress:pickup\.trim\(\),servicePincode:pincode,vehicleClass:vehicle/);
+ assert.match(flow,/serviceAddress:pickup\.trim\(\),servicePincode:pincode\.trim\(\),vehicleClass:vehicle/);
  assert.doesNotMatch(flow,/<input aria-label="Pickup PIN code"[^>]*\/>[\s\S]*Choose your car/,"the PIN is no longer first asked on the car page");
 });
 
@@ -61,6 +62,9 @@ test("back navigation sits at the top of every step and reuses the stage machine
 
 test("executes the consistency rule the flow applies early and the business rules it must not overstate",async()=>{
  const {serviceAddressConflict}=await import("../lib/service-address-consistency.ts");
+ const {strictServicePincode}=await import("../lib/service-zone-client.ts");
+ for(const raw of ["5600 38","5600389","560-038"])assert.equal(strictServicePincode(raw).ok,false,"pickup PIN is never silently repaired");
+ assert.equal(strictServicePincode(" 560038 ").ok,true,"only outer whitespace is accepted");
  assert.equal(serviceAddressConflict("12, 5th Cross, HSR Layout, Bengaluru","Bengaluru","560102"),null,"a consistent pickup passes");
  assert.match(String(serviceAddressConflict("7, Marine Drive, Mumbai","Bengaluru","560102")),/names a different city from Bengaluru/);
  assert.match(String(serviceAddressConflict("12, 5th Cross, HSR Layout 560034","Bengaluru","560102")),/address and selected PIN code do not match/);

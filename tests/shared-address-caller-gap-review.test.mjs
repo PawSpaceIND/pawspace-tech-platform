@@ -33,7 +33,7 @@ async function refusal(promise){try{await promise;assert.fail("expected a refusa
 
 
 
-// Characterization of inherited caller gaps, not product acceptance tests.
+// Regression controls for the inherited gaps closed by the reviewed shared-address repair.
 import fs from "node:fs";
 import path from "node:path";
 import {createRequire} from "node:module";
@@ -45,25 +45,29 @@ let stayJs=ts.transpileModule(fs.readFileSync(path.join(sourceRoot,"lib/stay-sav
 for(const spec of ["./service-zone-client","./service-address-text"])stayJs=stayJs.replaceAll('"'+spec+'"',JSON.stringify(pathToFileURL(path.join(sourceRoot,"lib",spec+'.ts')).href));
 const {validateSavedStayAddress}=await import("data:text/javascript;base64,"+Buffer.from(stayJs).toString("base64"));
 const coverageBody={data:{zone:{zoneId:"blr-east",serviceAvailable:true},assignment:{pincode:"560038",zoneId:"blr-east",cityId:"blr",city:"Bengaluru",area:"Indiranagar"}}};
-for(const raw of ["5600 38","5600389"]){test(`inherited gap: coverage helper normalizes malformed raw PIN ${raw}`,async t=>{
+for(const raw of ["5600 38","5600389"]){test(`repaired caller boundary refuses malformed raw PIN ${raw} without a request`,async t=>{
  const old=globalThis.fetch;let submitted;t.after(()=>globalThis.fetch=old);
  globalThis.fetch=async url=>{submitted=String(url);assert.ok(submitted.startsWith("/api/service-zone?"));return Response.json(coverageBody);};
- assert.equal((await resolveServiceCoverage(raw)).pincode,"560038");assert.equal(new URL(submitted,"http://localhost").searchParams.get("pincode"),"560038");
+ await assert.rejects(()=>resolveServiceCoverage(raw),/six digits only/);assert.equal(submitted,undefined);
 });}
-test("inherited gap: saved Stay address normalizes malformed postal_code before validation",async t=>{
+test("repaired saved Stay boundary refuses malformed postal_code without mutating the record",async t=>{
  const old=globalThis.fetch;let calls=0;t.after(()=>globalThis.fetch=old);
  globalThis.fetch=async url=>{calls++;assert.equal(new URL(String(url),"http://localhost").searchParams.get("pincode"),"560038");return Response.json(coverageBody);};
- const g=await validateSavedStayAddress({id:"LOCAL-ONLY",label:"Home",line1:"44 New Lane",area:"Indiranagar",city:"Bengaluru",postalCode:"5600 38",isDefault:true});
- assert.equal(g.assignment.pincode,"560038");assert.equal(calls,1);
+ const saved={id:"LOCAL-ONLY",label:"Home",line1:"44 New Lane",area:"Indiranagar",city:"Bengaluru",postalCode:"5600 38",isDefault:true},before={...saved};
+ await assert.rejects(()=>validateSavedStayAddress(saved),/invalid PIN code/);
+ assert.equal(calls,0);assert.deepEqual(saved,before);
 });
-test("inherited gap: unverified caller coordinates become cached authority when geocoder fails",async t=>{
+test("repaired resolver refuses unverified caller coordinates when forward and reverse geocoding fail",async t=>{
  const c=await fixture(t),before=c.canonical(),env=globalThis.__GROOM_GOLDEN_ENV__,priorEnv={...env},priorFetch=globalThis.fetch;
  env.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE="off";env.GOOGLE_MAPS_SERVER_API_KEY_UAT="local-mocked-adapter";
  globalThis.fetch=async url=>{assert.equal(new URL(String(url)).hostname,"maps.googleapis.com");return Response.json({status:"ZERO_RESULTS",results:[]});};
  try{
-  const g=await resolve(c.db,{serviceCode:"grooming",latitude:12.925,longitude:77.5938});
-  assert.equal(g.latitude,12.925);assert.equal(g.longitude,77.5938);assert.equal(c.geocode().latitude,12.925);assert.deepEqual(c.canonical(),before);
+  const rejected=await refusal(resolve(c.db,{serviceCode:"grooming",latitude:12.925,longitude:77.5938}));
+  assert.equal(rejected.status,409);assert.match(rejected.text,/could not be verified against map data/);
+  assert.equal(c.sqlite.prepare("SELECT COUNT(*) n FROM customer_service_address_geocodes").get().n,0);
+  assert.deepEqual(c.canonical(),before);
   const picker=fs.readFileSync(path.join(sourceRoot,"app/mobile-app/address-picker.tsx"),"utf8"),grooming=fs.readFileSync(path.join(sourceRoot,"app/mobile-app/grooming-flow.tsx"),"utf8"),route=fs.readFileSync(path.join(sourceRoot,"app/api/grooming-service-location/route.ts"),"utf8");
-  assert.match(picker,/latitude:place\?\.latitude\|\|12\.925/);assert.match(picker,/longitude:place\?\.longitude\|\|77\.5938/);assert.match(grooming,/latitude:\s*serviceLocation\.latitude/);assert.match(route,/source:"server_geocode"/);
+  assert.doesNotMatch(picker,/latitude:place\?\.latitude\|\|12\.925|longitude:place\?\.longitude\|\|77\.5938/);
+  assert.match(grooming,/freezeServiceAddressSelection/);assert.match(route,/coordinateSource/);
  }finally{globalThis.fetch=priorFetch;for(const k of Object.keys(env))delete env[k];Object.assign(env,priorEnv);}
 });
