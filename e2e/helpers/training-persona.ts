@@ -230,6 +230,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     };
     await uploadPhoto("Before photo");
     await action("Start session", "start");
+    await partner.reload();
     await expect(partner.getByLabel("I completed the pet-parent handover", { exact: true })).toBeVisible();
     await expect(partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true })).toBeChecked();
     const noHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "complete", idempotencyKey: `training-no-handover-${sessionId}` } });
@@ -255,7 +256,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       const approved = await operations.request.patch("/api/training-session-media", { data: review });
       expect(approved.status(), await approved.text()).toBe(200); expect((await approved.json()).data.proofReady).toBe(true);
     }
-    await partner.getByRole("button", { name: "Refresh photo approval", exact: true }).click();
+    await partner.getByRole("button", { name: "Check photo status", exact: true }).first().click();
     await expect(partner.getByText(/Approved — hash only/)).toHaveCount(2);
     await partner.getByLabel("Homework for pet parent", { exact: true }).fill("Practise the demonstrated cue briefly with praise and supervised rest.");
     const unassessedLabels = ["Recall score", "Impulse score", "Parent practice score"];

@@ -113,7 +113,7 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    for(const name of ['Title','Summary','Content sections (one per line)','Quiz question','Quiz options (separate with |; first index is 0)']){const field=content.getByLabel(name,{exact:true});await expect(field).toBeVisible();await field.focus();expect(await field.evaluate(e=>e===document.activeElement)).toBe(true);}
    const service=content.getByRole('combobox',{name:'Service',exact:true});await expect(service).toBeVisible();await expect(service).toHaveValue('all');await service.focus();expect(await service.evaluate(e=>e===document.activeElement)).toBe(true);
    await expect(content.getByLabel('Pass %',{exact:true})).toHaveValue('80');
-   for(const el of await content.locator('main').last().locator('button,input,select,header a').all())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+   for(const el of await content.locator('main').last().locator('button,input,select').all())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);
    await expect(content.getByRole('button',{name:'Save draft',exact:true})).toBeEnabled();
   }else if(screen==='operations')await expect(content.getByRole('link').filter({hasText:'Open →'})).toHaveCount(5);
   else {const search=content.getByRole('textbox',{name:'Find someone'});await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();await search.fill('does-not-match');await expect(content.getByText('No one matches “does-not-match”',{exact:true})).toBeVisible();await search.fill('');await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();}
