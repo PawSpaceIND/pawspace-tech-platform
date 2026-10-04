@@ -1,4 +1,4 @@
-name: Read future prepaid Finance scope pending appointment approval
+name: Verify remaining captured prepaid TEST Finance facts
 on:
   workflow_dispatch:
     inputs:
@@ -15,7 +15,7 @@ jobs:
   bounded-read:
     if: ${{ inputs.confirm == 'read-only-prepaid-finance-capture-reconciliation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     environment: pawspace-staging
     steps:
       - uses: actions/checkout@v4
@@ -33,14 +33,14 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          EVIDENCE_PATH: finance-prepaid-capture-reconciliation-receipt.json
+          EVIDENCE_PATH: finance-prepaid-remaining-verification-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/finance-prepaid-capture-reconciliation/read-runner.mjs
+          node scripts/ops/atlas-session/finance-prepaid-remaining-verification/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: finance-prepaid-capture-reconciliation-${{ github.sha }}
-          path: finance-prepaid-capture-reconciliation-receipt.json
+          name: finance-prepaid-remaining-verification-${{ github.sha }}
+          path: finance-prepaid-remaining-verification-receipt.json
           if-no-files-found: error
           retention-days: 7
