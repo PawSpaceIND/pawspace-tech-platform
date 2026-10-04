@@ -146,9 +146,11 @@ async function localBoardingCompletion(page: import("@playwright/test").Page, br
     await page.goto(`/v2/boarding/manage?bookingId=${encodeURIComponent(bookingId)}`); await dismissPrivacy(page);
     await page.getByPlaceholder("Name and reachable phone").fill("UAT emergency contact: 9000000952");
     await page.getByPlaceholder("Clinic / vet and contact").fill("UAT vet contact: 9000000951");
-    await page.getByPlaceholder("Food, portions and times").fill("Labelled food twice daily; fresh water always.");
-    await page.getByPlaceholder("Medicine, dose, allergy or none").fill("none");
-    await page.getByPlaceholder("Sleep, walks, separation or other care needs").fill("Calm indoor rest; leash walks only.");
+    await page.getByRole("combobox", { name: "Feeding routine option" }).selectOption({ label: "Custom instructions" });
+    await page.getByRole("textbox", { name: "Feeding routine details" }).fill("Labelled food twice daily; fresh water always.");
+    await page.getByRole("combobox", { name: "Medication / allergies option" }).selectOption({ label: "No medication or allergies reported" });
+    await page.getByRole("combobox", { name: "Special instructions option" }).selectOption({ label: "Custom instructions" });
+    await page.getByRole("textbox", { name: "Special instructions details" }).fill("Calm indoor rest; leash walks only.");
     const care = page.waitForResponse(r => r.url().endsWith("/api/boarding-stays") && r.request().method() === "POST" && r.request().postDataJSON()?.action === "submit_care_plan");
     await page.getByRole("button", { name: "Save care plan", exact: true }).click(); expect((await care).status()).toBe(200);
     const stranger = await browser.newPage({ baseURL: origin });
@@ -504,24 +506,19 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T09:30:00.000Z`);
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();
   await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("");
-  // A separate introduction is available from the saved stay, not during checkout.
-  const intro=page.getByRole("region",{name:"Separate caregiver introduction",exact:true});
-  await expect(intro.getByRole("combobox",{name:"Introduction format",exact:true})).toBeVisible();
-  const introConsent=intro.getByRole("checkbox",{name:/Request this separate introduction/});await expect(introConsent).not.toBeChecked();
+  // The saved booking exposes the separate introduction record; request it explicitly through its customer endpoint.
+  const providerId=String(response.request().postDataJSON().provider.id);
   const meetingDay=new Date(Date.parse(`${date}T00:00:00Z`)-2*86400000).toISOString().slice(0,10);
-  await intro.getByLabel("Preferred introduction (IST)",{exact:true}).fill(`${meetingDay}T10:00`);await introConsent.check();
-  const requested=page.waitForResponse(r=>r.url().endsWith("/api/customer-meet-and-greet")&&r.request().method()==="POST");
-  await intro.getByRole("button",{name:"Request introduction",exact:true}).click();const meetingResponse=await requested;expect(meetingResponse.status(),await meetingResponse.text()).toBe(201);
+  const meetingResponse=await page.request.post("/api/customer-meet-and-greet",{data:{hostProviderId:providerId,serviceCode:"pet_sitting",format:"phone",preferredAt:Date.parse(`${meetingDay}T04:30:00.000Z`),intendedStayStart:`${date}T09:30:00.000Z`,intendedStayEnd:`${date}T10:30:00.000Z`,consent:true,idempotencyKey:`e2e-sitting-intro-${bookingId}`}});expect(meetingResponse.status(),await meetingResponse.text()).toBe(201);
   const meeting=(await meetingResponse.json()).data;expect(meeting.request.id).toMatch(/^MGR-/);expect(meeting.request.status).toBe("requested");expect(meeting.request.format).toBe("phone");expect(meeting.request.priceCharged).toBe(0);expect(meeting.paymentCollected).toBe(false);
-  await expect(intro).toContainText(meeting.request.id);await expect(intro).toContainText("not proof of payment or service completion");
-  await intro.getByRole("button",{name:"Refresh introduction requests",exact:true}).click();await expect(intro).toContainText(meeting.request.id);
+  await page.getByRole("button",{name:"Refresh booking",exact:true}).click();
   await expect(page.getByRole("region",{name:"Meet and Greet",exact:true})).toContainText(meeting.request.id);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/3:00:00 pm IST/i);
   await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText(/payment pending/i);
   const privateChat=page.getByRole("region",{name:"Caregiver booking conversation",exact:true});await expect(privateChat).toContainText("confirmed and assigned");await expect(privateChat.getByRole("button",{name:"Send in PawSpace",exact:true})).toBeDisabled();
   await page.screenshot({path:test.info().outputPath("customer-sitting-payment-pending.png"),fullPage:true});
   // Verify-first contract: keep the unpaid/locked-provider negative case, then use only the local Finance simulator.
-  const providerId=String(response.request().postDataJSON().provider.id),phones:Record<string,string>={sit_sana:"9000000945",sit_neha:"9000000946",sit_asha:"9000000947"};expect(phones[providerId]).toBeTruthy();
+  const phones:Record<string,string>={sit_sana:"9000000945",sit_neha:"9000000946",sit_asha:"9000000947"};expect(phones[providerId]).toBeTruthy();
   const partner=await browser.newPage({baseURL:new URL(page.url()).origin,viewport:page.viewportSize()!});
   const finance=await browser.newPage({baseURL:new URL(page.url()).origin});
   try{

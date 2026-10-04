@@ -208,6 +208,8 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await partner.evaluate(({ latitude, longitude }) => Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition(success: (value: { coords: { latitude: number; longitude: number; accuracy: number } }) => void) { success({ coords: { latitude, longitude, accuracy: 5 } }); } } }), fixtureDoorstep);
     const arrived = await action("Confirm arrival with device GPS", "arrive");
     expect((await arrived.json()).data.geofence.distanceMeters).toBeLessThanOrEqual(250);
+    await partner.goto(`/v2/partner/trainer/session?bookingId=${encodeURIComponent(bookingId)}&sessionId=${encodeURIComponent(sessionId)}`);
+    await expect(partner.getByRole("heading", { name: "Training session work" })).toBeVisible();
     await partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true }).check();
     await partner.getByLabel("Training area is safe", { exact: true }).check();
     await expect(partner.getByRole("button", { name: "Start session", exact: true })).toBeDisabled();
