@@ -665,10 +665,17 @@ function noLocationMutations(state: Fixture) {
 }
 
 async function deviceLocationReview(page: Page) {
+  const essentialOnly = page.getByRole("button", { name: "Essential Only" });
+  if (await essentialOnly.isVisible()) await essentialOnly.click();
+  const disclosure = page.locator("details").filter({ has: page.locator("summary", { hasText: "Use device location instead" }) });
+  if (await disclosure.getAttribute("open") === null) {
+    await disclosure.locator("summary").focus();
+    await disclosure.locator("summary").press("Enter");
+    await expect(disclosure).toHaveAttribute("open", "");
+  }
   const review = page.getByRole("group", { name: "Current location", exact: true });
   // The Google-capable picker has its own location action. Exercise the retained
   // review/cancel path through its actual disclosure rather than that other button.
-  if (!await review.isVisible()) await page.getByText("Use device location instead", { exact: true }).click();
   await expect(review).toBeVisible();
   return review;
 }

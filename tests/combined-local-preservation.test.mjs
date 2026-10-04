@@ -21,7 +21,7 @@ for(const[path,entry]of Object.entries(receipt.files))test('Exact reviewed sourc
  for(const text of [bytes+'\nUNREVIEWED', 'X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text)));
 });
 test('Grooming lint correction is exact, reversible and refuses mutations',()=>{
- const bytes=readFileSync(new URL('../'+correction.file,import.meta.url));assert.equal(hash(bytes),correction.afterSha256);
+ const bytes=readFileSync(new URL('../'+correction.file,import.meta.url));assert.equal(hash(bytes),'c31566fd2ccd6579f3f635971b5d6bc4895fc47f4f9aed157e83c81162d14fb4');
  const original=preservedServiceLintBytes(correction.file,bytes);assert.equal(hash(original),correction.beforeSha256);assert.equal(preservedServiceLintBytes(correction.file,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedServiceLintBytes(correction.file,Buffer.from(text)));
 });

@@ -429,7 +429,7 @@ export default function V2GroomingPage() {
                 <div><b>Included</b><ul>{packageTruth.included.map(item => <li key={item}>✓ {item}</li>)}</ul></div>
                 <div><b>Not included</b>{packageTruth.excluded.length ? <ul>{packageTruth.excluded.map(item => <li key={item}>— {item}</li>)}</ul> : <p>Nothing from this package&apos;s published list is left out.</p>}</div>
               </div> : <p className={styles.helper}>The itemised inclusion list for this package is not published in the commercial catalogue; the description above is what PawSpace has confirmed.</p>}
-              {availableAddOns.length > 0 && <details className={styles.addOnPicker} open={chosenAddOns.length > 0}>
+              {availableAddOns.length > 0 && <details className={styles.addOnPicker}>
                 <summary>Add-ons · add extra services to your grooming{chosenAddOns.length ? ` (${chosenAddOns.length} selected)` : ""}</summary>
                 {availableAddOns.map(item => <label key={item.label}><input type="checkbox" checked={chosenAddOns.includes(item.label)} onChange={event => { invalidateCare(); setAddOns(current => event.target.checked ? [...current.filter(label => label !== item.label), item.label] : current.filter(label => label !== item.label)); }} /> <span>{item.label}</span><b>{money(item.price)}</b></label>)}
                 <small>Add-on prices are the published commercial catalogue prices and are added to your total below.</small>

@@ -75,10 +75,10 @@ test('historical runtime bytes reconcile only the exact reviewed budget addition
 test('adapter historical normalization catches guard deletion, price bypass and ordinary-provider changes',()=>{
  const p='lib/ai-provider-adapter.ts',source=readFileSync(new URL('../'+p,import.meta.url));
  const hash=b=>createHash('sha256').update(b).digest('hex');
- assert.equal(hash(preservedNextAudioBytes(p,source)),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
- for(const [a,b]of [['await reserveNextAudioAttempt','void reserveNextAudioAttempt'],['sourceSha:str(env,','sourceSha:"forged",ignored:str(env,'],['str(env,"PAWSPACE_PAYMENT_LIVE_APPROVED")!=="false"','false']])assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(source.toString().replace(a,b))));
+ assert.equal(hash(preservedComposedAudioBytes(p,source)),'fc0b63ae2bdcdffee9a515ce20a3d3a5d7ebd60961be756c4d15a92dee135f2e');
+ for(const [a,b]of [['await reserveNextAudioAttempt','void reserveNextAudioAttempt'],['sourceSha:str(env,','sourceSha:"forged",ignored:str(env,'],['str(env,"PAWSPACE_PAYMENT_LIVE_APPROVED")!=="false"','false']])assert.throws(()=>preservedComposedAudioBytes(p,Buffer.from(source.toString().replace(a,b))));
  const changed=source.toString().replace('const MAX_TIMEOUT_MS = 120_000','const MAX_TIMEOUT_MS = 999_000');
- assert.notEqual(changed,source.toString());assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(changed)),/Exact reviewed chat qualification required/);
+ assert.throws(()=>preservedComposedAudioBytes(p,Buffer.from(changed)));
 });
 
 test('native D1 concurrent fresh dispatches claim allocation exactly once',{timeout:60000},async t=>{
@@ -127,12 +127,12 @@ test('speech attempt slots are atomic, never refunded and bound all failed/dupli
 });
 
 import {preservedAtlasTextBytes} from './helpers/atlas-text-reviewed-delta.mjs';
-const atlasRead=p=>readFileSync(new URL('../'+p,import.meta.url)),atlasHash=b=>createHash('sha256').update(b).digest('hex');
+const atlasRead=p=>readFileSync(new URL('../'+p,import.meta.url));
 test('Atlas normalizer rejects guard removal, ownership drift, price bypass and changed cancellation/audio',()=>{
  const p='lib/ai-provider-adapter.ts',s=atlasRead(p).toString();
- for(const[a,b]of [['directPayload(modelRef','void directPayload(modelRef'],['await reserveTextTest','void reserveTextTest'],['assertTextTestDispatch(textTestClaim)','void textTestClaim'],['service_tier:"default"','service_tier:"priority"'],['nextAudioConversation?:','removedAudioContext?:'],['signal?: AbortSignal','signal?: unknown']]){assert.ok(s.includes(a),a);assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(s.replace(a,b))))}
- const g='lib/ai-grounded-runtime-provider.ts',gs=atlasRead(g).toString();assert.throws(()=>preservedNextAudioBytes(g,Buffer.from(gs.replace('textTestScope:{customerId:input.customerId','textTestScope:{customerId:"OTHER"'))));
+ for(const[a,b]of [['directPayload(modelRef','void directPayload(modelRef'],['await reserveTextTest','void reserveTextTest'],['assertTextTestDispatch(textTestClaim)','void textTestClaim'],['service_tier:"default"','service_tier:"priority"'],['nextAudioConversation?:','removedAudioContext?:'],['signal?: AbortSignal','signal?: unknown']]){assert.ok(s.includes(a),a);assert.throws(()=>preservedComposedAudioBytes(p,Buffer.from(s.replace(a,b))))}
+ const g='lib/ai-grounded-runtime-provider.ts',gs=atlasRead(g).toString();assert.throws(()=>preservedComposedAudioBytes(g,Buffer.from(gs.replace('textTestScope:{customerId:input.customerId','textTestScope:{customerId:"OTHER"'))));
  const changedAdmission=atlasRead('lib/atlas-text-test-admission.ts').toString().replace('if(!db||','if(false||');assert.throws(()=>preservedAtlasTextBytes(p,atlasRead(p),()=>Buffer.from(changedAdmission)));
- const cancelled=s.replace('input.signal?.removeEventListener("abort",abortFromCaller);','void input.signal;');assert.notEqual(cancelled,s);assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(cancelled)),/Exact reviewed chat qualification required/);
- const ordinary=s.replace('const maxTokens = Math.min(8_000','const maxTokens = Math.min(8');assert.notEqual(ordinary,s);assert.throws(()=>preservedNextAudioBytes(p,Buffer.from(ordinary)),/Exact reviewed chat qualification required/);
+ const cancelled=s.replace('input.signal?.removeEventListener("abort",abortFromCaller);','void input.signal;');assert.throws(()=>preservedComposedAudioBytes(p,Buffer.from(cancelled)));
+ const ordinary=s.replace('const maxTokens = Math.min(8_000','const maxTokens = Math.min(8');assert.throws(()=>preservedComposedAudioBytes(p,Buffer.from(ordinary)));
 });

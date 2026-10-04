@@ -69,7 +69,7 @@ test("reference flow: package selection reveals published inclusions and exclusi
  assert.match(page,/groomingCommercialPackages\.find\(item => item\.code === \(selectedPackage\.subscription\?\.servicePackageCode \|\| selectedPackage\.code\)\) \|\| null/);
  assert.match(page,/\{packageTruth\.included\.map\(item => <li key=\{item\}>✓ \{item\}<\/li>\)\}/);assert.match(page,/\{packageTruth\.excluded\.map\(item => <li key=\{item\}>— \{item\}<\/li>\)\}/);
  assert.match(page,/not published in the commercial catalogue; the description above is what PawSpace has confirmed/,"no inclusion list is invented");
- assert.match(page,/<details className=\{styles\.addOnPicker\} open=\{chosenAddOns\.length > 0\}>/);
+ assert.match(page,/<details className=\{styles\.addOnPicker\}>/);
  assert.match(page,/availableAddOns\.map\(item => <label key=\{item\.label\}><input type="checkbox" checked=\{chosenAddOns\.includes\(item\.label\)\}/);
  assert.match(page,/const addOnTotal = chosenAddOns\.reduce\(\(sum, label\) => sum \+ \(availableAddOns\.find\(item => item\.label === label\)\?\.price \?\? 0\), 0\);/,"add-on prices come from the catalogue helper, unchanged");
  assert.match(page,/<div className=\{styles\.stickyTotal\} role="status" aria-label="Running total">/);
