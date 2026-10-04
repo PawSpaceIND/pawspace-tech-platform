@@ -80,8 +80,11 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   await page.getByRole("button").filter({ hasText: "booking fee · 50%" }).filter({ hasText: "Citroen eC3" }).click();
   await page.screenshot({ path: test.info().outputPath("taxi-canonical-route-quote.png"), fullPage: true });
 
+  const reserve = page.getByRole("button", { name: /^Reserve · then pay 50% booking fee/ });
+  await expect(reserve).toBeVisible();
+  await expect(reserve).toBeEnabled();
   const bookingResponse = page.waitForResponse(r => r.url().endsWith("/api/taxi-ride-bookings") && r.request().method() === "POST", { timeout: 45_000 });
-  await page.getByRole("button", { name: /^Reserve · pay/ }).click();
+  await reserve.click();
   const created = await bookingResponse;
   expect(created.status(), await created.text()).toBe(201);
   const booking = (await created.json()).data;

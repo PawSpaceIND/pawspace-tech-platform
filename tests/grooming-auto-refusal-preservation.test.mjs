@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';
+import {preservedGroomingAutoRefusalBytes} from './helpers/grooming-auto-refusal-reviewed-delta.mjs';
+import {preservedServiceFixBytes} from './helpers/service-fix-reviewed-delta.mjs';
+const e=JSON.parse(readFileSync(new URL('./fixtures/grooming-auto-refusal-reviewed-delta.json',import.meta.url))),bytes=readFileSync(new URL('../'+e.file,import.meta.url)),hash=b=>createHash('sha256').update(b).digest('hex');
+test('Exact refusal correction restores prior bytes before historical service reversal',()=>{const prior=preservedGroomingAutoRefusalBytes(e.file,bytes);assert.equal(hash(prior),e.beforeSha256);assert.equal(prior.toString(),e.replacements[0][0]);assert.equal(preservedGroomingAutoRefusalBytes(e.file,prior),prior);assert.doesNotThrow(()=>preservedServiceFixBytes(e.file,prior));});
+for(const [name,alter]of [['appended',b=>b+'\nUNREVIEWED'],['changed',b=>'X'+b.toString().slice(1)],['removed',b=>b.toString().slice(1)],['line endings',b=>b.toString().replaceAll('\n','\r\n')]])test('Refuses '+name+' mutation',()=>assert.throws(()=>preservedGroomingAutoRefusalBytes(e.file,Buffer.from(alter(bytes)))));
+test('Unrelated source identity preserved',()=>{const b=Buffer.from('unrelated');assert.equal(preservedGroomingAutoRefusalBytes('lib/unrelated.ts',b),b);});

@@ -34,10 +34,10 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
     try{
       const result=await quoteGovernedCoupon({ code: normalized, customerId, serviceCode: "grooming", cityId, channel: "website", packageCode, orderValue, paymentMode:paymentMode==="prepaid"?"full":"after_service",isSubscription });
       if(current!==version.current)return;
-      if(!result.valid||result.code!==normalized||!result.quoteId){onChange(0,normalized);setMessage(result.error||"This coupon is not eligible for this booking. Remove it or choose another offer.");return;}
+      if(!result.valid||result.code!==normalized||!result.quoteId){if(mode==="automatic")setStale(normalized);onChange(0,normalized);setMessage(result.error||"This coupon is not eligible for this booking. Remove it or choose another offer.");return;}
       groomingCouponPayable(orderValue,result);
       setApplied(result.code);setMessage(`${result.code} ${mode==="automatic"?"automatically applied":"applied"}. You save ${money(result.discount)}.`);onChange(result.discount,result.code,result.quoteId);
-    }catch(error){if(current!==version.current)return;onChange(0,normalized);setMessage(error instanceof Error?error.message:"We could not check this coupon.");}
+    }catch(error){if(current!==version.current)return;if(mode==="automatic")setStale(normalized);onChange(0,normalized);setMessage(error instanceof Error?error.message:"We could not check this coupon.");}
     finally{if(current===version.current){setBusy(false);onChecked(contextKey);}}
   },[customerId,cityId,packageCode,orderValue,contextKey,paymentMode,isSubscription,intentRef,onChange,onChecked]);
   useEffect(()=>{
