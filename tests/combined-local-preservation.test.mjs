@@ -1,3 +1,7 @@
+import './helpers/grooming-auto-refusal-preservation-cases.mjs';
+import './helpers/ci-historical-preservation-composition-cases.mjs';
+import './helpers/ci-runtime-preservation-cases.mjs';
+import {preservedCiRuntimeBytes} from './helpers/ci-runtime-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -7,7 +11,7 @@ const receipt=JSON.parse(readFileSync(new URL('./fixtures/combined-local-reviewe
 const correction=JSON.parse(readFileSync(new URL('./fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 for(const[path,entry]of Object.entries(receipt.files))test('Exact reviewed source restoration rejects unrelated edits: '+path,()=>{
- const bytes=preservedTrainingIntegratedBytes(path,readFileSync(new URL('../'+path,import.meta.url)));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedTrainingIntegratedBytes(path,preservedCiRuntimeBytes(path,readFileSync(new URL('../'+path,import.meta.url))));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedCombinedLocalBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);
  assert.equal(preservedCombinedLocalBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED', 'X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text)));
