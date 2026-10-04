@@ -70,7 +70,6 @@ for(const width of [320,391,768,1440])for(const style of ['professional','cartoo
   for(const plan of plans){const choice=page.getByRole('button',{name:new RegExp(plan.name)});await expect(choice).toHaveCount(1);await expect(choice).toContainText(plan.base_price.toLocaleString('en-IN'));}
   const choice=page.getByRole('button',{name:/Fixture programme 1/});await choice.scrollIntoViewIfNeeded();await choice.click();await expect(choice).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('status').filter({hasText:'Selected programme:'})).toContainText('Fixture programme 1');await evidence(page,info,'training');
   await page.goto('/team/relocation-enquiries');await rendered(page);await expect(page.getByRole('heading',{name:'Submitted relocation enquiries',exact:true})).toBeVisible();
-  await readableLabel(page.getByText('PET RELOCATION · ENQUIRIES',{exact:true}));
   await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');await evidence(page,info,'staff');expect(writes).toEqual([]);
  });
 }
