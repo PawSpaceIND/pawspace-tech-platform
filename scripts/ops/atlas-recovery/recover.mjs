@@ -1,10 +1,10 @@
 import {writeFileSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
-const ORIGINAL='1cf2af17-8a15-4532-b178-05acce572490',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
+const ORIGINAL='57bf797a-39d9-4764-8843-e5a5d1a93d26',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
 const crons=['*/5 * * * *','*/15 * * * *','15 2 * * *'];
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
-const receipt={kind:'certified_staging_read_only_verification',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37148795839};
+const receipt={kind:'certified_staging_read_only_verification',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37174622760};
 const save=()=>writeFileSync(env.EVIDENCE_PATH||'recovery-receipt.json',JSON.stringify(receipt,null,2)+'\n');
 const check=(v,m)=>{if(!v)throw Error(m)};
 const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,1000);
