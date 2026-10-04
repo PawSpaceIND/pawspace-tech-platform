@@ -486,10 +486,10 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
  if(mode==="sitting"){await expect(review).not.toContainText("Overnight Pet Sitting");await expect(review).not.toContainText("Accepted offer");}
  // The review step creates the stay request first; payment is reviewed and collected on the next screen.
  const consent=page.getByRole("checkbox",{name:/I agree to care/});await expect(consent).not.toBeChecked();
- await expect(page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true})).toBeDisabled();
+ await expect(page.getByRole("button",{name:"Book stay",exact:true})).toBeDisabled();
  await page.screenshot({path:test.info().outputPath(`customer-${mode}-review.png`),fullPage:true});
  await consent.check();
- const pay=page.getByRole("button",{name:mode==="boarding"?"Create stay request & review payment":"Request sitter & review payment",exact:true});
+ const pay=page.getByRole("button",{name:"Book stay",exact:true});
  if(mode==="boarding"){
   const created=page.waitForResponse(response=>response.url().endsWith("/api/canonical-bookings")&&response.request().method()==="POST");
   await pay.click();const response=await created;expect(response.status(),await response.text()).toBe(201);

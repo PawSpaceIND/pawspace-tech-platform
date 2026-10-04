@@ -156,7 +156,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     const assignedTrainer = trainers.find(item => item.id === programme.programme.provider_id);
     expect(assignedTrainer, "Auto-assigned trainer must be an enrolled local UAT fixture").toBeTruthy();
     trainer = assignedTrainer!;
-    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(trainer.name);
+    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(bookingId);
     expect(programme.sessions).toHaveLength(1);
     expect(programme.programme).toMatchObject({ booking_id: bookingId, provider_id: trainer.id, plan_code: "trainer-meet-greet", total_sessions: 1 });
     const session = programme.sessions[0], sessionId = String(session.id);
