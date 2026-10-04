@@ -5,11 +5,11 @@ import {uploadMetadata,SQL} from '../atlas-api-only/runner.mjs';
 import {sanitizeFixtureResponse} from './sanitize-fixture.mjs';
 import {apiOnlyConfig} from '../atlas-api-only/make-api-only-config.mjs';
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
-const normalSha='c18b15caea9551505398746dc9335a962f17e8ae',normalVersion='48d370d2-1a1c-4003-856f-cceb8e8ca128';
+const normalSha='c18b15caea9551505398746dc9335a962f17e8ae',normalVersion='97c81f4d-f3fe-42d7-958f-1b175e66891b';
 const job='Sentinel_f67e3c5a85f88191b07279e0edbe250c',database='1b879a28-c8a9-40b0-830d-1ce439061a00';
-const bundleSha='195d9be95684e20705e4891dc8c3b17024e63bc87891c62bf378033b8ec7283e';
-const approvedAt=Date.parse('2026-10-04T03:24:04Z');
-const receipt={kind:'approved_zero_model_fixture_diagnostic',approval:'Sentinel_0585e5039f70819180a93ebb9ae9ec5a',sameCumulativeCapMicros:6000000,modelDispatches:0,sessionClockStarted:false,noRetry:true,operations:[],originRequests:0,restorationRequired:false,restoreProcedure:'Normal deploy-staging.yml pinned c18b15ca followed by actual version/crons/fixture/UI/assets/health verification; sole release owner, no rollback'};
+const bundleSha='fc38f8546f78b2177826fdf4c6a8f681ae8842b3626341fea9f01221ddda27fe';
+const approvedAt=Date.parse(env.EXPLICIT_APPROVAL_UTC??'');
+const receipt={kind:'approved_zero_model_fixture_diagnostic',approval:'user-approved-zero-model-20261004-044305',sameCumulativeCapMicros:6000000,modelDispatches:0,sessionClockStarted:false,noRetry:true,operations:[],originRequests:0,restorationRequired:false,restoreProcedure:'Normal deploy-staging.yml pinned c18b15ca followed by actual version/crons/fixture/UI/assets/health verification; sole release owner, no rollback'};
 const hash=v=>createHash('sha256').update(typeof v==='string'||Buffer.isBuffer(v)?v:JSON.stringify(v)).digest('hex');
 const save=()=>writeFileSync(env.EVIDENCE_PATH||'session-receipt.json',JSON.stringify(receipt,null,2)+'\n',{flush:true});
 const check=(v,m)=>{if(!v)throw Error(m)};
@@ -26,8 +26,8 @@ async function query(name){const p=await api(base+'/d1/database/'+database+'/que
 async function originRequest(path,init={}){const url=new URL(origin+path);check(url.origin===origin&&url.pathname==='/__staging/fixture-isolation'&&(!init.method||init.method==='GET')&&++receipt.originRequests<=2,'zero_model_origin_envelope');return fetch(url,{...init,redirect:'manual',signal:AbortSignal.timeout(20000)});}
 async function activeVersion(){const p=await api(script+'/deployments'),d=p?.deployments?.[0];check(d?.versions?.length===1&&d.versions[0].percentage===100,'deployment_shape');return d.versions[0].version_id;}
 try{
- check(env.CONFIRM==='atlas-zero-model-guard-diagnostic'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-session-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_scope_refused');
- check(Date.now()>=Date.parse('2026-10-04T02:21:19Z')&&Date.now()>=approvedAt&&Date.now()<approvedAt+3600000-120000,'fresh_window_refused');
+ check(env.CONFIRM==='atlas-zero-model-revision-predicates'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-session-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_scope_refused');
+ check(approvedAt===Date.parse('2026-10-04T04:43:05Z')&&Date.now()>=approvedAt&&Date.now()<Date.parse('2026-10-04T08:28:00Z'),'approved_diagnostic_readiness_refused');
  check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY,'existing_connection_missing');
  const deployments=await api(script+'/deployments');const active=deployments?.deployments?.[0];check(active?.versions?.length===1&&active.versions[0].percentage===100&&active.versions[0].version_id===normalVersion,'normal_version_changed');receipt.beforeVersion=normalVersion;
  const schedules=await api(script+'/schedules');const crons=(Array.isArray(schedules)?schedules:schedules?.schedules)?.map(x=>x.cron).sort();check(JSON.stringify(crons)===JSON.stringify(['*/15 * * * *','*/5 * * * *','15 2 * * *']),'normal_crons_changed');receipt.beforeCrons=crons;

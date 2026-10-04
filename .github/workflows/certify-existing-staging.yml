@@ -1,4 +1,4 @@
-name: One approved zero-model Atlas guard diagnostic
+name: One approved zero-model Atlas revision predicates
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   zero-model:
-    if: ${{ inputs.confirm == 'atlas-zero-model-guard-diagnostic' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'atlas-zero-model-revision-predicates' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: pawspace-staging
@@ -28,6 +28,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRM: ${{ inputs.confirm }}
+          EXPLICIT_APPROVAL_UTC: "2026-10-04T04:43:05Z"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
