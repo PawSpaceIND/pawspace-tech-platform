@@ -57,6 +57,9 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
  const theme=['emerald','signature','coral'][i%3],mode=style==='cartoon'?'dark':'light',writes:string[]=[],reads:string[]=[];
  await page.setViewportSize({width,height:900});
  await page.addInitScript(({style,theme,mode})=>{localStorage.setItem('pawspace.visual-style',style);localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.cookie-consent.v1','essential');},{style,theme,mode});
+ // Vite dev (plugin-rsc) removes the server-rendered client-component stylesheet links on hydration and re-injects the same CSS
+ // as <style> tags moments later; the 48px control rules live in those modules. Record the links so each screen is measured styled.
+ await page.addInitScript(()=>{const hrefs:string[]=(window as unknown as {__staffClientCss:string[]}).__staffClientCss=[];new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node instanceof HTMLLinkElement&&node.rel==='stylesheet'&&node.dataset.precedence?.startsWith('vite-rsc/client-reference'))hrefs.push(new URL(node.href).pathname);}).observe(document,{childList:true,subtree:true});});
  await page.route('**/api/**',async route=>{const r=route.request(),url=new URL(r.url());
   if(r.method()!=='GET'){writes.push(url.pathname);return route.fulfill({status:409,json:{error:'UI fixture blocks every mutation'}});}
   reads.push(url.pathname+url.search);
@@ -74,6 +77,7 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
  for(const screen of ['finance','operations','people','finance/boarding','finance/training','finance/sitting','people/provider-training']){
   await page.goto(`/team/${screen}${screen==='finance/boarding'?'?bookingId=FINANCE-UI':screen==='finance/sitting'?'?bookingId=SITTING-UI':''}`);await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   const content=page.locator('#staff-workspace-content');await expect(content).toBeVisible();
+  await page.waitForFunction(()=>{const dev=document.querySelector('script[src^="/@id/"]'),hrefs=(window as unknown as {__staffClientCss?:string[]}).__staffClientCss??[],injected=Array.from(document.querySelectorAll('style[data-vite-dev-id]'),style=>style.getAttribute('data-vite-dev-id')??'');return !dev||(!document.querySelector('link[rel="stylesheet"][data-precedence^="vite-rsc/client-reference"]')&&hrefs.every(href=>injected.some(id=>id.endsWith(href))));},null,{timeout:15_000});
   if(screen==='finance'){
    await expect(content.getByRole('heading',{name:'Service finance & reconciliation'})).toBeVisible();await expect(content.locator('[data-booking-id=FINANCE-UI]')).toContainText('UI-INVOICE');
    const publish=content.getByRole('button',{name:'Publish GST setting',exact:true});await expect(publish).toBeDisabled();

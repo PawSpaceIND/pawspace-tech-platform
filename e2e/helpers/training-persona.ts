@@ -231,7 +231,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await uploadPhoto("Before photo");
     await action("Start session", "start");
     await partner.reload();
-    await expect(partner.getByLabel("I completed the pet-parent handover", { exact: true })).toBeVisible();
+    await expect(partner.getByLabel("Confirm handover completed", { exact: true })).toBeVisible();
     await expect(partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true })).toBeChecked();
     const noHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "complete", idempotencyKey: `training-no-handover-${sessionId}` } });
     expect(noHandover.status()).toBe(409); expect((await noHandover.json()).code).toBe("training_owner_handover_required");
@@ -240,10 +240,10 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect((await incompleteHandover.json()).code).toBe("training_owner_handover_required");
     await expect(partner.getByRole("button", { name: "Confirm completed handover", exact: true })).toBeDisabled();
     await loginOperations(operations);
-    await partner.getByLabel("I completed the pet-parent handover", { exact: true }).check();
+    await partner.getByLabel("Confirm handover completed", { exact: true }).check();
     const handover = await action("Confirm completed handover", "owner_handover");
     expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
-    await expect(partner.getByText("Pet-parent handover completion recorded.", { exact: true })).toBeVisible();
+    await expect(partner.getByText("Pet-parent handover recorded. You can correct it until the session is complete.", { exact: true })).toBeVisible();
     await uploadPhoto("After photo");
     const media = await partner.request.get(`/api/training-session-media?sessionId=${encodeURIComponent(sessionId)}`);
     expect(media.ok()).toBeTruthy(); const assets = (await media.json()).data.assets;

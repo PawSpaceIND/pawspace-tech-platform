@@ -31,6 +31,14 @@ async function choose(page: Page, appearance: Appearance) {
     }).observe(document, { childList: true, subtree: true });
   });
 }
+// The root layout is async, so React hydrates late: until then clicks reach no handler and the client-only consent
+// banner has not mounted. The appearance trigger is in the root layout on every route.
+async function hydrated(page: Page) {
+  await page.waitForFunction(() => {
+    const trigger = document.querySelector(".paw-appearance-trigger");
+    return !!trigger && Object.keys(trigger).some(key => key.startsWith("__reactProps$"));
+  }, null, { timeout: 30_000 });
+}
 async function visit(page: Page, route: string, appearance: Appearance) {
   await page.goto(route, { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-pawspace-v2]")).toBeVisible();
@@ -48,8 +56,15 @@ async function visit(page: Page, route: string, appearance: Appearance) {
     return !dev || (!document.querySelector('link[rel="stylesheet"][data-precedence^="vite-rsc/client-reference"]') && hrefs.every(href => injected.some(id => id.endsWith(href))));
   }, null, { timeout: 15_000 });
   await page.evaluate(() => document.fonts.ready);
+  // Undecided consent moves the appearance control (globals.css) and covers the utility lane. Its banner mounts just
+  // after hydration, so wait until it is either decided or shown before deciding it.
+  await hydrated(page);
+  await page.waitForFunction(() => localStorage.getItem("pawspace.cookie-consent.v1") !== null || !!document.querySelector(".cookie-consent"), null, { timeout: 15_000 });
   const consent = page.getByRole("button", { name: "Essential only", exact: true });
-  if (await consent.isVisible().catch(() => false)) await consent.click();
+  if (await consent.isVisible().catch(() => false)) {
+    await consent.click();
+    await page.waitForFunction(() => !document.querySelector(".cookie-consent"), null, { timeout: 15_000 });
+  }
   // The consent banner sits at the end of the page, so clicking it scrolls there first. globals.css makes the root
   // scroll smooth; an instant reset keeps geometry from being read mid-animation.
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
@@ -194,7 +209,7 @@ test("Appearance selections persist across V2 navigation, reload and system disp
   await page.goto('/v2');
   await expect(page.locator('html')).toHaveAttribute('data-paw-theme', 'editorial');
   const trigger = page.getByRole('button', {name: 'Change PawSpace appearance'});
-  await trigger.click();
+  await hydrated(page); await trigger.click();
   const dialog = page.getByRole('dialog', {name: 'Make PawSpace yours.'});
   await dialog.getByRole('radio', {name: /Editorial Sanctuary/}).check();
   await expect(dialog.getByRole('radio', {name: /Modern Concierge/})).toBeDisabled();
@@ -219,7 +234,7 @@ test("Appearance selections persist across V2 navigation, reload and system disp
   });
   expect(darkPalette.background).toBe(darkPalette.expectedBackground);
   expect(darkPalette.hero).toBe(darkPalette.expectedHero);
-  await trigger.click(); await dialog.getByRole('radio', {name: /^system$/i}).check();
+  await hydrated(page); await trigger.click(); await dialog.getByRole('radio', {name: /^system$/i}).check();
   await dialog.getByRole('button', {name: 'Done', exact: true}).click();
   await page.emulateMedia({colorScheme: 'light'});
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode', 'light');
