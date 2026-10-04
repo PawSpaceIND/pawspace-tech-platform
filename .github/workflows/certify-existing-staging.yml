@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'read-only-prepaid-finance-terminal-reconciliation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-same-order-finance-retry-preflight' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: pawspace-staging
@@ -33,14 +33,14 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          EVIDENCE_PATH: finance-prepaid-terminal-reconciliation-receipt.json
+          EVIDENCE_PATH: finance-same-order-retry-preflight-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/finance-prepaid-terminal-reconciliation/read-runner.mjs
+          node scripts/ops/atlas-session/finance-same-order-retry-preflight/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: finance-prepaid-terminal-reconciliation-${{ github.sha }}
-          path: finance-prepaid-terminal-reconciliation-receipt.json
+          name: finance-same-order-retry-preflight-${{ github.sha }}
+          path: finance-same-order-retry-preflight-receipt.json
           if-no-files-found: error
           retention-days: 7
