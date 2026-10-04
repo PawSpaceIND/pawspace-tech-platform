@@ -1,6 +1,18 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-const trainer = { id: "uatcap_train_east", name: "Arjun T. (UAT East)", phone: "9000000932" };
+const trainers = [
+  { id: "uatcap_train_ft", name: "PawSpace Training Team (UAT)", phone: "9000000931" },
+  { id: "uatcap_train_east", name: "Arjun T. (UAT East)", phone: "9000000932" },
+  { id: "uatcap_train_south", name: "Kavya R. (UAT South)", phone: "9000000933" },
+  { id: "uatcap_train_north", name: "Nikhil B. (UAT North)", phone: "9000000934" },
+  { id: "uatcap_train_west", name: "Anitha G. (UAT West)", phone: "9000000935" },
+  { id: "uatcap_train_central", name: "Rohan D. (UAT Central)", phone: "9000000936" },
+  { id: "uatcap_train_ft_2", name: "PawSpace Training Team 2 (UAT)", phone: "9000000937" },
+  { id: "uatcap_train_ft_3", name: "PawSpace Training Team 3 (UAT)", phone: "9000000938" },
+  { id: "uatcap_train_ft_4", name: "PawSpace Training Team 4 (UAT)", phone: "9000000939" },
+  { id: "uatcap_train_ft_5", name: "PawSpace Training Team 5 (UAT)", phone: "9000000940" },
+] as const;
+type FixtureTrainer = typeof trainers[number];
 const fixtureDoorstep = { latitude: 12.9716, longitude: 77.5946 };
 const fixturePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=", "base64");
 
@@ -63,7 +75,7 @@ export async function openFixtureFinance(browser: Browser, baseURL: string): Pro
   } catch (error) { await page.close(); throw error; }
 }
 
-async function loginTrainer(page: Page) {
+async function loginTrainer(page: Page, trainer: FixtureTrainer) {
   await page.goto("/partner/onboarding"); await dismissPrivacy(page);
   await page.getByPlaceholder("10-digit phone number").fill(trainer.phone);
   await page.getByRole("button", { name: "Send OTP", exact: true }).click();
@@ -105,6 +117,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
   test.setTimeout(240_000);
   test.info().annotations.push({ type: "simulation", description: "Disposable Training Meet & Greet; normal customer/trainer OTP; Finance sandbox event; synthetic GPS/photo bytes with independent UAT release. Handover is a completion attestation, with no claim of elapsed 45/15-minute or scheduled-start enforcement." });
   const date = process.env.PW_UAT_SERVICE_DATE!;
+  let trainer: FixtureTrainer;
   expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   const partner = await browser.newPage({ baseURL: origin, viewport: page.viewportSize()! });
   const operations = await browser.newPage({ baseURL: origin });
@@ -137,17 +150,20 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect(createdResponse.status(), await createdResponse.text()).toBe(201);
     const booking = (await createdResponse.json()).data;
     const bookingId = String(booking.bookingId), paymentId = String(booking.paymentId);
-    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(trainer.name);
     await expect.poll(async () => (await page.request.get(`/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`)).status()).toBe(200);
     const programmeResponse = await page.request.get(`/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`);
     const programme = (await programmeResponse.json()).data;
+    const assignedTrainer = trainers.find(item => item.id === programme.programme.provider_id);
+    expect(assignedTrainer, "Auto-assigned trainer must be an enrolled local UAT fixture").toBeTruthy();
+    trainer = assignedTrainer!;
+    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(trainer.name);
     expect(programme.sessions).toHaveLength(1);
     expect(programme.programme).toMatchObject({ booking_id: bookingId, provider_id: trainer.id, plan_code: "trainer-meet-greet", total_sessions: 1 });
     const session = programme.sessions[0], sessionId = String(session.id);
     expect(session.status).toBe("scheduled");
     expect(new Date(session.scheduled_start).toISOString()).toBe(`${date}T07:30:00.000Z`);
     expect(new Date(session.scheduled_end).toISOString()).toBe(`${date}T08:30:00.000Z`);
-    await loginTrainer(partner);
+    await loginTrainer(partner, trainer);
     const denied = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "accept", idempotencyKey: `training-unpaid-${sessionId}` } });
     expect(denied.status(), await denied.text()).toBe(409);
     expect((await denied.json()).code).toBe("training_payment_required");
