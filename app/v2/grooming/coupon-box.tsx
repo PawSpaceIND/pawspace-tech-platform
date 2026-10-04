@@ -90,7 +90,7 @@ export default function V2GroomingCouponBox({customerId,cityId,packageCode,order
     {message&&<p role={applied||!code?"status":"alert"} className={applied?styles.helper:styles.inlineError}>{message}</p>}
     {applied&&!code&&<p className={offersStyle.appliedChip} role="status"><b>{applied}</b> applied to this booking</p>}
     {stale&&!applied&&!code&&<p role="alert" className={styles.inlineError}>Offer {stale} is no longer applied. Choose an offer again or remove it to continue.</p>}
-    {(applied||code||stale)&&<button type="button" onClick={remove}>Remove coupon</button>}
+    {(applied||code||stale||busy)&&<button type="button" onClick={remove}>Remove coupon</button>}
     <small>The best eligible normal offer applies automatically. Change or remove it at any time. One offer per booking.</small>
   </div>;
 }

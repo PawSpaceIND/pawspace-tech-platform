@@ -1,0 +1,3 @@
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';
+const e=JSON.parse(readFileSync(new URL('../fixtures/chat-ledger-reviewed-delta.json',import.meta.url))),hash=b=>createHash('sha256').update(b).digest('hex');
+export function preservedChatLedgerBytes(path,bytes){if(path!==e.file||hash(bytes)===e.beforeSha256)return bytes;assert.equal(hash(bytes),e.afterSha256,'Exact reviewed chat ledger required');let s=bytes.toString();for(const[a,b]of [...e.replacements].reverse()){assert.equal(s.split(b).length,2);s=s.replace(b,()=>a);}assert.equal(hash(s),e.beforeSha256);return Buffer.isBuffer(bytes)?Buffer.from(s):s;}

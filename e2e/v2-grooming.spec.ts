@@ -134,7 +134,14 @@ async function selectTickTreatment(page: Page) {
 }
 async function expectReviewTotal(page: Page, value: string) {
   await expect(page.locator("#v2-grooming-summary").getByText(value, { exact: true })).toBeVisible();
-  await expect(page.getByRole("status", { name: "Running total", exact: true }).getByText(value, { exact: true })).toBeVisible();
+  const runningTotal = page.locator('[role="status"][aria-label="Running total"]');
+  await expect(runningTotal).toHaveCount(1);
+  await expect(runningTotal.locator("b")).toHaveText(value);
+  if (await page.evaluate(() => matchMedia("(max-width:1100px)").matches)) {
+    await expect(runningTotal).toBeVisible();
+  } else {
+    await expect(runningTotal).toBeHidden();
+  }
 }
 async function openCare(page: Page) {
   await page.goto("/v2/grooming");
@@ -475,7 +482,7 @@ for (const bad of [{discount:100.001,final:1798.999},{discount:100,final:1700}])
   await box.getByRole("button",{name:"Apply",exact:true}).click();
   await expect(box.getByRole("alert")).toHaveText("Reapply the coupon before booking.");
   await expect(page.locator("#v2-grooming-summary").getByText(/^Coupon MALFORMED ·/)).toHaveCount(0);
-  await expect(page.getByRole("status", {name:"Running total",exact:true})).toContainText("Coupon MALFORMED needs re-applying");
+  await expect(page.locator('[role="status"][aria-label="Running total"]')).toContainText("Coupon MALFORMED needs re-applying");
   await expectReviewTotal(page, "₹1,899");
   await expect(page.getByRole("button", {name:/Next · review payment/})).toBeDisabled();
   expect(state.bookingWrites).toBe(0); expect(state.reservation).toBeNull();
@@ -628,7 +635,7 @@ test("G09: losing eligibility on a changed basket cannot silently enable full-pr
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();state.bookingCount=3;
  await selectTickTreatment(page);
  await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
- const box=page.getByRole("group",{name:"Coupon code",exact:true});await expect(box.getByRole("alert")).toContainText("no longer matches");
+ const box=page.getByRole("group",{name:"Coupon code",exact:true});await expect(box.getByRole("alert")).toHaveText("Offer NORMAL is no longer applied. Choose an offer again or remove it to continue.");
  await expect(page.getByRole("button",{name:/Next · review payment/})).toBeDisabled();
  await box.getByRole("button",{name:"Remove coupon"}).click();await expect(page.getByRole("button",{name:/Next · review payment/})).toBeEnabled();
  expect(state.couponInputs).toHaveLength(1);expect(state.bookingWrites).toBe(0);

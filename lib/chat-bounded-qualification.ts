@@ -1,3 +1,4 @@
+import {reserveBoundedChatAllocation,completeBoundedChatAllocation,markBoundedChatAllocationUnknown} from './atlas-text-test-admission';
 import {readBoundedText} from './provider-response-bounds';
 
 // Publisher supplies a reviewed, server-owned approval; this boundary has no default activation.
@@ -18,11 +19,7 @@ export async function runBoundedChatQualification(input:{db:Db;approval:ChatQual
  const payloadHash=await digest(body),id='CHATBOUND-'+await digest(JSON.stringify([a.jobId,a.threadId,turnKey]));
  assertCurrent();
  // The existing retained ledger is shared; no DDL, sweeps, refunds or parallel allowance.
- const claimed=await db.prepare(`INSERT OR IGNORE INTO atlas_text_test_requests(id,job_id,rate_version,thread_id,input_upper,output_upper,reserved_micros,status,created_at)
- SELECT ?,?,?,?,?,?,?,'reserved',? WHERE (SELECT COUNT(*) FROM atlas_text_test_requests WHERE job_id=?)<?
- AND (SELECT COALESCE(SUM(reserved_micros),0) FROM atlas_text_test_requests WHERE job_id=?)+?<=?
- AND NOT EXISTS(SELECT 1 FROM atlas_text_test_requests WHERE job_id=? AND status IN ('reserved','unknown'))`).bind(id,a.jobId,'chat-counted-conservative:'+payloadHash,a.threadId,INPUT,outputTokens,a.reservationMicros,now(),a.jobId,a.maxTurns,a.jobId,a.reservationMicros,a.capMicros,a.jobId).run();
- if(Number(claimed.meta?.changes)!==1)throw Error('chat_admission_refused');
+ const allocation=await reserveBoundedChatAllocation(db,{id,jobId:a.jobId,payloadHash,threadId:a.threadId,inputUpper:INPUT,outputUpper:outputTokens,reservedMicros:a.reservationMicros,maxTurns:a.maxTurns,capMicros:a.capMicros,now:now()});
  const controller=new AbortController(),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});
  const timer=setTimeout(abort,Math.min(30_000,Math.max(1,a.expiresAt-now())));
  const post=async(url:string,requestBody:string,maxBytes:number)=>{assertCurrent();if(controller.signal.aborted)throw Error('chat_cancelled');const r=await fetcher(url,{method:'POST',redirect:'error',signal:controller.signal,headers:{authorization:`Bearer ${credential}`,'content-type':'application/json'},body:requestBody});if(!r.ok)throw Error('chat_provider_refused');return JSON.parse(await readBoundedText(r,maxBytes));};
@@ -34,9 +31,8 @@ export async function runBoundedChatQualification(input:{db:Db;approval:ChatQual
   const cacheWrites=[...Object.entries(cache??{}),...Object.entries(u??{})].filter(([key])=>/cache.*(write|creation)/i.test(key)).map(([,value])=>value);
   if(result?.model!==payload.model||result?.service_tier!=='default'||![u?.input_tokens,u?.output_tokens,u?.total_tokens].every(v=>Number.isSafeInteger(v)&&v>=0)||u.input_tokens>INPUT||u.input_tokens>count.input_tokens||u.output_tokens>outputTokens||u.total_tokens!==u.input_tokens+u.output_tokens||cacheWrites.some(v=>v!==0))throw Error('chat_usage_unknown');
   assertCurrent();
-  const settled=await db.prepare("UPDATE atlas_text_test_requests SET status='completed',actual_upper_micros=? WHERE id=? AND job_id=? AND status='reserved'").bind(Math.ceil((u.input_tokens*4+u.output_tokens*18)*1.1),id,a.jobId).run();
-  if(Number(settled.meta?.changes)!==1)throw Error('chat_settlement_unknown');
+  await completeBoundedChatAllocation(db,allocation,Math.ceil((u.input_tokens*4+u.output_tokens*18)*1.1));
   return{result,payloadHash,inputTokens:count.input_tokens,reservedMicros:a.reservationMicros};
- }catch(error){await db.prepare("UPDATE atlas_text_test_requests SET status='unknown' WHERE id=? AND job_id=? AND status='reserved'").bind(id,a.jobId).run();throw error;}
+ }catch(error){await markBoundedChatAllocationUnknown(db,allocation);throw error;}
  finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }

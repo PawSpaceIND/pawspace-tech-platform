@@ -1,3 +1,4 @@
+import "./helpers/staging-workers-speech-config.mjs";
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
 import {installAiHooks,freshAiDb,seedCustomer} from './helpers/ai-harness.mjs';
 installAiHooks();
@@ -9,6 +10,10 @@ const origin='https://pawspace-staging.karthik-fce.workers.dev';
 async function world(t,patch={}){
  const env={PAWSPACE_UAT_LOGIN:'on',PAWSPACE_UAT_SIGNING_KEY:'synthetic-only-signing-key'.repeat(3),PAWSPACE_DEPLOYMENT_ENV:'staging',FORBID_PRODUCTION:'true',PAWSPACE_VOICE_PHONE_TESTS_PAUSED:'true',PAWSPACE_PAYMENT_ENV:'sandbox',PAWSPACE_PAYMENT_LIVE_APPROVED:'false',PAWSPACE_RAZORPAYX_ENV:'sandbox',PAWSPACE_RAZORPAYX_LIVE_APPROVED:'false',PAWSPACE_STAGING_BUILD_SHA:'a'.repeat(40),PAWSPACE_AI_PROVIDER:'openai',PAWSPACE_AI_VOICE_MODEL:'gpt-5.6-luna',ELEVENLABS_API_BASE:'https://api.elevenlabs.io',ELEVENLABS_API_KEY:'unit-test-only-not-real',ELEVENLABS_GROOMING_AGENT_ID:'synthetic',PAWSPACE_VOICE_UAT_ALLOWLIST:'9876500088',...patch};
  const w=freshAiDb(env);t.after(()=>w.sqlite.close());
+ // D1 batch returns SELECT/RETURNING rows; the generic AI fixture's run() only returns changes.
+ const prepare=w.db.prepare.bind(w.db);
+ w.db.prepare=sql=>{const wrap=(statement,args=[])=>({...statement,bind:(...values)=>wrap(statement.bind(...values),values),run:async()=>{if(!/^\s*SELECT\b/i.test(sql)&&!/\bRETURNING\b/i.test(sql))return statement.run();const before=w.sqlite.prepare('SELECT total_changes() n').get().n,results=w.sqlite.prepare(sql).all(...args);return{success:true,results,meta:{changes:w.sqlite.prepare('SELECT total_changes() n').get().n-before}};}});return wrap(prepare(sql));};
+ const batch=w.db.batch.bind(w.db);w.db.batch=async statements=>{w.sqlite.exec('SAVEPOINT audio_fixture_batch');try{const results=await batch(statements);w.sqlite.exec('RELEASE SAVEPOINT audio_fixture_batch');return results;}catch(error){w.sqlite.exec('ROLLBACK TO SAVEPOINT audio_fixture_batch');w.sqlite.exec('RELEASE SAVEPOINT audio_fixture_batch');throw error;}};
  w.sqlite.prepare("INSERT INTO app_users(id,email,name,role_code,status,created_at,updated_at) VALUES('F','founder@pawspace.in','Founder','founder','active',0,0)").run();
  seedCustomer(w.sqlite,'SYNTHETIC','Synthetic tester','9876500088');await ensureAiVoiceUatTables(w.db);
  w.sqlite.prepare("INSERT INTO ai_voice_calls(id,thread_id,customer_id,transport_provider,direction,status,consent_status,started_at,created_by) VALUES('CALL','INITIAL','SYNTHETIC','sandbox_simulator','inbound','active','verified',0,'founder@pawspace.in')").run();
@@ -18,7 +23,7 @@ async function world(t,patch={}){
  const receipt={currency:'USD',inclusiveOfFeesAndTaxes:true,sourceSha:'a'.repeat(40),agentConfigSha256:createHash('sha256').update(JSON.stringify(agent)).digest('hex'),provider:'openai',model:'gpt-5.6-luna',validUntil:Date.now()+600000,nativeMicrosPerMinute:160000,optionalBatchMicros:500000,inputMicrosPerToken:1,outputMicrosPerToken:8,framingTokenUpper:4096,evidenceReference:'synthetic test reference'};
  const token=await issueUatToken(env,'founder@pawspace.in',3600),cookie='pawspace_uat='+encodeURIComponent(token);
  const previous=globalThis.fetch;t.after(()=>globalThis.fetch=previous);let reads=0;
- globalThis.fetch=async(url,init)=>{reads++;assert.equal(String(url),'https://api.elevenlabs.io/v1/convai/agents/synthetic');assert.equal(init.method??'GET','GET');return Response.json(agent);};
+ globalThis.fetch=async(url,init)=>{reads++;const request=url instanceof Request?url:new Request(url,init);assert.equal(request.url,'https://api.elevenlabs.io/v1/convai/agents/synthetic');assert.equal(request.method,'GET');assert.equal(request.redirect,'manual');assert.equal(request.headers.get('xi-api-key'),'unit-test-only-not-real');return Response.json(agent);};
  return {...w,env,agent,receipt,cookie,reads:()=>reads,seedEvidence(r=receipt){w.sqlite.prepare('INSERT OR REPLACE INTO next_audio_rate_evidence VALUES(?,?,?)').run(budget.NEXT_AUDIO_BUDGET_ID,env.ELEVENLABS_API_BASE,JSON.stringify(r));},request(body,headers={}){return new Request(origin+'/api/ai-voice-uat/audio-lease',{method:body?'POST':'GET',headers:{cookie,origin,'content-type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});}};
 }
 test('lease HTTP cannot provide invented rates; missing trusted evidence blocks without provider fetch',async t=>{
@@ -133,4 +138,15 @@ test('failed Workers TTS is charged against attempt slots and never falls back t
  for(let i=0;i<4;i++)assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'No booking.'}))).status,500);
  assert.equal((await route.POST(w.request({...common,action:'workers_tts',text:'No booking.'}))).status,403);assert.equal(attempts,4);
  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM next_audio_speech_attempts WHERE kind='tts'").get().n,4);
+});
+
+
+test('native metadata refuses every redirect class without a second fetch or paid admission',async t=>{
+ for(const status of [300,301,302,303,304,305,306,307,308,399]){
+  const w=await world(t);w.seedEvidence();const calls=[];
+  globalThis.fetch=async input=>{assert.ok(input instanceof Request);assert.equal(input.redirect,'manual');calls.push(input.url);return new Response(null,{status,headers:{location:'https://outside.test/never-follow'}});};
+  const response=await route.GET(w.request());assert.equal(response.status,403);assert.equal((await response.json()).error,'next_audio_native_redirect_refused');
+  assert.deepEqual(calls,['https://api.elevenlabs.io/v1/convai/agents/synthetic']);
+  assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM next_audio_batch_claims').get().n,0);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM next_audio_leases').get().n,0);
+ }
 });
