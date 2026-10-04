@@ -8,7 +8,7 @@ const booking = (over = {}) => ({
   customer: { id: "preview-1-CUS", name: "Preview", primaryPhone: "+919000000900" },
   pets: [{ sourceId: "acct-1", name: "Bruno" }], cityId: "blr", zoneId: "koramangala",
   serviceCode: "pet_sitting", packageCode: "home-visit", packageName: "Pet Sitting",
-  scheduledStart: "2027-03-04T09:00:00.000Z", scheduledEnd: "2027-03-04T11:00:00.000Z",
+  scheduledStart: "2027-03-04T09:00:00.000Z", scheduledEnd: "2027-03-04T10:00:00.000Z",
   provider: { id: "preview-PRV", name: "Preview sitter", model: "full_time" },
   totalAmount: 1349, amountDueNow: 1349,
   payment: { method: "upi", mode: "prepaid", status: "captured", detail: "preview" },
@@ -96,6 +96,7 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   const captureCall = calls.find((call) => call.path === "/api/sitting-payment-sandbox");
   const canonical = calls.filter((call) => call.path === "/api/canonical-bookings").at(-1);
   assert.ok(quoteCall);
+  assert.equal(Date.parse(quoteCall.options.body.scheduledEnd) - Date.parse(quoteCall.options.body.scheduledStart), 60 * 60 * 1000);
   assert.ok(captureCall);
   assert.equal(captureCall.options.headers.cookie, cookie);
   assert.equal(captureCall.options.headers["x-payment-capture-key"].startsWith("preview-gate-"), true);

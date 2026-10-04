@@ -333,7 +333,9 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerAct
   const RUN = `preview-${env.EXPECTED_SHA.slice(0, 8)}-${assertRunTag(env.RUN_TAG)}`;
   report.runTag = env.RUN_TAG;
   const CUSTOMER = `${RUN}-CUS`, OTHER_CUSTOMER = `${RUN}-CUS2`, PROVIDER = `${RUN}-PRV`;
-  const START = "2027-03-04T09:00:00.000Z", END = "2027-03-04T11:00:00.000Z";
+  // The governed Home Visit package is exactly 60 minutes. Keep the seeded
+  // reservation and every booking request on the same eligible interval.
+  const START = "2027-03-04T09:00:00.000Z", END = "2027-03-04T10:00:00.000Z";
 
   const countOf = async (table, where = "1=1") =>
     Number((await d1(`SELECT COUNT(*) n FROM ${table} WHERE ${where}`))[0]?.n ?? 0);
