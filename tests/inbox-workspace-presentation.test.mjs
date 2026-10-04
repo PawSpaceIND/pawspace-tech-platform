@@ -1,3 +1,4 @@
+import {preservedStaffInboxCodeqlBytes} from './helpers/staff-inbox-codeql-reviewed-delta.mjs';
 import {preservedStaffInboxBytes} from './helpers/staff-inbox-reviewed-delta.mjs';
 import {preservedCustomerServiceBytes} from './helpers/customer-service-preservation.mjs';
 import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
@@ -35,7 +36,7 @@ test('Integrated business sources retain upstream bytes and Atlas retains upstre
 
 const inboxDelta=JSON.parse(fs.readFileSync('tests/fixtures/staff-inbox-reviewed-delta.json','utf8'));
 for(const [path,entry] of Object.entries(inboxDelta.files))test('Accepted staff inbox delta restores exact history and refuses mutations: '+path,()=>{
- const bytes=fs.readFileSync(path);assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=fs.readFileSync(path);assert.equal(hash(preservedStaffInboxCodeqlBytes(path,bytes)),entry.afterSha256);
  const old=preservedStaffInboxBytes(path,bytes);assert.equal(hash(old),entry.beforeSha256);assert.equal(preservedStaffInboxBytes(path,old),old);
  assert.equal(preservedStaffInboxBytes('unrelated',bytes),bytes);
  for(const changed of [Buffer.concat([bytes,Buffer.from('\nUNREVIEWED')]),Buffer.from('X'+bytes.toString().slice(1)),bytes.subarray(1),Buffer.from(bytes.toString().replaceAll('\n','\r\n'))])assert.throws(()=>preservedStaffInboxBytes(path,changed));

@@ -4,7 +4,7 @@ import InboxFilters, { type SavedInboxView } from "../../components/staff-inbox/
 import TemplateReply from "../../components/staff-inbox/TemplateReply";
 import { defaultStaffInboxView, type StaffInboxView } from "../../../lib/staff-inbox-contract";
 import type { InboxTemplate } from "../../../lib/staff-inbox-template";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Badge, Button, EmptyState } from "../../components/ui";
 import OpsShell from "../../components/ops-shell/OpsShell";
@@ -76,10 +76,15 @@ const aiReplyTemplateKey = "web_app_chat_ai_reply";
 /** Guided bot questions on a web chat thread (lib/ai-web-chat-adapter.ts WEB_CHAT_BOT_TEMPLATE_KEY). */
 const botTemplateKey = "web_app_chat_bot";
 const isWebChatConversation = (conversation: Conversation | null) => Boolean(conversation?.messages.some((message) => text(message.channel, "") === "chat") && !conversation?.messages.some((message) => text(message.channel, "") === "whatsapp"));
+const subscribeInitialSelection = () => () => {};
+const initialSelectionSnapshot = () => typeof window === "undefined" ? "" : new URL(window.location.href).searchParams.get("threadId") || "";
+const initialSelectionServerSnapshot = () => "";
 
 export default function CustomerExperiencePage() {
   const [threads, setThreads] = useState<Thread[]>([]);
-  const [selected, setSelected] = useState("");
+  const initialSelection = useSyncExternalStore(subscribeInitialSelection, initialSelectionSnapshot, initialSelectionServerSnapshot);
+  const [selectionOverride, setSelected] = useState<string | null>(null);
+  const selected = selectionOverride ?? initialSelection;
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [control, setControl] = useState<WhatsAppControl | null>(null);
   const [chatHandoff, setChatHandoff] = useState<ChatHandoff | null>(null);
@@ -93,16 +98,16 @@ export default function CustomerExperiencePage() {
   const setStatusFilter = (status: StaffInboxView["status"]) => setInboxView(current => ({ ...current, status }));
   const [savedViews, setSavedViews] = useState<SavedInboxView[]>([]);
   const [templates, setTemplates] = useState<InboxTemplate[]>([]);
-  const [templateDrafts, setTemplateDrafts] = useState<Record<string, { key: string; clientRequestId: string }>>({});
+  const [templateDrafts, setTemplateDrafts] = useState<Map<string, { key: string; clientRequestId: string }>>(() => new Map());
   const [cursorHistory, setCursorHistory] = useState<Cursor[]>([]);
   const [nextCursor, setNextCursor] = useState<Cursor | null>(null);
   const currentCursor = cursorHistory.at(-1);
-  const [drafts, setDrafts] = useState<Record<string, { text: string; clientRequestId: string }>>({});
-  const reply = drafts[selected]?.text || "";
-  const replyRequestId = drafts[selected]?.clientRequestId || "";
+  const [drafts, setDrafts] = useState<Map<string, { text: string; clientRequestId: string }>>(() => new Map());
+  const reply = drafts.get(selected)?.text || "";
+  const replyRequestId = drafts.get(selected)?.clientRequestId || "";
   const [internalNote, setInternalNote] = useState("");
   const [noteRequestId, setNoteRequestId] = useState("");
-  const activeThread = useRef("");
+  const activeThread = useRef(initialSelectionSnapshot());
   const mutationInFlight = useRef(false);
 
   const [routingReason, setRoutingReason] = useState("CX operator routing decision");
@@ -110,18 +115,18 @@ export default function CustomerExperiencePage() {
   const clearAccess = useCallback((threadId?: string) => {
     accessEpoch.current++;
     if (threadId) {
-      setTemplateDrafts(current => { const next = { ...current }; delete next[threadId]; return next; });
+      setTemplateDrafts(current => { const next = new Map(current); next.delete(threadId); return next; });
       setThreads(current => current.filter(row => row.id !== threadId));
-      setDrafts(current => { const next = { ...current }; delete next[threadId]; return next; });
+      setDrafts(current => { const next = new Map(current); next.delete(threadId); return next; });
     } else {
-      setThreads([]); setDrafts({}); setInboxView(defaultStaffInboxView); setSavedViews([]); setTemplates([]); setTemplateDrafts({}); setCursorHistory([]); setNextCursor(null); setInternalNote(""); setNoteRequestId("");
+      setThreads([]); setDrafts(new Map()); setInboxView(defaultStaffInboxView); setSavedViews([]); setTemplates([]); setTemplateDrafts(new Map()); setCursorHistory([]); setNextCursor(null); setInternalNote(""); setNoteRequestId("");
     }
     if (!threadId || activeThread.current === threadId) {
       activeThread.current = "";
       setSelected(""); setConversation(null); setControl(null); setChatHandoff(null); setNotice("");
       setRoutingReason("CX operator routing decision");
     }
-  }, []);
+  }, [setInternalNote, setNoteRequestId]);
   const selectThread = (id: string) => {
     if (activeThread.current === id) return;
     activeThread.current = id;
@@ -148,7 +153,7 @@ export default function CustomerExperiencePage() {
     const next = payload.data?.threads || [];
     if (shouldApply()) { setThreads(next); setNextCursor(payload.data?.nextCursor || null); }
     return next;
-  }, [inboxView, currentCursor, clearAccess]);
+  }, [inboxView, currentCursor, clearAccess, query, statusFilter]);
 
 
   const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
@@ -205,8 +210,6 @@ export default function CustomerExperiencePage() {
   }, [loadConversation, loadControl, loadChatHandoff]);
 
   useEffect(() => {
-    const id = new URL(window.location.href).searchParams.get("threadId");
-    if (id) { activeThread.current = id; setSelected(id); }
     let active = true;
     const epoch = accessEpoch.current;
     const load = async () => {
@@ -250,11 +253,11 @@ export default function CustomerExperiencePage() {
   async function sendTemplate(template: InboxTemplate) {
     if (!canQueueTemplate || mutationInFlight.current) return;
     const target = selected;
-    const draft = templateDrafts[target];
+    const draft = templateDrafts.get(target);
     const clientRequestId = draft?.key === template.key && draft.clientRequestId ? draft.clientRequestId : crypto.randomUUID();
-    setTemplateDrafts(current => ({ ...current, [target]: { key: template.key, clientRequestId } }));
+    setTemplateDrafts(current => new Map(current).set(target, { key: template.key, clientRequestId }));
     if (await act("template_reply", { templateKey: template.key, language: template.language, clientRequestId })) {
-      setTemplateDrafts(current => { const next = { ...current }; delete next[target]; return next; });
+      setTemplateDrafts(current => { const next = new Map(current); next.delete(target); return next; });
       if (activeThread.current === target) setNotice("Approved template queued. The reply window opens when the customer responds.");
     }
   }
@@ -423,13 +426,13 @@ export default function CustomerExperiencePage() {
     const target = selected;
     const submittedText = reply;
     const clientRequestId = replyRequestId || crypto.randomUUID();
-    if (!replyRequestId) setDrafts(current => ({ ...current, [target]: { text: submittedText, clientRequestId } }));
+    if (!replyRequestId) setDrafts(current => new Map(current).set(target, { text: submittedText, clientRequestId }));
     const sent = isWebChat
       ? await chatAct("/api/chat-human-reply", { action: "human_reply", message, clientRequestId })
       : await controlAct("human_reply", { message, clientRequestId });
     if (sent) {
-      setDrafts(current => current[target]?.text === submittedText && current[target]?.clientRequestId === clientRequestId
-        ? { ...current, [target]: { text: "", clientRequestId: "" } } : current);
+      setDrafts(current => current.get(target)?.text === submittedText && current.get(target)?.clientRequestId === clientRequestId
+        ? new Map(current).set(target, { text: "", clientRequestId: "" }) : current);
       if (activeThread.current === target) setNotice(isWebChat ? "Reply posted in the customer's PawSpace web chat." : "Reply queued through the governed WhatsApp outbox.");
     }
   }
@@ -568,11 +571,11 @@ export default function CustomerExperiencePage() {
               ))}
             </section>
             <div className={styles.notice}>This workspace does not bypass consent, quiet-hour, retry or adapter controls. AI may make mistakes. Price, availability, payment, cancellation and provider actions stay governed.</div>
-            {isWhatsApp && !withinWindow ? <TemplateReply templates={templates} selectedKey={templateDrafts[selected]?.key || ""} busy={busy} canQueue={canQueueTemplate} onSelect={key => setTemplateDrafts(current => ({ ...current, [selected]: { key, clientRequestId: "" } }))} onQueue={template => { void sendTemplate(template); }} /> : null}
+            {isWhatsApp && !withinWindow ? <TemplateReply templates={templates} selectedKey={templateDrafts.get(selected)?.key || ""} busy={busy} canQueue={canQueueTemplate} onSelect={key => setTemplateDrafts(current => new Map(current).set(selected, { key, clientRequestId: "" }))} onQueue={template => { void sendTemplate(template); }} /> : null}
             <footer className={styles.composer}>
               <input
                 value={reply}
-                onChange={(event) => { const value = event.target.value; setDrafts(current => ({ ...current, [selected]: { text: value, clientRequestId: "" } })); }}
+                onChange={(event) => { const value = event.target.value; setDrafts(current => new Map(current).set(selected, { text: value, clientRequestId: "" })); }}
                 disabled={isWebChat ? !chatStaffOwned || busy : !isWhatsApp || !humanMode || busy || !withinWindow}
                 maxLength={4096}
                 placeholder={isWebChat ? (chatStaffOwned ? "Reply in the customer's PawSpace chat..." : "Take over to reply in this web chat") : !isWhatsApp ? "Select a WhatsApp thread to reply" : !humanMode ? "Take over or switch to Human only to reply" : !withinWindow ? "24-hour window closed — use an approved template" : "Reply as PawSpace CX..."}
