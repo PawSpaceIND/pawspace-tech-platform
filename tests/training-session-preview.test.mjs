@@ -47,17 +47,17 @@ test("preview count falls back to 4 while the catalogue is still loading (plan.s
 // Guard: this is a display-only fix. The number of sessions actually booked must
 // still come from the server quote, NOT the preview length.
 // ---------------------------------------------------------------------------
-test("the programme reservation still books quote.sessions occurrences — unchanged by the preview fix", () => {
+test("the rolling programme reserves only its first appointment", () => {
   assert.match(
     flowSource,
-    /occurrences:quote\.sessions,weekdays:weekdayMap\[frequency\]/,
-    "the full-programme reserve must still use the server quote's session count",
+    /trainingReservationForChoice\(selection,\{mode:"auto"\}\)/,
+    "reservation uses the shared rolling schedule request",
   );
+  assert.match(flowSource, /schedulingMode:TRAINING_SCHEDULING_MODE/);
 });
 
-test("the misleading hard-capped label is gone and the preview is driven by the real session count", () => {
+test("the rolling screen does not claim that a full calendar is booked", () => {
   assert.doesNotMatch(flowSource, /First four sessions/, "the 'First four sessions' label must be removed");
-  assert.match(flowSource, /trainingSessionPreviewDates\(/, "the preview uses the shared generator");
-  assert.match(flowSource, /trainingPreviewCount\(plan\.sessions\)/, "the preview count derives from plan.sessions");
-  assert.match(flowSource, /Full session calendar/, "the label honestly reflects the full session calendar");
+  assert.doesNotMatch(flowSource, /Full session calendar/, "later sessions are booked one at a time");
+  assert.match(flowSource, /First appointment/);
 });
