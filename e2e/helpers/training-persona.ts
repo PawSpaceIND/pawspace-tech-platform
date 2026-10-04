@@ -289,7 +289,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect(completed).toMatchObject({ status: "completed", consumedExactlyOnce: true, programme: { completed: 1, status: "completed" }, closure: { assessmentCompleted: true, certificateNumber: null, reviewDispatched: false } });
     const repeat = await partner.request.post("/api/training-sessions", { data: completion.request().postDataJSON() });
     expect(repeat.status(), await repeat.text()).toBe(200); expect((await repeat.json()).data.duplicatePrevented).toBe(true);
-    await partner.reload(); await expect(partner.getByRole("heading", { name: "Session completed canonically", exact: true })).toBeVisible();
+    await partner.reload(); await expect(partner.getByRole("heading", { name: "Session completed", exact: true })).toBeVisible();
     const finalAccount = await page.request.get("/api/customer-account"); expect(finalAccount.ok()).toBeTruthy();
     const bookings = (await finalAccount.json()).data.bookings.filter((row: { id: string }) => row.id === bookingId);
     expect(bookings).toHaveLength(1); expect(bookings[0]).toMatchObject({ status: "completed", providerId: trainer.id });
