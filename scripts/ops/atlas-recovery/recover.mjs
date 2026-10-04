@@ -4,10 +4,10 @@ import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
 const ORIGINAL='57bf797a-39d9-4764-8843-e5a5d1a93d26',TEMP='2b9f4ac0-8bc9-4449-848b-dd98e9e29758',SHA='c18b15caea9551505398746dc9335a962f17e8ae';
 const crons=['*/5 * * * *','*/15 * * * *','15 2 * * *'];
 const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
-const receipt={kind:'certified_staging_read_only_verification',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37174622760};
+const receipt={kind:'normal_staging_provider_login_diagnosis',modelRequests:0,operations:[],originalVersion:ORIGINAL,expectedServingSha:SHA,originalFailedRun:37174622760};
 const save=()=>writeFileSync(env.EVIDENCE_PATH||'recovery-receipt.json',JSON.stringify(receipt,null,2)+'\n');
 const check=(v,m)=>{if(!v)throw Error(m)};
-const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,1000);
+const redact=s=>[env.CLOUDFLARE_API_TOKEN,env.CLOUDFLARE_ACCOUNT_ID,env.PAWSPACE_UAT_SIGNING_KEY,env.PAWSPACE_UAT_ACCESS_CODE].filter(Boolean).reduce((v,k)=>v.split(k).join('[redacted]'),String(s)).slice(0,1000);
 const base=`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/pawspace-staging`;
 async function api(suffix,method='GET',body){
  const op={path:suffix,method,state:method==='GET'?'read_pending':'uncertain_before_dispatch'};receipt.operations.push(op);save();
@@ -20,7 +20,7 @@ async function active(){const p=await api('/deployments');check(Array.isArray(p?
 async function schedules(){const p=await api('/schedules');const a=Array.isArray(p)?p:p?.schedules;check(Array.isArray(a),'schedules_shape');return a.map(x=>x.cron).sort();}
 try{
  check(env.CONFIRM==='restore-certified-staging'&&env.GITHUB_RUN_ATTEMPT==='1'&&/^ops\/atlas-restore-/.test(env.GITHUB_REF_NAME??'')&&env.EXPECTED_SHA===env.GITHUB_SHA,'fixed_recovery_refused');
- check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY,'existing_connection_missing');
+ check(/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID??'')&&env.CLOUDFLARE_API_TOKEN&&env.PAWSPACE_UAT_SIGNING_KEY&&String(env.PAWSPACE_UAT_ACCESS_CODE??'').length>0,'existing_connection_missing');
  receipt.before=await active();receipt.schedulesBefore=await schedules();save();
  check(receipt.before.versionId===ORIGINAL,'unexpected_deployment_refused');
  receipt.after=await active();check(receipt.after.versionId===ORIGINAL,'certified_version_not_restored');save();
@@ -32,5 +32,12 @@ try{
  const health=await(await get('/healthz')).json();check(health.status==='ok','health_failed');receipt.health=true;
  const favicon=Buffer.from(await(await get('/favicon.svg')).arrayBuffer());check(createHash('sha256').update(favicon).digest('hex')==='e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7','assets_hash_failed');receipt.assets=true;
  const ui=await get('/staging-login');check((ui.headers.get('content-type')??'').includes('text/html'),'normal_ui_failed');receipt.ui=true;
+
+ receipt.providerLogin={state:'uncertain_before_dispatch',requests:1};save();
+ let login;try{login=await fetch(origin+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code:env.PAWSPACE_UAT_ACCESS_CODE,email:'asha.groomer1@tkpetcare.in'}),redirect:'manual',signal:AbortSignal.timeout(20000)});}catch{receipt.providerLogin.state='unknown_no_retry';save();throw Error('provider_login_transport_unknown_no_retry');}
+ const loginBody=await login.json().catch(()=>null);
+ const error=String(loginBody?.error??'');
+ receipt.providerLogin={state:'response_received',requests:1,httpStatus:login.status,sessionIssued:login.status===200&&String(login.headers.get('set-cookie')??'').includes('pawspace_uat='),refusalKind:error.startsWith('That email cannot sign in here.')?'staff_identity_ineligible':error==='Invalid access code'?'access_code_invalid':error==='Permission denied'?'permission_denied':error?'other_refusal':null};save();
+ check(receipt.providerLogin.sessionIssued,'provider_login_unproven');
  receipt.ok=true;receipt.completedAt=new Date().toISOString();receipt.schedulePropagation='API read confirms all3; edge propagation may take15minutes';save();console.log('Certified staging version,3crons,authenticated fixture,UI/assets/health restored.');
 }catch(error){receipt.ok=false;receipt.failure=redact(error.message);save();console.error(receipt.failure);process.exitCode=1;}

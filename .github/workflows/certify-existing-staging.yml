@@ -1,4 +1,4 @@
-name: Recover certified human-test staging
+name: Diagnose normal staging provider login
 on:
   workflow_dispatch:
     inputs:
@@ -24,13 +24,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Reconcile and restore exact certified staging
+      - name: Verify exact normal staging then diagnose one provider login
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRM: ${{ inputs.confirm }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           EVIDENCE_PATH: recovery-receipt.json
         run: node scripts/ops/atlas-recovery/recover.mjs
       - uses: actions/upload-artifact@v4
