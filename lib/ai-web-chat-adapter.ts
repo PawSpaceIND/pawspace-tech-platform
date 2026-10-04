@@ -1,3 +1,4 @@
+import type{ChatRouteQualification}from"./chat-qualification-route";
 import{readConversationFollowupReceipt}from"./conversation-followup-action";
 import{ensureConversationHandoffTicket}from"./conversation-handoff-ticket";
 import {publicGroomingSubscriptionCatalogue} from "./public-grooming-subscription-catalogue";
@@ -237,6 +238,7 @@ function mirrorAiReplyStatement(db:D1Database,input:{threadId:string;customerId:
 function replayedTurn(row:Row){return{id:text(row.id),output:text(row.output_text),outcome:text(row.outcome),handoffReason:row.handoff_reason?text(row.handoff_reason):null,provider:text(row.provider),modelRef:row.model_ref?text(row.model_ref):null};}
 
 type WebChatOptions={
+ qualification?:ChatRouteQualification;
  /** Customer web chat: while a person owns the thread, accept the message and say so instead of refusing it. */
  acceptWhileWithTeam?:boolean;
  /* Facts the calling bot turn established in this same request, so the AI turn does not read them again
@@ -274,6 +276,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
  await ensureAiWebChatTables(db);
  if(!text(input.text)||!text(input.idempotencyKey))throw new Error("Message and idempotency key are required");
  const aiKey=`ai:${input.idempotencyKey}`;
+ if(options.qualification){const q=options.qualification;if(input.actor.developmentPreview||input.customerId!==q.approval.customerId||input.idempotencyKey!==q.turnKey)throw new Response("Qualification ownership mismatch",{status:403});await requireCustomerOwnership(db,input.actor,input.customerId);const t=await db.prepare("SELECT customer_id,status FROM communication_threads WHERE id=?").bind(q.approval.threadId).first<Row>();if(!t||t.customer_id!==input.customerId||t.status==="closed")throw new Response("Qualification thread mismatch",{status:403});options={...options,threadId:q.approval.threadId,ownershipVerified:false,priorChecked:false,handoffChecked:false};}
  // Ownership and the retry lookup are independent reads; a failed ownership check still rejects before any write.
  const[,prior]=await Promise.all([options.ownershipVerified?null:requireCustomerOwnership(db,input.actor,input.customerId),options.priorChecked?null:db.prepare("SELECT id,thread_id,customer_id FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>()]);
  if(prior&&text(prior.customer_id)!==input.customerId)throw new Response("Chat request key belongs to another customer",{status:403});
@@ -283,7 +286,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
    * It used to answer "This message was already received" and nothing else, so the reply the customer
    * had waited for was never shown. Return the stored answer; if the first attempt never produced one,
    * let the orchestrator's own reservation decide whether this retry may run it. */
-  threadId=text(prior.thread_id);messageId=text(prior.id);
+  threadId=text(prior.thread_id);messageId=text(prior.id);if(options.qualification&&threadId!==options.qualification.approval.threadId)throw new Response("Qualification replay mismatch",{status:403});if(options.qualification){const saved=await db.prepare("SELECT payload_json,policy_json FROM communication_messages WHERE id=?").bind(messageId).first<Row>();const policy=JSON.parse(String(saved?.policy_json||"{}")),payload=JSON.parse(String(saved?.payload_json||"{}"));if(policy.qualificationJob!==options.qualification.approval.jobId||payload.text!==redactTrustSafetyText(input.text).redacted)throw new Response("Qualification replay provenance mismatch",{status:403});}
   const stored=await db.prepare("SELECT * FROM ai_conversation_turns WHERE idempotency_key=?").bind(aiKey).first<Row>().catch(()=>null);
   if(stored)return{duplicatePrevented:true,messageId,threadId,ai:{duplicatePrevented:true,turn:replayedTurn(stored),toolReceipt:await readConversationFollowupReceipt(db,{turnKey:aiKey,customerId:input.customerId,threadId,inputMessageId:messageId}),autonomousExecution:false},autonomousExecution:false};
  }
@@ -291,11 +294,11 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   * team has the conversation) must not leave its rejection unhandled; awaiting it still throws. */
  if(!prior)threadId=text(options.threadId)||await openThread(db,input.customerId);
  const salesPromise=chatSalesService(db,input.customerId,threadId,input.text);salesPromise.catch(()=>{});
- const providerPromise=salesPromise.then(salesService=>createGroundedAiRuntimeProvider(db,salesService?WEB_CHAT_SALES_ACTOR:input.actor,"chat",{salesService}));providerPromise.catch(()=>{});
+ const providerPromise=salesPromise.then(salesService=>createGroundedAiRuntimeProvider(db,salesService?WEB_CHAT_SALES_ACTOR:input.actor,"chat",{salesService,...(options.qualification?{qualification:options.qualification}:{})}));providerPromise.catch(()=>{});
  if(!prior){
   messageId=`MSG-CHAT-${crypto.randomUUID().slice(0,12).toUpperCase()}`;const now=Date.now();
-  const inspected=await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-authenticated:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"authenticated_ai_web_chat"}});inspectedDetected=inspected.detected;
-  await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?, ?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:true}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
+  const inspected=options.qualification?redactTrustSafetyText(input.text):await inspectTrustSafetyText(db,{text:input.text,channel:"chat",sourceReference:`ai-web-authenticated:${input.idempotencyKey}`,actorType:"customer",actorId:input.actor.email,customerId:input.customerId,threadId,messageId,asOf:now,detail:{surface:"authenticated_ai_web_chat"}});inspectedDetected=inspected.detected;
+  await db.batch([db.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES (?,?,?,NULL,NULL,NULL,'inbound','chat','transactional','web_app_chat',?,'received','pawspace_web',NULL,?,?,?, ?,?)").bind(messageId,threadId,input.customerId,JSON.stringify({text:inspected.redacted,safetyRedacted:inspected.detected}),input.idempotencyKey,JSON.stringify({authenticated:true,customerOwned:true,externalDelivery:false,trustSafetyInspected:!options.qualification,...(options.qualification?{qualificationJob:options.qualification.approval.jobId}:{})}),input.actor.email,now,now),db.prepare("UPDATE communication_threads SET status=CASE WHEN status='pending_customer' THEN 'open' ELSE status END,updated_at=? WHERE id=?").bind(now,threadId)]);
  }
  const withTeam=async()=>{
   const handoff=await activeHandoff(db,threadId);
@@ -308,7 +311,7 @@ export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:Authe
   * will answer here, instead of a red "AI replies are paused" error on every message they send. */
  if(options.acceptWhileWithTeam&&!options.handoffChecked&&(await activeHandoff(db,threadId)).active)return withTeam();
  let result:Awaited<ReturnType<typeof orchestrateAiTurn>>;
- try{const provider=await providerPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider});}
+ try{const provider=await providerPromise;result=await orchestrateAiTurn(db,{actor:provider.salesService?WEB_CHAT_SALES_ACTOR:input.actor,threadId,customerId:input.customerId,inputMessageId:messageId,idempotencyKey:aiKey,channel:"chat",provider,...(options.qualification?{qualificationReadOnly:true}:{})});}
  catch(error){
   // A takeover that landed between the check above and the orchestrator's own check.
   if(options.acceptWhileWithTeam&&error instanceof Response&&error.status===409&&(await activeHandoff(db,threadId)).active)return withTeam();
