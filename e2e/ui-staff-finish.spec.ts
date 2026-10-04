@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Locator} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const files=['app/team/finance/page.tsx','app/team/finance/finance-ledger.tsx','app/team/finance/grooming-gst-panel.tsx','app/team/finance/finance-content.module.css','app/team/operations/page.tsx','app/team/people/page.tsx','app/team/presentation-next/staff-content.module.css','app/team/finance/boarding/boarding-finance-workspace.tsx','app/team/finance/boarding/boarding-content.module.css','app/team/finance/sitting/sitting-finance-workspace.tsx','app/team/finance/sitting/sitting-content.module.css','app/team/finance/training/page.tsx','app/team/finance/training/training-content.module.css','app/team/people/provider-training/page.tsx','app/team/people/provider-training/provider-training-content.module.css'];
@@ -20,6 +20,12 @@ function contrastRatio(foreground:string,backgrounds:string[]){
  const background=backgrounds.reduce((under,color)=>paint(color,under),[255,255,255]);
  const lum=(rgb:number[])=>rgb.map(channel=>{const c=channel/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;}).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
  const a=lum(paint(foreground,background)),b=lum(background);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+}
+// One synchronous snapshot of the visible controls under 'min' px: screens re-render after loading, so a separate
+// visibility check and a later measurement could see different nodes (a control gone by then has no box). Callers poll
+// it: on a cold dev server the page's client CSS modules are injected only after hydration, without any link to wait on.
+function undersized(scope:Locator,selector:string,min:number){
+ return scope.locator(selector).evaluateAll((controls,min)=>controls.filter(e=>{const box=e.getBoundingClientRect();return box.width>0&&box.height>0&&getComputedStyle(e).visibility!=='hidden'&&box.height<min;}).map(e=>`${e.tagName} ${e.getAttribute('aria-label')||e.textContent||e.getAttribute('type')} ${e.getBoundingClientRect().height}px`),min);
 }
 function textPaint(element:Element){
  const backgrounds:string[]=[];
@@ -91,7 +97,7 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    const lookup=content.getByRole('textbox',{name:'Boarding booking ID'});await expect(lookup).toHaveValue('FINANCE-UI');
    await content.getByRole('button',{name:'Load booking',exact:true}).click();await expect(lookup).toHaveValue('FINANCE-UI');
    await expect.poll(()=>reads.filter(x=>x.includes('boarding-finance?bookingId=FINANCE-UI')).length).toBeGreaterThanOrEqual(2);
-   for(const el of await content.locator('main button,main input,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main input,main header a',48)).toEqual([]);
    if(width<=600){const inputRect=(await lookup.boundingBox())!,buttonRect=(await content.getByRole('button',{name:'Load booking',exact:true}).boundingBox())!;expect(buttonRect.y).toBeGreaterThanOrEqual(inputRect.y+inputRect.height);}
   }else if(screen==='finance/training'){
    await expect(content.getByRole('heading',{name:'Training finance & payout readiness'})).toBeVisible();
@@ -104,12 +110,12 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    await expect(content.getByRole('button',{name:'Approve sandbox instruction',exact:true})).toBeEnabled();
    const regions=content.getByRole('region',{name:/scroll horizontally/});await expect(regions).toHaveCount(3);
    for(const region of await regions.all()){await page.keyboard.press('Tab');await region.focus();expect(await region.evaluate(e=>e===document.activeElement)).toBe(true);expect(await region.evaluate(e=>getComputedStyle(e).outlineOffset)).toBe('-3px');await region.evaluate(e=>{e.scrollLeft=0;});if(await region.evaluate(e=>e.scrollWidth>e.clientWidth)){await page.keyboard.press('ArrowRight');await expect.poll(()=>region.evaluate(e=>e.scrollLeft)).toBeGreaterThan(0);}}
-   for(const el of await content.locator('main button,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main header a',48)).toEqual([]);
   }else if(screen==='finance/sitting'){
    await expect(content.getByRole('heading',{name:'Sitting finance & reconciliation',exact:true})).toBeVisible();
    await expect(content.getByText('₹279.60',{exact:true})).toBeVisible();
    const lookup=content.getByPlaceholder('Canonical Sitting booking ID');await expect(lookup).toHaveValue('SITTING-UI');await lookup.focus();expect(await lookup.evaluate(e=>e===document.activeElement)).toBe(true);
-   for(const el of await content.locator('main button,main input,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main input,main header a',48)).toEqual([]);
    await lookup.fill('OTHER-SITTING-ID');await expect(content.getByRole('button',{name:'Record sandbox refund',exact:true})).toHaveCount(0);
    await lookup.fill('SITTING-UI');await content.getByRole('button',{name:'Load booking',exact:true}).click();await expect(content.getByText('₹279.60',{exact:true})).toBeVisible();
   }else if(screen==='people/provider-training'){
@@ -117,12 +123,12 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    for(const name of ['Title','Summary','Content sections (one per line)','Quiz question','Quiz options (separate with |; first index is 0)']){const field=content.getByLabel(name,{exact:true});await expect(field).toBeVisible();await field.focus();expect(await field.evaluate(e=>e===document.activeElement)).toBe(true);}
    const service=content.getByRole('combobox',{name:'Service',exact:true});await expect(service).toBeVisible();await expect(service).toHaveValue('all');await service.focus();expect(await service.evaluate(e=>e===document.activeElement)).toBe(true);
    await expect(content.getByLabel('Pass %',{exact:true})).toHaveValue('80');
-   for(const el of await content.locator('main').last().locator('button,input,select,header a').all())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+   await expect.poll(()=>undersized(content.locator('main').last(),'button,input,select,header a',48)).toEqual([]);
    await expect(content.getByRole('button',{name:'Save draft',exact:true})).toBeEnabled();
   }else if(screen==='operations')await expect(content.getByRole('link').filter({hasText:'Open →'})).toHaveCount(5);
   else {const search=content.getByRole('textbox',{name:'Find someone'});await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();await search.fill('does-not-match');await expect(content.getByText('No one matches “does-not-match”',{exact:true})).toBeVisible();await search.fill('');await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();}
   await page.evaluate(()=>document.fonts.ready);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+1);
-  for(const el of await content.locator('button,input:not([type=radio]),select').all()){if(!await el.isVisible())continue;expect((await el.boundingBox())!.height,await el.evaluate(e=>`${e.tagName} ${e.getAttribute('aria-label')||e.textContent||e.getAttribute('type')}`)).toBeGreaterThanOrEqual(44);}
+  await expect.poll(()=>undersized(content,'button,input:not([type=radio]),select',44)).toEqual([]);
   await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();document.querySelectorAll('[role=region]').forEach(e=>{e.scrollLeft=0;});scrollTo({top:0,behavior:'instant'});});await page.screenshot({path:info.outputPath(`${screen.replaceAll('/','-')}-${fingerprint}.png`),fullPage:true,animations:'disabled'});
  }
  expect(writes).toEqual([]);await info.attach('fixture-and-source',{body:JSON.stringify({width,style,theme,mode,fingerprint,hashes,writes,reads,authorizationAcceptance:false,physicalDevice:false}),contentType:'application/json'});

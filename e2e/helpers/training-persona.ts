@@ -257,8 +257,10 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       const approved = await operations.request.patch("/api/training-session-media", { data: review });
       expect(approved.status(), await approved.text()).toBe(200); expect((await approved.json()).data.proofReady).toBe(true);
     }
-    await partner.getByRole("button", { name: "Check photo status", exact: true }).first().click();
-    await expect(partner.getByText(/Approved — hash only/)).toHaveCount(2);
+    // During the session the trainer sees the after-photo control only (the before photo belongs to the arrival step);
+    // both approvals are proven above through the media API.
+    await partner.getByRole("button", { name: "Check photo status", exact: true }).click();
+    await expect(partner.getByText("After photo: Approved — hash only", { exact: true })).toBeVisible();
     await partner.getByLabel("Homework for pet parent", { exact: true }).fill("Practise the demonstrated cue briefly with praise and supervised rest.");
     const unassessedLabels = ["Recall score", "Impulse score", "Parent practice score"];
     await expect(partner.getByLabel("Focus score", { exact: true })).toHaveValue("");
