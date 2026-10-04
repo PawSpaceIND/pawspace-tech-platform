@@ -1,4 +1,4 @@
-name: Normal independent today TEST booking without payment instrument
+name: Read future prepaid Finance scope pending appointment approval
 on:
   workflow_dispatch:
     inputs:
@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'normal-independent-future-prepaid-finance-reserve-booking' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-prepaid-finance-terminal-reconciliation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 3
     environment: pawspace-staging
     steps:
       - uses: actions/checkout@v4
@@ -33,14 +33,14 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          EVIDENCE_PATH: finance-future-prepaid-booking-receipt.json
+          EVIDENCE_PATH: finance-prepaid-terminal-reconciliation-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/finance-future-prepaid-booking/read-runner.mjs
+          node scripts/ops/atlas-session/finance-prepaid-terminal-reconciliation/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: finance-future-prepaid-booking-${{ github.sha }}
-          path: finance-future-prepaid-booking-receipt.json
+          name: finance-prepaid-terminal-reconciliation-${{ github.sha }}
+          path: finance-prepaid-terminal-reconciliation-receipt.json
           if-no-files-found: error
           retention-days: 7
