@@ -52,7 +52,6 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   }
   await page.getByRole("button", { name: "Continue to trip details", exact: true }).click();
   await page.getByRole("button", { name: "One-way", exact: true }).click();
-  await page.getByRole("button", { name: "City / regular", exact: true }).click();
   await page.getByLabel("Pickup address", { exact: true }).fill("100 Feet Road, Indiranagar, Bengaluru 560038");
   await page.getByLabel("Drop address / Point 1", { exact: true }).fill("Koramangala 5th Block, Bengaluru 560095");
   await page.getByLabel("Pickup date", { exact: true }).fill(date!);
@@ -62,6 +61,7 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   const quoted = page.waitForResponse(r => r.url().endsWith("/api/taxi-commercial") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Calculate Citroën & XUV fares", exact: true }).click();
   const quoteResponse = await quoted;
+  expect(quoteResponse.request().postDataJSON()).toMatchObject({ ridePurpose: "regular", tripType: "one_way" });
   expect(quoteResponse.status(), await quoteResponse.text()).toBe(201);
   const quote = (await quoteResponse.json()).data;
   expect(quote.routeSource).toBe("google_routes_uat");

@@ -117,6 +117,10 @@ async function routeWorld(t) {
     .run("trainer@example.invalid", "PRV-1");
   const { ensureTrainingSessionLifecycleTables } = await import("../lib/training-session-lifecycle.ts");
   await ensureTrainingSessionLifecycleTables(db);
+  // The current session reader joins the canonical booking/work-order ownership schema.
+  await (await import("../lib/canonical-booking-core-schema.ts")).ensureCanonicalBookingCoreTables(db);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,total_amount,created_by,created_at,updated_at) VALUES (?,?,?,'[\"PET-1\"]','[]','blr','blr-east','dog_training','training-4-puppy','Puppy Training',?,?, '2026-10-01T10:00:00Z','2026-10-01T11:00:00Z','in_progress',6000,'synthetic-fixture',1,1)").run('BK-1','fixture-BK-1','CUS-1','GROUP-1','PRV-1');
+
   // Only the customer display join is needed; this fixture contains no real customer data.
   sqlite.exec("CREATE TABLE canonical_customers(id TEXT PRIMARY KEY,name TEXT)");
   sqlite.prepare("INSERT INTO canonical_customers VALUES (?,?)").run("CUS-1", "Synthetic Customer");

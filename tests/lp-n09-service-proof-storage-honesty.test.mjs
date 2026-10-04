@@ -150,6 +150,10 @@ async function trainingWorld() {
   // requires), so it is created the same way the route itself creates it.
   const { ensureTrainingSessionLifecycleTables } = await import("../lib/training-session-lifecycle.ts");
   await ensureTrainingSessionLifecycleTables(db);
+  // The current session reader joins the canonical booking/work-order ownership schema.
+  await (await import("../lib/canonical-booking-core-schema.ts")).ensureCanonicalBookingCoreTables(db);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,total_amount,created_by,created_at,updated_at) VALUES (?,?,?,'[\"pet_1\"]','[]','blr','blr-east','dog_training','training-4-puppy','Puppy Training',?,?, '2026-10-01T10:00:00Z','2026-10-01T11:00:00Z','in_progress',6000,'synthetic-fixture',1,1)").run('BK-TRAIN-1','fixture-BK-TRAIN-1','CUS-1','GROUP-TRAIN-1','PRV-TRAINER-1');
+
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUS-1','blr','Trisha Kumar','+91-9000000001',?,?)").run(now, now);
   sqlite.prepare("INSERT INTO training_programmes (id,booking_id,customer_id,provider_id,city_id,zone_id,plan_code,plan_name,pet_ids_json,total_sessions,created_at,updated_at) VALUES ('PRG-1','BK-TRAIN-1','CUS-1','PRV-TRAINER-1','blr','blr-east','obedience-starter','Obedience Starter','[\"pet_1\"]',1,?,?)").run(now, now);

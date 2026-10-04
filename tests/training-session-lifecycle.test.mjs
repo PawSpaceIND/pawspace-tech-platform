@@ -488,3 +488,18 @@ test("a programme session cannot start until every enrolled dog is vaccinated; t
   await act(meetWorld, m1, "arrive", "m-arrive", DOORSTEP);
   assert.equal(await act(meetWorld, m1, "start", "m-start").then((r) => r.status), "in_session", "the Meet & Greet needs no vaccination proof");
 });
+
+
+test("automatic Training policy requires persisted attendance and before photo before start", async()=>{
+ const world=freshWorld();const {booking,sessions}=await programme(world);const first=sessions[0];
+ for(const [action,extra]of [["accept",{}],["on_the_way",{}],["arrive",DOORSTEP]])await act(world,first,action,`prestart-${action}`,extra);
+ // Exact table DDL from app/api/uat-scheduling/route.ts; attach the reviewed new-booking start policy.
+ world.sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)");
+ world.sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,updated_at) VALUES (?,'full_time_first',?,?,'assigned',?)").run(booking.group,JSON.stringify({trainingDispatchVersion:1}),first.provider_id,Date.now());
+ await refusal(act(world,first,"start","prestart-without-attendance"),409,/Save attendance and safety/);
+ await act(world,first,"save_report","prestart-attendance",{report:{attendance:{mode:"parent",safeAreaConfirmed:true,parentOrCaretakerConfirmed:true}}});
+ await refusal(act(world,first,"start","prestart-without-photo"),409,/capture the before photo/);
+ seedAsset(world,"PRESTART-BEFORE","before_service",first);
+ assert.equal((await act(world,first,"start","prestart-complete")).status,"in_session");
+ assert.equal(JSON.parse(String((await getTrainingSession(world.db,first.id)).attendance_json)).safeAreaConfirmed,true);
+});

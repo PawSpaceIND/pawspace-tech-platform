@@ -61,13 +61,15 @@ test('missing audio stays unknown; interruption and native conversation ID are r
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {preservedNextAudioBytes} from './helpers/next-audio-reviewed-delta.mjs';
+import {preservedCombinedLocalBytes} from './helpers/combined-local-reviewed-delta.mjs';
+const preservedComposedAudioBytes=(path,bytes)=>preservedNextAudioBytes(path,preservedCombinedLocalBytes(path,bytes));
 test('historical runtime bytes reconcile only the exact reviewed budget additions',()=>{
  const path='lib/ai-grounded-runtime-provider.ts',source=readFileSync(new URL('../'+path,import.meta.url));
  const hash=b=>createHash('sha256').update(b).digest('hex');
- assert.equal(hash(preservedNextAudioBytes(path,source)),'a61691f2cee7230cb315ede9ebd5722f78c3fc6a0500531fbc1fc694774c1740');
- for(const [a,b] of [['nextAudioConversation:{threadId:input.threadId,customerId:input.customerId}','nextAudioConversation:{threadId:input.threadId,customerId:"OTHER"}'],['isNextAudioThread(input.threadId)','true'],['./next-audio-budget','./unknown-budget']])assert.throws(()=>preservedNextAudioBytes(path,Buffer.from(source.toString().replace(a,b))));
+ assert.equal(hash(preservedComposedAudioBytes(path,source)),'a61691f2cee7230cb315ede9ebd5722f78c3fc6a0500531fbc1fc694774c1740');
+ for(const [a,b] of [['nextAudioConversation:{threadId:input.threadId,customerId:input.customerId}','nextAudioConversation:{threadId:input.threadId,customerId:"OTHER"}'],['isNextAudioThread(input.threadId)','true'],['./next-audio-budget','./unknown-budget']])assert.throws(()=>preservedComposedAudioBytes(path,Buffer.from(source.toString().replace(a,b))));
  const mutation=source.toString().replace('maxTokens:channel===','maxTokens:false&&channel===');
- assert.notEqual(hash(preservedNextAudioBytes(path,Buffer.from(mutation))),'a61691f2cee7230cb315ede9ebd5722f78c3fc6a0500531fbc1fc694774c1740');
+ assert.throws(()=>preservedComposedAudioBytes(path,Buffer.from(mutation)));
 });
 
 test('adapter historical normalization catches guard deletion, price bypass and ordinary-provider changes',()=>{

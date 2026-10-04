@@ -127,8 +127,10 @@ async function openCare(page: Page) {
   await page.getByLabel("PIN code", { exact: true }).fill("560038");
 }
 async function previewCare(page: Page) {
+  const coverageResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/service-zone" && response.request().method() === "GET");
   await openCare(page);
-  await page.getByRole("button", { name: "Check service area" }).click();
+  expect((await coverageResponse).status()).toBe(200);
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
@@ -204,7 +206,7 @@ test("V2 contract: stale coverage cannot verify an edited doorstep", async ({ pa
   let release!: () => void;
   state.coverageGate = new Promise(resolve => { release = resolve; });
   await openCare(page);
-  await page.getByRole("button", { name: "Check service area" }).click();
+
   await expect.poll(() => state.coverageStarted).toBe(true);
   await page.getByLabel("PIN code", { exact: true }).fill("560001");
   const settled = page.waitForResponse(response => response.url().includes("/api/service-zone") && response.ok());
@@ -218,7 +220,7 @@ test("V2 contract: delayed provider results cannot restore a stale quote after e
   const state = await fixture(page);
   let release!: () => void;
   state.previewGate = new Promise(resolve => { release = resolve; });
-  await openCare(page); await page.getByRole("button", { name: "Check service area" }).click();
+  await openCare(page);
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect.poll(() => state.previewStarted).toBe(true);
@@ -243,7 +245,7 @@ test("V2 contract: address failure preserves booking and blocks payment until re
 
 test("V2 contract: fallback pricing never enables reservation", async ({ page }) => {
   const state = await fixture(page); state.quoteSource = "fallback_default";
-  await openCare(page); await page.getByRole("button", { name: "Check service area" }).click();
+  await openCare(page);
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByText(/published live grooming price could not be verified/)).toBeVisible();
@@ -284,7 +286,7 @@ test("V2 contract: full-page payment return verifies the receipt, scrubs URL and
 test('explicit V2 rejects a contradictory city/PIN before availability or booking', async ({page}) => {
   const state = await fixture(page); await openCare(page);
   await page.getByLabel('House, street & area').fill('24 Audit Road, Mumbai, Maharashtra');
-  await page.getByRole('button',{name:'Check service area'}).click();
+
   await expect(page.getByRole('alert')).toContainText('different city');
   await expect(page.getByRole('button',{name:/Check live price & groomers/})).toBeDisabled();
   expect(state.previewStarted).toBe(false); expect(state.bookingWrites).toBe(0);
@@ -336,7 +338,7 @@ test("G10: four visible keyboard-accessible steps preserve the complete booking 
   await expect(navigation.getByRole("button")).toHaveCount(4);
   for (const button of await navigation.getByRole("button").all()) await expect(button).toBeVisible();
   await expect(navigation.getByRole("button", { name: "4 Time & review" })).toBeDisabled();
-  await page.getByRole("button", { name: "Check service area" }).click();
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
@@ -432,7 +434,7 @@ test("G08: V2 coupon preview and booking refresh use the same basket including e
   const state = await fixture(page); state.couponDiscount = 239.8;
   await openCare(page);
   await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
-  await page.getByRole("button", {name:"Check service area"}).click();
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", {name:/Check live price & groomers/}).click();
   const box=page.getByRole("group", {name:"Coupon code", exact:true});
@@ -531,7 +533,7 @@ test("V2 automatic matching preserves the staged extras and coupon payable", asy
   const state = await fixture(page); state.couponDiscount = 239.8;
   await openCare(page);
   await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
-  await page.getByRole("button", {name:"Check service area"}).click();
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", {name:/Check live price & groomers/}).click();
   const coupon = page.getByRole("group", {name:"Coupon code", exact:true});
@@ -664,7 +666,7 @@ test("G02/G05: location needs a user action and review; confirmed changes rechec
   await expect(page.getByLabel("Save this address to my account")).not.toBeChecked();
   await expect(reserve).toBeDisabled();
   await page.getByLabel("House, street & area").fill(`Flat 4, ${locatedAddress}`);
-  await page.getByRole("button", { name: "Check service area", exact: true }).click();
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible(); await expect(reserve).toBeEnabled();
@@ -746,7 +748,7 @@ test("G05: Change address preserves the care draft and the customer's removed-co
   await expect(page.getByText("Bengaluru East is covered")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeDisabled();
   await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
-  await page.getByRole("button", { name: "Check service area", exact: true }).click();
+
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
   await page.getByRole("button", { name: /Check live price & groomers/ }).click();
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();

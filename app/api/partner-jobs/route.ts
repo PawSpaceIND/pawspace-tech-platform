@@ -1,4 +1,4 @@
-import {trainingAssignmentOffer} from '../../../lib/training-assignment-dispatch';
+import {trainingListReadback} from '../../../lib/training-list-readback';
 import { trainingBookingPaymentStates } from "../../../lib/training-payment-eligibility";
 import { authError, database, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { listTrainerSessions } from "../../../lib/training-session-lifecycle";
@@ -43,6 +43,7 @@ export async function GET(request: Request) {
         trainingBookingPaymentStates(db, bookingIds),
       ]);
       const commercialByBooking = new Map(commercialRows.results.map(row => [String(row.booking_id), row]));
+      const readback=await trainingListReadback(db,sessions.filter(raw=>String(commercialByBooking.get(String((raw as Row).booking_id))?.booking_status)!=="payment_pending"),providerId);
       for (const raw of sessions) {
         const session = projectTrainerSession({ ...raw, customer_name: maskName(String((raw as Row).customer_name || "Customer")) });
         const funding = fundingByBooking.get(session.booking_id);
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
           bookingId: session.booking_id,
           workOrderId: `TRAINING-SESSION-${session.id}`,
           trainingSessionId: session.id,
-          assignmentOffer: await trainingAssignmentOffer(db,session.booking_id,providerId,String(session.id)),
+          assignmentOffer: readback.assignments.get(String(session.id)),
           providerId: session.provider_id,
           providerName: String(profile?.name || "PawSpace Trainer"),
           providerModel: "trainer",

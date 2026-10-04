@@ -193,7 +193,7 @@ test("the customer sees the team's reply, and can keep writing while the team ha
   assert.equal(read.status, 200);
   const data = (await read.json()).data;
   assert.equal(data.threadId, threadId);
-  assert.deepEqual(data.handoff, { active: true, status: "staff_active" });
+  assert.deepEqual(data.handoff, { id: taken.handoff.id, active: true, status: "staff_active" });
   const roles = data.messages.map((message) => message.role);
   assert.deepEqual(roles, ["customer", "ai", "customer", "team"], `unexpected transcript: ${JSON.stringify(data.messages)}`);
   assert.equal(data.messages[3].text, "Hi, this is Asha from PawSpace. I can help.");

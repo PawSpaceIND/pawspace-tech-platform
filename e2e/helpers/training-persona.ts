@@ -103,7 +103,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
   const origin = assertLocalSandbox(baseURL);
   expect(process.env.PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE).toBe("on");
   test.setTimeout(240_000);
-  test.info().annotations.push({ type: "simulation", description: "Disposable Training Meet & Greet; normal customer/trainer OTP; Finance sandbox event; synthetic GPS/photo bytes with independent UAT release. Handover is a declared duration, with no claim of elapsed 45/15-minute or scheduled-start enforcement." });
+  test.info().annotations.push({ type: "simulation", description: "Disposable Training Meet & Greet; normal customer/trainer OTP; Finance sandbox event; synthetic GPS/photo bytes with independent UAT release. Handover is a completion attestation, with no claim of elapsed 45/15-minute or scheduled-start enforcement." });
   const date = process.env.PW_UAT_SERVICE_DATE!;
   expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   const partner = await browser.newPage({ baseURL: origin, viewport: page.viewportSize()! });
@@ -173,32 +173,48 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       const response = await pending; expect(response.status(), await response.text()).toBe(200);
       return response;
     };
-    await action("Accept", "accept"); await action("On the way", "on_the_way");
+    const sessionsResponse = await partner.request.get(`/api/training-sessions?providerId=${encodeURIComponent(trainer.id)}`);
+    expect(sessionsResponse.status(), await sessionsResponse.text()).toBe(200);
+    const ownedSessions = (await sessionsResponse.json()).data;
+    const ownedSession = ownedSessions.find((item: { id: string }) => item.id === sessionId);
+    expect(ownedSession).toBeTruthy();
+    expect(ownedSession.status).toBe("scheduled");
+    if (ownedSession.providerModel === "full_time") {
+      await expect(partner.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
+    } else {
+      expect(ownedSession.providerModel).toBe("commission");
+      await action("Accept", "accept");
+    }
+    await action("On the way", "on_the_way");
     // The server-owned explicit service-discovery fixture uses these coordinates; browser GPS is synthetic.
-    const outside = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "arrive", latitude: 13.1, longitude: 77.8, idempotencyKey: `training-outside-${sessionId}` } });
+    const outside = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "arrive", latitude: 13.1, longitude: 77.8, accuracyMeters: 5, idempotencyKey: `training-outside-${sessionId}` } });
     expect(outside.status()).toBe(409); expect((await outside.json()).code).toBe("training_outside_geofence");
-    await partner.evaluate(({ latitude, longitude }) => Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition(success: (value: { coords: { latitude: number; longitude: number } }) => void) { success({ coords: { latitude, longitude } }); } } }), fixtureDoorstep);
-    const arrived = await action("Arrived", "arrive");
+    await partner.evaluate(({ latitude, longitude }) => Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition(success: (value: { coords: { latitude: number; longitude: number; accuracy: number } }) => void) { success({ coords: { latitude, longitude, accuracy: 5 } }); } } }), fixtureDoorstep);
+    const arrived = await action("Confirm arrival with device GPS", "arrive");
     expect((await arrived.json()).data.geofence.distanceMeters).toBeLessThanOrEqual(250);
     await partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true }).check();
     await partner.getByLabel("Training area is safe", { exact: true }).check();
-    await action("Start session", "start");
-    await expect(partner.getByLabel("Minutes completed", { exact: true })).toBeVisible();
-    await expect(partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true })).toBeChecked();
-    const noHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "complete", idempotencyKey: `training-no-handover-${sessionId}` } });
-    expect(noHandover.status()).toBe(409); expect((await noHandover.json()).code).toBe("training_owner_handover_required");
-    const shortHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "owner_handover", ownerHandoverMinutes: 14, idempotencyKey: `training-short-handover-${sessionId}` } });
-    expect(shortHandover.status()).toBe(409);
-    await partner.getByLabel("Minutes completed", { exact: true }).fill("14");
-    await expect(partner.getByRole("button", { name: "Record completed handover", exact: true })).toBeDisabled();
-    await loginOperations(operations);
-    for (const label of ["Before photo", "After photo"]) {
+    await expect(partner.getByRole("button", { name: "Start session", exact: true })).toBeDisabled();
+    await action("Save attendance & safety", "save_report");
+    const uploadPhoto = async (label: string) => {
       const uploaded = partner.waitForResponse(r => r.url().endsWith("/api/service-media/upload") && r.request().method() === "PUT");
       await partner.getByLabel(label, { exact: true }).setInputFiles({ name: `synthetic-${label.replaceAll(" ", "-")}.png`, mimeType: "image/png", buffer: fixturePng });
       const uploadResponse = await uploaded; expect(uploadResponse.status(), await uploadResponse.text()).toBe(200);
       expect((await uploadResponse.json()).data.objectStored).toBe(false);
       await expect(partner.getByRole("button", { name: "Refresh photo approval", exact: true })).toBeEnabled();
-    }
+    };
+    await uploadPhoto("Before photo");
+    await action("Start session", "start");
+    await expect(partner.getByLabel("I completed the pet-parent handover", { exact: true })).toBeVisible();
+    await expect(partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true })).toBeChecked();
+    const noHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "complete", idempotencyKey: `training-no-handover-${sessionId}` } });
+    expect(noHandover.status()).toBe(409); expect((await noHandover.json()).code).toBe("training_owner_handover_required");
+    const incompleteHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "owner_handover", ownerHandoverCompleted: false, idempotencyKey: `training-incomplete-handover-${sessionId}` } });
+    expect(incompleteHandover.status()).toBe(409);
+    expect((await incompleteHandover.json()).code).toBe("training_owner_handover_required");
+    await expect(partner.getByRole("button", { name: "Confirm completed handover", exact: true })).toBeDisabled();
+    await loginOperations(operations);
+    await uploadPhoto("After photo");
     const media = await partner.request.get(`/api/training-session-media?sessionId=${encodeURIComponent(sessionId)}`);
     expect(media.ok()).toBeTruthy(); const assets = (await media.json()).data.assets;
     expect(assets).toHaveLength(2);
@@ -212,13 +228,15 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     }
     await partner.getByRole("button", { name: "Refresh photo approval", exact: true }).click();
     await expect(partner.getByText(/Approved — hash only/)).toHaveCount(2);
-    await partner.getByLabel("Minutes completed", { exact: true }).fill("15");
-    await action("Record completed handover", "owner_handover");
-    await expect(partner.getByText("Owner handover recorded: 15 minutes.", { exact: true })).toBeVisible();
+    await partner.getByLabel("I completed the pet-parent handover", { exact: true }).check();
+    const handover = await action("Confirm completed handover", "owner_handover");
+    expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
+    await expect(partner.getByText("Pet-parent handover completion recorded.", { exact: true })).toBeVisible();
     await partner.getByLabel("Homework for pet parent", { exact: true }).fill("Practise the demonstrated cue briefly with praise and supervised rest.");
     const unassessedLabels = ["Recall score", "Impulse score", "Parent practice score"];
     await expect(partner.getByLabel("Focus score", { exact: true })).toHaveValue("");
     for (const label of unassessedLabels) await expect(partner.getByLabel(label, { exact: true })).toHaveValue("");
+    await expect(partner.getByRole("button", { name: "Complete & consume one session", exact: true })).toBeDisabled();
     await partner.getByLabel("Focus score", { exact: true }).selectOption("7");
     for (const label of unassessedLabels) await expect(partner.getByLabel(label, { exact: true })).toHaveValue("");
     const expectedProgress = { focus: 7, recall: null, impulse: null, parent: null };
@@ -263,7 +281,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await finance.goto("/v2/team/finance/training"); await expect(finance.getByRole("heading", { name: "Training finance & payout readiness", exact: true })).toBeVisible();
     await partner.screenshot({ path: test.info().outputPath("training-trainer-completed.png"), fullPage: true });
     await finance.screenshot({ path: test.info().outputPath("training-finance-completed.png"), fullPage: true });
-    const receipt = { bookingId, paymentId, sessionId, providerId: trainer.id, customerStatus: "completed", partnerStatus: "completed", paymentStatus: "captured", gateway: "razorpay_sandbox", reconciliation: record.status, recordedHandoverMinutes: 15, elapsedDurationEnforced: false, scheduledStartEnforced: false, evidenceStorage: "hash_only", liveMoney: false };
+    const receipt = { bookingId, paymentId, sessionId, providerId: trainer.id, customerStatus: "completed", partnerStatus: "completed", paymentStatus: "captured", gateway: "razorpay_sandbox", reconciliation: record.status, ownerHandoverCompletionAttested: true, elapsedDurationEnforced: false, scheduledStartEnforced: false, evidenceStorage: "hash_only", liveMoney: false };
     console.log("TRAINING-PERSISTENT", JSON.stringify(receipt));
     return receipt;
   } finally { await Promise.allSettled([partner.close(), operations.close(), finance?.close()]); }
