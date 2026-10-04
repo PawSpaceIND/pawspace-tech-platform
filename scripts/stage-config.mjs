@@ -115,6 +115,7 @@ cfg.vars = {
   PAWSPACE_PRODUCTION_ENFORCE: "false",
   PAWSPACE_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
+  PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE: "on",
   PAWSPACE_PAYMENT_ENV: "sandbox",
   // Customer checkout (lib/customer-checkout-server.ts) opens the Razorpay TEST modal only when all
   // three sandbox locks are declared explicitly. Staging pinned PAWSPACE_PAYMENT_ENV but never declared
