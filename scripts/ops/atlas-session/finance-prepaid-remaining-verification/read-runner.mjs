@@ -20,6 +20,7 @@ export async function run(env=process.env,fetcher=fetch){
  assert(Array.isArray(bindings)&&bindings.filter(b=>b.type==='d1').length===1&&bindings.some(b=>b.type==='d1'&&b.name==='DB'&&(b.id??b.database_id)===PIN.d1),'dedicated_d1_unproven');
  const vars=Object.fromEntries(bindings.filter(b=>b.type==='plain_text').map(b=>[b.name,String(b.text??b.value??'')]));
  assert(vars.PAWSPACE_STAGING_BUILD_SHA===PIN.sha&&vars.PAWSPACE_UAT_LOGIN==='on'&&vars.PAWSPACE_COMMUNICATION_ENV==='uat'&&vars.PAWSPACE_PAYMENT_ENV==='sandbox'&&vars.PAWSPACE_PAYMENT_LIVE_APPROVED==='false'&&vars.PAWSPACE_RAZORPAYX_ENV==='sandbox'&&vars.PAWSPACE_RAZORPAYX_LIVE_APPROVED==='false','runtime_flags_unproven');
+ receipt.runtimeFlags={serviceWindowEnforcement:vars.PAWSPACE_SERVICE_WINDOW_ENFORCEMENT??null,deploymentEnvironment:vars.PAWSPACE_DEPLOYMENT_ENV??null,visualCompletionEnforce:vars.PAWSPACE_VISUAL_COMPLETION_ENFORCE??null,serviceExecutionClock:vars.PAWSPACE_SERVICE_EXECUTION_CLOCK??null};save();
  const cookie='pawspace_uat='+encodeURIComponent(await issueUatToken({PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY},'founder@pawspace.in',120));
  const actor=await resolveUatStaffActor(db,new Request(PIN.origin+'/api/grooming-payment-sandbox',{headers:{cookie}}),{...vars,PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY});
  assert(actor?.roleCode==='founder'&&actor.permissions.includes('*'),'normal_founder_authority_unproven');receipt.actor={normalUatFounder:true,verifiedActivePrincipal:true,credentialsEmitted:false};save();

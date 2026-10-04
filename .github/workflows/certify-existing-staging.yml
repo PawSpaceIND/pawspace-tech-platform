@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'read-only-prepaid-finance-capture-reconciliation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-prepaid-finance-remaining-verification' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 6
     environment: pawspace-staging
