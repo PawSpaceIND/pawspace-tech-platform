@@ -121,8 +121,10 @@ test("inventory: every background job is wired into the scheduled worker; none a
   // Count that source only while its actual entry point remains called by the scheduler.
   const salary = scheduler.includes("runEmployeeSalarySandboxSweep(")
     ? fs.readFileSync("lib/employee-payroll-payout.ts", "utf8") : "";
+  const trainingExpiry = scheduler.includes("runTrainingUnpaidExpirySweep(")
+    ? fs.readFileSync("lib/training-unpaid-expiry.ts", "utf8") : "";
   for (const sweep of sweepExports) {
-    const wired = scheduler.includes(`${sweep}(`) || funnel.includes(`${sweep}(`) || workerSource.includes(`${sweep}(`) || salary.includes(`${sweep}(`); // some integration sweeps are direct scheduled-worker siblings
+    const wired = scheduler.includes(`${sweep}(`) || funnel.includes(`${sweep}(`) || workerSource.includes(`${sweep}(`) || salary.includes(`${sweep}(`) || trainingExpiry.includes(`${sweep}(`); // some integration sweeps are direct scheduled-worker siblings
     assert.ok(wired, `${sweep} is exported but never reachable from the scheduled worker`);
   }
   assert.match(scheduler, /"\*\/5 \* \* \* \*"/, "the scheduler contract is the 5-minute cron");

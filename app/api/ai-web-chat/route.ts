@@ -1,3 +1,5 @@
+import{resolveChatRouteQualification}from"../../../lib/chat-qualification-route";
+import{isExplicitConversationFollowup}from"../../../lib/conversation-followup-action";
 import{reserveWebChatCallbackRequest}from"../../../lib/customer-callback-context";
 import{requestReplayableWebChatHandoff}from"../../../lib/web-chat-handoff-replay";
 import {ensureCommunicationTables} from "../../../lib/communication-engine";
@@ -16,7 +18,7 @@ import{activeCrossSell}from"../../../lib/ai-sales-offers";
 import{CustomerOtpUnavailableError,CustomerOtpVerificationError,exchangeCustomerOtp,startCustomerOtp}from"../../../lib/customer-otp-exchange";
 import{PLATFORM_SESSION_COOKIE}from"../../../lib/platform-session";
 
-type Body={careContext?:unknown;bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string;requestedStart?:string|number|null;serviceDate?:string|null;cityId?:string|null;zoneId?:string|null;bookingId?:string|null;petId?:string|null;serviceCode?:string|null;leadId?:string|null;cancelCallId?:string};
+type Body={qualification?:boolean;careContext?:unknown;bot?:boolean;start?:boolean;choiceId?:string;mode?:"public"|"authenticated";sessionKey?:string;query?:string;message?:string;history?:Array<{role?:"user"|"assistant";text?:string}>;name?:string;email?:string;phone?:string;customerId?:string;idempotencyKey?:string;requestedStart?:string|number|null;serviceDate?:string|null;cityId?:string|null;zoneId?:string|null;bookingId?:string|null;petId?:string|null;serviceCode?:string|null;leadId?:string|null;cancelCallId?:string};
 const json=(value:unknown,status=200,headers?:Headers)=>{const merged=new Headers(headers);merged.set("cache-control","no-store");return Response.json(value,{status,headers:merged});};
 type CallbackFollowUp={outcome:"accepted"|"not_placed"|"not_matched"|"unsupported_scheduling";handoff:boolean;reason:"customer_requested_human"|"policy_risk"|"provider_unavailable"|"provider_error"|null;notice:string};
 /** Read only fields requestGovernedCustomerCallback already returns. Accepted means the voice engine dialled or left the call queued, scheduled or dialing. A future requestedStart is unsupported scheduling, not a queued call. */
@@ -67,7 +69,7 @@ export async function GET(request:Request){try{const db=await database(),url=new
  }
  const query=url.searchParams.get("q")||"";const data=await publicAiWebKnowledge(db,{query});return json({data});}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to load public AI chat knowledge");}}
 
-export async function POST(request:Request){try{sameOrigin(request);const db=await database(),body=await request.json()as Body,mode=body.mode||"public";if(mode!=="public"&&mode!=="authenticated")return json({error:"Unsupported chat mode"},400);if(mode==="public"&&needsImmediateVetGuidance(body.message||body.query||"")){if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"Please contact your nearest emergency vet immediately. Chat rate limit reached."},429);return json({data:{mode,...emergencyChatResponse(body.sessionKey)}});}if(mode==="public"&&body.bot===true)return publicBotTurn(db,request,body);if(mode==="public"){if(body.message&&body.sessionKey&&(body.name||body.email||body.phone)){const lead=await captureAiWebLead(db,{sessionKey:body.sessionKey,message:body.message,name:body.name,email:body.email,phone:body.phone});return json({data:{mode:"public",lead,customerDataAccess:false,toolExecution:false,callbackAutomation:false}},201);}if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);const data=await runPublicAiWebChat(db,{query:body.query||body.message||"",history:body.history,sessionKey:body.sessionKey,careContext:atlasCareContext(body.careContext),cityId:body.cityId,zoneId:body.zoneId});return json({data});}
+export async function POST(request:Request){try{sameOrigin(request);const db=await database(),body=await request.json()as Body,mode=body.mode||"public";if(mode!=="public"&&mode!=="authenticated")return json({error:"Unsupported chat mode"},400);if(mode==="public"&&(body.qualification===true||String((await runtime()).PAWSPACE_CHAT_QUALIFICATION_APPROVAL_JSON??"")))return json({error:"Chat qualification requires the admitted customer session"},403);if(mode==="public"&&needsImmediateVetGuidance(body.message||body.query||"")){if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"Please contact your nearest emergency vet immediately. Chat rate limit reached."},429);return json({data:{mode,...emergencyChatResponse(body.sessionKey)}});}if(mode==="public"&&body.bot===true)return publicBotTurn(db,request,body);if(mode==="public"){if(body.message&&body.sessionKey&&(body.name||body.email||body.phone)){const lead=await captureAiWebLead(db,{sessionKey:body.sessionKey,message:body.message,name:body.name,email:body.email,phone:body.phone});return json({data:{mode:"public",lead,customerDataAccess:false,toolExecution:false,callbackAutomation:false}},201);}if(!(await withinPublicRateLimit(db,request,{table:"ai_web_chat_public_rate",now:Date.now(),limit:PUBLIC_AI_CHAT_TURN_LIMIT,windowMs:PUBLIC_AI_CHAT_WINDOW_MS})))return json({error:"You have sent a lot of messages in a short time. Please wait a few minutes and try again.",code:"public_chat_rate_limited"},429);const data=await runPublicAiWebChat(db,{query:body.query||body.message||"",history:body.history,sessionKey:body.sessionKey,careContext:atlasCareContext(body.careContext),cityId:body.cityId,zoneId:body.zoneId});return json({data});}
  let actor;
  try{actor=await resolveActor(request);}
  catch(error){
@@ -80,6 +82,8 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  if(body.customerId&&body.customerId!==customerId)return json({error:"Client customer identity is not accepted"},403);
  // Ownership is settled once, before the request's own fields choose what happens next.
  await requireCustomerOwnership(db,actor,customerId);
+ const qualification=await resolveChatRouteQualification(db,await runtime(),actor,session,body as unknown as Record<string,unknown>);
+ if(qualification){const key=`chat-qualification:${qualification.approval.jobId}:${qualification.turnKey}`;const data=await runAuthenticatedAiWebChat(db,{actor,customerId,text:body.message||"",idempotencyKey:key},{qualification:{...qualification,turnKey:key}});return json({data},200);}
  if(body.cancelCallId){
   const cancelled=await cancelGovernedCustomerCallback(db,{actor,customerId,callId:String(body.cancelCallId),reason:"customer_cancelled_in_chat"});
   await securityAudit(db,actor,"ai.web_chat.callback_cancel","voice_call",String(body.cancelCallId),"completed",{customerId});
@@ -117,7 +121,7 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
  if(!body.message||!body.idempotencyKey)return json({error:"Customer, message and idempotency key are required"},400);
  // Only an authenticated, customer-owned chat may originate a phone call. Anonymous web leads stay
  // capture-only so an internet user cannot type somebody else's number and cause PawSpace to dial it.
- if(isCustomerCallbackRequest(body.message)){
+ if(isCustomerCallbackRequest(body.message)&&!isExplicitConversationFollowup(body.message)){
   const original=await reserveWebChatCallbackRequest(db,customerId,body.idempotencyKey,{message:body.message,...callbackRequestFields(body)});
   const callback=await requestGovernedCustomerCallback(db,await runtime(),{actor,customerId,idempotencyKey:body.idempotencyKey,...original});
   const followUp=await handoffUndialledCallback(db,actor,customerId,null,callback,`callback:${body.idempotencyKey}`);

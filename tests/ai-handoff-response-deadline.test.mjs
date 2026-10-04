@@ -9,9 +9,12 @@ test('queue does not invent a response deadline when the canonical value is abse
 const {readFileSync}=await import('node:fs');
 const {createHash}=await import('node:crypto');
 const {reverseAtlasHandoffDeadline}=await import('./helpers/atlas-handoff-deadline-review.mjs');
+const {preservedCombinedLocalBytes}=await import('./helpers/combined-local-reviewed-delta.mjs');
 const preservation=JSON.parse(readFileSync(new URL('./fixtures/atlas-handoff-deadline-preservation.json',import.meta.url),'utf8'));
 for(const [file,entry]of Object.entries(preservation))test('deadline exception restores exact historical bytes and rejects unrelated changes: '+file,()=>{
- const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
+ const raw=readFileSync(new URL('../'+file,import.meta.url),'utf8');
+ const source=preservedCombinedLocalBytes(file,raw).toString();
+ if(source!==raw)assert.throws(()=>preservedCombinedLocalBytes(file,raw+'\nUNREVIEWED'));
  const digest=s=>createHash('sha256').update(s).digest('hex');
  assert.equal(digest(source),entry.afterSha256);
  assert.equal(digest(reverseAtlasHandoffDeadline(source,file)),entry.beforeSha256);

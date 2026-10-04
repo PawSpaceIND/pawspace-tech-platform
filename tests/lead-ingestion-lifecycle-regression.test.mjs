@@ -28,7 +28,7 @@ test("lead conversion attribution uses normalized service and lifecycle state",(
   assert.match(source,/normalizeLeadServiceCode\(booked\?\.service_code\)/);
   assert.match(source,/lifecycle_state NOT IN \('converted','dropped'\)/);
   assert.match(source,/lifecycle_state='converted'/);
-  assert.match(source,/matchedOn:"customer_and_normalized_service"/);
+  assert.match(source,/matchedOn:origin\.leadId\?"verified_conversation_origin":"customer_and_normalized_service"/);
 });
 
 test("leadless WhatsApp inbound initializes canonical lead before persisting message",()=>{

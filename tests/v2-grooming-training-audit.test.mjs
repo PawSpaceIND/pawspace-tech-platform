@@ -74,11 +74,11 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
   assert.match(assisted,/setRequestedCustomerId\(requested\);setCrmCustomer\(null\);/);
  });
  // QA regression (trainer-complete): the server half of this wire is executed in tests/training-session-lifecycle.test.mjs.
- test('review: the trainer pre-check is saved after start and stays confirmable until completion',()=>{
+ test('review: saved attendance and captured before proof gate start, and confirmations remain editable until completion',()=>{
   const trainer=read('app/trainer/page.tsx');
-  assert.match(trainer,/action:"start"\}\);try\{await trainingSessionAction\(\{sessionId:selected\.id,action:"save_report",\.\.\.attendanceOnly\}/,'the pre-check is persisted right after a successful start');
-  assert.match(trainer,/const attendanceOnly:Record<string,unknown>=\{report:\{attendance:report\.attendance\}\}/,'only attendance is saved at start, so no default scores are recorded');
-  assert.match(trainer,/onClick=\{\(\)=>void startSession\(\)\}>Start session</);
+  assert.match(trainer,/async function startSession\(\)\{if\(!selected\|\|!savedAttendanceReady\|\|!beforePhotoCaptured\)return;/,'start refuses unsaved attendance or missing before proof');
+  assert.match(trainer,/act\("save_report",\{report:\{attendance:report\.attendance\}\}\)/,'pre-start save persists only genuine attendance');
+  assert.match(trainer,/disabled=\{busy\|\|!savedAttendanceReady\|\|!beforePhotoCaptured\} onClick=\{\(\)=>void startSession\(\)\}>Start session</);
   assert.match(trainer,/<span>ATTENDANCE & SAFETY<\/span>.*\{attendanceControls\}<\/section><div className=\{styles\.actions\}><button disabled=\{busy\|\|!evidenceSettled\} onClick=\{\(\)=>void act\("save_report",\{report\}\)\}>Save report/,'the in-session report keeps the confirmations editable');
   assert.match(trainer,/!selected\.ownerHandover\|\|!attendanceReady\|\|!trainingProgressReady\(scores\)\} onClick=\{\(\)=>void act\("complete",\{report\}\)\}/,'completion waits for a genuine confirmation');
   assert.match(trainer,/const attendanceReady=safeArea&&\(attendanceMode!=="parent"\|\|parentConfirmed\);/);
@@ -89,7 +89,7 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
  // executed in tests/trainer-workspace-d1-scale.test.mjs; this pins the page's order and its stale-response guard.
  test('trainer: the workspace opens once sessions are listed, and only the newest photo read writes',()=>{
   const trainer=read('app/trainer/page.tsx');
-  const start=trainer.indexOf('useEffect(()=>{let active=true;'),effect=trainer.slice(start,trainer.indexOf('[requestedBookingId,requestedSessionId]);',start));
+  const end=trainer.indexOf('[requestedBookingId,requestedSessionId]);'),start=trainer.lastIndexOf('useEffect(()=>{let active=true;',end),effect=trainer.slice(start,end);
   assert.ok(start>=0&&effect.length>0,'the workspace load effect');
   const listed=effect.indexOf('await loadTrainerSessions(identity.subjectId)'),opened=effect.indexOf('setLoading(false);void providerDisplayName('),photos=effect.indexOf('if(first)await showEvidence(first.id);');
   assert.ok(listed>=0&&opened>listed&&photos>opened,'loading ends after the sessions list and before the photos and display name are requested');

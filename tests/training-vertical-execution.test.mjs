@@ -187,7 +187,7 @@ async function programmeWorld(over = {}) {
     CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,channel TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,pet_ids_json TEXT,created_by TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS booking_service_locations (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,provider_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'customer_booking',status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,lease_expires_at INTEGER,customer_session_id TEXT,attempt_id TEXT);
-    CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,service_code TEXT,status TEXT,updated_at INTEGER);
+    CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,service_code TEXT,provider_model TEXT,status TEXT,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER);
   `);
   w.sqlite.prepare("INSERT OR REPLACE INTO canonical_customers VALUES (?,?,?,?,?,?,'active',?,?)")
@@ -232,7 +232,7 @@ test("TRN-05 session state machine: each step is reachable only from the step be
   // Nothing may be skipped: a scheduled session cannot jump straight to started.
   const skipToStart = await act("start");
   assert.equal(skipToStart.ok, false, "a scheduled session must not be startable without accept/arrive");
-  const skipToArrive = await act("arrive", { latitude: DOORSTEP.lat, longitude: DOORSTEP.lng });
+  const skipToArrive = await act("arrive", { latitude: DOORSTEP.lat, longitude: DOORSTEP.lng, accuracyMeters: 5 });
   assert.equal(skipToArrive.ok, false, "a trainer cannot arrive at a session they never accepted");
   assert.equal(status(), "scheduled", "refused transitions must not move the session");
 
@@ -263,7 +263,7 @@ test("TRN-06 arrival geofence: a trainer must actually be at the customer's door
   assert.match(String(noCoords.body ?? ""), /Allow location access to confirm arrival/i);
 
   // ~2.2 km away - a trainer marking themselves arrived from the next neighbourhood.
-  const farAway = await act("arrive", { latitude: DOORSTEP.lat + 0.02, longitude: DOORSTEP.lng });
+  const farAway = await act("arrive", { latitude: DOORSTEP.lat + 0.02, longitude: DOORSTEP.lng, accuracyMeters: 5 });
   assert.equal(farAway.ok, false, "a trainer 2 km away must not be able to mark themselves arrived");
   assert.match(String(farAway.body ?? ""), /from the customer doorstep/i);
   assert.match(String(farAway.body ?? ""), new RegExp(`${life.TRAINING_ARRIVAL_GEOFENCE_METERS}m`),
@@ -271,13 +271,13 @@ test("TRN-06 arrival geofence: a trainer must actually be at the customer's door
   assert.equal(sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(SESSION).status, "on_the_way",
     "a refused arrival must not move the session");
 
-  // ~50 m away - inside the 250 m geofence.
-  const atDoor = await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng });
+  // ~50 m away - inside the 500 m geofence.
+  const atDoor = await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng, accuracyMeters: 5 });
   assert.equal(atDoor.ok, true, `a trainer at the door must be able to arrive: ${String(atDoor.body ?? "").slice(0, 200)}`);
   assert.ok(atDoor.value.geofence.distanceMeters <= life.TRAINING_ARRIVAL_GEOFENCE_METERS);
-  assert.equal(atDoor.value.geofence.thresholdMeters, 250);
+  assert.equal(atDoor.value.geofence.thresholdMeters, 500);
   assert.equal(sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(SESSION).status, "arrived");
-  stage("Arrival geofence", "PASS", `no coordinates and a 2 km distance both refused; ${atDoor.value.geofence.distanceMeters}m accepted against a 250m threshold`);
+  stage("Arrival geofence", "PASS", `no coordinates and a 2 km distance both refused; ${atDoor.value.geofence.distanceMeters}m accepted against a 500m threshold`);
 });
 
 // --- 4. THE FOUR COMPLETION GATES --------------------------------------------
@@ -290,7 +290,9 @@ async function inSessionWorld(over = {}) {
   });
   await act("accept");
   await act("on_the_way");
-  await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng });
+  await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng, accuracyMeters: 5 });
+  await act("save_report", { report: { attendance: { mode: "parent", safeAreaConfirmed: true, parentOrCaretakerConfirmed: true } } });
+  await evidence(w.db, "before_service", "TRN-PRESTART-BEFORE");
   await act("start");
   return { ...w, act };
 }
@@ -314,16 +316,16 @@ const GOOD_REPORT = (evidenceRefs) => ({
   evidenceRefs,
 });
 
-test("TRN-07 owner handover: a session cannot close without the mandatory 15-minute handover", async () => {
+test("TRN-07 owner handover: a session cannot close without the confirmed parent handover", async () => {
   const { db, sqlite, act } = await inSessionWorld();
   const life = await import("../lib/training-session-lifecycle.ts");
   const call = (action, over = {}) => attempt(() => life.mutateTrainingSession(db, {
     sessionId: SESSION, action, actorId: TRAINER, idempotencyKey: `hv-${action}-${Math.random()}`, ...over,
   }));
 
-  const short = await call("owner_handover", { ownerHandoverMinutes: 5 });
-  assert.equal(short.ok, false, "a 5-minute handover must not satisfy the 15-minute rule");
-  assert.match(String(short.body ?? ""), /at least 15 minutes/i);
+  const short = await call("owner_handover", { ownerHandoverCompleted: false, ownerHandoverMinutes: 5 });
+  assert.equal(short.ok, false, "an explicitly incomplete handover must be refused");
+  assert.match(String(short.body ?? ""), /Confirm.*parent handover/i);
 
   const missing = await call("owner_handover", {});
   assert.equal(missing.ok, false, "a handover with no duration must be refused");
@@ -334,14 +336,14 @@ test("TRN-07 owner handover: a session cannot close without the mandatory 15-min
   const refs = [await evidence(db, "before_service", "TRN-MED-B1"), await evidence(db, "after_service", "TRN-MED-A1")];
   const noHandover = await call("complete", { report: GOOD_REPORT(refs) });
   assert.equal(noHandover.ok, false, "a session must not close without the handover");
-  assert.match(String(noHandover.body ?? ""), /Owner Handover/i);
+  assert.match(String(noHandover.body ?? ""), /parent handover/i);
 
-  const done = await call("owner_handover", { ownerHandoverMinutes: 20 });
-  assert.equal(done.ok, true, `a 20-minute handover must be accepted: ${String(done.body ?? "").slice(0, 200)}`);
+  const done = await call("owner_handover", { ownerHandoverCompleted: true, ownerHandoverMinutes: 10 });
+  assert.equal(done.ok, true, `a confirmed 10-minute handover must be accepted: ${String(done.body ?? "").slice(0, 200)}`);
   const row = sqlite.prepare("SELECT duration_minutes,completed_by FROM training_owner_handover WHERE session_id=?").get(SESSION);
-  assert.equal(Number(row.duration_minutes), 20);
+  assert.equal(Number(row.duration_minutes), 10);
   assert.equal(row.completed_by, TRAINER);
-  stage("Owner handover", "PASS", "5 minutes and a missing duration refused; completion blocked without it; 20 minutes recorded");
+  stage("Owner handover", "PASS", "incomplete and missing handover refused; completion blocked without confirmation; 10 minutes recorded");
 });
 
 test("TRN-08 session report: attendance, safe area and real homework are all required to close", async () => {
@@ -712,7 +714,7 @@ test("TRN-16 programme: later sessions stay locked until the one before them is 
   });
   await act("accept");
   await act("on_the_way");
-  await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng });
+  await act("arrive", { latitude: DOORSTEP.lat + 0.00045, longitude: DOORSTEP.lng, accuracyMeters: 5 });
   await act("start");
   await act("owner_handover", { ownerHandoverMinutes: 20 });
   const refs = [await evidence(w.db, "before_service", "TRN-MED-MS-B"), await evidence(w.db, "after_service", "TRN-MED-MS-A")];

@@ -74,13 +74,18 @@ test("P0-4: Training session transitions bind the expected prior state", async (
   const source = await read("lib/training-session-lifecycle.ts");
   for (const [to, from] of [
     ["accepted", "scheduled"],
-    ["on_the_way", "accepted"],
     ["arrived", "on_the_way"],
     ["in_session", "arrived"],
     ["completed", "in_session"],
   ]) {
     assert.match(source, new RegExp(`training_sessions SET[^\n]*status='${to}'[^\n]*AND status='${from}'`), `${from} -> ${to} must be conditional`);
   }
+  const travelling = source.slice(source.indexOf('if(input.action==="on_the_way")'), source.indexOf('if(input.action==="arrive")'));
+  assert.match(travelling, /requireState\(\["accepted","scheduled"\]\)/);
+  assert.match(travelling, /const automatic=current==="scheduled"/);
+  assert.match(travelling, /if\(automatic&&!await db\.prepare/,'scheduled travel requires the full-time model assertion');
+  assert.match(travelling, /UPDATE training_sessions SET status='on_the_way'[^\n]*AND status=\? AND \$\{ctx\.guardSql\}/);
+  assert.match(travelling, /\.bind\(now,row\.id,providerId,current,\.\.\.ctx\.guardBinds\)/,'the observed prior state and canonical lease guard are bound');
   for (const to of ["reschedule_requested", "no_show", "scheduled", "cancelled"]) {
     assert.match(source, new RegExp(`training_sessions SET[^\n]*status='${to}'[^\n]*AND status=\\?`), `${to} must bind the state observed before the write`);
   }

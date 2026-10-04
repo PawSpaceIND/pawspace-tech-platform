@@ -118,7 +118,7 @@ test("a refusal on a shared GET/POST helper does not claim a write happened", ()
 
 test("the doorstep and Training stale-state refusals are governed too", () => {
   assert.match(read("app/api/grooming-service-location/route.ts"), /throw authFailure\("The doorstep address could not be resolved/);
-  assert.match(read("app/api/training-sessions/route.ts"), /throw authFailure\("This Training booking changed while the session was being completed/);
+  assert.match(read("app/api/training-sessions/route.ts"), /throw governedJsonError\(\{error:"This Training booking changed while the session was being completed[^"]*"\},409\)/);
 });
 
 test("cross-origin blocks stay deliberately unexplained", () => {

@@ -99,14 +99,15 @@ test("the founder-seed repairs still run on every call of a binding that has alr
   await assertWithinBudget(harness, { max: 3, min: 3, label: "ensure after the repairs" }, () => commercial.ensureTrainingCommercialTables(harness.db));
 });
 
-test("a legacy database gains both columns the first time a binding sees it", async () => {
+test("a legacy database gains all three additive columns the first time a binding sees it", async () => {
   const harness = freshCountingD1();
   harness.sqlite.exec("CREATE TABLE training_commercial_packages (package_code TEXT PRIMARY KEY,name TEXT NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,base_price REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',meet_and_greet INTEGER NOT NULL DEFAULT 0,max_pets INTEGER NOT NULL DEFAULT 4,direct_minutes_per_pet INTEGER NOT NULL DEFAULT 45,coaching_minutes_per_pet INTEGER NOT NULL DEFAULT 15,split_due_percent REAL NOT NULL DEFAULT 50,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   harness.sqlite.exec("CREATE TABLE training_commercial_quotes (id TEXT PRIMARY KEY,package_code TEXT NOT NULL,package_version INTEGER NOT NULL,pet_count INTEGER NOT NULL,scheduled_start TEXT NOT NULL,payment_mode TEXT NOT NULL,coupon_code TEXT,discount REAL NOT NULL DEFAULT 0,total_amount REAL NOT NULL,amount_due_now REAL NOT NULL,minutes_per_session INTEGER NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,used_at INTEGER,used_booking_id TEXT)");
-  // CREATE batch, PRAGMA + ALTER for each table, seed batch, repair read.
-  await assertWithinBudget(harness, { max: 7, min: 7, label: "first ensure on a legacy database" }, () => commercial.ensureTrainingCommercialTables(harness.db));
+  // CREATE batch, one PRAGMA per table, three required ALTERs, seed batch, repair read.
+  await assertWithinBudget(harness, { max: 8, min: 8, label: "first ensure on a legacy database" }, () => commercial.ensureTrainingCommercialTables(harness.db));
   const columns = (table) => harness.sqlite.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name);
   assert.ok(columns("training_commercial_quotes").includes("coupon_quote_id"));
+  assert.ok(columns("training_commercial_quotes").includes("scheduling_mode"));
   assert.ok(columns("training_commercial_packages").includes("extra_pet_percent"));
   assert.deepEqual(catalogue(harness.sqlite), FOUNDER, "the legacy database ends with the same catalogue as a new one");
   await assertWithinBudget(harness, { max: 3, min: 3, label: "ensure once the columns exist" }, () => commercial.ensureTrainingCommercialTables(harness.db));
@@ -118,7 +119,7 @@ test("a Training quote costs 6 D1 calls on an existing schema, prices exactly as
   await commercial.createTrainingQuote(harness.db, input); // first quote on the binding seeds the pricing-control rows
   // ensure (3), the package, the live price, the INSERT - was 16.
   const quote = await assertWithinBudget(harness, { max: 6, min: 6, label: "a Training quote on an existing schema" }, () => commercial.createTrainingQuote(harness.db, input));
-  assert.deepEqual(terms(quote), { packageCode: "training-8-basic", packageName: "Basic Obedience Plan", packageVersion: 1, sessions: 8, validityDays: 62, petCount: 2, minutesPerSession: 120, planPrice: 12000, extraPetPercent: 60, basePrice: 19200, discount: 0, totalAmount: 19200, amountDueNow: 9600, paymentMode: "split", meetAndGreet: false, couponCode: null, couponQuoteId: null });
+  assert.deepEqual(terms(quote), { schedulingMode:"series_v1", packageCode: "training-8-basic", packageName: "Basic Obedience Plan", packageVersion: 1, sessions: 8, validityDays: 62, petCount: 2, minutesPerSession: 120, planPrice: 12000, extraPetPercent: 60, basePrice: 19200, discount: 0, totalAmount: 19200, amountDueNow: 9600, paymentMode: "split", meetAndGreet: false, couponCode: null, couponQuoteId: null });
 
   // The same quote with nothing remembered between calls is the same quote, stored the same way.
   const reference = new DatabaseSync(":memory:"), binding = perCallBindings(reference);

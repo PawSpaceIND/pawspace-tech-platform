@@ -27,7 +27,7 @@ test("booking and scheduling go through the canonical Taxi client",()=>{
 });
 
 test("Taxi v2 supports 1-6 owned dogs or cats and preserves canonical pet identity",()=>{
- assert.match(flowSource,/loadCustomerPets/);assert.match(flowSource,/Select 1–6 pets/);assert.match(flowSource,/chosenPets\.length>=1&&chosenPets\.length<=6/);assert.match(flowSource,/petIds:chosenPets\.map\(p=>p\.id\)/);assert.match(flowSource,/p\.species==="cat"\?"cat":p\.species==="dog"\?"dog"/);assert.doesNotMatch(flowSource,/DOGS ONLY|dogs-only/);
+ assert.match(flowSource,/loadCustomerAccount\(customer\.customerId\)/);assert.match(flowSource,/const rows=account\.pets;setPets\(rows\)/);assert.match(flowSource,/Select 1–6 pets/);assert.match(flowSource,/chosenPets\.length>=1&&chosenPets\.length<=6/);assert.match(flowSource,/petIds:chosenPets\.map\(p=>p\.id\)/);assert.match(flowSource,/p\.species==="cat"\?"cat":p\.species==="dog"\?"dog"/);assert.doesNotMatch(flowSource,/DOGS ONLY|dogs-only/);
 });
 
 test("pickup, drop, round trip and city coverage use the v2 commercial contract",()=>{

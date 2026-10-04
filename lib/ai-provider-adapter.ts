@@ -1,3 +1,4 @@
+import {runBoundedChatQualification,type ChatQualificationApproval} from "./chat-bounded-qualification";
 import { reserveTextTest, directPayload, assertTextTestDispatch, settleTextTest, markTextTestUnknown, type Claim, type Scope } from "./atlas-text-test-admission";
 /**
  * The single boundary between PawSpace and an external language-model provider.
@@ -223,7 +224,7 @@ export async function aiProviderConnection(channel?: string): Promise<{
  * cannot wait for a complete generation, while chat and WhatsApp are unaffected because they do not
  * pass it. Only the OpenAI provider streams; the Anthropic path ignores it and stays blocking.
  */
-export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; textTestScope?: Scope; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
+export async function requestAiDraft(input: { systemPrompt: string; userPrompt: string; textTestScope?: Scope; boundedChatQualification?: {approval:ChatQualificationApproval;turnKey:string;informationOnly:true}; nextAudioConversation?: {threadId:string;customerId:string}; maxTokens?: number; channel?: string; intent?: string; timeoutMs?: number; onDelta?: (delta: string) => void; onTiming?: (stage: string) => void; signal?: AbortSignal }): Promise<AiDraftResult> {
   const abortError=()=>Object.assign(new Error("AI provider request cancelled"),{name:"AbortError"});
   const assertActive=()=>{if(input.signal?.aborted)throw abortError();};
   assertActive();
@@ -277,6 +278,21 @@ export async function requestAiDraft(input: { systemPrompt: string; userPrompt: 
     if (db) await completeAiProviderRequest(db, env, { reservation, provider: providerRef, modelRef, failureClass: "cancelled", retryableFailure: false });
     throw abortError();
   };
+
+  // Internal server-only qualification option: never bind this object from an HTTP body.
+  // It is dormant until a separately approved caller supplies verified scope and billing evidence.
+  if(input.boundedChatQualification){
+    const scoped=input.boundedChatQualification;
+    if(!db||providerRef!=="openai"||modelRef!=="gpt-5.6-terra"||input.channel!=="chat"||input.onDelta||!input.textTestScope)return await finishFailure("runtime_control_unavailable");
+    try{
+      const boundedStarted=Date.now();
+      const bounded=await runBoundedChatQualification({db,approval:scoped.approval,env,customerId:input.textTestScope.customerId,threadId:input.textTestScope.threadId,turnKey:scoped.turnKey,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,outputTokens:Math.min(maxTokens,650),informationOnly:scoped.informationOnly,signal:input.signal,fetcher:fetch,credential:apiKey});
+      const parsed=extractOpenAiText(bounded.result);
+      if("failure" in parsed)return await finishFailure(parsed.failure);
+      await completeAiProviderRequest(db,env,{reservation,provider:providerRef,modelRef,actualTokens:parsed.usageTokens,retryableFailure:false});
+      return{connected:true,text:parsed.text,modelRef,providerRef,latencyMs:Date.now()-boundedStarted,stopReason:parsed.stopReason,...(parsed.usageTokens===undefined?{}:{usageTokens:parsed.usageTokens})};
+    }catch{return await finishFailure("runtime_control_unavailable");}
+  }
 
   try { textTestClaim=await reserveTextTest(db,env,{provider:providerRef,model:modelRef,channel:input.channel,scope:input.textTestScope,systemPrompt:safeSystemPrompt,userPrompt:safeUserPrompt,maxOutput:maxTokens,streaming:Boolean(input.onDelta)}); } catch { return await finishFailure("runtime_control_unavailable"); }
 

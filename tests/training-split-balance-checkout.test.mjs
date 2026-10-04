@@ -26,13 +26,13 @@ function futureStart(days) {
   return start;
 }
 
-async function bookStarter(t, paymentMode, beforeBooking = async () => {}) {
+async function bookStarter(t, paymentMode, beforeBooking = async () => {}, schedulingMode="series_v1") {
   const ctx = await setupJourney();
   t.after(ctx.close);
   await seedOwnedPet(ctx.db, CUSTOMER.id, CUSTOMER.pet, "Bruno");
   const cookie = await sessionCookie(ctx.db, "customer", CUSTOMER.id, `customer:${CUSTOMER.id}`);
   const start = futureStart(4);
-  const quoted = await routeCall("../../app/api/training-commercial/route.ts", "POST", "/api/training-commercial", { packageCode: PACKAGE, petCount: 1, scheduledStart: start.toISOString(), paymentMode });
+  const quoted = await routeCall("../../app/api/training-commercial/route.ts", "POST", "/api/training-commercial", { packageCode: PACKAGE, petCount: 1, scheduledStart: start.toISOString(), paymentMode, schedulingMode });
   assert.equal(quoted.status, 201, JSON.stringify(quoted.body));
   const quote = quoted.body.data;
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {
@@ -41,6 +41,7 @@ async function bookStarter(t, paymentMode, beforeBooking = async () => {}) {
     serviceAddress: "14 Indiranagar 100 Feet Road, Bengaluru", servicePincode: "560038",
     scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + quote.minutesPerSession * 60_000).toISOString(),
     occurrences: quote.sessions, cadenceDays: 7, preferredProviderId: TRAINER,
+    ...(schedulingMode==="rolling_v1"?{trainingQuoteId:quote.quoteId,trainingSchedulingMode:"rolling_v1"}:{}),
   }, cookie);
   assert.equal(scheduled.status, 200, JSON.stringify(scheduled.body));
   await beforeBooking(ctx, quote);
@@ -105,4 +106,9 @@ test("a prepaid Training booking has no split schedule and is settled once captu
   assert.equal(tableExists ? ctx.sqlite.prepare("SELECT count(*) n FROM stay_payment_schedules WHERE booking_id=?").get(bookingId).n : 0, 0);
   ctx.sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE booking_id=?").run(bookingId);
   assert.equal((await paymentStageAmount(ctx.db, bookingId)).stage, "settled");
+});
+
+
+test("rolling canonical checkout preserves split balance without inventing a first-session deadline",async(t)=>{
+ const {ctx,bookingId,quote}=await bookStarter(t,"split",(w,q)=>commercial.captureTrainingQuoteSandbox(w.db,{quoteId:q.quoteId,amount:q.amountDueNow,paymentKey:"rolling-deposit"}),"rolling_v1");const row=ctx.sqlite.prepare("SELECT * FROM stay_payment_schedules WHERE booking_id=?").get(bookingId);assert.equal(row.balance_due_at,0);assert.equal(row.balance_amount,quote.totalAmount-quote.amountDueNow);const sweep=await import("../lib/stay-split-payments.ts");assert.equal((await sweep.sweepOverdueStayBalances(ctx.db,Date.now()+86400000)).marked,0);assert.equal(ctx.sqlite.prepare("SELECT status FROM stay_payment_schedules WHERE booking_id=?").get(bookingId).status,"pending_balance");const pg=await import("../lib/training-programme.ts");const record=await pg.materializeTrainingProgramme(ctx.db,{bookingId,actorId:"local-test"});assert.equal(record.sessions.length,1);assert.equal(record.entitlement.total_sessions,2);
 });

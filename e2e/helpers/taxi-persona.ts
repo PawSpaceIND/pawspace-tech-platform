@@ -52,16 +52,20 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   }
   await page.getByRole("button", { name: "Continue to trip details", exact: true }).click();
   await page.getByRole("button", { name: "One-way", exact: true }).click();
-  await page.getByRole("button", { name: "City / regular", exact: true }).click();
   await page.getByLabel("Pickup address", { exact: true }).fill("100 Feet Road, Indiranagar, Bengaluru 560038");
   await page.getByLabel("Drop address / Point 1", { exact: true }).fill("Koramangala 5th Block, Bengaluru 560095");
   await page.getByLabel("Pickup date", { exact: true }).fill(date!);
   // Matches the runner's documented 14:00 IST execution clock; no hosted time override is used.
   await page.getByRole("combobox", { name: "Pickup time", exact: true }).selectOption("14:00");
+  const coverageResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/service-zone" && response.request().method() === "GET" && new URL(response.url()).searchParams.get("pincode") === "560038");
+  await page.getByLabel("Pickup PIN code", { exact: true }).fill("560038");
+  expect((await coverageResponse).status()).toBe(200);
+  await expect(page.getByRole("status").filter({ hasText: "PIN 560038 is served." })).toBeVisible();
   await page.getByRole("button", { name: "Review ride requirements", exact: true }).click();
   const quoted = page.waitForResponse(r => r.url().endsWith("/api/taxi-commercial") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Calculate Citroën & XUV fares", exact: true }).click();
   const quoteResponse = await quoted;
+  expect(quoteResponse.request().postDataJSON()).toMatchObject({ ridePurpose: "regular", tripType: "one_way" });
   expect(quoteResponse.status(), await quoteResponse.text()).toBe(201);
   const quote = (await quoteResponse.json()).data;
   expect(quote.routeSource).toBe("google_routes_uat");
@@ -74,11 +78,13 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   expect(fare).toMatchObject({ quotedTotal: total, bookingFee: fee, finalBalanceBeforeAdjustments: balance, waitingCharge: 0, handlerCharge: 0 });
   await expect(page.getByRole("heading", { name: "Choose your car", exact: true })).toBeVisible();
   await page.getByRole("button").filter({ hasText: "booking fee · 50%" }).filter({ hasText: "Citroen eC3" }).click();
-  await page.getByLabel("Pickup PIN code", { exact: true }).fill("560038");
   await page.screenshot({ path: test.info().outputPath("taxi-canonical-route-quote.png"), fullPage: true });
 
+  const reserve = page.getByRole("button", { name: /^Reserve · then pay 50% booking fee/ });
+  await expect(reserve).toBeVisible();
+  await expect(reserve).toBeEnabled();
   const bookingResponse = page.waitForResponse(r => r.url().endsWith("/api/taxi-ride-bookings") && r.request().method() === "POST", { timeout: 45_000 });
-  await page.getByRole("button", { name: /^Reserve · pay/ }).click();
+  await reserve.click();
   const created = await bookingResponse;
   expect(created.status(), await created.text()).toBe(201);
   const booking = (await created.json()).data;

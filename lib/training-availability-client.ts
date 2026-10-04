@@ -4,11 +4,12 @@ import {previewUatProviders, type UatScheduleRequest} from "./uat-scheduling-cli
 
 export type TrainingScheduleSelection = {
   customerId: string; petIds: string[]; cityId: string; zoneId: string;
-  scheduledStart: string; quote: TrainingQuote; cadenceDays?: number;
+  scheduledStart: string; quote: TrainingQuote; cadenceDays?: number; schedulingMode?: "rolling_v1" | "series_v1";
 };
 
-/** Preview and reserve describe exactly the same programme, not only session one. */
-export function trainingScheduleRequest(input: TrainingScheduleSelection): UatScheduleRequest {
+export type TrainingScheduleRequest=UatScheduleRequest&{trainingQuoteId:string;trainingSchedulingMode?:"rolling_v1"};
+/** Preview and reserve share the quote-bound scheduling mode; legacy callers retain their series. */
+export function trainingScheduleRequest(input: TrainingScheduleSelection): TrainingScheduleRequest {
   const {quote} = input;
   const start = Date.parse(input.scheduledStart);
   if (!input.customerId || !input.cityId || !input.zoneId || input.petIds.length === 0 ||
@@ -20,13 +21,16 @@ export function trainingScheduleRequest(input: TrainingScheduleSelection): UatSc
   if (!Number.isFinite(quote.expiresAt) || quote.expiresAt <= Date.now()) {
     throw new Error("Your Training quote expired. Refresh availability before continuing.");
   }
-  trainingCalendarWindows(input.scheduledStart, quote, input.cadenceDays ?? 7);
+  if(input.schedulingMode && quote.schedulingMode && input.schedulingMode !== quote.schedulingMode) throw new Error("Training scheduling mode does not match the current quote. Refresh availability.");
+  const rolling = (input.schedulingMode ?? quote.schedulingMode) === "rolling_v1";
+  trainingCalendarWindows(input.scheduledStart, rolling ? {...quote,sessions:1} : quote, input.cadenceDays ?? 7);
   return {
-    clientRequestId: `training:${quote.quoteId}:${input.customerId}`,
+    clientRequestId: `training:${quote.quoteId}:${input.customerId}${rolling ? ":rolling_v1" : ""}`,
+    trainingQuoteId:quote.quoteId,...(rolling?{trainingSchedulingMode:"rolling_v1" as const}:{}),
     customerId: input.customerId, petIds: [...input.petIds], serviceCode: "dog_training",
     cityId: input.cityId, zoneId: input.zoneId, scheduledStart: input.scheduledStart,
     scheduledEnd: new Date(start + quote.minutesPerSession * 60_000).toISOString(),
-    occurrences: quote.meetAndGreet ? 1 : quote.sessions, cadenceDays: input.cadenceDays ?? 7,
+    occurrences: rolling || quote.meetAndGreet ? 1 : quote.sessions, cadenceDays: input.cadenceDays ?? 7,
   };
 }
 
@@ -55,7 +59,7 @@ export async function loadAvailableTrainingTrainers(
 }
 
 /** Reuse the same calendar builder and scheduler. Choice changes identity; changing a preview ranking does not. */
-export function trainingReservationForChoice(input: TrainingScheduleSelection, choice: {mode: "auto" | "specific"; providerId?: string}): UatScheduleRequest {
+export function trainingReservationForChoice(input: TrainingScheduleSelection, choice: {mode: "auto" | "specific"; providerId?: string}): TrainingScheduleRequest {
   if (choice.mode !== "auto" && choice.mode !== "specific") throw new Error("Choose how your trainer will be assigned.");
   if (choice.mode === "specific" && !choice.providerId?.trim()) throw new Error("Choose your trainer before reserving.");
   const request = trainingScheduleRequest(input);

@@ -1,3 +1,5 @@
+import {refreshTrainingRollingAlerts} from './training-rolling-scheduling';
+import {runTrainingOfferExpirySweep} from './training-assignment-dispatch';
 /**
  * Unpaid Dog Training bookings expire (owner decision, Dog Training follow-up 6, 26 Sep 2026).
  *
@@ -344,7 +346,7 @@ async function repairExpiries(db:Db,asOf:number,report:TrainingUnpaidExpirySweep
  }
 }
 
-export type TrainingUnpaidExpirySweepReport={skipped:boolean;reason?:string;processed:number;expired:number;expiredBookingIds:string[];skippedByReason:Record<string,number>;providerReads:number;lateCaptureRefunds:number;repairs:number;errors:string[]};
+export type TrainingUnpaidExpirySweepReport={rollingScheduling?:{scanned:number;alertChecks:number;errors:string[];externalDelivery:false};assignmentOffers?:Awaited<ReturnType<typeof runTrainingOfferExpirySweep>>;skipped:boolean;reason?:string;processed:number;expired:number;expiredBookingIds:string[];skippedByReason:Record<string,number>;providerReads:number;lateCaptureRefunds:number;repairs:number;errors:string[]};
 
 /*
  * Candidates carry every cheap predicate in SQL - trigger due, payment allow-list, nothing captured, no
@@ -370,7 +372,7 @@ async function selectCandidates(db:Db,tables:Set<string>,asOf:number,scanLimit:n
  * then up to `limit` expiries, oldest and least recently checked first. Cold-database safe - it creates no
  * Training table until a Training candidate or marker exists - and it never throws for a single booking.
  */
-export async function runTrainingUnpaidExpirySweep(db:Db,env:Env,input:{asOf?:number;limit?:number}={}):Promise<TrainingUnpaidExpirySweepReport>{
+async function runTrainingUnpaidExpirySweepCore(db:Db,env:Env,input:{asOf?:number;limit?:number}={}):Promise<TrainingUnpaidExpirySweepReport>{
  const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(100,Math.floor(input.limit??50))),scanLimit=limit*4;
  const report:TrainingUnpaidExpirySweepReport={skipped:false,processed:0,expired:0,expiredBookingIds:[],skippedByReason:{},providerReads:0,lateCaptureRefunds:0,repairs:0,errors:[]};
  try{
@@ -406,4 +408,18 @@ export async function runTrainingUnpaidExpirySweep(db:Db,env:Env,input:{asOf?:nu
   throw error;
  }
  return report;
+}
+
+/** Existing five-minute Training task also advances only newly enrolled assignment chains. */
+export async function runTrainingUnpaidExpirySweep(db:Db,env:Env,input:{asOf?:number;limit?:number}={}):Promise<TrainingUnpaidExpirySweepReport>{
+ const assignmentOffers=await runTrainingOfferExpirySweep(db);
+ const report=await runTrainingUnpaidExpirySweepCore(db,env,input);
+ const rollingScheduling={scanned:0,alertChecks:0,errors:[] as string[],externalDelivery:false as const};
+ const tables=await tableSet(db,['training_programme_entitlements','training_programmes','canonical_bookings','training_sessions','training_rolling_alert_checks']);
+ if(['training_programme_entitlements','training_programmes','canonical_bookings','training_sessions'].every(name=>tables.has(name))){
+  const checks=tables.has('training_rolling_alert_checks');
+  const rows=await db.prepare(`SELECT e.booking_id FROM training_programme_entitlements e JOIN training_programmes p ON p.id=e.programme_id JOIN canonical_bookings b ON b.id=e.booking_id ${checks?'LEFT JOIN training_rolling_alert_checks k ON k.programme_id=e.programme_id':''} WHERE e.scheduling_mode='rolling_v1' AND b.service_code='dog_training' AND b.status NOT IN ('cancelled','refunded','failed','expired','completed') AND p.status NOT IN ('completed','completed_with_exceptions','cancelled') ORDER BY ${checks?'COALESCE(k.last_checked_at,0),':''}e.created_at,e.programme_id LIMIT ?`).bind(Math.max(1,Math.min(20,Math.floor(input.limit??20)))).all<Row>();
+  for(const row of rows.results){rollingScheduling.scanned++;try{const review=await refreshTrainingRollingAlerts(db,text(row.booking_id));rollingScheduling.alertChecks+=review.createdChecks;await db.prepare('INSERT INTO training_rolling_alert_checks (programme_id,last_checked_at) SELECT programme_id,? FROM training_programme_entitlements WHERE booking_id=? ON CONFLICT(programme_id) DO UPDATE SET last_checked_at=excluded.last_checked_at').bind(Date.now(),row.booking_id).run();}catch(error){rollingScheduling.errors.push(`${text(row.booking_id)}:${await errorText(error)}`);}}
+ }
+ return {...report,assignmentOffers,rollingScheduling,errors:[...report.errors,...rollingScheduling.errors]};
 }

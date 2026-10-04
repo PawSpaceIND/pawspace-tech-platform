@@ -76,7 +76,7 @@ async function refundWorld(t, { invoiceSeries = true } = {}) {
   sqlite.exec(`
     CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,total_amount REAL,currency TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE canonical_customers (id TEXT PRIMARY KEY NOT NULL,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT DEFAULT 'uat_customer_app' NOT NULL,consent_json TEXT DEFAULT '{}' NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-    CREATE TABLE provider_capacity_profiles (id TEXT PRIMARY KEY,provider_model TEXT NOT NULL);
+    CREATE TABLE provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER,updated_at INTEGER);
     CREATE TABLE provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,provider_name TEXT,provider_model TEXT NOT NULL,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE unified_cases (id TEXT PRIMARY KEY,case_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',title TEXT NOT NULL,booking_id TEXT,created_at INTEGER NOT NULL);
@@ -275,14 +275,16 @@ async function executeTrainingProgramme(f,id) {
   await life.ensureTrainingSessionLifecycleTables(f.db);
   await media.ensureServiceMediaTable(f.db);
   for(const session of materialized.sessions) {
-    const act=(action,extra={})=>life.mutateTrainingSession(f.db,{sessionId:session.id,action,actorId:s.provider,idempotencyKey:`${session.id}-${action}`,...extra});
-    for(const action of ["accept","on_the_way","arrive","start"]) await act(action,{latitude:12.9784,longitude:77.6408});
+    const act=async(action,extra={})=>{try{return await life.mutateTrainingSession(f.db,{sessionId:session.id,action,actorId:s.provider,idempotencyKey:`${session.id}-${action}`,...extra});}catch(error){if(error instanceof Response)throw new Error(`${action}: ${await error.clone().text()}`);throw error;}};
+    for(const action of ["accept","on_the_way","arrive"]) await act(action,{latitude:12.9784,longitude:77.6408,accuracyMeters:5});
+    await act("save_report",{report:{attendance:{mode:"parent",safeAreaConfirmed:true,parentOrCaretakerConfirmed:true}}});
     const refs=[];
     for(const purpose of ["before_service","after_service"]) {
       const mid=`MED-${session.id}-${purpose}`;
       f.sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at,review_status,release_basis) VALUES (?,?,?,?,'fixture','image/jpeg',2048,'fixture-hash','clean','ready','active',0,?,?,?,'approved','scanner_clean')").run(mid,id,s.provider,purpose,s.provider,s.now,s.now);
       f.sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)").run(mid,session.id,materialized.programme.id,id,s.provider,s.now);
       refs.push(`media://asset/${mid}`);
+      if(purpose==="before_service")await act("start");
     }
     await act("owner_handover",{ownerHandoverMinutes:20});
     const done=await act("complete",{report:{attendance:{mode:"parent",safeAreaConfirmed:true,parentOrCaretakerConfirmed:true},homework:"Practise approved recall exercises with each enrolled dog.",progress:{recall:7},evidenceRefs:refs}});

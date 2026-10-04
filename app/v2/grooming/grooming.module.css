@@ -166,3 +166,29 @@
 .page.page .summary > .addressBox[aria-label="Payment timing"] > :is(b,small),.page.page .summary .safe p,.page.page .summary .safe > span,.page.page .summary .footnote { color:var(--brand-on-primary) !important; }
 .page.page .summary > .addressBox[aria-label="Payment timing"] button b { color:var(--brand-text) !important; }
 .page.page .summary .safe { background:transparent; }
+
+/* Workbook "Final testing 27th Sep", Grooming rows 3-6 and the reference flow: prominent back, package truth, add-on picker, sticky total. */
+.page .backBar { display:flex; justify-content:space-between; align-items:center; gap:12px; max-width:1100px; margin:8px auto 0; padding:0 16px; font-size:14px; }
+.page .backBar button,.page .backBar a { min-height:44px; padding:8px 14px; border:1px solid var(--brand-line); border-radius:calc(12px * var(--paw-radius-scale)); background:var(--brand-surface); color:var(--brand-text); font-weight:700; cursor:pointer; text-decoration:none; }
+.page .backBar span { color:var(--brand-muted); }
+.page .packageDetail { margin-top:16px; padding:16px; border:1px solid var(--brand-line); border-radius:var(--paw-card-radius); background:var(--brand-raised); }
+.page .packageDetailHead { display:grid; gap:4px; margin-bottom:12px; }
+.page .packageDetailHead span { font-size:11px; letter-spacing:.12em; color:var(--brand-muted); }
+.page .packageDetailHead b { font-size:18px; }
+.page .inclusionColumns { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+.page .inclusionColumns ul { list-style:none; margin:6px 0 0; padding:0; display:grid; gap:4px; font-size:14px; }
+.page .addOnPicker { margin-top:12px; }
+.page .addOnPicker summary { cursor:pointer; font-weight:700; min-height:44px; display:flex; align-items:center; }
+.page .addOnPicker label { display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; }
+.page .addOnPicker label span { flex:1; }
+.page .addOnPicker small { display:block; margin-top:6px; color:var(--brand-muted); }
+.page .stickyTotal { display:none; }
+@media(max-width:1100px) {
+  .page .stickyTotal { display:flex; position:sticky; bottom:0; z-index:5; justify-content:space-between; align-items:center; gap:12px; padding:12px 16px; background:var(--brand-surface); border-top:1px solid var(--brand-line); box-shadow:0 -6px 20px rgba(0,0,0,.08); }
+  .page .stickyTotal span,.page .stickyTotal small { display:block; font-size:12px; color:var(--brand-muted); }
+  .page .stickyTotal b { font-size:18px; }
+  .page .stickyTotal button { min-height:44px; padding:10px 16px; border:0; border-radius:calc(12px * var(--paw-radius-scale)); background:var(--brand-gold); color:var(--brand-on-gold); font-weight:800; }
+}
+
+/* Keep phone step-label wrapping from moving a focused disclosure during a tap. */
+@media(max-width:640px) { .page .backBar { min-height:60px; } }

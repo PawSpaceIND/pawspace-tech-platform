@@ -1,0 +1,4 @@
+import {authError,database,resolveActor,requirePermission,requireProviderOwnership} from '../../../lib/server-auth';
+import {getTrainingSession} from '../../../lib/training-session-lifecycle';
+import {trainingSessionContext} from '../../../lib/training-session-context';
+export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,'bookings.view');const db=await database(),id=new URL(request.url).searchParams.get('sessionId')||'',session=await getTrainingSession(db,id);if(!session)return Response.json({error:'Training session not found'},{status:404});await requireProviderOwnership(db,actor,String(session.provider_id));return Response.json({data:await trainingSessionContext(db,{request,session,actor})},{headers:{'cache-control':'private, no-store'}});}catch(error){return authError(error,'Unable to load Training session context');}}

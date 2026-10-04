@@ -117,7 +117,7 @@ export async function payStayBalance(db:Db,input:{bookingId:string;actorId:strin
  *  callers (ops alerts / cron) can act. Idempotent — already-overdue rows are untouched. */
 export async function sweepOverdueStayBalances(db:Db,now=Date.now()):Promise<{marked:number;overdue:StayPaymentSchedule[]}>{
  await ensureStayPaymentTables(db);
- const result=await db.prepare("UPDATE stay_payment_schedules SET status='overdue',updated_at=? WHERE status='pending_balance' AND balance_due_at<?").bind(now,now).run();
+ const result=await db.prepare("UPDATE stay_payment_schedules SET status='overdue',updated_at=? WHERE status='pending_balance' AND balance_due_at>0 AND balance_due_at<?").bind(now,now).run();
  const rows=await db.prepare("SELECT * FROM stay_payment_schedules WHERE status='overdue' ORDER BY balance_due_at ASC").all<Row>();
  return{marked:Number(result.meta.changes||0),overdue:rows.results.map(rowToSchedule)};
 }

@@ -141,11 +141,14 @@ test("sweepOverdueStayBalances: past-due pending goes overdue; paid and future a
   await staySplitScheduleStatement(db, { bookingId: "BK-FUTURE", serviceCode: "pet_sitting", customerId: "c2", totalAmount: 100, paidNowAmount: 50, balanceAmount: 50, balanceDueAt: now + 86400000 }).run();
   await staySplitScheduleStatement(db, { bookingId: "BK-PAIDPAST", serviceCode: "boarding", customerId: "c3", totalAmount: 100, paidNowAmount: 50, balanceAmount: 50, balanceDueAt: now - 1000 }).run();
   await payStayBalance(db, { bookingId: "BK-PAIDPAST", actorId: "x", idempotencyKey: "k3" });
+  await staySplitScheduleStatement(db, { bookingId: "BK-ROLLING", serviceCode: "dog_training", customerId: "c4", totalAmount: 100, paidNowAmount: 50, balanceAmount: 50, balanceDueAt: 0 }).run();
   const sweep = await sweepOverdueStayBalances(db, now);
   assert.equal(sweep.marked, 1);
   assert.deepEqual(sweep.overdue.map((s) => s.bookingId), ["BK-PAST"]);
   const again = await sweepOverdueStayBalances(db, now);
   assert.equal(again.marked, 0, "second sweep must not re-mark");
+  const { getStayPaymentSchedule } = await lib();
+  assert.equal((await getStayPaymentSchedule(db, "BK-ROLLING")).status, "pending_balance", "zero means no deadline until a rolling session is scheduled");
   // An overdue balance can still be settled (zero cancellation fee policy - it only blocks check-in).
   const late = await payStayBalance(db, { bookingId: "BK-PAST", actorId: "x", idempotencyKey: "k-late" });
   assert.equal(late.schedule.status, "paid");

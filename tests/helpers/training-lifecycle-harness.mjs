@@ -26,9 +26,9 @@ export const OTHER_TRAINER = "train_ramesh";
 export const CUSTOMER = "cus_t1";
 export const OTHER_CUSTOMER = "cus_other";
 // The trainer must arrive AT the doorstep: the same point, so the distance is 0m and inside
-// TRAINING_ARRIVAL_GEOFENCE_METERS (250). Moving either value apart is what the gate is for.
-export const DOORSTEP = { latitude: 12.9716, longitude: 77.5946 };
-export const FAR_AWAY = { latitude: 13.0827, longitude: 80.2707 };
+// TRAINING_ARRIVAL_GEOFENCE_METERS (500). Moving either value apart is what the gate is for.
+export const DOORSTEP = { latitude: 12.9716, longitude: 77.5946, accuracyMeters:5 };
+export const FAR_AWAY = { latitude: 13.0827, longitude: 80.2707, accuracyMeters:5 };
 
 const NOW = Date.now();
 // Anchored a fortnight ahead of the run, never to a literal calendar date, so "far enough in the

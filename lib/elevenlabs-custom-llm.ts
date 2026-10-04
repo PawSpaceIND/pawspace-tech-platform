@@ -257,7 +257,7 @@ export async function runElevenLabsGroundedTurn(db:D1Database,body:Row,clock:Tur
  // The orchestrator reads the inbound row by id, so on this path the write must have landed first.
  await settleInbound();
  const onLookupPending=lookupSpeech&&!/[^\x00-\x7f]/.test(inputText)?()=>pendingLookupAcknowledgment({signal:lookupSpeech.signal,claim:async()=>{await assertVoiceCustomerMayReply(db,ctx);return claimVoiceLookupAcknowledgment(db,{...ctx,messageId});},emit:lookupSpeech.emit}):undefined;
- const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent,onLookupPending,signal:lookupSpeech?.signal});assertActive();clock.mark("orchestrator");
+ const result=await orchestrateAiTurn(db,{actor:serviceActor,threadId:ctx.threadId,customerId:ctx.customerId,inputMessageId:messageId,idempotencyKey:`elevenlabs-llm:${messageId}`,channel:"voice",provider:actionProvider||{...provider,generate(input){return provider.generate({...input,context:{...input.context,conversationHistory,asOf:now}});}},voiceFollowupIntent:intent,voiceConversationHistory:conversationHistory,onLookupPending,signal:lookupSpeech?.signal});assertActive();clock.mark("orchestrator");
  const turn=(result.turn||{})as Row,output=text(turn.output||turn.output_text);
  if(text(turn.outcome)!=="handoff")await assertVoiceCustomerMayReply(db,ctx);
  if(!output)throw new Response("PawSpace grounded voice turn returned no reply",{status:503});

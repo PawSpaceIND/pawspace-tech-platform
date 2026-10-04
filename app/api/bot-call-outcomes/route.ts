@@ -1,3 +1,6 @@
+import{LeadCallbackRefusal}from"../../../lib/lead-callback-governance";
+import{recordAgreedBotFollowup}from"../../../lib/agreed-bot-followup";
+import{requireCustomerOwnership}from"../../../lib/server-auth";
 import{authError,authorize,database}from"../../../lib/server-auth";
 import{botCallDispositionSummary,pendingBotCallClaims,recordBotCallDisposition,reconcileBotCallClaim,BOT_CALL_TAGS}from"../../../lib/bot-call-disposition";
 
@@ -36,11 +39,17 @@ export async function POST(request:Request){
       const db=await database();
       return json({data:await reconcileBotCallClaim(db,{dispositionId:String(body.dispositionId||""),outcome:String(body.outcome||"")as"confirmed"|"not_found",note:String(body.note||""),actorId:actor.email}),bindings:bindings.optionalBindings},201);
     }
+    if(action==="followup"){
+      const actor=await authorize(request,"customers.manage");
+      const bindings=await requireBotCallBindings();if(bindings.response)return bindings.response;
+      const db=await database(),customerId=String(body.customerId||"");await requireCustomerOwnership(db,actor,customerId);
+      return json({data:await recordAgreedBotFollowup(db,{customerId,leadId:String(body.leadId||""),agreed:body.customerAgreed===true?true:body.customerAgreed===false?false:null,requestedAt:body.requestedAt==null?undefined:Number(body.requestedAt),callbackId:body.callbackId==null?undefined:String(body.callbackId),reason:String(body.reason||""),idempotencyKey:String(body.idempotencyKey||""),actorId:actor.email})});
+    }
     // Second gate, matched to the first: a bot disposition writes the same CRM rows the human path
     // writes, and that path requires customers.manage (PTJA W2-B4-M03).
     const actor=await authorize(request,"customers.manage");
     const bindings=await requireBotCallBindings();if(bindings.response)return bindings.response;
     const db=await database();
     return json({data:await recordBotCallDisposition(db,{idempotencyKey:String(body.idempotencyKey||""),leadId:body.leadId as string,phone:String(body.phone||""),channel:body.channel==="whatsapp"?"whatsapp":"voice",botProvider:String(body.botProvider||"pawspace_voice_bot"),callRef:body.callRef as string,primaryTag:String(body.primaryTag||""),secondaryTags:Array.isArray(body.tags)?body.tags as string[]:[],crossSellServices:Array.isArray(body.crossSellServices)?body.crossSellServices as string[]:[],callbackAt:body.callbackAt as number,talkTimeSeconds:body.talkTimeSeconds as number,sentiment:body.sentiment as string,notes:body.notes as string,transcriptRef:body.transcriptRef as string,actorId:actor.email}),bindings:bindings.optionalBindings},201);
-  }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to record bot call outcome");}
+  }catch(error){if(error instanceof LeadCallbackRefusal)return json({error:error.message},error.status);if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to record bot call outcome");}
 }

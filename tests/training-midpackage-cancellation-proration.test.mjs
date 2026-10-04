@@ -69,6 +69,8 @@ async function world({ publishPolicy = true, noShowTreatment = "refundable", com
   for (const k of Object.keys(programme)) if (/^ensure/.test(k)) await programme[k](db);
 
   const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(CUSTOMER,CITY,"Synthetic Training parent","+910000000001",'{"serviceUpdates":true}',now,now);
   sqlite.exec(`CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER);

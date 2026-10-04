@@ -291,6 +291,9 @@ test("W2B-C06: a genuinely overdue case at the real clock still notifies", async
   await cases.ensureUnifiedCaseTables(db);
   await db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-1','blr','Meera','+919845012345',?,?)").bind(now, now).run();
+  // The customer notice is governed by canonical booking ownership.
+  const {ensureCanonicalBookingCoreTables}=await import('../lib/canonical-booking-core-schema.ts');await ensureCanonicalBookingCoreTables(db);
+  await db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,total_amount,created_by,created_at,updated_at) VALUES ('BKG-1','case-booking-key','CUST-1','[]','[]','blr','east','grooming','bath','Bath','case-group','groomer','2099-01-01T00:00:00Z','2099-01-01T01:00:00Z',100,'ops',?,?)").bind(now,now).run();
   // genuinely overdue, at the real clock
   await db.prepare("INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,customer_id,booking_id,source_type,source_id,owner_team,first_response_due_at,manager_escalation_due_at,resolution_due_at,created_by,updated_by,created_at,updated_at) VALUES ('CASE-2','idem-2','customer_complaint','medium','open','Groomer was late','Late by an hour','CUST-1','BKG-1','manual','src-2','customer_support',?,?,?,'ops','ops',?,?)")
     .bind(now - 90 * 60_000, now - 30 * 60_000, now + 600 * 60_000, now - 200 * 60_000, now).run();

@@ -53,17 +53,17 @@ test("LP-N05 closing a Training session without the Owner Handover says which ev
 
   await act("accept", "lp-n05-a");
   await act("on_the_way", "lp-n05-b");
-  await act("arrive", "lp-n05-c", { latitude: 12.9716, longitude: 77.5946 });
+  await act("arrive", "lp-n05-c", { latitude: 12.9716, longitude: 77.5946, accuracyMeters: 5 });
   await act("start", "lp-n05-d");
 
   const refused = await routeCall(sessionsRoute.POST, "POST", "/api/training-sessions",
     { body: { sessionId: session.id, action: "complete", idempotencyKey: "lp-n05-complete" }, cookie: owner });
 
   assert.equal(refused.status, 409, "the Owner Handover requirement itself is unchanged");
-  assert.match(String(refused.body.error), /Owner Handover/i);
+  assert.match(String(refused.body.error), /parent handover/i);
   assert.notEqual(String(refused.body.error), "Unable to update Training session");
   assert.equal(refused.body.code, "training_owner_handover_required");
-  assert.equal(refused.body.requiredMinutes, 15);
+  assert.equal(refused.body.recordedMinutes, 0);
   assert.equal(world.sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(session.id).status, "in_session",
     "and the session is still open, so the trainer can do what the message asks");
 });

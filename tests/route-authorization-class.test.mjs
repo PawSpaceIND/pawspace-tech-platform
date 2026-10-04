@@ -269,6 +269,9 @@ const UNLOADABLE_UNDER_STRIP_ONLY = [];
 // the authorized customer probe may show 400. Keep these explicit so adding a route-local guard does
 // not turn a correct customer path into a false ordering defect.
 const AUTHORIZED_PROBE_VALIDATION = new Map([
+  ["training-homework.GET", "customer probe holds scheduling.book; missing session selector validates after authorization"],
+  ["training-homework.POST", "customer probe holds scheduling.book; empty acknowledgement validates after authorization"],
+  ["training-rolling-schedule.GET", "customer probe holds scheduling.book; missing booking selector validates after authorization"],
   ["customer-grooming-summary.GET", "customer probe holds scheduling.book; missing selector validates after authorization"],
   ["customer-live-tracking.GET", "customer probe holds scheduling.book; missing booking selector validates after authorization"],
   ["grooming-booking-change.GET", "customer probe holds scheduling.book; missing booking selector is validated only after authorization"],
@@ -539,3 +542,7 @@ test("a denied governance read performs no route-owned schema creation", async (
 test("Grooming change preview refuses anonymous callers before selector validation",()=>{assert.ok(anonymousSweep.refused.includes("grooming-booking-change.GET"));assert.ok(lowPrivilegeSweep.validatedFirst.includes("grooming-booking-change.GET -> 400"));});
 
 test("customer care summary refuses anonymous requests before selector validation",()=>{assert.ok(anonymousSweep.refused.includes("customer-grooming-summary.GET"));});
+
+test("new Training customer routes authenticate before selectors while retaining authorized customer validation",()=>{
+ for(const route of ["training-homework.GET","training-homework.POST","training-rolling-schedule.GET"]){assert.ok(anonymousSweep.refused.includes(route));assert.ok(lowPrivilegeSweep.validatedFirst.includes(route+" -> 400"));}
+});

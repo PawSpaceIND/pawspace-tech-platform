@@ -107,7 +107,7 @@ const NOW = Date.now();
 const TRAINER = "train_kiran";
 // The trainer must arrive AT the doorstep: the same point, so distance is 0m and well inside
 // TRAINING_ARRIVAL_GEOFENCE_METERS (250). Moving either value apart is what the gate is for.
-const DOORSTEP = { latitude: 12.9716, longitude: 77.5946 };
+const DOORSTEP = { latitude: 12.9716, longitude: 77.5946, accuracyMeters: 5 };
 // Session times: far enough in the future to reschedule, spread across days.
 // 05:30Z == 11:00 IST, 06:30Z == 12:00 IST — inside a 09:00-19:00 IST roster window.
 //

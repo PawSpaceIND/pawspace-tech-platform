@@ -60,11 +60,15 @@ export function presentedOwnedPetChoice(history:Message[],currentText:string,own
     if(!selected||selected.id===rejected?.id){selected=null;needsPetClarification=true;}
    }else if(typeof ordinal==="number"&&(awaitingPetChoice||pets.some(pet=>contains(message.content,pet.name)))){selected=options?.[ordinal]??null;needsPetClarification=!selected;}
    // A new explicit pet or plural request must not inherit an old single-pet constraint.
-   else if(/\b(?:both|all (?:my |the )?pets)\b/i.test(message.content)||pets.some(pet=>pet.id!==selected?.id&&((pet.name!==selected?.name&&contains(message.content,pet.name))||(pet.breed!==selected?.breed&&contains(message.content,pet.breed??""))))){selected=null;needsPetClarification=false;}
+   else if(/\b(?:both|all (?:my |the )?pets)\b/i.test(message.content)||pets.some(pet=>pet.id!==selected?.id&&((pet.name!==selected?.name&&contains(message.content,pet.name))||(pet.breed!==selected?.breed&&contains(message.content,pet.breed??""))))){selected=null;needsPetClarification=false;awaitingPetChoice=false;options=null;}
   }
  }
  const currentOrdinal=ordinalChoice(currentText,pets);
- const choiceClarification=pets.length?`I couldn't match that choice to a clear saved-pet list. ${pets.slice(0,5).map((pet,index)=>`${ordinals[index]}: your pet ${label(pet)}`).join("; ")}. Which pet do you mean?`:"I couldn't match that choice to a saved pet. What is your pet's saved name?";
+ const previousQuestion=[...history].reverse().find(message=>message.role==="assistant")?.content??"";
+ const requestedName=pets.find(pet=>contains(currentText,pet.name))?.name??pets.find(pet=>contains(previousQuestion,pet.name)&&pets.filter(other=>other.name.toLowerCase()===pet.name.toLowerCase()&&(other.breed??"").toLowerCase()===(pet.breed??"").toLowerCase()).length>1)?.name;
+ const indistinguishable=requestedName?pets.filter(pet=>pet.name.toLowerCase()===requestedName.toLowerCase()):[];
+ const identicalProfiles=indistinguishable.length>1&&new Set(indistinguishable.map(pet=>(pet.breed??"").toLowerCase())).size===1;
+ const choiceClarification=identicalProfiles?`Your saved profiles include ${indistinguishable.length} pets named ${requestedName} with the same breed details. I can't distinguish them safely by name or position alone. Please select the correct pet profile in the PawSpace app or ask our team to verify it.`:pets.length?`I couldn't match that choice to a clear saved-pet list. ${pets.slice(0,5).map((pet,index)=>`${ordinals[index]}: your pet ${label(pet)}`).join("; ")}. Which pet do you mean?`:"I couldn't match that choice to a saved pet. What is your pet's saved name?";
  const clarification=needsPetClarification||(!selected&&currentOrdinal!==null&&(awaitingPetChoice||pets.some(pet=>contains(currentText,pet.name))))?choiceClarification:null;
  const proposalClarification=needsPetClarification||(!selected&&awaitingPetChoice)?choiceClarification:null;
  const canonicalPetIndex=selected&&Array.isArray(ownedPets)?ownedPets.findIndex(pet=>pet&&typeof pet==="object"&&(pet as Record<string,unknown>).id===selected!.id):null;

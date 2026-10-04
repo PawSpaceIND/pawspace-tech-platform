@@ -42,6 +42,36 @@ async function programme(world, opts = {}) {
 const act = (world, session, action, key, extra = {}) =>
   mutateTrainingSession(world.db, { sessionId: session.id, action, actorId: trainer(session.provider_id), idempotencyKey: key, ...extra });
 
+test('full-time assigned trainer starts travel without a separate Accept action', async () => {
+  const world=freshWorld(),{sessions}=await programme(world),first=sessions[0];
+  world.sqlite.prepare("INSERT INTO provider_capacity_profiles(id,city_id,name,provider_model,services_json,zones_json,effective_from,updated_by,updated_at) VALUES(?,'blr','Kiran','full_time','[\"dog_training\"]','[\"blr-east\"]','2020-01-01','test',?)").run(first.provider_id,Date.now());
+  const result=await act(world,first,'on_the_way','full-time-travel').catch(async error=>{throw new Error(await error.text())});
+  assert.equal(result.status,'on_the_way');
+  assert.equal(world.sqlite.prepare('SELECT status FROM training_sessions WHERE id=?').get(first.id).status,'on_the_way');
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_events WHERE session_id=? AND event_type='accept'").get(first.id).n,0);
+  const replay=await act(world,first,'on_the_way','full-time-travel');
+  assert.equal(replay.duplicatePrevented,true);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_events WHERE session_id=? AND event_type='on_the_way'").get(first.id).n,1);
+});
+test('canonical work-order model controls full-time travel ahead of a changed provider profile', async () => {
+  for(const [orderModel,profileModel,allowed] of [['commission','full_time',false],['full_time','commission',true]]){
+    const world=freshWorld(),{sessions}=await programme(world),first=sessions[0];
+    world.sqlite.prepare("INSERT INTO provider_capacity_profiles(id,city_id,name,provider_model,services_json,zones_json,effective_from,updated_by,updated_at) VALUES(?,'blr','Kiran',?,'[\"dog_training\"]','[\"blr-east\"]','2020-01-01','test',?)").run(first.provider_id,profileModel,Date.now());
+    world.sqlite.prepare("INSERT INTO provider_work_orders(id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,created_at,updated_at) VALUES(?,?,?,?,?,?,'dog_training',?,?,?,?)").run(`WO-${orderModel}`,'B1','G1',first.provider_id,'Kiran',orderModel,first.scheduled_start,first.scheduled_end,Date.now(),Date.now());
+    if(allowed)assert.equal((await act(world,first,'on_the_way',`model-${orderModel}`)).status,'on_the_way');
+    else await refusal(act(world,first,'on_the_way',`model-${orderModel}`),409,/Contract trainers must accept/);
+  }
+});
+test('full-time model drift during the transaction rolls back travel', async () => {
+  const world=freshWorld(),{sessions}=await programme(world),first=sessions[0];
+  world.sqlite.prepare("INSERT INTO provider_capacity_profiles(id,city_id,name,provider_model,services_json,zones_json,effective_from,updated_by,updated_at) VALUES(?,'blr','Kiran','full_time','[\"dog_training\"]','[\"blr-east\"]','2020-01-01','test',?)").run(first.provider_id,Date.now());
+  world.sqlite.exec("CREATE TRIGGER drift_training_model AFTER UPDATE OF status ON training_sessions WHEN NEW.status='on_the_way' BEGIN UPDATE provider_capacity_profiles SET provider_model='commission' WHERE id=NEW.provider_id; END");
+  await assert.rejects(act(world,first,'on_the_way','model-drift'));
+  assert.equal(world.sqlite.prepare('SELECT status FROM training_sessions WHERE id=?').get(first.id).status,'scheduled');
+  assert.equal(world.sqlite.prepare('SELECT provider_model FROM provider_capacity_profiles WHERE id=?').get(first.provider_id).provider_model,'full_time');
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_events WHERE session_id=? AND event_type='on_the_way'").get(first.id).n,0);
+});
+
 // --- state machine + exactly-once consumption --------------------------------------------------
 
 test("Training Gate 2 owns each trainer session and consumes completion exactly once", async () => {
@@ -51,7 +81,7 @@ test("Training Gate 2 owns each trainer session and consumes completion exactly 
   const consumed = () => world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions WHERE session_id=?").get(s1.id).n;
 
   // Out-of-order actions are refused by state, not by convention.
-  await refusal(act(world, s1, "on_the_way", "k-early-otw"), 409, /Training session cannot on_the_way from scheduled/);
+  await refusal(act(world, s1, "on_the_way", "k-early-otw"), 409, /Contract trainers must accept an open offer/);
   await refusal(act(world, s1, "complete", "k-early-complete"), 409, /Training session cannot complete from scheduled/);
   assert.equal(await act(world, s1, "accept", "k-accept").then((r) => r.status), "accepted");
   assert.equal(await act(world, s1, "on_the_way", "k-otw").then((r) => r.status), "on_the_way");
@@ -61,7 +91,7 @@ test("Training Gate 2 owns each trainer session and consumes completion exactly 
   assert.equal(await act(world, s1, "start", "k-start").then((r) => r.status), "in_session");
   assert.equal((await getTrainingSession(world.db, s1.id)).status, "in_session");
 
-  await refusal(act(world, s1, "owner_handover", "k-handover-short", { ownerHandoverMinutes: 10 }), 409, /at least 15 minutes/);
+  await refusal(act(world, s1, "owner_handover", "k-handover-short", { ownerHandoverCompleted: false }), 409, /handover/);
   await act(world, s1, "owner_handover", "k-handover", { ownerHandoverMinutes: 20 });
   const refs = seedEvidence(world, "MA-1", s1);
   const done = await act(world, s1, "complete", "k-complete", { report: { ...REPORT, evidenceRefs: refs } });
@@ -97,12 +127,12 @@ test("ARRIVE is geofenced to the customer doorstep", async () => {
   await act(world, s1, "accept", "g-accept");
   await act(world, s1, "on_the_way", "g-otw");
   await refusal(act(world, s1, "arrive", "g-arrive-blind"), 409, /Allow location access to confirm arrival/);
-  const far = await refusal(act(world, s1, "arrive", "g-arrive-far", FAR_AWAY), 409, /Move within 250m and retry arrival/);
+  const far = await refusal(act(world, s1, "arrive", "g-arrive-far", FAR_AWAY), 409, /Move within 500m and retry arrival/);
   assert.match(far, /You are \d+m from the customer doorstep/);
   assert.equal((await getTrainingSession(world.db, s1.id)).status, "on_the_way", "a refused arrival leaves the session on the way");
-  const near = await act(world, s1, "arrive", "g-arrive", { latitude: DOORSTEP.latitude + 0.0005, longitude: DOORSTEP.longitude });
+  const near = await act(world, s1, "arrive", "g-arrive", { latitude: DOORSTEP.latitude + 0.0005, longitude: DOORSTEP.longitude, accuracyMeters:5 });
   assert.equal(near.status, "arrived");
-  assert.ok(near.geofence.distanceMeters > 0 && near.geofence.distanceMeters <= 250, `inside the geofence: ${near.geofence.distanceMeters}m`);
+  assert.ok(near.geofence.distanceMeters > 0 && near.geofence.distanceMeters <= 500, `inside the geofence: ${near.geofence.distanceMeters}m`);
 });
 
 // --- completion requirements ---------------------------------------------------------------------
@@ -114,7 +144,7 @@ test("Training completion requires attendance, homework, progress and exact-sess
   const consumed = () => world.sqlite.prepare("SELECT COUNT(*) n FROM training_session_consumptions").get().n;
   for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", DOORSTEP], ["start", {}]]) await act(world, s1, action, `c-${action}`, extra);
 
-  await refusal(act(world, s1, "complete", "c-no-handover", { report: { ...REPORT, evidenceRefs: [] } }), 409, /mandatory 15-minute Owner Handover/);
+  await refusal(act(world, s1, "complete", "c-no-handover", { report: { ...REPORT, evidenceRefs: [] } }), 409, /parent handover is completed/);
   await act(world, s1, "owner_handover", "c-handover", { ownerHandoverMinutes: 15 });
   const refs = seedEvidence(world, "MA-OK", s1);
   const attempt = (key, report) => act(world, s1, "complete", key, { report });
@@ -457,4 +487,19 @@ test("a programme session cannot start until every enrolled dog is vaccinated; t
   await act(meetWorld, m1, "on_the_way", "m-otw");
   await act(meetWorld, m1, "arrive", "m-arrive", DOORSTEP);
   assert.equal(await act(meetWorld, m1, "start", "m-start").then((r) => r.status), "in_session", "the Meet & Greet needs no vaccination proof");
+});
+
+
+test("automatic Training policy requires persisted attendance and before photo before start", async()=>{
+ const world=freshWorld();const {booking,sessions}=await programme(world);const first=sessions[0];
+ for(const [action,extra]of [["accept",{}],["on_the_way",{}],["arrive",DOORSTEP]])await act(world,first,action,`prestart-${action}`,extra);
+ // Exact table DDL from app/api/uat-scheduling/route.ts; attach the reviewed new-booking start policy.
+ world.sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)");
+ world.sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,updated_at) VALUES (?,'full_time_first',?,?,'assigned',?)").run(booking.group,JSON.stringify({trainingDispatchVersion:1}),first.provider_id,Date.now());
+ await refusal(act(world,first,"start","prestart-without-attendance"),409,/Save attendance and safety/);
+ await act(world,first,"save_report","prestart-attendance",{report:{attendance:{mode:"parent",safeAreaConfirmed:true,parentOrCaretakerConfirmed:true}}});
+ await refusal(act(world,first,"start","prestart-without-photo"),409,/capture the before photo/);
+ seedAsset(world,"PRESTART-BEFORE","before_service",first);
+ assert.equal((await act(world,first,"start","prestart-complete")).status,"in_session");
+ assert.equal(JSON.parse(String((await getTrainingSession(world.db,first.id)).attendance_json)).safeAreaConfirmed,true);
 });

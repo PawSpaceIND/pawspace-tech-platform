@@ -223,10 +223,12 @@ test("staff takeover pauses the AI: further turns are refused until an explicit 
   const handoffModule = await import("../lib/ai-human-handoff.ts");
   const stub = connectedProvider("Model reply.");
 
-  // A refund question is a policy risk: blocked and handed off, never answered by the model.
-  const riskMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-KS", customerId: "CUS-KS", text: "I want a refund for my last booking", idempotencyKey: "ks-1" });
+  sqlite.prepare("INSERT INTO canonical_bookings(id,customer_id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,created_at,updated_at) VALUES ('BKG-KS','CUS-KS','grooming','Synthetic package','completed','2026-10-01T10:00:00Z','2026-10-01T11:00:00Z',1000,?,?)").run(Date.now(),Date.now());
+  // An explicit owned-booking refund request records Finance review and hands off, never model approval.
+  const riskMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-KS", customerId: "CUS-KS", text: "I want a refund for booking BKG-KS because the service was incomplete", idempotencyKey: "ks-1" });
   const risky = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-KS", customerId: "CUS-KS", inputMessageId: riskMessage, idempotencyKey: "ks-turn-1", channel: "chat", provider: stub.provider });
-  assert.equal(risky.turn.policyDecision, "blocked_high_impact");
+  assert.equal(risky.turn.policyDecision, "refund_request_recorded");
+  assert.equal(sqlite.prepare("SELECT booking_id,customer_id FROM unified_cases WHERE case_type='refund'").get().booking_id,"BKG-KS");
   assert.equal(risky.turn.handoffReason, "refund_payment_dispute");
   assert.equal(stub.calls.length, 0, "a refund request never reaches the model");
   const queued = sqlite.prepare("SELECT queue_code FROM ai_handoffs WHERE thread_id='THREAD-KS'").get();

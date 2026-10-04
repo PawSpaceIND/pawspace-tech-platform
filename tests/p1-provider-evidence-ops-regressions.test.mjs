@@ -1,3 +1,4 @@
+import {preservedCombinedLocalBytes} from './helpers/combined-local-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,7 +25,7 @@ function componentFixture(file,name,context={}){
  useMemo(fn){cursor++;return fn();},
  useEffect(fn,deps){const i=cursor++,old=slots[i];if(!old||deps?.some((v,j)=>v!==old[j])){slots[i]=deps;effects.push(()=>{cleanups.get(i)?.();const cleanup=fn();if(typeof cleanup==='function')cleanups.set(i,cleanup);});}}
  };const React={createElement(type,props,...children){return {type,props:{...props,children:children.length===1?children[0]:children}};},Fragment:'fragment'};
- const component=moduleFixture(file,name,{...context,...hooks,React,window:{setTimeout(){},prompt(){return'';}},fetch(){throw Error('external transport prohibited');},usePathname:()=>'/trainer',useSearchParams:()=>new URLSearchParams(),baseStyles:new Proxy({},{get:(_,k)=>k}),extraStyles:new Proxy({},{get:(_,k)=>k})});
+ const component=moduleFixture(file,name,{...context,...hooks,React,window:{setTimeout(){},setInterval(){return 1;},clearInterval(){},prompt(){return'';}},fetch(){throw Error('external transport prohibited');},usePathname:()=>'/trainer',useSearchParams:()=>new URLSearchParams(),baseStyles:new Proxy({},{get:(_,k)=>k}),extraStyles:new Proxy({},{get:(_,k)=>k})});
  const render=()=>{cursor=0;tree=component();if(typeof tree.type==='function'&&tree.props.key!==undefined){if(renderKey!==tree.props.key){cleanups.forEach(fn=>fn());cleanups.clear();slots=[];renderKey=tree.props.key;}cursor=0;tree=tree.type(tree.props);}const tasks=effects;effects=[];tasks.forEach(fn=>fn());return tree;};
  return {render,find(predicate){const n=nodes(tree).find(predicate);assert.ok(n,'Expected actual component node');return n;},async settle(){for(let i=0;i<8;i++){await Promise.resolve();render();}},button(name){return this.find(n=>n.type==='button'&&text(n.props.children)===name);}};
 }
@@ -72,7 +73,7 @@ for(const kind of ['boarding','sitting'])test(kind+' Operations resolves exact i
 });
 test('actual Training save_report rejects A refs for B before writing, but preserves evidence-free draft notes',async()=>{
  const writes=[],row={id:'B',booking_id:'BOOK-B',provider_id:'PROV',programme_id:'P-B',status:'in_session',attendance_json:'{}',homework_json:'{}',progress_json:'{}',evidence_json:'[]'};
- const db={prepare(sql){let args;return{bind(...values){args=values;return this;},async first(){if(sql.startsWith('SELECT s.*'))return row;if(sql.startsWith('SELECT status FROM canonical_bookings'))return{status:'confirmed'};if(sql.includes('JOIN training_session_media_links'))return{session_id:'A',booking_id:'BOOK-A',provider_id:'PROV',link_provider_id:'PROV'};return null;},async all(){return{results:[]};},async run(){if(sql.startsWith('UPDATE training_sessions'))writes.push({sql,args});return{meta:{changes:1}};}};},async batch(){return[];}};
+ const db={prepare(sql){let args;return{bind(...values){args=values;return this;},async first(){if(sql.startsWith('SELECT s.*'))return row;if(sql.startsWith('SELECT status FROM canonical_bookings'))return{status:'confirmed'};if(sql.includes('JOIN training_session_media_links'))return{session_id:'A',booking_id:'BOOK-A',provider_id:'PROV',link_provider_id:'PROV'};return null;},async all(){return{results:[]};},async run(){if(sql.startsWith('UPDATE training_sessions'))writes.push({sql,args});return{meta:{changes:1}};}};},async batch(statements){const results=[];for(const statement of statements)results.push(await statement.run());return results;}};
  const action=moduleFixture('lib/training-session-lifecycle.ts','mutateTrainingSessionCore');
  const input={sessionId:'B',action:'save_report',actorId:'trainer',idempotencyKey:'SYNTHETIC',report:{homework:'Keep draft notes',evidenceRefs:['media://asset/A']}};
  await assert.rejects(action(db,input),error=>error instanceof Response&&error.status===409);assert.equal(writes.length,0);
@@ -121,6 +122,6 @@ test('Trainer: bounded grid breakpoint and 44px actions, prior CSS preserved',()
  assert.ok(1100>=225+56+320+480+13);
 });
 test('Trainer handlers and shared CSS remain byte-identical',()=>{
- for(const file of ['app/trainer/page.tsx','app/trainer/trainer-extra.module.css'])assert.equal(baselineHash(readFileSync(file,'utf8')),baseline.files[file]);
+ for(const file of ['app/trainer/page.tsx','app/trainer/trainer-extra.module.css'])assert.equal(baselineHash(preservedCombinedLocalBytes(file,readFileSync(file,'utf8'))),baseline.files[file]);
 });
 }

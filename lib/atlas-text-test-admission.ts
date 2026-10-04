@@ -41,3 +41,26 @@ export async function settleTextTest(db:Db,claim:Claim,response:unknown){
  await db.prepare("UPDATE atlas_text_test_requests SET status=?,actual_upper_micros=? WHERE id=? AND job_id=? AND status='reserved'").bind(known?"completed":"unknown",known?actual:null,claim.id,APPROVAL.jobId).run();
  if(!known)throw Error("job_usage_unknown");
 }
+
+/** Separate bounded chat allocation; the existing isolated ledger retains one admission owner. */
+export type BoundedChatAllocation=Readonly<{id:string;jobId:string;reservedMicros:number}>;
+export async function reserveBoundedChatAllocation(db:Db,input:{id:string;jobId:string;payloadHash:string;threadId:string;inputUpper:number;outputUpper:number;reservedMicros:number;maxTurns:number;capMicros:number;now:number}):Promise<BoundedChatAllocation>{
+ if(!/^CHATBOUND-[0-9a-f]{64}$/.test(input.id)||!input.jobId||input.jobId===APPROVAL.jobId||!/^[0-9a-f]{64}$/.test(input.payloadHash)||!input.threadId||input.inputUpper!==20_000||!Number.isSafeInteger(input.outputUpper)||input.outputUpper<1||input.outputUpper>650||![1,2].includes(input.maxTurns)||!Number.isSafeInteger(input.capMicros)||input.capMicros<1||input.capMicros>500_000||!Number.isSafeInteger(input.reservedMicros)||input.reservedMicros<100_870||input.reservedMicros>input.capMicros||!Number.isSafeInteger(input.now))throw Error("chat_allocation_scope_refused");
+ const result=await db.prepare(`INSERT OR IGNORE INTO atlas_text_test_requests(id,job_id,rate_version,thread_id,input_upper,output_upper,reserved_micros,status,created_at)
+ SELECT ?,?,?,?,?,?,?,'reserved',? WHERE (SELECT COUNT(*) FROM atlas_text_test_requests WHERE job_id=?)<?
+ AND (SELECT COALESCE(SUM(reserved_micros),0) FROM atlas_text_test_requests WHERE job_id=?)+?<=?
+ AND NOT EXISTS(SELECT 1 FROM atlas_text_test_requests WHERE job_id=? AND status IN ('reserved','unknown'))`).bind(input.id,input.jobId,'chat-counted-conservative:'+input.payloadHash,input.threadId,input.inputUpper,input.outputUpper,input.reservedMicros,input.now,input.jobId,input.maxTurns,input.jobId,input.reservedMicros,input.capMicros,input.jobId).run();
+ if(Number(result.meta?.changes)!==1)throw Error("chat_admission_refused");
+ return Object.freeze({id:input.id,jobId:input.jobId,reservedMicros:input.reservedMicros});
+}
+function assertBoundedChatAllocation(claim:BoundedChatAllocation){if(!claim.jobId||claim.jobId===APPROVAL.jobId||!/^CHATBOUND-[0-9a-f]{64}$/.test(claim.id)||!Number.isSafeInteger(claim.reservedMicros)||claim.reservedMicros<100_870||claim.reservedMicros>500_000)throw Error("chat_allocation_scope_refused");}
+export async function completeBoundedChatAllocation(db:Db,claim:BoundedChatAllocation,actualApiUpperMicros:number){
+ assertBoundedChatAllocation(claim);
+ if(!Number.isSafeInteger(actualApiUpperMicros)||actualApiUpperMicros<0||actualApiUpperMicros>claim.reservedMicros)throw Error("chat_usage_unknown");
+ const result=await db.prepare("UPDATE atlas_text_test_requests SET status='completed',actual_upper_micros=? WHERE id=? AND job_id=? AND reserved_micros=? AND status='reserved'").bind(actualApiUpperMicros,claim.id,claim.jobId,claim.reservedMicros).run();
+ if(Number(result.meta?.changes)!==1)throw Error("chat_settlement_unknown");
+}
+export async function markBoundedChatAllocationUnknown(db:Db,claim:BoundedChatAllocation){
+ assertBoundedChatAllocation(claim);
+ await db.prepare("UPDATE atlas_text_test_requests SET status='unknown' WHERE id=? AND job_id=? AND reserved_micros=? AND status='reserved'").bind(claim.id,claim.jobId,claim.reservedMicros).run();
+}

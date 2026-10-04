@@ -72,7 +72,9 @@ test("CRM lead hands the same customer and pet identity into governed booking an
   assert.match(page,/Confirm the missing pet species/,"staff must confirm missing pet identity data rather than invent it");
   assert.match(page,/customer:\{id:customer\.id,name:customer\.name,primaryPhone:customer\.primaryPhone/,"the selected CRM customer ID must be submitted unchanged");
   assert.match(route,/customer:input\.customer,pets:input\.pets/,"assisted orders must pass that identity unchanged to canonical booking");
-  assert.match(canonicalBooking,/attributeBookingToOpenLead\(db,\{customerId:input\.customer\.id,bookingId\}\)/,"canonical booking must attribute the result back to the open CRM lead");
+  assert.match(canonicalBooking,/attributeBookingToOpenLead\(db,\{customerId:input\.customer\.id,bookingId,leadId:input\.leadId,threadId:input\.threadId\}\)/,"canonical booking must retain the selected customer and booking identity while passing optional governed lead/thread bindings");
+  assert.match(canonicalBooking,/leadId\?:string;threadId\?:string;/,"lead/thread origins remain optional for staff-assisted bookings");
+  assert.match(canonicalBooking,/validateBookingOrigin\(db,\{customerId:input\.customer\.id,serviceCode:input\.serviceCode,leadId:input\.leadId,threadId:input\.threadId\}\)/,"an explicit origin must be validated against the same customer and service before booking");
 });
 
 test("a staff-assisted order takes a governed coupon quoted by the server on the assisted_staff channel",()=>{

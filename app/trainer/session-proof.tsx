@@ -14,7 +14,12 @@ export function TrainingEvidenceControls({assets,busy,error,onUpload,onRefresh}:
  })}<button disabled={busy} onClick={onRefresh}>Refresh photo approval</button></div></section>;
 }
 
-export function TrainingOwnerHandover({record,busy,onRecord}:{record?:{durationMinutes:number;completedAt:number}|null;busy:boolean;onRecord:(minutes:number)=>void}){
- const[minutes,setMinutes]=useState("");
- return <section className={styles.precheck}><span>OWNER HANDOVER</span>{record?<p role="status">Owner handover recorded: {record.durationMinutes} minutes.</p>:<><p>Complete at least 15 minutes with the owner to explain progress and homework, then record the time spent.</p><label>Minutes completed<input type="number" min="15" step="1" value={minutes} onChange={event=>setMinutes(event.target.value)}/></label><button disabled={busy||!Number.isInteger(Number(minutes))||Number(minutes)<15} onClick={()=>onRecord(Number(minutes))}>Record completed handover</button></>}</section>;
+export function TrainingOwnerHandover({record,busy,reminderDue=false,onRecord}:{record?:{durationMinutes?:number;completedAt:number}|null;busy:boolean;reminderDue?:boolean;onRecord:()=>void}){
+ const[confirmed,setConfirmed]=useState(false);
+ return <section className={styles.precheck}><span>OWNER HANDOVER</span>{record?<p role="status">Pet-parent handover completion recorded.</p>:<><p role={reminderDue?"status":undefined}>{reminderDue?"It is time to hand over progress and homework before this session ends.":"Allow time within the session to explain progress, demonstrate practice and hand over homework to the pet parent."}</p><label><input type="checkbox" checked={confirmed} disabled={busy} onChange={event=>setConfirmed(event.target.checked)}/> I completed the pet-parent handover</label><button disabled={busy||!confirmed} onClick={onRecord}>Confirm completed handover</button></>}</section>;
+}
+
+export function TrainingVideoControls({assets,busy,onUpload}:{assets:TrainingEvidenceAsset[];busy:boolean;onUpload:(file:File,purpose:TrainingEvidencePurpose)=>void}){
+ const videos=assets.filter(asset=>asset.purpose==="training_video");
+ return <section className={styles.media}><div><span>TRAINING VIDEO</span><h3>Record the training practice</h3><p>Upload a short training video. Private storage and independent approval are required before secure playback is available.</p><label>Training video<input aria-label="Training video" type="file" accept="video/mp4,video/webm" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value="";if(file)onUpload(file,"training_video");}}/></label>{videos.map(asset=><div key={asset.id}><p>{asset.objectStored===false?"Video was not stored; retry when private storage is available.":asset.proofReady?"Video approved for secure access.":"Video awaiting upload, scan or independent approval."}</p>{asset.objectStored===true&&asset.proofReady&&<video controls preload="none" playsInline src={`/api/training-session-media/content?id=${encodeURIComponent(asset.id)}`}/>}</div>)}</div></section>;
 }

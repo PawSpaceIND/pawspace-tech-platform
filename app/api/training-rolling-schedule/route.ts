@@ -1,0 +1,23 @@
+import {ensureTrainingProgrammeTables} from "../../../lib/training-programme";
+import {ensureCanonicalBookingCoreTables} from "../../../lib/canonical-booking-core-schema";
+import {authError,authFailure,database,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from '../../../lib/server-auth';
+import {findIdentityBinding} from '../../../lib/identity-binding';
+import {withLifecycleMutationLock} from '../../../lib/lifecycle-mutation-lock';
+import {ensureTrainingRollingScheduleTables,rollingScheduleSummary,mutateTrainingRollingSchedule,type RollingMutation} from "../../../lib/training-rolling-scheduling";
+type Row=Record<string,unknown>;
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'no-store'}});
+async function owned(db:D1Database,actor:AuthenticatedActor,bookingId:string,actorKind:string,sessionId?:string,changeId?:string){
+ if(!['customer','provider'].includes(actorKind))throw authFailure('Choose the authenticated customer or provider actor',400);await ensureTrainingRollingScheduleTables(db);await ensureTrainingProgrammeTables(db);await ensureCanonicalBookingCoreTables(db);
+ const row=await db.prepare("SELECT p.customer_id,p.provider_id FROM training_programmes p JOIN canonical_bookings b ON b.id=p.booking_id WHERE b.id=? AND b.service_code='dog_training'").bind(bookingId).first<Row>();if(!row)throw authFailure('Canonical Training programme not found',404);
+ let target=String(actorKind==='customer'?row.customer_id:row.provider_id);
+ if(actorKind==='provider'&&(sessionId||changeId)){const session=await db.prepare('SELECT s.provider_id FROM training_sessions s WHERE s.booking_id=? AND (s.id=? OR s.id=(SELECT session_id FROM training_rolling_changes WHERE id=? AND booking_id=?))').bind(bookingId,sessionId??'',changeId??'',bookingId).first<Row>();if(!session)throw authFailure('Owned Training appointment not found',404);target=String(session.provider_id);}
+ // Staff recovery uses its separate existing route; mutual agreement cannot impersonate either party.
+ const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:actorKind as 'customer'|'provider'});if(!binding||String(binding.subject_id)!==target)throw authFailure('Training schedule ownership denied',403);return target;
+}
+export async function GET(request:Request){try{const url=new URL(request.url),bookingId=String(url.searchParams.get('bookingId')||'').trim(),actorKind=String(url.searchParams.get('actorKind')||'customer');const actor=await resolveActor(request);requirePermission(actor,actorKind==='customer'?'scheduling.book':'bookings.view');if(!bookingId)return json({error:'Training booking ID is required'},400);const db=await database();await owned(db,actor,bookingId,actorKind,url.searchParams.get('sessionId')??undefined);return json({data:await rollingScheduleSummary(db,bookingId)});}catch(error){return authError(error,'Unable to load rolling Training schedule');}}
+export async function POST(request:Request){try{
+ const origin=request.headers.get('origin');if(origin&&origin!==new URL(request.url).origin)return json({error:'Cross-origin Training action blocked'},403);
+ const actor=await resolveActor(request);const body=await request.json() as Record<string,unknown>,bookingId=String(body.bookingId||'').trim(),actorKind=String(body.actorKind||''),action=String(body.action||'');requirePermission(actor,actorKind==='customer'?'scheduling.book':'bookings.view');if(!bookingId)return json({error:'Training booking ID is required'},400);
+ const db=await database();const sessionId=body.sessionId?String(body.sessionId):undefined,changeId=body.changeId?String(body.changeId):undefined,subjectId=await owned(db,actor,bookingId,actorKind,sessionId,changeId);
+ const result=await withLifecycleMutationLock(db,{bookingId,actorId:actor.email,action:`rolling_${action}`},()=>mutateTrainingRollingSchedule(db,{bookingId,actorKind:actorKind as RollingMutation['actorKind'],subjectId,actorId:actor.email,action:action as RollingMutation['action'],idempotencyKey:String(body.idempotencyKey||''),slots:body.slots as RollingMutation['slots'],holdId:body.holdId?String(body.holdId):undefined,sessionId,changeId,reason:body.reason?String(body.reason):undefined}));await securityAudit(db,actor,`training.rolling.${action}`,'training_programme',bookingId,'completed',{actorKind,duplicatePrevented:result.duplicatePrevented,externalDelivery:false});return json({data:result});
+}catch(error){return authError(error,'Unable to change rolling Training schedule');}}
