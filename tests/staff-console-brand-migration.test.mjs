@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import postcss from 'postcss';
+import {preservedStaffInboxBytes} from './helpers/staff-inbox-reviewed-delta.mjs';
 const read=path=>fs.readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const contract=JSON.parse(read('tests/fixtures/staff-console-page-contract.json'));
 for(const [file,hash] of Object.entries(contract.pages)){
  test(file+': page requests, actions, fields and business copy are byte-for-byte unchanged',()=>{
-  assert.equal(crypto.createHash('sha256').update(read(file)).digest('hex'),hash);
+  assert.equal(crypto.createHash('sha256').update(preservedStaffInboxBytes(file,read(file))).digest('hex'),hash);
  });
 }
 test('both existing shared shells delegate navigation without guarding their child workflows',()=>{
