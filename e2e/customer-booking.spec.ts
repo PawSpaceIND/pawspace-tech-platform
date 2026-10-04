@@ -382,7 +382,7 @@ test("address choice: customer can recover from a wrong map match and editing cl
  await serviceCard(page,"Grooming").getByRole("button",{name:/book now/i}).click();
  await page.getByRole("button",{name:/Choose a package/i}).click();
  await page.getByRole("button",{name:"Choose address and requested time",exact:true}).click();
- // Controlled external Maps responses exercise selection, area-fallback verification and recovery; this case does not certify Google.
+ // Controlled Maps responses exercise refusal of an unverified area-only match and recovery; this case does not certify Google.
  const resolved:string[]=[];
  await page.route("**/api/address-autocomplete?*",async route=>{
   const query=new URL(route.request().url()).searchParams;
@@ -397,26 +397,28 @@ test("address choice: customer can recover from a wrong map match and editing cl
  const matches=page.getByRole("region",{name:"Google address suggestions",exact:true});
  await expect(matches.getByRole("button")).toHaveCount(2);
  expect(resolved).toEqual([]);
- // New behaviour (P0 fix): an area-only Google match with no map PIN is verified from the recognised
- // Bengaluru area (Indiranagar -> 560038) instead of dead-ending, so the customer is never blocked.
+ // An area name cannot supply a guessed PIN. Refuse the incomplete match, then recover
+ // through the explicit doorstep answer carrying its PIN without weakening verification.
  await matches.getByRole("button",{name:/^Indiranagar/}).click();
- await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
- await page.screenshot({path:test.info().outputPath("customer-address-choice.png"),fullPage:true});
+ await expect(page.getByRole("alert")).toContainText("6-digit PIN code");
+ await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
+ await expect(page.getByRole("button",{name:"Verify service address",exact:true}).last()).toBeDisabled();
  await page.locator("#grooming-address-line-1").fill("42 Double Road, Indiranagar, Bengaluru");
  await page.getByRole("region",{name:"Google address suggestions",exact:true}).getByRole("button",{name:/^42 Double Road/}).click();
  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeVisible();
+ await page.screenshot({path:test.info().outputPath("customer-address-choice.png"),fullPage:true});
  expect(resolved).toEqual(["area","doorstep"]);
  await expect(page.getByRole("button",{name:"Review booking",exact:true})).toBeEnabled();
  await page.locator("#grooming-address-line-1").fill("99 Koramangala, Bengaluru");
  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
  await expect.poll(()=>page.evaluate(()=>sessionStorage.getItem("pawspace.selected-service-address"))).toBeNull();
- // The typed-verify path stays bounded: an address with neither a PIN nor a known Bengaluru area is refused.
+ // The typed-verify path refuses an address without an explicit PIN.
  await page.locator("#grooming-address-line-1").fill("Unnamed lane behind the market");
  await expect(matches.getByRole("button")).toHaveCount(2);
  // Two controls read "Verify service address": the in-picker button (enabled) and the step-3 CTA
  // (disabled while unverified). Target the picker's own button to exercise the typed-verify guard.
  await page.getByRole("button",{name:"Verify service address",exact:true}).first().click();
- await expect(page.getByRole("alert")).toContainText("Bengaluru area name");
+ await expect(page.getByRole("alert")).toContainText("6-digit PIN code");
  await expect(page.getByText("Verified service doorstep",{exact:true})).toBeHidden();
 });
 

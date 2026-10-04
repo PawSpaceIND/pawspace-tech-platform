@@ -62,6 +62,9 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     start.setUTCHours(4, 30, 0, 0);
     const end = new Date(start.getTime() + 2 * 60 * 60_000);
 
+    // The reservation and later doorstep save must use the same customer-selected address.
+    const serviceAddress = "100 Feet Road, Indiranagar, Bengaluru";
+    const servicePincode = "560038";
     const schedulePayload = {
         action: "reserve",
         assignmentStrategy: assignmentMode,
@@ -71,6 +74,8 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
         serviceCode: "grooming",
         cityId: "blr",
         zoneId: "blr-east",
+        serviceAddress,
+        servicePincode,
         scheduledStart: start.toISOString(),
         scheduledEnd: end.toISOString(),
         preferredProviderId: PROVIDER_ID,
@@ -146,8 +151,8 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       data: {
         bookingId,
         customerId: CUSTOMER_ID,
-        address: "100 Feet Road, Indiranagar, Bengaluru",
-        pincode: "560038",
+        address: serviceAddress,
+        pincode: servicePincode,
         latitude: 12.9719,
         longitude: 77.6412,
       },
