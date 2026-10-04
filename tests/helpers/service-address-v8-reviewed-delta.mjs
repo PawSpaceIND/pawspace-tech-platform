@@ -1,9 +1,10 @@
+import {preservedSharedAddressBytes} from './shared-address-reviewed-delta.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const receipt=JSON.parse(readFileSync(new URL('../fixtures/service-address-v8-reviewed-delta.json',import.meta.url),'utf8'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-export function preservedServiceAddressV8Bytes(path,bytes){
+export function preservedServiceAddressV8Bytes(path,bytes){bytes=preservedSharedAddressBytes(path,bytes);
  const entry=receipt.files[path];if(!entry)return bytes;
  const digest=hash(bytes);if(digest===entry.beforeSha256||entry.priorReviewedHashes.includes(digest))return bytes;
  assert.equal(digest,entry.afterSha256,'Exact independently reviewed service-address v8 bytes required: '+path);
