@@ -63,7 +63,7 @@ for(const width of [320,391,768,1440])for(const style of ['professional','cartoo
   }
   const signIn=page.getByRole('link',{name:'Sign in from home',exact:true});await expect(signIn).toBeVisible();expect((await signIn.boundingBox())!.height).toBeGreaterThanOrEqual(44);await evidence(page,info,'account');
   await page.unroute('**/api/**');const writes=await fixture(page);await page.goto('/v2/training');await rendered(page);
-  await expect(page.getByText('Selected programme:',{exact:false}).first()).toBeVisible();
+  await expect(page.getByRole('status').filter({hasText:'Selected programme:'})).toHaveCount(0);
   for(const label of ['Puppy','Obedience','Behavioral','Leash','Other available programmes']){const summary=page.locator('summary').filter({has:page.locator('strong',{hasText:label})}).filter({visible:true});await expect(summary).toHaveCount(1);if(!await summary.evaluate(e=>(e.parentElement as HTMLDetailsElement).open))await summary.click();}
   const puppySummary=page.locator('summary').filter({has:page.locator('strong',{hasText:'Puppy'})});await puppySummary.focus();await puppySummary.press('Enter');await expect(puppySummary.locator('..')).not.toHaveAttribute('open','');await puppySummary.press('Enter');await expect(puppySummary.locator('..')).toHaveAttribute('open','');
   await expect(page.getByText('Assessment-led · starts with an assessment',{exact:true})).toBeVisible();
@@ -79,9 +79,9 @@ for(const width of [320,391,768,1440])for(const service of ['training','walking'
   const accountGate=gate(),catalogueGate=gate();await page.setViewportSize({width,height:900});const writes=await fixture(page,{accountGate,catalogueGate});
   try{
    await page.goto(`/v2/${service}`);await rendered(page);
-   const date=page.getByLabel(service==='training'?'First session date':'Start from',{exact:true});await expect(date).toBeDisabled();
+   const date=service==='training'?page.getByLabel(/First session date/):page.getByLabel('Start from',{exact:true});await expect(date).toBeDisabled();
    accountGate.release();await expect(date).toBeDisabled();catalogueGate.release();await expect(date).toBeEnabled();
-   await date.fill('2026-10-08');if(service==='training')await page.getByLabel('First session time (IST)',{exact:true}).fill('11:15');
+   await date.fill('2026-10-08');if(service==='training')await page.getByLabel('First session start (IST, on the hour)',{exact:true}).selectOption('11:00');
    else{const slot=page.getByRole('button',{name:/6:00 AM/}).first();await expect(slot).toBeEnabled();await slot.click();}
    await expect(date).toHaveValue('2026-10-08');await page.evaluate(()=>{for(const theme of ['coral','signature','emerald']){localStorage.setItem('pawspace.customer.theme',theme);window.dispatchEvent(new CustomEvent('pawspace-appearance-change',{detail:{theme,mode:'dark',style:'cartoon'}}));}});
    await expect(date).toHaveValue('2026-10-08');await evidence(page,info,`${service}-ready`);expect(writes).toEqual([]);

@@ -72,7 +72,7 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
   return route.fulfill({status:401,json:{error:'Isolated UI fixture; unavailable data stays unavailable'}});
  });
  for(const screen of ['finance','operations','people','finance/boarding','finance/training','finance/sitting','people/provider-training']){
-  await page.goto(`/team/${screen}${screen==='finance/boarding'?'?bookingId=FINANCE-UI':screen==='finance/sitting'?'?bookingId=SITTING-UI':''}`);await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
+  await page.goto(`/team/${screen}${screen==='finance/boarding'?'?bookingId=FINANCE-UI':screen==='finance/sitting'?'?bookingId=SITTING-UI':''}`);await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   const content=page.locator('#staff-workspace-content');await expect(content).toBeVisible();
   if(screen==='finance'){
    await expect(content.getByRole('heading',{name:'Service finance & reconciliation'})).toBeVisible();await expect(content.locator('[data-booking-id=FINANCE-UI]')).toContainText('UI-INVOICE');
