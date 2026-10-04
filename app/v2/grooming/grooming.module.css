@@ -189,3 +189,6 @@
   .page .stickyTotal b { font-size:18px; }
   .page .stickyTotal button { min-height:44px; padding:10px 16px; border:0; border-radius:calc(12px * var(--paw-radius-scale)); background:var(--brand-gold); color:var(--brand-on-gold); font-weight:800; }
 }
+
+/* Keep phone step-label wrapping from moving a focused disclosure during a tap. */
+@media(max-width:640px) { .page .backBar { min-height:60px; } }

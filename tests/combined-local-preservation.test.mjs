@@ -1,3 +1,4 @@
+import {preservedGroomingBackBarBytes} from './helpers/grooming-back-bar-reviewed-delta.mjs';
 import './helpers/chat-ledger-preservation-cases.mjs';
 import './helpers/chat-qualification-preservation-cases.mjs';
 import {preservedChatQualificationBytes} from './helpers/chat-qualification-reviewed-delta.mjs';
@@ -39,4 +40,18 @@ test('integrated handover projection retains operational proof and excludes raw 
  const completed=projectTrainerSession(input);assert.deepEqual(completed.ownerHandover,{durationMinutes:15,completedAt:123});
  for(const field of ['staff_notes','customer_email','customer_phone'])assert.equal(Object.hasOwn(completed,field),false);
  assert.equal(projectTrainerSession({...input,owner_handover_completed_at:null}).ownerHandover,null);
+});
+
+const backBar=JSON.parse(readFileSync(new URL('./fixtures/grooming-back-bar-reviewed-delta.json',import.meta.url),'utf8'));
+test('Grooming back-bar CSS restores exact 7e bytes and rejects unrelated mutations',()=>{
+ const path=backBar.file,bytes=readFileSync(new URL('../'+path,import.meta.url));
+ assert.equal(hash(bytes),backBar.afterSha256);
+ const original=preservedGroomingBackBarBytes(path,bytes);
+ assert.equal(hash(original),backBar.beforeSha256);
+ assert.equal(preservedGroomingBackBarBytes(path,original),original);
+ const service=JSON.parse(readFileSync(new URL('./fixtures/service-fix-reviewed-delta.json',import.meta.url),'utf8'));
+ assert.equal(backBar.beforeSha256,service.files[path].reviewedHash);
+ assert.equal(backBar.historicalSha256,service.files[path].originalHash);
+ assert.equal(preservedGroomingBackBarBytes('unrelated',bytes),bytes);
+ for(const changed of [bytes+'\nUNREVIEWED',bytes.toString().replace('min-height:60px','min-height:44px'),bytes.toString().replace(backBar.append,backBar.append+backBar.append),bytes.toString().replace(backBar.append,backBar.append.trim()),bytes.toString().replaceAll('\n','\r\n'),'X'+bytes.toString().slice(1)])assert.throws(()=>preservedGroomingBackBarBytes(path,Buffer.from(changed)));
 });

@@ -1,3 +1,4 @@
+import {preservedGroomingBackBarBytes} from './grooming-back-bar-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
 import {preservedChatQualificationBytes} from './chat-qualification-reviewed-delta.mjs';
 import {preservedCiRuntimeBytes} from './ci-runtime-reviewed-delta.mjs';
@@ -19,5 +20,5 @@ function reverse(source,entry,path){
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
 export function preservedTrainingIntegratedBytes(path,bytes){return training.files[path]?reverse(bytes,training.files[path],path):bytes;}
-export function preservedCombinedLocalBytes(path,bytes){bytes=preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes)));if(receipt.files[path]&&hash(bytes)===receipt.files[path].beforeSha256)return bytes;bytes=preservedTrainingIntegratedBytes(path,bytes);return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
+export function preservedCombinedLocalBytes(path,bytes){bytes=preservedGroomingBackBarBytes(path,bytes);bytes=preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes)));if(receipt.files[path]&&hash(bytes)===receipt.files[path].beforeSha256)return bytes;bytes=preservedTrainingIntegratedBytes(path,bytes);return receipt.files[path]?reverse(bytes,receipt.files[path],path):bytes;}
 export function preservedServiceLintBytes(path,bytes){return path===correction.file?reverse(bytes,correction,path):bytes;}

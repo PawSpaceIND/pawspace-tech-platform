@@ -1,0 +1,8 @@
+{
+  "file": "app/v2/grooming/grooming.module.css",
+  "baseCommit": "7e2d85acc328c60df524219f864a685fbbffaf51",
+  "beforeSha256": "d6b0310fe9e06007e3dcd9957b37d552afef8513560d353cac77f13bccc2ca7e",
+  "afterSha256": "3d7b26fcbeb08e0f36308ff7bf7a17a2b8ebb4026f1b5d46c54ae53eac00f2bb",
+  "historicalSha256": "16673fc5857c21d4207b931c244a430c9dd3406c70912c71343eb05f25dfbb2b",
+  "append": "\n/* Keep phone step-label wrapping from moving a focused disclosure during a tap. */\n@media(max-width:640px) { .page .backBar { min-height:60px; } }\n"
+}

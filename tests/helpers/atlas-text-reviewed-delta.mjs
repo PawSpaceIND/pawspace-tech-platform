@@ -1,3 +1,4 @@
+import {preservedChatQualificationBytes} from './chat-qualification-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -6,6 +7,7 @@ const root=new URL('../../',import.meta.url);
 const reviewed=JSON.parse(readFileSync(new URL('../fixtures/atlas-text-reviewed-delta.json',import.meta.url),'utf8'));
 /** Reverse only unique exact reviewed Atlas additions, before historical audio normalization. */
 export function preservedAtlasTextBytes(path,bytes,read=p=>readFileSync(new URL(p,root))){
+ bytes=preservedChatQualificationBytes(path,bytes);
  const reversals=reviewed.reversals[path];if(!reversals)return bytes;
  for(const[p,hash]of Object.entries(reviewed.approvedSources))assert.equal(createHash('sha256').update(preservedChatLedgerBytes(p,read(p))).digest('hex'),hash,'Reviewed Atlas admission changed: '+p);
  let source=bytes.toString();

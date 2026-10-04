@@ -55,7 +55,7 @@ test("row 5: the special-code box is never pre-filled by the automatically appli
  // Failure and changed-context paths keep an automatic offer out of the field too, while the reapply block is still reported.
  assert.match(coupon,/if\(intent\.mode==="automatic"\)setStale\(intent\.code\);else setCode\(intent\.code\);setMessage\(`Your previous coupon/);
  assert.match(coupon,/if\(intent\.mode==="automatic"\)setStale\(intent\.code\);else setCode\(intent\.code\);onChange\(0,intent\.code\);\}/);
- assert.match(coupon,/\{\(applied\|\|code\|\|stale\)&&<button type="button" onClick=\{remove\}>Remove coupon<\/button>\}/);
+ assert.match(coupon,/\{\(applied\|\|code\|\|stale\|\|busy\)&&<button type="button" onClick=\{remove\}>Remove coupon<\/button>\}/);
 });
 
 test("row 6: a failed zone reload no longer wipes the published subscription plans from the grid",()=>{
