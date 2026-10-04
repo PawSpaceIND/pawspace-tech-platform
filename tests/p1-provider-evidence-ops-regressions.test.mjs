@@ -117,8 +117,9 @@ for(const [file,old,next] of changes)test(`${file}: scoped 44px control and all 
 const file='app/trainer/trainer.module.css';
 const appended='\n/* Keep the session columns within the available workspace width. */\n.actions button{min-height:44px}\n@media(max-width:1100px){.layout{grid-template-columns:minmax(0,1fr)}.schedule,.session{min-width:0}}\n';
 test('Trainer: bounded grid breakpoint and 44px actions, prior CSS preserved',()=>{
- const source=readFileSync(file,'utf8');assert.ok(source.endsWith(appended));
- assert.equal(baselineHash(source.slice(0,-appended.length)),baseline.files[file]);
+ const source=readFileSync(file,'utf8'),at=source.indexOf(appended);assert.ok(at>=0);
+ assert.equal(baselineHash(source.slice(0,at)),baseline.files[file]);
+ assert.match(source.slice(at+appended.length),/\.workMain \.actions button[^\n]*min-height:44px/);
  assert.ok(1100>=225+56+320+480+13);
 });
 test('Trainer handlers and shared CSS remain byte-identical',()=>{
