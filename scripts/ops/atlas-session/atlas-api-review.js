@@ -88,8 +88,8 @@ function installGenerationGuard(target = globalThis, now = () => Date.now()) {
 var END, START, fail;
 var init_atlas_generation_shape_guard = __esm({
   "atlas-fresh-session/lib/atlas-generation-shape-guard.mjs"() {
-    END = Date.parse("2026-10-03T20:59:55Z");
-    START = Date.parse("2026-10-03T19:59:55Z");
+    END = Date.parse("2026-10-04T03:30:00Z");
+    START = Date.parse("2026-10-04T02:21:19Z");
     fail = () => {
       throw new Error("FINANCE_TEST_OUTBOUND_DENIED");
     };
@@ -451,7 +451,7 @@ var APPROVAL, INPUT_UPPER, OUTPUT_UPPER, RESERVED_MICROS, inputBoundEvidence, RE
 var init_atlas_text_test_admission = __esm({
   "atlas-fresh-session/lib/atlas-text-test-admission.ts"() {
     init_atlas_native_boundary();
-    APPROVAL = Object.freeze({ jobId: "Sentinel_f67e3c5a85f88191b07279e0edbe250c", provider: "openai", model: "gpt-5.6-terra", customerId: "CUS0000", fixture: "FINANCE-TEST-OPS-GROOMING-01", capMicros: 5e6, maxTurns: 10, capBasis: "api_usage_tax_excluded", taxScopeApproval: "Sentinel_2adfdd39a5b48191b4ba13d4a82e2d67", replacementApproval: "user-combined-six-total-20261003-195955", startsAt: Date.parse("2026-10-03T19:59:55Z"), expiresAt: Date.parse("2026-10-03T20:59:55Z"), maxInputTokens: 2e4, maxOutputTokens: 1200 });
+    APPROVAL = Object.freeze({ jobId: "Sentinel_f67e3c5a85f88191b07279e0edbe250c", provider: "openai", model: "gpt-5.6-terra", customerId: "CUS0000", fixture: "FINANCE-TEST-OPS-GROOMING-01", capMicros: 5e6, maxTurns: 10, capBasis: "api_usage_tax_excluded", taxScopeApproval: "Sentinel_2adfdd39a5b48191b4ba13d4a82e2d67", replacementApproval: "Sentinel_84e4136974548191833f72afbc079b60", startsAt: Date.parse("2026-10-04T02:21:19Z"), expiresAt: Date.parse("2026-10-04T03:30:00Z"), maxInputTokens: 2e4, maxOutputTokens: 1200 });
     INPUT_UPPER = 105e4;
     OUTPUT_UPPER = 1200;
     RESERVED_MICROS = 4643760;

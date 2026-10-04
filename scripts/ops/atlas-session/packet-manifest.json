@@ -1,0 +1,18 @@
+{
+  "approval": "Sentinel_84e4136974548191833f72afbc079b60",
+  "destination": "https://api.openai.com/v1/responses",
+  "model": "gpt-5.6-terra",
+  "totalCapMicros": 6000000,
+  "maxApprovedTurns": 10,
+  "runnerActualRequests": 1,
+  "sessionClockStarted": false,
+  "sessionDurationFromFirstRequestMs": 3600000,
+  "fixedReadinessExpiry": "2026-10-04T03:30:00Z",
+  "files": {
+    "atlas-api-review.js": "195d9be95684e20705e4891dc8c3b17024e63bc87891c62bf378033b8ec7283e",
+    "lib/atlas-text-test-admission.ts": "17a5bf0ec6896479e557894848b9bbf9bac4c3fce7b3264910ff401edc7a7d74",
+    "lib/atlas-generation-shape-guard.mjs": "90035e0bf1684b7a5e94bd3fc2e176a98abf31f77c78bf20d10633f9f1129ecf",
+    "session-runner.mjs": "ac8de8e49990e09761a697d81e06687a0d133a6fcd0c7b17c2e2908631270f83",
+    "workflow.yml": "4fd1ee39c12d0a199d82e967c1f6e27f86139337145f1a961d6de9e1eaaa6e84"
+  }
+}

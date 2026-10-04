@@ -1,0 +1,12 @@
+{
+  "userMessage": "Sentinel_84e4136974548191833f72afbc079b60",
+  "approvedAt": "2026-10-04T02:21:19Z",
+  "scope": "Atlas item2 only",
+  "firstModelRequest": null,
+  "sessionClockStarted": false,
+  "totalCapMicros": 6000000,
+  "maxTurns": 10,
+  "sessionDurationMs": 3600000,
+  "runnerActualRequests": 1,
+  "fixedCandidateReadinessExpiry": "2026-10-04T03:30:00Z"
+}
