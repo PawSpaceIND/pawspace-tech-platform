@@ -1,3 +1,4 @@
+import {preservedStaffInboxBytes} from './helpers/staff-inbox-reviewed-delta.mjs';
 import {preservedCustomerServiceBytes} from './helpers/customer-service-preservation.mjs';
 import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {createHash} from 'node:crypto';import ts from 'typescript';
@@ -5,7 +6,7 @@ import {installWorkersHooks} from './helpers/module-hooks.mjs';import {staffSema
 installWorkersHooks('__INBOX_UI_DB__','__INBOX_UI_ENV__');
 const {visibleStaffGroups}=await import('../app/components/staff-workspace/navigation.ts');
 const c=JSON.parse(fs.readFileSync('tests/fixtures/inbox-workspace-contract.json','utf8')),hash=v=>createHash('sha256').update(v).digest('hex');
-const read=p=>fs.readFileSync(p,'utf8');
+const read=p=>preservedStaffInboxBytes(p,fs.readFileSync(p,'utf8'));
 test('Inbox changes preserve every other application source',()=>{for(const[p,h]of Object.entries(c.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,fs.readFileSync(p)),p)),h,p);});
 test('Inbox requests, state, polling, selection, idempotency and actions stay unchanged',()=>{
  const path='app/team/customer-experience/page.tsx',s=read(path),sf=ts.createSourceFile(path,s,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),fn=sf.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='CustomerExperiencePage');
@@ -30,4 +31,12 @@ test('Integrated business sources retain upstream bytes and Atlas retains upstre
  const m=JSON.parse(read('tests/fixtures/ui-mainline-integration-contract.json'));
  for(const[p,h]of Object.entries(m.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,fs.readFileSync(p)),p)),h,p);
  for(const[p,x]of Object.entries(m.presentation))assert.equal(staffSemanticContract(read(p),p),x.semantic,p);
+});
+
+const inboxDelta=JSON.parse(fs.readFileSync('tests/fixtures/staff-inbox-reviewed-delta.json','utf8'));
+for(const [path,entry] of Object.entries(inboxDelta.files))test('Accepted staff inbox delta restores exact history and refuses mutations: '+path,()=>{
+ const bytes=fs.readFileSync(path);assert.equal(hash(bytes),entry.afterSha256);
+ const old=preservedStaffInboxBytes(path,bytes);assert.equal(hash(old),entry.beforeSha256);assert.equal(preservedStaffInboxBytes(path,old),old);
+ assert.equal(preservedStaffInboxBytes('unrelated',bytes),bytes);
+ for(const changed of [Buffer.concat([bytes,Buffer.from('\nUNREVIEWED')]),Buffer.from('X'+bytes.toString().slice(1)),bytes.subarray(1),Buffer.from(bytes.toString().replaceAll('\n','\r\n'))])assert.throws(()=>preservedStaffInboxBytes(path,changed));
 });
