@@ -1,3 +1,5 @@
+import {readFileSync} from 'node:fs';
+import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import {preservedGroomingBackBarBytes} from './grooming-back-bar-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
 import {preservedChatQualificationBytes} from './chat-qualification-reviewed-delta.mjs';
@@ -7,7 +9,7 @@ import {preservedCombinedLocalBytes,preservedServiceLintBytes} from './combined-
 import {preservedServiceFixBytes} from './service-fix-reviewed-delta.mjs';
 import {preservedReviewedFoodBytes} from './food-route-review.mjs';
 // Reverse the exact reviewed customer-flow delta before existing Food/Audio guards.
-export function preservedCustomerServiceBytes(path,bytes,read){
+export function preservedCustomerServiceBytes(path,bytes,read){bytes=preservedAcceptedUiBytes(path,bytes);const sourceRead=read??(p=>readFileSync(new URL('../../'+p,import.meta.url)));read=p=>preservedAcceptedUiBytes(p,sourceRead(p));
  bytes=preservedGroomingBackBarBytes(path,bytes);
  return preservedReviewedFoodBytes(path,preservedCombinedLocalBytes(path,preservedServiceFixBytes(path,preservedServiceLintBytes(path,preservedGroomingAutoRefusalBytes(path,preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes))))))),read);
 }

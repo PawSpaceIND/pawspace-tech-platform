@@ -31,7 +31,8 @@ for(const viewport of viewports)for(const theme of ['emerald','signature','coral
   await page.setViewportSize(viewport);
   await page.addInitScript(({theme,mode,style})=>{localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.visual-style',style);},{theme,mode,style});
   await openChat(page);
-  for(const [key,value] of Object.entries({theme,mode,style}))await expect(page.locator('html')).toHaveAttribute(`data-paw-${key}`,value);
+  // Legacy palette and style keys remain migration metadata; the released layout is Editorial.
+  for(const [key,value] of Object.entries({theme:'editorial',mode,style:'professional'}))await expect(page.locator('html')).toHaveAttribute(`data-paw-${key}`,value);
   const broken=await page.locator('[aria-label="Chat topic"]').evaluate(element=>{
    const words:string[]=[];const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);let node:Node|null;
    while((node=walker.nextNode()))for(const match of (node.textContent||'').matchAll(/[A-Za-z]+/g)){

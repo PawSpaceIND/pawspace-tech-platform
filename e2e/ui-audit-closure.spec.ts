@@ -33,9 +33,11 @@ for(const viewport of viewports) for(const theme of ["emerald","signature","cora
   await page.addInitScript(({theme,mode,style})=>{localStorage.setItem("pawspace.customer.theme",theme);localStorage.setItem("pawspace.customer.appearance",mode);localStorage.setItem("pawspace.visual-style",style);},{theme,mode,style});
   for(const route of tableRoutes) {
    await ready(page,route);
-   await expect(page.locator("html")).toHaveAttribute("data-paw-theme",theme);
+   // Seeded legacy palette/style keys are migration metadata only (app/mobile-app/theme-config.ts): each one renders
+   // the approved Editorial theme in the professional style, while the seeded light/dark mode is honoured.
+   await expect(page.locator("html")).toHaveAttribute("data-paw-theme","editorial");
    await expect(page.locator("html")).toHaveAttribute("data-paw-mode",mode);
-   await expect(page.locator("html")).toHaveAttribute("data-paw-style",style);
+   await expect(page.locator("html")).toHaveAttribute("data-paw-style","professional");
    await expect(page.locator("table").first()).toBeVisible();
    const measured=await page.locator("table").evaluateAll(tables=>tables.map(table=>{
     const broken:string[]=[]; const walker=document.createTreeWalker(table,NodeFilter.SHOW_TEXT);
@@ -157,9 +159,10 @@ for(const theme of ["emerald","signature","coral"]) for(const mode of ["light","
   await page.addInitScript(({theme,mode,style})=>{localStorage.setItem("pawspace.customer.theme",theme);localStorage.setItem("pawspace.customer.appearance",mode);localStorage.setItem("pawspace.visual-style",style);},{theme,mode,style});
   for(const viewport of viewports) {
    await page.setViewportSize(viewport);await ready(page,"/v2/team/operations/live-tracking");
-   await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);
+   // Legacy seeds never render (see the financial tables test): Editorial, professional, seeded mode.
+   await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');
    await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
-   await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);
+   await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');
    await expect(page.getByText("UI-BOOKING-44",{exact:true})).toBeAttached();
    const main=page.getByRole('heading',{name:'Live tracking control',exact:true}).locator('xpath=ancestor::main[1]');
    const colors=await main.evaluate(e=>{

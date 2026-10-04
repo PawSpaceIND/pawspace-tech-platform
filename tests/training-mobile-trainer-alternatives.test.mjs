@@ -1,17 +1,13 @@
-/*
- * Staging master E2E 36278778677 (27 Sep 2026, 04:43-05:09 IST): the customer app's "Reserve Basic Obedience with
- * 50% split" was refused with "Your selected provider is no longer available. Refresh availability and choose
- * again." The app's trainer step lists the roster for the first session only; the chosen trainer already held one
- * of the Wed & Sun 9:00 windows, and the screen offered no way forward.
- *
- * Training selection is strict (lib/provider-assignment-policy.ts: "never silently substitute"), so the app does
- * not reserve another trainer on the customer's behalf. It asks the scheduler who is free for every session of
- * the same calendar and lets the customer choose one. The engine half runs here; the screen half is checked in
- * its source.
+/* The legacy scheduler still honors an explicitly selected trainer across a series (three engine regressions).
+ * Accepted T1 customer checkout now reserves one automatic first appointment in the governed zone.
+ * Later customer appointments use the assigned programme's server-offered slot, hold and explicit confirm.
+ * The actual helper cases below retain refusal/no-write and chosen-slot boundaries under that current contract.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
+installWorkersHooks("__TRAINING_CHOICE_TEST_DB__");
 
 const { schedule } = await import("../backend/src/scheduling.ts");
 
@@ -71,28 +67,37 @@ test("engine: the trainer the customer then chooses is the one reserved, even wh
 
 const flow = readFileSync(new URL("../app/mobile-app/training-flow.tsx", import.meta.url), "utf8");
 const policy = readFileSync(new URL("../lib/provider-assignment-policy.ts", import.meta.url), "utf8");
-const reserveStart = flow.indexOf('const schedule:Omit<UatScheduleRequest,"clientRequestId">={customerId:customer.customerId');
-const reserveBlock = flow.slice(reserveStart, flow.indexOf("const canonical=await createCanonicalLifecycle", reserveStart));
+const {createRollingBooking}=await import("../lib/training-rolling-booking.ts");
+const {trainingReservationForChoice}=await import("../lib/training-availability-client.ts");
 
-test("app: a refused trainer leads to a preview of the same calendar, never to a reservation for someone else", () => {
+test("app: automatic first-appointment refusal never reserves another calendar or starts a booking", async () => {
   assert.match(policy, /serviceCode:"dog_training",cityId:"\*",config:\{assignmentMode:"auto",preferredProviderMode:"strict"\}/);
-  assert.ok(reserveStart > 0 && reserveBlock.length > 0, "the programme reservation");
-  assert.equal((reserveBlock.match(/reserveUatSchedule\(/g) || []).length, 1, "one reservation, for the chosen trainer only");
-  assert.match(reserveBlock, /reserveUatSchedule\(\{\.\.\.schedule,clientRequestId:requestId,preferredProviderId:selectedTrainer\?\.id\}\)/);
-  assert.match(reserveBlock, /if\(!isProviderSlotRefusal\(problem\)\|\|!selectedTrainer\)throw problem;/, "only a refusal of the chosen trainer looks for others");
-  assert.match(reserveBlock, /previewUatProviders\(\{\.\.\.schedule,clientRequestId:`\$\{requestId\}:alternatives`\},\{timeoutMs:60_000\}\)/, "the preview describes the exact calendar that was refused");
-  assert.match(reserveBlock, /trainer&&trainer\.id!==selectedTrainer\.id\?\[trainer\]:\[\]/, "the refused trainer is not offered again");
-  assert.match(reserveBlock, /setCalendarAlternatives\(\{key:calendarKey,trainers:free\}\)/);
-  // A preview that timed out or failed is not an answer: the customer is told to try again, not only that the trainer is busy.
-  assert.match(reserveBlock, /could not check the other trainers just now\. Try again in a moment, or change the time or days\./);
-  assert.doesNotMatch(reserveBlock, /:problem;/, "a failed preview never ends on the bare refusal");
-  assert.match(flow, /weekdays:weekdayMap\[frequency\]\};/, "preview and reservation share the weekday calendar");
+  const start=flow.indexOf('const selection:RollingSelection={customerId:customer.customerId');
+  const block=flow.slice(start,flow.indexOf('const canonical=await createCanonicalLifecycle',start));
+  assert.ok(start>0&&block.length>0,"the first-appointment reservation");
+  assert.equal((block.match(/reserveUatSchedule\(/g)||[]).length,1,"one reservation attempt only");
+  assert.match(block,/trainingReservationForChoice\(selection,\{mode:"auto"\}\)/);
+  assert.match(block,/if\(!isProviderSlotRefusal\(problem\)\)throw problem;/);
+  assert.match(block,/No certified trainer is free for your first appointment/);
+  assert.doesNotMatch(block,/previewUatProviders|preferredProviderId|weekdays:/,"no legacy calendar fallback or customer-selected trainer");
+  const quote={quoteId:"Q-FIRST",petCount:1,sessions:8,validityDays:60,minutesPerSession:60,expiresAt:Date.now()+60000,schedulingMode:"rolling_v1"};
+  const request=trainingReservationForChoice({customerId:"customer",petIds:["dog"],cityId:"governed-city",zoneId:"governed-zone",scheduledStart:"2026-10-09T04:30:00.000Z",quote,schedulingMode:"rolling_v1"},{mode:"auto"});
+  assert.equal(request.cityId,"governed-city");assert.equal(request.zoneId,"governed-zone");assert.equal(request.occurrences,1);
+  assert.equal(request.trainingQuoteId,quote.quoteId);assert.equal(request.trainingSchedulingMode,"rolling_v1");assert.equal(request.providerSelection,"auto");assert.equal("preferredProviderId" in request,false);assert.equal(quote.sessions,8,"full entitlement preserved");
+  const slot={start:"2026-10-09T04:30:00.000Z",end:"2026-10-09T05:30:00.000Z"},sent=[];
+  const machine=createRollingBooking({bookingId:"BK",now:()=>1,client:{loadSummary:async()=>({canSchedule:true,remainingSessions:7,maxUpcomingSessions:3,upcomingSessions:[],holds:[],availableSlots:[slot],providerId:"assigned"}),sendAction:async body=>{sent.push(body);throw Error("Slot unavailable");}}});
+  await machine.load();machine.select(slot);await machine.hold();await machine.confirm();
+  assert.equal(machine.state.hold,null);assert.notEqual(machine.state.phase,"confirmed");assert.deepEqual(machine.state.confirmedSessionIds,[]);
+  assert.deepEqual(sent.map(x=>x.action),["hold"],"refusal never dispatches confirmation or another reservation");
 });
 
-test("app: the review step lists them only for that calendar, and the customer chooses", () => {
-  assert.match(flow, /const calendarKey=\[selectedStartIso,frequency,time,trainerId,petKey\]\.join\("\|"\);/);
-  assert.match(flow, /const calendarTrainers=calendarAlternatives\?\.key===calendarKey\?calendarAlternatives\.trainers:\[\];/, "a changed time, day, trainer or dog hides the list");
-  const list = flow.slice(flow.indexOf('aria-label="Trainers free for every session"') - 200, flow.indexOf("</div>}", flow.indexOf('aria-label="Trainers free for every session"')));
-  assert.match(list, /calendarTrainers\.map\(\(item\) => <button key=\{item\.id\} onClick=\{\(\) => \{setTrainerId\(item\.id\);setScheduleError\(""\);\}\}>/, "choosing sets the trainer; the customer confirms again to reserve");
-  assert.doesNotMatch(list, /reserveUatSchedule|confirm\(/, "choosing does not reserve by itself");
+test("app: later appointments use one server-offered slot and a bound hold before confirmation",async()=>{
+  assert.match(flow,/Only your first appointment|ROLLING_CHECKOUT_COPY/);
+  const slot={start:"2026-10-09T04:30:00.000Z",end:"2026-10-09T05:30:00.000Z"},sent=[];
+  const machine=createRollingBooking({bookingId:"BK",now:()=>1,client:{loadSummary:async()=>({canSchedule:true,remainingSessions:7,maxUpcomingSessions:3,upcomingSessions:[],holds:[],availableSlots:[slot],providerId:"assigned"}),sendAction:async body=>{sent.push(body);return body.action==="hold"?{holdId:"H",expiresAt:1000}:{status:"confirmed",sessionIds:["S"]};}}});
+  await machine.load();machine.select({...slot,start:"2026-10-10T04:30:00.000Z"});await machine.hold();
+  assert.equal(sent.length,0,"a non-offered slot cannot create a hold");assert.match(machine.state.error,/slots your trainer offered/);machine.select(slot);
+  assert.equal(sent.length,0,"choosing a slot creates no write");await machine.confirm();assert.equal(sent.length,0,"no confirmation before a hold");
+  await machine.hold();assert.deepEqual(sent[0].slots,[slot]);assert.equal(sent[0].actorKind,"customer");assert.equal(sent[0].bookingId,"BK");
+  await machine.confirm();assert.equal(sent[1].holdId,"H");assert.notEqual(sent[1].idempotencyKey,sent[0].idempotencyKey);assert.equal(sent[1].action,"confirm");assert.equal(machine.state.phase,"confirmed");assert.deepEqual(machine.state.confirmedSessionIds,["S"]);
 });

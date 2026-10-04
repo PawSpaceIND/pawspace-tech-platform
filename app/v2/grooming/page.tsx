@@ -33,6 +33,7 @@ import {
 } from "../../../lib/v2/grooming-checkout-client";
 import { useQueryParameter } from "../../../lib/use-query-parameter";
 import GroomingGuestPreview from "./guest-preview";
+import { NativeServiceArt } from "../../components/native-art";
 import V2GroomingPaymentPanel from "./payment-panel";
 import V2GroomingCouponBox, { type V2CouponIntent } from "./coupon-box";
 import ContactForm from "../../contact/contact-form";
@@ -337,7 +338,7 @@ export default function V2GroomingPage() {
 
   if (fatal || !account || !catalogue) return (
     <main className={styles.errorPage}>
-      <img src="/assets/pawspace-grooming-cartoon.webp" alt="" />
+      <NativeServiceArt service="family" />
       <span>PAWSPACE V2 · GROOMING</span>
       <h1>We can’t begin this booking yet.</h1>
       <p>{fatal || "Your PawSpace family or grooming catalogue is unavailable."}</p>
@@ -372,7 +373,7 @@ export default function V2GroomingPage() {
         </div>
         <div className={styles.heroArt}>
           <span>Doorstep care</span>
-          <img src="/assets/pawspace-grooming-editorial.webp" alt="Pet enjoying PawSpace grooming" />
+          <NativeServiceArt service="grooming" informative />
         </div>
       </section>
 
@@ -502,7 +503,7 @@ export default function V2GroomingPage() {
 
         <aside id="v2-grooming-summary" className={styles.summary}>
           <div className={styles.summaryTop}><span>YOUR CARE PLAN</span><b>{quote ? "Live price checked" : "Your selected care"}</b></div>
-          <div className={styles.summaryPet}><img src="/assets/pawspace-grooming-cartoon.webp" alt="" /><div><b>{selectedPets.map(pet => pet.name).join(" + ") || "Choose your pet"}</b><small>{selectedPets.length ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "No pet selected"}</small></div></div>
+          <div className={styles.summaryPet}><NativeServiceArt service="grooming" /><div><b>{selectedPets.map(pet => pet.name).join(" + ") || "Choose your pet"}</b><small>{selectedPets.length ? `${selectedPets.length} ${selectedPets.length === 1 ? "pet" : "pets"}` : "No pet selected"}</small></div></div>
           <div className={styles.summaryRows}>
             <div><span>Package</span><b>{selectedPackage?.name || "—"}</b></div>
             <div><span>Doorstep</span><b>{coverage ? `${address.trim()}, ${coverage.pincode}` : "Verify address"}</b></div>

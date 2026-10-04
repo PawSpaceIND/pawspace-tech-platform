@@ -31,8 +31,8 @@ for(const width of [320,412,820,1440])for(const style of ['professional','cartoo
   return route.fulfill({status:401,json:{error:'Isolated presentation fixture'}});
  });
  const capture=async(name:string)=>{
-  await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);
-  await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);
+  await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');
+  await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');
   await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   await page.evaluate(()=>document.fonts.ready);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2);

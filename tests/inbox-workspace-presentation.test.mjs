@@ -28,6 +28,10 @@ test('Executed Inbox & AI menu matches the existing communications permission',(
 });
 test('Integrated business sources retain upstream bytes and Atlas retains upstream behavior',()=>{
  const m=JSON.parse(read('tests/fixtures/ui-mainline-integration-contract.json'));
- for(const[p,h]of Object.entries(m.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,fs.readFileSync(p)),p)),h,p);
+ for(const[p,h]of Object.entries(m.protected)){
+  const current=fs.readFileSync(p);
+  if(m.reviewedTestPostimages?.[p]){assert.equal(hash(current),m.reviewedTestPostimages[p],p);continue;}
+  assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,current),p)),h,p);
+ }
  for(const[p,x]of Object.entries(m.presentation))assert.equal(staffSemanticContract(read(p),p),x.semantic,p);
 });

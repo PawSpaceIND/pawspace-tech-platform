@@ -1,5 +1,11 @@
 /* One presentation source for every web route and Capacitor shell.
    Semantic feedback colours and the official logo retain their own meaning. */
+/* Licensed Noto faces from the approved A/C handoff (SIL OFL 1.1, public/fonts/noto/LICENSE-NOTO.txt). Only the faces a theme
+   actually uses are downloaded; headings load the selected theme's face. */
+@font-face{font-family:'PawSpace Sans';src:url('/fonts/noto/NotoSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'PawSpace Sans';src:url('/fonts/noto/NotoSans-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:'PawSpace Serif';src:url('/fonts/noto/NotoSerif-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'PawSpace Display';src:url('/fonts/noto/NotoSansDisplay-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
 :root, html[data-paw-theme] {
   --paw-primary:#01261F; --paw-deep:#01261F; --paw-gold:#E6B34E;
   --paw-bg:#F8FAF7; --paw-surface:#FFFFFF; --paw-raised:#EAF3EE;
@@ -7,6 +13,13 @@
   --paw-soft:#84B6A4; --paw-soft-ink:#BBDACD; --paw-on-primary:#FFFFFF;
   --paw-card-radius:16px; --paw-control-radius:12px; --paw-radius-scale:1;
   --paw-font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --paw-accent:#E6B34E; --paw-accent-ink:#795316; --paw-control-line:#556B63;
+  --paw-display-font:var(--paw-font); --paw-display-weight:700;
+  /* Boundary colour for filled primary controls where the fill alone cannot reach 3:1 against the canvas (dark modes). */
+  --paw-primary-edge:var(--paw-primary);
+  /* Focus ring colour: legacy themes keep gold; the native themes use their primary (light) or primary edge (dark) so the ring
+     reaches 3:1 on every surface. */
+  --paw-focus-ring:var(--paw-gold);
 }
 html[data-paw-theme="signature"] {
   --paw-primary:#894AED; --paw-deep:#452179; --paw-gold:#FFAF00;
@@ -17,6 +30,26 @@ html[data-paw-theme="coral"] {
   --paw-primary:#B94339; --paw-deep:#742C29; --paw-gold:#FFAF00;
   --paw-bg:#FFF8F4; --paw-raised:#FCEBE4; --paw-text:#482F2B;
   --paw-muted:#7D6058; --paw-line:#EDD9D0; --paw-soft:#DA9B8E; --paw-soft-ink:#F1C6BA;
+}
+/* Approved native themes (tokens/pawspace-tokens.json, 3 Oct 2026). Accent fills are not text colours: text on or in an
+   accent uses --paw-accent-ink, measured at 4.5:1 or better; --paw-gold keeps the highlight-on-deep role for existing rules. */
+html[data-paw-theme="editorial"] {
+  --paw-primary:#164A3D; --paw-deep:#0E2E26; --paw-gold:#CA7E60;
+  --paw-bg:#F6F3EC; --paw-surface:#FFFEFA; --paw-raised:#E3EAD8; --paw-text:#163B32;
+  --paw-muted:#566A60; --paw-line:#D8DFD2; --paw-soft:#9DBFAF; --paw-soft-ink:#C9DDD2;
+  --paw-accent:#C46E4D; --paw-accent-ink:#9F5235; --paw-control-line:#748379;
+  --paw-card-radius:7px; --paw-control-radius:7px; --paw-focus-ring:var(--paw-primary);
+  --paw-font:'PawSpace Sans','Noto Sans',system-ui,-apple-system,"Segoe UI",sans-serif;
+  --paw-display-font:'PawSpace Serif','Noto Serif',Georgia,serif; --paw-display-weight:400;
+}
+html[data-paw-theme="concierge"] {
+  --paw-primary:#174DC8; --paw-deep:#113891; --paw-gold:#D8EA65;
+  --paw-bg:#EDF2FA; --paw-surface:#FFFFFF; --paw-raised:#E5EDFC; --paw-text:#182A49;
+  --paw-muted:#5B6B81; --paw-line:#D7E0ED; --paw-soft:#9DB7E8; --paw-soft-ink:#C9D8F3;
+  --paw-accent:#D8EA65; --paw-accent-ink:#626F0F; --paw-control-line:#75859D;
+  --paw-card-radius:9px; --paw-control-radius:9px; --paw-focus-ring:var(--paw-primary);
+  --paw-font:'PawSpace Sans','Noto Sans',system-ui,-apple-system,"Segoe UI",sans-serif;
+  --paw-display-font:'PawSpace Display','Noto Sans Display','PawSpace Sans',sans-serif; --paw-display-weight:700;
 }
 html[data-paw-mode="dark"] {
   --paw-bg:#151A19; --paw-surface:#202725; --paw-raised:#2C3532;
@@ -36,21 +69,20 @@ html[data-paw-style="cartoon"] {--paw-card-radius:24px;--paw-control-radius:18px
   --ps-primary:var(--paw-primary);--ps-deep:var(--paw-deep);--ps-ink:var(--paw-text);--ps-bg:var(--paw-bg);--ps-surface:var(--paw-surface);--ps-muted:var(--paw-muted);--ps-line:var(--paw-line);--ps-gold:var(--paw-gold);
   --purple:var(--paw-primary);--purple-deep:var(--paw-deep);--orange:var(--paw-gold);--ink:var(--paw-text);--muted:var(--paw-muted);--line:var(--paw-line);
 }
-html:root[data-paw-mode="dark"]{--ui-gold-ink:#F0C976}
+html:root[data-paw-mode="dark"]{--ui-gold-ink:#F0C976;--paw-accent-ink:#F0C976;--paw-control-line:#8FA69C;--paw-primary-edge:#98D4BE}
 html,body{background:var(--paw-bg)!important;color:var(--paw-text);font-family:var(--paw-font)}
 button,input,textarea,select{font-family:inherit;accent-color:var(--paw-primary)}
-:where(button,a,input,textarea,select):focus-visible{outline:3px solid var(--paw-gold);outline-offset:3px}
+:where(button,a,input,textarea,select):focus-visible{outline:3px solid var(--paw-focus-ring);outline-offset:3px}
 .paw-appearance-trigger{background:var(--paw-surface)!important;color:var(--paw-primary)!important;border:1px solid var(--paw-line)!important;bottom:90px;min-width:44px;min-height:44px;z-index:90}
 .paw-appearance-dialog{background:var(--paw-surface);color:var(--paw-text);border-radius:var(--paw-card-radius);max-height:85dvh;overflow:auto}
 .paw-appearance-dialog fieldset{margin:16px 0}.paw-theme-choice{padding:12px;border-radius:var(--paw-control-radius)}
-.paw-appearance-dialog button.paw-appearance-done{background:var(--paw-primary)!important;color:var(--paw-on-primary)!important}
+.paw-appearance-dialog button.paw-appearance-done{background:var(--paw-primary)!important;color:var(--paw-on-primary)!important;border:2px solid var(--paw-primary-edge)!important}
 /* Cosmetic launch overlay, pointer-transparent and automatically dismissed. */
 .paw-welcome{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:var(--paw-bg);pointer-events:none;animation:paw-welcome-out 1.65s both}
 .paw-welcome-inner{text-align:center;display:grid;justify-items:center;gap:20px;padding:24px}
 .paw-welcome-logo{width:180px;background:#fff;border-radius:16px;padding:12px;animation:paw-logo-in .6s both}
 .paw-welcome-pets{display:flex;gap:0;align-items:center}
-.paw-welcome-pets img{width:115px;height:130px;object-fit:cover;border-radius:50% 50% 42% 42%;border:6px solid var(--paw-surface);box-shadow:0 8px 30px #00000010;animation:paw-pet-in .65s both}
-.paw-welcome-pets img+img{margin-left:-16px;margin-top:24px;animation-delay:.1s}
+html[data-paw-theme] .paw-welcome-pets .ps-service-art{width:160px;height:160px;border-radius:50% 50% 42% 42%;border:6px solid var(--paw-surface);box-shadow:0 8px 30px #00000010;animation:paw-pet-in .65s both}
 .paw-welcome p{margin:0;color:var(--paw-text);font-size:16px;font-weight:650}.paw-welcome-dots{font-size:10px;letter-spacing:8px;color:var(--paw-primary)}
 @keyframes paw-logo-in{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}
 @keyframes paw-pet-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
@@ -91,11 +123,50 @@ html[data-paw-theme="coral"][data-paw-mode="light"]{--paw-link:#A43830}
 /* Shared feedback roles and utility surfaces used by older team screens. */
 :root,html:root[data-paw-theme]{--ds-warning-600:#875006;--ds-warning-50:#FFF4DF;--ds-success-600:#0D6B46;--ds-success-50:#E9FAF3;--ds-danger-600:#A4232F;--ds-danger-50:#FDECEC;--ds-info-500:var(--paw-link)}
 html:root[data-paw-mode="dark"]{--ds-success-600:#9AD8B8;--ds-success-50:#163B2B;--ds-danger-600:#FFACB5;--ds-danger-50:#48242C;--ds-warning-600:#F4CC87;--ds-warning-50:#44331D}
+/* Dark values for the native themes are derived from the owner's light hues (owner confirmation pending); the handoff ships light tokens only. */
+html[data-paw-mode="dark"][data-paw-theme="editorial"] {--paw-bg:#0F1A17;--paw-surface:#1A2825;--paw-raised:#253732;--paw-text:#F6F4EE;--paw-muted:#CBC5B9;--paw-line:#3F5A53;--paw-accent-ink:#D08D73;--paw-control-line:#5E877D;--paw-link:#35B191;--paw-primary-edge:#35B191;--paw-focus-ring:#35B191}
+html[data-paw-mode="dark"][data-paw-theme="concierge"] {--paw-bg:#0F121A;--paw-surface:#1A1E28;--paw-raised:#252A37;--paw-text:#EEF1F6;--paw-muted:#B9C0CB;--paw-line:#3F475A;--paw-accent-ink:#D8EA65;--paw-control-line:#6A7796;--paw-link:#6790ED;--paw-primary-edge:#6790ED;--paw-focus-ring:#6790ED}
+/* "system" is rendered by the server as-is so the first paint cannot disagree with the client; the dark tokens follow the OS preference here. */
+@media (prefers-color-scheme: dark) {
+html[data-paw-mode="system"] {--paw-primary-edge:#98D4BE;--paw-bg:#151A19;--paw-surface:#202725;--paw-raised:#2C3532;--paw-text:#F3F6F3;--paw-muted:#BCC9C2;--paw-line:#465650;--paw-accent-ink:#F0C976;--paw-link:#98D4BE;--paw-danger:#FF9CA6;--ui-gold-ink:#F0C976}
+html[data-paw-mode="system"][data-paw-theme="editorial"] {--paw-bg:#0F1A17;--paw-surface:#1A2825;--paw-raised:#253732;--paw-text:#F6F4EE;--paw-muted:#CBC5B9;--paw-line:#3F5A53;--paw-accent-ink:#D08D73;--paw-control-line:#5E877D;--paw-link:#35B191;--paw-primary-edge:#35B191;--paw-focus-ring:#35B191}
+html[data-paw-mode="system"][data-paw-theme="concierge"] {--paw-bg:#0F121A;--paw-surface:#1A1E28;--paw-raised:#252A37;--paw-text:#EEF1F6;--paw-muted:#B9C0CB;--paw-line:#3F475A;--paw-accent-ink:#D8EA65;--paw-control-line:#6A7796;--paw-link:#6790ED;--paw-primary-edge:#6790ED;--paw-focus-ring:#6790ED}
+html[data-paw-mode="system"]{--ds-success-600:#9AD8B8;--ds-success-50:#163B2B;--ds-danger-600:#FFACB5;--ds-danger-50:#48242C;--ds-warning-600:#F4CC87;--ds-warning-50:#44331D}
+}
 html[data-paw-theme] .bg-white{background-color:var(--paw-surface)!important}
 
 .pet-count-row strong{color:var(--paw-text)}
 
 :root,html:root[data-paw-theme],html:root[data-paw-mode]{--paw-gold-ink:var(--ui-on-gold);--paw-feedback-danger-bg:var(--ds-danger-50);--paw-feedback-success:var(--ds-success-600);--paw-feedback-success-bg:var(--ds-success-50);--paw-feedback-warning:var(--ds-warning-600);--paw-feedback-warning-bg:var(--ds-warning-50)}
+
+/* Shared measurements and status roles from tokens/pawspace-tokens.json; identical in both themes. */
+:root,html:root[data-paw-theme],html:root[data-paw-mode]{
+ --ps-font-heading:var(--paw-display-font);--ps-heading-weight:var(--paw-display-weight);--ps-font-body:var(--paw-font);--ps-control-border:var(--paw-control-line);--ps-accent:var(--paw-accent);--ps-accent-ink:var(--paw-accent-ink);--ps-soft:var(--paw-raised);
+ --ps-space-1:4px;--ps-space-2:8px;--ps-space-3:12px;--ps-space-4:16px;--ps-space-5:24px;--ps-space-6:32px;--ps-space-7:48px;--ps-space-8:64px;--ps-space-9:96px;
+ --ps-type-caption:12px;--ps-type-label:14px;--ps-type-body:16px;--ps-type-body-large:18px;--ps-type-section:24px;--ps-type-page:32px;--ps-type-hero-compact:32px;--ps-type-hero-wide:48px;
+ --ps-content-max:1280px;--ps-wide-gutter:32px;--ps-compact-gutter:20px;--ps-header-height:72px;--ps-sidebar-width:232px;--ps-bottom-nav-min:64px;
+ --ps-touch-min:44px;--ps-button-min:48px;--ps-input-min:56px;--ps-dialog-radius:16px;--ps-chip-radius:999px;
+ --ps-success:var(--ds-success-600);--ps-success-soft:var(--ds-success-50);--ps-danger:var(--ds-danger-600);--ps-danger-soft:var(--ds-danger-50);--ps-warning:var(--ds-warning-600);--ps-warning-soft:var(--ds-warning-50);
+ --ps-duration-fast:120ms;--ps-duration-standard:180ms;
+}
+@media (prefers-reduced-motion:reduce){:root,html:root[data-paw-theme]{--ps-duration-fast:0ms;--ps-duration-standard:0ms}}
+/* Square service scene cut from the approved sheet: the image gets --sprite-width/--sprite-left/--sprite-top from asset-manifest.json. */
+.ps-service-art{display:block;position:relative;aspect-ratio:1;overflow:hidden;border-radius:var(--paw-card-radius);background:var(--paw-raised)}
+.ps-service-art>img{position:absolute;max-width:none;height:auto;width:var(--sprite-width);left:var(--sprite-left);top:var(--sprite-top)}
+/* Under the native themes the sprite geometry outranks any module "img" sizing rule (object-fit:cover, width:100%, max-width), so a scene
+   placed inside an existing art frame never shows the whole sheet. */
+html[data-paw-theme] .ps-service-art{display:block!important;position:relative!important;overflow:hidden!important;aspect-ratio:1/1!important;height:100%;width:auto;max-width:100%;margin:0 auto}
+html[data-paw-theme] .ps-service-art>img{position:absolute!important;width:var(--sprite-width)!important;height:auto!important;max-width:none!important;max-height:none!important;left:var(--sprite-left)!important;top:var(--sprite-top)!important;object-fit:unset!important;border-radius:0!important;filter:none!important}
+.ps-focus:focus-visible{outline:3px solid var(--paw-focus-ring);outline-offset:2px;box-shadow:0 0 0 2px var(--paw-surface)}
+/* Filled primary control: the fill alone is below 3:1 against the dark canvas in both native themes, so every filled control
+   carries a 2px --paw-primary-edge border (3:1 or better on surface, canvas and raised in light, dark and system-dark). */
+.ps-primary-fill{background:var(--paw-primary);color:var(--paw-on-primary);border:2px solid var(--paw-primary-edge)}
+/* Stage 3: the shared layout on every V2, partner and staff surface. Controls take the theme's radius instead of the
+   retired Professional/Fun radii, filled primary actions carry the primary edge, and headings use the display face. */
+html[data-paw-theme] [data-pawspace-v2]{--v2-control-radius:var(--paw-control-radius)}
+/* !important only to outrank the retired per-screen "border:0 !important" and global brand-lock heading rules; the values are the theme tokens. */
+html[data-paw-theme] [data-pawspace-v2] :is([data-v2-action],[data-paw-action="primary"]){border:2px solid var(--paw-primary-edge)!important}
+html[data-paw-theme][data-paw-mode][data-paw-style] :is([data-pawspace-v2],[data-partner-presentation],[data-staff-module]) :is(h1,h2){font-family:var(--paw-display-font)!important;font-weight:var(--paw-display-weight)!important}
 
 /* Readable, text-only Atlas formatting; raw HTML remains escaped text. */
 .paw-readable-text { white-space:pre-wrap; line-height:1.6; overflow-wrap:anywhere; }

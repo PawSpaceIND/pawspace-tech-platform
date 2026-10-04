@@ -18,13 +18,15 @@ test('matched goal exposes canonical plan and exact selected-dog commercial expr
 test('unrecognised goals, zero dogs and missing catalogue recommendations do not invent a suggested plan',()=>{
  for(const [rec,count] of [[recommendTrainingPlan({goals:['Unknown'],packageCodes:plans.map(p=>p.package_code)}),2],[{basis:'goals',packageCode:'unknown',matchedGoals:['Recall']},2],[{basis:'goals',packageCode:'training-8-basic',matchedGoals:['Recall']},0]])assert.ok(!render(rec,count).includes('Suggested training programme'));
 });
-test('V2 defaults to editable three-day cadence; legacy remains weekly; saved dog identity feeds existing rules',()=>{
+test('V2 checks and reserves the first appointment while saved dogs guide the programme',()=>{
  const source=readFileSync(new URL('../app/training/page.tsx',import.meta.url),'utf8');
- assert.ok(source.includes('[cadenceDays,setCadenceDays]=useState(routeScope==="v2"?3:7)'));
- assert.ok(source.includes('onChange={event=>setCadenceDays(Number(event.target.value))}'));
- assert.ok(source.includes('[1,2,3,4,5,6,7].map'));
+ assert.ok(source.includes('schedulingMode:TRAINING_SCHEDULING_MODE'));
+ assert.ok(source.includes('const providerSelection="auto" as const'));
+ assert.ok(source.includes('trainingReservationForChoice(selection,{mode:providerSelection})'));
+ assert.ok(source.includes('Later sessions are scheduled one at a time'));
  assert.ok(source.includes('dogs:selectedPets'));
  assert.ok(source.includes('recommendation={recommendation} petCount={petCount}'));
  assert.ok(source.includes('loadCustomerAccount().then(record=>'));
- assert.ok(source.includes('trainingCalendarWindows(scheduledStart,currentQuote,cadenceDays)'));
+ const availability=readFileSync(new URL('../lib/training-availability-client.ts',import.meta.url),'utf8');
+ assert.match(availability,/occurrences: rolling \|\| quote\.meetAndGreet \? 1 : quote\.sessions/);
 });

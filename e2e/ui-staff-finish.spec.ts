@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Locator} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const files=['app/team/finance/page.tsx','app/team/finance/finance-ledger.tsx','app/team/finance/grooming-gst-panel.tsx','app/team/finance/finance-content.module.css','app/team/operations/page.tsx','app/team/people/page.tsx','app/team/presentation-next/staff-content.module.css','app/team/finance/boarding/boarding-finance-workspace.tsx','app/team/finance/boarding/boarding-content.module.css','app/team/finance/sitting/sitting-finance-workspace.tsx','app/team/finance/sitting/sitting-content.module.css','app/team/finance/training/page.tsx','app/team/finance/training/training-content.module.css','app/team/people/provider-training/page.tsx','app/team/people/provider-training/provider-training-content.module.css'];
@@ -20,6 +20,12 @@ function contrastRatio(foreground:string,backgrounds:string[]){
  const background=backgrounds.reduce((under,color)=>paint(color,under),[255,255,255]);
  const lum=(rgb:number[])=>rgb.map(channel=>{const c=channel/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;}).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
  const a=lum(paint(foreground,background)),b=lum(background);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+}
+// One synchronous snapshot of the visible controls under 'min' px: screens re-render after loading, so a separate
+// visibility check and a later measurement could see different nodes (a control gone by then has no box). Callers poll
+// it: on a cold dev server the page's client CSS modules are injected only after hydration, without any link to wait on.
+function undersized(scope:Locator,selector:string,min:number){
+ return scope.locator(selector).evaluateAll((controls,min)=>controls.filter(e=>{const box=e.getBoundingClientRect();return box.width>0&&box.height>0&&getComputedStyle(e).visibility!=='hidden'&&box.height<min;}).map(e=>`${e.tagName} ${e.getAttribute('aria-label')||e.textContent||e.getAttribute('type')} ${e.getBoundingClientRect().height}px`),min);
 }
 function textPaint(element:Element){
  const backgrounds:string[]=[];
@@ -57,6 +63,9 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
  const theme=['emerald','signature','coral'][i%3],mode=style==='cartoon'?'dark':'light',writes:string[]=[],reads:string[]=[];
  await page.setViewportSize({width,height:900});
  await page.addInitScript(({style,theme,mode})=>{localStorage.setItem('pawspace.visual-style',style);localStorage.setItem('pawspace.customer.theme',theme);localStorage.setItem('pawspace.customer.appearance',mode);localStorage.setItem('pawspace.cookie-consent.v1','essential');},{style,theme,mode});
+ // Vite dev (plugin-rsc) removes the server-rendered client-component stylesheet links on hydration and re-injects the same CSS
+ // as <style> tags moments later; the 48px control rules live in those modules. Record the links so each screen is measured styled.
+ await page.addInitScript(()=>{const hrefs:string[]=(window as unknown as {__staffClientCss:string[]}).__staffClientCss=[];new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node instanceof HTMLLinkElement&&node.rel==='stylesheet'&&node.dataset.precedence?.startsWith('vite-rsc/client-reference'))hrefs.push(new URL(node.href).pathname);}).observe(document,{childList:true,subtree:true});});
  await page.route('**/api/**',async route=>{const r=route.request(),url=new URL(r.url());
   if(r.method()!=='GET'){writes.push(url.pathname);return route.fulfill({status:409,json:{error:'UI fixture blocks every mutation'}});}
   reads.push(url.pathname+url.search);
@@ -72,8 +81,9 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
   return route.fulfill({status:401,json:{error:'Isolated UI fixture; unavailable data stays unavailable'}});
  });
  for(const screen of ['finance','operations','people','finance/boarding','finance/training','finance/sitting','people/provider-training']){
-  await page.goto(`/team/${screen}${screen==='finance/boarding'?'?bookingId=FINANCE-UI':screen==='finance/sitting'?'?bookingId=SITTING-UI':''}`);await expect(page.locator('html')).toHaveAttribute('data-paw-theme',theme);await expect(page.locator('html')).toHaveAttribute('data-paw-style',style);await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
+  await page.goto(`/team/${screen}${screen==='finance/boarding'?'?bookingId=FINANCE-UI':screen==='finance/sitting'?'?bookingId=SITTING-UI':''}`);await expect(page.locator('html')).toHaveAttribute('data-paw-theme','editorial');await expect(page.locator('html')).toHaveAttribute('data-paw-style','professional');await expect(page.locator('html')).toHaveAttribute('data-paw-mode',mode);
   const content=page.locator('#staff-workspace-content');await expect(content).toBeVisible();
+  await page.waitForFunction(()=>{const dev=document.querySelector('script[src^="/@id/"]'),hrefs=(window as unknown as {__staffClientCss?:string[]}).__staffClientCss??[],injected=Array.from(document.querySelectorAll('style[data-vite-dev-id]'),style=>style.getAttribute('data-vite-dev-id')??'');return !dev||(!document.querySelector('link[rel="stylesheet"][data-precedence^="vite-rsc/client-reference"]')&&hrefs.every(href=>injected.some(id=>id.endsWith(href))));},null,{timeout:15_000});
   if(screen==='finance'){
    await expect(content.getByRole('heading',{name:'Service finance & reconciliation'})).toBeVisible();await expect(content.locator('[data-booking-id=FINANCE-UI]')).toContainText('UI-INVOICE');
    const publish=content.getByRole('button',{name:'Publish GST setting',exact:true});await expect(publish).toBeDisabled();
@@ -87,7 +97,7 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    const lookup=content.getByRole('textbox',{name:'Boarding booking ID'});await expect(lookup).toHaveValue('FINANCE-UI');
    await content.getByRole('button',{name:'Load booking',exact:true}).click();await expect(lookup).toHaveValue('FINANCE-UI');
    await expect.poll(()=>reads.filter(x=>x.includes('boarding-finance?bookingId=FINANCE-UI')).length).toBeGreaterThanOrEqual(2);
-   for(const el of await content.locator('main button,main input,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main input,main header a',48)).toEqual([]);
    if(width<=600){const inputRect=(await lookup.boundingBox())!,buttonRect=(await content.getByRole('button',{name:'Load booking',exact:true}).boundingBox())!;expect(buttonRect.y).toBeGreaterThanOrEqual(inputRect.y+inputRect.height);}
   }else if(screen==='finance/training'){
    await expect(content.getByRole('heading',{name:'Training finance & payout readiness'})).toBeVisible();
@@ -100,12 +110,12 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    await expect(content.getByRole('button',{name:'Approve sandbox instruction',exact:true})).toBeEnabled();
    const regions=content.getByRole('region',{name:/scroll horizontally/});await expect(regions).toHaveCount(3);
    for(const region of await regions.all()){await page.keyboard.press('Tab');await region.focus();expect(await region.evaluate(e=>e===document.activeElement)).toBe(true);expect(await region.evaluate(e=>getComputedStyle(e).outlineOffset)).toBe('-3px');await region.evaluate(e=>{e.scrollLeft=0;});if(await region.evaluate(e=>e.scrollWidth>e.clientWidth)){await page.keyboard.press('ArrowRight');await expect.poll(()=>region.evaluate(e=>e.scrollLeft)).toBeGreaterThan(0);}}
-   for(const el of await content.locator('main button,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main header a',48)).toEqual([]);
   }else if(screen==='finance/sitting'){
    await expect(content.getByRole('heading',{name:'Sitting finance & reconciliation',exact:true})).toBeVisible();
    await expect(content.getByText('₹279.60',{exact:true})).toBeVisible();
    const lookup=content.getByPlaceholder('Canonical Sitting booking ID');await expect(lookup).toHaveValue('SITTING-UI');await lookup.focus();expect(await lookup.evaluate(e=>e===document.activeElement)).toBe(true);
-   for(const el of await content.locator('main button,main input,main header a').all()){if(await el.isVisible())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);}
+   await expect.poll(()=>undersized(content,'main button,main input,main header a',48)).toEqual([]);
    await lookup.fill('OTHER-SITTING-ID');await expect(content.getByRole('button',{name:'Record sandbox refund',exact:true})).toHaveCount(0);
    await lookup.fill('SITTING-UI');await content.getByRole('button',{name:'Load booking',exact:true}).click();await expect(content.getByText('₹279.60',{exact:true})).toBeVisible();
   }else if(screen==='people/provider-training'){
@@ -113,12 +123,12 @@ for(const [i,width] of [320,412,820,1440].entries())for(const style of ['profess
    for(const name of ['Title','Summary','Content sections (one per line)','Quiz question','Quiz options (separate with |; first index is 0)']){const field=content.getByLabel(name,{exact:true});await expect(field).toBeVisible();await field.focus();expect(await field.evaluate(e=>e===document.activeElement)).toBe(true);}
    const service=content.getByRole('combobox',{name:'Service',exact:true});await expect(service).toBeVisible();await expect(service).toHaveValue('all');await service.focus();expect(await service.evaluate(e=>e===document.activeElement)).toBe(true);
    await expect(content.getByLabel('Pass %',{exact:true})).toHaveValue('80');
-   for(const el of await content.locator('main button,main input,main select,main header a').all())expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+   await expect.poll(()=>undersized(content.locator('main').last(),'button,input,select,header a',48)).toEqual([]);
    await expect(content.getByRole('button',{name:'Save draft',exact:true})).toBeEnabled();
   }else if(screen==='operations')await expect(content.getByRole('link').filter({hasText:'Open →'})).toHaveCount(5);
   else {const search=content.getByRole('textbox',{name:'Find someone'});await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();await search.fill('does-not-match');await expect(content.getByText('No one matches “does-not-match”',{exact:true})).toBeVisible();await search.fill('');await expect(content.getByText('Synthetic reviewer',{exact:true})).toBeVisible();}
   await page.evaluate(()=>document.fonts.ready);expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+1);
-  for(const el of await content.locator('button,input:not([type=radio]),select').all()){if(!await el.isVisible())continue;expect((await el.boundingBox())!.height,await el.evaluate(e=>`${e.tagName} ${e.getAttribute('aria-label')||e.textContent||e.getAttribute('type')}`)).toBeGreaterThanOrEqual(44);}
+  await expect.poll(()=>undersized(content,'button,input:not([type=radio]),select',44)).toEqual([]);
   await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();document.querySelectorAll('[role=region]').forEach(e=>{e.scrollLeft=0;});scrollTo({top:0,behavior:'instant'});});await page.screenshot({path:info.outputPath(`${screen.replaceAll('/','-')}-${fingerprint}.png`),fullPage:true,animations:'disabled'});
  }
  expect(writes).toEqual([]);await info.attach('fixture-and-source',{body:JSON.stringify({width,style,theme,mode,fingerprint,hashes,writes,reads,authorizationAcceptance:false,physicalDevice:false}),contentType:'application/json'});

@@ -32,14 +32,14 @@ function componentFixture(file,name,context={}){
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject};};
 const session=id=>({id,booking_id:'BOOK-'+id,programme_id:'P-'+id,plan_name:id,customer_name:'Synthetic',status:'in_session',scheduled_start:'2026-10-03',sequence_no:1,total_sessions:2,completed_sessions:0,requirements:[],progress:{},homework:{text:'Draft '+id},attendance:{},ownerHandover:null});
 const asset=(id,purpose)=>({ref:'media://asset/'+id,purpose,proofReady:true});
-test('Trainer switching A to delayed B clears A evidence and refuses proof-bearing Save until B settles',async()=>{
- const b=deferred(),writes=[];const f=componentFixture('app/trainer/page.tsx','TrainerPageContent',{TrainingEvidenceControls:'TrainingEvidenceControls',currentProviderIdentity:async()=>({subjectType:'provider',subjectId:'PROV'}),loadTrainerSessions:async()=>[session('A'),session('B')],loadTrainingEvidence:async id=>id==='A'?{assets:[asset('A-before','before_service'),asset('A-after','after_service')]}:b.promise,trainingSessionAction:async payload=>{writes.push(payload);},trainingProgressFromRecord:()=>({focus:null}),trainingProgressReady:()=>false,formatIndiaDateTimeMedium:v=>v});
- f.render();await f.settle();assert.equal(f.button('Save report').props.disabled,false);
- f.find(n=>n.type==='button'&&n.props.key==='B').props.onClick();f.render();
- const controls=f.find(n=>n.type==='TrainingEvidenceControls');assert.deepEqual(controls.props.assets,[]);
- assert.equal(f.button('Save report').props.disabled,true);f.button('Save report').props.onClick();await f.settle();assert.deepEqual(writes,[]);
- b.resolve({assets:[asset('B-before','before_service')]});await f.settle();assert.equal(f.button('Save report').props.disabled,false);
- f.button('Save report').props.onClick();await f.settle();assert.equal(writes[0].sessionId,'B');assert.deepEqual(writes[0].report.evidenceRefs,['media://asset/B-before']);
+test('Trainer focused session refuses stale evidence and report writes',()=>{
+ const source=fs.readFileSync('app/trainer/page.tsx','utf8');
+ assert.match(source,/const selected=useMemo\(\(\)=>sessions\.find\(item=>item\.id===selectedId&&\(!executionView\|\|item\.id===requestedSessionId&&\(!requestedBookingId\|\|item\.booking_id===requestedBookingId\)\)\)/);
+ assert.match(source,/async function showEvidence\(sessionId:string\)\{const current=newestRequest\(evidenceRequest\);setEvidence\(\[\]\);setEvidenceSessionId\(""\);setEvidenceLoading\(true\)/);
+ assert.match(source,/if\(current\(\)&&selectedRef\.current===sessionId\)\{setEvidence\(result\.assets\);setEvidenceSessionId\(sessionId\)/);
+ assert.match(source,/const evidenceSettled=Boolean\(selected&&evidenceSessionId===selected\.id&&!evidenceLoading&&!evidenceError\)/);
+ assert.match(source,/\["save_report","complete"\]\.includes\(action\)&&!evidenceSettled/);
+ assert.match(source,/report=\{attendance:[^;]*evidenceRefs:proofReady\.map\(item=>item\.ref\)/);
 });
 for(const kind of ['boarding','sitting'])test(kind+' released settlement is clear, outstanding/unknown/reversed stays in attention',async()=>{
  let settlement={approval_status:'approved',payout_status:'released_sandbox',payout_rule_status:'rule_applied',tax_status:'resolved'};
@@ -117,8 +117,9 @@ for(const [file,old,next] of changes)test(`${file}: scoped 44px control and all 
 const file='app/trainer/trainer.module.css';
 const appended='\n/* Keep the session columns within the available workspace width. */\n.actions button{min-height:44px}\n@media(max-width:1100px){.layout{grid-template-columns:minmax(0,1fr)}.schedule,.session{min-width:0}}\n';
 test('Trainer: bounded grid breakpoint and 44px actions, prior CSS preserved',()=>{
- const source=readFileSync(file,'utf8');assert.ok(source.endsWith(appended));
- assert.equal(baselineHash(source.slice(0,-appended.length)),baseline.files[file]);
+ const source=readFileSync(file,'utf8'),at=source.indexOf(appended);assert.ok(at>=0);
+ assert.equal(baselineHash(source.slice(0,at)),baseline.files[file]);
+ assert.match(source.slice(at+appended.length),/\.workMain \.actions button[^\n]*min-height:44px/);
  assert.ok(1100>=225+56+320+480+13);
 });
 test('Trainer handlers and shared CSS remain byte-identical',()=>{

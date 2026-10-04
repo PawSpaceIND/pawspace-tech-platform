@@ -18,6 +18,8 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   // These exact machine-to-machine POST handlers authenticate their own bearer/HMAC credentials.
   // A provider cannot log in as staff. Never exempt a prefix or any other HTTP method here.
   if(method==="POST"&&(url.pathname==="/api/elevenlabs/v1/responses"||url.pathname==="/api/webhooks/elevenlabs/init"||url.pathname==="/api/webhooks/elevenlabs/post-call"))return null;
+  // Appearance owns its verified session check; exempt only the two implemented methods.
+  if(url.pathname==="/api/appearance"&&["GET","POST"].includes(method))return null;
   if(url.pathname==="/api/v2/test-coins"&&["GET","POST"].includes(method))return "scheduling.book";
   // V2 publishes only the customer-safe grooming catalogue without auth. Checkout remains
   // customer-scoped, while unknown V2 paths and unsupported methods keep default-deny.

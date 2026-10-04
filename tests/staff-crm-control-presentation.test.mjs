@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import {preservedBrandStyleBytes} from './helpers/approved-brand-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ import {hasPermission} from '../lib/platform-security.ts';
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const contract=JSON.parse(read('tests/fixtures/staff-crm-control-contract.json'));
-for(const [file,expected] of Object.entries(contract.files))test('CRM/Control preserves non-presentation code: '+file,()=>assert.equal(staffContextSemanticContract(read(file),file),expected.contextSemantic));
+for(const [file,expected] of Object.entries(contract.files))test('CRM/Control preserves non-presentation code: '+file,()=>assert.equal(staffContextSemanticContract(preservedAcceptedUiBytes(file,read(file)),file),expected.contextSemantic));
 test('CRM consent, lead lock, customer identity, payloads and handlers cannot disappear',()=>{
  const path='app/crm/page.tsx',s=read(path),h=staffContextSemanticContract(s,path);
  for(const [a,b] of [['/api/crm','/api/other'],['leadLock.current)return','false)return'],['primaryPhone:String','wrongPhone:String'],['whatsappConsent:fd.get','wrongConsent:fd.get'],['onClick={()=>setView(n.id)}','onClick={()=>setView("customers")}']]){assert.ok(s.includes(a));assert.notEqual(staffContextSemanticContract(s.replace(a,b),path),h);}

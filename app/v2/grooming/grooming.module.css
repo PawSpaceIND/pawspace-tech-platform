@@ -190,5 +190,45 @@
   .page .stickyTotal button { min-height:44px; padding:10px 16px; border:0; border-radius:calc(12px * var(--paw-radius-scale)); background:var(--brand-gold); color:var(--brand-on-gold); font-weight:800; }
 }
 
+/* Approved shared layout (native A/C handoff, 3 Oct 2026): visible approved grooming scene, display headings, 48 px actions,
+   3:1 input borders and focus rings. Steps, summary rows, totals and every control stay exactly as rendered by the page. */
+.page.page, .loading.loading, .errorPage.errorPage, .checkoutPage.checkoutPage { font-family:var(--paw-font) !important; }
+.page.page :is(h1,h2,h3), .checkoutPage.checkoutPage :is(h1,h2), .errorPage.errorPage h1 { font-family:var(--paw-display-font); font-weight:var(--paw-display-weight); letter-spacing:0; }
+.page.page .hero { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--ps-space-4); align-items:center; }
+.page.page .hero h1 { font-size:var(--ps-type-hero-compact); line-height:1.19; margin:6px 0 10px; }
+.page.page .hero h1 em { font-family:inherit !important; font-style:normal; color:var(--brand-text) !important; }
+.page.page .hero p { font-size:var(--ps-type-body); }
+:global(html[data-paw-theme]) .page.page .heroArt { display:block; width:min(100%,260px); height:auto; aspect-ratio:1 / 1; border-radius:var(--paw-card-radius); background:var(--brand-raised) !important; box-shadow:none; }
+.page.page .heroArt :global(.ps-service-art) { width:100%; height:100%; }
+.page.page .heroArt:after, .page.page .heroArt>span { display:none; }
+.page.page .step { border:1px solid var(--paw-line); background:var(--paw-surface) !important; box-shadow:none; }
+.page.page .stepHead>span { border-radius:var(--paw-control-radius); }
+.page.page .addressBox input, .page.page .recoveryForm input { border-color:var(--paw-control-line) !important; min-height:var(--ps-input-min); border-radius:var(--paw-control-radius); }
+.page.page .addressBox button, .page.page .liveButton, .page.page .continue, .page.page .stepNavigation button { min-height:var(--ps-button-min); border-radius:var(--paw-control-radius); }
+.page.page .continue { background:var(--brand-primary) !important; color:var(--brand-on-primary) !important; border:2px solid var(--paw-primary-edge); }
+.page.page .summaryPet :global(.ps-service-art) { width:58px; height:58px; flex:none; border-radius:var(--paw-card-radius); }
+.errorPage.errorPage :global(.ps-service-art) { width:130px; }
+.page.page :is(button,a):focus-visible, .checkoutPage.checkoutPage :is(button,a):focus-visible, .errorPage.errorPage :is(button,a):focus-visible { outline:3px solid var(--paw-focus-ring) !important; outline-offset:2px; }
+@media (min-width:768px) {
+  .page.page .hero { grid-template-columns:minmax(0,1fr) 260px; gap:var(--ps-space-6); }
+  .page.page .hero h1 { font-size:40px; line-height:1.15; }
+}
+/* Sprite frames on the Grooming page: hero scene, summary pet scene and the error page scene use the manifest offsets. */
+:global(html[data-paw-theme]) .page.page .heroArt :global(.ps-service-art), :global(html[data-paw-theme]) .page.page .summaryPet :global(.ps-service-art), :global(html[data-paw-theme]) .errorPage :global(.ps-service-art) { display:block; position:relative; width:100%; height:100%; aspect-ratio:1 / 1; overflow:hidden; }
+:global(html[data-paw-theme]) .page.page .heroArt :global(.ps-service-art)>img, :global(html[data-paw-theme]) .page.page .summaryPet :global(.ps-service-art)>img, :global(html[data-paw-theme]) .errorPage :global(.ps-service-art)>img { position:absolute; width:var(--sprite-width); height:auto; max-width:none; max-height:none; left:var(--sprite-left); top:var(--sprite-top); object-fit:unset; background:transparent; border-radius:0; }
+:global(html[data-paw-theme]) .page.page .heroArt { height:auto; aspect-ratio:1 / 1; box-shadow:none; background:var(--paw-raised); }
+:global(html[data-paw-theme]) .page.page .heroArt:after { display:none; }
+:global(html[data-paw-theme]) .page.page .summaryPet :global(.ps-service-art) { width:58px; height:58px; flex:0 0 58px; }
+:global(html[data-paw-theme]) .errorPage :global(.ps-service-art) { width:130px; height:130px; margin:0 auto; }
+@media (min-width:768px) {
+  :global(html[data-paw-theme]) .page.page .hero { grid-template-columns:minmax(0,1fr) 320px; align-items:center; gap:var(--ps-space-7,40px); }
+  :global(html[data-paw-theme]) .page.page .heroArt { width:320px; max-width:100%; justify-self:end; }
+}
+
+/* The signed-out preview keeps the shared appearance control in its header, clear of booking/verification actions. */
+.guestAppearance { display:flex; align-items:center; justify-self:end; }
+.guestAppearance :global(.paw-appearance-trigger) { position:static !important; inset:auto !important; min-height:48px; margin:0; box-shadow:none; }
+
+
 /* Keep phone step-label wrapping from moving a focused disclosure during a tap. */
 @media(max-width:640px) { .page .backBar { min-height:60px; } }

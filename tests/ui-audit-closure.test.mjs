@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import {reverseTrainingReadGeneration} from './helpers/training-finance-read-generation-review.mjs';
 import {reverseFinancePrecision} from './helpers/ui-finance-precision-review.mjs';
 import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
@@ -15,7 +16,7 @@ for (const [file, expected] of Object.entries(contract.files)) {
    assert.deepEqual(reviewed.slice(patch.index,patch.index+patch.remove.length),patch.remove);
    reviewed.splice(patch.index,patch.remove.length,...patch.insert);
   }
-  assert.deepEqual(uiBehaviorSignatures(reverseAtlasHandoffDeadline(read(file),file),file),reviewed);
+  assert.deepEqual(uiBehaviorSignatures(reverseAtlasHandoffDeadline(preservedAcceptedUiBytes(file,read(file)),file),file),reviewed);
   });
 }
 test('table repair stays scoped and never hides document overflow',()=>{

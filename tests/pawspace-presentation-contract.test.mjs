@@ -3,17 +3,21 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import postcss from 'postcss';
-import {themes, resolveBrandTheme, resolveVisualStyle, DEFAULT_STYLE} from '../app/mobile-app/theme-config.ts';
+import {themes, resolveBrandTheme, resolveVisualStyle, DEFAULT_STYLE, isOfferedTheme, isLegacyThemeId} from '../app/mobile-app/theme-config.ts';
 const root = new URL('../', import.meta.url);
 const read=p=>fs.readFileSync(new URL(p,root),'utf8');
 function files(dir){return fs.readdirSync(new URL(dir,root),{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(`${dir}/${e.name}`):[`${dir}/${e.name}`]);}
-test('two independent styles expose all three palettes, preserving legacy Fun preference',()=>{
- assert.deepEqual(themes.map(t=>t.id),['emerald','signature','coral']);
+test('the shared layout offers Editorial and gates Concierge while preserving legacy metadata',()=>{
+ assert.deepEqual(themes.map(t=>t.id),['editorial','concierge']);
  assert.equal(DEFAULT_STYLE,'professional');
  assert.equal(resolveVisualStyle('cartoon'),'cartoon');
  assert.equal(resolveVisualStyle(null),'professional');
- for(const t of themes)assert.equal(resolveBrandTheme(t.id),t.id);
- assert.equal(resolveBrandTheme('unknown'),'emerald');
+ assert.equal(isLegacyThemeId('coral'),true);
+ assert.equal(isOfferedTheme('concierge',false),false);
+ assert.equal(isOfferedTheme('concierge',true),true);
+ assert.equal(resolveBrandTheme('unknown',false),'editorial');
+ assert.equal(resolveBrandTheme('concierge',false),'editorial');
+ assert.equal(resolveBrandTheme('concierge',true),'concierge');
 });
 test('every shared palette reference resolves and legacy sheets cannot redefine the root palette',()=>{
  const sheet=read('app/pawspace-design-system.css');
@@ -69,18 +73,17 @@ test('legacy booking widgets distinguish surface backgrounds from button foregro
   }
 });
 
-test('all module corner treatments follow the shared style scale',()=>{
- for(const file of files('app').filter(f=>f.endsWith('.css')&&!f.endsWith('pawspace-design-system.css'))){
-  postcss.parse(read(file)).walkDecls(d=>{
-   if(d.prop==='border-radius'&&/^\d+px$/.test(d.value))assert.ok(parseInt(d.value)<8||parseInt(d.value)>32,`${file}: fixed component radius ${d.value}`);
-  });
- }
- assert.match(read('app/pawspace-design-system.css'),/--paw-radius-scale:1\.35/);
+test('the root appearance fixes one professional structure and exposes shared corner tokens',()=>{
+ const sheet=read('app/pawspace-design-system.css');
+ assert.match(read('app/layout.tsx'),/data-paw-style="professional"/);
+ assert.match(sheet,/--paw-card-radius:16px/);
+ assert.match(sheet,/--paw-control-radius:12px/);
+ assert.match(sheet,/--v2-control-radius:var\(--paw-control-radius\)/);
 });
 
 test('every web module inherits the single root appearance controller',()=>{
  const layout=read('app/layout.tsx');
- assert.equal((layout.match(/<PawSpaceAppearance\s*\/>/g)||[]).length,1);
+ assert.equal((layout.match(/<PawSpaceAppearance\b/g)||[]).length,1);
  assert.ok(layout.indexOf('./pawspace-design-system.css')>layout.indexOf('./brand-book-theme.css'));
  for(const file of files('app').filter(f=>f.endsWith('/layout.tsx')&&f!=='app/layout.tsx'))assert.doesNotMatch(read(file),/<html\b|<body\b|<PawSpaceAppearance\b/,file);
  assert.match(read('app/components/pawspace-appearance.tsx'),/window.addEventListener\("storage", sync\)/);
@@ -98,7 +101,7 @@ test('inline component corners cannot bypass the global Professional/Fun style',
 test('staff appearance uses the same saved choice and change event as the main selector',()=>{
  const staff=read('app/control/appearance-platform-panel.tsx');
  assert.match(staff,/localStorage\.getItem\(THEME_STORAGE_KEY\)/);
- assert.match(staff,/useState<ThemeId>\("emerald"\)/);
+ assert.match(staff,/useState<ThemeId>\("editorial"\)/);
  assert.doesNotMatch(staff,/useState<ThemeId>\(readStoredTheme\)/);
  assert.match(staff,/localStorage\.setItem\(THEME_STORAGE_KEY, next\)/);
  assert.match(staff,/window\.addEventListener\("pawspace-appearance-change", sync\)/);

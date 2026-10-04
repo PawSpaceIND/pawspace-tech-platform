@@ -1,4 +1,5 @@
 "use client";
+import {NativeServiceArt,type ServiceSceneCode} from "../native-art";
 import {FormEvent,ReactNode,useEffect,useRef} from "react";
 import styles from "./wati-chat.module.css";
 
@@ -24,7 +25,7 @@ export default function WatiConversation(props:{
  draft:string;onDraft:(value:string)=>void;onSend:(text:string)=>void;onChoice:(choice:WatiChoice)=>void;
  placeholder:string;composerDisabled?:boolean;
  /** Service art by choice id (/assets/pawspace-*-cartoon.webp): a service menu becomes WATI's services card. */
- serviceArt?:Record<string,string>;menuBanner?:string;
+ serviceArt?:Record<string,string>;serviceScene?:Record<string,ServiceSceneCode>;menuBanner?:string;
 }){
  const end=useRef<HTMLDivElement|null>(null);
  useEffect(()=>{end.current?.scrollIntoView({behavior:"smooth",block:"end"});},[props.messages.length,props.busy]);
@@ -46,7 +47,7 @@ export default function WatiConversation(props:{
       <p>{message.side==="pawspace"?withPayLink(message.text):message.text}</p>
       {message.at?<span className={styles.meta}>{time(message.at)}{message.side==="customer"?" ✓✓":""}</span>:null}
      </article>
-     {message===last&&message.choices?.length?<div className={`${styles.choices} ${servicesCard(message.choices,props.serviceArt)?styles.serviceChoices:""}`} role="group" aria-label="Choose an option">{message.choices.map(choice=><button key={choice.id} type="button" className={styles.choice} disabled={props.busy} onClick={()=>props.onChoice(choice)}>{props.serviceArt?.[choice.id]&&<img className={styles.choiceArt} src={props.serviceArt[choice.id]} alt=""/>}<span>{choice.label}</span></button>)}</div>:null}
+     {message===last&&message.choices?.length?<div className={`${styles.choices} ${servicesCard(message.choices,props.serviceArt)?styles.serviceChoices:""}`} role="group" aria-label="Choose an option">{message.choices.map(choice=><button key={choice.id} type="button" className={styles.choice} disabled={props.busy} onClick={()=>props.onChoice(choice)}>{props.serviceArt?.[choice.id]&&(props.serviceScene?.[choice.id]?<span className={styles.choiceArt}><NativeServiceArt service={props.serviceScene[choice.id]}/></span>:<img className={styles.choiceArt} src={props.serviceArt[choice.id]} alt=""/>)}<span>{choice.label}</span></button>)}</div>:null}
     </div>)}
    {props.busy&&<div className={`${styles.row} ${styles.rowPawSpace}`} role="status" aria-label="PawSpace is typing"><div className={`${styles.bubble} ${styles.typing}`}><span/><span/><span/></div></div>}
    {props.error&&<p role="alert" className={styles.error}>{props.error}</p>}

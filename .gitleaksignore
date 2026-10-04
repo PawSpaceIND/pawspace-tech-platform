@@ -59,3 +59,6 @@ a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret
 # Exact historical false positive: public in-memory Training signing fixture, never a hosted credential.
 # Latest fixture uses an unmistakable test-only expression; all other findings remain enforced.
 bdb7df8bb8e201858855af28448d1a6f7e1dc183:tests/training-arrival-handover-context.test.mjs:generic-api-key:10
+
+# Public base64url character alphabet, not a credential. Exact original PR1267 finding only.
+7ebbc7fe30b10fc0653ea15c1ebcf7c6e26485cd:app/components/appearance-account-client.ts:generic-api-key:27

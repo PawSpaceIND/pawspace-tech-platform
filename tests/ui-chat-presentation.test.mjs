@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -14,7 +15,7 @@ for(const [path,expected] of Object.entries({
  'app/components/wati-chat/wati-chat.module.css':'e7dd395378a4c42fac84c170a72358ddcb8968eb93037c3f7465ff5372670e07',
  // Reviewed Grooming-only mobile utility append; chat sources and assertions remain unchanged.
  'app/v2/presentation.module.css':'3a201fab2e8db78e646277e899222fec8528e441f529e8ae3babbc75fafed5ef',
-}))test(`Chat visual repair preserves original source: ${path}`,()=>assert.equal(hash(read(path)),expected));
+}))test(`Chat visual repair preserves original source: ${path}`,()=>assert.equal(hash(preservedAcceptedUiBytes(path,read(path))),expected));
 test('chat CSS repair preserves the complete pre-repair stylesheet as an exact prefix',()=>{
  const css=read('app/v2/chat/page.module.css'),at=css.indexOf(marker);
  assert.ok(at>0);assert.equal(hash(css.slice(0,at)),originalCssHash);

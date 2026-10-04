@@ -91,7 +91,7 @@ test("boarding and sitting premium presentation still uses governed quotes, capa
     /createCanonicalLifecycle/,
     /vaccinationStatus !== "verified"/,
   ], "Boarding\/Sitting");
-  const gate=read("app/mobile-app/stay-care-payment-gate.tsx");hasAll(gate,[/BookingPaymentPage/,/if\s*\(ready\)\s*return\s*<>[\s\S]*?<BookingPaymentPage/,/Retry saving care instructions/],"Verified care payment gate");
+  const gate=read("app/mobile-app/stay-care-payment-gate.tsx");hasAll(gate,[/BookingPaymentPage returnAfterVerified=\{false\}/,/Complete payment first, then add your Care Card/,/caregiver cannot check in without them/],"Verified care payment gate");
   assert.doesNotMatch(source, /customerId\s*:\s*["']TST-101["']/);
 });
 

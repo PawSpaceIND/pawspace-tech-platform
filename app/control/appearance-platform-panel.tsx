@@ -8,7 +8,7 @@ function readStoredTheme(): ThemeId {
     const stored = localStorage.getItem(THEME_STORAGE_KEY) || localStorage.getItem(PLATFORM_THEME_STORAGE_KEY);
     if (isOfferedTheme(stored)) return stored;
   } catch { /* Session-only. */ }
-  return "emerald";
+  return "editorial";
 }
 
 const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 };
@@ -27,9 +27,11 @@ const tag: React.CSSProperties = { display: "block", fontSize: 14, lineHeight: 1
 const swatchRow: React.CSSProperties = { display: "flex", gap: 8, marginTop: 14 };
 const swatch = (bg: string): React.CSSProperties => ({ width: 28, height: 28, borderRadius: "calc(8px * var(--paw-radius-scale))", background: bg, border: "1px solid var(--paw-raised)" });
 
-/** Control-center default only. Does not touch bookings or payments. */
+/** Control-center default only. Does not touch bookings or payments.
+    Writes the legacy device keys; the shared appearance record (see components/appearance-resolver.ts) treats them as migration
+    metadata, so a true new-user default still needs server-side ownership. Only eligible appearances are listed. */
 export default function AppearancePlatformPanel({ notify }: { notify: (message: string) => void }) {
-  const [theme, setTheme] = useState<ThemeId>("emerald");
+  const [theme, setTheme] = useState<ThemeId>("editorial");
   useEffect(() => {
     const sync = () => setTheme(readStoredTheme());
     sync();
@@ -51,7 +53,7 @@ export default function AppearancePlatformPanel({ notify }: { notify: (message: 
         This device uses one shared appearance across customer, partner and staff modules. You can also change it from the main Appearance panel.
       </p>
       <div style={grid} role="radiogroup" aria-label="Colour kit">
-        {themes.map((option) => {
+        {themes.filter((option) => isOfferedTheme(option.id)).map((option) => {
           const on = theme === option.id;
           return (
             <button

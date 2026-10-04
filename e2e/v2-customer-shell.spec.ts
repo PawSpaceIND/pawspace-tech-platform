@@ -12,7 +12,7 @@ async function shellFixture(page:Page){
 }
 test("V2 customer shell keeps all service and utility navigation inside V2",async({page})=>{
  await shellFixture(page); await page.goto("/v2");
- await expect(page.getByRole("heading",{name:/Happy pets/})).toBeVisible();
+ await expect(page.getByRole("heading",{name:/Their happy place\.\s*Your peace of mind\./})).toBeVisible();
  for(const route of ["grooming","boarding","training","sitting","walking","food","relocation","taxi"]){
   await expect(page.locator('a[href="/v2/'+route+'"]')).toHaveCount(1);
  }
