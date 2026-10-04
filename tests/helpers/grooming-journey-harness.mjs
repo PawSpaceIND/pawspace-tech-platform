@@ -146,6 +146,14 @@ export async function runCompletedJourney(ctx, config) {
     coupon = await quoteCoupon(db, { code: config.couponCode, customerId: config.customerId, serviceCode: "grooming", cityId: config.cityId, channel: "customer_app", packageCode: "dog-basic", orderValue: 1899, paymentMode: "full", isSubscription: false });
   }
   const total = coupon?.valid ? coupon.finalAmount : 1899;
+  // Optional governed Grooming quote (lib/grooming-commercial-governance): priced by the canonical live governance,
+  // pinned with this coupon quote, and accepted by the customer's own booking POST below. Off unless asked for.
+  let groomingQuote = null;
+  if (config.groomingQuote) {
+    const quoted = await routeCall("../../app/api/grooming-commercial/route.ts", "POST", "/api/grooming-commercial", { customerId: config.customerId, packageCode: "dog-basic", pets: [{ sourceId: config.petSourceId }], cityId: config.cityId, zoneId: config.zoneId, scheduledStart: start.toISOString(), paymentMode: "prepaid", ...(coupon?.quoteId ? { couponQuoteId: coupon.quoteId } : {}) }, customerCookie);
+    if (quoted.status !== 201) throw new Error(`Grooming quote failed: ${quoted.status} ${JSON.stringify(quoted.body)}`);
+    groomingQuote = quoted.body.data.quote;
+  }
   const bookingPayload = {
     idempotencyKey: config.groupId, scheduleGroupId: config.groupId,
     customer: { id: config.customerId, name: config.customerName, primaryPhone: config.phone },
@@ -154,7 +162,7 @@ export async function runCompletedJourney(ctx, config) {
     scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), provider,
     totalAmount: total, amountDueNow: total,
     payment: { method: "upi", mode: "prepaid", status: "created", detail: "sandbox golden journey" },
-    pricing: { discount: coupon?.discount || 0, ...(coupon?.quoteId ? { couponCode: config.couponCode, couponQuoteId: coupon.quoteId } : {}) },
+    pricing: { discount: coupon?.discount || 0, ...(coupon?.quoteId ? { couponCode: config.couponCode, couponQuoteId: coupon.quoteId } : {}), ...(groomingQuote ? { groomingQuoteId: groomingQuote.quoteId } : {}) },
   };
   const booked = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
@@ -172,7 +180,7 @@ export async function runCompletedJourney(ctx, config) {
 
   if (config.stopAfterCapture) return {
     coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay,
-    bookingId, provider, total, customerCookie, bookingPayload,
+    bookingId, provider, total, customerCookie, bookingPayload, groomingQuote,
   };
 
   const providerCookie = await sessionCookie(db, "provider", provider.id, `provider:${provider.id}`);
@@ -205,7 +213,7 @@ export async function runCompletedJourney(ctx, config) {
   const completed = await lifecycle("complete");
   const visible = await routeCall("../../app/api/canonical-bookings/route.ts", "GET", "/api/canonical-bookings", null);
 
-  return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total, customerCookie, bookingPayload,
+  return { coverage, scheduled, scheduleReplay, booked, bookingReplay, location, linked, captured, captureReplay, jobs, transitions, invalidEarlyComplete, proof, completed, visible, bookingId, provider, total, customerCookie, bookingPayload, groomingQuote,
     persisted: {
       booking: sqlite.prepare("SELECT * FROM canonical_bookings WHERE id=?").get(bookingId),
       pet: sqlite.prepare("SELECT * FROM canonical_pets WHERE customer_id=?").get(config.customerId),
@@ -214,6 +222,8 @@ export async function runCompletedJourney(ctx, config) {
       payment: sqlite.prepare("SELECT * FROM booking_payments WHERE booking_id=?").get(bookingId),
       location: sqlite.prepare("SELECT * FROM booking_service_locations WHERE booking_id=?").get(bookingId),
       address: sqlite.prepare("SELECT * FROM customer_addresses WHERE customer_id=? AND is_default=1").get(config.customerId),
+      quoteLink: groomingQuote ? sqlite.prepare("SELECT * FROM grooming_booking_quote_links WHERE quote_id=?").get(groomingQuote.quoteId) : null,
+      quote: groomingQuote ? sqlite.prepare("SELECT id,status,used_booking_id,final_payable_minor,amount_due_now_minor,payment_mode,coupon_quote_id,pets_json FROM grooming_commercial_quotes WHERE id=?").get(groomingQuote.quoteId) : null,
       counts: {
         bookings: sqlite.prepare("SELECT COUNT(*) c FROM canonical_bookings WHERE idempotency_key=?").get(config.groupId).c,
         payments: sqlite.prepare("SELECT COUNT(*) c FROM booking_payments WHERE booking_id=?").get(bookingId).c,

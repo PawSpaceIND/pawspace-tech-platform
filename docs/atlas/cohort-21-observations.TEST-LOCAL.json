@@ -1,0 +1,581 @@
+{
+ "summary": {
+  "frozenAt": "2026-10-03T06:44:07.820855+00:00",
+  "successCriterion": "correct FULL declared terminal outcome with zero staff/provider/Finance/human operational steps; required end-customer inputs disclosed separately",
+  "denominator": 21,
+  "qualifiedWholeJourneys": 0,
+  "executedLocallyTEST": 2,
+  "notExecuted": 19,
+  "label": "TEST/LOCAL observations; frozen statuses untouched; 0/21 qualified is not a measured operational failure rate (source ratePolicy)"
+ },
+ "observations": [
+  {
+   "id": "OPS-GROOMING-01",
+   "service": "grooming",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "executed_locally_TEST",
+   "environment": "local in-memory SQLite D1, real route handlers, TEST actors; not hosted",
+   "runDescriptor": "FINANCE-TEST-OPS-GROOMING-01",
+   "elapsedMs": 2153,
+   "withinTimeout": true,
+   "providerSimulationDisclosed": true,
+   "mandatoryApprovals": [],
+   "qualified": false,
+   "wholeCase": "manual",
+   "terminalReached": true,
+   "autonomous": [
+    "1.enquiry",
+    "2.crm_transcript",
+    "3.scoped_quote",
+    "4.customer_confirmation",
+    "5.reservation_booking_workorder",
+    "6.assignment",
+    "8.invoice_accounts"
+   ],
+   "manual": [
+    "6b.payment_capture: manual",
+    "7.provider_lifecycle_media: manual",
+    "9.consented_followup: manual(TEST consent; synthetic customer)"
+   ],
+   "blocked": [],
+   "notExecuted": [],
+   "stages": [
+    {
+     "stage": "1.enquiry",
+     "actor": "customer(TEST session)",
+     "outcome": "autonomous",
+     "status": 200,
+     "threadId": "THREAD-2901D437-B4E",
+     "modelDispatched": false,
+     "note": "owned web chat thread opened by menu bot"
+    },
+    {
+     "stage": "2.crm_transcript",
+     "actor": "customer(TEST session)",
+     "outcome": "autonomous",
+     "threadId": "THREAD-2901D437-B4E",
+     "messages": 1,
+     "transcriptStatus": 200,
+     "foreignReadStatus": 404,
+     "foreignThreadVisible": false
+    },
+    {
+     "stage": "3.scoped_quote",
+     "actor": "customer(TEST session) via canonical live governance",
+     "outcome": "autonomous",
+     "quoteId": "GQ-AF6F8534-A76",
+     "priceSource": "canonical_live_grooming_governance",
+     "finalPayable": 1799,
+     "baseAmount": 1899,
+     "couponDiscount": 100,
+     "declaredPets": [
+      {
+       "sourceId": "PET-ATLAS-J01",
+       "species": "dog"
+      }
+     ],
+     "couponQuoteId": "CPQ-F0B0951F-973",
+     "catalogueVersion": "2026-08-07.v2",
+     "previousGap": "closed in this lane: grooming_commercial_quotes + grooming_booking_quote_links, price from quoteGroomingBookingWithLiveMultiPet"
+    },
+    {
+     "stage": "4.customer_confirmation",
+     "actor": "customer(TEST session)",
+     "outcome": "autonomous",
+     "bookingStatus": 201,
+     "replayDuplicatePrevented": true,
+     "idempotencyKey": "ATLAS-J01-GROOM",
+     "acceptanceRecord": {
+      "quoteId": "GQ-AF6F8534-A76",
+      "bookingId": "PS-UAT-MUTO0HQE-41E1"
+     },
+     "previousGap": "closed: acceptance is the quote link written by the customer's booking POST"
+    },
+    {
+     "stage": "5.reservation_booking_workorder",
+     "actor": "customer(TEST session) + scheduler",
+     "outcome": "autonomous",
+     "scheduleStatus": 200,
+     "scheduleReplayDuplicatePrevented": true,
+     "reservationId": "ATLAS-J01-GROOM_groom_arun_1_1791108932929",
+     "workOrderId": "WO-BA6C641F",
+     "bookingId": "PS-UAT-MUTO0HQE-41E1"
+    },
+    {
+     "stage": "6.assignment",
+     "actor": "scheduler(governed capacity)",
+     "outcome": "autonomous",
+     "providerId": "groom_arun",
+     "visibleInProviderFeed": true
+    },
+    {
+     "stage": "6b.payment_capture",
+     "actor": "TEST sandbox gateway event (simulated)",
+     "outcome": "manual",
+     "status": 201,
+     "replayDuplicate": true,
+     "paymentStatus": "captured",
+     "commercialMode": "prepaid",
+     "label": "TEST simulate_event via grooming-payment-sandbox; no gateway, no money"
+    },
+    {
+     "stage": "7.provider_lifecycle_media",
+     "actor": "provider(TEST session) with TEST GPS + TEST media bytes",
+     "outcome": "manual",
+     "transitions": [
+      200,
+      200,
+      200,
+      200
+     ],
+     "completeWithoutProof": 409,
+     "proofStatus": 200,
+     "completeStatus": 200,
+     "workOrderStatus": "completed",
+     "label": "physical grooming is external provider input; simulated here"
+    },
+    {
+     "stage": "8.invoice_accounts",
+     "actor": "system(completion finance)",
+     "outcome": "autonomous",
+     "invoices": 1,
+     "invoiceNumber": "PS-2026-188ED8BA",
+     "journalEntriesForBooking": 5,
+     "debits": 3598,
+     "credits": 3598,
+     "balanced": true,
+     "completeReplayStatus": 200,
+     "invoiceCountAfterReplay": 1,
+     "journalCountAfterReplay": 5,
+     "journalColumns": [
+      "id",
+      "entry_date",
+      "source_type",
+      "source_id",
+      "account_code",
+      "cost_centre",
+      "vertical",
+      "debit",
+      "credit",
+      "narration",
+      "period_code",
+      "posted",
+      "created_at",
+      "booking_id",
+      "customer_id",
+      "city_id",
+      "service_code",
+      "payment_id",
+      "settlement_id",
+      "payment_method",
+      "tax_amount",
+      "gateway_fee",
+      "collector_id",
+      "reversal_reference",
+      "transaction_at",
+      "verification_status",
+      "verified_by",
+      "verified_at"
+     ]
+    },
+    {
+     "stage": "9.consented_followup",
+     "actor": "customer(TEST session; TEST consent via governed writer)",
+     "outcome": "manual(TEST consent; synthetic customer)",
+     "eligibilityStatus": 200,
+     "eligibility": {
+      "invitation": {
+       "bookingId": "PS-UAT-MUTO0HQE-41E1",
+       "serviceCode": "grooming",
+       "destinations": [],
+       "source": "no_approved_config",
+       "terms": {
+        "optional": true,
+        "rewarded": false,
+        "ratingGated": false,
+        "postingVerified": false,
+        "honestOnly": true
+       }
+      },
+      "call": {
+       "bookingId": "PS-UAT-MUTO0HQE-41E1",
+       "eligible": true,
+       "reasons": [],
+       "timezone": "Asia/Kolkata",
+       "quietHours": {
+        "start": 21,
+        "end": 9
+       },
+       "policy": {
+        "maxHorizonMs": 1209600000,
+        "dispatchWindowMs": 5400000,
+        "source": "environment_configuration"
+       },
+       "maxAttempts": 1,
+       "attemptsUsed": 0,
+       "existing": null
+      }
+     },
+     "scheduleStatus": 201,
+     "scheduleBody": {
+      "data": {
+       "scheduled": true,
+       "duplicatePrevented": false,
+       "schedule": {
+        "id": "PSFC-14C2CD96-EED",
+        "bookingId": "PS-UAT-MUTO0HQE-41E1",
+        "status": "scheduled",
+        "scheduledFor": 1791181800000,
+        "timezone": "Asia/Kolkata",
+        "attemptCount": 0,
+        "maxAttempts": 1,
+        "voiceCallId": null,
+        "outcome": null
+       }
+      }
+     },
+     "withoutConsentStatus": 400,
+     "replayDuplicatePrevented": null,
+     "persistedCalls": 1,
+     "voiceConsentRecord": "recorded(TEST source)",
+     "centralConsentRecord": {
+      "customerId": "CUST-ATLAS-J01",
+      "channel": "voice",
+      "allowed": true,
+      "globalOptOut": false,
+      "effectiveAllowed": true,
+      "source": "customer_app_settings",
+      "updatedBy": "customer:CUST-ATLAS-J01",
+      "updatedAt": 1791108933628
+     },
+     "label": "consent is a TEST flag from a TEST customer session, not a real customer's consent"
+    }
+   ]
+  },
+  {
+   "id": "OPS-GROOMING-02",
+   "service": "grooming",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "executed_locally_TEST",
+   "environment": "local in-memory SQLite D1, real route handlers, TEST actors; not hosted",
+   "runDescriptor": "FINANCE-TEST-OPS-GROOMING-01",
+   "elapsedMs": 222,
+   "withinTimeout": true,
+   "providerSimulationDisclosed": true,
+   "mandatoryApprovals": [
+    "Finance authorization for refund/reversal where policy requires"
+   ],
+   "qualified": false,
+   "wholeCase": "blocked",
+   "terminalReached": false,
+   "autonomous": [
+    "1-6.chain_to_assignment",
+    "7.customer_cancellation",
+    "8.capacity_release"
+   ],
+   "manual": [
+    "6b.payment_capture: manual"
+   ],
+   "blocked": [
+    "9.refund_or_approval_pending: blocked(Finance authorization for refund/reversal; gateway refund event not simulated here)"
+   ],
+   "notExecuted": [
+    "10.credit_reversal_reconciliation: not_executed(depends on stage 9 authority)",
+    "11.consented_followup: not_executed(booking not completed; follow-up eligibility requires a completed service)"
+   ],
+   "stages": [
+    {
+     "stage": "1-6.chain_to_assignment",
+     "actor": "customer(TEST session) + scheduler",
+     "outcome": "autonomous",
+     "scheduleStatus": 200,
+     "bookingStatus": 201,
+     "bookingId": "PS-UAT-MUTO0I8V-1908",
+     "quoteId": "GQ-8D12FCAB-D08",
+     "providerId": "groom_arun"
+    },
+    {
+     "stage": "6b.payment_capture",
+     "actor": "TEST sandbox gateway event (simulated)",
+     "outcome": "manual",
+     "status": 201,
+     "label": "TEST simulate_event; no gateway, no money"
+    },
+    {
+     "stage": "7.customer_cancellation",
+     "actor": "customer(TEST session)",
+     "outcome": "autonomous",
+     "status": 200,
+     "code": null,
+     "replayStatus": 409,
+     "bookingStatus": "cancelled",
+     "refundAmountEvaluated": 1799,
+     "refundPolicy": null
+    },
+    {
+     "stage": "8.capacity_release",
+     "actor": "system(cancellation)",
+     "outcome": "autonomous",
+     "reservationStatus": "cancelled",
+     "workOrderStatus": "cancelled"
+    },
+    {
+     "stage": "9.refund_or_approval_pending",
+     "actor": "Finance authority (external) / gateway refund event (external)",
+     "outcome": "blocked(Finance authorization for refund/reversal; gateway refund event not simulated here)",
+     "refundCases": [
+      {
+       "id": "ccc20934-3cee-4ffc-b82b-51b3d38dd058",
+       "status": "requested",
+       "amount": 1799
+      }
+     ],
+     "paymentStatus": "refund_pending",
+     "note": "cohort mandatoryApprovals; no automatic refund, no simulated refund.processed event in this executor"
+    },
+    {
+     "stage": "10.credit_reversal_reconciliation",
+     "actor": "Finance",
+     "outcome": "not_executed(depends on stage 9 authority)"
+    },
+    {
+     "stage": "11.consented_followup",
+     "actor": "customer",
+     "outcome": "not_executed(booking not completed; follow-up eligibility requires a completed service)"
+    }
+   ]
+  },
+  {
+   "id": "OPS-GROOMING-03",
+   "service": "grooming",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for grooming/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-TRAINING-01",
+   "service": "training",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for training/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-TRAINING-02",
+   "service": "training",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for training/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-TRAINING-03",
+   "service": "training",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for training/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-BOARDING-01",
+   "service": "boarding",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for boarding/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-BOARDING-02",
+   "service": "boarding",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for boarding/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-BOARDING-03",
+   "service": "boarding",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for boarding/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-SITTING-01",
+   "service": "sitting",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for sitting/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-SITTING-02",
+   "service": "sitting",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for sitting/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-SITTING-03",
+   "service": "sitting",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for sitting/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-WALKING-01",
+   "service": "walking",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for walking/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-WALKING-02",
+   "service": "walking",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for walking/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-WALKING-03",
+   "service": "walking",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for walking/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-PET_TAXI-01",
+   "service": "pet_taxi",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for pet_taxi/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-PET_TAXI-02",
+   "service": "pet_taxi",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for pet_taxi/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-PET_TAXI-03",
+   "service": "pet_taxi",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for pet_taxi/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-FOOD_DELIVERY-01",
+   "service": "food_delivery",
+   "branch": "normal",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for food_delivery/normal; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-FOOD_DELIVERY-02",
+   "service": "food_delivery",
+   "branch": "cancel_refund",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for food_delivery/cancel_refund; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  },
+  {
+   "id": "OPS-FOOD_DELIVERY-03",
+   "service": "food_delivery",
+   "branch": "recovery_switch",
+   "frozenStatus": "not_executed",
+   "frozenObservedAutonomousSuccess": false,
+   "observation": "not_executed",
+   "reason": "no local executor for food_delivery/recovery_switch; nothing inferred",
+   "qualified": false,
+   "wholeCase": "not_executed",
+   "environment": "none"
+  }
+ ]
+}
