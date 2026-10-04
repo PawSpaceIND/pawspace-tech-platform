@@ -1,4 +1,4 @@
-name: Read-only finance groomer binding and cancellation isolation
+name: Read-only finance booking unpaid state and isolation
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'read-only-finance-binding-cancel-isolation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-finance-booking-unpaid-isolation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: pawspace-staging
@@ -31,14 +31,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          EVIDENCE_PATH: finance-binding-read-receipt.json
+          EVIDENCE_PATH: finance-booking-read-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/finance-binding-read/read-runner.mjs
+          node scripts/ops/atlas-session/finance-booking-read/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: finance-binding-isolation-read-${{ github.sha }}
-          path: finance-binding-read-receipt.json
+          name: finance-booking-unpaid-read-${{ github.sha }}
+          path: finance-booking-read-receipt.json
           if-no-files-found: error
           retention-days: 7
