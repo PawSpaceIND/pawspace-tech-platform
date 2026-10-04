@@ -125,12 +125,12 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     } });
     expect(address.ok(), await address.text()).toBeTruthy();
     await page.goto("/v2/training"); await dismissPrivacy(page);
-    await page.getByLabel("First session date", { exact: true }).fill(date);
-    await page.getByLabel("First session time (IST)", { exact: true }).fill("13:30");
+    await page.getByLabel(/^First session date/).fill(date);
+    await page.getByLabel("First session start (IST, on the hour)", { exact: true }).selectOption("13:00");
     await page.getByRole("button", { name: /Trainer Meet & Greet/ }).click();
     await expect(page.getByLabel("Payment mode")).toBeDisabled();
     await expect(page.getByLabel("Payment mode")).toHaveValue("prepaid");
-    await page.getByRole("button", { name: new RegExp(trainer.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }).click();
+    await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
     const created = page.waitForResponse(r => r.url().endsWith("/api/canonical-bookings") && r.request().method() === "POST");
     await page.getByRole("button", { name: "Reserve trainer & continue to payment →", exact: true }).click();
     const createdResponse = await created;
@@ -145,8 +145,8 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect(programme.programme).toMatchObject({ booking_id: bookingId, provider_id: trainer.id, plan_code: "trainer-meet-greet", total_sessions: 1 });
     const session = programme.sessions[0], sessionId = String(session.id);
     expect(session.status).toBe("scheduled");
-    expect(new Date(session.scheduled_start).toISOString()).toBe(`${date}T08:00:00.000Z`);
-    expect(new Date(session.scheduled_end).toISOString()).toBe(`${date}T09:00:00.000Z`);
+    expect(new Date(session.scheduled_start).toISOString()).toBe(`${date}T07:30:00.000Z`);
+    expect(new Date(session.scheduled_end).toISOString()).toBe(`${date}T08:30:00.000Z`);
     await loginTrainer(partner);
     const denied = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "accept", idempotencyKey: `training-unpaid-${sessionId}` } });
     expect(denied.status(), await denied.text()).toBe(409);

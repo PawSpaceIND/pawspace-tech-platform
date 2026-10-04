@@ -97,24 +97,17 @@ test('using a different number clears the old phone before requesting another OT
   expect(requestedPhones).toEqual(['9000000001','9000000002']);
 });
 
-test('Care Card validates in place, focuses missing input, preserves back/review details',async({page})=>{
+test('post-payment Care Card requirement is clear and review remains reversible',async({page})=>{
   const writes=await fixture(page,true); await page.goto('/v2/sitting'); await dismissPrivacy(page);
   await page.getByRole('button',{name:'See available sitters',exact:true}).click();
   await page.getByRole('button',{name:'Continue with Test',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Care after booking',exact:true})).toBeVisible();
+  await expect(page.getByText(/Vet and emergency contacts and home access are required in your saved Care Card before service starts/)).toBeVisible();
   const review=page.getByRole('button',{name:'Review protected booking',exact:true}); await review.click();
-  await expect(page.getByRole('heading',{name:'Build the Care Card',exact:true})).toBeVisible();
-  await expect(page.getByRole('textbox',{name:'Vet contact',exact:true})).toBeFocused();
-  await expect(page.getByRole('textbox',{name:'Vet contact',exact:true})).toHaveAttribute('aria-invalid','true');
-  await page.getByRole('textbox',{name:'Vet contact',exact:true}).fill('   '); await review.click();
-  await expect(page.getByRole('textbox',{name:'Vet contact',exact:true})).toBeFocused();
-  await page.getByRole('textbox',{name:'Vet contact',exact:true}).fill('Synthetic test vet');
-  await page.getByRole('textbox',{name:'Emergency contact',exact:true}).fill('Synthetic test contact'); await review.click();
-  await expect(page.getByRole('textbox',{name:'Home access instructions',exact:true})).toBeFocused();
-  await page.getByRole('textbox',{name:'Home access instructions',exact:true}).fill('Synthetic test access'); await review.click();
   await expect(page.getByRole('heading',{name:'Review and confirm',exact:true})).toBeVisible();
+  await expect(page.locator('[aria-label="Review stay details"]')).toContainText('Test Sitter');
   await page.getByRole('button',{name:'← Care plan',exact:true}).click();
-  await expect(page.getByRole('textbox',{name:'Vet contact',exact:true})).toHaveValue('Synthetic test vet');
-  await expect(page.getByRole('textbox',{name:'Home access instructions',exact:true})).toHaveValue('Synthetic test access');
+  await expect(page.getByRole('heading',{name:'Care after booking',exact:true})).toBeVisible();
   expect(writes.filter(path=>path==='/api/uat-scheduling'||path.includes('booking'))).toEqual([]);
 });
 

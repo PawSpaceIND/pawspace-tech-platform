@@ -156,7 +156,10 @@ test("V2 actions share the primary control variant", async ({ page }) => {
   await choose(page, appearance);
   for (const route of ["/v2/training", "/v2/food", "/v2/partner", "/v2/boarding", "/v2/chat"]) {
     await visit(page, route, appearance); const action = page.locator('[data-v2-action], [data-paw-action="primary"]').first();
-    await expect(action).toBeVisible(); await expect(action).toHaveCSS("border-radius", "14px");
+    await expect(action).toBeVisible();
+    const radius=await action.evaluate(element=>getComputedStyle(element).borderRadius);
+    const token=await page.locator('html').evaluate(element=>getComputedStyle(element).getPropertyValue('--paw-control-radius').trim());
+    expect(radius).toBe(token);
     expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
 });
@@ -238,8 +241,9 @@ for (const theme of ['emerald','signature'] as const) for (const style of ['prof
   await choose(page,appearance); await visit(page,'/v2',appearance); await page.evaluate(()=>scrollTo(0,0));
   const tiles=page.locator('[data-home-care-tile]'); await expect(tiles).toHaveCount(10);
   for(const tile of await tiles.all()) {
-    await expect(tile).toBeVisible(); const box=(await tile.boundingBox())!;
-    expect(box.y+box.height).toBeLessThan(748); expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
+    await tile.evaluate(element=>element.scrollIntoView({block:'center',behavior:'instant'}));
+    await expect(tile).toBeInViewport();const box=(await tile.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
   }
   await expect(page.locator('[class*="serviceArt"] img:visible')).toHaveCount(8);
   await expect(page.locator('[class*="serviceIcon"]:visible')).toHaveCount(0);

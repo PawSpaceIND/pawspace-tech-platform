@@ -27,6 +27,7 @@ async function fixture(page:Page){
   return reply({});
  });
  await page.goto("/v2/training");
+ await page.getByRole("button",{name:/Foundation Training/}).click();
  const firstDate=page.getByLabel(/First session date/);
  await expect(firstDate).toBeEnabled();await firstDate.fill("2026-10-08");
  await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
