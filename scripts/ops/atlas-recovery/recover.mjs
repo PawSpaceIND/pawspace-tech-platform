@@ -33,6 +33,19 @@ try{
  receipt.liveBengaluruAdvertises560068=rows.some(row=>row.resolved_city_id==='blr'&&row.launch_status==='Live'&&String(row.advertised_pincodes??'').split(/[,;\s]+/).includes('560068'));
  receipt.launchConfigurationPresent=rows.some(row=>typeof row.launch_status==='string');
  receipt.exactOwnedGeocodeRow=rows.some(row=>row.geocode_city==='blr'&&row.geocode_zone==='blr-south'&&typeof row.address_text==='string');
+ const candidate=rows[0];
+ if(candidate){
+  const expectedAddress=serviceAddressText({line1:candidate.line1,line2:candidate.line2,area:candidate.area,city:candidate.city,postalCode:'560068',country:'India'});
+  receipt.cacheFieldChecks={
+   savedAddressPresent:true,
+   geocodeTextPresent:typeof candidate.address_text==='string',
+   geocodeCityMatches:candidate.geocode_city===candidate.resolved_city_id,
+   geocodeZoneMatches:candidate.geocode_zone===candidate.resolved_zone_id,
+   latitudeFiniteAndInRange:typeof candidate.latitude==='number'&&Number.isFinite(candidate.latitude)&&candidate.latitude>=-90&&candidate.latitude<=90,
+   longitudeFiniteAndInRange:typeof candidate.longitude==='number'&&Number.isFinite(candidate.longitude)&&candidate.longitude>=-180&&candidate.longitude<=180,
+   addressIdentityMatches:typeof candidate.address_text==='string'&&sameSavedAddress({line1:candidate.address_text,area:candidate.resolved_area,city:candidate.resolved_city,postalCode:'560068'},{line1:expectedAddress,area:candidate.resolved_area,city:candidate.resolved_city,postalCode:'560068'}),
+  };
+ }
  receipt.cachedOwnedGeocode=rows.some(row=>{
   if(row.resolved_city_id!=='blr'||row.resolved_zone_id!=='blr-south'||row.geocode_city!==row.resolved_city_id||row.geocode_zone!==row.resolved_zone_id||typeof row.latitude!=='number'||typeof row.longitude!=='number'||!Number.isFinite(row.latitude)||!Number.isFinite(row.longitude)||row.latitude<-90||row.latitude>90||row.longitude<-180||row.longitude>180||typeof row.address_text!=='string')return false;
   const address=serviceAddressText({line1:row.line1,line2:row.line2,area:row.area,city:row.city,postalCode:'560068',country:'India'});
