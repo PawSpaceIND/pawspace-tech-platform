@@ -112,6 +112,7 @@ export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
 cfg.vars = {
   ...( /^[0-9a-f]{40}$/.test(String(process.env.EXPECTED_SHA || "")) ? { PAWSPACE_STAGING_BUILD_SHA: process.env.EXPECTED_SHA } : {}),
   PAWSPACE_DEPLOYMENT_ENV: "staging",
+  PAWSPACE_PUBLIC_ORIGIN: "https://pawspace-staging.karthik-fce.workers.dev",
   PAWSPACE_PRODUCTION_ENFORCE: "false",
   PAWSPACE_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",

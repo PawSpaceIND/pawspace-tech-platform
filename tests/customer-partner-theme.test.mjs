@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import {preservedCustomerServiceBytes} from './helpers/customer-service-preservation.mjs';
 import {preservedReviewedFoodBytes} from './helpers/food-route-review.mjs';
 import {reverseAtlasHandoffDeadline} from './helpers/atlas-handoff-deadline-review.mjs';
@@ -92,7 +93,7 @@ import {uiWiringContract} from "./helpers/ui-wiring-contract.mjs";
 const root = new URL('../', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, root), 'utf8');
 const baseline = JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json'));
-function reviewedTrainingAndContinuitySource(source,name){
+function reviewedTrainingAndContinuitySource(source,name){source=preservedAcceptedUiBytes(name,source);
  if(name==='app/training/page.tsx'){
   // Only the independently reviewed V2 default changes; handlers and guards stay in the contract.
   const cadence='[cadenceDays,setCadenceDays]=useState(routeScope==="v2"?3:7)';
@@ -146,7 +147,7 @@ test('sandbox and no-auto-charge notices survive customer-copy changes', () => {
 import {uiDataFlowContract} from './helpers/ui-wiring-contract.mjs';
 {
  const compact=JSON.parse(read('tests/fixtures/v2-ui-wiring-contract.json')).compactDataFlow;
- for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(reverseGuestContinuity(read(file).toString(),file),file),expected));
+ for(const [file,expected] of Object.entries(compact.files))test('Compact UI preserves pre-change data flow: '+file,()=>assert.deepEqual(uiDataFlowContract(reverseGuestContinuity(preservedAcceptedUiBytes(file,read(file)).toString(),file),file),expected));
  test('Compact UI keeps the exact official PawSpace logo bytes',()=>assert.equal(hash(read('public/assets/pawspace-official-lockup.png')),compact.logoSha256));
  test('Data-flow guard rejects a changed booking call despite navigation exclusions',()=>{
   const file='app/v2/page.tsx',source=read(file).toString(),changed=source.replace('loadV2CustomerAccount()', 'loadDifferentCustomerAccount()');
@@ -196,6 +197,6 @@ test('unreviewed Food CSS drift is refused',()=>{
 });
 test('legacy Food, clients, APIs, subscriptions and unrelated routes never get transformed',()=>{
  for(const file of ['app/food/canonical-food-page.tsx','lib/food-client.ts','lib/food-subscription-client.ts','app/api/food-commercial/route.ts','app/v2/grooming/page.tsx']){
-  const bytes=read(file);assert.equal(preservedReviewedFoodBytes(file,bytes),bytes,file);
+  const bytes=preservedAcceptedUiBytes(file,read(file));assert.equal(preservedReviewedFoodBytes(file,bytes),bytes,file);
  }
 });

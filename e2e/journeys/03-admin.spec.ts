@@ -7,6 +7,12 @@ import { rejects } from "node:assert/strict";
  */
 const AS_ADMIN = { "oai-authenticated-user-email": "e2e.admin@pawspace.test", cookie: "pawspace_admin_mfa=e2e-admin-mfa-session-token" };
 test.use({ extraHTTPHeaders: AS_ADMIN });
+// Keep the existing seeded MFA session in the browser jar when appearance writes another cookie.
+// The isolated request fixture retains AS_ADMIN; server verification remains authoritative.
+test.beforeEach(async ({ page, baseURL }) => {
+  expect(baseURL).toBeTruthy();
+  await page.context().addCookies([{ name: "pawspace_admin_mfa", value: "e2e-admin-mfa-session-token", url: baseURL! }]);
+});
 function waitingRequestSuccessAnnouncements(page:Page){
  return page.getByRole('status').filter({hasText:/Request WAITING-GROUP cancelled\.|(?:Partner acceptance and customer|Customer) booking confirmation is still pending\.|Partner acceptance and customer booking confirmation are still pending\./});
 }

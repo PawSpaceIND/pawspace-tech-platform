@@ -1,6 +1,18 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-const trainer = { id: "uatcap_train_east", name: "Arjun T. (UAT East)", phone: "9000000932" };
+const trainers = [
+  { id: "uatcap_train_ft", name: "PawSpace Training Team (UAT)", phone: "9000000931" },
+  { id: "uatcap_train_east", name: "Arjun T. (UAT East)", phone: "9000000932" },
+  { id: "uatcap_train_south", name: "Kavya R. (UAT South)", phone: "9000000933" },
+  { id: "uatcap_train_north", name: "Nikhil B. (UAT North)", phone: "9000000934" },
+  { id: "uatcap_train_west", name: "Anitha G. (UAT West)", phone: "9000000935" },
+  { id: "uatcap_train_central", name: "Rohan D. (UAT Central)", phone: "9000000936" },
+  { id: "uatcap_train_ft_2", name: "PawSpace Training Team 2 (UAT)", phone: "9000000937" },
+  { id: "uatcap_train_ft_3", name: "PawSpace Training Team 3 (UAT)", phone: "9000000938" },
+  { id: "uatcap_train_ft_4", name: "PawSpace Training Team 4 (UAT)", phone: "9000000939" },
+  { id: "uatcap_train_ft_5", name: "PawSpace Training Team 5 (UAT)", phone: "9000000940" },
+] as const;
+type FixtureTrainer = typeof trainers[number];
 const fixtureDoorstep = { latitude: 12.9716, longitude: 77.5946 };
 const fixturePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=", "base64");
 
@@ -63,7 +75,7 @@ export async function openFixtureFinance(browser: Browser, baseURL: string): Pro
   } catch (error) { await page.close(); throw error; }
 }
 
-async function loginTrainer(page: Page) {
+async function loginTrainer(page: Page, trainer: FixtureTrainer) {
   await page.goto("/partner/onboarding"); await dismissPrivacy(page);
   await page.getByPlaceholder("10-digit phone number").fill(trainer.phone);
   await page.getByRole("button", { name: "Send OTP", exact: true }).click();
@@ -105,6 +117,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
   test.setTimeout(240_000);
   test.info().annotations.push({ type: "simulation", description: "Disposable Training Meet & Greet; normal customer/trainer OTP; Finance sandbox event; synthetic GPS/photo bytes with independent UAT release. Handover is a completion attestation, with no claim of elapsed 45/15-minute or scheduled-start enforcement." });
   const date = process.env.PW_UAT_SERVICE_DATE!;
+  let trainer: FixtureTrainer;
   expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   const partner = await browser.newPage({ baseURL: origin, viewport: page.viewportSize()! });
   const operations = await browser.newPage({ baseURL: origin });
@@ -125,29 +138,32 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     } });
     expect(address.ok(), await address.text()).toBeTruthy();
     await page.goto("/v2/training"); await dismissPrivacy(page);
-    await page.getByLabel("First session date", { exact: true }).fill(date);
-    await page.getByLabel("First session time (IST)", { exact: true }).fill("13:30");
     await page.getByRole("button", { name: /Trainer Meet & Greet/ }).click();
+    await page.getByLabel(/^First session date/).fill(date);
+    await page.getByLabel(/First session start \(IST, on the hour\)/).selectOption("13:00");
     await expect(page.getByLabel("Payment mode")).toBeDisabled();
     await expect(page.getByLabel("Payment mode")).toHaveValue("prepaid");
-    await page.getByRole("button", { name: new RegExp(trainer.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }).click();
+    await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
     const created = page.waitForResponse(r => r.url().endsWith("/api/canonical-bookings") && r.request().method() === "POST");
     await page.getByRole("button", { name: "Reserve trainer & continue to payment →", exact: true }).click();
     const createdResponse = await created;
     expect(createdResponse.status(), await createdResponse.text()).toBe(201);
     const booking = (await createdResponse.json()).data;
     const bookingId = String(booking.bookingId), paymentId = String(booking.paymentId);
-    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(trainer.name);
     await expect.poll(async () => (await page.request.get(`/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`)).status()).toBe(200);
     const programmeResponse = await page.request.get(`/api/training-programmes?bookingId=${encodeURIComponent(bookingId)}`);
     const programme = (await programmeResponse.json()).data;
+    const assignedTrainer = trainers.find(item => item.id === programme.programme.provider_id);
+    expect(assignedTrainer, "Auto-assigned trainer must be an enrolled local UAT fixture").toBeTruthy();
+    trainer = assignedTrainer!;
+    await expect(page.getByRole("region", { name: "Reserved training details" })).toContainText(bookingId);
     expect(programme.sessions).toHaveLength(1);
     expect(programme.programme).toMatchObject({ booking_id: bookingId, provider_id: trainer.id, plan_code: "trainer-meet-greet", total_sessions: 1 });
     const session = programme.sessions[0], sessionId = String(session.id);
     expect(session.status).toBe("scheduled");
-    expect(new Date(session.scheduled_start).toISOString()).toBe(`${date}T08:00:00.000Z`);
-    expect(new Date(session.scheduled_end).toISOString()).toBe(`${date}T09:00:00.000Z`);
-    await loginTrainer(partner);
+    expect(new Date(session.scheduled_start).toISOString()).toBe(`${date}T07:30:00.000Z`);
+    expect(new Date(session.scheduled_end).toISOString()).toBe(`${date}T08:30:00.000Z`);
+    await loginTrainer(partner, trainer);
     const denied = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "accept", idempotencyKey: `training-unpaid-${sessionId}` } });
     expect(denied.status(), await denied.text()).toBe(409);
     expect((await denied.json()).code).toBe("training_payment_required");
@@ -192,12 +208,14 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await partner.evaluate(({ latitude, longitude }) => Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition(success: (value: { coords: { latitude: number; longitude: number; accuracy: number } }) => void) { success({ coords: { latitude, longitude, accuracy: 5 } }); } } }), fixtureDoorstep);
     const arrived = await action("Confirm arrival with device GPS", "arrive");
     expect((await arrived.json()).data.geofence.distanceMeters).toBeLessThanOrEqual(250);
+    await partner.goto(`/v2/partner/trainer/session?bookingId=${encodeURIComponent(bookingId)}&sessionId=${encodeURIComponent(sessionId)}`);
+    await expect(partner.getByRole("heading", { name: "Training session work" })).toBeVisible();
     await partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true }).check();
     await partner.getByLabel("Training area is safe", { exact: true }).check();
     await expect(partner.getByRole("button", { name: "Start session", exact: true })).toBeDisabled();
     await action("Save attendance & safety", "save_report");
     const uploadPhoto = async (label: string) => {
-      const input = partner.getByLabel(label, { exact: true });
+      const input = partner.locator(`input[type="file"][aria-label="${label}"]`);
       await expect(input).toBeEnabled();
       const registered = partner.waitForResponse(r => r.url().endsWith("/api/training-session-media") && r.request().method() === "POST" && r.request().postDataJSON()?.sessionId === sessionId);
       const uploaded = partner.waitForResponse(r => r.url().endsWith("/api/service-media/upload") && r.request().method() === "PUT");
@@ -208,11 +226,12 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       expect((await registration.json()).data.upload.token).toBeTruthy();
       const uploadResponse = await uploaded; expect(uploadResponse.status(), await uploadResponse.text()).toBe(200);
       expect((await uploadResponse.json()).data.objectStored).toBe(false);
-      await expect(partner.getByRole("button", { name: "Refresh photo approval", exact: true })).toBeEnabled();
+      await expect(partner.getByRole("button", { name: "Check photo status", exact: true })).toBeEnabled();
     };
     await uploadPhoto("Before photo");
     await action("Start session", "start");
-    await expect(partner.getByLabel("I completed the pet-parent handover", { exact: true })).toBeVisible();
+    await partner.reload();
+    await expect(partner.getByLabel("Confirm handover completed", { exact: true })).toBeVisible();
     await expect(partner.getByLabel("Parent/caretaker attendance confirmed", { exact: true })).toBeChecked();
     const noHandover = await partner.request.post("/api/training-sessions", { data: { sessionId, action: "complete", idempotencyKey: `training-no-handover-${sessionId}` } });
     expect(noHandover.status()).toBe(409); expect((await noHandover.json()).code).toBe("training_owner_handover_required");
@@ -221,10 +240,11 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect((await incompleteHandover.json()).code).toBe("training_owner_handover_required");
     await expect(partner.getByRole("button", { name: "Confirm completed handover", exact: true })).toBeDisabled();
     await loginOperations(operations);
-    await partner.getByLabel("I completed the pet-parent handover", { exact: true }).check();
+    await partner.getByLabel("Confirm handover completed", { exact: true }).check();
     const handover = await action("Confirm completed handover", "owner_handover");
     expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
-    await expect(partner.getByText("Pet-parent handover completion recorded.", { exact: true })).toBeVisible();
+    // The status names the recorded handover duration when one was captured ("… recorded · 12 minutes. …").
+    await expect(partner.getByText(/^Pet-parent handover recorded(?: · \d+ minutes)?\. You can correct it until the session is complete\.$/)).toBeVisible();
     await uploadPhoto("After photo");
     const media = await partner.request.get(`/api/training-session-media?sessionId=${encodeURIComponent(sessionId)}`);
     expect(media.ok()).toBeTruthy(); const assets = (await media.json()).data.assets;
@@ -237,8 +257,10 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       const approved = await operations.request.patch("/api/training-session-media", { data: review });
       expect(approved.status(), await approved.text()).toBe(200); expect((await approved.json()).data.proofReady).toBe(true);
     }
-    await partner.getByRole("button", { name: "Refresh photo approval", exact: true }).click();
-    await expect(partner.getByText(/Approved — hash only/)).toHaveCount(2);
+    // During the session the trainer sees the after-photo control only (the before photo belongs to the arrival step);
+    // both approvals are proven above through the media API.
+    await partner.getByRole("button", { name: "Check photo status", exact: true }).click();
+    await expect(partner.getByText("After photo: Approved — hash only", { exact: true })).toBeVisible();
     await partner.getByLabel("Homework for pet parent", { exact: true }).fill("Practise the demonstrated cue briefly with praise and supervised rest.");
     const unassessedLabels = ["Recall score", "Impulse score", "Parent practice score"];
     await expect(partner.getByLabel("Focus score", { exact: true })).toHaveValue("");
@@ -267,7 +289,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect(completed).toMatchObject({ status: "completed", consumedExactlyOnce: true, programme: { completed: 1, status: "completed" }, closure: { assessmentCompleted: true, certificateNumber: null, reviewDispatched: false } });
     const repeat = await partner.request.post("/api/training-sessions", { data: completion.request().postDataJSON() });
     expect(repeat.status(), await repeat.text()).toBe(200); expect((await repeat.json()).data.duplicatePrevented).toBe(true);
-    await partner.reload(); await expect(partner.getByRole("heading", { name: "Session completed canonically", exact: true })).toBeVisible();
+    await partner.reload(); await expect(partner.getByRole("heading", { name: "Session completed", exact: true })).toBeVisible();
     const finalAccount = await page.request.get("/api/customer-account"); expect(finalAccount.ok()).toBeTruthy();
     const bookings = (await finalAccount.json()).data.bookings.filter((row: { id: string }) => row.id === bookingId);
     expect(bookings).toHaveLength(1); expect(bookings[0]).toMatchObject({ status: "completed", providerId: trainer.id });

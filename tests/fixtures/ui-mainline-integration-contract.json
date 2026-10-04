@@ -1064,5 +1064,11 @@
       "upstreamHash": "5e8c65aa401cfa51f3ac6e4273b203f647a7c9a12494b479777f98a99ab4680f",
       "semantic": "03a3232f85af568e2a56618cb42fd170923b13c355ac8e9e8011c3199135faa0"
     }
+  },
+  "reviewedTestPostimages": {
+    "tests/boarding-customer-wiring.test.mjs": "be00a22cb209431a4db6fdaaed6fa47c5fa4871ed9c6750de829b979cdbc1d48",
+    "tests/customer-payment-gate-uat.test.mjs": "6955724b44d4a51b14ab388a1b164864d4beae1f179d48919400b6659e8acbf9",
+    "tests/premium-customer-service-parity.test.mjs": "75777d5468c3fc10439cb329d80b5c08dd6bc5cc10461e5d8900a4d3b2b9280b",
+    "tests/rendered-html.test.mjs": "3fa15aac5ec904651601cc77f0a549820232f04df9d7dfc24e35a9e96314ca6b"
   }
 }

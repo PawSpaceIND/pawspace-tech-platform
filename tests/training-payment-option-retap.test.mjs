@@ -74,5 +74,5 @@ test("both payment buttons are wired through choosePaymentOption, and the model 
   assert.match(options, /onClick=\{\(\) => choosePaymentOption\(paymentMode,"full",paymentSetters\)\}><i>\{paymentMode === "full"/);
   assert.doesNotMatch(options, /setCheckoutQuote\(null\)/, "no button clears the quote on its own");
   assert.match(flow, /const paymentSetters=\{mode:setPaymentMode,coupon:\(code:string,quoteId:string\)=>\{setCouponCode\(code\);setCouponQuoteId\(quoteId\);\},quote:setCheckoutQuote\};/);
-  assert.match(flow, /\},\[stage,plan\.packageCode,plan\.sessions,selectedPets\.length,paymentMode,couponCode,couponQuoteId,frequency,time,startDateIndex,selectedStartIso\]\);/, "the quote effect re-runs on the mode and coupon, which is what the model above treats as a re-quote");
+  assert.match(flow, /\},\[stage,plan\.packageCode,plan\.sessions,selectedPets\.length,paymentMode,couponCode,couponQuoteId,time,startDateIndex,selectedStartIso\]\);/, "the quote effect re-runs on the mode and coupon, which is what the model above treats as a re-quote");
 });

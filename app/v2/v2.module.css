@@ -524,3 +524,84 @@
   .page.page[data-v2-home] .mobileDock a:first-child { background:var(--brand-raised); }
   .page.page[data-v2-home] .mobileDock a:first-child :is(span,b) { color:var(--paw-link) !important; }
 }
+
+/* Approved shared layout (native A/C handoff, 3 Oct 2026): one structure for both appearances; tokens change colour,
+   heading face and decorative art only. Overrides the compact-home rules above; every handler, link and state is untouched. */
+.page.page[data-v2-home] { font-family:var(--paw-font); padding-bottom:calc(var(--ps-bottom-nav-min) + 24px); }
+.page.page[data-v2-home] .shell { width:min(var(--ps-content-max),calc(100% - 2 * var(--ps-compact-gutter))); gap:var(--ps-space-6); }
+.page.page[data-v2-home] :is(h1,h2,h3) { font-family:var(--paw-display-font); font-weight:var(--paw-display-weight); letter-spacing:0; }
+.page.page[data-v2-home] .nav { height:var(--ps-header-height); border-bottom:1px solid var(--paw-line); }
+.page.page[data-v2-home] .logo { width:auto; max-height:40px; }
+.page.page[data-v2-home] .navCenter { order:0; justify-self:start; min-height:var(--ps-touch-min); padding:6px 12px; border-radius:var(--ps-chip-radius); background:var(--paw-raised) !important; color:var(--paw-text) !important; font-size:var(--ps-type-label) !important; font-weight:700; }
+.page.page[data-v2-home] .navCenter .locationDot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+/* Hero: location first, headline, visible pet art, primary task; two balanced columns from 768px. */
+.page.page[data-v2-home] .hero { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--ps-space-4); align-items:center; }
+.page.page[data-v2-home] .heroCopy { display:contents; }
+.page.page[data-v2-home] .hero :is(.kicker,.heroCopy>p,.heroActions,.heroVisual) { display:flex; }
+.page.page[data-v2-home] .kicker { order:0; margin:0; font-size:var(--ps-type-caption); font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--paw-muted) !important; }
+.page.page[data-v2-home] .kicker i { display:none; }
+.page.page[data-v2-home] .hero h1 { order:1; font-size:var(--ps-type-hero-compact); line-height:1.19; margin:0; max-width:18ch; }
+.page.page[data-v2-home] .hero h1 :is(br,em) { display:inline; }
+.page.page[data-v2-home] .hero h1 em { font-style:normal; font-weight:inherit; color:var(--paw-text) !important; }
+.page.page[data-v2-home] .heroVisual { order:2; display:block; min-height:0; padding:0; }
+.page.page[data-v2-home] .heroVisual :is(.heroHalo,.floatingCardTop,.floatingCardBottom) { display:none; }
+.page.page[data-v2-home] .petPortrait { width:100%; max-width:none; aspect-ratio:3 / 2; border-radius:var(--paw-card-radius); overflow:hidden; background:var(--paw-raised) !important; transform:none; box-shadow:none; }
+.page.page[data-v2-home] .petPortrait :is(picture,img) { display:block; width:100%; height:100%; object-fit:cover; object-position:center; }
+.page.page[data-v2-home] .heroCopy>p { order:3; margin:0; font-size:var(--ps-type-body-large); line-height:1.55; color:var(--paw-muted) !important; max-width:34ch; }
+.page.page[data-v2-home] .heroActions { order:4; gap:var(--ps-space-3); flex-wrap:wrap; }
+.page.page[data-v2-home] .primaryAction, .page.page[data-v2-home] .secondaryAction { min-height:var(--ps-button-min); padding:0 20px; border-radius:var(--paw-control-radius); font-size:var(--ps-type-body); font-weight:700; display:inline-flex; align-items:center; gap:8px; }
+.page.page[data-v2-home] .primaryAction { background:var(--paw-primary) !important; color:var(--paw-on-primary) !important; border:2px solid var(--paw-primary-edge); }
+.page.page[data-v2-home] .secondaryAction { background:var(--paw-surface) !important; color:var(--paw-text) !important; border:1px solid var(--paw-control-line); }
+.page.page[data-v2-home] .secondaryAction span { color:var(--paw-accent-ink) !important; }
+.page.page[data-v2-home] .trustRow { display:none; }
+.page.page[data-v2-home] .notice { order:2; }
+/* Services: square approved scene beside the label; eight services in the approved order, additional care after them. */
+.page.page[data-v2-home] .servicesSection { order:3; }
+.page.page[data-v2-home] .sectionHeader { display:flex; justify-content:space-between; align-items:end; gap:16px; margin-bottom:var(--ps-space-3); }
+.page.page[data-v2-home] .sectionHeader h2 { margin:0; font-size:var(--ps-type-section); line-height:1.3; }
+.page.page[data-v2-home] .sectionHeader .eyebrow, .page.page[data-v2-home] .sectionHeader p { display:none; }
+.page.page[data-v2-home] .servicesGrid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--ps-gridgap,12px); }
+.page.page[data-v2-home] .serviceCard, .page.page[data-v2-home] .serviceHero { min-height:0 !important; padding:10px; display:grid; grid-template-columns:72px minmax(0,1fr); align-items:center; gap:12px; text-align:left; border-radius:var(--paw-card-radius); border:1px solid transparent; background:var(--paw-raised) !important; }
+.page.page[data-v2-home] .serviceCard:hover { transform:none; border-color:var(--paw-control-line); }
+.page.page[data-v2-home] .serviceCopy { order:1; display:grid; gap:2px; max-width:100%; }
+.page.page[data-v2-home] .serviceCopy h3 { font-family:var(--paw-font); font-size:var(--ps-type-body); font-weight:700; line-height:1.3; margin:0; }
+.page.page[data-v2-home] .serviceCopy>p { display:none; margin:0; font-size:13px; line-height:1.4; color:var(--paw-muted) !important; }
+.page.page[data-v2-home] .serviceDisabled .serviceState { font-size:var(--ps-type-caption) !important; color:var(--paw-muted) !important; }
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt, :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceHero .serviceArt { display:block; order:0; position:static; width:72px; height:72px; max-width:none; }
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt :global(.ps-service-art) { width:100%; height:100%; }
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceIcon { display:none; }
+.page.page[data-v2-home] [data-home-care-tile="relocation"] { order:1; }
+.page.page[data-v2-home] [data-home-care-tile="funeral_memorial"], .page.page[data-v2-home] [data-home-care-tile="vet_consult"] { order:2; }
+/* Sensitive service: subdued surface, no cheerful family art. */
+.page.page[data-v2-home] [data-home-care-tile="funeral_memorial"] { background:var(--paw-surface) !important; border:1px solid var(--paw-line); }
+/* Family strip, rail cards and dock on the shared surfaces. */
+.page.page[data-v2-home] .familyStrip, .page.page[data-v2-home] .bookingCard, .page.page[data-v2-home] .aiCard { border-radius:var(--paw-card-radius); border:1px solid var(--paw-line); background:var(--paw-surface) !important; }
+.page.page[data-v2-home] .familySignIn { background:var(--paw-raised) !important; color:var(--paw-text) !important; border:1px solid var(--paw-line); }
+.page.page[data-v2-home] .mobileDock { min-height:var(--ps-bottom-nav-min); background:var(--paw-surface); border:1px solid var(--paw-line); border-radius:var(--paw-card-radius); }
+.page.page[data-v2-home] .mobileDock a:first-child { background:var(--paw-raised); }
+.page.page[data-v2-home] .mobileDock a:first-child :is(span,b) { color:var(--paw-primary) !important; }
+.page.page[data-v2-home] :is(a,button):focus-visible { outline:3px solid var(--paw-focus-ring) !important; outline-offset:2px; }
+@media (min-width:768px) {
+  .page.page[data-v2-home] .shell { width:min(var(--ps-content-max),calc(100% - 2 * var(--ps-wide-gutter))); gap:var(--ps-space-7); }
+  .page.page[data-v2-home] .hero { grid-template-columns:minmax(0,1fr) minmax(320px,.82fr); gap:var(--ps-space-7); }
+  .page.page[data-v2-home] .heroCopy { display:grid; gap:var(--ps-space-4); align-content:center; }
+  .page.page[data-v2-home] .heroVisual { order:0; }
+  .page.page[data-v2-home] .hero h1 { font-size:var(--ps-type-hero-wide); line-height:1.12; }
+  .page.page[data-v2-home] .sectionHeader p { display:block; margin:0; font-size:var(--ps-type-label); color:var(--paw-muted) !important; }
+  .page.page[data-v2-home] .servicesGrid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--ps-space-5); }
+  .page.page[data-v2-home] .serviceCard, .page.page[data-v2-home] .serviceHero { padding:14px; grid-template-columns:80px minmax(0,1fr); }
+  :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt, :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceHero .serviceArt { width:80px; height:80px; }
+  .page.page[data-v2-home] .serviceCopy>p { display:block; }
+  .page.page[data-v2-home] .navCenter { font-size:var(--ps-type-label) !important; }
+}
+/* Sprite frame inside the service tiles: the frame is block-level and the sheet image is positioned by the manifest offsets,
+   overriding the earlier contained-image rules. Compact tiles stack the scene above the label so names never break mid-word. */
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt :global(.ps-service-art) { display:block; width:100%; height:100%; }
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt :global(.ps-service-art)>img { position:absolute; width:var(--sprite-width); height:auto; max-width:none; max-height:none; left:var(--sprite-left); top:var(--sprite-top); object-fit:unset; filter:none; }
+.page.page[data-v2-home] .serviceCopy h3 { overflow-wrap:normal; word-break:normal; hyphens:manual; }
+.page.page[data-v2-home] .serviceCard, .page.page[data-v2-home] .serviceHero { grid-template-columns:minmax(0,1fr); align-items:start; gap:8px; }
+:global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt, :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceHero .serviceArt { width:64px; height:64px; }
+@media (min-width:768px) {
+  .page.page[data-v2-home] .serviceCard, .page.page[data-v2-home] .serviceHero { grid-template-columns:80px minmax(0,1fr); align-items:center; gap:12px; }
+  :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceArt, :global(html[data-paw-theme]) .page.page[data-v2-home] .serviceHero .serviceArt { width:80px; height:80px; }
+}

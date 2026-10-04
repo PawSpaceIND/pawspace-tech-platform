@@ -15,7 +15,7 @@ function render({status='arrived',providerModel='commission',saved=false,capture
  const nullComponent=()=>null,hookReact={...React,useState:()=>[states[i++],()=>{}],useEffect:()=>{},useMemo:fn=>fn(),useRef:value=>({current:value})};
  const localRequire=id=>{
   if(id==='react')return hookReact;if(id==='react/jsx-runtime')return require(id);
-  if(id==='next/navigation')return{usePathname:()=>'/trainer',useSearchParams:()=>new URLSearchParams()};
+  if(id==='next/navigation')return{usePathname:()=>status==='scheduled'?'/trainer':'/trainer/session',useSearchParams:()=>new URLSearchParams(status==='scheduled'?'':'bookingId=BOOKING&sessionId=SESSION')};
   if(id==='next/link')return{__esModule:true,default:({href,children})=>React.createElement('a',{href},children)};
   if(id.endsWith('.css'))return{__esModule:true,default:{}};
   if(id.endsWith('training-partner-precheck'))return{trainingAttendanceReady,trainingBeforeCaptured};

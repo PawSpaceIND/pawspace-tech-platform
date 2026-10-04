@@ -1,14 +1,9 @@
 "use client";
 import Link from "next/link";
 import {scopedBookingHref} from "../../lib/customer-booking-safety";
-import { useEffect, useRef, useState } from 'react';
-import { saveCustomerBoardingCare } from '../../lib/boarding-customer-care';
-import { saveSittingCustomerPlan } from '../../lib/sitting-customer-view';
 import type { SittingCarePlan } from '../../lib/sitting-lifecycle';
 import BookingPaymentPage from './booking-payment-page';
-import styles from './booking-payment-page.module.css';
-import { hostRequestsExcludedNote } from '../../lib/boarding-host-requests';
-import {plainErrorMessage} from "../../lib/safe-json-response";
+import {hostRequestsExcludedNote} from '../../lib/boarding-host-requests';
 
 type Props = {
   routeScope?:'legacy'|'v2'; mode: 'boarding' | 'sitting'; carePlan: SittingCarePlan;
@@ -17,32 +12,11 @@ type Props = {
   /** Boarding Care Card requests to the host: shown as not part of this payment. */
   hostRequests?: string[];
 };
-/** Retrying this boundary only saves care on the SAME booking. It cannot reserve or charge again. */
-export default function StayCarePaymentGate({ mode, carePlan, payment, onVerified,routeScope="legacy",hostRequests=[] }: Props) {
-  const requestsNote = hostRequestsExcludedNote(hostRequests, 'this payment');
-  const [ready, setReady] = useState(false), [busy, setBusy] = useState(true);
-  const [error, setError] = useState(''), [attempt, setAttempt] = useState(0);
-  const initialPlan = useRef(carePlan);
-  useEffect(() => {
-    let active = true;
-    const save = mode === 'boarding' ? saveCustomerBoardingCare : saveSittingCustomerPlan;
-    void save(payment.bookingId, initialPlan.current, `initial-${mode}-care:${payment.bookingId}`)
-      .then(() => { if (active) setReady(true); })
-      .catch(problem => { if (active) setError(plainErrorMessage(problem,'Care instructions were not confirmed.')); })
-      .finally(() => { if (active) setBusy(false); });
-    return () => { active = false; };
-  }, [mode, payment.bookingId, attempt]);
-  if (ready) return <><p>Booking reference: <b>{payment.bookingId}</b> · <Link href={scopedBookingHref(mode,payment.bookingId,routeScope==="v2")}>Saved care instructions</Link></p>{requestsNote && <p>{requestsNote}</p>}<BookingPaymentPage serviceName={payment.serviceName} bookingId={payment.bookingId}
-    totalAmount={payment.total} amountDueNow={payment.dueNow} mode={payment.mode} onVerified={onVerified}/></>;
-  return <section className={styles.page} aria-label="Save stay care before payment">
-    <h3>Save care instructions before payment</h3>
-    <p>Booking reference: <b>{payment.bookingId}</b>. Your booking has been created, but payment is not confirmed.</p>
-    <p>We must confirm your care, vet and emergency instructions before checkout. Do not make another booking.</p>
-    {requestsNote && <p>{requestsNote}</p>}
-    {busy && <p role="status">Saving care instructions for this booking…</p>}
-    {error && <p role="alert">{error} Your instructions remain here so you can retry the same booking.</p>}
-    <button type="button" className={styles.primary} disabled={busy} onClick={() => { setBusy(true); setError(''); setAttempt(value => value + 1); }}>
-      {busy ? 'Saving care instructions…' : 'Retry saving care instructions'}
-    </button>
-  </section>;
+/** Payment and care are separate: required care still blocks server-side check-in. */
+export default function StayCarePaymentGate({mode,payment,onVerified,routeScope="legacy",hostRequests=[]}:Props){
+ const requestsNote=hostRequestsExcludedNote(hostRequests,'this payment');
+ return <><p>Booking reference: <b>{payment.bookingId}</b> · <Link href={scopedBookingHref(mode,payment.bookingId,routeScope==="v2")}>Saved booking and Care Card</Link></p>
+ <p>Complete payment first, then add your Care Card. Vet and emergency contacts{mode==='sitting'?' and home access':''} must be saved before service starts; your caregiver cannot check in without them.</p>
+ {requestsNote&&<p>{requestsNote}</p>}
+ <BookingPaymentPage returnAfterVerified={false} serviceName={payment.serviceName} bookingId={payment.bookingId} totalAmount={payment.total} amountDueNow={payment.dueNow} mode={payment.mode} onVerified={onVerified}/></>;
 }

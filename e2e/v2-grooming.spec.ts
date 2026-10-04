@@ -123,10 +123,11 @@ async function fixture(page: Page) {
 async function selectTickTreatment(page: Page) {
   const disclosure = page.locator("details").filter({ has: page.locator("summary").filter({ hasText: /^Add-ons · add extra services to your grooming/ }) });
   await expect(disclosure).toHaveCount(1);
-  if (await disclosure.getAttribute("open") === null) {
-    await disclosure.locator("summary").click();
-    await expect(disclosure).toHaveAttribute("open", "");
-  }
+  // Async quote rerenders can remount the add-on picker closed (seen in WebKit); re-open until it stays open.
+  await expect(async () => {
+    if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click();
+    await expect(disclosure).toHaveAttribute("open", "", { timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   const checkbox = disclosure.getByRole("checkbox", { name: /Tick & flea treatment/ });
   await expect(checkbox).toBeVisible();
   await checkbox.check();

@@ -89,8 +89,10 @@ test("Training proof keeps unscanned production assets blocked after human appro
 });
 
 test("trainer completion controls show each proof category and the saved handover, without claiming unreviewed uploads are approved",()=>{
- const html=renderToStaticMarkup(React.createElement(TrainingEvidenceControls,{assets:[{id:'M',purpose:'before_service',proofReady:false,access_status:'quarantined',review_status:'pending_review'}],busy:false,error:'',onUpload:()=>{},onRefresh:()=>{}}));
- assert.match(html,/Before photo: Awaiting approval/);assert.match(html,/After photo: Not uploaded/);assert.match(html,/Refresh photo approval/);
- const handed=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:{durationMinutes:18,completedAt:1},busy:false,onRecord:()=>{}}));assert.match(handed,/Pet-parent handover completion recorded/);
- const empty=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:null,busy:false,onRecord:()=>{}}));assert.match(empty,/I completed the pet-parent handover/);assert.match(empty,/Confirm completed handover/);assert.match(empty,/disabled=""/);
+ const props={assets:[{id:'M',purpose:'before_service',proofReady:false,access_status:'quarantined',review_status:'pending_review'}],busy:false,error:'',onUpload:()=>{},onRefresh:()=>{}};
+ const before=renderToStaticMarkup(React.createElement(TrainingEvidenceControls,{...props,purpose:'before_service',canUpload:true}));
+ const after=renderToStaticMarkup(React.createElement(TrainingEvidenceControls,{...props,purpose:'after_service',canUpload:false}));
+ assert.match(before,/Before photo: Awaiting approval/);assert.match(after,/After photo: Not uploaded/);assert.match(after,/Check photo status/);assert.match(after,/disabled=""/);
+ const handed=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:{durationMinutes:18,completedAt:1},busy:false,onRecord:()=>{}}));assert.match(handed,/Pet-parent handover recorded/);assert.match(handed,/correct it until the session is complete/);
+ const empty=renderToStaticMarkup(React.createElement(TrainingOwnerHandover,{record:null,busy:false,onRecord:()=>{}}));assert.match(empty,/I completed the pet-parent handover/);assert.match(empty,/Confirm handover/);assert.match(empty,/disabled=""/);
 });

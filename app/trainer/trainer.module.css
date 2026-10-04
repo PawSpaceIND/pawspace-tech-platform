@@ -7,3 +7,17 @@
 /* Keep the session columns within the available workspace width. */
 .actions button{min-height:44px}
 @media(max-width:1100px){.layout{grid-template-columns:minmax(0,1fr)}.schedule,.session{min-width:0}}
+
+/* Selected job details stay with the card; execution has its own focused page. */
+.layout,.workLayout{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.jobCard+ .jobCard{margin-top:12px}
+.jobCard>button{width:100%;min-height:56px;padding:12px;display:grid;grid-template-columns:minmax(120px,.7fr) minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-surface);color:var(--ui-ink);text-align:left;cursor:pointer}
+.jobCard>button[aria-expanded="true"]{border-color:var(--ui-brand-soft);background:var(--ui-canvas)}
+.jobCard>button>span,.jobCard>button>div{display:grid;gap:4px;min-width:0}.jobCard>button small{color:var(--ui-muted)}
+.inlineDetails{padding:16px;border:1px solid var(--ui-line);border-top:0;border-radius:0 0 10px 10px}.inlineDetails p{font-size:14px;line-height:1.5}
+.workLink{display:inline-block;margin:12px 0;padding:12px 16px;border-radius:8px;background:var(--ui-brand-deep);color:white;text-decoration:none;font-weight:700}
+.workShell{display:block}.workMain{max-width:860px;margin:0 auto}.workMain>header h1{font-size:28px}.workMain>header a{display:inline-block;margin-bottom:12px;font-size:16px}.workLayout .session{margin-top:0}
+.workMain .precheck,.workMain .goals,.workMain .homework{font-size:14px;line-height:1.5}.workMain .precheck label,.workMain .goals label,.workMain .homework textarea,.workMain .homework span,.workMain .scoreGrid label span{font-size:14px}
+@media(max-width:560px){.jobCard>button{grid-template-columns:minmax(0,1fr)}.inlineDetails{padding:12px}.workMain{padding:18px 12px}}
+
+.jobCard>button>span,.jobCard>button strong{font-size:16px}.jobCard>button small,.jobCard>button b{font-size:13px}.workMain .precheck>button,.workMain .actions button,.inlineDetails .actions button,.workMain .scoreGrid select{min-height:44px;font-size:14px}

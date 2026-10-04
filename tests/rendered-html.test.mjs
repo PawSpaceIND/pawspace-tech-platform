@@ -265,8 +265,8 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(training, /\{plan\.directMinutes\} minutes of direct training/);
   assert.match(training, /outdoor leash walking and toilet-routine practice/);
   assert.match(training, /30–45 minute travel buffer/);
-  assert.match(trainer, /CANONICAL SESSION LEDGER/);
-  assert.match(trainer, /Trainer-led permitted programme/);
+  assert.match(trainer, /YOUR SESSIONS/);
+  assert.match(trainer, /SESSION PLAN · SERVER-OWNED/);
   assert.match(trainer, /Complete & consume one session/);
   assert.match(host, /SERVER-OWNED ASSIGNMENT OFFERS/);
   assert.match(host, /Accept & lock capacity/);

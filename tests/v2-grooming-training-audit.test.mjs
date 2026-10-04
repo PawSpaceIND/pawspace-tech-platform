@@ -89,7 +89,7 @@ test('ordinary weekly courses and multi-dog session lengths are unchanged',()=>{
  // executed in tests/trainer-workspace-d1-scale.test.mjs; this pins the page's order and its stale-response guard.
  test('trainer: the workspace opens once sessions are listed, and only the newest photo read writes',()=>{
   const trainer=read('app/trainer/page.tsx');
-  const end=trainer.indexOf('[requestedBookingId,requestedSessionId]);'),start=trainer.lastIndexOf('useEffect(()=>{let active=true;',end),effect=trainer.slice(start,end);
+  const end=trainer.indexOf('[requestedBookingId,requestedSessionId,executionView]);'),start=trainer.lastIndexOf('useEffect(()=>{let active=true;',end),effect=trainer.slice(start,end);
   assert.ok(start>=0&&effect.length>0,'the workspace load effect');
   const listed=effect.indexOf('await loadTrainerSessions(identity.subjectId)'),opened=effect.indexOf('setLoading(false);void providerDisplayName('),photos=effect.indexOf('if(first)await showEvidence(first.id);');
   assert.ok(listed>=0&&opened>listed&&photos>opened,'loading ends after the sessions list and before the photos and display name are requested');

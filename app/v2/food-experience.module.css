@@ -7,3 +7,11 @@
 .profileSummary{padding:16px;border:1px solid var(--paw-line);border-radius:var(--paw-control-radius)}.profileSummary p{margin:8px 0}.profileSummary small{line-height:1.5}.profileSummary details{margin-top:16px}.profileSummary summary{cursor:pointer;min-height:46px;display:flex;align-items:center;font-weight:700}.profileSummary summary:focus-visible{outline:3px solid var(--paw-text);outline-offset:4px}
 
 .reviewActions{position:sticky;bottom:-24px;background:var(--paw-surface);border-top:1px solid var(--paw-line);padding:14px 0;margin-top:16px;z-index:1}@media(max-width:560px){.reviewActions{bottom:-20px}}
+
+/* PAWSPACE STAGE 3B: approved presentation-only append (Food hero scene). */
+:global(html[data-paw-theme]) .art .heroScene { width:min(100%,360px); height:auto; aspect-ratio:1 / 1; border-radius:var(--paw-card-radius); }
+@media(max-width:760px) { :global(html[data-paw-theme]) .art .heroScene { width:min(100%,240px); } }
+
+/* PAWSPACE STAGE 3C: approved presentation-only append (Food mobile flow). Phone widths keep the price review and the shared appearance control in the page flow so neither covers the hero or the catalogue. */
+@media(max-width:760px) { :global(html[data-paw-theme]) .footer { position:static; bottom:auto; box-shadow:none; } }
+@media(max-width:760px) { :global(body):has(.page) :global(.paw-appearance-trigger) { position:relative !important; inset:auto !important; transform:none !important; width:fit-content; min-width:44px; min-height:44px; margin:12px 16px 12px auto; } }

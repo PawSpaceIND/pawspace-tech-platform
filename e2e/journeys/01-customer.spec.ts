@@ -200,7 +200,7 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await page.setExtraHTTPHeaders({});
   await page.context().clearCookies();
   await page.addInitScript(() => {
-    localStorage.setItem("pawspace.visual-style", "professional");
+    localStorage.setItem("pawspace.visual-style", "cartoon");
   });
   const response = await page.goto("/mobile-app", { waitUntil: "domcontentloaded" });
   expect(response?.status()).toBe(200);
@@ -213,16 +213,25 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
   await expect(care.getByRole("heading", { name: "Everything your pet needs, in one happy place." })).toBeVisible();
   const names = ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"];
   await expect(care.getByRole("button")).toHaveCount(names.length);
-  // Force the reviewed professional baseline: icon cards deliberately hide the artwork.
+  // Legacy style migrates to Editorial; the shared layout retains its icon cards.
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
   await expect(care.locator("article img").first()).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath("customer-approved-professional-home.png"), fullPage: true });
-  // Switch through the real preference controls before checking illustrated assets.
+  // Exercise the real closed-gate controls and display preference before auditing every asset.
   await page.getByRole("button", { name: "Change PawSpace appearance" }).click();
   const appearance = page.getByRole("dialog", { name: "Make PawSpace yours." });
-  await appearance.getByRole("radio", { name: /^Fun/ }).check();
+  const editorial = appearance.getByRole("radio", { name: /^Editorial Sanctuary/ });
+  await expect(editorial).toBeChecked();
+  await expect(editorial).toBeEnabled();
+  await expect(appearance.getByRole("radio", { name: /^Modern Concierge/ })).toBeDisabled();
+  await editorial.check();
+  await appearance.getByRole("radio", { name: "dark", exact: true }).check();
   await appearance.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-paw-style", "cartoon");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", "editorial");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-mode", "dark");
+  const migrated = (await page.context().cookies()).find(cookie => cookie.name === "pawspace-appearance");
+  expect(decodeURIComponent(migrated?.value ?? "")).toContain("style~cartoon");
   const measurements = [];
   for (const name of names) {
     const card = care.getByRole("button", { name: new RegExp(name, "i") });
@@ -270,12 +279,17 @@ test("reviewed unified UI keeps both visual styles and all eight real service en
     await expect(home).toBeVisible();
   }
   await page.getByRole("button", { name: "Change PawSpace appearance" }).click();
-  await appearance.getByRole("radio", { name: /^Professional/ }).check();
+  await editorial.check();
+  await appearance.getByRole("radio", { name: "light", exact: true }).check();
   await appearance.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", "editorial");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-mode", "light");
   await page.reload();
   await expect(home).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-paw-style", "professional");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-theme", "editorial");
+  await expect(page.locator("html")).toHaveAttribute("data-paw-mode", "light");
   await expect(care.getByRole("button")).toHaveCount(8);
   await testInfo.attach("approved-unified-ui-controls", { body: JSON.stringify({ project: testInfo.project.name,
     uiSource: "97d006a54c6661d21bb455bf8968a97739430c67", scope: "guest service entry, artwork, search, location and navigation; not payment capture", measurements }, null, 2), contentType: "application/json" });

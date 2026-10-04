@@ -30,7 +30,11 @@ test('Executed Inbox & AI menu matches the existing communications permission',(
 });
 test('Integrated business sources retain upstream bytes and Atlas retains upstream behavior',()=>{
  const m=JSON.parse(read('tests/fixtures/ui-mainline-integration-contract.json'));
- for(const[p,h]of Object.entries(m.protected))assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,fs.readFileSync(p)),p)),h,p);
+ for(const[p,h]of Object.entries(m.protected)){
+  const current=fs.readFileSync(p);
+  if(m.reviewedTestPostimages?.[p]){assert.equal(hash(current),m.reviewedTestPostimages[p],p);continue;}
+  assert.equal(hash(reverseAtlasHandoffDeadline(preservedCustomerServiceBytes(p,current),p)),h,p);
+ }
  for(const[p,x]of Object.entries(m.presentation))assert.equal(staffSemanticContract(read(p),p),x.semantic,p);
 });
 
@@ -41,3 +45,9 @@ for(const [path,entry] of Object.entries(inboxDelta.files))test('Accepted staff 
  assert.equal(preservedStaffInboxBytes('unrelated',bytes),bytes);
  for(const changed of [Buffer.concat([bytes,Buffer.from('\nUNREVIEWED')]),Buffer.from('X'+bytes.toString().slice(1)),bytes.subarray(1),Buffer.from(bytes.toString().replaceAll('\n','\r\n'))])assert.throws(()=>preservedStaffInboxBytes(path,changed));
 });
+
+const codeqlReceipt=JSON.parse(fs.readFileSync('tests/fixtures/staff-inbox-codeql-reviewed-delta.json','utf8'));
+for(const[p,e]of Object.entries(codeqlReceipt.files)){
+ test('accepted CodeQL correction restores exact prior bytes: '+p,()=>{const b=fs.readFileSync(p);assert.equal(hash(b),e.afterSha256);assert.equal(hash(preservedStaffInboxCodeqlBytes(p,b)),e.beforeSha256);});
+ test('unreviewed CodeQL correction mutation refuses: '+p,()=>{const b=fs.readFileSync(p);assert.throws(()=>preservedStaffInboxCodeqlBytes(p,Buffer.concat([b,Buffer.from('\n/* mutation */\n')])),/Exact accepted staff inbox CodeQL correction required/);});
+}

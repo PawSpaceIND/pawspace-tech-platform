@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -5,7 +6,7 @@ import {createHash} from 'node:crypto';
 import postcss from 'postcss';
 const read = path => readFileSync(new URL('../'+path,import.meta.url),'utf8');
 test('Account presentation preserves every original byte except reviewed copy and CSS hooks',()=>{
- let source=read('app/v2/account/page.tsx');
+ let source=preservedAcceptedUiBytes('app/v2/account/page.tsx',read('app/v2/account/page.tsx'));
  source=source.replace('\nimport accountStyles from "./account.module.css";','');
  for(const [oldText,newText] of [
   ['Family details without leaving V2.','Your pet family, all in one place.'],
@@ -32,7 +33,8 @@ test('actual Account component renders the plain-language heading and existing a
  const html=renderToStaticMarkup(createElement(AccountPage));
  assert.ok(html.includes('Your pet family, all in one place.'));
  assert.ok(html.includes('Keep your profile, pets and saved addresses together for your PawSpace bookings.'));
- assert.match(html,/Choose style &amp; colours/);
+ assert.match(html,/Appearance &amp; display/);
+ assert.match(read('app/v2/account/page.tsx'),/onClick=\{\(\)=>window\.dispatchEvent\(new CustomEvent\("pawspace-open-appearance"\)\)\}/);
  assert.match(html,/href="\/v2"/);
  assert.doesNotMatch(html,/canonical customer record|Family details without leaving V2/);
 });

@@ -43,7 +43,8 @@ test("all customer booking flows propagate resolved city instead of hard-coding 
   for (const [path, source] of Object.entries(sources)) assert.doesNotMatch(source, /cityId\s*:\s*["']blr["']/, `${path} still hard-codes Bengaluru`);
   assert.match(sources["app/mobile-app/grooming-flow.tsx"], /serviceCode:"grooming",cityId:serviceLocation\.assignment\.cityId,zoneId/);
   assert.match(sources["app/mobile-app/stay-flow.tsx"], /serviceCode:mode==="boarding"\?"boarding":"pet_sitting",serviceAddress:serviceLocation\.address,servicePincode:serviceLocation\.assignment\.pincode,cityId:serviceLocation\.assignment\.cityId,zoneId/);
-  assert.ok((sources["app/mobile-app/training-flow.tsx"].match(/serviceCode:"dog_training",cityId:serviceCoverage\.cityId,zoneId:serviceCoverage\.zoneId/g) || []).length >= 2);
+  const training=sources["app/mobile-app/training-flow.tsx"];
+  assert.ok((training.match(/cityId:serviceCoverage\.cityId,zoneId:serviceCoverage\.zoneId/g) || []).length >= 4,"both rolling Training branches must carry the resolved location through reservation and booking");
   assert.match(sources["app/mobile-app/walking-flow.tsx"], /cityId:\s*coverage\.cityId,\s*zoneId:\s*coverage\.zoneId/);
   assert.match(sources["app/mobile-app/taxi-flow.tsx"], /cityId:\s*coverage\.cityId,\s*zoneId:\s*coverage\.zoneId/);
   assert.match(sources["app/mobile-app/food-flow.tsx"], /cityId: resolved\.cityId/);
