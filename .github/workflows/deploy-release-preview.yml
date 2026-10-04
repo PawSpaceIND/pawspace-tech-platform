@@ -221,9 +221,18 @@ jobs:
           PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
         run: |
           set -euo pipefail
-          # Addressed by id, so the migration cannot land on a database chosen by name resolution.
+          # The generated candidate config binds DB to the isolated preview D1 id verified above.
+          # Wrangler resolves migration targets by binding, not by a bare database UUID.
           if [ -d migrations ]; then
-            npx wrangler d1 migrations apply "$PREVIEW_D1" --remote
+            node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('dist/server/wrangler.json', 'utf8'));
+          const binding = config.d1_databases?.find((item) => item.binding === 'DB');
+          if (!binding || binding.database_id !== process.env.PREVIEW_D1) {
+            throw new Error('Candidate DB binding does not match the isolated preview D1');
+          }
+          NODE
+            npx wrangler d1 migrations apply DB --config dist/server/wrangler.json --remote
           else
             echo "No migrations directory in the candidate; the route creates its own tables on first request."
           fi
