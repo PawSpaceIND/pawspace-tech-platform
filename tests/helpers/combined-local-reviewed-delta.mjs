@@ -1,3 +1,4 @@
+import {preservedServiceAddressV8Bytes} from './service-address-v8-reviewed-delta.mjs';
 import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import {preservedGroomingBackBarBytes} from './grooming-back-bar-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
@@ -21,6 +22,7 @@ function reverse(source,entry,path){
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
 export function preservedTrainingIntegratedBytes(path,bytes){
+ bytes=preservedServiceAddressV8Bytes(path,bytes);
  if(path==='e2e/v2-grooming.spec.ts'&&hash(bytes)==='766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230'){
   const reviewed="  // Async quote rerenders can remount the add-on picker closed (seen in WebKit); re-open until it stays open.\n  await expect(async () => {\n    if (await disclosure.getAttribute(\"open\") === null) await disclosure.locator(\"summary\").click();\n    await expect(disclosure).toHaveAttribute(\"open\", \"\", { timeout: 2_000 });\n  }).toPass({ timeout: 15_000 });\n",prior="  if (await disclosure.getAttribute(\"open\") === null) {\n    await disclosure.locator(\"summary\").click();\n    await expect(disclosure).toHaveAttribute(\"open\", \"\");\n  }\n";
   const text=bytes.toString();assert.equal(text.split(reviewed).length,2,'Unique reviewed native add-on pointer retry');

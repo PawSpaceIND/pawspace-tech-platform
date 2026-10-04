@@ -5,6 +5,8 @@ import {previewUatProviders, type UatScheduleRequest} from "./uat-scheduling-cli
 export type TrainingScheduleSelection = {
   customerId: string; petIds: string[]; cityId: string; zoneId: string;
   scheduledStart: string; quote: TrainingQuote; cadenceDays?: number; schedulingMode?: "rolling_v1" | "series_v1";
+  /** The address the customer is looking at, so preview and reserve never fall back to a remembered one. */
+  serviceAddress?: string; servicePincode?: string;
 };
 
 export type TrainingScheduleRequest=UatScheduleRequest&{trainingQuoteId:string;trainingSchedulingMode?:"rolling_v1"};
@@ -31,6 +33,7 @@ export function trainingScheduleRequest(input: TrainingScheduleSelection): Train
     cityId: input.cityId, zoneId: input.zoneId, scheduledStart: input.scheduledStart,
     scheduledEnd: new Date(start + quote.minutesPerSession * 60_000).toISOString(),
     occurrences: rolling || quote.meetAndGreet ? 1 : quote.sessions, cadenceDays: input.cadenceDays ?? 7,
+    ...(input.serviceAddress && input.servicePincode ? {serviceAddress: input.serviceAddress, servicePincode: input.servicePincode} : {}),
   };
 }
 
