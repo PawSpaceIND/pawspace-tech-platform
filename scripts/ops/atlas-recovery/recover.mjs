@@ -51,5 +51,8 @@ try{
   const address=serviceAddressText({line1:row.line1,line2:row.line2,area:row.area,city:row.city,postalCode:'560068',country:'India'});
   return sameSavedAddress({line1:row.address_text,area:row.resolved_area,city:row.resolved_city,postalCode:'560068'},{line1:address,area:row.resolved_area,city:row.resolved_city,postalCode:'560068'});
  });
+ const actors=await api('/d1/database/'+database+'/query',{sql:"SELECT email,role_code,status,mfa_enabled,CASE WHEN mfa_secret IS NULL OR trim(mfa_secret)='' THEN 0 ELSE 1 END has_totp_secret FROM app_users WHERE email IN (?,?) ORDER BY email",params:['anjali.finance33@tkpetcare.in','founder@pawspace.in']});
+ check(actors?.length===1&&actors[0].success&&Array.isArray(actors[0].results)&&actors[0].meta.rows_written===0&&actors[0].meta.changed_db===false,'read_only_select_unproven');
+ receipt.existingPrivilegedActors=actors[0].results.map(row=>({role:row.role_code,active:row.status==='active',mfaEnrolled:Number(row.mfa_enabled)===1,hasTotpSecret:Number(row.has_totp_secret)===1}));
  receipt.servingVersion=version;receipt.servingSha=vars.PAWSPACE_STAGING_BUILD_SHA;receipt.target={customerId:'CUS0000',pincode:'560068',city:'blr',zone:'blr-south'};receipt.ok=true;receipt.completedAt=new Date().toISOString();save();
 }catch(error){receipt.ok=false;receipt.failure=['scope_refused','existing_connection_missing','read_refused','normal_version_changed','bindings_unproven','dedicated_db_refused','sandbox_revision_refused','fixture_flag_secret_unreadable','read_only_select_unproven','canonical_zone_source_missing'].includes(error.message)?error.message:'read_transport_or_source_failed';save();process.exitCode=1;}
