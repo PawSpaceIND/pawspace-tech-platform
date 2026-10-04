@@ -17,8 +17,11 @@ export async function POST(request:Request){try{
   sameOriginWrite(request);
   const actor=await resolveActor(request),db=await database();
   const body=await request.json() as Body;
-  const customerId=String(body.customerId||"").trim();if(!customerId)return json({error:"Customer is required"},400);
+  // Authorize before validating: ownership is decided first (an absent id is owned by no customer), so a caller
+  // who neither owns nor manages the customer is refused 403 before any payload validation answers.
+  const customerId=String(body.customerId||"").trim();
   await requireCustomerOwnership(db,actor,customerId);
+  if(!customerId)return json({error:"Customer is required"},400);
   // Declared pets are the customer's SAVED pets (source id); species is taken from the saved row, the client value is only cross-checked.
   const pets=Array.isArray(body.pets)?body.pets.slice(0,8).map(pet=>({sourceId:String(pet?.sourceId||""),...(pet?.species?{species:(["dog","cat","other"].includes(String(pet.species))?String(pet.species):"other") as GroomingPetType}:{})})):[];
   const addOns=Array.isArray(body.addOns)?body.addOns.slice(0,8).map(value=>String(value)):[];

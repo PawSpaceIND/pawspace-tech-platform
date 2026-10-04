@@ -1,4 +1,4 @@
-import { authError, database, securityAudit, type AuthenticatedActor } from "../../../lib/server-auth";
+import { authError, database, requireCustomerOwnership, securityAudit, type AuthenticatedActor } from "../../../lib/server-auth";
 import { resolvePlatformSession } from "../../../lib/platform-session";
 import { recordCustomerChannelConsent, type ConsentChannel } from "../../../lib/communication-governance";
 
@@ -19,6 +19,9 @@ async function customerContext(request: Request) {
   if (!session || session.subjectType !== "customer" || !String(session.subjectId || "").trim()) throw new Response("A verified customer sign-in is required", { status: 401 });
   const customerId = String(session.subjectId);
   const actor: AuthenticatedActor = { email: session.auditId, name: `Customer ${customerId}`, roleCode: session.roleCode, permissions: session.permissions, developmentPreview: false, identitySource: session.identitySource, principalType: session.principalType, principalKey: session.principalKey, subjectType: "customer" };
+  // The session subject stays the only principal; the shared ownership gate additionally proves that the verified
+  // identity binding behind this session owns that customer before the body is read or anything is written.
+  await requireCustomerOwnership(db, actor, customerId);
   return { db, actor, customerId };
 }
 type Body = { customerId?: string; channel?: string; allowed?: unknown; source?: string };
