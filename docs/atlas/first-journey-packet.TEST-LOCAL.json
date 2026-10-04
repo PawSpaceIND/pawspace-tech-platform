@@ -1,0 +1,176 @@
+{
+ "runDescriptor": "FINANCE-TEST-OPS-GROOMING-01",
+ "label": "TEST/LOCAL executable journey; not hosted whole-job evidence",
+ "stages": [
+  {
+   "stage": "1.enquiry",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "status": 200,
+   "threadId": "THREAD-978B023F-360",
+   "modelDispatched": false,
+   "note": "owned web chat thread opened by menu bot"
+  },
+  {
+   "stage": "2.crm_transcript",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "threadId": "THREAD-978B023F-360",
+   "messages": 1,
+   "transcriptStatus": 200,
+   "foreignReadStatus": 404,
+   "foreignThreadVisible": false
+  },
+  {
+   "stage": "3.scoped_quote",
+   "actor": "system(coupon governance) for customer",
+   "outcome": "manual",
+   "quoteId": "CPQ-A7FF1D74-ABE",
+   "finalAmount": 1799,
+   "gap": "no Grooming commercial_quotes table or quote route; only coupon quote persisted, package price governed at booking"
+  },
+  {
+   "stage": "4.customer_confirmation",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "bookingStatus": 201,
+   "replayDuplicatePrevented": true,
+   "idempotencyKey": "ATLAS-J01-GROOM",
+   "gap": "confirmation is the booking POST; no explicit quote-acceptance record"
+  },
+  {
+   "stage": "5.reservation_booking_workorder",
+   "actor": "customer(TEST session) + scheduler",
+   "outcome": "autonomous",
+   "scheduleStatus": 200,
+   "scheduleReplayDuplicatePrevented": true,
+   "reservationId": "ATLAS-J01-GROOM_groom_arun_1_1791098302227",
+   "workOrderId": "WO-8366ED4C",
+   "bookingId": "PS-UAT-MUTHON0K-4B9D"
+  },
+  {
+   "stage": "6.assignment",
+   "actor": "scheduler(governed capacity)",
+   "outcome": "autonomous",
+   "providerId": "groom_arun",
+   "visibleInProviderFeed": true
+  },
+  {
+   "stage": "6b.payment_capture",
+   "actor": "TEST sandbox gateway event (simulated)",
+   "outcome": "manual",
+   "status": 201,
+   "replayDuplicate": true,
+   "paymentStatus": "captured",
+   "commercialMode": "prepaid",
+   "label": "TEST simulate_event via grooming-payment-sandbox; no gateway, no money"
+  },
+  {
+   "stage": "7.provider_lifecycle_media",
+   "actor": "provider(TEST session) with TEST GPS + TEST media bytes",
+   "outcome": "manual",
+   "transitions": [
+    200,
+    200,
+    200,
+    200
+   ],
+   "completeWithoutProof": 409,
+   "proofStatus": 200,
+   "completeStatus": 200,
+   "workOrderStatus": "completed",
+   "label": "physical grooming is external provider input; simulated here"
+  },
+  {
+   "stage": "8.invoice_accounts",
+   "actor": "system(completion finance)",
+   "outcome": "autonomous",
+   "invoices": 1,
+   "invoiceNumber": "PS-2026-70D3A7B0",
+   "journalEntriesForBooking": 5,
+   "debits": 3598,
+   "credits": 3598,
+   "balanced": true,
+   "completeReplayStatus": 200,
+   "invoiceCountAfterReplay": 1,
+   "journalCountAfterReplay": 5,
+   "journalColumns": [
+    "id",
+    "entry_date",
+    "source_type",
+    "source_id",
+    "account_code",
+    "cost_centre",
+    "vertical",
+    "debit",
+    "credit",
+    "narration",
+    "period_code",
+    "posted",
+    "created_at",
+    "booking_id",
+    "customer_id",
+    "city_id",
+    "service_code",
+    "payment_id",
+    "settlement_id",
+    "payment_method",
+    "tax_amount",
+    "gateway_fee",
+    "collector_id",
+    "reversal_reference",
+    "transaction_at",
+    "verification_status",
+    "verified_by",
+    "verified_at"
+   ]
+  },
+  {
+   "stage": "9.consented_followup",
+   "actor": "customer(TEST session; TEST consent flag)",
+   "outcome": "blocked(governed: A feedback call cannot be scheduled: call_policy_unknown, voice_consent_not_explicit, voice_consent_missing, timezone_unknown, quiet_hours_policy_unknown)",
+   "eligibilityStatus": 200,
+   "eligibility": {
+    "invitation": {
+     "bookingId": "PS-UAT-MUTHON0K-4B9D",
+     "serviceCode": "grooming",
+     "destinations": [],
+     "source": "no_approved_config",
+     "terms": {
+      "optional": true,
+      "rewarded": false,
+      "ratingGated": false,
+      "postingVerified": false,
+      "honestOnly": true
+     }
+    },
+    "call": {
+     "bookingId": "PS-UAT-MUTHON0K-4B9D",
+     "eligible": false,
+     "reasons": [
+      "call_policy_unknown",
+      "voice_consent_not_explicit",
+      "voice_consent_missing",
+      "timezone_unknown",
+      "quiet_hours_policy_unknown"
+     ],
+     "timezone": null,
+     "quietHours": null,
+     "policy": null,
+     "maxAttempts": 1,
+     "attemptsUsed": 0,
+     "existing": null
+    }
+   },
+   "scheduleStatus": 412,
+   "scheduleBody": {
+    "error": "A feedback call cannot be scheduled: call_policy_unknown, voice_consent_not_explicit, voice_consent_missing, timezone_unknown, quiet_hours_policy_unknown",
+    "code": "call_policy_unknown"
+   },
+   "withoutConsentStatus": 400,
+   "replayDuplicatePrevented": null,
+   "persistedCalls": 0,
+   "label": "consent is a TEST flag from a TEST customer session, not a real customer's consent"
+  }
+ ]
+}
