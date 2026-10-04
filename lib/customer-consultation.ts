@@ -8,10 +8,13 @@ const row=(value:unknown):Row=>value&&typeof value==='object'?value as Row:{};
 const text=(value:unknown)=>typeof value==='string'?value.trim():'';
 /** Read-only chat topic selection; a paused service mention is not the active request. */
 export function activeChatConsultationText(value:string){
- return value.replace(/\b(?:pause|stop|hold|no|not|don't want|don’t want)\s+(?:(?:my|the|a|an)\s+)?(?:[A-Za-z]+\s+){0,2}(?:grooming|training|boarding|daycare|sitting|sitter|haircut)\b/gi,' ');
+ return value.replace(/\b(?:switch|change|move)\s+from\b.*?\bto\s+/gi,' ').replace(/\b(?:pause|stop|hold|no|not|don't want|don’t want)\s+(?:(?:my|the|a|an)\s+)?(?:[A-Za-z]+\s+){0,2}(?:grooming|training|boarding|daycare|sitting|sitter|haircut|taxi|cab|walking|walker|funeral|cremation)\b/gi,' ');
 }
-export function chatConsultationService(value:string):'grooming'|'dog_training'|'boarding'|'pet_sitting'|null{
+export function chatConsultationService(value:string):Service|null{
  const active=activeChatConsultationText(value);
+ if(patterns.pet_taxi.test(active))return 'pet_taxi';
+ if(patterns.dog_walking.test(active))return 'dog_walking';
+ if(patterns.funeral.test(active))return 'funeral';
  const sitting=/\b(?:sitting|sitter|caregiver)\b|\b(?:cat|pet)\b.{0,90}\bvisits?\b/i.test(active);
  if(sitting)return 'pet_sitting';
  if(/\b(?:boarding|daycare)\b/i.test(active))return 'boarding';
@@ -19,9 +22,16 @@ export function chatConsultationService(value:string):'grooming'|'dog_training'|
  if(/\b(?:train\w*|obedience|puppy class\w*)\b/i.test(active))return 'dog_training';
  return null;
 }
-function chatCareWindow(value:string){
- const active=value.replace(/\b(?:not|no|never)\s+(?:an?\s+)?overnight\b/gi,' ');
- return /\bvisits?\b/i.test(active)?'visits':/\bovernight\b/i.test(active)?'overnight':/\b(?:daytime|daycare|during the day)\b/i.test(active)?'daytime':null;
+function chatCareWindow(values:string[]){
+ let window:'visits'|'overnight'|'daytime'|null=null;
+ for(const value of values){
+  const denied=new Set<string>();
+  const active=value.replace(/\b(?:not|no|never|cancel|stop|pause|without|don't want|don’t want|rather than|instead of)\s+(?:(?:the|any|a|an|short)\s+)*(visits?|overnight|daytime|daycare|during the day)\b/gi,(_,mode:string)=>{denied.add(/^visit/i.test(mode)?'visits':/^overnight/i.test(mode)?'overnight':'daytime');return ' ';});
+  const affirmed=[...active.matchAll(/\b(visits?|overnight|daytime|daycare|during the day)\b/gi)].at(-1)?.[1];
+  if(affirmed)window=/^visit/i.test(affirmed)?'visits':/^overnight/i.test(affirmed)?'overnight':'daytime';
+  else if(window&&denied.has(window))window=null;
+ }
+ return window;
 }
 /** A read-only consultation plan. Facts are attributed dialogue, never executable identity/consent. */
 export function buildCustomerConsultation(input:{history:ConsultationMessage[];currentText:string;context:Row;service?:string;channel:string}){
@@ -61,8 +71,9 @@ export function buildCustomerConsultation(input:{history:ConsultationMessage[];c
  const knownAge=Boolean(chat&&/\b(?:adult|elderly|senior)\s+(?:dog|cat|pet)\b/i.test(input.currentText)||constraints.age||pet&&[pet.age_months,pet.age_years,pet.age].some(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0)||pet&&(pet.date_of_birth||pet.dob));
  const questionList:string[]=[];
  const recommendation=/\b(?:compare|difference|better|best|recommend|suggest)\b|\bwhich\b.{0,60}\b(?:package|plan|training|programme|program)\b.{0,30}\b(?:fits?|suits?|right)\b/i.test(input.currentText);
- const currentPetText=chat?careHistory.filter(entry=>entry.subject===careHistory.at(-1)?.subject).map(entry=>activeChatConsultationText(entry.text)).join(' '):'';
- const careWindow=chat?chatCareWindow(currentPetText):null;
+ const currentPetTurns=chat?careHistory.filter(entry=>entry.subject===careHistory.at(-1)?.subject).map(entry=>activeChatConsultationText(entry.text)):[];
+ const currentPetText=currentPetTurns.join(' ');
+ const careWindow=chat?chatCareWindow(currentPetTurns):null;
  if(service==='dog_training'){
   if(!(needs[service]?.length))questionList.push('What would you most like to improve—such as jumping, toilet habits, or lead pulling?');
   if(!knownAge)questionList.push('How old is your pet?');

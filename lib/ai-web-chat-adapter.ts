@@ -259,15 +259,15 @@ type WebChatOptions={
  */
 const WEB_CHAT_SALES_ACTOR:AuthenticatedActor={email:"web-chat-ai@system.pawspace",name:"PawSpace web chat AI",roleCode:"service_web_chat_ai",permissions:["communications.manage","customers.manage","bookings.manage","scheduling.book"],developmentPreview:false,identitySource:"workspace",principalType:"identity_subject",principalKey:"service:web-chat-ai"};
 const SALES_SERVICE_MEMORY_MS=2*60*60*1000;
-export function chatSalesServiceNamed(message:string):VoiceSalesService|null{return chatConsultationService(message);}
+export function chatSalesServiceNamed(message:string):VoiceSalesService|null{const selected=chatConsultationService(message);return selected==="dog_walking"||selected==="funeral"?null:selected;}
 
 /** The service this chat thread is selling: the one named now, else the one named in it in the last two hours. */
 export async function chatSalesService(db:D1Database,customerId:string,threadId:string,message:string):Promise<VoiceSalesService|undefined>{
- const named=chatSalesServiceNamed(message),now=Date.now();
+ const selected=chatConsultationService(message),named=chatSalesServiceNamed(message),now=Date.now();
  const last=await db.prepare("SELECT detail_json FROM ai_web_chat_events WHERE thread_id=? AND customer_id=? AND event_type='sales_service' AND created_at>=? ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(threadId,customerId,now-SALES_SERVICE_MEMORY_MS).first<Row>();
- let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training"||service==="boarding"||service==="pet_sitting")remembered=service;}catch{}
- if(named&&named!==remembered)await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();
- return named??remembered;
+ let remembered:VoiceSalesService|undefined;try{const service=JSON.parse(String(last?.detail_json??"{}")).service;if(service==="grooming"||service==="dog_training"||service==="boarding"||service==="pet_sitting"||service==="pet_taxi")remembered=service;}catch{}
+ if(selected&&named!==remembered)await db.prepare("INSERT INTO ai_web_chat_events (id,thread_id,customer_id,event_type,actor_ref,detail_json,created_at) VALUES (?,?,?,'sales_service',?,?,?)").bind(crypto.randomUUID(),threadId,customerId,WEB_CHAT_SALES_ACTOR.email,JSON.stringify({service:named}),now).run();
+ return selected?named??undefined:remembered;
 }
 
 export async function runAuthenticatedAiWebChat(db:D1Database,input:{actor:AuthenticatedActor;customerId:string;text:string;idempotencyKey:string},options:WebChatOptions={}){

@@ -104,3 +104,29 @@ test('normal authenticated stay followup cannot cancel an existing scheduled agr
  assert.deepEqual(w.sqlite.prepare("SELECT * FROM lead_callbacks WHERE id='CALLBACK-DEMO'").get(),callbackBefore);assert.deepEqual(w.businessSnapshot(),business);assert.equal(result.ai.turn.policyDecision,'chat_stay_read_only');assert.equal(mock.calls.length,1);
  const receipts=w.sqlite.prepare("SELECT name FROM sqlite_master WHERE name='ai_conversation_followup_receipts'").get();if(receipts)assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM ai_conversation_followup_receipts').get().n,0);
 });
+
+for(const [previous,current,expected] of [
+ ['My cat needs two visits daily.','Actually change to overnight care, not visits.','overnight'],
+ ['My cat needs two visits daily.','Cancel the visits. I now need overnight care.','overnight'],
+ ['My cat needs overnight care.','Actually change to two short visits daily, not overnight.','visits'],
+ ['My cat needs overnight care.','Cancel overnight care. I now need visits.','visits'],
+])test('latest affirmed care-window correction: '+current,()=>{
+ const p=buildCustomerConsultation({history:[{role:'user',content:previous}],currentText:current,context,service:'pet_sitting',channel:'chat'});
+ assert.equal(p.careWindow,expected);assert.equal(p.questions.length,0);assert.equal(p.identityVerified,false);assert.equal(p.bookingConsent,false);
+ const retained=buildCustomerConsultation({history:[{role:'user',content:previous},{role:'user',content:current}],currentText:'What is the next app step?',context,service:'pet_sitting',channel:'chat'});assert.equal(retained.careWindow,expected);
+});
+for(const [query,service,sales] of [
+ ['Switch from sitting to pet taxi.','pet_taxi','pet_taxi'],
+ ['Pause sitting. I need pet taxi.','pet_taxi','pet_taxi'],
+ ['Switch from sitting to dog walking.','dog_walking',undefined],
+ ['Pause sitting. I need funeral care.','funeral',undefined],
+])test('normal authenticated explicit service switch clears stay scope: '+query,async t=>{
+ const w=await runtime(t);await chatSalesService(w.db,'CUS-DEMO','THREAD-DEMO','I need pet sitting.');
+ const plan=buildCustomerConsultation({history:[{role:'user',content:'I need pet sitting.'}],currentText:query,context,service:'pet_sitting',channel:'chat'});assert.equal(plan.service,service);
+ let sent;const mock=stubFetch((url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses');sent=JSON.parse(init.body);return jsonResponse({status:'completed',output_text:service==='pet_taxi'?'What are the pickup and drop-off addresses?':'The team can help with your request.',usage:{total_tokens:20}});});t.after(()=>mock.restore());
+ const result=await runAuthenticatedAiWebChat(w.db,{actor,customerId:'CUS-DEMO',text:query,idempotencyKey:'switch-'+service+query},{threadId:'THREAD-DEMO'});
+ assert.notEqual(result.ai.turn.policyDecision,'chat_stay_read_only');assert.notEqual(result.ai.turn.policyDecision,'chat_stay_answer_refused');
+ assert.equal(await chatSalesService(w.db,'CUS-DEMO','THREAD-DEMO','Tell me the next step.'),sales);
+ if(sent){const grounded=JSON.parse(sent.input).canonicalContext;assert.equal(grounded.stayCapabilities,undefined);assert.doesNotMatch(sent.instructions,/Caregiver selection, rates, booking and payment are app-only/);if(service==='pet_taxi'){assert.equal(grounded.salesService,'pet_taxi');assert.notEqual(grounded.informationOnly,true);assert.match(sent.instructions,/Executable voice booking services are grooming, dog_training and pet_taxi/);}}
+ if(service==='pet_taxi')assert.equal(mock.calls.length,1,'Taxi must retain its existing provider path');
+});
