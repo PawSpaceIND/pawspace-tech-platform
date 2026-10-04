@@ -1,0 +1,60 @@
+{
+  "base": "3fec937767999d8f23967653a8afa36ff076df9a",
+  "head": "e2f59a32c39a0f72bd1a3c365c2649bd90c2107e",
+  "files": {
+    "app/api/canonical-bookings/route.ts": {
+      "beforeSha256": "72102d6a8a2b22329f81e002ee0263310a17a2c29755494f7d511222eebfda81",
+      "afterSha256": "1d2b347242f46c2ee647444585047ce505c92f522bf17a91e130a6b1694bfd06",
+      "replacements": [
+        [
+          "",
+          "import {governGroomingQuoteAcceptance,groomingQuoteAcceptanceStatements,isGroomingQuoteAcceptanceGuardError,reconcileGroomingQuoteLink} from \"../../../lib/grooming-commercial-governance\";\n"
+        ],
+        [
+          "",
+          "groomingQuoteId?:string;"
+        ],
+        [
+          "return json({data:await readBundle(db,prior,true)",
+          "const bundle=await readBundle(db,prior,true);if(input.serviceCode===\"grooming\"&&String(input.pricing.groomingQuoteId||\"\").trim()){const quoteReconciliation=await reconcileGroomingQuoteLink(db,String(prior.id));return json({data:{...bundle,quoteReconciliation}});}return json({data:bundle"
+        ],
+        [
+          "",
+          "  let groomingCommercial:Awaited<ReturnType<typeof governGroomingQuoteAcceptance>>|null=null;\n"
+        ],
+        [
+          "",
+          "    // Optional governed Grooming quote. Acceptance compares the FINAL canonical terms governed in this very request\n    // (live base, add-ons, coupon discount and final payable, due now, payment mode, declared pets, catalogue, breakdown,\n    // commercial policy) with the pinned quote in exact minor units. Link + consume join the booking batch below.\n    const groomingQuoteId=String(input.pricing.groomingQuoteId||\"\").trim();\n    if(groomingQuoteId){try{groomingCommercial=await governGroomingQuoteAcceptance(db,{quoteId:groomingQuoteId,customerId:input.customer.id,packageCode:governed.packageCode,pets:input.pets.map(pet=>({sourceId:pet.sourceId,species:pet.species})),addOns:submittedAddOns,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,paymentMode:input.payment.mode,couponQuoteId:couponQuoteId||null,governed:{baseAmount:gross-groomingAddOnTotal,addOnTotal:groomingAddOnTotal,couponDiscount:couponCommercial?.discount??0,finalPayable:finalAmount,amountDueNow:governed.amountDueNow,catalogueVersion:governed.catalogueVersion,pricingBreakdown:(governed as {pricingBreakdown?:unknown}).pricingBreakdown,commercialPolicyVersion:commercialPolicy?policyVersion(commercialPolicy):null}});}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);throw error;}}\n"
+        ],
+        [
+          "",
+          "  if(groomingCommercial)statements.push(...groomingQuoteAcceptanceStatements(db,groomingCommercial.quoteId,bookingId,input.customer.id,now));\n"
+        ],
+        [
+          "",
+          "if(isGroomingQuoteAcceptanceGuardError(error))return json({error:\"Grooming quote is no longer acceptable (expired, already used or raced); request a fresh quote\",code:\"grooming_quote_not_acceptable\"},409);"
+        ]
+      ]
+    },
+    "lib/communication-governance.ts": {
+      "beforeSha256": "e03ef4a0e34179a58fb3d097518280467f3f8ebf4e6e56fead41b72e415ac1e0",
+      "afterSha256": "20454b68e220d775f216be33df819063537b6e2b98d4806c665e3e410df09ec7",
+      "replacements": [
+        [
+          "",
+          "\nexport type ConsentChannel=\"voice\"|\"whatsapp\"|\"sms\"|\"email\";\nconst CONSENT_COLUMNS:Record<ConsentChannel,string>={voice:\"voice_allowed\",whatsapp:\"whatsapp_allowed\",sms:\"sms_allowed\",email:\"email_allowed\"};\n/**\n * Customer-owned central channel consent. The ONLY legitimate writer of a per-channel allow/deny besides recordGlobalOptOut.\n * Rules: the subject writes for themself only (the route enforces the platform-session subject); a missing row never defaults\n * to allowed and is created with every channel NULL except the one declared; a declared `false` is a refusal, not a deletion;\n * a global opt-out is never lifted here (it stays 1 until the opt-out owner lifts it); `source` names the app surface and\n * `updatedBy` the acting subject so the row is attributable. Returns the exact persisted row.\n */\nexport async function recordCustomerChannelConsent(db:Db,input:{customerId:string;channel:ConsentChannel;allowed:boolean;source:string;updatedBy:string;asOf?:number}){\n await ensureCommunicationGovernance(db);\n const customerId=String(input.customerId||\"\").trim(),source=String(input.source||\"\").trim(),updatedBy=String(input.updatedBy||\"\").trim();\n if(!customerId||!source||!updatedBy)throw new Response(\"Customer, source and acting subject are required\",{status:400});\n const column=CONSENT_COLUMNS[input.channel];if(!column)throw new Response(\"Unsupported consent channel\",{status:400});\n if(typeof input.allowed!==\"boolean\")throw new Response(\"Consent must be an explicit boolean\",{status:400});\n const now=input.asOf??Date.now(),value=input.allowed?1:0;\n await db.prepare(`INSERT INTO communication_consent(customer_id,global_opt_out,whatsapp_allowed,email_allowed,voice_allowed,sms_allowed,source,updated_by,updated_at) VALUES (?,0,NULL,NULL,NULL,NULL,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET source=excluded.source,updated_by=excluded.updated_by,updated_at=excluded.updated_at`).bind(customerId,source,updatedBy,now).run();\n await db.prepare(`UPDATE communication_consent SET ${column}=? WHERE customer_id=?`).bind(value,customerId).run();\n const row=await db.prepare(\"SELECT customer_id,global_opt_out,whatsapp_allowed,email_allowed,voice_allowed,sms_allowed,source,updated_by,updated_at FROM communication_consent WHERE customer_id=?\").bind(customerId).first<Row>();\n return{customerId,channel:input.channel,allowed:input.allowed,globalOptOut:Number(row?.global_opt_out||0)===1,effectiveAllowed:Number(row?.global_opt_out||0)!==1&&Number(row?.[column])===1,source,updatedBy,updatedAt:now};\n}\n"
+        ]
+      ]
+    },
+    "lib/session-api-gateway.ts": {
+      "beforeSha256": "0c1ee70ccfd8f5c0707ee9b8d2d63b863963ea714dd0235c258f4d31c6ab2d94",
+      "afterSha256": "d160d4d8f70d939024da60179c5fbd09cd18c965d70ad5df7502e8d529d02702",
+      "replacements": [
+        [
+          "",
+          "  if([\"/api/grooming-commercial\",\"/api/customer-communication-consent\"].includes(url.pathname)&&method===\"POST\")return{permission:\"scheduling.book\",subjectType:\"customer\"};\n"
+        ]
+      ]
+    }
+  }
+}
