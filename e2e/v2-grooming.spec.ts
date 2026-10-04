@@ -132,7 +132,7 @@ async function previewCare(page: Page) {
   expect((await coverageResponse).status()).toBe(200);
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
 }
 
@@ -212,7 +212,7 @@ test("V2 contract: stale coverage cannot verify an edited doorstep", async ({ pa
   const settled = page.waitForResponse(response => response.url().includes("/api/service-zone") && response.ok());
   release(); await settled;
   await expect(page.getByText("Bengaluru East is covered")).toBeHidden();
-  await expect(page.getByRole("button", { name: /Check live price & groomers/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Next · confirm price & groomers/ })).toBeDisabled();
   expect(state.bookingWrites).toBe(0);
 });
 
@@ -222,7 +222,7 @@ test("V2 contract: delayed provider results cannot restore a stale quote after e
   state.previewGate = new Promise(resolve => { release = resolve; });
   await openCare(page);
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect.poll(() => state.previewStarted).toBe(true);
   await page.getByLabel("House, street & area").fill("42 Indiranagar Different Road");
   const settled = page.waitForResponse(response => response.url().includes("/api/uat-scheduling") && response.ok());
@@ -247,7 +247,7 @@ test("V2 contract: fallback pricing never enables reservation", async ({ page })
   const state = await fixture(page); state.quoteSource = "fallback_default";
   await openCare(page);
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(page.getByText(/published live grooming price could not be verified/)).toBeVisible();
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeDisabled();
   expect(state.bookingWrites).toBe(0);
@@ -288,7 +288,7 @@ test('explicit V2 rejects a contradictory city/PIN before availability or bookin
   await page.getByLabel('House, street & area').fill('24 Audit Road, Mumbai, Maharashtra');
 
   await expect(page.getByRole('alert')).toContainText('different city');
-  await expect(page.getByRole('button',{name:/Check live price & groomers/})).toBeDisabled();
+  await expect(page.getByRole('button',{name:/Next · confirm price & groomers/})).toBeDisabled();
   expect(state.previewStarted).toBe(false); expect(state.bookingWrites).toBe(0);
 });
 async function familyFixture(page:Page, pets:Array<{id:string;name:string;species:string;ageYears:number}>) {
@@ -340,7 +340,7 @@ test("G10: four visible keyboard-accessible steps preserve the complete booking 
   await expect(navigation.getByRole("button", { name: "4 Time & review" })).toBeDisabled();
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(page.getByRole("heading", { name: "Available for this exact slot" })).toBeVisible();
   await page.getByLabel("Notes for your groomer (optional)").fill("Please be gentle with paws");
   const before = [...requests];
@@ -399,7 +399,7 @@ for (const oldValid of [true, false]) test(`G08: late ${oldValid ? "success" : "
   await page.locator("#v2-grooming-time").getByRole("button").nth(2).click();
   await expect(couponBox).toHaveCount(0);
   state.couponGate = undefined; state.couponValid = true;
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(couponBox).toBeVisible();
   await couponBox.getByText("Have a special code?", {exact:true}).click();
   await couponBox.getByRole("textbox").fill("NEW200");
@@ -436,7 +436,7 @@ test("G08: V2 coupon preview and booking refresh use the same basket including e
   await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", {name:/Check live price & groomers/}).click();
+  await page.getByRole("button", {name:/Next · confirm price & groomers/}).click();
   const box=page.getByRole("group", {name:"Coupon code", exact:true});
   await box.getByText("Have a special code?", {exact:true}).click();
   await box.getByRole("textbox").fill("EXTRAS10");
@@ -535,7 +535,7 @@ test("V2 automatic matching preserves the staged extras and coupon payable", asy
   await page.getByRole("checkbox", {name:/Tick & flea treatment/}).check();
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", {name:/Check live price & groomers/}).click();
+  await page.getByRole("button", {name:/Next · confirm price & groomers/}).click();
   const coupon = page.getByRole("group", {name:"Coupon code", exact:true});
   await coupon.getByText("Have a special code?", {exact:true}).click();
   await coupon.getByRole("textbox").fill("EXTRAS10");
@@ -571,7 +571,7 @@ test("G09: Remove cancels a pending automatic quote and survives a fresh price c
  await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
  await box.getByRole("button",{name:"Remove coupon"}).click();release();state.couponGate=undefined;
  await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeEnabled();
- await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expect.poll(()=>state.offerReads||0).toBe(2);
  await expect(box.getByRole("button",{name:"Apply NORMAL",exact:true})).toBeEnabled();
  await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0);expect(state.couponInputs).toHaveLength(1);
@@ -582,7 +582,7 @@ test("G09: a customer's chosen offer is revalidated instead of replaced by a lar
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
  await box.getByRole("button",{name:"Apply SECOND",exact:true}).click();await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
  await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
- await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expect(page.getByText("₹2,298",{exact:true})).toBeVisible();
  expect(state.couponInputs.map(x=>x.code)).toEqual(["NORMAL","SECOND","SECOND"]);
  expect(state.couponInputs.at(-1)?.orderValue).toBe(2398);expect(state.bookingWrites).toBe(0);
@@ -592,7 +592,7 @@ test("G09: automatic selection recomputes the best savings for the changed baske
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
  state.offerValues=[{code:"BETTER",savings:350},{code:"NORMAL",savings:200}];state.couponDiscounts={BETTER:350};
  await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
- await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expect(page.getByText(/Coupon BETTER/)).toBeVisible();await expect(page.getByText("₹2,048",{exact:true})).toBeVisible();
  expect(state.couponInputs.map(x=>x.code)).toEqual(["NORMAL","BETTER"]);
 });
@@ -600,7 +600,7 @@ test("G09: losing eligibility on a changed basket cannot silently enable full-pr
  const state=await fixture(page);state.normalOffers=true;await previewCare(page);
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();state.bookingCount=3;
  await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();
- await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  const box=page.getByRole("group",{name:"Coupon code",exact:true});await expect(box.getByRole("alert")).toContainText("no longer matches");
  await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
  await box.getByRole("button",{name:"Remove coupon"}).click();await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeEnabled();
@@ -611,7 +611,7 @@ test("G09: losing eligibility on a changed basket cannot silently enable full-pr
 test("G09: typing a private code is not treated as consent to apply it on a new basket",async({page})=>{
  const state=await fixture(page);await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
  await box.getByText("Have a special code?",{exact:true}).click();await box.getByRole("textbox").fill("PRIVATE");
- await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();await page.getByRole("button",{name:/Check live price & groomers/}).click();
+ await page.getByRole("checkbox",{name:/Tick & flea treatment/}).check();await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expect.poll(()=>state.offerReads||0).toBe(2);
  await expect(page.getByRole("button",{name:/Reserve & review payment/})).toBeDisabled();
  await box.getByText("Have a special code?",{exact:true}).click();await expect(box.getByRole("textbox")).toHaveValue("PRIVATE");
@@ -668,7 +668,7 @@ test("G02/G05: location needs a user action and review; confirmed changes rechec
   await page.getByLabel("House, street & area").fill(`Flat 4, ${locatedAddress}`);
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible(); await expect(reserve).toBeEnabled();
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
   expect(stored).not.toContain("12.9783692"); expect(stored).not.toContain("77.6408356");
@@ -750,7 +750,7 @@ test("G05: Change address preserves the care draft and the customer's removed-co
   await page.getByLabel("House, street & area").fill("99 Indiranagar Main Road");
 
   await expect(page.getByText("Bengaluru East is covered")).toBeVisible();
-  await page.getByRole("button", { name: /Check live price & groomers/ }).click();
+  await page.getByRole("button", { name: /Next · confirm price & groomers/ }).click();
   await expect(page.getByRole("button", { name: /Reserve & review payment/ })).toBeEnabled();
   await expect(page.getByText(/Coupon NORMAL/)).toHaveCount(0); noLocationMutations(state);
 });

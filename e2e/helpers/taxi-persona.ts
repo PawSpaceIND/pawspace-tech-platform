@@ -57,6 +57,10 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   await page.getByLabel("Pickup date", { exact: true }).fill(date!);
   // Matches the runner's documented 14:00 IST execution clock; no hosted time override is used.
   await page.getByRole("combobox", { name: "Pickup time", exact: true }).selectOption("14:00");
+  const coverageResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/service-zone" && response.request().method() === "GET" && new URL(response.url()).searchParams.get("pincode") === "560038");
+  await page.getByLabel("Pickup PIN code", { exact: true }).fill("560038");
+  expect((await coverageResponse).status()).toBe(200);
+  await expect(page.getByRole("status").filter({ hasText: "PIN 560038 is served." })).toBeVisible();
   await page.getByRole("button", { name: "Review ride requirements", exact: true }).click();
   const quoted = page.waitForResponse(r => r.url().endsWith("/api/taxi-commercial") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Calculate Citroën & XUV fares", exact: true }).click();
@@ -74,7 +78,6 @@ export async function runTaxiPersona({ page, browser, baseURL, sandboxLogin, ens
   expect(fare).toMatchObject({ quotedTotal: total, bookingFee: fee, finalBalanceBeforeAdjustments: balance, waitingCharge: 0, handlerCharge: 0 });
   await expect(page.getByRole("heading", { name: "Choose your car", exact: true })).toBeVisible();
   await page.getByRole("button").filter({ hasText: "booking fee · 50%" }).filter({ hasText: "Citroen eC3" }).click();
-  await page.getByLabel("Pickup PIN code", { exact: true }).fill("560038");
   await page.screenshot({ path: test.info().outputPath("taxi-canonical-route-quote.png"), fullPage: true });
 
   const bookingResponse = page.waitForResponse(r => r.url().endsWith("/api/taxi-ride-bookings") && r.request().method() === "POST", { timeout: 45_000 });

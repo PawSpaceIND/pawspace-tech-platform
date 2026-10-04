@@ -197,8 +197,15 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await expect(partner.getByRole("button", { name: "Start session", exact: true })).toBeDisabled();
     await action("Save attendance & safety", "save_report");
     const uploadPhoto = async (label: string) => {
+      const input = partner.getByLabel(label, { exact: true });
+      await expect(input).toBeEnabled();
+      const registered = partner.waitForResponse(r => r.url().endsWith("/api/training-session-media") && r.request().method() === "POST" && r.request().postDataJSON()?.sessionId === sessionId);
       const uploaded = partner.waitForResponse(r => r.url().endsWith("/api/service-media/upload") && r.request().method() === "PUT");
-      await partner.getByLabel(label, { exact: true }).setInputFiles({ name: `synthetic-${label.replaceAll(" ", "-")}.png`, mimeType: "image/png", buffer: fixturePng });
+      await input.setInputFiles({ name: `synthetic-${label.replaceAll(" ", "-")}.png`, mimeType: "image/png", buffer: fixturePng });
+      const registration = await registered;
+      expect(registration.status(), await registration.text()).toBe(201);
+      expect(registration.request().postDataJSON().purpose).toBe(label === "Before photo" ? "before_service" : "after_service");
+      expect((await registration.json()).data.upload.token).toBeTruthy();
       const uploadResponse = await uploaded; expect(uploadResponse.status(), await uploadResponse.text()).toBe(200);
       expect((await uploadResponse.json()).data.objectStored).toBe(false);
       await expect(partner.getByRole("button", { name: "Refresh photo approval", exact: true })).toBeEnabled();
@@ -214,6 +221,10 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     expect((await incompleteHandover.json()).code).toBe("training_owner_handover_required");
     await expect(partner.getByRole("button", { name: "Confirm completed handover", exact: true })).toBeDisabled();
     await loginOperations(operations);
+    await partner.getByLabel("I completed the pet-parent handover", { exact: true }).check();
+    const handover = await action("Confirm completed handover", "owner_handover");
+    expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
+    await expect(partner.getByText("Pet-parent handover completion recorded.", { exact: true })).toBeVisible();
     await uploadPhoto("After photo");
     const media = await partner.request.get(`/api/training-session-media?sessionId=${encodeURIComponent(sessionId)}`);
     expect(media.ok()).toBeTruthy(); const assets = (await media.json()).data.assets;
@@ -228,10 +239,6 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     }
     await partner.getByRole("button", { name: "Refresh photo approval", exact: true }).click();
     await expect(partner.getByText(/Approved — hash only/)).toHaveCount(2);
-    await partner.getByLabel("I completed the pet-parent handover", { exact: true }).check();
-    const handover = await action("Confirm completed handover", "owner_handover");
-    expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
-    await expect(partner.getByText("Pet-parent handover completion recorded.", { exact: true })).toBeVisible();
     await partner.getByLabel("Homework for pet parent", { exact: true }).fill("Practise the demonstrated cue briefly with praise and supervised rest.");
     const unassessedLabels = ["Recall score", "Impulse score", "Parent practice score"];
     await expect(partner.getByLabel("Focus score", { exact: true })).toHaveValue("");
