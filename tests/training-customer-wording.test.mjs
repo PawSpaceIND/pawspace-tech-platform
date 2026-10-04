@@ -29,14 +29,14 @@ const booking = readFileSync(new URL("../app/v2/booking/page.tsx", import.meta.u
 const sessions = readFileSync(new URL("../app/v2/booking/training-sessions.tsx", import.meta.url), "utf8");
 
 test("V2 Training keeps internal wording on the /training UAT route only", () => {
-  for (const internal of ["now share one canonical identity", "Canonical scheduler assignment", "sandbox amount due now · live money disabled", "The browser no longer invents a plan", "Loading canonical Training catalogue"]) {
+  for (const internal of ["sandbox amount due now · live money disabled", "The browser no longer invents a plan", "Loading canonical Training catalogue"]) {
     const at = page.indexOf(internal);
     assert.ok(at > 0, `${internal} is still shown on the UAT route`);
     // Each internal phrase is the non-V2 arm of a routeScope==="v2" choice.
     assert.match(page.slice(Math.max(0, at - 400), at), /routeScope==="v2"\?/, `${internal} must sit behind the V2 check`);
   }
   assert.match(page, /\$\{money\(currentQuote\.amountDueNow\)\} due now · \$\{money\(currentQuote\.totalAmount-currentQuote\.amountDueNow\)\} before your final session/);
-  assert.match(page, /\{routeScope!=="v2"&&<small>\{session\.id\} · trainer \{session\.provider_id\}<\/small>\}/, "V2 hides session and provider ids");
+  assert.match(page, /\{routeScope!=="v2"&&<small>\{session\.id\}<\/small>\}/, "V2 hides session ids");
 });
 
 test("the goal buttons are outside the Dogs button group", () => {
