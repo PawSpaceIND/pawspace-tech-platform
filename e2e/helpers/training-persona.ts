@@ -226,7 +226,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
       expect((await registration.json()).data.upload.token).toBeTruthy();
       const uploadResponse = await uploaded; expect(uploadResponse.status(), await uploadResponse.text()).toBe(200);
       expect((await uploadResponse.json()).data.objectStored).toBe(false);
-      await expect(partner.getByRole("button", { name: "Refresh photo approval", exact: true })).toBeEnabled();
+      await expect(partner.getByRole("button", { name: "Check photo status", exact: true })).toBeEnabled();
     };
     await uploadPhoto("Before photo");
     await action("Start session", "start");
