@@ -1,3 +1,4 @@
+import {preservedServiceAddressV8Bytes} from './helpers/service-address-v8-reviewed-delta.mjs';
 import {preservedGroomingBackBarBytes} from './helpers/grooming-back-bar-reviewed-delta.mjs';
 import './helpers/chat-ledger-preservation-cases.mjs';
 import './helpers/chat-qualification-preservation-cases.mjs';
@@ -28,7 +29,7 @@ test('Grooming lint correction is exact, reversible and refuses mutations',()=>{
 test('Unrelated source retains identity',()=>{const bytes=Buffer.from('untouched');assert.equal(preservedCombinedLocalBytes('lib/unrelated.ts',bytes),bytes);assert.equal(preservedServiceLintBytes('lib/unrelated.ts',bytes),bytes);});
 const training=JSON.parse(readFileSync(new URL('./fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 for(const[path,entry]of Object.entries(training.files))test('Exact integrated Training delta rejects unrelated edits: '+path,()=>{
- const bytes=readFileSync(new URL('../'+path,import.meta.url));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedServiceAddressV8Bytes(path,readFileSync(new URL('../'+path,import.meta.url)));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedTrainingIntegratedBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedTrainingIntegratedBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedTrainingIntegratedBytes(path,Buffer.from(text)));
 });

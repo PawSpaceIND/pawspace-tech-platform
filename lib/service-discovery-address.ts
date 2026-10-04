@@ -1,10 +1,12 @@
 import {sameSavedAddress,savedAddressId} from "./saved-address-identity";
+import{SERVICE_ADDRESS_REASON_COPY,type ServiceAddressRefusalCode,type ServiceAddressRefusalReason}from"./service-address-refusal-copy";
 import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 import{cityFulfilmentVerdict}from"./city-coverage-authority";
 import{geocodeAddress}from"./address-autocomplete";
 import{validateIndianPincode}from"./pincode-validation";
 import{resolveZoneByPincode}from"./service-zones";
 import{serviceAddressConflict}from"./service-address-consistency";
+import{serviceAddressPincodes}from"./service-address-pincode";
 import{serviceAddressText}from"./service-address-text";
 
 type Db=D1Database;
@@ -27,6 +29,8 @@ async function ensureAddressTablesUncached(db:Db){
 const addressTablesReady=new WeakSet<object>();
 async function ensureAddressTables(db:Db){if(addressTablesReady.has(db))return;await ensureAddressTablesUncached(db);addressTablesReady.add(db);}
 function completeAddress(row:Row,pincode:string){return serviceAddressText({line1:String(row.line1||""),line2:String(row.line2||""),area:String(row.area||""),city:String(row.city||""),postalCode:pincode,country:"India"});}
+/** Finite, in-range coordinates; anything else is not usable for provider matching. */
+function usableCoordinates(latitude:unknown,longitude:unknown){const lat=Number(latitude),lng=Number(longitude);return Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;}
 function truthy(value:unknown){return["1","true","on","yes"].includes(String(value??"").trim().toLowerCase());}
 async function testFixtureEnabled(){const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const processEnv:Record<string,string|undefined>=typeof process!=="undefined"?process.env:{};const read=(key:string)=>runtime[key]??processEnv[key];return truthy(read("PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE"))&&String(read("PAWSPACE_PAYMENT_ENV")||"").toLowerCase()==="sandbox"&&(String(read("NODE_ENV")||"").toLowerCase()==="test"||String(read("PAWSPACE_SCHEDULING_ENV")||"").toLowerCase()==="uat");}
 function fixtureCoordinates(cityId:string){switch(cityId){case"maa":return{latitude:13.0827,longitude:80.2707};case"hyd":return{latitude:17.385,longitude:78.4867};case"bom":case"mum":return{latitude:19.076,longitude:72.8777};case"pnq":case"pune":return{latitude:18.5204,longitude:73.8567};default:return{latitude:12.9716,longitude:77.5946};}}
@@ -80,19 +84,69 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const held=await db.prepare("SELECT * FROM customer_addresses WHERE id=?").bind(String(row.id)).first<Row>();
   if(held&&(String(held.customer_id)!==input.customerId||!sameSavedAddress(held,{...row,postalCode:validated.pincode,area:row.area||resolved.assignment.area,city:row.city||resolved.assignment.city})))throw new Response("Address identity conflict; select your saved address",{status:409});
   const address=completeAddress(row,validated.pincode);
-  let geo=await db.prepare("SELECT latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=?").bind(String(row.id),input.customerId,validated.pincode,cityId,resolved.assignment.zoneId).first<Row>();
-  if(geo&&!sameSavedAddress({line1:geo.address_text,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode},{line1:address,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+  // The cached geocode is DERIVED data: it is read by address id alone and judged against the canonical address
+  // resolved above, never the other way round. The canonical address and PIN are never rewritten here.
+  //  - A row owned by another customer is refused.
+  //  - Postal drift: the row's PIN column, OR a PIN embedded in its address text, contradicts the canonical PIN
+  //    (observed shape: canonical 560043, cached PIN column 560043, cached text "…, 560113, India"). City/zone drift
+  //    and unusable coordinates are drift too.
+  //  - Drift on a SAVED, owned address whose doorstep is otherwise the same (the text matches the canonical address
+  //    once only the contradictory postal code is set aside) is an unusable cache: the unchanged canonical address is
+  //    geocoded afresh, the fresh evidence is validated BEFORE anything is written, and ONLY that exact stale snapshot
+  //    is replaced. A different doorstep is never treated as postal drift: it stays an identity conflict, as does any
+  //    mismatch for an address that is not saved (there is no canonical row to repair from).
+  //  - Every write is conditional on the canonical saved row being byte-for-byte what was read, and that row is
+  //    checked again before this answer is returned, so a concurrent address edit can never be repaired over.
+  const geoColumns="customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at";
+  const canonicalLocality={area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode};
+  const sameDoorstepText=(text:unknown)=>sameSavedAddress({line1:text,...canonicalLocality},{line1:address,...canonicalLocality});
+  const embeddedPins=(text:unknown)=>serviceAddressPincodes(String(text??""));
+  const postalDrift=(candidate:Row)=>String(candidate.pincode)!==validated.pincode||embeddedPins(candidate.address_text).some(pin=>pin!==validated.pincode);
+  const derivedDrift=(candidate:Row)=>postalDrift(candidate)||String(candidate.city_id)!==cityId||String(candidate.zone_id)!==resolved.assignment.zoneId||!usableCoordinates(candidate.latitude,candidate.longitude);
+  // Used ONLY to tell postal drift from a different doorstep; the cached text is discarded either way, never stored or trusted.
+  const doorstepAsidePostal=(candidate:Row)=>{let text=String(candidate.address_text??"");for(const pin of embeddedPins(text))if(pin!==validated.pincode)text=text.replace(new RegExp(`\\b${pin}\\b`,"g"),validated.pincode);return sameDoorstepText(text);};
+  const consistentGeo=(candidate:Row)=>!derivedDrift(candidate)&&sameDoorstepText(candidate.address_text);
+  // The canonical saved row's own columns (whichever of these the table has); a write or answer is valid only while they are unchanged.
+  const canonicalColumns=held?["customer_id","line1","line2","area","city","postal_code","updated_at"].filter(column=>Object.prototype.hasOwnProperty.call(held,column)):[];
+  const canonicalGuard=canonicalColumns.map(column=>`${column} IS ?`).join(" AND "),canonicalValues=canonicalColumns.map(column=>held?.[column]??null);
+  const canonicalUnchanged=async()=>{if(!held)return true;const now=await db.prepare(`SELECT ${canonicalColumns.join(",")} FROM customer_addresses WHERE id=?`).bind(String(row.id)).first<Row>();return Boolean(now)&&canonicalColumns.every(column=>(now?.[column]??null)===(held[column]??null));};
+  const canonicalChanged=()=>new Response("Saved address changed while it was being verified; try again",{status:409});
+  let geo=await db.prepare(`SELECT ${geoColumns} FROM customer_service_address_geocodes WHERE address_id=?`).bind(String(row.id)).first<Row>();
+  if(geo&&String(geo.customer_id)!==input.customerId)throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+  const stale=geo&&held&&derivedDrift(geo)&&doorstepAsidePostal(geo)?geo:null;if(stale)geo=null;
+  if(geo&&!consistentGeo(geo))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
-    const fallbackLatitude=Number(input.latitude),fallbackLongitude=Number(input.longitude),gpsFallback=Number.isFinite(fallbackLatitude)&&Number.isFinite(fallbackLongitude)&&fallbackLatitude>=-90&&fallbackLatitude<=90&&fallbackLongitude>=-180&&fallbackLongitude<=180;
-    const resolvedGeo=geocoded.status==="configured"&&Number.isFinite(geocoded.latitude)&&Number.isFinite(geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
+    const fallbackLatitude=Number(input.latitude),fallbackLongitude=Number(input.longitude),gpsFallback=usableCoordinates(fallbackLatitude,fallbackLongitude);
+    const resolvedGeo=geocoded.status==="configured"&&usableCoordinates(geocoded.latitude,geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
-    const now=Date.now(),id=String(row.id);
-    await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO NOTHING").bind(id,input.customerId,validated.pincode,cityId,resolved.assignment.zoneId,resolvedGeo.address||address,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude),now,now).run();
-    const stored=await db.prepare("SELECT customer_id,pincode,city_id,zone_id,latitude,longitude,address_text FROM customer_service_address_geocodes WHERE address_id=?").bind(id).first<Row>();
-    if(!stored||String(stored.customer_id)!==input.customerId||String(stored.pincode)!==validated.pincode||String(stored.city_id)!==cityId||String(stored.zone_id)!==resolved.assignment.zoneId||!sameSavedAddress({line1:stored.address_text,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode},{line1:address,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+    // Fresh evidence is validated BEFORE any INSERT or compare-and-swap: usable coordinates, no PIN or city in the
+    // returned text that contradicts the canonical address, and the same doorstep. A geocoder answer that fails any
+    // of these is not written anywhere; the old cache and the canonical address stay exactly as they were.
+    const freshText=String(resolvedGeo.address||address);
+    if(!usableCoordinates(resolvedGeo.latitude,resolvedGeo.longitude)||serviceAddressConflict(freshText,String(resolved.assignment.city),validated.pincode)||!sameDoorstepText(freshText))throw new Response("The service address could not be verified against map data",{status:409});
+    const now=Date.now(),id=String(row.id),fresh=[validated.pincode,cityId,resolved.assignment.zoneId,freshText,Number(resolvedGeo.latitude),Number(resolvedGeo.longitude)] as const;
+    const guardSql=held?` AND EXISTS (SELECT 1 FROM customer_addresses WHERE id=? AND ${canonicalGuard})`:"",guardValues=held?[id,...canonicalValues]:[];
+    if(stale){
+      // Compare-and-swap on every column of the snapshot judged stale AND on the canonical saved row. Zero rows means
+      // another request replaced the cache or the customer's address changed; the checks below decide, and nothing
+      // newer is overwritten.
+      await db.prepare(`UPDATE customer_service_address_geocodes SET pincode=?,city_id=?,zone_id=?,address_text=?,latitude=?,longitude=?,resolved_at=?,updated_at=? WHERE address_id=? AND customer_id=? AND pincode=? AND city_id=? AND zone_id=? AND address_text=? AND latitude=? AND longitude=? AND resolved_at=? AND updated_at=?${guardSql}`).bind(...fresh,now,now,id,input.customerId,String(stale.pincode),String(stale.city_id),String(stale.zone_id),String(stale.address_text),Number(stale.latitude),Number(stale.longitude),Number(stale.resolved_at),Number(stale.updated_at),...guardValues).run();
+    }else if(held){
+      await db.prepare(`INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM customer_addresses WHERE id=? AND ${canonicalGuard}) ON CONFLICT(address_id) DO NOTHING`).bind(id,input.customerId,...fresh,now,now,...guardValues).run();
+    }else{
+      await db.prepare("INSERT INTO customer_service_address_geocodes (address_id,customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address_id) DO NOTHING").bind(id,input.customerId,...fresh,now,now).run();
+    }
+    if(!await canonicalUnchanged())throw canonicalChanged();
+    const stored=await db.prepare(`SELECT ${geoColumns} FROM customer_service_address_geocodes WHERE address_id=?`).bind(id).first<Row>();
+    if(stored&&String(stored.customer_id)!==input.customerId)throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+    // Whatever is stored now (ours, or a concurrent writer's) must agree with the canonical address; otherwise the
+    // customer retries rather than booking against data this request did not verify.
+    if(!stored||!consistentGeo(stored))throw new Response("Address geocode changed while it was being verified; try again",{status:409});
     geo=stored;
   }
+  // Authority is returned only while the canonical saved row is still the one this answer was derived from.
+  if(!await canonicalUnchanged())throw canonicalChanged();
   // Saving follows the customer's choice on every call, not only the first one that geocodes the doorstep.
   {const id=String(row.id),now=Date.now();
     if(suppliedAddress&&input.saveToAccount!==false&&!await db.prepare("SELECT id FROM customer_addresses WHERE id=? AND customer_id=?").bind(id,input.customerId).first()){
@@ -106,4 +160,32 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   }
   const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?(await uatSchedulingRuntime()?UAT_SERVICE_DISCOVERY_RADIUS_KM:SERVICE_DISCOVERY_RADIUS_KM):undefined;
   return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};
+}
+
+
+/**
+ * The customer-facing answer to a governed-address refusal (a 400/409 Response thrown above), for the
+ * scheduling route. Each branch keeps a safe reason and the shared sentence from service-address-refusal-copy;
+ * nothing from the refusal's own text, a geocoder or a saved address is echoed. Customer-correctable validation
+ * keeps the long-standing code SERVICE_ADDRESS_UNVERIFIED with a `reason`; coverage and verification-infrastructure
+ * failures get their own codes, because the customer's PIN is not what is wrong there. Anything unrecognised keeps
+ * the generic code and reason.
+ */
+export type PublicAddressRefusal={code:ServiceAddressRefusalCode;reason:ServiceAddressRefusalReason;error:string};
+export function publicAddressRefusal(status:number,detail:string):PublicAddressRefusal{
+  const text=String(detail||"").trim();
+  let code="";try{const parsed=JSON.parse(text) as {code?:unknown};code=String(parsed?.code??"");}catch{/* plain-text refusal */}
+  const answer=(code:ServiceAddressRefusalCode,reason:ServiceAddressRefusalReason):PublicAddressRefusal=>({code,reason,error:SERVICE_ADDRESS_REASON_COPY[reason]});
+  if(text==="Save a service address before booking")return answer("SERVICE_ADDRESS_REQUIRED","address_missing");
+  if(text==="A valid 6-digit service PIN code is required")return answer("SERVICE_ADDRESS_UNVERIFIED","pin_invalid");
+  if(text==="A complete service address is required")return answer("SERVICE_ADDRESS_UNVERIFIED","address_incomplete");
+  if(text==="The saved service address has an invalid PIN code")return answer("SERVICE_ADDRESS_UNVERIFIED","saved_pin_invalid");
+  if(code==="service_address_mismatch")return answer("SERVICE_ADDRESS_UNVERIFIED","address_pin_mismatch");
+  if(text.startsWith("Address geocode changed while it was being verified"))return answer("SERVICE_ADDRESS_VERIFICATION_UNAVAILABLE","verification_retry");
+  if(text.startsWith("Saved address changed while it was being verified"))return answer("SERVICE_ADDRESS_UNVERIFIED","address_changed");
+  if(text.startsWith("Address identity conflict")||text.startsWith("Address geocode identity conflict"))return answer("SERVICE_ADDRESS_UNVERIFIED","identity_conflict");
+  if(code==="service_zone_unavailable"||text==="The service address has no governed city"||(code&&status===409))return answer("SERVICE_ADDRESS_NOT_COVERED","not_covered");
+  // Every remaining 409 is thrown after the PIN, coverage and identity checks passed: the geocoder (or its configuration) answered badly.
+  if(status===409)return answer("SERVICE_ADDRESS_VERIFICATION_UNAVAILABLE","verification_unavailable");
+  return answer("SERVICE_ADDRESS_UNVERIFIED","unknown");
 }
