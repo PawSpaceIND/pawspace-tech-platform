@@ -1,4 +1,4 @@
-name: Read-only finance booking unpaid state and isolation
+name: Normal Founder TEST finance preview only
 on:
   workflow_dispatch:
     inputs:
@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'read-only-finance-booking-unpaid-isolation' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'normal-founder-finance-preview-only' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     environment: pawspace-staging
     steps:
       - uses: actions/checkout@v4
@@ -31,14 +31,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          EVIDENCE_PATH: finance-booking-read-receipt.json
+          EVIDENCE_PATH: finance-founder-preview-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/finance-booking-read/read-runner.mjs
+          node scripts/ops/atlas-session/finance-founder-preview/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: finance-booking-unpaid-read-${{ github.sha }}
-          path: finance-booking-read-receipt.json
+          name: finance-founder-preview-${{ github.sha }}
+          path: finance-founder-preview-receipt.json
           if-no-files-found: error
           retention-days: 7
