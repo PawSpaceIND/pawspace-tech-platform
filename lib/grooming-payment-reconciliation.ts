@@ -51,6 +51,28 @@ export async function ensurePaymentReconciliationTables(db:Db){await ensureD1Onc
 
 async function ensurePaymentLinkColumn(db:Db){const columns=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!columns.results.some(row=>String(row.name)==="gateway_payment_link_id")){try{await db.prepare("ALTER TABLE payment_gateway_links ADD COLUMN gateway_payment_link_id TEXT").run();}catch(error){const refreshed=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!refreshed.results.some(row=>String(row.name)==="gateway_payment_link_id"))throw error;}}await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_gateway_links_payment_link ON payment_gateway_links(gateway_payment_link_id)").run();}
 
+/**
+ * Point the booking's gateway link at a VERIFIED captured payment.
+ *
+ * The link holds one gateway_payment_id: the payment a link-based refund is sent against. It must be the first
+ * payment that actually CAPTURED. A later distinct capture (a split balance, a reschedule difference) keeps the
+ * first one; but an id with no verified capture behind it - a failed or authorized-only attempt on the same
+ * order - is not a capture and gives way to the one that is. Verified means a processed capture event for this
+ * payment from a signed webhook or the authenticated provider read (the same rule as lib/razorpay-capture-atomic
+ * trustedCaptureSql). Scoped to this booking, payment and environment; nothing else on the link changes.
+ */
+export function claimCapturedPaymentLinkStatement(db:Db,input:{bookingId:string;paymentId:string;environment:string;gatewayPaymentId:string;now:number}){
+ return db.prepare(`UPDATE payment_gateway_links SET gateway_payment_id=?,updated_at=?
+   WHERE booking_id=? AND payment_id=? AND environment=?
+     AND (COALESCE(gateway_payment_id,'')='' OR gateway_payment_id=? OR NOT EXISTS (
+       SELECT 1 FROM payment_gateway_events e
+       WHERE e.provider='razorpay' AND e.environment=payment_gateway_links.environment AND e.payment_id=payment_gateway_links.payment_id
+         AND e.gateway_payment_id=payment_gateway_links.gateway_payment_id
+         AND e.event_type IN ('payment.captured','order.paid','payment_link.paid') AND e.processing_status='processed'
+         AND (e.signature_verified=1 OR json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api')))`)
+  .bind(input.gatewayPaymentId,input.now,input.bookingId,input.paymentId,input.environment,input.gatewayPaymentId);
+}
+
 function postServiceMappingStatements(db:Db,input:{id:string;bookingId:string;paymentId:string;amount:number;currency:string;now:number}){return[
  db.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,gateway_payment_link_id,status,created_at,updated_at) SELECT ?,?,?,?, ?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM post_service_payment_requests WHERE id=? AND booking_id=?) ON CONFLICT(booking_id) DO UPDATE SET gateway_payment_link_id=excluded.gateway_payment_link_id,provider=excluded.provider,environment=excluded.environment,status='active',updated_at=excluded.updated_at").bind(`PAYLINK-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.bookingId,input.paymentId,"razorpay","sandbox",input.id,input.now,input.now,input.id,input.bookingId),
  db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) SELECT ?,?,?,?,?,0,0,?,'payment_link_created','pending',0,NULL,? WHERE EXISTS (SELECT 1 FROM post_service_payment_requests WHERE id=? AND booking_id=?) ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,currency=excluded.currency,gateway_status=CASE WHEN payment_reconciliation_records.gateway_status IN ('captured','refunded','partially_refunded') THEN payment_reconciliation_records.gateway_status ELSE 'payment_link_created' END,updated_at=excluded.updated_at").bind(input.paymentId,input.bookingId,"razorpay","sandbox",input.amount,input.currency,input.now,input.id,input.bookingId),
@@ -287,7 +309,11 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
   const linkedExpected=await db.prepare("SELECT expected_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>().catch(()=>null);
   const expected=Number(linkedExpected?.expected_amount??payment.amount??0);await db.prepare("UPDATE payment_gateway_events SET booking_id=?,payment_id=? WHERE id=?").bind(bookingId,paymentId,rowId).run();
   if(event.currency&&event.currency!==currency){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"currency_mismatch",detail:{expected:currency,received:event.currency}});await finish("exception","Currency mismatch");return{duplicate:false,status:"exception",reason:"currency_mismatch"};}
-  if(event.gatewayPaymentId)await db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=?").bind(event.gatewayPaymentId,now,bookingId).run();
+  // The link's gateway_payment_id is the booking's CAPTURED payment, so it is written only by a verified capture
+  // (below, and in lib/razorpay-capture-atomic.ts) - never here, before the event type is known. Writing the first
+  // non-null id of ANY event let a failed or authorized-only attempt own the link, and a later successful capture
+  // on the same order could not displace it; the refund paths that read the link then targeted a payment that
+  // never captured.
   // expected_amount stays the amount THIS order was opened for. An earlier attempt stored the
   // booking-level total here, which fed straight back into the variance check on the next event: a
   // second notification for a Rs 4,000 instalment was compared against a Rs 8,000 booking and raised a
@@ -355,6 +381,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const settlesBalance=Boolean(schedule)&&String(schedule?.status)!=="paid"&&stagesCollected>=2&&capturedTotal+0.009>=scheduleTotal;
     const collectedInFull=schedule?capturedTotal+0.009>=scheduleTotal:capturedTotal+0.009>=expected;
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(detail_json,'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.gatewayPaymentId??null,event.gatewayOrderId??null,event.eventId,now,paymentId).run();
+    if(event.gatewayPaymentId)await claimCapturedPaymentLinkStatement(db,{bookingId,paymentId,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,now}).run();
  /*
   * The collection posts here, on CAPTURE, because this is where the money actually becomes ours. The
   * approved rule is explicit that a collection posts on successful capture and never on booking creation.
