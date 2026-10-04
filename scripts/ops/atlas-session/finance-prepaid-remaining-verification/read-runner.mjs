@@ -83,7 +83,21 @@ export async function run(env=process.env,fetcher=fetch){
  await scoped('partner_payout_instructions',['id','provider_id','amount','currency','environment','status','provider_reference'],"provider_id=?",[b.provider_id]);
  receipt.remaining.completionJournal=await query("SELECT source_type,account_code,SUM(debit) debit,SUM(credit) credit,COUNT(*) lines FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=? GROUP BY source_type,account_code",[newBookingId]);
  receipt.remaining.startWindow={opensAt:new Date(Date.parse(b.scheduled_start)-60*60000).toISOString(),closesAt:new Date(Date.parse(b.scheduled_start)+120*60000).toISOString(),openNow:Date.now()>=Date.parse(b.scheduled_start)-60*60000&&Date.now()<=Date.parse(b.scheduled_start)+120*60000};
- receipt.remaining.noFinancialMutation=true;save();
+
+ if(present.has('finance_tax_ledger'))receipt.remaining.outputTaxLedger=await query("SELECT component,ledger_type,source_type,source_id,amount FROM finance_tax_ledger WHERE source_id=?",[newBookingId]);
+ receipt.remaining.captureDeduplication=await query("SELECT event_type,gateway_payment_id,processing_status,COUNT(*) records FROM payment_gateway_events WHERE booking_id=? AND payment_id=? AND event_type IN ('payment.captured','order.paid') GROUP BY event_type,gateway_payment_id,processing_status",[newBookingId,newPaymentId]);
+ const normalWindow=await(await request(PIN.origin+'/api/grooming-lifecycle?bookingId='+newBookingId+'&view=service_window',{method:'GET',headers:{cookie}},'normal_service_window_read')).json();
+ assert(normalWindow.serviceWindow?.bookingId===newBookingId,'normal_service_window_response_unproven');receipt.remaining.normalServiceWindow=normalWindow.serviceWindow;save();
+ // This exact deployed transition refuses complete from confirmed BEFORE finance/proof writes.
+ // No checklist, proof, service clock override or fabricated completion evidence is supplied.
+ receipt.remaining.completionRefusalProbe={attempted:true,pending:true};save();
+ const refusal=await fetcher(PIN.origin+'/api/grooming-lifecycle',{method:'POST',headers:{cookie,origin:PIN.origin,'content-type':'application/json'},body:JSON.stringify({bookingId:newBookingId,action:'complete'}),redirect:'manual',signal:AbortSignal.timeout(20000)});
+ const refused=await refusal.json();receipt.remaining.completionRefusalProbe={attempted:true,httpStatus:refusal.status,error:refused.error};save();
+ assert(refusal.status===409&&refused.error==='Action complete is not allowed from confirmed','normal_completion_refusal_unproven');
+ const unchanged=(await query("SELECT status FROM canonical_bookings WHERE id=?",[newBookingId]))[0];assert(unchanged.status==='confirmed','completion_probe_changed_booking');
+ assert((await query("SELECT COUNT(*) n FROM finance_journal_entries WHERE source_type='service_completion' AND source_id=?",[newBookingId]))[0].n===0,'completion_probe_posted_finance');
+ receipt.remaining.noFinancialMutation=true;receipt.remaining.phase='completed_independent_checks_and_refusal';save();
+
 
  const captured=payments.items.filter(p=>p.status==='captured'&&p.captured===true);assert(captured.length===1&&captured[0].id==='pay_TjnImIen9Dmc8P'&&newOrder.status==='paid'&&newOrder.amount_paid===124100&&newOrder.amount_due===0&&newOrder.attempts===2,'exact_single_provider_capture_unproven');assert(n.paymentStatus==='captured'&&n.bookingStatus==='confirmed','canonical_capture_propagation_unproven');assert(receipt.newGatewayEvents.some(e=>e.gateway_payment_id===captured[0].id&&e.signature_verified===1&&e.processing_status==='processed'&&['payment.captured','order.paid'].includes(e.event_type)),'signed_capture_event_unproven');assert(receipt.newReconciliation.some(r=>r.captured_amount===1241&&r.reconciliation_status==='matched'),'capture_reconciliation_unproven');receipt.normalCustomerCaptureConfirmed=true;
  await active();receipt.ok=true;receipt.captureVerified=payments.items.some(p=>p.status==='captured'&&p.captured===true);receipt.checkoutRetryPerformed=true;receipt.oldBookingOrderUntouched=true;receipt.nextAction=receipt.captureVerified?'Inspect legitimate capture and canonical propagation; service remains future-window guarded.':'Provider TEST checkout failed; retain exact order/booking and diagnose supported error, no duplicate instrument or automatic checkout retry.';save();console.log('Exact TEST checkout terminal reconciliation complete; no financial mutation.');
