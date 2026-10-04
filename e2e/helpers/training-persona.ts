@@ -243,7 +243,8 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await partner.getByLabel("Confirm handover completed", { exact: true }).check();
     const handover = await action("Confirm completed handover", "owner_handover");
     expect(handover.request().postDataJSON().ownerHandoverCompleted).toBe(true);
-    await expect(partner.getByText("Pet-parent handover recorded. You can correct it until the session is complete.", { exact: true })).toBeVisible();
+    // The status names the recorded handover duration when one was captured ("… recorded · 12 minutes. …").
+    await expect(partner.getByText(/^Pet-parent handover recorded(?: · \d+ minutes)?\. You can correct it until the session is complete\.$/)).toBeVisible();
     await uploadPhoto("After photo");
     const media = await partner.request.get(`/api/training-session-media?sessionId=${encodeURIComponent(sessionId)}`);
     expect(media.ok()).toBeTruthy(); const assets = (await media.json()).data.assets;

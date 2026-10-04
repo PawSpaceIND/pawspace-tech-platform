@@ -466,11 +466,12 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   if(eveningProviders.length){for(const provider of eveningProviders)await expect(page.getByRole("heading",{name:provider.name,exact:true}).first()).toBeVisible();}
   else{await expect(page.getByRole("alert")).toContainText("No sitter is available for this care window");await expect(page.getByRole("button",{name:"Choose an available caregiver",exact:true})).toBeDisabled();}
   await page.getByRole("button",{name:/← Plan/}).click();
-  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T09:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T10:30:00.000Z`);
-  // The governed Home Visit start must be on the hour and later than the fixture's 14:00 IST clock.
+  const available=page.waitForResponse(response=>response.url().endsWith("/api/uat-scheduling")&&response.request().method()==="POST"&&response.request().postDataJSON()?.scheduledStart===`${date}T08:30:00.000Z`&&response.request().postDataJSON()?.scheduledEnd===`${date}T09:30:00.000Z`);
+  // Home Visit starts are whole IST hours. 14:00 IST is the fixture's execution clock, so the booked window has started
+  // when the (replacement) sitter checks in: the server refuses a check-in before the booked start.
   const executionNow=Number(process.env.PAWSPACE_UAT_EXECUTION_NOW_MS);
-  expect(Number.isSafeInteger(executionNow)).toBe(true);expect(executionNow).toBeGreaterThanOrEqual(Date.parse(`${date}T08:00:00.000Z`));expect(executionNow).toBeLessThan(Date.parse(`${date}T09:00:00.000Z`));
-  await page.getByLabel("Visit start time",{exact:true}).fill("15:00");
+  expect(Number.isSafeInteger(executionNow)).toBe(true);expect(executionNow).toBeGreaterThanOrEqual(Date.parse(`${date}T08:30:00.000Z`));expect(executionNow).toBeLessThan(Date.parse(`${date}T09:30:00.000Z`));
+  await page.getByLabel("Visit start time",{exact:true}).fill("14:00");
   const availability=await available;expect(availability.status()).toBe(200);const candidates=await availability.json();expect(candidates.data.providers.length).toBeGreaterThan(0);
   await page.getByRole("button",{name:"See available sitters",exact:true}).click();
  }else{
@@ -503,7 +504,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
   await expect(page.getByRole("heading",{name:"Review payment",exact:true})).toBeVisible({timeout:30_000});
   await expect(page.getByText("Secure Razorpay checkout",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:/^Pay securely/})).toBeVisible();
-  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T09:30:00.000Z`);
+  const saved=await page.context().request.get("/api/customer-account");expect(saved.ok()).toBeTruthy();const account=await saved.json();const rows=account.data.bookings.filter((booking:{id:string})=>booking.id===bookingId);expect(rows).toHaveLength(1);expect(rows[0].serviceCode).toBe("pet_sitting");expect(rows[0].status).toBe("payment_pending");expect(new Date(rows[0].scheduledStart).toISOString()).toBe(`${date}T08:30:00.000Z`);
   await page.goto(`/v2/sitting/manage?bookingId=${encodeURIComponent(bookingId)}`);await expect(page.getByRole("heading",{name:"Your sitting booking",exact:true})).toBeVisible();
   await expect(page.getByRole("textbox",{name:"Vet contact",exact:true})).toHaveValue("");
   // The saved booking exposes the separate introduction record; request it explicitly through its customer endpoint.
@@ -578,7 +579,7 @@ for(const mode of ["boarding","sitting"] as const)test(mode==="sitting"?"sitting
    const accepted=partner.waitForResponse(response=>response.url().endsWith("/api/sitting-lifecycle")&&response.request().method()==="POST");await partner.getByRole("button",{name:"Accept booking",exact:true}).click();expect((await accepted).status()).toBe(200);
    await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);await partner.reload();await expect(partner.locator("main")).toContainText(/Status:\s*assigned/);
    await page.reload();await expect(page.getByRole("region",{name:"Your sitting booking",exact:true})).toContainText("assigned");
-   const originalStart=`${date}T09:30:00.000Z`,originalEnd=`${date}T10:30:00.000Z`;
+   const originalStart=`${date}T08:30:00.000Z`,originalEnd=`${date}T09:30:00.000Z`;
    const cancelRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_cancel",idempotencyKey:`sitting-cancel-${bookingId}`,reason:"Verify founder zero-fee cancellation boundary"}});expect(cancelRequest.status(),await cancelRequest.text()).toBe(200);const cancelData=await cancelRequest.json();expect(cancelData.data.status).toBe("policy_review_required");expect(cancelData.data.bookingPreserved).toBe(true);expect(cancelData.data.refundPolicy).toBe("configuration_required");
    const dateRequest=await page.request.post("/api/sitting-finance",{data:{bookingId,action:"request_date_change",idempotencyKey:`sitting-date-${bookingId}`,reason:"Verify founder zero-fee reschedule boundary",requestedStart:originalStart,requestedEnd:originalEnd}});expect(dateRequest.status(),await dateRequest.text()).toBe(200);const dateData=await dateRequest.json();expect(dateData.data.status).toBe("commercial_quote_required");expect(dateData.data.stayWindowUnchanged).toBe(true);
    const afterRequests=await page.context().request.get("/api/customer-account");expect(afterRequests.ok()).toBeTruthy();const afterRequestRows=(await afterRequests.json()).data.bookings.filter((row:{id:string})=>row.id===bookingId);expect(afterRequestRows).toHaveLength(1);expect(new Date(afterRequestRows[0].scheduledStart).toISOString()).toBe(originalStart);expect(new Date(afterRequestRows[0].scheduledEnd).toISOString()).toBe(originalEnd);expect(afterRequestRows[0].providerId).toBe(providerId);

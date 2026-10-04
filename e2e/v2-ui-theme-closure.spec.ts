@@ -172,10 +172,10 @@ test("V2 actions share the primary control variant", async ({ page }) => {
   for (const route of ["/v2/training", "/v2/food", "/v2/partner", "/v2/boarding", "/v2/chat"]) {
     await visit(page, route, appearance); const action = page.locator('[data-v2-action], [data-paw-action="primary"]').first();
     await expect(action).toBeVisible();
-    const radius=await action.evaluate(element=>getComputedStyle(element).borderRadius);
     const token=await page.locator('html').evaluate(element=>getComputedStyle(element).getPropertyValue('--paw-control-radius').trim());
-    expect(radius).toBe(token);
-    expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    // Routes replace their first render once loaded (a detached action computes no radius), so measure the settled action.
+    await expect.poll(()=>action.evaluate(element=>getComputedStyle(element).borderRadius).catch(()=>''), route).toBe(token);
+    await expect.poll(async()=>(await action.boundingBox())?.height ?? 0, route).toBeGreaterThanOrEqual(44);
   }
 });
 test("Mobile utilities do not cover dock targets, including the signed-in notification control", async ({ page }) => {
