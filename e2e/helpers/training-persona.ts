@@ -215,7 +215,7 @@ export async function runTrainingPersona({ page, browser, baseURL, sandboxLogin,
     await expect(partner.getByRole("button", { name: "Start session", exact: true })).toBeDisabled();
     await action("Save attendance & safety", "save_report");
     const uploadPhoto = async (label: string) => {
-      const input = partner.getByLabel(label, { exact: true });
+      const input = partner.locator(`input[type="file"][aria-label="${label}"]`);
       await expect(input).toBeEnabled();
       const registered = partner.waitForResponse(r => r.url().endsWith("/api/training-session-media") && r.request().method() === "POST" && r.request().postDataJSON()?.sessionId === sessionId);
       const uploaded = partner.waitForResponse(r => r.url().endsWith("/api/service-media/upload") && r.request().method() === "PUT");
