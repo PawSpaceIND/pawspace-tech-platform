@@ -69,14 +69,15 @@ test("the app's Training flow stays in place, and its next steps are the program
   assert.match(flow, /if \(confirmed\)\s*return \(\s*<TrainingDashboard/);
 });
 
-test("every other caller of the payment page, the web Training pages included, keeps the return to the booking", () => {
+test("web Training and other direct payment callers return to the booking; Stay opens its Care Card", () => {
   const callers = readdirSync(new URL("app/", root), { recursive: true })
     .map((file) => `app/${String(file).replaceAll("\\", "/")}`)
     .filter((file) => /\.tsx?$/.test(file) && file !== "app/mobile-app/booking-payment-page.tsx" && file !== "app/mobile-app/training-flow.tsx")
-    .filter((file) => /booking-payment-page/.test(read(file)));
+    .filter((file) => /booking-payment-page/.test(read(file)) && file !== "app/mobile-app/stay-care-payment-gate.tsx");
   assert.ok(callers.includes("app/training/page.tsx"), "the web Training page uses the shared payment page");
   assert.ok(callers.length >= 6, callers.join(", "));
   for (const file of callers) assert.doesNotMatch(read(file), /returnAfterVerified/, `${file} keeps #1120's return`);
+  assert.match(read("app/mobile-app/stay-care-payment-gate.tsx"), /<BookingPaymentPage returnAfterVerified=\{false\}/);
 });
 
 test("the option changes only what happens after a verified payment, not what the payment step shows", async () => {
