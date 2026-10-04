@@ -12,6 +12,19 @@ const list=(value:unknown)=>text(value).split(",").map(text).filter(Boolean);
 const SHA=/^[0-9a-f]{40}$/;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REQUIRED_PROVIDERS=["uatcap_groom_ft","uatcap_train_ft","uatcap_train_ft_3","uatcap_train_ft_5","uatcap_host_cm","uatcap_sit_cm","uatcap_taxi_ft","uatcap_walk_ft"];
+/** Versioned name of the revision-diagnostic response shape. A marker names a contract; it is not a bundle digest
+ * and never proves which compiled artifact answered. Content identity is the publisher's separate module read. */
+export const REVISION_DIAGNOSTIC_CONTRACT="atlas-revision-diagnostic-v2";
+export type ObservedRevision={proven:boolean;checks:{buildShaValid:boolean;buildShaMatchesExpected:boolean;versionIdValid:boolean;versionTimestampValid:boolean};version:{buildSha:string|null;id:string|null;timestamp:string|null}};
+/** Observed runtime identity, emitted only when well-formed. Anything malformed or absent is null (unknown):
+ * null never satisfies a predicate, and a predicate is true only when the emitted value it describes is non-null. */
+export function observeRevision(env:Env,expectedSha:string):ObservedRevision{
+ const metadata=env.PAWSPACE_VERSION_METADATA as {id?:unknown;timestamp?:unknown}|undefined;
+ const rawSha=text(env.PAWSPACE_STAGING_BUILD_SHA),rawId=text(metadata?.id),rawTimestamp=text(metadata?.timestamp);
+ const buildSha=SHA.test(rawSha)?rawSha:null,id=UUID.test(rawId)?rawId:null,timestamp=Number.isFinite(Date.parse(rawTimestamp))?rawTimestamp:null;
+ const checks={buildShaValid:buildSha!==null,buildShaMatchesExpected:buildSha!==null&&buildSha===expectedSha,versionIdValid:id!==null,versionTimestampValid:timestamp!==null};
+ return {proven:Object.values(checks).every(Boolean),checks,version:{buildSha,id,timestamp}};
+}
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"cache-control":"no-store, private","pragma":"no-cache","x-content-type-options":"nosniff"}});
 
 /** Conservative union of the actual generic exact-string boundary and normalized runtime boundary.
@@ -47,9 +60,11 @@ export async function handleStagingFixtureIsolation(request:Request,db:D1Databas
   if(url.searchParams.getAll("scope").length>1||!["bengaluru_roster","grooming_strict"].includes(scope))return json({ok:false,code:"fixed_scope_required"},400);
   const strictGrooming=scope==="grooming_strict";
   const expectedSha=url.searchParams.get("expectedSha")!;
-  const metadata=env.PAWSPACE_VERSION_METADATA as {id?:unknown;timestamp?:unknown}|undefined;
-  const revisionProven=SHA.test(text(env.PAWSPACE_STAGING_BUILD_SHA))&&expectedSha===text(env.PAWSPACE_STAGING_BUILD_SHA)&&UUID.test(text(metadata?.id))&&Number.isFinite(Date.parse(text(metadata?.timestamp)));
-  if(!revisionProven)return json({ok:false,code:"revision_unproven"},409);
+  const revision=observeRevision(env,expectedSha);
+  // The four predicates and the observed identity are always emitted on a revision refusal. A runner can
+  // therefore distinguish "the artifact refused and said why" from "an artifact that never speaks this
+  // contract answered", and a null identity field says "unknown here", never "matches".
+  if(!revision.proven)return json({ok:false,code:"revision_unproven",diagnosticContract:REVISION_DIAGNOSTIC_CONTRACT,checks:revision.checks,version:revision.version},409);
   const gates={
    paymentSandbox:text(env.PAWSPACE_PAYMENT_ENV)==="sandbox"&&text(env.PAWSPACE_PAYMENT_LIVE_APPROVED)==="false",
    payoutsSandbox:text(env.PAWSPACE_RAZORPAYX_ENV)==="sandbox"&&text(env.PAWSPACE_RAZORPAYX_LIVE_APPROVED)==="false",
@@ -89,6 +104,6 @@ export async function handleStagingFixtureIsolation(request:Request,db:D1Databas
   const checks={...gates,customerFixtureProven:customerProven,customerOtpTargetUnambiguous,...(strictGrooming?{specificGroomerFixtureProven:strictGroomerProven,groomerOtpTargetUnambiguous}:{fixedProviderFixturesProven:fixedProvidersProven,bengaluruCapacityRosterProven:rosterProven}),...exclusion};
   const ok=Object.values(checks).every(Boolean);
   const fixtureSnapshotId=ok?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify({scope,customer,roster:rows,checks})))),byte=>byte.toString(16).padStart(2,"0")).join(""):null;
-  return json({ok,fixtureSnapshotId,code:ok?"fixed_fixture_snapshot_attested":"fixed_fixture_isolation_unproven",scope:strictGrooming?"grooming_strict":"documented_synthetic_customer_and_bengaluru_capacity_roster",checks,version:{id:text(metadata?.id),buildSha:expectedSha},observedAt:new Date().toISOString(),strictProviderSelectionRequired:strictGrooming,automaticAssignmentCovered:false,reassignmentRecoveryCovered:false,assignmentLock:false,bookingMutationAuthorized:false,staffFallbackRecipientsCovered:false,alternateProviderTablesCovered:false,productionReadiness:false,requiresMatchingDeploymentIsolationCertificate:true},ok?200:409);
+  return json({ok,fixtureSnapshotId,code:ok?"fixed_fixture_snapshot_attested":"fixed_fixture_isolation_unproven",scope:strictGrooming?"grooming_strict":"documented_synthetic_customer_and_bengaluru_capacity_roster",checks,diagnosticContract:REVISION_DIAGNOSTIC_CONTRACT,version:revision.version,observedAt:new Date().toISOString(),strictProviderSelectionRequired:strictGrooming,automaticAssignmentCovered:false,reassignmentRecoveryCovered:false,assignmentLock:false,bookingMutationAuthorized:false,staffFallbackRecipientsCovered:false,alternateProviderTablesCovered:false,productionReadiness:false,requiresMatchingDeploymentIsolationCertificate:true},ok?200:409);
  }catch{return json({ok:false,code:"read_only_evidence_unavailable"},503);}
 }

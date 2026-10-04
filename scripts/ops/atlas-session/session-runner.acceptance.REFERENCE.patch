@@ -1,0 +1,43 @@
+--- a/scripts/ops/atlas-session/session-runner.mjs
++++ b/scripts/ops/atlas-session/session-runner.mjs
+@@ -3,11 +3,13 @@
+ import {issueUatToken} from '../atlas-api-only/issue-uat-token.mjs';
+ import {uploadMetadata,SQL} from '../atlas-api-only/runner.mjs';
+ import {sanitizeFixtureResponse} from './sanitize-fixture.mjs';
++import {classifyDiagnostic} from './diagnostic-contract.mjs';
+ import {apiOnlyConfig} from '../atlas-api-only/make-api-only-config.mjs';
+ const env=process.env,origin='https://pawspace-staging.karthik-fce.workers.dev';
+ const normalSha='c18b15caea9551505398746dc9335a962f17e8ae',normalVersion='97c81f4d-f3fe-42d7-958f-1b175e66891b';
+ const job='Sentinel_f67e3c5a85f88191b07279e0edbe250c',database='1b879a28-c8a9-40b0-830d-1ce439061a00';
+-const bundleSha='fc38f8546f78b2177826fdf4c6a8f681ae8842b3626341fea9f01221ddda27fe';
++// Rebuilt from committed source (worker/atlas-revision-diagnostic-entry.ts); see local-artifact-receipt.json. Updated together with the receipt.
++const bundleSha='48df7c1b3a4a4981c1b55264f781a06bc05258ecfc6cffc2436f70d7a8433042';
+ const approvedAt=Date.parse(env.EXPLICIT_APPROVAL_UTC??'');
+ const receipt={kind:'approved_zero_model_fixture_diagnostic',approval:'user-approved-zero-model-20261004-044305',sameCumulativeCapMicros:6000000,modelDispatches:0,sessionClockStarted:false,noRetry:true,operations:[],originRequests:0,restorationRequired:false,restoreProcedure:'Normal deploy-staging.yml pinned c18b15ca followed by actual version/crons/fixture/UI/assets/health verification; sole release owner, no rollback'};
+ const hash=v=>createHash('sha256').update(typeof v==='string'||Buffer.isBuffer(v)?v:JSON.stringify(v)).digest('hex');
+@@ -32,7 +34,8 @@
+  const deployments=await api(script+'/deployments');const active=deployments?.deployments?.[0];check(active?.versions?.length===1&&active.versions[0].percentage===100&&active.versions[0].version_id===normalVersion,'normal_version_changed');receipt.beforeVersion=normalVersion;
+  const schedules=await api(script+'/schedules');const crons=(Array.isArray(schedules)?schedules:schedules?.schedules)?.map(x=>x.cron).sort();check(JSON.stringify(crons)===JSON.stringify(['*/15 * * * *','*/5 * * * *','15 2 * * *']),'normal_crons_changed');receipt.beforeCrons=crons;
+  const founder='pawspace_uat='+encodeURIComponent(await issueUatToken({PAWSPACE_UAT_SIGNING_KEY:env.PAWSPACE_UAT_SIGNING_KEY},'founder@pawspace.in',600));
+- const fixture=async(sha)=>{const r=await originRequest('/__staging/fixture-isolation?expectedSha='+sha+'&scope=grooming_strict',{headers:{cookie:founder}});const p=await r.json().catch(()=>null);const safe=sanitizeFixtureResponse(r.status,p);receipt.fixtureReads??=[];receipt.fixtureReads.push({expectedSha:sha,...safe});save();return safe;};
++ // Acceptance is decided on the RAW payload by classifyDiagnostic; the sanitized copy is only what the receipt persists.
++ const fixture=async(sha,expectedVersion=null)=>{const r=await originRequest('/__staging/fixture-isolation?expectedSha='+sha+'&scope=grooming_strict',{headers:{cookie:founder}});const p=await r.json().catch(()=>null);const safe=sanitizeFixtureResponse(r.status,p);const verdict=classifyDiagnostic(r.status,p,{expectedSha:sha,expectedVersion,artifactContentVerified:false,expectedScope:'grooming_strict'});// artifactContentVerified stays false here: only the publisher's separate module-content read may set it, so a 200 is at most CONTRACT_QUALIFIED_ATTESTATIONreceipt.fixtureReads??=[];receipt.fixtureReads.push({expectedSha:sha,...safe,verdict});save();return {...safe,verdict};};
+  receipt.beforeFixture=await fixture(normalSha);check(receipt.beforeFixture.httpStatus===200&&receipt.beforeFixture.ok&&receipt.beforeFixture.version?.id===normalVersion&&receipt.beforeFixture.version?.buildSha===normalSha,'normal_fixture_refused');save();
+  const beforeNormal=await query('normal'),beforeLedger=await query('ledger');receipt.before={normalDigest:hash(beforeNormal),normalRows:beforeNormal.length,ledgerDigest:hash(beforeLedger),ledgerRows:beforeLedger.length};
+  check(beforeLedger.length===0,'prior_charge_or_uncertain_request_refused');save();
+@@ -42,8 +45,13 @@
+  receipt.restorationRequired=true;save();await api(script+'/schedules','PUT',[],'clear_schedules',true);
+  const form=new FormData();form.set('metadata',new Blob([JSON.stringify(uploadMetadata(config))],{type:'application/json'}));form.set('atlas-api-review.js',new Blob([bundle],{type:'application/javascript+module'}),'atlas-api-review.js');await api(script,'PUT',form,'temporary_upload',true);
+  receipt.activeAfterUpload=await activeVersion();check(receipt.activeAfterUpload!==normalVersion,'temporary_deployment_not_observed');save();
+- receipt.temporaryFixture=await fixture(env.GITHUB_SHA);
++ receipt.temporaryFixture=await fixture(env.GITHUB_SHA,receipt.activeAfterUpload);
+  receipt.afterLedger=await query('ledger');check(receipt.afterLedger.length===0,'unexpected_Atlas_admission');
+- receipt.diagnosticCaptured=receipt.temporaryFixture.code!==null;check(receipt.diagnosticCaptured,'sanitized_guard_code_missing');
++ const verdict=receipt.temporaryFixture.verdict;
++ // Three separate facts. A recognized code alone is no longer evidence of anything.
++ receipt.transportCaptured=verdict.transportCaptured;receipt.contractQualified=verdict.contractQualified;receipt.diagnosticCaptured=verdict.diagnosticCaptured;receipt.diagnosticDecision=verdict.decision;receipt.diagnosticReason=verdict.reason;
++ receipt.operationalSuccess=verdict.operationalSuccess;receipt.edgeIdentityProven=false;receipt.artifactContentVerified=false;receipt.modelAdmission=false;
++ check(verdict.diagnosticCaptured,'diagnostic_contract_unqualified_'+verdict.reason);
++ // ok means "the runner finished its protocol", never that the diagnostic succeeded operationally.
+  receipt.ok=true;receipt.completedAt=new Date().toISOString();save();console.log('ZERO_MODEL_GUARD_DIAGNOSTIC '+JSON.stringify(receipt.temporaryFixture));
+ }catch(error){receipt.ok=false;receipt.failure=redact(error.message);save();console.error(receipt.failure);process.exitCode=1;}

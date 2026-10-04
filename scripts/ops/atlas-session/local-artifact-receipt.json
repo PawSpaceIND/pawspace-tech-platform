@@ -1,0 +1,12 @@
+{
+  "kind": "LOCAL_TEST_ARTIFACT_RECEIPT_NOT_HOSTED_EVIDENCE",
+  "sourceEntry": "worker/atlas-revision-diagnostic-entry.ts",
+  "sourceRoute": "lib/staging-fixture-isolation.ts",
+  "build": "node scripts/ops/atlas-session/build-diagnostic-bundle.mjs",
+  "artifactName": "atlas-api-review.js",
+  "artifactSha256": "48df7c1b3a4a4981c1b55264f781a06bc05258ecfc6cffc2436f70d7a8433042",
+  "artifactBytes": 34000,
+  "supersededArtifactSha256": "fc38f8546f78b2177826fdf4c6a8f681ae8842b3626341fea9f01221ddda27fe",
+  "supersededArtifactFinding": "fc38 was compiled from two uncommitted working trees (three-chat-release-review, atlas-revision-diagnostic-review); the committed lib/staging-fixture-isolation.ts at 9dcbcdf9ba4f53907926fc1913eaf4747470b0c9 emitted no checks, so no committed source corresponded to fc38. Semantic diff fc38 -> this artifact: contract marker, observeRevision, nullable observed identity, entry rename only.",
+  "hostedIdentity": "UNPROVEN. This hash is a local compile. Publisher must read served main-module content and active deployment/version before and after, and compare to this hash."
+}

@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {preservedCombinedLocalBytes,preservedServiceLintBytes,preservedTrainingIntegratedBytes} from './helpers/combined-local-reviewed-delta.mjs';
+import {preservedAtlasQuoteConsentBytes,preservedCombinedLocalBytes,preservedServiceLintBytes,preservedTrainingIntegratedBytes} from './helpers/combined-local-reviewed-delta.mjs';
 const receipt=JSON.parse(readFileSync(new URL('./fixtures/combined-local-reviewed-delta.json',import.meta.url),'utf8'));
 const correction=JSON.parse(readFileSync(new URL('./fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -29,10 +29,20 @@ test('Grooming lint correction is exact, reversible and refuses mutations',()=>{
 test('Unrelated source retains identity',()=>{const bytes=Buffer.from('untouched');assert.equal(preservedCombinedLocalBytes('lib/unrelated.ts',bytes),bytes);assert.equal(preservedServiceLintBytes('lib/unrelated.ts',bytes),bytes);});
 const training=JSON.parse(readFileSync(new URL('./fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 for(const[path,entry]of Object.entries(training.files))test('Exact integrated Training delta rejects unrelated edits: '+path,()=>{
- const bytes=preservedServiceAddressV8Bytes(path,readFileSync(new URL('../'+path,import.meta.url)));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedAtlasQuoteConsentBytes(path,preservedServiceAddressV8Bytes(path,readFileSync(new URL('../'+path,import.meta.url))));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedTrainingIntegratedBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedTrainingIntegratedBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedTrainingIntegratedBytes(path,Buffer.from(text)));
 });
+const atlasQuoteConsent=JSON.parse(readFileSync(new URL('./fixtures/atlas-quote-consent-reviewed-delta.json',import.meta.url),'utf8'));
+const mutateEachRegion=(text,entry)=>entry.replacements.map(([,after])=>{const at=text.indexOf(after)+(after.length>>1);return text.slice(0,at)+(text[at]==='#'?'@':'#')+text.slice(at+1);});
+for(const[path,entry]of Object.entries(atlasQuoteConsent.files))test('Exact reviewed Atlas quote and consent delta rejects unrelated edits: '+path,()=>{
+ const bytes=readFileSync(new URL('../'+path,import.meta.url));assert.equal(hash(bytes),entry.afterSha256);
+ const original=preservedAtlasQuoteConsentBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedAtlasQuoteConsentBytes(path,original),original);
+ assert.equal(hash(preservedTrainingIntegratedBytes(path,bytes)),(training.files[path]??entry).beforeSha256);
+ const partial=entry.replacements.length>1?entry.replacements.map(([before,after])=>bytes.toString().replace(after,()=>before)):[];
+ for(const text of [bytes+'\nUNREVIEWED','X'+bytes,'X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().slice(0,-1),bytes.toString().replaceAll('\n','\r\n'),original+'\nUNREVIEWED',...partial,...mutateEachRegion(bytes.toString(),entry)])assert.throws(()=>preservedTrainingIntegratedBytes(path,Buffer.from(text)));
+});
+test('Atlas quote and consent delta keeps unrelated sources as identity',()=>{const bytes=Buffer.from('untouched');assert.equal(preservedAtlasQuoteConsentBytes('lib/unrelated.ts',bytes),bytes);assert.equal(preservedTrainingIntegratedBytes('lib/unrelated.ts',bytes),bytes);});
 
 // Exercise the integrated product projection as well as exact source restoration.
 const {projectTrainerSession}=await import('../lib/training-provider-projection.ts');

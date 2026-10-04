@@ -1,0 +1,217 @@
+{
+ "runDescriptor": "FINANCE-TEST-OPS-GROOMING-01",
+ "cohortId": "OPS-GROOMING-01",
+ "label": "TEST/LOCAL executable journey; not hosted whole-job evidence",
+ "stages": [
+  {
+   "stage": "1.enquiry",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "status": 200,
+   "threadId": "THREAD-674E9892-3A7",
+   "modelDispatched": false,
+   "note": "owned web chat thread opened by menu bot"
+  },
+  {
+   "stage": "2.crm_transcript",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "threadId": "THREAD-674E9892-3A7",
+   "messages": 1,
+   "transcriptStatus": 200,
+   "foreignReadStatus": 404,
+   "foreignThreadVisible": false
+  },
+  {
+   "stage": "3.scoped_quote",
+   "actor": "customer(TEST session) via canonical live governance",
+   "outcome": "autonomous",
+   "quoteId": "GQ-69A7BABC-454",
+   "priceSource": "canonical_live_grooming_governance",
+   "finalPayable": 1799,
+   "baseAmount": 1899,
+   "couponDiscount": 100,
+   "declaredPets": [
+    {
+     "sourceId": "PET-ATLAS-J01",
+     "species": "dog"
+    }
+   ],
+   "couponQuoteId": "CPQ-9CE20AD1-2B3",
+   "catalogueVersion": "2026-08-07.v2",
+   "previousGap": "closed in this lane: grooming_commercial_quotes + grooming_booking_quote_links, price from quoteGroomingBookingWithLiveMultiPet"
+  },
+  {
+   "stage": "4.customer_confirmation",
+   "actor": "customer(TEST session)",
+   "outcome": "autonomous",
+   "bookingStatus": 201,
+   "replayDuplicatePrevented": true,
+   "idempotencyKey": "ATLAS-J01-GROOM",
+   "acceptanceRecord": {
+    "quoteId": "GQ-69A7BABC-454",
+    "bookingId": "PS-UAT-MUTO1C4E-D7B2"
+   },
+   "previousGap": "closed: acceptance is the quote link written by the customer's booking POST"
+  },
+  {
+   "stage": "5.reservation_booking_workorder",
+   "actor": "customer(TEST session) + scheduler",
+   "outcome": "autonomous",
+   "scheduleStatus": 200,
+   "scheduleReplayDuplicatePrevented": true,
+   "reservationId": "ATLAS-J01-GROOM_groom_arun_1_1791108972293",
+   "workOrderId": "WO-5D9870D7",
+   "bookingId": "PS-UAT-MUTO1C4E-D7B2"
+  },
+  {
+   "stage": "6.assignment",
+   "actor": "scheduler(governed capacity)",
+   "outcome": "autonomous",
+   "providerId": "groom_arun",
+   "visibleInProviderFeed": true
+  },
+  {
+   "stage": "6b.payment_capture",
+   "actor": "TEST sandbox gateway event (simulated)",
+   "outcome": "manual",
+   "status": 201,
+   "replayDuplicate": true,
+   "paymentStatus": "captured",
+   "commercialMode": "prepaid",
+   "label": "TEST simulate_event via grooming-payment-sandbox; no gateway, no money"
+  },
+  {
+   "stage": "7.provider_lifecycle_media",
+   "actor": "provider(TEST session) with TEST GPS + TEST media bytes",
+   "outcome": "manual",
+   "transitions": [
+    200,
+    200,
+    200,
+    200
+   ],
+   "completeWithoutProof": 409,
+   "proofStatus": 200,
+   "completeStatus": 200,
+   "workOrderStatus": "completed",
+   "label": "physical grooming is external provider input; simulated here"
+  },
+  {
+   "stage": "8.invoice_accounts",
+   "actor": "system(completion finance)",
+   "outcome": "autonomous",
+   "invoices": 1,
+   "invoiceNumber": "PS-2026-5016E4FF",
+   "journalEntriesForBooking": 5,
+   "debits": 3598,
+   "credits": 3598,
+   "balanced": true,
+   "completeReplayStatus": 200,
+   "invoiceCountAfterReplay": 1,
+   "journalCountAfterReplay": 5,
+   "journalColumns": [
+    "id",
+    "entry_date",
+    "source_type",
+    "source_id",
+    "account_code",
+    "cost_centre",
+    "vertical",
+    "debit",
+    "credit",
+    "narration",
+    "period_code",
+    "posted",
+    "created_at",
+    "booking_id",
+    "customer_id",
+    "city_id",
+    "service_code",
+    "payment_id",
+    "settlement_id",
+    "payment_method",
+    "tax_amount",
+    "gateway_fee",
+    "collector_id",
+    "reversal_reference",
+    "transaction_at",
+    "verification_status",
+    "verified_by",
+    "verified_at"
+   ]
+  },
+  {
+   "stage": "9.consented_followup",
+   "actor": "customer(TEST session; TEST consent via governed writer)",
+   "outcome": "manual(TEST consent; synthetic customer)",
+   "eligibilityStatus": 200,
+   "eligibility": {
+    "invitation": {
+     "bookingId": "PS-UAT-MUTO1C4E-D7B2",
+     "serviceCode": "grooming",
+     "destinations": [],
+     "source": "no_approved_config",
+     "terms": {
+      "optional": true,
+      "rewarded": false,
+      "ratingGated": false,
+      "postingVerified": false,
+      "honestOnly": true
+     }
+    },
+    "call": {
+     "bookingId": "PS-UAT-MUTO1C4E-D7B2",
+     "eligible": true,
+     "reasons": [],
+     "timezone": "Asia/Kolkata",
+     "quietHours": {
+      "start": 21,
+      "end": 9
+     },
+     "policy": {
+      "maxHorizonMs": 1209600000,
+      "dispatchWindowMs": 5400000,
+      "source": "environment_configuration"
+     },
+     "maxAttempts": 1,
+     "attemptsUsed": 0,
+     "existing": null
+    }
+   },
+   "scheduleStatus": 201,
+   "scheduleBody": {
+    "data": {
+     "scheduled": true,
+     "duplicatePrevented": false,
+     "schedule": {
+      "id": "PSFC-6D9B89D0-A28",
+      "bookingId": "PS-UAT-MUTO1C4E-D7B2",
+      "status": "scheduled",
+      "scheduledFor": 1791181800000,
+      "timezone": "Asia/Kolkata",
+      "attemptCount": 0,
+      "maxAttempts": 1,
+      "voiceCallId": null,
+      "outcome": null
+     }
+    }
+   },
+   "withoutConsentStatus": 400,
+   "replayDuplicatePrevented": null,
+   "persistedCalls": 1,
+   "voiceConsentRecord": "recorded(TEST source)",
+   "centralConsentRecord": {
+    "customerId": "CUST-ATLAS-J01",
+    "channel": "voice",
+    "allowed": true,
+    "globalOptOut": false,
+    "effectiveAllowed": true,
+    "source": "customer_app_settings",
+    "updatedBy": "customer:CUST-ATLAS-J01",
+    "updatedAt": 1791108973018
+   },
+   "label": "consent is a TEST flag from a TEST customer session, not a real customer's consent"
+  }
+ ]
+}

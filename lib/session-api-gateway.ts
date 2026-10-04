@@ -12,6 +12,7 @@ async function sessionScope(request:Request,session?:PlatformSessionActor):Promi
   if(method==="GET"&&url.pathname==="/api/v2/grooming-checkout")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/training-rolling-schedule"&&["GET","POST"].includes(method)){const body=method==='POST'?await request.clone().json().catch(()=>({})) as Record<string,unknown>:null;const kind=String(body?.actorKind||url.searchParams.get('actorKind')||'customer');return kind==='provider'?{permission:'bookings.view',subjectType:'provider'}:{permission:'scheduling.book',subjectType:'customer'};}
   if(url.pathname==="/api/customer-checkout"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
+  if(["/api/grooming-commercial","/api/customer-communication-consent"].includes(url.pathname)&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
   if(url.pathname==="/api/provider-chat"&&method==="GET")return{permission:"communications.message",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/provider-chat"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"communications.message",subjectType:"provider",subjectId:String(body.providerId||"")};}
