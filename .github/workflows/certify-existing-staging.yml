@@ -1,4 +1,4 @@
-name: Read Training address failure diagnostics
+name: Inspect existing Atlas quote constraints and held Training diagnostics
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bounded-read:
-    if: ${{ inputs.confirm == 'read-only-training-address-runtime-diagnostic' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-atlas-0006-hosted-schema' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 6
     environment: pawspace-staging
@@ -33,14 +33,14 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-          EVIDENCE_PATH: training-address-runtime-diagnostic-receipt.json
+          EVIDENCE_PATH: atlas-0006-hosted-schema-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/training-address-runtime-diagnostic/read-runner.mjs
+          node scripts/ops/atlas-session/atlas-0006-hosted-schema/read-runner.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: training-address-runtime-diagnostic-${{ github.sha }}
-          path: training-address-runtime-diagnostic-receipt.json
+          name: atlas-0006-hosted-schema-${{ github.sha }}
+          path: atlas-0006-hosted-schema-receipt.json
           if-no-files-found: error
           retention-days: 7
