@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {preservedCombinedLocalBytes,preservedServiceLintBytes,preservedTrainingIntegratedBytes} from './helpers/combined-local-reviewed-delta.mjs';
+import {preservedCapturedRetryLinkBytes,preservedCombinedLocalBytes,preservedServiceLintBytes,preservedTrainingIntegratedBytes} from './helpers/combined-local-reviewed-delta.mjs';
 const receipt=JSON.parse(readFileSync(new URL('./fixtures/combined-local-reviewed-delta.json',import.meta.url),'utf8'));
 const correction=JSON.parse(readFileSync(new URL('./fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -55,4 +55,23 @@ test('Grooming back-bar CSS restores exact 7e bytes and rejects unrelated mutati
  assert.equal(backBar.historicalSha256,service.files[path].originalHash);
  assert.equal(preservedGroomingBackBarBytes('unrelated',bytes),bytes);
  for(const changed of [bytes+'\nUNREVIEWED',bytes.toString().replace('min-height:60px','min-height:44px'),bytes.toString().replace(backBar.append,backBar.append+backBar.append),bytes.toString().replace(backBar.append,backBar.append.trim()),bytes.toString().replaceAll('\n','\r\n'),'X'+bytes.toString().slice(1)])assert.throws(()=>preservedGroomingBackBarBytes(path,Buffer.from(changed)));
+});
+
+const capturedRetry=JSON.parse(readFileSync(new URL('./fixtures/gateway-link-captured-retry-reviewed-delta.json',import.meta.url),'utf8'));
+for(const[path,entry]of Object.entries(capturedRetry.files))test('Exact captured-retry gateway-link delta rejects unrelated edits: '+path,()=>{
+ const bytes=readFileSync(new URL('../'+path,import.meta.url));assert.equal(hash(bytes),entry.afterSha256);
+ const original=preservedCapturedRetryLinkBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedCapturedRetryLinkBytes(path,original),original);
+ for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().slice(0,-1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedCapturedRetryLinkBytes(path,Buffer.from(text)));
+ const text=bytes.toString();
+ for(const[before,after]of entry.replacements){
+  const at=text.indexOf(after)+Math.floor(after.length/2);
+  assert.throws(()=>preservedCapturedRetryLinkBytes(path,Buffer.from(text.slice(0,at)+(text[at]==='#'?'%':'#')+text.slice(at+1))),'mutation inside reviewed region');
+  assert.throws(()=>preservedCapturedRetryLinkBytes(path,Buffer.from(text.replace(after,()=>after+after))),'duplicated reviewed region');
+  if(entry.replacements.length>1)assert.throws(()=>preservedCapturedRetryLinkBytes(path,Buffer.from(text.replace(after,()=>before))),'partial reviewed delta');
+ }
+});
+test('Captured-retry delta keeps unrelated sources identical and composes before historical guards',()=>{
+ const bytes=Buffer.from('untouched');assert.equal(preservedCapturedRetryLinkBytes('lib/unrelated.ts',bytes),bytes);
+ for(const[path,entry]of Object.entries(capturedRetry.files))assert.equal(hash(preservedTrainingIntegratedBytes(path,readFileSync(new URL('../'+path,import.meta.url)))),entry.beforeSha256,path);
+ assert.equal(hash(preservedCombinedLocalBytes('.gitleaksignore',readFileSync(new URL('../.gitleaksignore',import.meta.url)))),receipt.files['.gitleaksignore'].beforeSha256);
 });

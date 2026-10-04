@@ -9,6 +9,7 @@ import {createHash} from 'node:crypto';
 const receipt=JSON.parse(readFileSync(new URL('../fixtures/combined-local-reviewed-delta.json',import.meta.url),'utf8'));
 const training=JSON.parse(readFileSync(new URL('../fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 const correction=JSON.parse(readFileSync(new URL('../fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
+const capturedRetry=JSON.parse(readFileSync(new URL('../fixtures/gateway-link-captured-retry-reviewed-delta.json',import.meta.url),'utf8'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
 function reverse(source,entry,path){
  const text=source.toString();if(hash(text)===entry.beforeSha256)return source;
@@ -20,7 +21,11 @@ function reverse(source,entry,path){
  return Buffer.isBuffer(source)?Buffer.from(out):out;
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
+// PR 1272: reverse only the exact reviewed verified-captured-retry gateway-link delta and its exact
+// .gitleaksignore fingerprint append; every historical layer below then runs unchanged.
+export function preservedCapturedRetryLinkBytes(path,bytes){return capturedRetry.files[path]?reverse(bytes,capturedRetry.files[path],path):bytes;}
 export function preservedTrainingIntegratedBytes(path,bytes){
+ bytes=preservedCapturedRetryLinkBytes(path,bytes);
  bytes=preservedServiceAddressV8Bytes(path,bytes);
  if(path==='e2e/v2-grooming.spec.ts'&&hash(bytes)==='16132dcb56b13354e8a060c5a5eefbe9c8d5bd8984f1b97ae5345bb539c968ca'){
   const prior=`  const review = page.getByRole("group", { name: "Current location", exact: true });\n  // The Google-capable picker has its own location action. Exercise the retained\n  // review/cancel path through its actual disclosure rather than that other button.\n  if (!await review.isVisible()) await page.getByText("Use device location instead", { exact: true }).click();`;

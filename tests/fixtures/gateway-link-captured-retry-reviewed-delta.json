@@ -1,0 +1,61 @@
+{
+  "base": "3fec937767999d8f23967653a8afa36ff076df9a",
+  "head": "f922044f3397bdbab8dc118877218a174ee55247",
+  "note": "PR #1272 reviewed delta: verified captured retry keeps the booking gateway link; .gitleaksignore adds the exact f922044f synthetic-fixture fingerprint only.",
+  "files": {
+    "lib/grooming-payment-reconciliation.ts": {
+      "beforeSha256": "52909a69c099d61cd9db2a60cb4f268a222afa68c345efa238bed3a5f20b4bf7",
+      "afterSha256": "23742b35ecde3538c36e171fdb5bcc2be394e7042c3f6986ca824a72bbaf0d19",
+      "replacements": [
+        [
+          "",
+          "/**\n * Point the booking's gateway link at a VERIFIED captured payment.\n *\n * The link holds one gateway_payment_id: the payment a link-based refund is sent against. It must be the first\n * payment that actually CAPTURED. A later distinct capture (a split balance, a reschedule difference) keeps the\n * first one; but an id with no verified capture behind it - a failed or authorized-only attempt on the same\n * order - is not a capture and gives way to the one that is. Verified means a processed capture event for this\n * payment from a signed webhook or the authenticated provider read (the same rule as lib/razorpay-capture-atomic\n * trustedCaptureSql). Scoped to this booking, payment and environment; nothing else on the link changes.\n */\nexport function claimCapturedPaymentLinkStatement(db:Db,input:{bookingId:string;paymentId:string;environment:string;gatewayPaymentId:string;now:number}){\n return db.prepare(`UPDATE payment_gateway_links SET gateway_payment_id=?,updated_at=?\n   WHERE booking_id=? AND payment_id=? AND environment=?\n     AND (COALESCE(gateway_payment_id,'')='' OR gateway_payment_id=? OR NOT EXISTS (\n       SELECT 1 FROM payment_gateway_events e\n       WHERE e.provider='razorpay' AND e.environment=payment_gateway_links.environment AND e.payment_id=payment_gateway_links.payment_id\n         AND e.gateway_payment_id=payment_gateway_links.gateway_payment_id\n         AND e.event_type IN ('payment.captured','order.paid','payment_link.paid') AND e.processing_status='processed'\n         AND (e.signature_verified=1 OR json_extract(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END,'$.captureAuthority')='provider_api')))`)\n  .bind(input.gatewayPaymentId,input.now,input.bookingId,input.paymentId,input.environment,input.gatewayPaymentId);\n}\n\n"
+        ],
+        [
+          "  if(event.gatewayPaymentId)await db.prepare(\"UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=?\").bind(event.gatewayPaymentId,now,bookingId).run();\n",
+          "  // The link's gateway_payment_id is the booking's CAPTURED payment, so it is written only by a verified capture\n  // (below, and in lib/razorpay-capture-atomic.ts) - never here, before the event type is known. Writing the first\n  // non-null id of ANY event let a failed or authorized-only attempt own the link, and a later successful capture\n  // on the same order could not displace it; the refund paths that read the link then targeted a payment that\n  // never captured.\n"
+        ],
+        [
+          "",
+          "    if(event.gatewayPaymentId)await claimCapturedPaymentLinkStatement(db,{bookingId,paymentId,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,now}).run();\n"
+        ]
+      ]
+    },
+    "lib/razorpay-capture-atomic.ts": {
+      "beforeSha256": "e8b5e3da3803e445e4d9d548556d1b982df27de115a5b7f5e82d174db963e5d3",
+      "afterSha256": "60a2030ad93848f476e10a333bdc9ab05e38a5d01f451022669975d2f52fa903",
+      "replacements": [
+        [
+          "import { ensurePaymentReconciliationTables } from \"./grooming-payment-reconciliation\";\n",
+          "import { claimCapturedPaymentLinkStatement, ensurePaymentReconciliationTables } from \"./grooming-payment-reconciliation\";\n"
+        ],
+        [
+          "",
+          "      // A repeat of a VERIFIED capture may still point a link that a failed attempt took at this payment. The\n      // claim is the same guarded statement as a first capture, so a link already on a verified capture keeps it.\n      ...(input.gatewayPaymentId ? [claimCapturedPaymentLinkStatement(db, { bookingId: input.bookingId, paymentId: input.paymentId, environment: input.environment, gatewayPaymentId: input.gatewayPaymentId, now })] : []),\n"
+        ],
+        [
+          "    // The link keeps the FIRST captured payment. A later capture on the same booking (a split balance, a\n",
+          "    // The link keeps the FIRST CAPTURED payment. A later capture on the same booking (a split balance, a\n"
+        ],
+        [
+          "    // refund sweep splits a refund across.\n    db.prepare(\"UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=? AND payment_id=?\").bind(input.gatewayPaymentId || null, now, input.bookingId, input.paymentId),\n",
+          "    // refund sweep splits a refund across. COALESCE kept the first NON-NULL id instead, so a failed attempt on\n    // the same order that reached the link first kept it after the retry captured; the claim gives way only to\n    // an id with no verified capture behind it.\n    // Always exactly one statement in this slot: the schedule updates below are spliced in by position.\n    input.gatewayPaymentId\n      ? claimCapturedPaymentLinkStatement(db, { bookingId: input.bookingId, paymentId: input.paymentId, environment: input.environment, gatewayPaymentId: input.gatewayPaymentId, now })\n      : db.prepare(\"UPDATE payment_gateway_links SET updated_at=? WHERE booking_id=? AND payment_id=?\").bind(now, input.bookingId, input.paymentId),\n"
+        ],
+        [
+          "    ...(input.intentId ? [db.prepare(\"UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)\")\n",
+          "    // A signed payment.authorized pins the intent's gateway_payment_id (advancePaymentState). If that attempt never\n    // captured and a retry on the same order did, the old guard matched no row and this commit failed verification,\n    // so the real capture was never recorded. An intent that is not yet CAPTURED and whose pinned id has no verified\n    // capture gives way to the payment that captured; a CAPTURED intent keeps the payment it captured.\n    ...(input.intentId ? [db.prepare(`UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=?\n      WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?\n        OR (state<>'CAPTURED' AND NOT EXISTS (SELECT 1 FROM payment_gateway_events e WHERE e.provider='razorpay' AND e.environment=payment_intents.environment\n          AND e.payment_id=payment_intents.payment_id AND e.gateway_payment_id=payment_intents.gateway_payment_id AND e.event_type IN ${CAPTURE_TYPES}\n          AND e.processing_status='processed' AND ${trustedCaptureSql(\"e\")})))`)\n"
+        ]
+      ]
+    },
+    ".gitleaksignore": {
+      "beforeSha256": "a22899e8dca8d84aea0d2956ec646324e168375b34b0177c9115ee9a00c4a69e",
+      "afterSha256": "f91664038651db162f480b3e9a50fddebabfd7b62dbfbac8fea9581f9ae4feb4",
+      "replacements": [
+        [
+          "",
+          "\n# Non-credential: synthetic Razorpay TEST-mode key id used only as stubbed sandbox configuration in the\n# verified captured-retry gateway-link test (PR #1272 commit f922044f). Provider calls are stubbed and nothing\n# reaches Razorpay. Exact historical finding only; literal not reproduced here, all other findings enforced.\nf922044f3397bdbab8dc118877218a174ee55247:tests/gateway-link-captured-payment-winner.test.mjs:pawspace-payment-secret-key:66\n"
+        ]
+      ]
+    }
+  }
+}

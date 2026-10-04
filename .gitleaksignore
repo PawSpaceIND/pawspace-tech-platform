@@ -59,3 +59,8 @@ a1b3a6d6f0a6826ee0f72d56e1f721755b935b36:.gitleaksignore:pawspace-payment-secret
 # Exact historical false positive: public in-memory Training signing fixture, never a hosted credential.
 # Latest fixture uses an unmistakable test-only expression; all other findings remain enforced.
 bdb7df8bb8e201858855af28448d1a6f7e1dc183:tests/training-arrival-handover-context.test.mjs:generic-api-key:10
+
+# Non-credential: synthetic Razorpay TEST-mode key id used only as stubbed sandbox configuration in the
+# verified captured-retry gateway-link test (PR #1272 commit f922044f). Provider calls are stubbed and nothing
+# reaches Razorpay. Exact historical finding only; literal not reproduced here, all other findings enforced.
+f922044f3397bdbab8dc118877218a174ee55247:tests/gateway-link-captured-payment-winner.test.mjs:pawspace-payment-secret-key:66
