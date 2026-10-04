@@ -1,4 +1,4 @@
-name: One approved zero-model Atlas revision predicates
+name: Read-only normal staging restoration verification
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   zero-model:
-    if: ${{ inputs.confirm == 'atlas-zero-model-revision-predicates' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
+    if: ${{ inputs.confirm == 'read-only-normal-restore-verification' && startsWith(github.ref, 'refs/heads/ops/atlas-session-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: pawspace-staging
@@ -28,18 +28,17 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRM: ${{ inputs.confirm }}
-          EXPLICIT_APPROVAL_UTC: "2026-10-04T04:43:05Z"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           EVIDENCE_PATH: diagnostic-receipt.json
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          node scripts/ops/atlas-session/session-runner.mjs
+          node scripts/ops/atlas-session/normal-restore-verify.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: atlas-zero-model-diagnostic-${{ github.sha }}
+          name: atlas-normal-restore-verified-${{ github.sha }}
           path: diagnostic-receipt.json
           if-no-files-found: error
           retention-days: 7
