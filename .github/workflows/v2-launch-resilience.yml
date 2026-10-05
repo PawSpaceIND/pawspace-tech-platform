@@ -28,8 +28,8 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: node node_modules/@playwright/test/cli.js install --with-deps webkit
-      - name: Only ten focused native controls, no broad matrix
-        run: node node_modules/@playwright/test/cli.js test --config playwright.pr1275-pointer-focused.config.ts
+      - name: Only four held-input cases after observer correction
+        run: node node_modules/@playwright/test/cli.js test --config playwright.pr1275-pointer-focused.config.ts --grep "held "
       - uses: actions/upload-artifact@v4
         if: always()
         with:

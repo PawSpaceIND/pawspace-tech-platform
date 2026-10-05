@@ -168,6 +168,12 @@ async function passive(page:Page){await page.addInitScript(()=>{
   const entry={type,t:performance.now(),trusted:event.isTrusted,target:label(event.target),hit:label(document.elementFromPoint(e.clientX||0,e.clientY||0)),scrollY,rect:r?{x:r.x,y:r.y,width:r.width,height:r.height}:null,prevented:event.defaultPrevented};
   (window as any).__pointerEvents.push(entry);queueMicrotask(()=>entry.prevented=event.defaultPrevented);
  },true);
+ // Capture-phase microtasks can run before React's root capture handler. Measure
+ // cancellation at document bubble, after the source handler, without altering input.
+ document.addEventListener('mousedown',event=>{
+  const entries=(window as any).__pointerEvents;const entry=[...entries].reverse().find(e=>e.type==='mousedown');
+  if(entry){entry.capturePrevented=entry.prevented;entry.prevented=event.defaultPrevented;entry.bubbleObserved=true;}
+ });
  Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition(_success:unknown,fail:(e:{code:number})=>void){(window as any).__geoCalls++;queueMicrotask(()=>fail({code:1}));}}});
 });}
 async function nativeDown(page:Page,button:ReturnType<Page['getByRole']>,secondary=false){
