@@ -440,7 +440,17 @@ export default function V2GroomingPage() {
             </div>}
           </section>
 
-          <section id="v2-grooming-address" tabIndex={-1} aria-labelledby="v2-grooming-address-title" className={styles.step} onFocusCapture={() => setActiveStep(3)}>
+          <section id="v2-grooming-address" tabIndex={-1} aria-labelledby="v2-grooming-address-title" className={styles.step} onFocusCapture={() => setActiveStep(3)}
+            onMouseDownCapture={event => {
+              if (event.button !== 0 || !(event.target instanceof Element)) return;
+              const action = event.target.closest("button");
+              if (!(action instanceof HTMLButtonElement) || !event.currentTarget.contains(action) ||
+                  action.matches(":disabled") || action.closest('section[aria-label="Contact details"]')) return;
+              // Keep address-action hit targets still through native down/up.
+              event.preventDefault();
+              window.scrollTo({ left: window.scrollX, top: window.scrollY, behavior: "instant" });
+              action.focus({ preventScroll: true });
+            }}>
             <div className={styles.stepHead}><span>03</span><div><small>SERVICE DOORSTEP</small><h2 id="v2-grooming-address-title">Where should we come?</h2></div></div>
             <GroomingCustomerIntake account={account} disabled={checkoutBusy} onProfileSaved={setAccount} />
             <p className={styles.helper}>Save your contact details and address once, then reuse them for future visits. Pet photos are optional in your pet profile.</p>
