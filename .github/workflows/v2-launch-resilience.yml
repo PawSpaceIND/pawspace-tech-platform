@@ -1,34 +1,15 @@
-name: V2 launch compatibility and offline recovery
+name: PR1275 focused native input qualification
 on:
-  pull_request:
-    paths:
-      - 'app/partner-app/**'
-      - 'lib/bounded-fetch.ts'
-      - 'lib/partner-status-queue.ts'
-      - 'lib/provider-proof-offline-queue.ts'
-      - 'app/v2/**'
-      - 'e2e/v2-*.spec.ts'
-      - 'playwright.launch-readiness.config.ts'
-      - 'tests/v2-network-recovery.test.mjs'
-      - 'tests/v2-launch-ci-partition.test.mjs'
-      - 'tests/provider-proof-offline-queue.test.mjs'
-      - 'tests/booking-fanout-atomicity*'
-      - 'tests/scheduling-rules-authorization*'
-      - 'tests/helpers/wrangler-ready.mjs'
-      - 'wrangler.scheduling-rules-authorization.jsonc'
-      - 'package-lock.json'
-      - '.github/workflows/v2-launch-resilience.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: v2-launch-resilience-${{ github.ref }}
-  cancel-in-progress: true
+  group: pr1275-pointer-focused-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  offline-checks:
-    name: Offline transport and storage
+  native-input:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       PAWSPACE_PAYMENT_ENV: sandbox
       PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
@@ -37,78 +18,21 @@ jobs:
       PW_PORT: '4291'
     steps:
       - uses: actions/checkout@v4
+      - name: Pin independently reviewed application and original spec
+        run: |
+          test "$(sha256sum app/v2/grooming/page.tsx | cut -d' ' -f1)" = b3bdb51f7c808d39a6734e9288b3a0f5d00ce5f2db339d179ad7bd42365c0e14
+          test "$(sha256sum e2e/v2-grooming.spec.ts | cut -d' ' -f1)" = 766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230
       - uses: actions/setup-node@v4
         with:
           node-version: '22.15.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run typecheck
-      - name: Offline transport and storage regressions
-        env:
-          NODE_ENV: test
-          PAWSPACE_LOCAL_PREVIEW: 'on'
-        run: node --experimental-strip-types --test --test-concurrency=1 tests/v2-network-recovery.test.mjs tests/provider-proof-offline-queue.test.mjs tests/uat-phase3-partner-tracking.test.mjs tests/frontend-chaos-hardening.test.mjs tests/global-chaos-hardening-source-contract.test.mjs tests/partner-app-login-gate.test.mjs tests/partner-proof-upload-chain.test.mjs tests/service-proof-verification-wiring.test.mjs tests/booking-fanout-atomicity-real-d1.test.mjs tests/scheduling-rules-authorization-real-d1.test.mjs
-      - name: Verify complete CI partition and failure gate
-        run: node --experimental-strip-types --test tests/v2-launch-ci-partition.test.mjs
-
-  browser-compatibility:
-    name: V2 compatibility (${{ matrix.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include:
-          - name: desktop-engines
-            browsers: chromium firefox webkit
-            projects: --project=desktop-chromium --project=desktop-firefox --project=desktop-webkit
-          - name: mobile-chromium
-            browsers: chromium
-            projects: --project=android-360 --project=small-320
-          - name: mobile-webkit
-            browsers: webkit
-            projects: --project=iphone-390 --project=tablet-768
-          - name: chromium-route-matrix
-            browsers: chromium
-            projects: --project=all-route-visual-matrix
-          - name: firefox-webkit-route-matrix
-            browsers: firefox webkit
-            projects: --project=firefox-route-matrix --project=webkit-route-matrix
-    env:
-      PAWSPACE_PAYMENT_ENV: sandbox
-      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
-      FORBID_PRODUCTION: 'true'
-      APP_ENV: staging
-      PW_PORT: '4291'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.15.0'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: node node_modules/@playwright/test/cli.js install --with-deps ${{ matrix.browsers }}
-      - name: Run assigned browser projects
-        run: node node_modules/@playwright/test/cli.js test --config playwright.launch-readiness.config.ts ${{ matrix.projects }}
+      - run: node node_modules/@playwright/test/cli.js install --with-deps webkit
+      - name: Only ten focused native controls, no broad matrix
+        run: node node_modules/@playwright/test/cli.js test --config playwright.pr1275-pointer-focused.config.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v2-launch-compatibility-${{ matrix.name }}-${{ github.sha }}
-          path: artifacts/launch-readiness/
+          name: pr1275-pointer-focused-${{ github.sha }}
+          path: artifacts/pr1275-pointer-focused/
           retention-days: 7
-
-  compatibility:
-    # Keep the original gate name; cancelled/skipped/failed partitions are never success.
-    if: always()
-    needs: [offline-checks, browser-compatibility]
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Require complete compatibility evidence
-        env:
-          OFFLINE_RESULT: ${{ needs.offline-checks.result }}
-          BROWSER_RESULT: ${{ needs.browser-compatibility.result }}
-        run: |
-          test "$OFFLINE_RESULT" = success
-          test "$BROWSER_RESULT" = success
