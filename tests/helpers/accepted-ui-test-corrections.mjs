@@ -1,0 +1,4 @@
+import{preservedFinalGuestTestBytes}from'./ui-final-guest-test-reviewed-delta.mjs';
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';
+const r=JSON.parse(readFileSync(new URL('../fixtures/accepted-ui-test-corrections.json',import.meta.url))),hash=b=>createHash('sha256').update(b).digest('hex');
+export function preservedAcceptedUiTestBytes(path,bytes){bytes=preservedFinalGuestTestBytes(path,bytes);const e=r.files[path];if(!e||hash(bytes)===e.beforeSha256)return bytes;assert.equal(hash(bytes),e.afterSha256,'Exact accepted UI test correction required');let s=bytes.toString();for(const[a,b]of [...e.replacements].reverse()){assert.equal(s.split(b).length,2);s=s.replace(b,()=>a);}assert.equal(hash(s),e.beforeSha256);return Buffer.isBuffer(bytes)?Buffer.from(s):s;}

@@ -1,4 +1,8 @@
 import {preservedServiceAddressV8Bytes} from './helpers/service-address-v8-reviewed-delta.mjs';
+import './helpers/accepted-ui-test-correction-cases.mjs';
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
+import './helpers/accepted-ui-preservation-cases.mjs';
+import './helpers/ci-historical-preservation-composition-cases.mjs';
 import {preservedGroomingBackBarBytes} from './helpers/grooming-back-bar-reviewed-delta.mjs';
 import './helpers/chat-ledger-preservation-cases.mjs';
 import './helpers/chat-qualification-preservation-cases.mjs';
@@ -16,20 +20,20 @@ const receipt=JSON.parse(readFileSync(new URL('./fixtures/combined-local-reviewe
 const correction=JSON.parse(readFileSync(new URL('./fixtures/service-fix-lint-correction.json',import.meta.url),'utf8'));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 for(const[path,entry]of Object.entries(receipt.files))test('Exact reviewed source restoration rejects unrelated edits: '+path,()=>{
- const bytes=preservedTrainingIntegratedBytes(path,preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,readFileSync(new URL('../'+path,import.meta.url)))));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedTrainingIntegratedBytes(path,preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedAcceptedUiBytes(path,readFileSync(new URL('../'+path,import.meta.url))))));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedCombinedLocalBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);
  assert.equal(preservedCombinedLocalBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED', 'X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text)));
 });
 test('Grooming lint correction is exact, reversible and refuses mutations',()=>{
- const bytes=readFileSync(new URL('../'+correction.file,import.meta.url));assert.equal(hash(bytes),'c31566fd2ccd6579f3f635971b5d6bc4895fc47f4f9aed157e83c81162d14fb4');
+ const bytes=preservedAcceptedUiBytes(correction.file,readFileSync(new URL('../'+correction.file,import.meta.url)));assert.equal(hash(bytes),'c31566fd2ccd6579f3f635971b5d6bc4895fc47f4f9aed157e83c81162d14fb4');
  const original=preservedServiceLintBytes(correction.file,bytes);assert.equal(hash(original),correction.beforeSha256);assert.equal(preservedServiceLintBytes(correction.file,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedServiceLintBytes(correction.file,Buffer.from(text)));
 });
 test('Unrelated source retains identity',()=>{const bytes=Buffer.from('untouched');assert.equal(preservedCombinedLocalBytes('lib/unrelated.ts',bytes),bytes);assert.equal(preservedServiceLintBytes('lib/unrelated.ts',bytes),bytes);});
 const training=JSON.parse(readFileSync(new URL('./fixtures/training-integrated-reviewed-delta.json',import.meta.url),'utf8'));
 for(const[path,entry]of Object.entries(training.files))test('Exact integrated Training delta rejects unrelated edits: '+path,()=>{
- const bytes=preservedServiceAddressV8Bytes(path,readFileSync(new URL('../'+path,import.meta.url)));assert.equal(hash(bytes),entry.afterSha256);
+ const bytes=preservedAcceptedUiBytes(path,preservedServiceAddressV8Bytes(path,readFileSync(new URL('../'+path,import.meta.url))));assert.equal(hash(bytes),entry.afterSha256);
  const original=preservedTrainingIntegratedBytes(path,bytes);assert.equal(hash(original),entry.beforeSha256);assert.equal(preservedTrainingIntegratedBytes(path,original),original);
  for(const text of [bytes+'\nUNREVIEWED','X'+bytes.toString().slice(1),bytes.toString().slice(1),bytes.toString().replaceAll('\n','\r\n')])assert.throws(()=>preservedTrainingIntegratedBytes(path,Buffer.from(text)));
 });
@@ -45,7 +49,7 @@ test('integrated handover projection retains operational proof and excludes raw 
 
 const backBar=JSON.parse(readFileSync(new URL('./fixtures/grooming-back-bar-reviewed-delta.json',import.meta.url),'utf8'));
 test('Grooming back-bar CSS restores exact 7e bytes and rejects unrelated mutations',()=>{
- const path=backBar.file,bytes=readFileSync(new URL('../'+path,import.meta.url));
+ const path=backBar.file,bytes=preservedAcceptedUiBytes(path,readFileSync(new URL('../'+path,import.meta.url)));
  assert.equal(hash(bytes),backBar.afterSha256);
  const original=preservedGroomingBackBarBytes(path,bytes);
  assert.equal(hash(original),backBar.beforeSha256);
@@ -72,6 +76,22 @@ for(const[path,entry]of Object.entries(capturedRetry.files))test('Exact captured
 });
 test('Captured-retry delta keeps unrelated sources identical and composes before historical guards',()=>{
  const bytes=Buffer.from('untouched');assert.equal(preservedCapturedRetryLinkBytes('lib/unrelated.ts',bytes),bytes);
- for(const[path,entry]of Object.entries(capturedRetry.files))assert.equal(hash(preservedTrainingIntegratedBytes(path,readFileSync(new URL('../'+path,import.meta.url)))),entry.beforeSha256,path);
+ // .gitleaksignore continues through the accepted-UI layer (PR 1267) to that layer's exact predecessor; the PR1272 layer alone is asserted above.
+ const acceptedUi=JSON.parse(readFileSync(new URL('./fixtures/ui-current-main-reviewed-delta.json',import.meta.url),'utf8'));
+ for(const[path,entry]of Object.entries(capturedRetry.files))assert.equal(hash(preservedTrainingIntegratedBytes(path,readFileSync(new URL('../'+path,import.meta.url)))),path==='.gitleaksignore'?acceptedUi.files[path].beforeSha256:entry.beforeSha256,path);
  assert.equal(hash(preservedCombinedLocalBytes('.gitleaksignore',readFileSync(new URL('../.gitleaksignore',import.meta.url)))),receipt.files['.gitleaksignore'].beforeSha256);
+});
+
+test('Exact native add-on pointer retry restores history and rejects assertion mutations',()=>{
+ const path='e2e/v2-grooming.spec.ts',bytes=readFileSync(new URL('../'+path,import.meta.url));
+ assert.equal(hash(bytes),'766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230');
+ assert.equal(hash(preservedTrainingIntegratedBytes(path,bytes)),'72106356e17dd30c32a66a6d498d7b9fbc4f678e1185a058bf46a0f08f8e784c');
+ const original=preservedCombinedLocalBytes(path,bytes);
+ assert.equal(hash(original),'1c91a9503698107ea2064a7a8dd5292563fb35463817b403f5f7184c76606498');
+ assert.equal(preservedCombinedLocalBytes(path,original),original);
+ assert.equal(preservedTrainingIntegratedBytes('unrelated',bytes),bytes);
+ const text=bytes.toString();
+ const pairs=[['timeout: 2_000','timeout: 20_000'],['disclosure.locator("summary").click();','disclosure.locator("summary").click({ force: true });'],['toHaveAttribute("open", "", { timeout: 2_000 })','toHaveAttribute("open", "", { timeout: 20_000 })'],['await expect(checkbox).toBeChecked();','await checkbox.isChecked();'],['expect(state.bookingWrites).toBe(0)','expect(state.bookingWrites).toBeGreaterThanOrEqual(0)'],['SECOND','OTHER']];
+ for(const [before,after] of pairs){assert.ok(text.includes(before),before);assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(text.replace(before,after))));}
+ for(const changed of [text+'\nUNREVIEWED','X'+text.slice(1),text.slice(1),text.replaceAll('\n','\r\n')])assert.throws(()=>preservedCombinedLocalBytes(path,Buffer.from(changed)));
 });

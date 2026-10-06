@@ -60,3 +60,6 @@
 .row[aria-current="true"]{background:var(--wa-head);border-left-color:var(--wa-accent)}
 .filter{border-color:var(--wa-chip-line);color:var(--wa-avatar-text)}
 .filterActive{background:var(--wa-chip-on);color:var(--wa-chip-on-text);border-color:var(--wa-chip-on-line)}
+
+.threadTools{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px;background:var(--wa-panel,var(--staff-surface));border-bottom:1px solid var(--wa-line,var(--staff-line))}
+.listTop{display:grid;gap:12px}.listTop h2{margin:0}

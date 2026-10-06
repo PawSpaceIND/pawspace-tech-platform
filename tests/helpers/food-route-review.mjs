@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -16,9 +17,9 @@ const hash=source=>createHash('sha256').update(source).digest('hex');
  * Every other path, including legacy Food, clients, APIs and subscription modules, is unchanged.
  */
 export function preservedReviewedFoodBytes(path,bytes,read=file=>readFileSync(new URL(file,root))){
- bytes=preservedNextAudioBytes(path,bytes);
+ bytes=preservedNextAudioBytes(path,preservedAcceptedUiBytes(path,bytes));
  if(path!=='app/v2/food/page.tsx'||bytes.toString()===original)return bytes;
  assert.equal(bytes.toString(),reviewed,'Only the exact reviewed V2 Food bridge is accepted');
- for(const[file,expected]of Object.entries(approvedSources))assert.equal(hash(read(file)),expected,'Reviewed Food source changed: '+file);
+ for(const[file,expected]of Object.entries(approvedSources))assert.equal(hash(preservedAcceptedUiBytes(file,read(file))),expected,'Reviewed Food source changed: '+file);
  return Buffer.from(original);
 }

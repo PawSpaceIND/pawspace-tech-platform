@@ -26,32 +26,39 @@ async function fixture(page:Page){
   if(path==="/api/customer-checkout")return reply({bookingId:"TRAIN-B1",amountDueNow:3000,paymentStatus:"created",sandboxOnly:true});
   return reply({});
  });
- await page.goto("/v2/training");await expect(page.getByRole("button",{name:/Trainer One/})).toBeVisible();
+ await page.goto("/v2/training");
+ // Programmes are grouped into family disclosures that stay closed until one of their plans is chosen; open Puppy.
+ const summary=page.locator("summary",{hasText:/^Puppy/}),family=summary.locator("xpath=.."),plan=family.getByRole("button",{name:/Foundation Training/});
+ await expect(async()=>{if(await family.getAttribute("open")===null)await summary.click();await expect(plan).toBeVisible({timeout:2_000});}).toPass({timeout:15_000});
+ await plan.click();
+ const firstDate=page.getByLabel(/First session date/);
+ await expect(firstDate).toBeEnabled();await firstDate.fill("2026-10-08");
+ await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
  await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeEnabled();return state;
 }
 
 test("V2 Training defaults to automatic matching and uses the assigned trainer before payment",async({page})=>{
  const state=await fixture(page);state.assigned=trainer("TRAINER-NEW","Currently Available Trainer");
- await expect(page.getByRole("button",{name:"PawSpace chooses the best available trainer"})).toHaveAttribute("aria-pressed","true");
  await page.getByRole("button",{name:/Reserve trainer & continue/}).click();
  await expect(page.getByRole("heading",{name:"Complete payment to confirm"})).toBeVisible();
  expect(state.reservations).toHaveLength(1);expect(state.reservations[0].providerSelection).toBe("auto");expect(state.reservations[0].preferredProviderId).toBeUndefined();
  expect(state.bookings).toHaveLength(1);expect(state.bookings[0].provider).toMatchObject({id:"TRAINER-NEW"});
- await expect(page.getByRole("region",{name:"Reserved training details"})).toContainText("Currently Available Trainer");
- expect(state.reservations[0].occurrences).toBe(4);
+ // The scheduler's provisional trainer is never shown (lib/training-assignment-view.ts): the screen reads
+ // "Finding your certified trainer" until the programme reports an award.
+ const reserved=page.getByRole("region",{name:"Reserved training details"});
+ await expect(reserved).toContainText("Finding your certified trainer");await expect(reserved).not.toContainText("Currently Available Trainer");
+ expect(state.reservations[0].occurrences).toBe(1);
 });
-test("V2 Training specific choice is sent as strict and a refusal creates no booking",async({page})=>{
- const state=await fixture(page);await page.getByRole("button",{name:/Trainer Two/}).click();state.refuse=true;
+test("V2 Training reservation refusal creates no booking or payment",async({page})=>{
+ const state=await fixture(page);state.refuse=true;
  await page.getByRole("button",{name:/Reserve trainer & continue/}).click();
- await expect(page.getByRole("alert").first()).toContainText("selected provider");
- expect(state.reservations[0]).toMatchObject({providerSelection:"specific",preferredProviderId:"TRAINER-2"});expect(state.bookings).toHaveLength(0);
+ await expect(page.getByRole("alert").first()).toBeVisible();
+ expect(state.reservations[0]).toMatchObject({providerSelection:"auto",occurrences:1});expect(state.bookings).toHaveLength(0);
+ await expect(page.getByRole("heading",{name:"Complete payment to confirm"})).toHaveCount(0);
 });
-test("V2 Training does not change an explicit choice after availability refresh",async({page})=>{
- const state=await fixture(page);await page.getByRole("button",{name:/Trainer One/}).click();state.providers=[trainer("TRAINER-2","Trainer Two")];
+test("V2 Training refreshes first-slot availability without creating a booking",async({page})=>{
+ const state=await fixture(page);state.providers=[trainer("TRAINER-2","Trainer Two")];
  await page.getByRole("button",{name:"Refresh trainer availability"}).click();
- await expect(page.getByText("Your chosen trainer is unavailable for this programme. Choose another trainer or automatic matching.")).toBeVisible();
- await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeDisabled();
- await expect(page.getByRole("button",{name:/Trainer Two/})).toHaveAttribute("aria-pressed","false");
- await page.getByRole("button",{name:"PawSpace chooses the best available trainer"}).click();
+ await expect(page.getByText(/trainer is available/)).toBeVisible();
  await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeEnabled();expect(state.reservations).toHaveLength(0);
 });

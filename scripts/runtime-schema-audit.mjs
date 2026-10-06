@@ -1,3 +1,4 @@
+import ts from "typescript";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
@@ -20,7 +21,7 @@ function walk(root, relative) {
   return out;
 }
 
-function sqlArguments(source) {
+function sqlArguments(source, file) {
   const values = [];
   const pattern = /\.(?:prepare|exec)\(\s*(`(?:\\.|[^`])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gs;
   for (const match of source.matchAll(pattern)) {
@@ -28,6 +29,28 @@ function sqlArguments(source) {
     const body = literal.slice(1, -1);
     // Keep a syntax boundary so FROM ${source} cannot consume a following SQL keyword.
     values.push(body.replace(/\$\{[\s\S]*?\}/g, " (?) "));
+  }
+  // Two appearance-owned runtime DDL constants are counted only when their AST binding is unambiguous.
+  // Any shadowing parameter/import/declaration, parse error or dynamic initializer refuses certification.
+  if (file === "lib/appearance-preferences.ts") {
+    const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    if (tree.parseDiagnostics.length === 0) {
+      for (const name of ["PREFERENCE_DDL", "MUTATION_DDL"]) {
+        const bindings = [], calls = [];
+        const visit = node => {
+          if (ts.isIdentifier(node) && node.text === name && node.parent?.name === node && !ts.isPropertyAccessExpression(node.parent) && !ts.isPropertyAssignment(node.parent)) bindings.push(node.parent);
+          if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ["prepare", "exec"].includes(node.expression.name.text) && node.arguments.length === 1 && ts.isIdentifier(node.arguments[0]) && node.arguments[0].text === name) calls.push(node);
+          ts.forEachChild(node, visit);
+        };
+        visit(tree);
+        if (bindings.length !== 1 || calls.length === 0) continue;
+        const declaration = bindings[0], list = declaration.parent, statement = list?.parent;
+        if (!ts.isVariableDeclaration(declaration) || !ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const) || !ts.isVariableStatement(statement) || statement.parent !== tree) continue;
+        const value = declaration.initializer;
+        if (!value || (!ts.isStringLiteral(value) && !ts.isNoSubstitutionTemplateLiteral(value)) || !/^\s*CREATE\s+(?:TABLE|INDEX)\b/i.test(value.text)) continue;
+        values.push(value.text);
+      }
+    }
   }
   return values;
 }
@@ -71,7 +94,7 @@ export function auditRuntimeSchemaCoverage(root = ".") {
 
   for (const file of sources) {
     const source = fs.readFileSync(path.join(root, file), "utf8");
-    for (const sql of sqlArguments(source)) {
+    for (const sql of sqlArguments(source, file)) {
       for (const table of createdTables(sql)) {
         const files = runtimeCreators.get(table) || new Set();
         files.add(file);

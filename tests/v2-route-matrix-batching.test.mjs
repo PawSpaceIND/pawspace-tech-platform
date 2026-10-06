@@ -29,6 +29,7 @@ function suite(routeDirectory = path.join(root, "app/v2")) {
   register.setTimeout = ms => deadlines.push(ms);
   register.step = async (_name, run) => run();
   const expect = value => ({ toBe: expected => assert.equal(value, expected),
+    toContain: expected => assert.ok(value.includes(expected)),
     toBeLessThanOrEqual: expected => assert.ok(value <= expected),
     toBeVisible: async () => {}, toHaveAttribute: async () => {} });
   expect.soft = expect;
@@ -47,6 +48,10 @@ function probe(failureRoute) {
   const visited = [], screenshots = [], attachments = []; let current = "";
   const page = {
     setViewportSize: async () => {}, addInitScript: async () => {},
+    context: () => ({
+      addCookies: async () => {},
+      cookies: async () => [{ name: "pawspace-appearance", value: "v1.-.editorial.light.theme~emerald~style~cartoon" }],
+    }),
     goto: async route => { visited.push(route); if (route === failureRoute) throw new Error(`broken route ${route}`); current = route; },
     locator: () => ({}), waitForFunction: async () => {}, waitForTimeout: async () => {},
     getByRole: () => ({ isVisible: async () => false }),

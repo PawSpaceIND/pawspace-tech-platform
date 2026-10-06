@@ -2,3 +2,9 @@
 .programmes{min-width:0}.programmes main>*{min-width:0}.programmes button{white-space:normal}.programmes select{min-width:0;width:100%}.programmes label{min-width:0}
 /* Scoped contrast repair: shared legacy button colors cannot override V2 surfaces. */
 .programmes.programmes main button{background:var(--brand-surface)!important;color:var(--brand-text)!important;border-color:var(--brand-line)!important}.programmes.programmes main button[aria-pressed="true"]{background:var(--brand-raised)!important;border-color:var(--brand-primary)!important}.programmes.programmes main button[data-v2-action="primary"]{background:var(--brand-primary)!important;color:var(--brand-on-primary)!important}
+
+/* PAWSPACE CUSTOMER/PARTNER THEME: approved presentation-only append. */
+/* Approved shared layout (native A/C handoff, Stage 3): training scene from the theme's sheet in place of the photo. */
+:global(html[data-paw-theme]) .hero .heroScene { display:block; position:relative; width:min(100%,360px); aspect-ratio:1 / 1; overflow:hidden; border-radius:var(--paw-card-radius); background:var(--paw-raised); justify-self:end; }
+:global(html[data-paw-theme]) .hero .heroScene>img { position:absolute; width:var(--sprite-width); height:auto; max-width:none; max-height:none; left:var(--sprite-left); top:var(--sprite-top); object-fit:unset; border-radius:0; }
+@media(max-width:720px){ :global(html[data-paw-theme]) .hero .heroScene { width:min(100%,260px); justify-self:start; } }

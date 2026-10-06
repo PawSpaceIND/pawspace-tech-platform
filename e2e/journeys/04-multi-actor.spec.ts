@@ -82,6 +82,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       const day=start.toISOString().slice(0,10);
       const boardApi=await expectOk(await admin.get(`/api/uat-scheduling?date=${encodeURIComponent(day)}`),"admin waiting-request board API");
       expect(boardApi.data.pendingRequests.some((row:{groupId:string})=>row.groupId===groupId)).toBe(true);
+      await page.context().addCookies([{name:"pawspace_admin_mfa",value:"e2e-admin-mfa-session-token",url:origin}]);
       await page.setExtraHTTPHeaders({"oai-authenticated-user-email":ADMIN_EMAIL,cookie:ADMIN_MFA_COOKIE});
       await page.goto("/team/scheduling");
       // Wait for client hydration before changing the controlled date input. On mobile Chromium the
@@ -106,6 +107,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
       await page.screenshot({path:test.info().outputPath("employee-assignment-live-form.png"),fullPage:true});
       await waiting.getByRole("button",{name:"Assign provider",exact:true}).click();
       await expect(waiting).toHaveCount(0);
+      await page.context().clearCookies({name:"pawspace_admin_mfa"});
       await page.setExtraHTTPHeaders({"oai-authenticated-user-email":CUSTOMER_EMAIL});
       scheduleBody=await expectOk(await customer.post("/api/uat-scheduling",{data:schedulePayload}),"customer resumes the staff-assigned request");
       expect(scheduleBody.data.duplicatePrevented).toBe(true);
@@ -284,6 +286,7 @@ for(const assignmentMode of ["auto","admin_choice"] as const)test(`correlated jo
     await expect(feedbackCard).toHaveCount(0);await expect(page.getByText(bookingId,{exact:false}).first()).toBeVisible();
     await page.screenshot({path:test.info().outputPath(`customer-feedback-saved-${assignmentMode}.png`),fullPage:true});
     await page.context().clearCookies();
+    await page.context().addCookies([{name:"pawspace_admin_mfa",value:"e2e-admin-mfa-session-token",url:origin}]);
     await page.setExtraHTTPHeaders({ "oai-authenticated-user-email": ADMIN_EMAIL, cookie: ADMIN_MFA_COOKIE });
     const adminUi = await page.goto("/booking-command-center", { waitUntil: "domcontentloaded" });
     expect(adminUi?.status() ?? 500).toBeLessThan(500);

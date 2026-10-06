@@ -1,0 +1,34 @@
+name: Staff inbox sandbox acceptance
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  staff-inbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_PAYMENT_ENV: sandbox
+      PAWSPACE_PAYMENT_LIVE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run install:ci
+      - run: npx playwright install --with-deps chromium
+      - name: Exact preservation and executed queue controls
+        run: node --experimental-strip-types --test tests/inbox-workspace-presentation.test.mjs tests/customer-partner-theme.test.mjs tests/partner-services-presentation.test.mjs tests/ui-display-truth.test.mjs tests/staff-inbox-contract.test.mjs tests/staff-inbox-queue-races.test.mjs
+      - name: Browser interaction and refusal controls
+        run: npx playwright test --config playwright.staff-inbox.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staff-inbox-sandbox-acceptance
+          path: test-results/staff-inbox/
+          if-no-files-found: warn

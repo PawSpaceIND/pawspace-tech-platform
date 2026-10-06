@@ -48,8 +48,8 @@
       ]
     },
     ".gitleaksignore": {
-      "beforeSha256": "a22899e8dca8d84aea0d2956ec646324e168375b34b0177c9115ee9a00c4a69e",
-      "afterSha256": "f91664038651db162f480b3e9a50fddebabfd7b62dbfbac8fea9581f9ae4feb4",
+      "beforeSha256": "5f1c662c7f2f69829655bcaf418b69333f36ed2025659ecbbe993125be110388",
+      "afterSha256": "02def25c71913940e8bf5c2195fa90c282ea7e6d2a5524ae05272932adffd01c",
       "replacements": [
         [
           "",

@@ -231,16 +231,16 @@ test("mobile: the recommendation comes from the goals, not a fixed flag or headi
   for (const stale of ["<h4>Basic Obedience Plan</h4>", "recommended:true", "item.recommended", "selectedGoals.slice(0, 2)"]) {
     assert.equal(flow.includes(stale), false, `${stale} is gone`);
   }
-  assert.match(flow, /next\.find\(item=>item\.packageCode===TRAINING_CORE_PACKAGE_CODE\)/, "the first selection still falls back to the core programme");
+  assert.match(flow, /const emptyPlan:Plan=\{packageCode:""/, "no programme is selected before the customer chooses");
+  assert.match(flow, /setPlan\(current=>next\.find\(item=>item\.packageCode===current\.packageCode\)\|\|emptyPlan\)/, "catalogue refresh preserves an explicit selection only");
 });
 
-test("mobile: opening the options pre-selects only a goal match, and every stage-1 way in goes through the helper", () => {
+test("mobile: opening the options shows the goal match without selecting it", () => {
   const start = flow.indexOf("showTrainingOptions = () => {");
   assert.ok(start > 0, "showTrainingOptions exists");
   const helper = flow.slice(start, flow.indexOf("\n    },", start));
-  assert.match(helper, /recommendation\?\.basis === "goals" && recommendedPlan && recommendedPlan\.packageCode !== appliedRecommendation/);
-  assert.ok(helper.indexOf("setPlan(recommendedPlan)") > 0 && helper.indexOf("setPlan(recommendedPlan)") < helper.indexOf("setStage(2)"), "the plan is set before stage 2 opens");
-  assert.match(helper, /setAppliedRecommendation\(recommendedPlan\.packageCode\)/);
+  assert.match(helper, /setStage\(2\)/);
+  assert.doesNotMatch(helper, /setPlan\(/, "opening options cannot choose a plan for the customer");
   const stageOne = flow.slice(flow.indexOf("{stage === 1 && ("), flow.indexOf("{stage === 2 && ("));
   assert.match(stageOne, /onClick=\{showTrainingOptions\}>\{selectedPets\.length === 0 \? "Select a dog to continue" : "See training options"\}/);
   assert.equal(stageOne.includes("setStage(2)"), false, "no stage-1 control opens stage 2 around the helper");
@@ -265,7 +265,7 @@ test("V2: a goal match is labelled on its package button and never selected for 
   assert.match(page, /const recommendation=useMemo\(\(\)=>recommendTrainingPlan\(\{goals,packageCodes:packages\.map\(item=>item\.package_code\),dogs:selectedPets\}\),\[goals,packages,selectedPets\]\);/);
   // Right after the name, so each button's accessible name still starts with the plan name.
   assert.match(page, /<strong>\{item\.name\}<\/strong>\{recommendation\?\.basis==="goals"&&recommendation\.packageCode===item\.package_code&&<small className=\{styles\.block\}>Best match for \{recommendation\.matchedGoals\.join\(" \+ "\)\}<\/small>\}/);
-  assert.match(page, /const\[packageCode,setPackageCode\]=useState\("training-4-puppy"\)/, "the default plan is unchanged");
+  assert.match(page, /const\[packageCode,setPackageCode\]=useState\(""\)/, "V2 waits for an explicit programme choice");
   assert.equal([...page.matchAll(/setPackageCode\(/g)].length, 2, "each route layout selects a package only through the customer's own tap");
   assert.equal([...page.matchAll(/onClick=\{\(\)=>setPackageCode\(item\.package_code\)\}/g)].length, 2, "both package selectors require an explicit tap");
   assert.match(page, /onClick=\{\(\)=>setPackageCode\(item\.package_code\)\}/);

@@ -14,6 +14,8 @@ import {boardingProviderExtras} from "./boarding-provider-projection.ts";
 
 export const HOST_REQUESTS_TITLE="Requests for your host";
 export const HOST_REQUESTS_NOT_INCLUDED="Not included in the price";
+/** Workbook row 54 asked for chargeable add-ons with real prices: no priced Boarding add-on catalogue exists, so none is listed. */
+export const ADD_ON_PRICE_NOTE="No priced Boarding add-ons are published yet, so none are listed here. Anything chargeable is a request your host confirms, with its price, before it applies.";
 export const HOST_REQUESTS_NOTE="These are requests to your host, not part of your booking price. Your host confirms whether they can help, and any extra charge, before it applies. Nothing extra is charged now.";
 
 /** The Review row's value. */

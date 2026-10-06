@@ -1,3 +1,4 @@
+import {preservedAcceptedUiBytes} from './helpers/accepted-ui-reviewed-delta.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -51,7 +52,7 @@ function preserveTrainingSource(input){
  assert.equal(createHash('sha256').update(source).digest('hex'),'b23d396e588a5ed106e7fec9562ddfda5aff71cb8f0c78e38e927491fd2d00f5');
  return source;
 }
-const pageSource=()=>readFileSync(new URL('../app/training/page.tsx',import.meta.url),'utf8');
+const pageSource=()=>preservedAcceptedUiBytes('app/training/page.tsx',readFileSync(new URL('../app/training/page.tsx',import.meta.url),'utf8'));
 test('page retains all original handlers, values, requests and V1 bytes after reversing its presentation wrapper',()=>{preserveTrainingSource(pageSource());});
 
 import {uiWiringContract} from './helpers/ui-wiring-contract.mjs';
@@ -64,6 +65,11 @@ test('reviewed grouping/readiness changes normalize to the original interaction 
  assert.equal(actual.declarations,baseline.declarations);assert.equal(actual.conditions,baseline.conditions);
 });
 test('preservation rejects changed selection, guard, request, commercial expression and grouping inputs',()=>{
+ const raw=readFileSync(new URL('../app/training/page.tsx',import.meta.url),'utf8');
+ for(const [before,after]of [['!firstSession.ok','false'],['zoneId:location.zoneId','zoneId:"unreviewed-zone"'],['schedulingMode:TRAINING_SCHEDULING_MODE','schedulingMode:"series_v1"'],['const quote=currentQuote;','const quote={...currentQuote,totalAmount:1};']]){
+  assert.ok(raw.includes(before),before);
+  assert.throws(()=>preservedAcceptedUiBytes('app/training/page.tsx',raw.replace(before,after)),before);
+ }
  const source=pageSource();
  const changes=[
  ['setPackageCode(item.package_code)','setPackageCode("different-plan")'],

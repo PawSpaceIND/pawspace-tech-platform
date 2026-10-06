@@ -20,6 +20,7 @@ import { AdditionalCareTiles, HomePets } from "./home-care-extras";
 import V2ServiceIcon from "./service-icon";
 import { useModalFocus } from "../components/use-modal-focus";
 import PawSpaceWelcome from "../components/pawspace-welcome";
+import { NativeHero, NativeServiceArt, type ServiceSceneCode } from "../components/native-art";
 
 type ServiceCard = {
   code: string;
@@ -213,23 +214,18 @@ export default function PawSpaceV2() {
 
         <section className={styles.hero}>
           <div className={styles.heroCopy}>
-            <span className={styles.kicker}><i /> YOUR PETTER HALF</span>
-            <h1>Happy pets.<br /><em>Happier days.</em></h1>
-            <p>A little care. A lot of love.</p>
+            <span className={styles.kicker}><i /> THOUGHTFUL CARE. CLOSE TO HOME.</span>
+            <h1>Their happy place.<br /><em>Your peace of mind.</em></h1>
+            <p>From little routines to longer stays, find the care that fits your pet.</p>
             <div className={styles.heroActions}>
-              <a href="#services" className={styles.primaryAction}>Book a service <span>↗</span></a>
+              <a href="#services" className={styles.primaryAction}>Explore care <span>↗</span></a>
               <Link href="/v2/chat" className={styles.secondaryAction}><span>✦</span> Plan with PawSpace AI</Link>
-            </div>
-            <div className={styles.trustRow}>
-              <span><b>4.9</b><small>customer love</small></span>
-              <span><b>8</b><small>care experiences</small></span>
-              <span><b>1</b><small>family record</small></span>
             </div>
           </div>
           <div className={styles.heroVisual}>
             <div className={styles.heroHalo} />
             <div className={styles.petPortrait}>
-              <img src="/assets/pawspace-grooming-editorial.webp" alt="Happy pet enjoying PawSpace care" />
+              <NativeHero />
             </div>
             <div className={styles.floatingCardTop}>
               <span className={styles.liveDot} />
@@ -287,7 +283,7 @@ export default function PawSpaceV2() {
                       <p>{service.note}</p>
                       <b className={styles.serviceState}>{availabilityKnown ? (enabled ? "Available" : "Not taking bookings") : "Checking availability"}</b>
                     </div>
-                    <div className={styles.serviceArt}><img src={service.image} alt="" /></div>
+                    <div className={styles.serviceArt}><NativeServiceArt service={service.code as ServiceSceneCode} /></div>
                     <span className={styles.serviceArrow}>↗</span>
                   </>
                 );

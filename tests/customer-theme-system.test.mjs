@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-test("customer app offers Emerald kit and Brand book colours", async () => {
+test("customer app offers the two approved appearances; legacy kits remain migration metadata", async () => {
   const config = await readFile(new URL("../app/mobile-app/theme-config.ts", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/mobile-app/mobile.module.css", import.meta.url), "utf8");
@@ -11,9 +11,9 @@ test("customer app offers Emerald kit and Brand book colours", async () => {
   const appearance = await readFile(new URL("../app/components/pawspace-appearance.tsx", import.meta.url), "utf8");
   const brandBook = await readFile(new URL("../app/pawspace-design-system.css", import.meta.url), "utf8");
 
-  assert.match(config, /id:"emerald"/);
-  assert.match(config, /id:"signature"/);
-  assert.match(config, /id:"coral"/);
+  assert.match(config, /id:"editorial"/);
+  assert.match(config, /id:"concierge"/);
+  assert.doesNotMatch(config, /id:"emerald"|id:"signature"|id:"coral"/, "legacy palettes are not offered as appearances");
   assert.match(config, /resolveBrandTheme/);
   assert.match(config, /PLATFORM_THEME_STORAGE_KEY/);
   assert.doesNotMatch(config, /id:"midnight"/);
@@ -25,7 +25,12 @@ test("customer app offers Emerald kit and Brand book colours", async () => {
   assert.match(brandLock, /#e6b34e|#E6B34E/);
   assert.match(brandBook, /#894AED/);
   assert.match(brandBook, /#FFAF00/);
-  assert.match(appearance, /resolveBrandTheme/);
+  // The controller derives its theme only through the shared resolver, which resolves through the config gate (no local theme list).
+  const resolver = await readFile(new URL("../app/components/appearance-resolver.ts", import.meta.url), "utf8");
+  assert.match(appearance, /effectiveTheme\(record, conciergeAvailable\)/);
+  assert.doesNotMatch(appearance, /\[\s*"editorial"\s*,\s*"concierge"\s*\]/);
+  assert.match(resolver, /isOfferedTheme\(record\.explicit, conciergeAvailable\)/);
+  assert.match(resolver, /return SAFE_THEME;/);
   assert.match(appearance, /Make PawSpace yours/);
 
   assert.match(page, /data-pawspace-mobile="true"/);
