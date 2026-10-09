@@ -768,10 +768,17 @@ test("G02: late device permission completion after manual entry never calls the 
 });
 
 test("G02: rejecting a suggested location keeps the existing quote and coupon intact", async ({ page }) => {
+  // This test checks cancellation, not scrolling animation. The WebKit trace showed
+  // the button moving during its pointer click; respect the supported reduced-motion path.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
   await previewCare(page); await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Next · review payment/ })).toBeEnabled();
   await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
-  await page.getByRole("button", { name: "Keep entered address", exact: true }).click();
+  const suggestion = page.getByRole("region", { name: "Suggested service address" });
+  await expect(suggestion).toBeVisible();
+  await suggestion.getByRole("button", { name: "Keep entered address", exact: true }).click();
+  await expect(suggestion).toHaveCount(0);
   await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
   await expect(page.getByRole("button", { name: /Next · review payment/ })).toBeEnabled();
