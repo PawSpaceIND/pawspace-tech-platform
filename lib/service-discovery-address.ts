@@ -2,7 +2,7 @@ import {sameSavedAddress,savedAddressId} from "./saved-address-identity";
 import{SERVICE_ADDRESS_REASON_COPY,type ServiceAddressRefusalCode,type ServiceAddressRefusalReason}from"./service-address-refusal-copy";
 import{uatRosterSeedingEnabled}from"./scheduling-roster-authority";
 import{cityFulfilmentVerdict}from"./city-coverage-authority";
-import{geocodeAddress}from"./address-autocomplete";
+import{geocodeAddress,reverseGeocode}from"./address-autocomplete";
 import{validateIndianPincode}from"./pincode-validation";
 import{resolveZoneByPincode}from"./service-zones";
 import{serviceAddressConflict}from"./service-address-consistency";
@@ -16,7 +16,11 @@ export const SERVICE_DISCOVERY_RADIUS_KM=16;
 /** UAT only: every seeded groomer serves the whole city, so the geofence must span it (Kengeri-Whitefield is ~30 km). */
 export const UAT_SERVICE_DISCOVERY_RADIUS_KM=45;
 async function uatSchedulingRuntime(){const{env}=await import("cloudflare:workers");return uatRosterSeedingEnabled(env as unknown as Record<string,unknown>);}
-export type GovernedServiceAddress={addressId:string;address:string;pincode:string;cityId:string;zoneId:string;latitude:number;longitude:number;serviceRadiusKm?:number};
+/** Where the returned coordinates came from. Client coordinates are never a source on their own: a device point is
+ * accepted only after the server's own reverse geocode of that point names this same doorstep and PIN. A cached
+ * point is reported as cached, never relabelled as a fresh server geocode. */
+export type GovernedCoordinateSource="server_geocode"|"server_reverse_geocode"|"cached_geocode";
+export type GovernedServiceAddress={addressId:string;address:string;pincode:string;cityId:string;zoneId:string;latitude:number;longitude:number;serviceRadiusKm?:number;coordinateSource:GovernedCoordinateSource};
 
 async function tableExists(db:Db,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>());}
 // Once per isolate: this probe and two DDL statements ran in front of every booking and availability check.
@@ -24,6 +28,9 @@ async function ensureAddressTablesUncached(db:Db){
   if(!await tableExists(db,"customer_addresses"))await db.prepare("CREATE TABLE IF NOT EXISTS customer_addresses (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,label TEXT NOT NULL,line1 TEXT NOT NULL,line2 TEXT,area TEXT,city TEXT NOT NULL,postal_code TEXT,is_default INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE TABLE IF NOT EXISTS customer_service_address_geocodes (address_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,pincode TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,resolved_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_service_geocodes_customer ON customer_service_address_geocodes(customer_id,updated_at DESC)").run();
+  // Additive side table: where a cached point came from. It counts only while it matches the cached row exactly, so a
+  // replaced or older row (written before provenance was recorded) reads as unknown provenance.
+  await db.prepare("CREATE TABLE IF NOT EXISTS customer_service_address_geocode_provenance (address_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,coordinate_source TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,recorded_at INTEGER NOT NULL)").run();
 }
 // Ready-set only: no in-flight promise is shared across requests (a cancelled request's promise never settles).
 const addressTablesReady=new WeakSet<object>();
@@ -54,7 +61,7 @@ async function ensureTestProviderHomeBases(db:Db){
  * Legacy executable suites can opt into one explicit server-owned sandbox fixture with
  * PAWSPACE_TEST_SERVICE_DISCOVERY_FIXTURE=on. The fixture is impossible to activate unless the runtime
  * is sandbox plus test/UAT, and it never trusts browser city/zone/coordinates. */
-export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number;/** false: resolve and geocode only; the customer did not ask to keep this address. */saveToAccount?:boolean}) : Promise<GovernedServiceAddress>{
+export async function resolveGovernedServiceAddress(db:Db,input:{customerId:string;serviceCode:string;serviceAddress?:string;servicePincode?:string;latitude?:number;longitude?:number;/** false: resolve and geocode only; the customer did not ask to keep this address. */saveToAccount?:boolean;/** Persisting a booking doorstep: a cached point of unknown provenance is re-verified by a fresh server geocode before it is used. */requireCoordinateProvenance?:boolean}) : Promise<GovernedServiceAddress>{
   await ensureAddressTables(db);const fixture=await testFixtureEnabled();if(fixture)await ensureTestProviderHomeBases(db);
   let suppliedAddress=String(input.serviceAddress||"").trim();const suppliedPincode=String(input.servicePincode||"").trim();
   let row:Row|null=null;
@@ -98,6 +105,8 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   //  - Every write is conditional on the canonical saved row being byte-for-byte what was read, and that row is
   //    checked again before this answer is returned, so a concurrent address edit can never be repaired over.
   const geoColumns="customer_id,pincode,city_id,zone_id,address_text,latitude,longitude,resolved_at,updated_at";
+  const knownSource=(value:unknown):value is GovernedCoordinateSource=>value==="server_geocode"||value==="server_reverse_geocode";
+  const recordedSource=async(candidate:Row):Promise<GovernedCoordinateSource|null>=>{const p=await db.prepare("SELECT customer_id,coordinate_source,address_text,latitude,longitude FROM customer_service_address_geocode_provenance WHERE address_id=?").bind(String(row.id)).first<Row>();return p&&String(p.customer_id)===input.customerId&&String(p.address_text)===String(candidate.address_text)&&Number(p.latitude)===Number(candidate.latitude)&&Number(p.longitude)===Number(candidate.longitude)&&knownSource(p.coordinate_source)?p.coordinate_source:null;};
   const canonicalLocality={area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode};
   const sameDoorstepText=(text:unknown)=>sameSavedAddress({line1:text,...canonicalLocality},{line1:address,...canonicalLocality});
   const embeddedPins=(text:unknown)=>serviceAddressPincodes(String(text??""));
@@ -111,14 +120,28 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
   const canonicalGuard=canonicalColumns.map(column=>`${column} IS ?`).join(" AND "),canonicalValues=canonicalColumns.map(column=>held?.[column]??null);
   const canonicalUnchanged=async()=>{if(!held)return true;const now=await db.prepare(`SELECT ${canonicalColumns.join(",")} FROM customer_addresses WHERE id=?`).bind(String(row.id)).first<Row>();return Boolean(now)&&canonicalColumns.every(column=>(now?.[column]??null)===(held[column]??null));};
   const canonicalChanged=()=>new Response("Saved address changed while it was being verified; try again",{status:409});
+  let coordinateSource:GovernedCoordinateSource="cached_geocode";
   let geo=await db.prepare(`SELECT ${geoColumns} FROM customer_service_address_geocodes WHERE address_id=?`).bind(String(row.id)).first<Row>();
   if(geo&&String(geo.customer_id)!==input.customerId)throw new Response("Address geocode identity conflict; select your saved address",{status:409});
-  const stale=geo&&held&&derivedDrift(geo)&&doorstepAsidePostal(geo)?geo:null;if(stale)geo=null;
+  const provenanceOfCached=input.requireCoordinateProvenance&&geo&&consistentGeo(geo)?await recordedSource(geo):null;
+  const unprovenanced=Boolean(input.requireCoordinateProvenance&&geo&&consistentGeo(geo)&&!provenanceOfCached);
+  const stale=geo&&((held&&derivedDrift(geo)&&doorstepAsidePostal(geo))||unprovenanced)?geo:null;if(stale)geo=null;
   if(geo&&!consistentGeo(geo))throw new Response("Address geocode identity conflict; select your saved address",{status:409});
+  // A reused point keeps its recorded provenance; one written before provenance was recorded reads as cached, never as a fresh server geocode.
+  if(geo)coordinateSource=provenanceOfCached??"cached_geocode";
   if(!geo){
     const fixtureGeo=fixtureCoordinates(cityId),geocoded=fixture?{status:"configured"as const,address,latitude:fixtureGeo.latitude,longitude:fixtureGeo.longitude,error:undefined}:await geocodeAddress({address});
-    const fallbackLatitude=Number(input.latitude),fallbackLongitude=Number(input.longitude),gpsFallback=usableCoordinates(fallbackLatitude,fallbackLongitude);
-    const resolvedGeo=geocoded.status==="configured"&&usableCoordinates(geocoded.latitude,geocoded.longitude)?geocoded:gpsFallback?{status:"configured" as const,address,latitude:fallbackLatitude,longitude:fallbackLongitude,error:geocoded.error,source:"customer_gps_fallback"}:null;
+    // Map authority is server evidence only. A forward geocode of the canonical address is preferred. Device coordinates
+    // (or any flag, place id or source label a client sends) are never written on their own: they are used only as the
+    // point the server reverse-geocodes, and accepted only if that answer carries this PIN and passes the same
+    // doorstep validation below. Otherwise the request refuses neutrally and nothing is written.
+    let resolvedGeo:{address?:string;latitude?:number;longitude?:number}|null=null;
+    if(geocoded.status==="configured"&&usableCoordinates(geocoded.latitude,geocoded.longitude)){resolvedGeo=geocoded;coordinateSource="server_geocode";}
+    else if(!fixture&&usableCoordinates(input.latitude,input.longitude)){
+      const reverse=await reverseGeocode({latitude:Number(input.latitude),longitude:Number(input.longitude)});
+      if(reverse.status==="configured"&&String(reverse.pincode||"").trim()===validated.pincode&&String(reverse.address||"").trim()){resolvedGeo={address:String(reverse.address),latitude:Number(input.latitude),longitude:Number(input.longitude)};coordinateSource="server_reverse_geocode";}
+      else throw new Response("The service address could not be verified against map data",{status:409});
+    }
     if(!resolvedGeo)throw new Response(geocoded.error||"The service address could not be geocoded for provider matching. Use current location or contact PawSpace support.",{status:409});
     // Fresh evidence is validated BEFORE any INSERT or compare-and-swap: usable coordinates, no PIN or city in the
     // returned text that contradicts the canonical address, and the same doorstep. A geocoder answer that fails any
@@ -143,6 +166,10 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
     // Whatever is stored now (ours, or a concurrent writer's) must agree with the canonical address; otherwise the
     // customer retries rather than booking against data this request did not verify.
     if(!stored||!consistentGeo(stored))throw new Response("Address geocode changed while it was being verified; try again",{status:409});
+    // A concurrent writer's row is honest data but not this request's fresh answer: report it as cached.
+    if(String(stored.address_text)!==fresh[3]||Number(stored.latitude)!==fresh[4]||Number(stored.longitude)!==fresh[5])coordinateSource=(input.requireCoordinateProvenance?await recordedSource(stored):null)??"cached_geocode";
+    // Our own validated write: record where the point came from, bound to these exact values.
+    else await db.prepare("INSERT INTO customer_service_address_geocode_provenance (address_id,customer_id,coordinate_source,address_text,latitude,longitude,recorded_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(address_id) DO UPDATE SET customer_id=excluded.customer_id,coordinate_source=excluded.coordinate_source,address_text=excluded.address_text,latitude=excluded.latitude,longitude=excluded.longitude,recorded_at=excluded.recorded_at").bind(id,input.customerId,coordinateSource,fresh[3],fresh[4],fresh[5],now).run();
     geo=stored;
   }
   // Authority is returned only while the canonical saved row is still the one this answer was derived from.
@@ -159,7 +186,7 @@ export async function resolveGovernedServiceAddress(db:Db,input:{customerId:stri
     if(!persisted||String(persisted.customer_id)!==input.customerId||!sameSavedAddress(persisted,{line1:suppliedAddress,area:resolved.assignment.area,city:resolved.assignment.city,postalCode:validated.pincode}))throw new Response("Address identity conflict; refresh and try again",{status:409});
   }
   const radius=input.serviceCode==="grooming"||input.serviceCode==="dog_training"?(await uatSchedulingRuntime()?UAT_SERVICE_DISCOVERY_RADIUS_KM:SERVICE_DISCOVERY_RADIUS_KM):undefined;
-  return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius};
+  return{addressId:String(row.id),address:String(geo.address_text||address),pincode:validated.pincode,cityId,zoneId:resolved.assignment.zoneId,latitude:Number(geo.latitude),longitude:Number(geo.longitude),serviceRadiusKm:radius,coordinateSource};
 }
 
 

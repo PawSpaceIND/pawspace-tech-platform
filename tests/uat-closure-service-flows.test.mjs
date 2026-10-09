@@ -104,10 +104,16 @@ test("the governed service PIN fails closed before anything is scheduled", async
     const east = await client.resolveServiceCoverage("560038");
     assert.notEqual(east.zoneId, resolved.zoneId, "two pincodes in different zones resolve differently");
 
-    // Punctuation and spacing are normalised rather than rejected or passed through raw.
-    const messy = await client.resolveServiceCoverage(" 560-001 ");
-    assert.equal(messy.zoneId, resolved.zoneId);
-    assert.equal(messy.pincode, "560001");
+    // Outer whitespace is accepted; punctuation, inner spaces and truncation are refused before a network call.
+    const padded = await client.resolveServiceCoverage(" 560001 ");
+    assert.equal(padded.zoneId, resolved.zoneId);
+    assert.equal(padded.pincode, "560001");
+    const routeFetch = globalThis.fetch;let malformedRequests=0;
+    globalThis.fetch=(...args)=>{malformedRequests++;return routeFetch(...args);};
+    try {
+      for(const raw of [" 560-001 ","560 001","5600019"])await assert.rejects(()=>client.resolveServiceCoverage(raw),/six digits only/);
+      assert.equal(malformedRequests,0,"malformed PIN never reaches coverage or scheduling");
+    } finally { globalThis.fetch=routeFetch; }
   } finally {
     restore();
   }
