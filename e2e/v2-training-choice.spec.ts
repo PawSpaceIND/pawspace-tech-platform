@@ -1,6 +1,8 @@
 import {test,expect,type Page} from "@playwright/test";
 const trainer=(id:string,name:string)=>({id,name,model:"commission",rating:4.8,qualityScore:90,capacity:1,travelBufferMinutes:30,maxDailyJobs:6});
 async function fixture(page:Page){
+ const fixtureNow=new Date("2026-10-05T04:00:00Z");
+ await page.clock.setFixedTime(fixtureNow);
  const first=trainer("TRAINER-1","Trainer One"),second=trainer("TRAINER-2","Trainer Two");
  const state={providers:[first,second],assigned:first,refuse:false,reservations:[] as Record<string,unknown>[],bookings:[] as Record<string,unknown>[]};
  await page.route("**/api/**",async route=>{
@@ -12,7 +14,7 @@ async function fixture(page:Page){
   if(path==="/api/service-zone")return reply({zone:{zoneId:"blr-east",zoneName:"Bengaluru East",serviceAvailable:true}});
   if(path==="/api/training-commercial"){
    if(request.method()==="GET")return reply({packages:[{package_code:"training-4-puppy",name:"Foundation Training",sessions:4,validity_days:60,base_price:6000,currency:"INR",meet_and_greet:0,max_pets:4,direct_minutes_per_pet:45,coaching_minutes_per_pet:15,split_due_percent:50,version:1}],source:"fixture",liveMoney:false});
-   return reply({quoteId:"TRAIN-Q1",packageCode:body.packageCode,packageName:"Foundation Training",packageVersion:1,sessions:4,validityDays:60,petCount:body.petCount,minutesPerSession:60,basePrice:6000,discount:0,totalAmount:6000,amountDueNow:body.paymentMode==="split"?3000:6000,paymentMode:body.paymentMode,meetAndGreet:false,expiresAt:Date.now()+900000,liveMoney:false});
+   return reply({quoteId:"TRAIN-Q1",packageCode:body.packageCode,packageName:"Foundation Training",packageVersion:1,sessions:4,validityDays:60,petCount:body.petCount,minutesPerSession:60,basePrice:6000,discount:0,totalAmount:6000,amountDueNow:body.paymentMode==="split"?3000:6000,paymentMode:body.paymentMode,meetAndGreet:false,expiresAt:fixtureNow.getTime()+900000,liveMoney:false});
   }
   if(path==="/api/training-trainers")return reply({providers:state.providers,source:"fixture",liveAvailability:false});
   if(path==="/api/uat-scheduling"){
@@ -61,4 +63,13 @@ test("V2 Training refreshes first-slot availability without creating a booking",
  await page.getByRole("button",{name:"Refresh trainer availability"}).click();
  await expect(page.getByText(/trainer is available/)).toBeVisible();
  await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeEnabled();expect(state.reservations).toHaveLength(0);
+});
+
+test("V2 Training still refuses dates inside the two full preparation days",async({page})=>{
+ const state=await fixture(page);
+ await expect(page.getByLabel(/First session date/)).toHaveAttribute("min","2026-10-08");
+ await page.getByLabel(/First session date/).fill("2026-10-07");
+ await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeDisabled();
+ await expect(page.getByRole("alert").filter({hasText:/two full days to prepare/})).toBeVisible();
+ expect(state.reservations).toHaveLength(0);expect(state.bookings).toHaveLength(0);
 });
