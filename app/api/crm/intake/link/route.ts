@@ -3,7 +3,7 @@ import {CRM_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScop
 import {validateBookingOrigin} from '../../../../../lib/lead-conversion-attribution';
 import {readBoundedRequestText,VoiceFetchRefused} from '../../../../../lib/voice-safe-fetch';
 import {BridgeRefusal,recordCanonicalLink,verifiedBookingHandoff} from '../../../../../lib/crm-intake-bridge.mjs';
-import {ensureCrmIntakeBridgeTables} from '../../../../../lib/crm-intake-schema';
+import {ensureCrmIntakeBridgeTables} from "../../../../../lib/crm-intake-schema";
 
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&v===v.trim()&&!/[\u0000-\u001f\u007f]/.test(v);
