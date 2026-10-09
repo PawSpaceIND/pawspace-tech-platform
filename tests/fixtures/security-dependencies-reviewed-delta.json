@@ -191,7 +191,7 @@
     },
     "e2e/v2-grooming.spec.ts": {
       "beforeSha256": "766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230",
-      "afterSha256": "7a0a48d9d7cf42d96ea3a1fe4db49b526dfcd133d7a133df58ac82e57a889467",
+      "afterSha256": "00e0f4e0779ad40c3a2d6a18210ea7273d52d3b7890a4f1669bb4f85c7957158",
       "replacements": [
         [
           "test(\"G02: rejecting a suggested location keeps the existing quote and coupon intact\", async ({ page }) => {\n  const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);\n",
@@ -208,6 +208,10 @@
         [
           "  await (await deviceLocationReview(page)).getByRole(\"button\", { name: \"Use current location\", exact: true }).click();\n  const suggested = page.getByRole(\"region\", { name: \"Suggested service address\" });",
           "  // Smooth scrolling moved the tablet pointer target between mouse-down and mouse-up.\n  // Exercise the same user action through its keyboard-accessible button.\n  const useLocation = (await deviceLocationReview(page)).getByRole(\"button\", { name: \"Use current location\", exact: true });\n  await useLocation.focus();\n  await expect(useLocation).toBeFocused();\n  await useLocation.press(\"Enter\");\n  const suggested = page.getByRole(\"region\", { name: \"Suggested service address\" });"
+        ],
+        [
+          " await box.getByRole(\"button\",{name:\"Apply SECOND\",exact:true}).click();await expect(page.getByText(/Coupon SECOND/)).toBeVisible();\n await selectTickTreatment(page);",
+          " // Firefox placed the pointer target at the viewport edge under the privacy banner.\n const essentialOnly=page.getByRole(\"button\",{name:\"Essential Only\"});\n if(await essentialOnly.isVisible())await essentialOnly.click();\n const applySecond=box.getByRole(\"button\",{name:\"Apply SECOND\",exact:true});\n await applySecond.focus();await expect(applySecond).toBeFocused();await applySecond.press(\"Enter\");\n await expect(page.getByText(/Coupon SECOND/)).toBeVisible();\n await selectTickTreatment(page);"
         ]
       ]
     }

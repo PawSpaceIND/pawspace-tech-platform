@@ -615,7 +615,12 @@ test("G09: a customer's chosen offer is revalidated instead of replaced by a lar
  const state=await fixture(page);state.normalOffers=true;state.offerValues=[{code:"NORMAL",savings:300},{code:"SECOND",savings:100}];state.couponDiscounts={NORMAL:300,SECOND:100};
  await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
- await box.getByRole("button",{name:"Apply SECOND",exact:true}).click();await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
+ // Firefox placed the pointer target at the viewport edge under the privacy banner.
+ const essentialOnly=page.getByRole("button",{name:"Essential Only"});
+ if(await essentialOnly.isVisible())await essentialOnly.click();
+ const applySecond=box.getByRole("button",{name:"Apply SECOND",exact:true});
+ await applySecond.focus();await expect(applySecond).toBeFocused();await applySecond.press("Enter");
+ await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
  await selectTickTreatment(page);
  await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expectReviewTotal(page, "₹2,298");
