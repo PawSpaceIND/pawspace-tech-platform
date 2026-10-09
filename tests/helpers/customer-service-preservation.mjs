@@ -1,3 +1,4 @@
+import {preservedSecurityDependencyBytes} from './security-dependencies-reviewed-delta.mjs';
 import {preservedStaffInboxBytes} from './staff-inbox-reviewed-delta.mjs';
 import {readFileSync} from 'node:fs';
 import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
@@ -14,6 +15,7 @@ export function preservedCustomerServiceBytes(path,bytes,read){
  bytes=preservedAcceptedUiBytes(path,preservedStaffInboxBytes(path,bytes));
  const sourceRead=read??(p=>readFileSync(new URL('../../'+p,import.meta.url)));
  read=p=>preservedAcceptedUiBytes(p,preservedStaffInboxBytes(p,sourceRead(p)));
+ bytes=preservedSecurityDependencyBytes(path,bytes);
  bytes=preservedGroomingBackBarBytes(path,bytes);
  return preservedReviewedFoodBytes(path,preservedCombinedLocalBytes(path,preservedServiceFixBytes(path,preservedServiceLintBytes(path,preservedGroomingAutoRefusalBytes(path,preservedCiRuntimeBytes(path,preservedChatQualificationBytes(path,preservedChatLedgerBytes(path,bytes))))))),read);
 }

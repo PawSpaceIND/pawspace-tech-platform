@@ -615,7 +615,12 @@ test("G09: a customer's chosen offer is revalidated instead of replaced by a lar
  const state=await fixture(page);state.normalOffers=true;state.offerValues=[{code:"NORMAL",savings:300},{code:"SECOND",savings:100}];state.couponDiscounts={NORMAL:300,SECOND:100};
  await previewCare(page);const box=page.getByRole("group",{name:"Coupon code",exact:true});
  await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
- await box.getByRole("button",{name:"Apply SECOND",exact:true}).click();await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
+ // Firefox placed the pointer target at the viewport edge under the privacy banner.
+ const essentialOnly=page.getByRole("button",{name:"Essential Only"});
+ if(await essentialOnly.isVisible())await essentialOnly.click();
+ const applySecond=box.getByRole("button",{name:"Apply SECOND",exact:true});
+ await applySecond.focus();await expect(applySecond).toBeFocused();await applySecond.press("Enter");
+ await expect(page.getByText(/Coupon SECOND/)).toBeVisible();
  await selectTickTreatment(page);
  await page.getByRole("button",{name:/Next · confirm price & groomers/}).click();
  await expectReviewTotal(page, "₹2,298");
@@ -688,7 +693,12 @@ test("G02/G05: location needs a user action and review; confirmed changes rechec
   expect(state.reverseCalls).toBe(0);
   const reserve = page.getByRole("button", { name: /Next · review payment/ });
   await expect(reserve).toBeEnabled();
-  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
+  // Smooth scrolling moved the tablet pointer target between mouse-down and mouse-up.
+  // Exercise the same user action through its keyboard-accessible button.
+  const useLocation = (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true });
+  await useLocation.focus();
+  await expect(useLocation).toBeFocused();
+  await useLocation.press("Enter");
   const suggested = page.getByRole("region", { name: "Suggested service address" });
   await expect(suggested).toBeVisible();
   await expect(suggested).toContainText(locatedAddress);
@@ -768,10 +778,17 @@ test("G02: late device permission completion after manual entry never calls the 
 });
 
 test("G02: rejecting a suggested location keeps the existing quote and coupon intact", async ({ page }) => {
+  // This test checks cancellation, not scrolling animation. The WebKit trace showed
+  // the button moving during its pointer click; respect the supported reduced-motion path.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const state = await fixture(page); state.normalOffers = true; await enableDeviceLocation(page);
   await previewCare(page); await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Next · review payment/ })).toBeEnabled();
   await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
-  await page.getByRole("button", { name: "Keep entered address", exact: true }).click();
+  const suggestion = page.getByRole("region", { name: "Suggested service address" });
+  await expect(suggestion).toBeVisible();
+  await suggestion.getByRole("button", { name: "Keep entered address", exact: true }).click();
+  await expect(suggestion).toHaveCount(0);
   await expect(page.getByLabel("House, street & area")).toHaveValue("21 Indiranagar Main Road");
   await expect(page.getByText(/Coupon NORMAL/)).toBeVisible();
   await expect(page.getByRole("button", { name: /Next · review payment/ })).toBeEnabled();
