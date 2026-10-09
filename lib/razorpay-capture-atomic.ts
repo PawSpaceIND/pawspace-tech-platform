@@ -1,6 +1,6 @@
 import { ACCT } from "./finance-accounts";
 import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
-import { ensurePaymentReconciliationTables } from "./grooming-payment-reconciliation";
+import { claimCapturedPaymentLinkStatement, ensurePaymentReconciliationTables } from "./grooming-payment-reconciliation";
 import { postCollectionEvent } from "./collection-ledger";
 import { paymentStageAmount } from "./payment-stage-amount";
 import { convertLeadOnPaymentCaptured } from "./lead-conversion-attribution";
@@ -165,6 +165,9 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
         ON CONFLICT(provider,event_id) DO NOTHING`)
         .bind(`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`, input.environment, input.eventId, "payment.captured", input.bookingId, input.paymentId, input.gatewayOrderId || null, input.gatewayPaymentId || null, input.amountPaise, input.currency, authority==="webhook_signature"?1:0, input.payloadHash, JSON.stringify({ ...(input.detail || {}), atomicCapture: true, duplicateCapture: true, captureAuthority: authority }), now, now),
       ...(input.inboxId?[db.prepare("UPDATE gateway_webhook_events SET processing_status='PROCESSED',event_type='payment.captured',failure_reason=NULL,processed_at=? WHERE id=? AND processing_status='PROCESSING'").bind(now, input.inboxId)]:[]),
+      // A repeat of a VERIFIED capture may still point a link that a failed attempt took at this payment. The
+      // claim is the same guarded statement as a first capture, so a link already on a verified capture keeps it.
+      ...(input.gatewayPaymentId ? [claimCapturedPaymentLinkStatement(db, { bookingId: input.bookingId, paymentId: input.paymentId, environment: input.environment, gatewayPaymentId: input.gatewayPaymentId, now })] : []),
     ]);
     const existingEffects = await db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>();
     return { duplicateCapture: true, effectsOutboxId: text(existingEffects?.id), effectsStatus: text(existingEffects?.status), capturedTotal: Number(current?.captured_amount || 0), collectedInFull: true };
@@ -222,11 +225,16 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,failure_reason,detail_json,received_at,processed_at)
       VALUES (?,'razorpay',? ,?,'payment.captured',?,?,?,?,NULL,?,?,?,?,'processed',NULL,?,?,?)`)
       .bind(gatewayEventId, input.environment, input.eventId, input.bookingId, input.paymentId, input.gatewayOrderId || null, input.gatewayPaymentId || null, input.amountPaise, input.currency, signatureVerified, input.payloadHash, eventDetail, now, now),
-    // The link keeps the FIRST captured payment. A later capture on the same booking (a split balance, a
+    // The link keeps the FIRST CAPTURED payment. A later capture on the same booking (a split balance, a
     // reschedule difference) used to overwrite it, so a refund went to the newest, smaller payment. Every
     // capture stays recorded on its own payment_gateway_events row (and on its intent), which is what the
-    // refund sweep splits a refund across.
-    db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=? AND payment_id=?").bind(input.gatewayPaymentId || null, now, input.bookingId, input.paymentId),
+    // refund sweep splits a refund across. COALESCE kept the first NON-NULL id instead, so a failed attempt on
+    // the same order that reached the link first kept it after the retry captured; the claim gives way only to
+    // an id with no verified capture behind it.
+    // Always exactly one statement in this slot: the schedule updates below are spliced in by position.
+    input.gatewayPaymentId
+      ? claimCapturedPaymentLinkStatement(db, { bookingId: input.bookingId, paymentId: input.paymentId, environment: input.environment, gatewayPaymentId: input.gatewayPaymentId, now })
+      : db.prepare("UPDATE payment_gateway_links SET updated_at=? WHERE booking_id=? AND payment_id=?").bind(now, input.bookingId, input.paymentId),
     db.prepare("UPDATE booking_payments SET status='captured',gateway=?,method=COALESCE(?,method),detail_json=json_set(COALESCE(detail_json,'{}'),'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?,'$.atomicCapture',1),updated_at=? WHERE id=? AND booking_id=?")
       .bind(gateway, gatewayMethod, input.gatewayPaymentId || null, input.gatewayOrderId || null, input.eventId, now, input.paymentId, input.bookingId),
     db.prepare(`INSERT INTO payment_reconciliation_records
@@ -234,7 +242,15 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
       VALUES (?,?,?,?,?,0,?,?,'captured','partially_captured',0,?,?)
       ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=CASE WHEN ?=1 THEN payment_reconciliation_records.expected_amount ELSE excluded.expected_amount END,currency=excluded.currency,gateway_status='captured',last_event_id=excluded.last_event_id,updated_at=excluded.updated_at`)
       .bind(input.paymentId, input.bookingId, "razorpay", input.environment, additionalCapture ? 0 : amount, refundedCurrent, input.currency, input.eventId, now, additionalCapture ? 1 : 0),
-    ...(input.intentId ? [db.prepare("UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=? WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?)")
+    // A signed payment.authorized pins the intent's gateway_payment_id (advancePaymentState). If that attempt never
+    // captured and a retry on the same order did, the old guard matched no row and this commit failed verification,
+    // so the real capture was never recorded. An intent that is not yet CAPTURED and whose pinned id has no verified
+    // capture gives way to the payment that captured; a CAPTURED intent keeps the payment it captured.
+    ...(input.intentId ? [db.prepare(`UPDATE payment_intents SET state='CAPTURED',gateway_payment_id=COALESCE(?,gateway_payment_id),version=version+1,updated_at=?
+      WHERE id=? AND state IN ('CREATED','AUTHORIZED','CAPTURED') AND (gateway_payment_id IS NULL OR gateway_payment_id=?
+        OR (state<>'CAPTURED' AND NOT EXISTS (SELECT 1 FROM payment_gateway_events e WHERE e.provider='razorpay' AND e.environment=payment_intents.environment
+          AND e.payment_id=payment_intents.payment_id AND e.gateway_payment_id=payment_intents.gateway_payment_id AND e.event_type IN ${CAPTURE_TYPES}
+          AND e.processing_status='processed' AND ${trustedCaptureSql("e")})))`)
       .bind(input.gatewayPaymentId || null, now, input.intentId, input.gatewayPaymentId || null)] : []),
     db.prepare("INSERT INTO journal_transactions (id,source_type,source_id,source_event_id,currency,status,narration,created_at) VALUES (?,?,?, ?,?,'DRAFT',?,?) ON CONFLICT(source_event_id) DO NOTHING")
       .bind(journalId, "razorpay_capture", input.intentId || input.paymentId, journalEventId, input.currency, `Razorpay capture ${captureKey(input)}`, now),

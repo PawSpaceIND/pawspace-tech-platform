@@ -1,4 +1,5 @@
 import {preservedServiceAddressV8Bytes} from './service-address-v8-reviewed-delta.mjs';
+import {preservedCapturedRetryLinkBytes} from './captured-retry-link-reviewed-delta.mjs';
 import {preservedAcceptedUiBytes} from './accepted-ui-reviewed-delta.mjs';
 import {preservedGroomingBackBarBytes} from './grooming-back-bar-reviewed-delta.mjs';
 import {preservedChatLedgerBytes} from './chat-ledger-reviewed-delta.mjs';
@@ -21,7 +22,12 @@ function reverse(source,entry,path){
  return Buffer.isBuffer(source)?Buffer.from(out):out;
 }
 // Composition only; historical fixtures and the existing owner helpers stay immutable.
+// PR 1272: reverse only the exact reviewed verified-captured-retry gateway-link delta and its exact
+// .gitleaksignore fingerprint append; every historical layer below then runs unchanged.
+export {preservedCapturedRetryLinkBytes};
 export function preservedTrainingIntegratedBytes(path,bytes){
+ // .gitleaksignore: the PR1272 append is reversed once, inside the accepted-UI layer below (before its own exact check).
+ if(path!=='.gitleaksignore')bytes=preservedCapturedRetryLinkBytes(path,bytes);
  bytes=preservedServiceAddressV8Bytes(path,bytes);
  if(path==='e2e/v2-grooming.spec.ts'&&hash(bytes)==='766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230'){
   const reviewed="  // Async quote rerenders can remount the add-on picker closed (seen in WebKit); re-open until it stays open.\n  await expect(async () => {\n    if (await disclosure.getAttribute(\"open\") === null) await disclosure.locator(\"summary\").click();\n    await expect(disclosure).toHaveAttribute(\"open\", \"\", { timeout: 2_000 });\n  }).toPass({ timeout: 15_000 });\n",prior="  if (await disclosure.getAttribute(\"open\") === null) {\n    await disclosure.locator(\"summary\").click();\n    await expect(disclosure).toHaveAttribute(\"open\", \"\");\n  }\n";

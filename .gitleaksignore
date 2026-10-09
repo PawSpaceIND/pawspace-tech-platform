@@ -62,3 +62,8 @@ bdb7df8bb8e201858855af28448d1a6f7e1dc183:tests/training-arrival-handover-context
 
 # Public base64url character alphabet, not a credential. Exact original PR1267 finding only.
 7ebbc7fe30b10fc0653ea15c1ebcf7c6e26485cd:app/components/appearance-account-client.ts:generic-api-key:27
+
+# Non-credential: synthetic Razorpay TEST-mode key id used only as stubbed sandbox configuration in the
+# verified captured-retry gateway-link test (PR #1272 commit f922044f). Provider calls are stubbed and nothing
+# reaches Razorpay. Exact historical finding only; literal not reproduced here, all other findings enforced.
+f922044f3397bdbab8dc118877218a174ee55247:tests/gateway-link-captured-payment-winner.test.mjs:pawspace-payment-secret-key:66
