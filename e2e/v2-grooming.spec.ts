@@ -688,7 +688,12 @@ test("G02/G05: location needs a user action and review; confirmed changes rechec
   expect(state.reverseCalls).toBe(0);
   const reserve = page.getByRole("button", { name: /Next · review payment/ });
   await expect(reserve).toBeEnabled();
-  await (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true }).click();
+  // Smooth scrolling moved the tablet pointer target between mouse-down and mouse-up.
+  // Exercise the same user action through its keyboard-accessible button.
+  const useLocation = (await deviceLocationReview(page)).getByRole("button", { name: "Use current location", exact: true });
+  await useLocation.focus();
+  await expect(useLocation).toBeFocused();
+  await useLocation.press("Enter");
   const suggested = page.getByRole("region", { name: "Suggested service address" });
   await expect(suggested).toBeVisible();
   await expect(suggested).toContainText(locatedAddress);

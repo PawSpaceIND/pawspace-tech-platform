@@ -85,5 +85,5 @@ test('Reviewed booking fixture delta rejects current-source assertion mutations'
  assert.equal(hash(preservedSecurityDependencyBytes(path,raw)),'766d969cf0ea06c1790cd788bbcbcfb052030fb41333784e4578c4c8cdba5230');
  const text=raw.toString(),before='await expect(suggestion).toHaveCount(0);';
  assert.ok(text.includes(before));
- for(const changed of [text.replace(before,'await suggestion.isVisible();'),text+'\nUNREVIEWED','X'+text.slice(1),text.replaceAll('\n','\r\n')])assert.throws(()=>preservedSecurityDependencyBytes(path,Buffer.from(changed)));
+ for(const changed of [text.replace(before,'await suggestion.isVisible();'),text.replace('await expect(useLocation).toBeFocused();','await useLocation.isVisible();'),text.replace('await useLocation.press("Enter");','await useLocation.click({ force: true });'),text+'\nUNREVIEWED','X'+text.slice(1),text.replaceAll('\n','\r\n')])assert.throws(()=>preservedSecurityDependencyBytes(path,Buffer.from(changed)));
 });
