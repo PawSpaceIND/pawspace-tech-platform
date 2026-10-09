@@ -10,6 +10,7 @@ const {ensureCustomerAccountTables}=await import('../lib/customer-account.ts');
 const {ensureLeadWorkItemsTable}=await import('../lib/lead-conversion-attribution.ts');
 const {ensureInboundLead}=await import('../lib/lead-lifecycle-governance.ts');
 const {stagePlatformIntake,normalizeEnvelope}=await import('../lib/crm-intake-bridge.mjs');
+const {ensureCrmIntakeBridgeTables,CRM_INTAKE_SCHEMA_STATEMENTS}=await import('../lib/crm-intake-schema.ts');
 const {requiredPermission,authorizeApiRequest,auditApiResponse}=await import('../lib/api-gateway.ts');
 const {requestForAuthorization}=await import('../lib/trusted-workspace-identity.ts');
 const {authorizePlatformSessionRequest}=await import('../lib/session-api-gateway.ts');
@@ -17,9 +18,28 @@ const {runtimeControlBlock}=await import('../lib/control-runtime-switches.ts');
 const {blockDisabledServiceRequest}=await import('../lib/service-control.ts');
 const {ensureFinancialRuntimeSchema,resetFinancialRuntimeSchemaForTests}=await import('../lib/financial-runtime-bootstrap.ts');
 const {upsertEmployee,addEmploymentVersion}=await import('../lib/people-foundation.ts');
-const migration=readFileSync(new URL('../migrations/0001_crm_intake_bridge.sql',import.meta.url),'utf8');
+const migration=readFileSync(new URL('../drizzle/0047_crm_intake_bridge.sql',import.meta.url),'utf8');
 const enabled={PAWSPACE_DEPLOYMENT_ENV:'staging',PAWSPACE_WORKSPACE_IDENTITY_TRUST:'openai-dispatch',CRM_PLATFORM_INTAKE_ENABLED:'true',CRM_PLATFORM_CANONICAL_LINK_ENABLED:'true',CRM_PLATFORM_INTAKE_EXOTEL_ACCOUNT:'synthetic-account',CRM_PLATFORM_INTAKE_CITY_ID:'blr'};
 const origin='https://isolated-staging.pawspace.test',path='/api/crm/intake/link';
+test('cold bridge schema is gated, authorized, replay-safe and identical to forward migration',async()=>{
+ const states=[{env:{CRM_PLATFORM_CANONICAL_LINK_ENABLED:'false'},email:'synthetic-founder@pawspace.test',expected:503},{env:{},email:null,expected:401},{env:{},email:'synthetic-associate@pawspace.test',expected:403},{env:{},email:'synthetic-founder@pawspace.test',expected:404}];
+ for(const state of states){const w=world('__CRM_LINK_DB__','__CRM_LINK_ENV__',{...enabled,...state.env});try{
+  await seedActors(w.sqlite,w.db,[{id:'SYNTHETIC-FOUNDER',email:'synthetic-founder@pawspace.test',role:'founder'},{id:'SYNTHETIC-ASSOCIATE',email:'synthetic-associate@pawspace.test',role:'associate'}]);
+  const result=await call({inquiryKey:'a'.repeat(64),customerId:'SYNTHETIC-C1',leadId:'SYNTHETIC-L1'},{email:state.email});assert.equal(result.status,state.expected,JSON.stringify(result));
+  const schema=()=>w.sqlite.prepare("SELECT name,type,sql FROM sqlite_master WHERE name LIKE 'crm_intake_bridge_%' ORDER BY name").all();
+  if(state.expected!==404){assert.equal(schema().length,0,'disabled or unauthorized requests must create no bridge schema');continue;}
+  const before=schema();assert.ok(before.length>=5);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM crm_intake_bridge_inquiries').get().n,0);assert.equal(w.sqlite.prepare('SELECT COUNT(*) n FROM crm_intake_bridge_events').get().n,0);
+  await ensureCrmIntakeBridgeTables(w.db);w.sqlite.exec(migration);w.sqlite.exec(migration);assert.deepEqual(schema(),before,'runtime and forward migration must replay without schema changes');
+  assert.deepEqual(CRM_INTAKE_SCHEMA_STATEMENTS.map(s=>s+';').join('\n'),migration.replace(/^--.*\n/,'').trim());
+ }finally{w.sqlite.close();}}
+});
+test('runtime forward immutability hardens legacy receipt trigger without rewriting or deleting history',async()=>{const w=await setup();try{
+ w.sqlite.exec("DROP TRIGGER crm_intake_bridge_event_immutable_v2; CREATE TRIGGER crm_intake_bridge_event_collision BEFORE UPDATE ON crm_intake_bridge_events WHEN OLD.fingerprint<>NEW.fingerprint BEGIN SELECT RAISE(ABORT,'source_event_payload_conflict'); END;");
+ const before={...w.sqlite.prepare('SELECT * FROM crm_intake_bridge_events').get()};assert.equal((await call(w.body)).status,200);
+ assert.ok(w.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='crm_intake_bridge_event_collision'").get(),'legacy trigger is retained');
+ assert.throws(()=>w.sqlite.prepare('UPDATE crm_intake_bridge_events SET account_id=?').run('other-account'),/source_event_payload_conflict/);
+ assert.deepEqual({...w.sqlite.prepare('SELECT * FROM crm_intake_bridge_events').get()},before);
+ }finally{w.sqlite.close();}});
 async function setup(overrides={}){
  const env={...enabled,...overrides};const w=world('__CRM_LINK_DB__','__CRM_LINK_ENV__',env);
  await seedActors(w.sqlite,w.db,[{id:'SYNTHETIC-FOUNDER',email:'synthetic-founder@pawspace.test',role:'founder'},{id:'SYNTHETIC-ASSOCIATE',email:'synthetic-associate@pawspace.test',role:'associate'},{id:'SYNTHETIC-ADMIN',email:'synthetic-admin@pawspace.test',role:'admin'},{id:'SYNTHETIC-MANAGER',email:'synthetic-manager@pawspace.test',role:'manager'}]);

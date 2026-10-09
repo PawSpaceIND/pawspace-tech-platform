@@ -3,6 +3,7 @@ import {CRM_MANAGER_DOMAIN,requireManagerDomain,resolveManagerOrganizationalScop
 import {validateBookingOrigin} from '../../../../../lib/lead-conversion-attribution';
 import {readBoundedRequestText,VoiceFetchRefused} from '../../../../../lib/voice-safe-fetch';
 import {BridgeRefusal,recordCanonicalLink,verifiedBookingHandoff} from '../../../../../lib/crm-intake-bridge.mjs';
+import {ensureCrmIntakeBridgeTables} from '../../../../../lib/crm-intake-schema';
 
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&v===v.trim()&&!/[\u0000-\u001f\u007f]/.test(v);
@@ -23,6 +24,7 @@ export async function POST(request:Request){
   if(!accountId||!cityId)return json({error:'source_scope_not_configured'},503);
   const db=await database(),scope=await resolveManagerOrganizationalScope(db,actor);requireManagerDomain(scope,CRM_MANAGER_DOMAIN);
   if(scope&&scope.cityId!==cityId)return json({error:'canonical_link_scope_denied'},403);
+  await ensureCrmIntakeBridgeTables(db);
   const {inquiryKey,customerId,leadId}=body as {inquiryKey:string;customerId:string;leadId:string};
   const staged=await db.prepare('SELECT source,account_id,service_code,canonical_lead_id,canonical_customer_id FROM crm_intake_bridge_inquiries WHERE inquiry_key=?').bind(inquiryKey).first<Record<string,unknown>>();
   if(!staged)return json({error:'unknown_external_inquiry'},404);
