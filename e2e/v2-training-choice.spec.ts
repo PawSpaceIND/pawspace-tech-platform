@@ -2,7 +2,7 @@ import {test,expect,type Page} from "@playwright/test";
 const trainer=(id:string,name:string)=>({id,name,model:"commission",rating:4.8,qualityScore:90,capacity:1,travelBufferMinutes:30,maxDailyJobs:6});
 async function fixture(page:Page){
  const fixtureNow=new Date("2026-10-05T04:00:00Z");
- await page.clock.setFixedTime(fixtureNow);
+ const browserErrors:string[]=[];page.on("pageerror",error=>browserErrors.push(error.message));
  const first=trainer("TRAINER-1","Trainer One"),second=trainer("TRAINER-2","Trainer Two");
  const state={providers:[first,second],assigned:first,refuse:false,reservations:[] as Record<string,unknown>[],bookings:[] as Record<string,unknown>[]};
  await page.route("**/api/**",async route=>{
@@ -31,12 +31,17 @@ async function fixture(page:Page){
  await page.goto("/v2/training");
  // Programmes are grouped into family disclosures that stay closed until one of their plans is chosen; open Puppy.
  const summary=page.locator("summary",{hasText:/^Puppy/}),family=summary.locator("xpath=.."),plan=family.getByRole("button",{name:/Foundation Training/});
+ // Let server and browser hydrate with the same real clock before fixing the date-sensitive interactions.
+ await expect(summary).toBeVisible();
+ await expect(page.getByRole("button",{name:/Bruno Labrador/})).toBeVisible();
+ await page.clock.setFixedTime(fixtureNow);
+ expect(browserErrors).toHaveLength(0);
  await expect(async()=>{if(await family.getAttribute("open")===null)await summary.click();await expect(plan).toBeVisible({timeout:2_000});}).toPass({timeout:15_000});
  await plan.click();
  const firstDate=page.getByLabel(/First session date/);
  await expect(firstDate).toBeEnabled();await firstDate.fill("2026-10-08");
  await expect(page.getByText(/trainer is available|trainers are available/)).toBeVisible();
- await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeEnabled();return state;
+ await expect(page.getByRole("button",{name:/Reserve trainer & continue/})).toBeEnabled();expect(browserErrors).toHaveLength(0);return state;
 }
 
 test("V2 Training defaults to automatic matching and uses the assigned trainer before payment",async({page})=>{
